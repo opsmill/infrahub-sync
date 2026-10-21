@@ -1,0 +1,20 @@
+dev/specs/010-second-sync-plan-speed/plan.md
+  s_47078ea83e766d::t_60677b2144d95b 181
+  s_47078ea83e766d::t_07ac76089e804f 235
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "98c730847066e47587035c259e8d06fe481cba4a",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
