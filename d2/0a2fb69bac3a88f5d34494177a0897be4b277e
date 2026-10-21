@@ -1,0 +1,46 @@
+docs/docs/reference/sync-http-api.mdx
+  s_756605d570e551::t_a3a7f7737f9b19 195-203
+infrahub_sync/client/models.py
+  s_756605d570e551::t_18b118d3e4c23c 324-325
+infrahub_sync/service/serve.py
+  s_756605d570e551::t_112419aa079037 72
+  s_756605d570e551::t_dfa34f87e07c80 19
+  s_756605d570e551::t_b6fa66a96b68db 90-96
+  s_756605d570e551::t_840bcb8b3facb6 58-59
+docs/docs/compose-deployment.mdx
+  s_756605d570e551::t_49ea28c54186ed 558-575
+infrahub_sync/service/service.py
+  s_756605d570e551::t_0443339b2b6c99 52
+  s_756605d570e551::t_e18c6a6cb491b5 1064
+  s_756605d570e551::t_8da96bc2c0e16a 1087
+  s_756605d570e551::t_e0b8a8ee18e7cf 143,150-151
+infrahub_sync/service/prefect_ui.py
+  s_756605d570e551::t_cd95ec2cd0845d 1-42,44-45,51-63
+  s_756605d570e551::t_a56d62f47d7398 46-50
+  s_756605d570e551::t_67379ab1b9d1f0 43
+infrahub_sync/cli.py
+  s_756605d570e551::t_68ece0f36d26db 478-480
+tests/cli/test_client_commands.py
+  s_756605d570e551::t_0c2d708ef53e0e 630-650
+tests/service/test_prefect_ui_url.py
+  s_756605d570e551::t_75b41da9ceb7e2 1-148
+  s_756605d570e551::t_8706d53258618a 149-150
+changelog/+prefect-ui-url.added.md
+  s_756605d570e551::t_a0137e28e358f1 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d20a2fb69bac3a88f5d34494177a0897be4b277e",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
