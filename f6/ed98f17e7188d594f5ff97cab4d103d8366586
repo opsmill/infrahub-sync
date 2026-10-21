@@ -1,0 +1,30 @@
+changelog/+orchestration-terminal-state.fixed.md
+  s_756605d570e551::t_b6e6b69e381e2c 1
+docs/docs/reference/sync-http-api.mdx
+  s_756605d570e551::t_03ba421f9a798e 269-274
+infrahub_sync/service/service.py
+  s_756605d570e551::t_1e700c6e278f65 1079
+  s_756605d570e551::t_366c97282e6872 1046-1049
+tests/service/test_status_observation_budget.py
+  s_756605d570e551::t_41d4441e85194c 413
+  s_756605d570e551::t_420b43fa186ec6 452-454
+  s_756605d570e551::t_f8af98015cbcb2 253-256,266
+  s_756605d570e551::t_6e6901a6690404 245-246
+  s_756605d570e551::t_8dd08d40c50770 423-424
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f6ed98f17e7188d594f5ff97cab4d103d8366586",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
