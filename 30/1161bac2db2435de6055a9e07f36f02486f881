@@ -1,0 +1,31 @@
+changelog/+prefect-run-tags.added.md
+  s_756605d570e551::t_09902712e7d09d 1
+docs/docs/orchestration.mdx
+  s_756605d570e551::t_aa54daaf044ab4 107-108
+tests/service/test_run_titles.py
+  s_756605d570e551::t_d6a4858f79f602 40,42,46
+  s_756605d570e551::t_d81c630dfac5a9 14
+  s_756605d570e551::t_128df7590c3f9d 90-109
+tests/service/test_flow_and_prefect.py
+  s_756605d570e551::t_367d721f9ae219 892,894
+infrahub_sync/service/orchestration.py
+  s_756605d570e551::t_29cd07050d8430 82-94
+  s_756605d570e551::t_3f8ad8e03e80c2 174
+  s_756605d570e551::t_278c33a1f51658 205-207,212
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "301161bac2db2435de6055a9e07f36f02486f881",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
