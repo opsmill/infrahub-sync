@@ -1,0 +1,114 @@
+dev/specs/docs/v3-docs-overhaul/review-2/deploy-operate-reference.checks.md
+  s_09798a683dbbdd::t_8edcef8e012c9c 1-1702
+dev/specs/docs/v3-docs-overhaul/audit-B-tutorials-guides.md
+  s_4475617983ea10::t_fe39c050c0adfa 1-536
+dev/specs/docs/v3-docs-overhaul/checks/adapters.md
+  s_4475617983ea10::t_e692da31418d96 1-451
+dev/specs/docs/v3-docs-overhaul/checks/reference.md
+  s_4475617983ea10::t_3e13a91ba13c37 1-350
+dev/specs/docs/v3-docs-overhaul/review-2/adapters.md
+  s_09798a683dbbdd::t_adc8c18a0fda85 143
+  s_09798a683dbbdd::t_fde5735035efc7 151
+  s_09798a683dbbdd::t_5c9122d498e0cc 1-142,144-150,152-197,200-226,228-243,246-313,315-374,376-404
+  s_09798a683dbbdd::t_08c86d85505d82 314
+  s_09798a683dbbdd::t_be9eab9da0c557 227
+  s_09798a683dbbdd::t_8fcf2055eb40a7 198-199
+  s_09798a683dbbdd::t_88d61e6bf0d128 244-245
+  s_09798a683dbbdd::t_605266f431b5a8 375
+dev/specs/docs/v3-docs-overhaul/checks/concepts.md
+  s_4475617983ea10::t_3c8bae772b2223 333-334
+  s_4475617983ea10::t_1750613ad2595d 316-332
+  s_4475617983ea10::t_0b9db4902b9d5c 1-315
+dev/specs/docs/v3-docs-overhaul/audit-final-adapters-reference.md
+  s_4475617983ea10::t_2d93c32b3d9169 1-315
+dev/specs/docs/v3-docs-overhaul/review-2/README.md
+  s_09798a683dbbdd::t_610222c78ce7f0 1-34
+dev/specs/docs/v3-docs-overhaul/checks/overview.md
+  s_51feb3c15a5f42::t_502c9843b55495 331
+  s_4475617983ea10::t_8c8d998cc87b4b 1-15,17-51,53-165,167-312,314-330,332-340
+  s_4475617983ea10::t_a03cb94fcf1069 16,52,166,313
+dev/specs/docs/v3-docs-overhaul/audit-A-get-started.md
+  s_4475617983ea10::t_fe39c050c0adfa 1-542
+dev/specs/docs/v3-docs-overhaul/audit-E-reference.md
+  s_4475617983ea10::t_fe39c050c0adfa 1-536
+dev/specs/docs/v3-docs-overhaul/checks/deploy.md
+  s_4475617983ea10::t_e920068b7cf912 1-29,33-298,302-303
+  s_4475617983ea10::t_1396bc6841c254 30-32
+  s_4475617983ea10::t_5829f0b1dd45f1 299-301
+dev/specs/docs/v3-docs-overhaul/review-2/adapters.checks.md
+  s_09798a683dbbdd::t_a742fb796fdb37 1-449
+dev/specs/docs/v3-docs-overhaul/audit-final-deploy-operate.md
+  s_4475617983ea10::t_365c8bb9d5c6cc 1-116,118-125,127-286,290,292-296
+  s_51feb3c15a5f42::t_502c9843b55495 117,126,287-289,291
+dev/specs/docs/v3-docs-overhaul/review-2/user-path.md
+  s_09798a683dbbdd::t_c4d286d749b50a 1-53,55-59,63-198,200-427
+  s_09798a683dbbdd::t_30e411f334ae43 54,60-62,199
+dev/specs/docs/v3-docs-overhaul/audit-C-operations.md
+  s_4475617983ea10::t_fe39c050c0adfa 1-31,33-531
+  s_51feb3c15a5f42::t_502c9843b55495 32
+dev/specs/docs/v3-docs-overhaul/checks/guides.md
+  s_4475617983ea10::t_74a734894da3cb 170
+  s_4475617983ea10::t_bc4f157954978d 440-442
+  s_4475617983ea10::t_e9d3079d8eb4a9 350-353
+  s_4475617983ea10::t_55e92c387b8685 166
+  s_4475617983ea10::t_8d8c093d176b50 27
+  s_4475617983ea10::t_ac999e48bdead1 1-26,28-165,167-169,171-349,354-439,443-475
+dev/specs/docs/v3-docs-overhaul/drafting-brief.md
+  s_51feb3c15a5f42::t_502c9843b55495 52-54,58
+  s_4475617983ea10::t_6fa81013d62ab6 1-51,55-57,59-93,96-122
+  s_4475617983ea10::t_ef008a55371bb8 94-95
+dev/specs/docs/v3-docs-overhaul.md
+  s_4475617983ea10::t_46972d8cc8b3e7 1-34,80-235,238-253,261-267,270,272-285
+  s_4475617983ea10::t_80048cbe73627d 35-54,57-79
+  s_4475617983ea10::t_39e2e2a842e28b 237
+  s_4475617983ea10::t_1666543be42c2c 286-296
+  s_4475617983ea10::t_aa6a187426e95d 254-255,257-260
+  s_51feb3c15a5f42::t_502c9843b55495 55-56,236,256,268-269,271
+dev/specs/docs/v3-docs-overhaul/audit-final-user-path.md
+  s_51feb3c15a5f42::t_502c9843b55495 197,297,310
+  s_4475617983ea10::t_ca411de907bf11 1-196,198-296,298-309,311-318
+dev/specs/docs/v3-docs-overhaul/benchmark-comparables.md
+  s_4475617983ea10::t_fe39c050c0adfa 1-309
+dev/specs/docs/v3-docs-overhaul/review-2/user-path.checks.md
+  s_09798a683dbbdd::t_c0f9d84b53943f 15-50
+  s_09798a683dbbdd::t_58b9e5f6628c95 1-14,51-1511
+dev/specs/docs/v3-docs-overhaul/review-2/deploy-operate-reference.md
+  s_09798a683dbbdd::t_2b21c88aaf2e08 69
+  s_09798a683dbbdd::t_db94422995a2b6 266-269
+  s_09798a683dbbdd::t_5139ef1f7adb85 26-28
+  s_09798a683dbbdd::t_eec4e47d7e4429 1-25,29-68,70-265,270-290
+dev/specs/docs/v3-docs-overhaul/audit-D-adapters.md
+  s_4475617983ea10::t_fe39c050c0adfa 1-405
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0ba1f9b334e05fbfeb6d521e5362f443afc32838",
+  "prompts": {},
+  "sessions": {
+    "s_09798a683dbbdd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8caff82d-0ac5-431b-b934-93e21b36b4b9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_4475617983ea10": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7919e80f-8829-4f3e-ae67-e690c834bb56",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_51feb3c15a5f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9eeb2e45-e1c5-44b9-8b8d-41680a41fdd6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
