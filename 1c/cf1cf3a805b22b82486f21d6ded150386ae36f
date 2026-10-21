@@ -1,0 +1,21 @@
+tests/dev_stack/test_preview_compose_environment.py
+  s_756605d570e551::t_a5535f1f054b12 1-42
+tasks/preview.py
+  s_756605d570e551::t_1dc41f4918ca71 251-264,269
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1ccf1cf3a805b22b82486f21d6ded150386ae36f",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
