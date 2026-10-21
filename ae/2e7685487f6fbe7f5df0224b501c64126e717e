@@ -1,0 +1,38 @@
+infrahub_sync/service/failure_record.py
+  s_756605d570e551::t_7e27bae3c2faf5 25,184
+infrahub_sync/execution.py
+  s_756605d570e551::t_7e27bae3c2faf5 1262
+infrahub_sync/service/liveness.py
+  s_756605d570e551::t_8ad8e2af81391a 189
+infrahub_sync/product_store/models.py
+  s_756605d570e551::t_8ad8e2af81391a 233-236
+infrahub_sync/service/plan_step.py
+  s_756605d570e551::t_8ad8e2af81391a 18-23,42-45,47-48,50,53-64,72-73,81,98,109,113-127,137
+  s_756605d570e551::t_894db742f9bd75 26
+infrahub_sync/service/flow.py
+  s_756605d570e551::t_46ff0c2096ae10 730-732
+  s_756605d570e551::t_3e1c688cb84a31 51
+  s_756605d570e551::t_8ad8e2af81391a 236,248,848,850,906,982
+infrahub_sync/service/models.py
+  s_756605d570e551::t_3e1c688cb84a31 49
+  s_756605d570e551::t_7e27bae3c2faf5 201
+infrahub_sync/plan_step_timer.py
+  s_756605d570e551::t_7e27bae3c2faf5 45
+  s_756605d570e551::t_637d397d10f52d 41-44,46,163,178-186,207,221,240,263
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ae2e7685487f6fbe7f5df0224b501c64126e717e",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
