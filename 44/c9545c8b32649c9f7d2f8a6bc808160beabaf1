@@ -1,0 +1,27 @@
+tests/test_nightly_e2e.py
+  s_a2f1b17812bc2b::t_8a4d3eb8a64cc0 127,132-134,149-151
+docs/docs/development/guides/preview-stack.md
+  s_a2f1b17812bc2b::t_2c787aabed2570 88-94
+.github/scripts/nightly_e2e.py
+  s_a2f1b17812bc2b::t_8a4d3eb8a64cc0 114-119,124-125,190
+docs/docs/development/guidelines/testing-tiers.md
+  s_a2f1b17812bc2b::t_2c787aabed2570 347-353,358-359,367,390-393
+changelog/+013-demo-schema-on-branch.housekeeping.md
+  s_a2f1b17812bc2b::t_5d99592c55dd99 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "44c9545c8b32649c9f7d2f8a6bc808160beabaf1",
+  "prompts": {},
+  "sessions": {
+    "s_a2f1b17812bc2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "800e1b10-7585-4fd4-bff7-57b8118ec85e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+tasks/preview.py
+  s_756605d570e551::t_08fc1dbf6d06a1 228-250,255
+tests/preview/test_preview_configuration.py
+  s_756605d570e551::t_ad47b6ad1260c8 578
+  s_756605d570e551::t_08fc1dbf6d06a1 575-577,579-592
+  s_756605d570e551::t_950bd40e806615 317-318
+changelog/+preview-netbox-token-default.housekeeping.md
+  s_756605d570e551::t_d8723a866aa80b 1
+docs/docs/development/guidelines/testing-tiers.md
+  s_756605d570e551::t_71ea9c4c2c8a77 337-339,344
+docs/docs/development/guides/preview-stack.md
+  s_756605d570e551::t_a8b8cffb798cec 90-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b8b76e5f6b7bb73618aa22a4bacc6babae1624f4",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

@@ -1,0 +1,37 @@
+docs/docs/development/knowledge/plan-artifact.md
+  s_756605d570e551::t_82fb4818b2d9fc 128-133
+infrahub_sync/plan/apply_gate.py
+  s_756605d570e551::t_77f6a58f6b71b1 26,31,36-65
+  s_756605d570e551::t_976472e1e00e00 14-18
+infrahub_sync/plan/errors.py
+  s_756605d570e551::t_286ed5278c4060 121-132
+  s_756605d570e551::t_f7dc9f973ce7a1 118-120
+infrahub_sync/adapters/infrahub.py
+  s_756605d570e551::t_c03416acf8cb1e 726-728
+infrahub_sync/potenda/__init__.py
+  s_756605d570e551::t_6d073afed14058 26
+  s_756605d570e551::t_38b09f342da569 899
+tests/adapters/test_infrahub_planned_write.py
+  s_756605d570e551::t_b8595720ba0dc5 2108,2116-2130
+  s_756605d570e551::t_5b18fd67e28653 54
+tests/plan/test_cleared_relationships.py
+  s_756605d570e551::t_b3a0b8a7f399f3 154
+infrahub_sync/failure_cause.py
+  s_756605d570e551::t_1429443a4b0ca6 45,154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f09c02ce33997143712a320e726458509af55072",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

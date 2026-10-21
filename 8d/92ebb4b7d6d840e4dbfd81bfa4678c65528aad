@@ -1,0 +1,19 @@
+dev/specs/010-second-sync-plan-speed/opsmill-implement-report.md
+  s_756605d570e551::t_387f2ed4167621 7,97-98,148,167,176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8d92ebb4b7d6d840e4dbfd81bfa4678c65528aad",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
