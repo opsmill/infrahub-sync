@@ -1,0 +1,71 @@
+dev/specs/010-prefect-from-sync-image/data-model.md
+  s_8d92f288a8f661::t_b465b052a04272 104-108
+dev/specs/010-prefect-from-sync-image/spec.md
+  s_8d92f288a8f661::t_9635add6f42b7b 375-391
+  s_8d92f288a8f661::t_2156156d8cb88e 429
+  s_8d92f288a8f661::t_d22c4142f70a17 408-409
+  s_8d92f288a8f661::t_27c4d0257ef386 459-460,463-464
+  s_8d92f288a8f661::t_825030be2032f8 65-85
+  s_8d92f288a8f661::t_7d16cb2b5edd12 93-95
+  s_8d92f288a8f661::t_105c64fb3257ac 419-424
+  s_8d92f288a8f661::t_380918795905be 402-403
+  s_8d92f288a8f661::t_894f3e7100bc03 321-324,326-327
+dev/specs/010-prefect-from-sync-image/tasks.md
+  s_8d92f288a8f661::t_c4baef81d511d5 65
+  s_8d92f288a8f661::t_17ef12fd928051 130
+  s_8d92f288a8f661::t_9bcb4aef296f64 200
+  s_8d92f288a8f661::t_6845e1e967a3de 152-153
+  s_8d92f288a8f661::t_6b3e664167d20a 120
+  s_8d92f288a8f661::t_a181168de81c55 158
+  s_8d92f288a8f661::t_9d31c5d8944847 203
+  s_8d92f288a8f661::t_4a66436ea37b32 134
+  s_8d92f288a8f661::t_71fdd3e7387cb4 211-214
+  s_8d92f288a8f661::t_e9e6140964cce2 259
+  s_8d92f288a8f661::t_7b86dd097914e9 194
+  s_8d92f288a8f661::t_f40b3b4a17cc88 274-275,277-278,281-284
+  s_8d92f288a8f661::t_a76cec7898afe9 37-48
+  s_8d92f288a8f661::t_f1f0dcaca7c93e 136
+  s_8d92f288a8f661::t_6e04859c78ff10 96-98
+  s_8d92f288a8f661::t_c98d663b320d67 128
+  s_8d92f288a8f661::t_5cd769ca321f30 131
+  s_8d92f288a8f661::t_0897a06e765af1 235-237
+  s_8d92f288a8f661::t_56fffc7ae2f21b 87
+  s_8d92f288a8f661::t_12e4648b9619e9 257
+  s_8d92f288a8f661::t_1792f0a29cf8d0 132-133
+  s_8d92f288a8f661::t_0c6bbd1fe300fe 83
+  s_8d92f288a8f661::t_06882c66d430ec 122
+dev/specs/010-prefect-from-sync-image/research.md
+  s_8d92f288a8f661::t_e796dda7caf348 217-221
+  s_8d92f288a8f661::t_2ddc27a237e0ff 255-259
+dev/specs/010-prefect-from-sync-image/quickstart.md
+  s_8d92f288a8f661::t_87de02eb2c6d56 60-61
+dev/specs/010-prefect-from-sync-image/contracts/compose-services.md
+  s_8d92f288a8f661::t_a5ef8c24558427 12
+  s_8d92f288a8f661::t_8f2b3b2dd9fbf3 31
+dev/specs/010-prefect-from-sync-image/contracts/invoke-tasks.md
+  s_8d92f288a8f661::t_0eecead5fd4892 51
+dev/specs/010-prefect-from-sync-image/contracts/testcontainers-api.md
+  s_8d92f288a8f661::t_cd7db16a7ef3f6 29-30,35-36,39-55
+  s_8d92f288a8f661::t_0154ba3c7edf27 69-70
+  s_8d92f288a8f661::t_192e9e286d8e2f 56
+dev/specs/010-prefect-from-sync-image/plan.md
+  s_8d92f288a8f661::t_8646046f347bbe 172,174,176-183
+  s_8d92f288a8f661::t_030dfb0c3933cd 193-195
+  s_8d92f288a8f661::t_e9ff703f497063 17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "13bf22cb2ed2d920a30b3d5a92e78760d1008cb0",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
