@@ -1,0 +1,58 @@
+tests/data/v2_examples/infrahub_to_peering-manager/config.yml
+  s_9c7f8713d8e8dc::t_71f708878e7af9 1-151
+tests/data/v2_examples/nautobot-v2_to_infrahub/config.yml
+  s_9c7f8713d8e8dc::t_71f708878e7af9 1-530
+tests/data/v2_examples/observium_to_infrahub/config.yml
+  s_9c7f8713d8e8dc::t_71f708878e7af9 1-93
+.yamllint.yml
+  s_9c7f8713d8e8dc::t_68fe5e4e3fb43b 7-9
+tests/data/v2_examples/device42_to_infrahub/config.yml
+  s_9c7f8713d8e8dc::t_71f708878e7af9 1-56
+tests/data/v2_examples/peeringdb_to_infrahub/config.yml
+  s_9c7f8713d8e8dc::t_71f708878e7af9 1-40
+tests/data/v2_examples/nautobot-v1_to_infrahub/config.yml
+  s_9c7f8713d8e8dc::t_71f708878e7af9 1-524
+tests/data/v2_examples/README.md
+  s_9c7f8713d8e8dc::t_c9a37af4409637 1-20
+tests/data/v2_examples/slurpit_to_infrahub/config.yml
+  s_9c7f8713d8e8dc::t_71f708878e7af9 1-200
+infrahub_sync/configuration/conversion.py
+  s_9c7f8713d8e8dc::t_39fa0b4772981f 1-23,25-136,138-146
+  s_9c7f8713d8e8dc::t_b3266f6a82013d 24,137
+tests/data/v2_examples/aci_to_infrahub/config.yml
+  s_9c7f8713d8e8dc::t_71f708878e7af9 1-122
+tests/data/v2_examples/ipfabric_to_infrahub/config.yml
+  s_9c7f8713d8e8dc::t_71f708878e7af9 1-221
+tests/data/v2_examples/peering-manager_to_infrahub/config.yml
+  s_9c7f8713d8e8dc::t_71f708878e7af9 1-212
+tests/data/v2_examples/v1_netbox_to_infrahub/config.yml
+  s_9c7f8713d8e8dc::t_71f708878e7af9 1-469
+tests/data/v2_gate/expected_deletes.yml
+  s_9c7f8713d8e8dc::t_a4f99ddbfdca1d 1-16
+tests/data/v2_examples/custom_adapter/config.yml
+  s_9c7f8713d8e8dc::t_71f708878e7af9 1-31
+tests/data/v2_examples/netbox_to_infrahub/config.yml
+  s_9c7f8713d8e8dc::t_71f708878e7af9 1-661
+"tests/data/v2_examples/prometheus_to_infrahub (node_exporter)/config.yml"
+  s_9c7f8713d8e8dc::t_71f708878e7af9 1-207
+dev/specs/012-v2-configuration-conversion/tasks.md
+  s_9c7f8713d8e8dc::t_b3266f6a82013d 26-28
+tests/data/v2_examples/librenms_to_infrahub/config.yml
+  s_9c7f8713d8e8dc::t_71f708878e7af9 1-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a332f437fbe39604d33c8e173991752c5df08762",
+  "prompts": {},
+  "sessions": {
+    "s_9c7f8713d8e8dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7b4ab04-36d6-4644-a214-69334e6a0d27",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
