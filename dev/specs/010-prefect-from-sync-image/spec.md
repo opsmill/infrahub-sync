@@ -1,6 +1,6 @@
 # Feature Specification: Compose stacks run the Prefect server from the Sync image
 
-**Feature Branch**: `016-prefect-from-sync-image`
+**Feature Branch**: `010-prefect-from-sync-image`
 
 **Created**: 2026-10-22
 
