@@ -156,7 +156,9 @@ it, and the report names where that value came from:
 
 The command reads only the variable names that V2 itself read for each adapter. It does not read
 a variable that `config.yml` names in a `${NAME}` placeholder or in a `*_env_vars` setting, and
-it says so in the report.
+it says so in the report. When a `*_env_vars` setting replaces V2's variable names for a
+setting, V2 did not read its default names either, so the command takes that setting from
+`config.yml` or a flag only.
 
 Run the command in the shell where V2 ran, or pass the addresses as flags, so that the package
 holds the addresses V2 used. Then check that the Sync worker can reach them.
@@ -175,10 +177,11 @@ holds the addresses V2 used. Then check that the Sync worker can reach them.
 | `source.adapter`, `destination.adapter` | Drops it with a note when it names the bundled adapter's own module. Refuses any other value. |
 | Credential settings, such as `token` or `password` | Replaces the value with a `$credential` reference and declares the reference in the `credentials` block. |
 | `url` and other settings that V2 read from the environment first | Writes the value from the flag, the variable or the file, and reports its origin. |
-| `genericrestapi` settings that end in `_env_vars` | Drops them with a note. The command does not read the variables they name. |
+| `genericrestapi` and `peeringmanager` settings that end in `_env_vars` | Drops them and lists them under `Dropped`. The command does not read the variables they name. |
 | An address that holds a user name or password | Refuses it, without printing the address. |
 | Other settings that the bundled adapter accepts | Copies them. |
 | Other settings | Refuses them. |
+| Other keys of `source` or `destination` | Drops them, because V2 did not read them. |
 | `store` | Drops it with a warning: V3 keeps sync data in memory during a run. |
 | `adapters_path` | Drops it with a warning: V3 runs only its bundled adapters. |
 | `incremental` | Copies it for `infrahub`, `nautobot` and `netbox` sources. Drops it with a warning for other sources. |

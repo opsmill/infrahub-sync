@@ -983,3 +983,85 @@ def test_conversion_result_holds_a_package_or_refusals(
 ) -> None:
     with pytest.raises(ValueError, match="package"):
         ConversionResult(package=package, refusals=refusals)
+
+
+# --- Review fixes: replaced v2 variables, unread keys and value comparison --------------
+
+
+@pytest.mark.parametrize("source_name", ["genericrestapi", "peeringmanager"])
+def test_env_vars_list_stops_the_default_address_variables_from_being_read(source_name: str) -> None:
+    settings = {"url": "https://file.example.com", "api_endpoint": "/api", "url_env_vars": ["MY_URL"]}
+    visible = {"URL": "https://unrelated.example.com", "PEERING_MANAGER_ADDRESS": "https://unrelated.example.com"}
+    result = _convert(_config(settings, source_name=source_name), visible)
+    assert _configuration(result)["source"]["settings"]["url"] == "https://file.example.com"
+    origin = _origin(result, "source.settings.url")
+    assert origin.origin == "config.yml"
+    assert origin.other_value is None
+
+
+def test_env_vars_list_without_a_file_address_names_the_flag() -> None:
+    settings = {"api_endpoint": "/api", "url_env_vars": ["MY_URL"]}
+    result = _convert(_config(settings, source_name="genericrestapi"), {"URL": "https://unrelated.example.com"})
+    refusal = next(item for item in result.refusals if item.location == "source.settings.url")
+    assert "--source-url" in refusal.reason
+
+
+def test_env_vars_list_equal_to_the_defaults_keeps_them() -> None:
+    settings = {"api_endpoint": "/api", "url_env_vars": ["URL", "ADDRESS"]}
+    result = _convert(_config(settings, source_name="genericrestapi"), {"URL": "https://rest.example.com"})
+    assert _origin(result, "source.settings.url").origin_variable == "URL"
+
+
+def test_env_vars_list_is_named_as_the_credential_origin() -> None:
+    settings = {"url": "https://rest.example.com", "api_endpoint": "/api", "token_env_vars": ["MY_TOKEN"]}
+    result = _convert(_config(settings, source_name="genericrestapi"))
+    entry = _credential(result, "source.settings.token")
+    assert entry.origin == "variable"
+    assert entry.origin_variable == "a variable named in token_env_vars"
+
+
+def test_peering_manager_env_vars_settings_are_dropped_not_refused() -> None:
+    settings = {"url": "https://peering.example.com", "token_env_vars": ["PM_TOKEN"]}
+    result = _convert(_config(settings, source_name="peeringmanager"))
+    assert result.refusals == ()
+    assert "source.settings.token_env_vars" in {entry.location for entry in result.dropped}
+
+
+def test_source_and_destination_sharing_a_credential_reference_is_noted() -> None:
+    data = _config({"url": "https://a.example.com"}, {"url": "https://b.example.com"}, source_name="infrahub")
+    result = _convert(data)
+    assert any(
+        "source.settings.token and destination.settings.token share the credential reference infrahub-token"
+        in note.text
+        for note in result.notes
+    )
+
+
+def test_unread_keys_of_an_adapter_block_are_dropped() -> None:
+    data = _config()
+    data["source"]["description"] = "not read by v2"
+    result = _convert(data)
+    assert "description" not in _configuration(result)["source"]
+    assert conversion.DroppedEntry("source.description", "v2 did not read this key") in result.dropped
+
+
+@pytest.mark.parametrize("settings", [[], "", 0])
+def test_settings_that_are_not_a_mapping_are_refused_as_input(settings: object) -> None:
+    data = _config()
+    data["source"]["settings"] = settings
+    with pytest.raises(conversion.ConversionInputError, match=r"source\.settings"):
+        _convert(data, {"NETBOX_ADDRESS": "https://netbox.example.com"})
+
+
+def test_setting_name_that_is_not_text_is_refused_without_a_crash() -> None:
+    settings: dict[Any, Any] = {"url": "https://rest.example.com", 1: "x"}
+    result = _convert(_config(settings, source_name="genericrestapi"))
+    assert "source.settings.1" in {item.location for item in result.refusals}
+
+
+def test_boolean_file_value_equal_to_the_variable_reports_no_other_value() -> None:
+    settings = {"url": "https://apic.example.com", "verify": False}
+    result = _convert(_config(settings, source_name="aci"), {"CISCO_APIC_VERIFY": "false"})
+    origin = _origin(result, "source.settings.verify")
+    assert origin.value == "false"
+    assert origin.other_value is None

@@ -201,6 +201,51 @@ def test_write_failure_names_the_target_and_the_system_error(
     assert not package.exists()
 
 
+def test_file_system_without_hard_links_still_writes_the_package(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _no_hard_links(*_: object) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(cli.os, "link", _no_hard_links)
+    code, _, stderr = _convert(str(config_file), "--yes")
+
+    package = config_file.parent / "package.yml"
+    assert code == 0, stderr
+    assert yaml.safe_load(package.read_text(encoding="utf-8"))["format_version"] == 1
+    assert sorted(path.name for path in config_file.parent.iterdir()) == ["config.yml", "package.yml"]
+
+
+def test_yaml_anchors_in_the_input_are_written_out_in_full(tmp_path: Path) -> None:
+    config = tmp_path / "config.yml"
+    config.write_text(
+        "name: from-netbox\n"
+        "source: {name: netbox, settings: {url: 'https://netbox.example.com'}}\n"
+        "destination: {name: infrahub, settings: {url: 'https://infrahub.example.com'}}\n"
+        "schema_mapping:\n"
+        "  - {name: BuiltinTag, mapping: extras.tags, identifiers: [name], fields: &fields [{name: name, mapping: name}]}\n"
+        "  - {name: LocationSite, mapping: dcim.sites, identifiers: [name], fields: *fields}\n",
+        encoding="utf-8",
+    )
+
+    code, _, stderr = _convert(str(config), "--yes")
+
+    assert code == 0, stderr
+    text = (tmp_path / "package.yml").read_text(encoding="utf-8")
+    assert "&id" not in text
+    assert "*id" not in text
+
+
+def test_default_output_that_is_the_input_file_names_the_option(tmp_path: Path) -> None:
+    config = tmp_path / "package.yml"
+    shutil.copyfile(NETBOX_EXAMPLE, config)
+
+    code, _, stderr = _convert(str(config), "--yes")
+
+    assert code == 1
+    assert f"error: the default output {config} is the input file; pass --output with another path" in stderr
+
+
 def test_output_in_a_missing_directory_exits_2(config_file: Path, tmp_path: Path) -> None:
     code, _, stderr = _convert(str(config_file), "--output", str(tmp_path / "missing" / "p.yml"), "--yes")
 

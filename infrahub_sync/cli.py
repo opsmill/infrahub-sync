@@ -655,14 +655,38 @@ def _read_v2_configuration(path: Path) -> object:
         _convert_fail(f"error: {path.name} is not valid YAML", 2)
 
 
+class _PackageDumper(yaml.SafeDumper):
+    """Write every value in full: a YAML anchor in config.yml does not become ``&id001`` in the package."""
+
+    def ignore_aliases(self, data: Any) -> bool:  # noqa: ARG002 - PyYAML's signature.
+        return True
+
+
+def _create_exclusively(output: Path, text: str) -> None:
+    """Create ``output`` with ``text``, failing with ``FileExistsError`` when it exists.
+
+    A write that fails removes the file it created, so no partial package is left behind.
+    """
+    handle = output.open("x", encoding="utf-8")
+    try:
+        with handle:
+            handle.write(text)
+    except OSError:
+        output.unlink(missing_ok=True)
+        raise
+
+
 def _write_package(output: Path, package: Mapping[str, Any], *, replace: bool) -> None:
     """Write through a temporary file in the target directory, then move it in place (research R8).
 
     With ``replace``, the move is a rename that replaces ``output``. Without it, the move is a
     hard link, which fails with ``FileExistsError`` when ``output`` was created after the
-    command checked for it, for example while the question waited for an answer.
+    command checked for it, for example while the question waited for an answer. On a file
+    system without hard links, the file is created exclusively instead, which keeps that rule.
     """
-    text = yaml.safe_dump(dict(package), sort_keys=False, default_flow_style=False, allow_unicode=True)
+    text = yaml.dump(
+        dict(package), Dumper=_PackageDumper, sort_keys=False, default_flow_style=False, allow_unicode=True
+    )
     handle = tempfile.NamedTemporaryFile(  # noqa: SIM115 - closed before the move below.
         "w", encoding="utf-8", dir=output.parent, prefix=f".{output.name}.", suffix=".tmp", delete=False
     )
@@ -674,7 +698,12 @@ def _write_package(output: Path, package: Mapping[str, Any], *, replace: bool) -
         if replace:
             temporary.replace(output)
         else:
-            os.link(temporary, output)
+            try:
+                os.link(temporary, output)
+            except FileExistsError:
+                raise
+            except OSError:
+                _create_exclusively(output, text)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -749,6 +778,8 @@ def configs_convert(
     if not target.parent.is_dir():
         _convert_fail(f"error: the directory of {target} does not exist", 2)
     if _is_same_file(target, path):
+        if output is None:
+            _convert_fail(f"error: the default output {target} is the input file; pass --output with another path", 1)
         _convert_fail(f"error: --output {target} is the input file {path}; choose another path", 1)
     if target.exists() and not force:
         _convert_fail(f"{target} exists; pass --force to replace it", 1)

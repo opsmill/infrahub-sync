@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import copy
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from urllib.parse import urlsplit
@@ -34,7 +34,7 @@ from .models import ConfigurationPackageParseError, parse_configuration_package
 from .validation import collect_findings
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
 
     from .capabilities import AdapterConfigurationCapabilities
     from .models import ValidationFinding
@@ -159,10 +159,11 @@ def credential_reference(adapter: str, setting: str) -> CredentialReference:
     return CredentialReference(reference, f"{ENV_CREDENTIAL_PREFIX}{adapter}_{setting}".upper())
 
 
-def _non_credential_variables() -> tuple[str, ...]:
+def _non_credential_variables(adapters: Iterable[str] | None = None) -> tuple[str, ...]:
+    """Return the ``address`` and ``other`` variable names of ``adapters`` (default: all), once each."""
     names: dict[str, None] = {}
-    for settings in V2_ENVIRONMENT_FIRST.values():
-        for entry in settings:
+    for adapter in V2_ENVIRONMENT_FIRST if adapters is None else adapters:
+        for entry in V2_ENVIRONMENT_FIRST.get(adapter, ()):
             if entry.kind != "credential":
                 names.update(dict.fromkeys(entry.variables))
     return tuple(names)
@@ -360,7 +361,10 @@ _BUNDLED_MODULE_PREFIX = "infrahub_sync.adapters."
 _COPIED_KEYS = frozenset({"name", "order", "diffsync_flags", "schema_mapping"})
 _DEFAULT_ADDRESS = EnvironmentSetting("url", (), "address")
 _ENV_VARS_SUFFIX = "_env_vars"
-_ENV_VARS_ADAPTERS = frozenset({"genericrestapi"})
+# The v2 adapters that read ``<setting>_env_vars`` from the file: the generic REST adapter
+# and Peering Manager, which is built on it and only changes the default names.
+_ENV_VARS_ADAPTERS = frozenset({"genericrestapi", "peeringmanager"})
+_ADAPTER_BLOCK_KEYS = frozenset({"name", "adapter", "settings"})
 _ONLY_DESTINATION = "infrahub"
 _CUSTOM_ADAPTER_REASON = "custom adapters are not available in this release (INFP-654, planned for 3.0)"
 _PLACEHOLDER_REASON = (
@@ -377,10 +381,14 @@ _DROP_REASONS: Mapping[str, str] = MappingProxyType(
         "adapters_path": "V3 runs only its bundled adapters; custom adapters are planned for 3.0 (INFP-654)",
     }
 )
-_ENV_VARS_REASON = "V3 reads credentials from credential references and does not read the variables this setting names"
+_ENV_VARS_REASON = (
+    "V3 does not read the variables this setting names; credentials come from credential references "
+    "and other settings from the package"
+)
 _UNREAD_KEY_REASON = "v2 did not read this key"
 _GENERATION_NOTE = "V3 has no generation step; the generated adapter and model files are not needed"
-_FLAGS: Mapping[AdapterRole, Literal["--source-url", "--destination-url"]] = MappingProxyType(
+_FlagName = Literal["--source-url", "--destination-url"]
+_FLAGS: Mapping[AdapterRole, _FlagName] = MappingProxyType(
     {"source": "--source-url", "destination": "--destination-url"}
 )
 
@@ -418,6 +426,13 @@ class _Report:
         )
 
 
+class _Flag(NamedTuple):
+    """One address flag: its name, and the value given on the command line or ``None``."""
+
+    name: _FlagName
+    value: str | None
+
+
 @dataclass(frozen=True, slots=True)
 class _Flags:
     """The address flags given on the command line, by role."""
@@ -425,8 +440,8 @@ class _Flags:
     source: str | None
     destination: str | None
 
-    def for_role(self, role: AdapterRole) -> str | None:
-        return self.source if role == "source" else self.destination
+    def for_role(self, role: AdapterRole) -> _Flag:
+        return _Flag(_FLAGS[role], self.source if role == "source" else self.destination)
 
 
 def convert_v2_configuration(
@@ -466,17 +481,8 @@ def convert_v2_configuration(
     if not report.refusals:
         _check_package(package, report)
     names = tuple(name for name in V2_NON_CREDENTIAL_VARIABLES if visible.get(name))
-    return report.result(package, VisibleVariablesEntry(names, _looked_up_variables(data)))
-
-
-def _looked_up_variables(data: Mapping[str, Any]) -> tuple[str, ...]:
-    """Return the v2 address and setting variables of the source and destination adapters, once each."""
-    names: dict[str, None] = {}
-    for role in ("source", "destination"):
-        for row in V2_ENVIRONMENT_FIRST.get(data[role]["name"], ()):
-            if row.kind != "credential":
-                names.update(dict.fromkeys(row.variables))
-    return tuple(names)
+    looked_up = _non_credential_variables((data["source"]["name"], data["destination"]["name"]))
+    return report.result(package, VisibleVariablesEntry(names, looked_up))
 
 
 def _check_shape(data: Mapping[str, Any]) -> None:
@@ -495,7 +501,8 @@ def _check_shape(data: Mapping[str, Any]) -> None:
         if not isinstance(block, dict) or not isinstance(block.get("name"), str):
             msg = f"{role}: a v1 or v2 configuration has a {role} with a name"
             raise ConversionInputError(msg)
-        if not isinstance(block.get("settings") or {}, dict):
+        settings = block.get("settings")
+        if settings is not None and not isinstance(settings, dict):
             msg = f"{role}.settings: the settings are not a mapping"
             raise ConversionInputError(msg)
 
@@ -539,6 +546,10 @@ def _convert_adapter(
             )
         else:
             report.refusals.append(RefusalEntry(f"{role}.adapter", _CUSTOM_ADAPTER_REASON, _printable(adapter)))
+    # v2 ignored any other key of the block, so it is dropped and reported like a top-level key.
+    report.dropped.extend(
+        DroppedEntry(f"{role}.{key}", _UNREAD_KEY_REASON) for key in block if key not in _ADAPTER_BLOCK_KEYS
+    )
     if capabilities is None:
         # The settings of an adapter V3 does not bundle are not read: any of them could hold
         # a credential, and the name is already refused.
@@ -601,9 +612,35 @@ def _refuse_other_setting(name: str, key: str, value: object, location: str, rep
     return False
 
 
-def _environment_settings(name: str) -> dict[str, EnvironmentSetting]:
-    """Return the environment-first settings of an adapter, with ``url`` as an address by default."""
-    rows = {row.setting: row for row in V2_ENVIRONMENT_FIRST.get(name, ()) if row.kind != "credential"}
+def _replaced_variables(name: str, settings: Mapping[str, Any]) -> frozenset[str]:
+    """Return the settings whose v2 variables the file replaced with a ``<setting>_env_vars`` list.
+
+    v2 read only the variables such a list names, and not its default names. The command
+    reads neither (spec FR-030), so the value of these settings comes from the file or a flag.
+    A list equal to v2's default names replaces nothing.
+    """
+    if name not in _ENV_VARS_ADAPTERS:
+        return frozenset()
+    defaults = {row.setting: list(row.variables) for row in V2_ENVIRONMENT_FIRST.get(name, ())}
+    replaced: set[str] = set()
+    for key, value in settings.items():
+        if isinstance(key, str) and key.endswith(_ENV_VARS_SUFFIX):
+            setting = key.removesuffix(_ENV_VARS_SUFFIX)
+            if value != defaults.get(setting):
+                replaced.add(setting)
+    return frozenset(replaced)
+
+
+def _environment_settings(name: str, replaced: frozenset[str]) -> dict[str, EnvironmentSetting]:
+    """Return the environment-first settings of an adapter, with ``url`` as an address by default.
+
+    A setting in ``replaced`` keeps its row with no variable, so only the file and a flag are read.
+    """
+    rows = {
+        row.setting: replace(row, variables=()) if row.setting in replaced else row
+        for row in V2_ENVIRONMENT_FIRST.get(name, ())
+        if row.kind != "credential"
+    }
     if not any(row.kind == "address" for row in rows.values()):
         rows[_DEFAULT_ADDRESS.setting] = _DEFAULT_ADDRESS
     return rows
@@ -620,27 +657,27 @@ def _convert_settings(  # pylint: disable=too-many-arguments,too-many-positional
 ) -> dict[str, Any]:
     """Convert the settings of one bundled adapter, keeping the order of the file."""
     credential_settings = capabilities.credential_setting_paths
-    environment = _environment_settings(name)
+    replaced = _replaced_variables(name, settings)
+    environment = _environment_settings(name, replaced)
+    flag = flags.for_role(role)
     converted: dict[str, Any] = {}
     for key, value in settings.items():
         location = f"{role}.settings.{key}"
         if key in credential_settings:
-            converted[key] = _convert_credential(role, name, key, value, report)
+            converted[key] = _convert_credential(role, name, key, value, report, replaced=replaced)
         elif key in environment:
-            _set_resolved(
-                converted, key, _resolve(location, environment[key], value, visible, flags.for_role(role), report)
-            )
-        elif name in _ENV_VARS_ADAPTERS and key.endswith(_ENV_VARS_SUFFIX):
+            _set_resolved(converted, key, _resolve(location, environment[key], value, visible, flag, report))
+        elif name in _ENV_VARS_ADAPTERS and isinstance(key, str) and key.endswith(_ENV_VARS_SUFFIX):
             report.dropped.append(DroppedEntry(location, _ENV_VARS_REASON))
         elif not _refuse_other_setting(name, key, value, location, report):
             converted[key] = copy.deepcopy(value)
     for key in credential_settings:
         if key not in settings:
-            converted[key] = _convert_credential(role, name, key, None, report)
+            converted[key] = _convert_credential(role, name, key, None, report, replaced=replaced)
     for key, row in environment.items():
         if key not in settings:
             location = f"{role}.settings.{key}"
-            _set_resolved(converted, key, _resolve(location, row, None, visible, flags.for_role(role), report))
+            _set_resolved(converted, key, _resolve(location, row, None, visible, flag, report))
     return converted
 
 
@@ -652,13 +689,31 @@ def _set_resolved(settings: dict[str, Any], key: str, value: object) -> None:
 # --- Credentials (FR-006 to FR-009) -----------------------------------------------------
 
 
-def _convert_credential(role: AdapterRole, name: str, setting: str, value: object, report: _Report) -> dict[str, str]:
+def _convert_credential(  # pylint: disable=too-many-arguments
+    role: AdapterRole,
+    name: str,
+    setting: str,
+    value: object,
+    report: _Report,
+    *,
+    replaced: frozenset[str] = frozenset(),
+) -> dict[str, str]:
     """Replace one credential setting by a reference; the value is read only for its kind."""
     reference = credential_reference(name, setting)
-    origin, origin_variable = _credential_origin(name, setting, value)
+    origin, origin_variable = _credential_origin(name, setting, value, replaced)
+    location = f"{role}.settings.{setting}"
+    shared = next((entry.location for entry in report.credentials if entry.reference == reference.reference), None)
+    if shared is not None:
+        # The source and the destination use the same adapter, so one reference serves both.
+        report.notes.append(
+            NoteEntry(
+                f"{shared} and {location} share the credential reference {reference.reference} and both read "
+                f"{reference.identifier}; the package cannot give them different values"
+            )
+        )
     report.credentials.append(
         CredentialEntry(
-            location=f"{role}.settings.{setting}",
+            location=location,
             origin=origin,
             reference=reference.reference,
             identifier=reference.identifier,
@@ -670,13 +725,21 @@ def _convert_credential(role: AdapterRole, name: str, setting: str, value: objec
     return {"$credential": reference.reference}
 
 
-def _credential_origin(name: str, setting: str, value: object) -> tuple[CredentialOrigin, str | None]:
-    """Return where v2 took a credential from, without keeping the value."""
+def _credential_origin(
+    name: str, setting: str, value: object, replaced: frozenset[str] = frozenset()
+) -> tuple[CredentialOrigin, str | None]:
+    """Return where v2 took a credential from, without keeping the value.
+
+    For a setting in ``replaced``, v2 read the variables that ``<setting>_env_vars`` names
+    instead of its default names; the list is named, its entries are not.
+    """
     placeholder = _placeholder_name(value)
     if placeholder is not None:
         return "placeholder", placeholder
     if not _is_empty(value):
         return "literal", None
+    if setting in replaced:
+        return "variable", f"a variable named in {setting}{_ENV_VARS_SUFFIX}"
     rows = [row for row in V2_ENVIRONMENT_FIRST.get(name, ()) if row.setting == setting]
     if rows:
         return "variable", ", ".join(rows[0].variables)
@@ -707,6 +770,7 @@ class _Candidates:
     variable: str | None
     variable_value: str | None
     flag: str | None
+    flag_name: _FlagName
     placeholder: str | None
     visible_variables: tuple[tuple[str, str], ...] = ()
 
@@ -716,13 +780,13 @@ def _resolve(  # pylint: disable=too-many-arguments,too-many-positional-argument
     row: EnvironmentSetting,
     value: object,
     visible: Mapping[str, str],
-    flag: str | None,
+    flag: _Flag,
     report: _Report,
 ) -> object:
     """Return the value v2 used for one setting, recording its origin, or ``None``."""
     candidates = _candidates(location, row, value, visible, flag, report)
     if row.kind == "address":
-        holders = _user_information_holders(location, candidates)
+        holders = _user_information_holders(candidates)
         if holders:
             report.refusals.append(
                 RefusalEntry(
@@ -745,7 +809,7 @@ def _candidates(  # pylint: disable=too-many-arguments,too-many-positional-argum
     row: EnvironmentSetting,
     value: object,
     visible: Mapping[str, str],
-    flag: str | None,
+    flag: _Flag,
     report: _Report,
 ) -> _Candidates:
     """Collect the file value, the first visible v2 variable and the flag for one setting."""
@@ -766,20 +830,30 @@ def _candidates(  # pylint: disable=too-many-arguments,too-many-positional-argum
     found = tuple((name, visible[name]) for name in lookup if visible.get(name))
     variable, variable_value = found[0] if found else (None, None)
     return _Candidates(
-        file_value, variable, variable_value, flag if row.kind == "address" else None, placeholder, found
+        file_value=file_value,
+        variable=variable,
+        variable_value=variable_value,
+        flag=flag.value if row.kind == "address" else None,
+        flag_name=flag.name,
+        placeholder=placeholder,
+        visible_variables=found,
     )
+
+
+def _as_text(value: object) -> str:
+    """Return a file value as YAML writes it, so ``false`` in the file equals ``false`` in a variable."""
+    return str(value).lower() if isinstance(value, bool) else str(value)
 
 
 def _choose(location: str, row: EnvironmentSetting, candidates: _Candidates) -> SettingOriginEntry | None:
     """Apply flag, then v2's precedence between the variable and the file."""
     if candidates.flag:
-        origin = _FLAGS["source" if location.startswith("source.") else "destination"]
-        return SettingOriginEntry(location, candidates.flag, origin)
-    file_value = candidates.file_value
+        return SettingOriginEntry(location, candidates.flag, candidates.flag_name)
+    file_text = None if candidates.file_value is None else _as_text(candidates.file_value)
     variable_value = candidates.variable_value
-    use_variable = variable_value is not None and (row.precedence == "variable" or file_value is None)
+    use_variable = variable_value is not None and (row.precedence == "variable" or file_text is None)
     if use_variable:
-        other = None if file_value is None or str(file_value) == variable_value else str(file_value)
+        other = None if file_text is None or file_text == variable_value else file_text
         return SettingOriginEntry(
             location,
             str(variable_value),
@@ -787,12 +861,12 @@ def _choose(location: str, row: EnvironmentSetting, candidates: _Candidates) -> 
             origin_variable=candidates.variable,
             other_value=other,
         )
-    if file_value is None:
+    if file_text is None:
         return None
-    other = None if variable_value is None or variable_value == str(file_value) else variable_value
+    other = None if variable_value is None or variable_value == file_text else variable_value
     return SettingOriginEntry(
         location,
-        str(file_value),
+        file_text,
         "config.yml",
         other_value=other,
     )
@@ -807,8 +881,7 @@ def _refuse_missing(location: str, row: EnvironmentSetting, candidates: _Candida
     """Refuse a setting that got no value (FR-012, FR-029); an absent optional setting is left out."""
     names = ", ".join(row.variables) or "none"
     if row.kind == "address":
-        flag = _FLAGS["source" if location.startswith("source.") else "destination"]
-        reason = f"no address in config.yml or a v2 variable ({names}); pass {flag}"
+        reason = f"no address in config.yml or a v2 variable ({names}); pass {candidates.flag_name}"
     elif candidates.placeholder is not None:
         reason = f"no value in config.yml or a v2 variable ({names}); set one of these variables"
     else:
@@ -816,7 +889,7 @@ def _refuse_missing(location: str, row: EnvironmentSetting, candidates: _Candida
     report.refusals.append(RefusalEntry(location, reason))
 
 
-def _user_information_holders(location: str, candidates: _Candidates) -> list[str]:
+def _user_information_holders(candidates: _Candidates) -> list[str]:
     """Name the origin of every candidate address that holds a user name or password.
 
     Every candidate is checked, not only the one v2 used: a value that loses is still printed
@@ -827,7 +900,7 @@ def _user_information_holders(location: str, candidates: _Candidates) -> list[st
         holders.append("config.yml")
     holders.extend(name for name, value in candidates.visible_variables if _has_user_information(value))
     if candidates.flag is not None and _has_user_information(candidates.flag):
-        holders.append(_FLAGS["source" if location.startswith("source.") else "destination"])
+        holders.append(candidates.flag_name)
     return holders
 
 
