@@ -50,7 +50,9 @@ def cpu_freq_or_none(original: Callable[P, R]) -> Callable[P, R | None]:
 
 
 try:
-    import psutil
+    # The Python 3.10 profile has no psutil, so its type check cannot resolve it; on 3.11+ the
+    # directive is unused and ty reports only a warning.
+    import psutil  # ty: ignore[unresolved-import]
 except ImportError:  # pragma: no cover -- without psutil the plugin is not installed either
     pass
 else:
