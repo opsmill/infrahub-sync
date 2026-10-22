@@ -1,0 +1,23 @@
+dev/specs/012-v2-configuration-conversion/plan.md
+  s_9c7f8713d8e8dc::t_18b1ba3778c287 144-145
+dev/specs/012-v2-configuration-conversion/research.md
+  s_9c7f8713d8e8dc::t_5150ff0778e0a8 179-181
+dev/specs/012-v2-configuration-conversion/tasks.md
+  s_9c7f8713d8e8dc::t_31c69dd8c9d68a 118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7dc0d4c91b9217a215d5af0ec0d2bcad25530b63",
+  "prompts": {},
+  "sessions": {
+    "s_9c7f8713d8e8dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7b4ab04-36d6-4644-a214-69334e6a0d27",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
