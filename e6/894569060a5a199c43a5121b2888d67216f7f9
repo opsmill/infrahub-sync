@@ -1,0 +1,19 @@
+dev/specs/010-prefect-from-sync-image/checklists/requirements.md
+  s_8d92f288a8f661::t_c207b086fbc0eb 42-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e6894569060a5a199c43a5121b2888d67216f7f9",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
