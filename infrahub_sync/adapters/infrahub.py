@@ -90,7 +90,7 @@ if TYPE_CHECKING:
     from infrahub_sdk.schema import MainSchemaTypesAPI
     from infrahub_sdk.store import NodeStoreSync
 
-    from infrahub_sync.plan.models import PlannedOperation
+    from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 
 
 def _node_has_complete_attributes(node: InfrahubNodeSync, node_schema: MainSchemaTypesAPI) -> bool:
@@ -1550,9 +1550,24 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # `None` leaves the `is_protected` key out of the payload, so a value protected earlier
         # keeps its flag; the flag is sent only when the package turns `protect` on (FR-006).
         is_protected = True if lineage is not None and lineage.protect else None
+        # The owner goes on every value a create writes. An update sends it on no attribute,
+        # so the server keeps the owner each value holds, including an empty one (FR-002,
+        # D-8); it goes only on the relationship edges the update adds (research R-6).
         create_data = self.client.schema.generate_payload_create(
-            schema=node_schema, data=data, source=source_id, owner=owner_id, is_protected=is_protected
+            schema=node_schema,
+            data=data,
+            source=source_id,
+            owner=owner_id if operation.action == "create" else None,
+            is_protected=is_protected,
         )
+        if operation.action == "update" and owner_id is not None and references:
+            self._set_owner_on_added_edges(
+                create_data=create_data,
+                operation=operation,
+                node_schema=node_schema,
+                references=references,
+                owner_id=owner_id,
+            )
         node = self.client.create(kind=operation.kind, data=create_data)
         if operation.action == "update":
             # The recorded id, set on the node rather than put into `data`. The SDK renders
@@ -1587,6 +1602,77 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         node_id = _require_node_id(node, context=f"for operation {operation.operation_id!r}")
         peers.remember(operation.kind, operation.identity, node_id)
         return node_id
+
+    def _current_peer_ids(
+        self,
+        *,
+        operation: PlannedOperation,
+        node_schema: NodeSchemaAPI,
+        references: Sequence[RelationshipReference],
+    ) -> dict[str, set[str]] | None:
+        """Return the peer ids the destination node has now, for each relationship the update writes.
+
+        One `client.get` by the recorded id, in the request shape `RelationshipManager.fetch()`
+        uses: the cardinality-many relationships the update writes are included, and every
+        attribute and every other relationship is excluded, so no attribute value is selected.
+        Cardinality-one relationships come back without being included, because the SDK selects
+        every one that is not excluded. `None` when the node does not exist: the upsert keyed by
+        that id is then refused as a stale id, and no edge is treated as added.
+        """
+        written = {reference.field for reference in references}
+        include = [reference.field for reference in references if reference.cardinality == "many"]
+        exclude = [
+            *node_schema.attribute_names,
+            *(name for name in node_schema.relationship_names if name not in written),
+        ]
+        node = self.client.get(
+            kind=operation.kind,
+            id=operation.destination_id,
+            include=include,
+            exclude=exclude,
+            populate_store=False,
+            raise_when_missing=False,
+        )
+        if node is None:
+            return None
+        current: dict[str, set[str]] = {}
+        for reference in references:
+            related = getattr(node, reference.field)
+            if reference.cardinality == "many":
+                current[reference.field] = set(related.peer_ids)
+            else:
+                current[reference.field] = {related.id} if related.id else set()
+        return current
+
+    def _set_owner_on_added_edges(
+        self,
+        *,
+        create_data: dict[str, Any],
+        operation: PlannedOperation,
+        node_schema: NodeSchemaAPI,
+        references: Sequence[RelationshipReference],
+        owner_id: str,
+    ) -> None:
+        """Put the owner on the relationship edges an update adds, and on no other edge (R-6).
+
+        An edge is added when its peer is not among the node's current peers (cardinality
+        many), or differs from the current peer (cardinality one). Infrahub replaces an
+        existing edge's owner whenever one is sent, so every other edge is left without the
+        `owner` key and keeps the owner it has.
+        """
+        current = self._current_peer_ids(operation=operation, node_schema=node_schema, references=references)
+        if current is None:
+            logger.debug(
+                "Owner not set on operation %s: the node %s was not found",
+                operation.operation_id,
+                operation.destination_id,
+            )
+            return
+        for reference in references:
+            edges = create_data.get(reference.field)
+            for edge in edges if isinstance(edges, list) else [edges]:
+                if isinstance(edge, dict) and edge.get("id") not in current[reference.field]:
+                    edge["owner"] = owner_id
 
     @staticmethod
     def _assert_identity_components_accounted_for(

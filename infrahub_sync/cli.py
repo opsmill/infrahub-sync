@@ -51,6 +51,8 @@ if TYPE_CHECKING:
 DEFAULT_WAIT_TIMEOUT = 30 * 60.0
 DEFAULT_POLL_INTERVAL = 2.0
 VERBOSITY_MAP = {"quiet": logging.WARNING, "default": logging.INFO, "verbose": logging.DEBUG}
+# Shown in the `runs plan` summary when the saved plan names an owner (FR-009, D-8).
+OWNER_SCOPE_NOTICE = "The owner setting applies only to values this run creates."
 _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
 _KIND_ARG = "kind"
@@ -507,6 +509,12 @@ def _echo_counts(name: str, counts: Mapping[str, int]) -> None:
     typer.echo(_display(f"{name}: " + ", ".join(f"{key}={value}" for key, value in counts.items())))
 
 
+def _owner_scope_disclosure(plan: PlanResource) -> None:
+    """Say that a named owner covers only the values this run creates (D-8)."""
+    if plan.lineage is not None and plan.lineage.owner is not None:
+        typer.echo(OWNER_SCOPE_NOTICE)
+
+
 def _delete_disclosure(plan: PlanResource) -> None:
     if not plan.summary.delete_operations_computed:
         typer.echo("Delete operations were NOT computed for this plan; the review may omit destination deletes.")
@@ -566,6 +574,7 @@ def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = N
     _echo_counts("by_action", plan.summary.by_action)
     _echo_counts("by_kind", plan.summary.by_kind)
     _delete_disclosure(plan)
+    _owner_scope_disclosure(plan)
     if detail:
         for operation in operations:
             _operation_detail(operation)

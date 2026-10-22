@@ -338,6 +338,32 @@ class PlanOperationResource(_ResourceModel):
     destination_id: str | None = None
 
 
+class PlanLineageAccountResource(_ResourceModel):
+    """The import account a saved plan was computed with."""
+
+    name: str = Field(min_length=1)
+    id: str = Field(min_length=1)
+
+
+class PlanLineageNodeResource(_ResourceModel):
+    """A source or owner node, by kind and name, as the saved plan recorded it."""
+
+    kind: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+
+
+class PlanLineageResource(_ResourceModel):
+    """The lineage a saved plan writes: import account, source, owner and protection.
+
+    `owner` is `None` when the package names no owner.
+    """
+
+    import_account: PlanLineageAccountResource
+    source: PlanLineageNodeResource
+    owner: PlanLineageNodeResource | None = None
+    protect: bool
+
+
 class PlanResource(_ResourceModel):
     """Return a saved plan, checksum, summary, and operations."""
 
@@ -351,6 +377,9 @@ class PlanResource(_ResourceModel):
     # reviewer reads the binding the apply will compare. `None` for an unregistered plan.
     schema_fingerprint: str | None = None
     destination_branch: str | None = None
+    # The lineage the plan records in its manifest. `None` for a plan whose destination
+    # records no lineage. Optional, so a service that does not send it still validates.
+    lineage: PlanLineageResource | None = None
 
 
 class ResultsResource(_ResourceModel):
