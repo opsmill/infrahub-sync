@@ -681,6 +681,23 @@ class InfrahubLineageSettingsError(ValueError):
     """
 
 
+class NamedLineageNodeNotFoundError(LookupError):
+    """The node a `source` or `owner` setting names does not exist in the destination (FR-004, FR-011).
+
+    Raised at the start of a plan, before the source system is read, and at the start of an
+    apply, before any write. The message names the setting, the kind and the name, and is the
+    same in both, so an apply records the cause a plan would have recorded.
+    """
+
+    wrote = False
+
+    def __init__(self, *, setting: str, kind: str, name: str) -> None:
+        self.setting = setting
+        self.kind = kind
+        self.name = name
+        super().__init__(f"The setting `{setting}` names `{kind}` `{name}`, which does not exist.")
+
+
 class ImportAccountUnreadableError(RuntimeError):
     """Infrahub answered the import account query without an account id."""
 
@@ -893,8 +910,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         if settings.source is None:
             source = ResolvedLineageNode(kind="CoreAccount", name=import_account.name, id=import_account.id)
         else:
-            source = self._resolve_named_lineage_node(settings.source)
-        owner = None if settings.owner is None else self._resolve_named_lineage_node(settings.owner)
+            source = self._resolve_named_lineage_node("source", settings.source)
+        owner = None if settings.owner is None else self._resolve_named_lineage_node("owner", settings.owner)
         self.lineage = ResolvedLineage(
             import_account=import_account, source=source, owner=owner, protect=settings.protect
         )
@@ -913,13 +930,31 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             self.client.execute_graphql(query=IMPORT_ACCOUNT_QUERY, operation_name="IMPORT_ACCOUNT")
         )
 
-    def _resolve_named_lineage_node(self, named: NamedLineageNode) -> ResolvedLineageNode:
+    def _resolve_named_lineage_node(self, setting: str, named: NamedLineageNode) -> ResolvedLineageNode:
         """Return the id of the node a `source` or `owner` setting names.
 
-        One `client.get(kind=..., name__value=...)`. `NodeNotFoundError` propagates, so a named
-        node that does not exist stops the run with no fallback.
+        One `client.get(kind=..., name__value=...)` that selects the name and excludes every
+        relationship of the kind. With the SDK's default fields the read also needs `view` on
+        the peer kinds of those relationships (`CoreAccountRole` and `CoreGroup` for a group,
+        credentials and tags for a repository); with the name only it needs `view` on the
+        named kind only (research R-7). The kind's relationships come from the schema the SDK
+        has cached, which `get` reads anyway.
+
+        A named node that does not exist raises `NamedLineageNodeNotFoundError`, so the run
+        stops with no fallback node.
         """
-        node = self.client.get(kind=named.kind, name__value=named.name)
+        relationships = [relationship.name for relationship in self.client.schema.get(kind=named.kind).relationships]
+        try:
+            node = self.client.get(kind=named.kind, name__value=named.name, include=["name"], exclude=relationships)
+        except NodeNotFoundError as exc:
+            logger.warning(
+                "Lineage refused: the setting %s names %s %s, which does not exist",
+                setting,
+                named.kind,
+                named.name,
+                extra={"lineage_setting": setting, "lineage_kind": named.kind, "lineage_name": named.name},
+            )
+            raise NamedLineageNodeNotFoundError(setting=setting, kind=named.kind, name=named.name) from exc
         node_id = _require_node_id(node, context=f"for the {named.kind} named {named.name!r}")
         return ResolvedLineageNode(kind=named.kind, name=named.name, id=node_id)
 

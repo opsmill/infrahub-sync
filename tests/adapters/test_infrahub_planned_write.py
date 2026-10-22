@@ -44,6 +44,7 @@ from infrahub_sync.adapters.infrahub import (
     ImportAccount,
     InfrahubAdapter,
     InfrahubModel,
+    NamedLineageNodeNotFoundError,
     PeerResolver,
     ResolvedLineage,
     ResolvedLineageNode,
@@ -997,6 +998,9 @@ def test_a_named_lineage_node_that_does_not_exist_stops_the_apply_before_any_wri
     operation = operation_record(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
     write_artifact(directory, [operation], run_id=APPLY_RUN_ID, source_snapshot=[])
     client = RecordingClient()
+    group = NodeSchemaAPI(id="group-schema", name="AccountGroup", namespace="Core", attributes=[], relationships=[])
+    client.live_schema = BranchSchema(hash="fixture", nodes={**SCHEMAS, "CoreAccountGroup": group})
+    client.schema.set_cache(client.live_schema)
     adapter = make_adapter(client)
     adapter.lineage_settings = InfrahubLineageSettings(owner=NamedLineageNode(kind="CoreAccountGroup", name="missing"))
 
@@ -1006,12 +1010,12 @@ def test_a_named_lineage_node_that_does_not_exist_stops_the_apply_before_any_wri
 
     client.get = _no_such_node  # ty: ignore[invalid-assignment]
 
-    with pytest.raises(NodeNotFoundError):
+    with pytest.raises(NamedLineageNodeNotFoundError):
         engine_over(directory, adapter).apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
 
     assert client.mutations == []
     assert [payload for name, payload in client.events if name == "get"] == [
-        {"kind": "CoreAccountGroup", "name__value": "missing"}
+        {"kind": "CoreAccountGroup", "name__value": "missing", "include": ["name"], "exclude": []}
     ]
 
 

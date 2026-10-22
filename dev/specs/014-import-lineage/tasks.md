@@ -90,16 +90,16 @@ apply before any write.
 
 ### Tests for User Story 2
 
-- [ ] T020 [P] [US2] Registration tests in `tests/configuration/test_infrahub_lineage_validation.py` for each refused input in `contracts/infrahub-destination-settings.md`, checking the finding pointer `/configuration/destination/settings/<setting>` (FR-003)
-- [ ] T021 [P] [US2] Unit tests in `tests/adapters/test_infrahub_lineage.py`: a named `source` or `owner` that does not exist stops the plan before the source adapter's load is called; the cause names the setting, the kind and the name; no fallback node is used; a named `CoreAccount` is looked up, a named group needs no account read (FR-004, FR-005, SC-003)
-- [ ] T022 [P] [US2] Unit tests in `tests/adapters/test_infrahub_lineage_apply.py`: a named node deleted after the plan stops apply before any write call, with the same cause as the plan (FR-011, SC-007)
+- [X] T020 [P] [US2] Registration tests in `tests/configuration/test_infrahub_lineage_validation.py` for each refused input in `contracts/infrahub-destination-settings.md`, checking the finding pointer `/configuration/destination/settings/<setting>` (FR-003)
+- [X] T021 [P] [US2] Unit tests in `tests/adapters/test_infrahub_lineage.py`: a named `source` or `owner` that does not exist stops the plan before the source adapter's load is called; the cause names the setting, the kind and the name; no fallback node is used; a named `CoreAccount` is looked up, a named group needs no account read (FR-004, FR-005, SC-003)
+- [X] T022 [P] [US2] Unit tests in `tests/adapters/test_infrahub_lineage_apply.py`: a named node deleted after the plan stops apply before any write call, with the same cause as the plan (FR-011, SC-007)
 - [ ] T023 [P] [US2] Unit tests in `tests/adapters/test_infrahub_planned_write.py`: a create sends the named owner on every attribute and edge; an update sends no owner on attributes; an update sends the owner only on relationship edges it adds, as decided in T002; an update that changes nothing makes no write call (FR-002, SC-004, spec edge case)
 - [ ] T024 [P] [US2] Unit tests in `tests/plan/test_lineage_manifest.py`: `lineage.owner` is the named owner or `null`; the summary notice is present exactly when `lineage.owner` is not `null` (FR-009)
 
 ### Implementation for User Story 2
 
-- [ ] T025 [US2] Register a `validator` on the `infrahub` entry of `infrahub_sync/configuration/capabilities.py:522-531` that runs the parser from T006 and returns one finding per refusal
-- [ ] T026 [US2] Look up each named node with one `client.get(kind=..., name__value=...)` in the lineage-resolution method, in plan and in apply, and raise a specific `NamedLineageNodeNotFoundError` whose message names the setting, the kind and the name; log the stop with `structlog`, with the setting, kind and name as context, in `infrahub_sync/adapters/infrahub.py`
+- [X] T025 [US2] Register a `validator` on the `infrahub` entry of `infrahub_sync/configuration/capabilities.py:522-531` that runs the parser from T006 and returns one finding per refusal
+- [X] T026 [US2] Look up each named node with one `client.get(kind=..., name__value=...)` in the lineage-resolution method, in plan and in apply, and raise a specific `NamedLineageNodeNotFoundError` whose message names the setting, the kind and the name; log the stop with `structlog`, with the setting, kind and name as context, in `infrahub_sync/adapters/infrahub.py`
 - [ ] T027 [US2] Set the owner on creates and on relationship edges an update adds (decision from T002), and never on attributes of an existing node, in the payload code of `infrahub_sync/adapters/infrahub.py:1290-1364`
 - [ ] T028 [US2] Add `owner` to the manifest's `lineage` field in `infrahub_sync/plan/models.py` and `infrahub_sync/plan/writer.py`
 - [ ] T029 [US2] Show the notice "The owner setting applies only to values this run creates." in the summary of `infrahub-sync runs plan` (`infrahub_sync/cli.py`) when `lineage.owner` is not `null`, and add the optional `lineage` field to `PlanResource` (`infrahub_sync/client/models.py:341`), filled in `infrahub_sync/service/flow.py:178-187`

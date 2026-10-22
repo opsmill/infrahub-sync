@@ -11,13 +11,18 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
+from infrahub_sdk.exceptions import NodeNotFoundError
+from infrahub_sdk.schema import NodeSchemaAPI
+from infrahub_sdk.schema.main import BranchSchema
 
+from infrahub_sync.adapters.infrahub import NamedLineageNodeNotFoundError
 from infrahub_sync.configuration.capabilities import InfrahubLineageSettings, NamedLineageNode
 from infrahub_sync.plan.errors import ImportAccountMismatchError, PlanLineageMissingError
 from infrahub_sync.plan.models import LineageAccountRecord, LineageNodeRecord, PlanLineageRecord
 from infrahub_sync.plan.write_surface import destination_lineage_record
 from tests.adapters.test_infrahub_planned_write import (
     IMPORT_ACCOUNT_ID,
+    SCHEMAS,
     SITE_KIND,
     RecordingClient,
     apply_run_dir,
@@ -37,13 +42,31 @@ OTHER_ACCOUNT = {"name": "planner-account", "id": "planner-account-1"}
 NAMED_SOURCE = NamedLineageNode(kind="CoreAccountGroup", name="network-team")
 
 
-def _lineage(*, account: dict[str, str], source: dict[str, str] | None = None) -> dict[str, Any]:
+def _lineage(
+    *, account: dict[str, str], source: dict[str, str] | None = None, owner: dict[str, str] | None = None
+) -> dict[str, Any]:
     return {
         "import_account": account,
         "source": source or {"kind": "CoreAccount", "name": account["name"]},
-        "owner": None,
+        "owner": owner,
         "protect": False,
     }
+
+
+class DeletedNamedNodeClient(RecordingClient):
+    """A destination where the named node the plan resolved has since been deleted."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        group = NodeSchemaAPI(id="group-schema", name="AccountGroup", namespace="Core", attributes=[], relationships=[])
+        self.live_schema = BranchSchema(hash="fixture", nodes={**SCHEMAS, NAMED_SOURCE.kind: group})
+        self.schema.set_cache(self.live_schema)
+
+    def get(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        if kwargs.get("kind") == NAMED_SOURCE.kind:
+            self.events.append(("get", kwargs))
+            raise NodeNotFoundError(identifier={"name__value": [kwargs["name__value"]]}, node_type=kwargs["kind"])
+        return super().get(*args, **kwargs)
 
 
 def _plan(tmp_path: Path, **manifest_overrides: Any) -> Path:  # noqa: ANN401 — a manifest field's value is any JSON value
@@ -102,6 +125,40 @@ def test_a_saved_plan_with_no_recorded_import_account_is_refused_before_any_writ
     assert client.mutations == []
     assert client.events == [], "the refusal reads nothing from the destination"
     assert any("no import account" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.parametrize("setting", ["source", "owner"])
+def test_a_named_node_deleted_after_the_plan_stops_apply_before_any_write(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, setting: str
+) -> None:
+    """FR-011, SC-007: apply reads the named node again, and its absence stops apply with the plan's cause."""
+    named = {"kind": NAMED_SOURCE.kind, "name": NAMED_SOURCE.name}
+    account = {"name": "import-account", "id": IMPORT_ACCOUNT_ID}
+    directory = _plan(tmp_path, lineage=_lineage(account=account, **{setting: named}))
+    settings = InfrahubLineageSettings.model_validate({setting: NAMED_SOURCE})
+    client = DeletedNamedNodeClient()
+
+    with (
+        caplog.at_level(logging.WARNING, logger=ADAPTER_LOGGER),
+        pytest.raises(NamedLineageNodeNotFoundError) as raised,
+    ):
+        _apply(directory, client, settings)
+
+    plan_adapter = make_adapter(DeletedNamedNodeClient())
+    plan_adapter.lineage_settings = settings
+    with pytest.raises(NamedLineageNodeNotFoundError) as planned:
+        plan_adapter.resolve_lineage()
+
+    assert str(raised.value) == str(planned.value), "apply records the same cause as a plan"
+    assert (
+        str(raised.value) == f"The setting `{setting}` names `CoreAccountGroup` `network-team`, which does not exist."
+    )
+    assert raised.value.wrote is False
+    assert client.mutations == []
+    assert [name for name, _ in client.events] == ["account_profile", "get"], (
+        "nothing is read or written after the stop"
+    )
+    assert any(getattr(record, "lineage_setting", None) == setting for record in caplog.records)
 
 
 def test_an_apply_with_the_recorded_import_account_writes(tmp_path: Path) -> None:

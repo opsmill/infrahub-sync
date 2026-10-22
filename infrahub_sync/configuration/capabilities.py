@@ -310,6 +310,20 @@ def parse_infrahub_lineage_settings(settings: Mapping[str, object] | None) -> Li
     )
 
 
+def _validate_infrahub_lineage_settings(
+    package: ConfigurationPackage,
+    role: AdapterRole,
+) -> tuple[ValidationFinding, ...]:
+    """Refuse the destination's `source`, `owner` and `protect` settings the lineage parser refuses (FR-003).
+
+    One finding per refused setting, at `/configuration/destination/settings/<setting>`. The
+    settings are lineage only when Infrahub is the destination, so the source role gives none.
+    """
+    if role != "destination":
+        return ()
+    return parse_infrahub_lineage_settings(package.configuration.destination.settings).findings
+
+
 def _resolved_client_settings(package: ConfigurationPackage, branch: str) -> tuple[str, dict[str, Any]]:
     """Resolve the declared destination settings one schema read needs.
 
@@ -663,6 +677,7 @@ BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
             destination_schema_validation=True,
             destination_schema_accessor=_read_infrahub_destination_schema,
             incremental_extraction=True,
+            validator=_validate_infrahub_lineage_settings,
         ),
         "ipfabricsync": AdapterConfigurationCapabilities(
             adapter_name="ipfabricsync",

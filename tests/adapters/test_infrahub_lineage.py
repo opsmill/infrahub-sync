@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -16,6 +17,7 @@ from infrahub_sync.adapters.infrahub import (
     ImportAccountUnreadableError,
     InfrahubAdapter,
     InfrahubLineageSettingsError,
+    NamedLineageNodeNotFoundError,
     ResolvedLineage,
     ResolvedLineageNode,
     require_lineage_settings,
@@ -25,6 +27,29 @@ from infrahub_sync.potenda import Potenda
 
 IMPORT_ACCOUNT = {"id": "account-1", "name": {"value": "netbox-import"}}
 ACCOUNT_PROFILE_CALL = ("account_profile", {"operation_name": "IMPORT_ACCOUNT"})
+ADAPTER_LOGGER = "infrahub_sync.adapters.infrahub"
+
+# The relationships of each kind a setting may name, as the destination schema lists them. A
+# lookup by name leaves every one of them out, so it needs `view` on the named kind only.
+RELATIONSHIPS = {
+    "CoreAccount": ("member_of_groups", "subscriber_of_groups", "profiles"),
+    "CoreAccountGroup": ("roles", "members", "subscribers", "parent", "children"),
+    "CoreRepository": ("credential", "tags", "transformations", "queries", "checks", "generators"),
+    "CoreReadOnlyRepository": ("credential", "tags", "transformations", "queries", "checks", "generators"),
+}
+
+
+def name_only_lookup(kind: str, name: str) -> tuple[str, dict[str, Any]]:
+    """The one `get` a named node is looked up with: by name, selecting the name and no relationship."""
+    return ("get", {"kind": kind, "name__value": name, "include": ["name"], "exclude": list(RELATIONSHIPS[kind])})
+
+
+class LineageSchema:
+    """The cached destination schema, answering the relationships of each kind."""
+
+    @staticmethod
+    def get(*, kind: str, **_: Any) -> SimpleNamespace:  # noqa: ANN401
+        return SimpleNamespace(relationships=[SimpleNamespace(name=name) for name in RELATIONSHIPS[kind]])
 
 
 class LineageClient:
@@ -34,6 +59,7 @@ class LineageClient:
         self.profile = {"AccountProfile": IMPORT_ACCOUNT} if profile is None else profile
         self.nodes = nodes or {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.schema = LineageSchema()
 
     def execute_graphql(self, *, query: str, operation_name: str | None = None) -> object:
         assert query == IMPORT_ACCOUNT_QUERY, f"lineage resolution sends only the import account query, not {query!r}"
@@ -136,22 +162,76 @@ def test_named_source_and_owner_are_looked_up_by_kind_and_name() -> None:
     assert lineage.protect is True
     assert client.calls == [
         ACCOUNT_PROFILE_CALL,
-        ("get", {"kind": "CoreRepository", "name__value": "inventory"}),
-        ("get", {"kind": "CoreAccountGroup", "name__value": "network-team"}),
+        name_only_lookup("CoreRepository", "inventory"),
+        name_only_lookup("CoreAccountGroup", "network-team"),
     ]
 
 
+@pytest.mark.parametrize("kind", sorted(RELATIONSHIPS))
+def test_a_named_node_is_read_with_its_name_only(kind: str) -> None:
+    """R-7: the lookup selects `name` and excludes every relationship, so it needs `view` on the kind only.
+
+    With the SDK's default fields, a `CoreAccountGroup` lookup also needs `view` on
+    `CoreAccountRole` and `CoreGroup`, and a repository lookup `view` on credentials and tags.
+    """
+    client = LineageClient(nodes={(kind, "named"): "node-1"})
+    adapter = make_adapter(client, InfrahubLineageSettings(owner=NamedLineageNode(kind=kind, name="named")))  # ty: ignore[invalid-argument-type]
+
+    adapter.resolve_lineage()
+
+    (_, lookup) = client.calls[1]
+    assert lookup["include"] == ["name"]
+    assert sorted(lookup["exclude"]) == sorted(RELATIONSHIPS[kind])
+    assert set(lookup) == {"kind", "name__value", "include", "exclude"}
+
+
+def test_a_named_account_is_looked_up_and_a_named_group_needs_no_account_read() -> None:
+    """FR-005: a named `CoreAccount` source is read by name; a named group owner reads no account."""
+    client = LineageClient(
+        nodes={("CoreAccount", "netbox"): "account-netbox", ("CoreAccountGroup", "network-team"): "group-1"}
+    )
+    adapter = make_adapter(client, InfrahubLineageSettings(source=NamedLineageNode(kind="CoreAccount", name="netbox")))
+
+    assert adapter.resolve_lineage().source == ResolvedLineageNode(
+        kind="CoreAccount", name="netbox", id="account-netbox"
+    )
+    assert client.calls == [ACCOUNT_PROFILE_CALL, name_only_lookup("CoreAccount", "netbox")]
+
+    client.calls.clear()
+    adapter.lineage_settings = InfrahubLineageSettings(
+        owner=NamedLineageNode(kind="CoreAccountGroup", name="network-team")
+    )
+
+    adapter.resolve_lineage()
+
+    assert [call for call in client.calls if call[0] == "get"] == [name_only_lookup("CoreAccountGroup", "network-team")]
+    assert all(call[1].get("kind") != "CoreAccount" for call in client.calls), "a named group needs no account read"
+
+
 @pytest.mark.parametrize("setting", ["source", "owner"])
-def test_a_named_node_that_does_not_exist_stops_resolution_without_a_fallback(setting: str) -> None:
-    """A missing named node raises; the import account is not used in its place."""
-    client = LineageClient()
+def test_a_named_node_that_does_not_exist_stops_resolution_without_a_fallback(
+    setting: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """FR-004: the cause names the setting, the kind and the name; no other node is used in its place."""
+    client = LineageClient(nodes={("CoreAccountGroup", "fallback"): "group-fallback"})
     named = NamedLineageNode(kind="CoreAccountGroup", name="missing")
     adapter = make_adapter(client, InfrahubLineageSettings.model_validate({setting: named}))
 
-    with pytest.raises(NodeNotFoundError):
+    with (
+        caplog.at_level(logging.WARNING, logger=ADAPTER_LOGGER),
+        pytest.raises(NamedLineageNodeNotFoundError) as raised,
+    ):
         adapter.resolve_lineage()
 
-    assert adapter.lineage is None
+    assert str(raised.value) == f"The setting `{setting}` names `CoreAccountGroup` `missing`, which does not exist."
+    assert (raised.value.setting, raised.value.kind, raised.value.name) == (setting, "CoreAccountGroup", "missing")
+    assert isinstance(raised.value.__cause__, NodeNotFoundError)
+    assert adapter.lineage is None, "no lineage is kept, so nothing can be written with a fallback node"
+    assert [call for call in client.calls if call[0] == "get"] == [name_only_lookup("CoreAccountGroup", "missing")]
+    (record,) = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert record.__dict__["lineage_setting"] == setting
+    assert record.__dict__["lineage_kind"] == "CoreAccountGroup"
+    assert record.__dict__["lineage_name"] == "missing"
 
 
 @pytest.mark.parametrize(
@@ -250,6 +330,34 @@ def test_a_lineage_refusal_stops_the_plan_before_the_source_is_read(tmp_path: Pa
         engine.load_both_sides()
 
     assert events == []
+
+
+@pytest.mark.parametrize("setting", ["source", "owner"])
+@pytest.mark.parametrize("concurrent_load", [True, False])
+def test_a_missing_named_node_stops_the_plan_before_the_source_adapter_loads(
+    tmp_path: Path, setting: str, *, concurrent_load: bool
+) -> None:
+    """SC-003: with the real adapter as destination, a missing named node stops the plan before either load."""
+    events: list[str] = []
+    destination = _loading_adapter(LineageClient(), events)
+    destination.lineage_settings = InfrahubLineageSettings.model_validate(
+        {setting: NamedLineageNode(kind="CoreAccountGroup", name="missing")}
+    )
+    source = _ordered_side("source", events)
+    engine = Potenda(
+        source=source,
+        destination=destination,
+        config=None,  # ty: ignore[invalid-argument-type]
+        top_level=[],
+        run_dir=tmp_path,
+        concurrent_load=concurrent_load,
+    )
+
+    with pytest.raises(NamedLineageNodeNotFoundError, match=f"`{setting}` names `CoreAccountGroup` `missing`"):
+        engine.load_both_sides()
+
+    assert events == []
+    source.load.assert_not_called()
 
 
 def test_a_destination_without_lineage_is_loaded_without_resolution(tmp_path: Path) -> None:
