@@ -1,0 +1,33 @@
+dev/specs/009-reviewable-netbox-import/spec.md
+  s_8d92f288a8f661::t_def7650c046d41 162-165
+  s_8d92f288a8f661::t_8eb6eb12a6d02d 166,169
+  s_8d92f288a8f661::t_1c885e8bb6ea6a 214-215
+  s_8d92f288a8f661::t_4caa1ecd383b17 254-256
+  s_8d92f288a8f661::t_13bd8f9cff8c12 305-306
+  s_8d92f288a8f661::t_ab1e9ce49d9e28 294-295
+  s_8d92f288a8f661::t_2274460abd5119 326-327
+  s_8d92f288a8f661::t_6a054eeb029c26 42-57
+  s_8d92f288a8f661::t_c719ff374b3230 79
+  s_8d92f288a8f661::t_b6ec11cc5ee608 73
+  s_8d92f288a8f661::t_4ac048d61e645e 387-388
+  s_8d92f288a8f661::t_9ce8bae140e5e8 238-243
+dev/specs/009-reviewable-netbox-import/checklists/requirements.md
+  s_8d92f288a8f661::t_8eb6eb12a6d02d 18
+  s_8d92f288a8f661::t_7c842e3c116c57 36-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "05cfa7356fd83f837ad02e0edc324e689c82973f",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
