@@ -116,7 +116,7 @@ tests/
 
 docs/docs/adapters/infrahub.mdx                      # lineage section rewritten (FR-010)
 docs/docs/development/knowledge/plan-artifact.md     # new file and manifest fields
-changelog/                                            # news fragment
+changelog/                                            # news fragment, type `changed`; PR label `changes/minor`
 ```
 
 **Structure Decision**: single Python package; the change stays in the existing modules listed
@@ -134,7 +134,10 @@ above.
   with it.
 - Whether the checkpoint artifact copies the plan directory or a fixed list of files
   (`infrahub_sync/product_store/bundle.py:64`) is not checked yet (R-4).
-- The release-intent label for the configuration format change is not decided.
+- Closed (product owner, 2026-10-22): the change that refuses a bare-name `source` or `owner`
+  carries the release-intent label `changes/minor`. V3 is not released, so no released package
+  breaks, and the v2 conversion writes the `{kind, name}` form. The news fragment type is
+  `changed`.
 
 ## Complexity Tracking
 
