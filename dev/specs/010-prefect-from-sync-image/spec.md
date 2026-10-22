@@ -35,10 +35,15 @@ a custom certificate authority, lifecycle reliability, and the release digest an
 Answers from the product owner.
 
 - Q: Which task names run the full format pass and the full lint pass once the top-level `format`
-  and `lint` tasks are removed? → A: `linter.format` and `linter.lint` take over the
-  documentation legs and become the full passes; `docs.format` and `docs.lint` stay as subsets;
-  `tests-all` becomes `tests.all`; `check-310` becomes `tests.check-310`; no top-level task
-  remains.
+  and `lint` tasks are removed? → A (revised 2026-10-22): the top-level `format` and `lint`
+  tasks stay as the full passes (documentation and Python). `linter.format`, `linter.lint`,
+  `docs.format` and `docs.lint` stay as subsets. `tests-all` becomes `tests.all` and
+  `check-310` becomes `tests.check-310`. Every other top-level task is removed. Reason for the
+  revision: the other OpsMill repositories expose top-level `format` and `lint`. Infrahub
+  registers `format_all` and `lint_all` at the top level (`infrahub/tasks/__init__.py:53-54`),
+  and the product owner reports that the Python SDK, infrahub-backup and styrmin do the same.
+  The first answer, that `linter.format` and `linter.lint` would take over the documentation
+  legs and that no top-level task would remain, is withdrawn.
 - Q: Does running the AGPLv3 Silo image unmodified in a separate container need any action from
   OpsMill? → A: The operator documentation names the Silo image, its AGPLv3 licence and a link to
   its source. No notice file ships. This is recorded as the product owner's decision.
@@ -79,8 +84,10 @@ These are final product-owner decisions. This specification does not reopen them
 - **D-6**: one `dev` task namespace with two modes: `dev.deps` (dependencies in containers, Sync
   API and worker on the host) and `dev.start` (everything in containers). The `preview` task
   namespace is removed.
-- **D-7**: one name per task. The top-level `format`, `lint`, `docusaurus`, `generate-doc` and
-  `tests-*` tasks are removed. `netbox.up` and `netbox.down` become `netbox.start` and
+- **D-7** (revised 2026-10-22): every task has exactly one name, except that `format` and
+  `lint` stay at the top level as the full passes. The other top-level duplicates are removed:
+  `docusaurus`, `generate-doc` and `tests-*` (`tests-all` becomes `tests.all`, `check-310`
+  becomes `tests.check-310`). `netbox.up` and `netbox.down` become `netbox.start` and
   `netbox.destroy`. `AGENTS.md` and CI move to the new names.
 - **D-8**: in `dev.deps` mode, the Prefect server runs from the Sync image built from the
   checkout.
@@ -339,18 +346,24 @@ image, and complete a plan and an apply.
 - **FR-016**: The `dev` namespace MUST provide `dev.build`, `dev.deps`, `dev.start`,
   `dev.restart`, `dev.stop`, `dev.destroy`, `dev.status`, `dev.logs`, `dev.seed`, `dev.smoke`,
   `dev.api` and `dev.worker`. The `netbox` namespace MUST provide `netbox.start` and
-  `netbox.destroy` in place of `netbox.up` and `netbox.down`. Test: task inventory.
-- **FR-017**: Every invoke task MUST have exactly one name, and no top-level task MUST remain. The
-  top-level `format`, `lint`, `docusaurus`, `generate-doc`, `tests-unit`, `tests-integration`,
-  `tests-all` and `check-310` tasks and the `preview` namespace MUST be removed, with these
-  replacements:
-  - `linter.format` MUST run the documentation formatter and then the Python formatter, and
-    becomes the full format pass. `docs.format` stays as the documentation-only subset.
-  - `linter.lint` MUST run the documentation linter and then the Python linters, and becomes the
-    full lint pass. `docs.lint` stays as the documentation-only subset.
+  `netbox.destroy` in place of `netbox.up` and `netbox.down`. The top-level `format` and `lint`
+  tasks MUST stay. Test: task inventory.
+- **FR-017**: Every invoke task MUST have exactly one name. The only top-level tasks MUST be
+  `format` and `lint`:
+  - `format` MUST stay the full format pass: `docs.format`, then `linter.format`.
+  - `lint` MUST stay the full lint pass: `docs.lint`, then `linter.lint`.
+  - `linter.format`, `linter.lint`, `docs.format` and `docs.lint` stay as subsets.
+
+  The top-level `docusaurus`, `generate-doc`, `tests-unit`, `tests-integration`, `tests-all`,
+  `check-310`, `build`, `start` and `destroy` tasks and the `preview` namespace MUST be
+  removed, with these replacements:
   - `tests.all` MUST replace `tests-all` and run the unit and integration tiers.
   - `tests.check-310` MUST replace `check-310`.
-  Test: a task inventory test finds no duplicate names and no top-level task.
+  - `docs.docusaurus`, `docs.generate`, `tests.tests-unit`, `tests.tests-integration` and
+    `dev.build`, `dev.start`, `dev.destroy` are the remaining names.
+
+  Test: a task inventory test finds no duplicate names and no top-level task other than `format`
+  and `lint`.
 - **FR-018**: `dev.start` and `dev.deps` MUST rebuild the Sync image when the dependencies or the
   `Dockerfile` changed since the image was built. Code changes alone MUST NOT need a rebuild.
   Test: run against an image built from an older lock file.
@@ -388,14 +401,16 @@ image, and complete a plan and an apply.
 #### CI and documentation
 
 - **FR-026**: The CI end-to-end tier, the nightly workflow and the benchmark runner MUST use the
-  new task names or the fixture. `AGENTS.md` and the documentation MUST name only the new tasks,
-  including `AGENTS.md` (required workflow and policy), `docs/docs/development/constitution.md`,
+  new task names or the fixture. `AGENTS.md` and the documentation MUST name only the current
+  tasks. `invoke format` and `invoke lint` in `AGENTS.md`, `docs/docs/development/constitution.md`,
   `docs/docs/development/knowledge/quality-gates.md` and
-  `docs/docs/development/guides/adding-an-adapter.md`, which use `invoke format` and
-  `invoke lint` today. The benchmark runner (`tasks/bench.py`) reads `development/preview.env`
-  today; it MUST read the same settings from the development Compose file or its defaults. How it
-  reads them is not known. Test: a search over `.github/`, `docs/` and `AGENTS.md` finds no old
-  task name.
+  `docs/docs/development/guides/adding-an-adapter.md` stay valid; the removed names (for example
+  `invoke docusaurus` in `.github/workflows/workflow-linter.yml`, `check-310` in
+  `docs/docs/development/guidelines/testing-tiers.md`, and every `preview.*` task) MUST be
+  replaced. The benchmark runner (`tasks/bench.py`) reads `development/preview.env` today; it MUST
+  read the same settings from the development Compose file or its defaults (planning settled how,
+  in [research.md R6](research.md#r6-how-tasksbenchpy-reads-the-development-settings-planning-check-4)).
+  Test: a search over `.github/`, `docs/` and `AGENTS.md` finds no removed task name.
 - **FR-027**: [`development-stack.mdx`](../../../docs/docs/development-stack.mdx) MUST describe both
   modes well enough for an engineer with a fresh checkout to reach a passing `dev.smoke` without
   other documents.

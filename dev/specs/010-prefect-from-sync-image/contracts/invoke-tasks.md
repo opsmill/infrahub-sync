@@ -2,15 +2,23 @@
 
 The complete list of task names after this feature, and what each development task does. A
 task inventory test (`uv run invoke --list` parsed, or the `Collection` walked) checks that every
-name below exists, that no top-level task exists, and that no name appears twice (FR-016,
-FR-017, SC-005).
+name below exists, that `format` and `lint` are the only top-level tasks, and that no name
+appears twice (FR-016, FR-017, SC-005).
+
+## Top-level tasks that stay
+
+| Task | Runs |
+|------|------|
+| `format` | `docs.format`, then `linter.format` (full format pass) |
+| `lint` | `docs.lint`, then `linter.lint` (full lint pass) |
+
+`linter.format`, `linter.lint`, `docs.format` and `docs.lint` stay as subsets. This matches
+Infrahub (`infrahub/tasks/__init__.py:53-54`).
 
 ## Removed names and their replacements
 
 | Removed | Replacement |
 |---------|-------------|
-| `format` | `linter.format` (now runs `docs.format` first) |
-| `lint` | `linter.lint` (now runs `docs.lint` first) |
 | `docusaurus` | `docs.docusaurus` |
 | `generate-doc` | `docs.generate` |
 | `tests-unit` | `tests.tests-unit` |
@@ -47,11 +55,12 @@ a PID file or starts a background process (FR-021).
 
 ## Callers that must move to the new names (FR-026)
 
-- `AGENTS.md`: required workflow, policy, Invoke tasks list.
-- `docs/docs/development/constitution.md` (PATCH amendment),
-  `docs/docs/development/knowledge/quality-gates.md`,
-  `docs/docs/development/guides/adding-an-adapter.md`,
-  `docs/docs/development/guidelines/testing-tiers.md`, `docs/docs/development-stack.mdx`.
+- `AGENTS.md`: the Invoke tasks list and every `preview.*`, `tests-*` or `check-310` mention.
+  Its `invoke format` and `invoke lint` stay valid.
+- `docs/docs/development/guidelines/testing-tiers.md` (`check-310`),
+  `docs/docs/development-stack.mdx` and `docs/docs/development/guides/preview-stack.md`.
+  The constitution, `quality-gates.md` and `adding-an-adapter.md` use `invoke format` and
+  `invoke lint` only and need no change for task names.
 - `.github/workflows/workflow-linter.yml` (`invoke docusaurus`),
   `.github/workflows/workflow-nightly-e2e.yml` and `.github/scripts/nightly_e2e.py`.
 - `tasks/bench.py` (through `dev_settings()`).

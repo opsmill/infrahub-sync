@@ -279,19 +279,22 @@ is a base class, not a plugin, and Sync follows it.
 
 ## R9. Task names
 
-**Decision**: as clarified on 2026-10-22: `linter.format` and `linter.lint` gain the
-documentation legs (`docs.format`, `docs.lint` stay as subsets); `tests.all` and
-`tests.check-310` replace `tests-all` and `check-310`; every top-level task in
-`tasks/__init__.py` is removed; `preview` is removed; `netbox.up` and `netbox.down` become
-`netbox.start` and `netbox.destroy`.
+**Decision**: as clarified and revised on 2026-10-22: the top-level `format` and `lint` stay as
+the full passes and are the only top-level tasks; `linter.format`, `linter.lint`,
+`docs.format` and `docs.lint` stay as subsets; `tests.all` and `tests.check-310` replace
+`tests-all` and `check-310`; the other top-level tasks in `tasks/__init__.py` (`docusaurus`,
+`generate-doc`, `tests-unit`, `tests-integration`, `build`, `start`, `destroy`) are removed;
+`preview` is removed; `netbox.up` and `netbox.down` become `netbox.start` and `netbox.destroy`.
 
 **Evidence**: the top-level `lint` and `format` call `docs.lint` / `docs.format` and then
 `linter.lint_all` / `linter.format_all` (`tasks/__init__.py:40-50`); `linter.lint` and
-`linter.format` exist at `tasks/linter.py:36-57`. Users of the old names:
-`AGENTS.md:37-38`, `:41`, `:126`; `docs/docs/development/constitution.md:150-151`;
-`docs/docs/development/knowledge/quality-gates.md:11-54`;
-`docs/docs/development/guides/adding-an-adapter.md:395-396`, `:559`;
-`docs/docs/development/guidelines/testing-tiers.md:38`, `:539`;
+`linter.format` exist at `tasks/linter.py:36-57`. Infrahub registers the same two tasks at the
+top level (`infrahub/tasks/__init__.py:53-54`). Because `format` and `lint` keep their names,
+`AGENTS.md:37-38`, `docs/docs/development/constitution.md:150-151`,
+`docs/docs/development/knowledge/quality-gates.md` and
+`docs/docs/development/guides/adding-an-adapter.md:395-396` stay valid and the constitution
+needs no amendment. Users of removed names:
+`docs/docs/development/guidelines/testing-tiers.md:38`, `:539` (`check-310`);
 `.github/workflows/workflow-linter.yml:184` (`invoke docusaurus`); the nightly workflow and
 `.github/scripts/nightly_e2e.py` (`preview.up`, `preview.seed`, `preview.down`, `netbox.down`,
 lines 112-258).

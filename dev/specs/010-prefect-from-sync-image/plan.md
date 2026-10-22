@@ -71,9 +71,9 @@ Against the [project constitution](../../../docs/docs/development/constitution.m
 | V. Test discipline | Pass | Each FR names its test; the unit tier stays Docker-free and disables the `infrahub-testcontainers` pytest plugin (R8). |
 | VI. Security, secrets, input boundaries | Pass | Prefect database password held by `prefect-server` and `db-bootstrap` only in the root file; the CLI holds no Prefect credential; the Prefect port is closed by default. |
 | VII. Simplicity, new dependencies justified | Pass with note | Two new dependencies, justified by D-15 and D-16, and kept in an optional extra plus `dev`. Fewer files and tasks overall. |
-| Quality gates and documentation | Pass with note | The constitution's "Code quality gates" block names `uv run invoke format` and `uv run invoke lint` (`constitution.md:150-151`). Renaming them to `linter.format` / `linter.lint` changes the constitution's text. This is a PATCH amendment (wording only, no principle change) and needs maintainer approval and a version bump to 1.0.4 under the Governance section. |
+| Quality gates and documentation | Pass | The constitution's "Code quality gates" block names `uv run invoke format` and `uv run invoke lint` (`constitution.md:150-151`). Both names stay (D-7 as revised on 2026-10-22), so the constitution needs no amendment and stays at 1.0.3. |
 
-Gate result before Phase 0: pass, with the constitution PATCH amendment listed in
+Gate result before Phase 0: pass. The two new dependencies are listed in
 [Complexity Tracking](#complexity-tracking).
 
 Re-check after Phase 1: pass. The design adds one Python module for the Prefect server, one
@@ -119,9 +119,8 @@ development/
 ├── docker-compose.preview.yml            # removed
 └── preview.env                           # removed
 tasks/
-├── __init__.py                           # no top-level tasks
+├── __init__.py                           # top-level format and lint only; dev namespace added
 ├── dev.py                                # build/deps/start/restart/stop/destroy/status/logs/seed/smoke/api/worker
-├── linter.py                             # lint/format include the documentation legs
 ├── tests.py                              # tests.all, tests.check-310, plugin disabled in unit tier
 ├── netbox.py                             # start/destroy
 ├── bench.py                              # reads dev_settings() (R6)
@@ -133,9 +132,6 @@ tasks/
 docs/docs/
 ├── compose-deployment.mdx                # override snippet, first-start times, Silo licence
 ├── development-stack.mdx                 # both modes
-├── development/constitution.md           # PATCH amendment: task names
-├── development/knowledge/quality-gates.md
-├── development/guides/adding-an-adapter.md
 ├── development/guides/preview-stack.md   # removed or folded into development-stack.mdx
 └── development/guidelines/testing-tiers.md
 dev/adr/
@@ -173,7 +169,7 @@ into the base install.
 2. Silo in every Compose file, health checks and the repair service. Completes User Story 1.
 3. Development stack merge, profiles, checkout mounts, `dev.*` tasks, stale-image label,
    `dev_settings()`, `bench.py`. Delivers User Stories 2 and 3.
-4. Task renames, `AGENTS.md`, constitution PATCH amendment, documentation, workflows.
+4. Task renames (top-level `format` and `lint` stay), `AGENTS.md`, documentation, workflows.
 5. `infrahub_sync.testcontainers`, the extra, the version-match test, the CI end-to-end tier.
    Delivers User Story 5.
 6. ADR 0019 amendment, ADR 0016 note, release note with the `down -v` instruction, measured
@@ -192,5 +188,4 @@ into the base install.
 
 | Item | Why needed | Simpler alternative rejected because |
 |------|------------|--------------------------------------|
-| Constitution PATCH amendment (1.0.3 → 1.0.4) | The quality-gates block names `invoke format` / `invoke lint`, which D-7 and the 2026-10-22 clarification remove. | Keeping the top-level names contradicts D-7, a final product-owner decision. |
 | Two new dependencies (`infrahub-testcontainers`, `testcontainers`) | D-15 and D-16 require the fixture to inherit `TestInfrahubDocker`. | Writing an independent fixture would duplicate Infrahub's start-up logic and drift from it. |

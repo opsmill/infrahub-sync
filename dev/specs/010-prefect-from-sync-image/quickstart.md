@@ -91,5 +91,5 @@ with Docker stopped: it passes, and the `infrahub-testcontainers` plugin is not 
 uv run invoke --list
 ```
 
-Expected: no name without a namespace; `linter.lint` runs rumdl first and then ruff, pylint,
-yamllint and ty.
+Expected: `format` and `lint` are the only names without a namespace; `lint` runs rumdl first
+and then ruff, pylint, yamllint and ty.
