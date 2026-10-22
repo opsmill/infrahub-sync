@@ -417,6 +417,25 @@ def test_the_page_links_the_registry_login_instructions(document: Path) -> None:
     assert "./installation.mdx#run-the-container-image" in document.read_text(encoding="utf-8")
 
 
+def silo_image() -> str:
+    """Return the Silo image `docker-compose.yml` pins, as `repository:tag` without the digest."""
+    images = set(re.findall(r"(pgsty/silo:[^@\s\"]+)@sha256:", COMPOSE_FILE.read_text(encoding="utf-8")))
+    assert len(images) == 1, images
+    return images.pop()
+
+
+def test_the_page_names_the_silo_image_its_licence_and_its_source() -> None:
+    """Silo is AGPLv3, so an operator has to be able to find what the file runs and its terms."""
+    assert f"`{silo_image()}`" in page()
+    assert "AGPLv3" in page()
+    assert "https://github.com/pgsty/silo" in page()
+
+
+def test_the_page_starts_the_deployment_with_a_bounded_wait() -> None:
+    """`--wait-timeout` has no default, so `--wait` alone can wait forever on a failing service."""
+    assert "docker compose up -d --wait --wait-timeout 420" in shell_lines(section(page(), "Start the deployment"))
+
+
 def test_the_troubleshooting_page_covers_an_operator_file_without_the_cli_token() -> None:
     """An `operator.env` from an earlier alpha has no `INFRAHUB_SYNC_API_TOKEN` line at all."""
     troubleshooting = TROUBLESHOOTING.read_text(encoding="utf-8")

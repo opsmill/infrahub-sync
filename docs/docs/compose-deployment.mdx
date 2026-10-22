@@ -5,8 +5,9 @@ title: Compose deployment
 Each release deploys Infrahub Sync on one host from a single file,
 `docker-compose.yml`, and a `.env` file that you write beside it. The deployment
 runs the Sync API, the Sync worker, a Prefect server, PostgreSQL, and
-S3-compatible object storage. Docker pulls the Sync image from the OpsMill
-registry like every other service image. A host needs Docker with Docker Compose
+S3-compatible object storage. The Prefect server runs from the Sync image, so
+the deployment pulls no Prefect image. Docker pulls the Sync image from the
+OpsMill registry like every other service image. A host needs Docker with Docker Compose
 2.24 or later, and nothing else: no product checkout, no Python, no `uv`.
 
 For the shortest path to a running deployment, follow the
@@ -32,7 +33,8 @@ flow, and for the configuration and reviewed-run procedure that follows it.
 - A registry login. Until the 3.0.0 release, the registry project is open to
   invited testers only, so run `docker login registry.opsmill.io` before the
   first start. See [Install Infrahub Sync](./installation.mdx#run-the-container-image).
-- Ports 8000 and 4200 free on `127.0.0.1`, or other ports set in `.env`.
+- Port 8000 free on `127.0.0.1`, or another port set in `.env`. The Sync API is
+  the only port the deployment publishes.
 
 ## Get the file
 
@@ -51,8 +53,8 @@ carries its digest, so a re-pointed tag cannot change what the file runs.
 | --- | --- |
 | `postgres` | PostgreSQL. Holds the product database and the Prefect database. |
 | `db-bootstrap` | A short-lived job that creates both databases and their owner roles. |
-| `object-store-init`, `object-store` | S3-compatible object storage for plans and artifacts, and a short-lived job that prepares its volume. |
-| `prefect-server` | The Prefect API and UI. |
+| `object-store-init`, `object-store` | S3-compatible object storage for plans and artifacts, on the Silo image, and a short-lived job that prepares its volume. |
+| `prefect-server` | The Prefect API, from the Sync image. It publishes no port and serves no UI. |
 | `sync-bootstrap` | A short-lived job that creates the product schema, the bucket, the work pool, and the Prefect deployment. |
 | `sync-api` | The Sync API. |
 | `sync-worker` | The Sync worker that runs plans and applies. |
@@ -62,6 +64,16 @@ The API and the worker share no mount, no volume, and no scratch directory. Run
 state travels between them through PostgreSQL and the object store, which is
 why the worker needs no configuration mount and why replacing it loses nothing.
 PostgreSQL and the object store hold the only volumes that survive a restart.
+
+### The object store image and its licence
+
+The object store runs
+`pgsty/silo:RELEASE.2026-10-18T00-00-00Z`, pinned by digest in the file. Silo
+is a maintained build of the MinIO server. It is licensed under the AGPLv3, and
+its source is at [github.com/pgsty/silo](https://github.com/pgsty/silo). The
+deployment does not publish the object store port and does not start its
+browser console: only the Sync services reach it, on the deployment's own
+network.
 
 Run every `docker compose` command on this page from the directory that holds
 `docker-compose.yml` and `.env`. Compose finds both files there without `-f` or
@@ -109,9 +121,9 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_DOCKER_IMAGE` | `registry.opsmill.io/opsmill/infrahub-sync` | The repository of the Sync image. |
 | `INFRAHUB_SYNC_DATABASE_URL` | composed | The product database connection string, as a whole. |
 | `INFRAHUB_SYNC_PREFECT_DATABASE_URL` | composed | The Prefect database connection string, as a whole. |
-| `INFRAHUB_SYNC_BIND_ADDRESS` | `127.0.0.1` | The address both published ports bind to. |
+| `INFRAHUB_SYNC_BIND_ADDRESS` | `127.0.0.1` | The address the published Sync API port binds to. |
 | `INFRAHUB_SYNC_API_PORT` | `8000` | The published Sync API port. |
-| `INFRAHUB_SYNC_PREFECT_PORT` | `4200` | The published Prefect port. |
+| `INFRAHUB_SYNC_PREFECT_PORT` | `4200` | The host port of the Prefect UI. The file does not publish the Prefect port, so this setting has no effect unless an override file publishes it. |
 | `INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE` | `postgres` | The PostgreSQL administrator role. |
 | `INFRAHUB_SYNC_PRODUCT_DATABASE`, `INFRAHUB_SYNC_PRODUCT_ROLE` | `infrahub_sync` | The product database and its owner role. |
 | `INFRAHUB_SYNC_PREFECT_DATABASE`, `INFRAHUB_SYNC_PREFECT_ROLE` | `prefect` | The Prefect database and its owner role. |
@@ -279,14 +291,25 @@ Check the file and `.env` together, then start:
 
 ```bash
 docker compose config --quiet
-docker compose up -d --wait
+docker compose up -d --wait --wait-timeout 420
 ```
 
 `config --quiet` prints nothing when every required credential is set, and
 names the first missing one otherwise. `up -d --wait` pulls the images, runs the
 bootstrap jobs, and returns once every service is running and every health check
-passes. Then confirm that a worker has registered, as described in
-[Status](#status).
+passes. `--wait` has no time limit of its own, so `--wait-timeout 420` makes the
+command fail after 420 seconds when a service does not become healthy. Then
+confirm that a worker has registered, as described in [Status](#status).
+
+Measured first-start times, from the start of `up` until it returns:
+
+| Host | Images already pulled | No image and no volume |
+| --- | --- | --- |
+| arm64 laptop (Apple M5 Pro, Docker Engine 29.8.2) | 20.6 s | 28.8 s, with the Sync image already present |
+| amd64 GitHub `ubuntu-latest` runner | not measured yet | not measured yet |
+
+A first start that also pulls the Sync image, about 1 GB, takes longer by the
+time that pull takes on your network. Each time comes from one run.
 
 `up` is safe to repeat. Bootstrap converges the two databases, their owner roles,
 the product schema, the artifact bucket, the Prefect work pool, and the installed
@@ -298,12 +321,9 @@ registry, no credentials set, and no reachable destination. Whether a registered
 package is valid is answered by `configs validate`, and whether its destination
 answers is answered by the first run against it.
 
-Both published surfaces bind to loopback by default:
-
-| Surface | Address |
-| --- | --- |
-| Sync API | `http://127.0.0.1:8000` |
-| Prefect UI and API | `http://127.0.0.1:4200` |
+The deployment publishes one port, the Sync API, and binds it to loopback by
+default: `http://127.0.0.1:8000`. It serves no Prefect UI, and the Prefect API,
+PostgreSQL and the object store publish no port.
 
 External exposure and TLS termination are not part of this topology.
 
@@ -356,10 +376,9 @@ reads the deployment from Prefect again, so this check relies on the Prefect
 credential above: anyone who holds it could change the deployment between the
 check and the start.
 
-To open the Prefect UI, browse to `http://127.0.0.1:4200`. It asks for a
-password once per browser: enter the whole value of
-`INFRAHUB_SYNC_PREFECT_AUTH_STRING`. Read it from `.env` in a text editor or with
-`sed -n 's/^INFRAHUB_SYNC_PREFECT_AUTH_STRING=//p' .env`; never `source` the file.
+The default deployment serves no Prefect UI and does not publish the Prefect
+port. Only the Sync services reach the Prefect API, on the deployment's own
+network.
 
 ## Wrapper equivalents
 
@@ -833,18 +852,25 @@ start:
 
 ```bash
 docker compose down --volumes --remove-orphans
-docker compose up -d --wait
+docker compose up -d --wait --wait-timeout 420
 ```
 
 Prior run history, retained plans, registered configurations, and artifacts do
 not survive that. Keep anything you need outside the deployment before you
 reset, and register your package again afterwards.
 
-The object store image is a temporary, pinned MinIO build, while a maintained
-S3-compatible store is selected. On the first start after upgrading from the
-former root-running image, the short-lived `object-store-init` service changes the
-owner of the existing volume to UID 65532. The data stays in place. This first
-start can take longer for a large volume.
+A deployment of an earlier alpha, whose file ran the Prefect server from the
+Prefect image, cannot be updated in place to a file that runs it from the Sync
+image and the object store from Silo. Run
+`docker compose down --volumes --remove-orphans` with the old file first. This
+removes the Prefect work pool, the deployments and the run history, the saved
+plans and run files, and the `infrahub_sync` database. Then fetch the new file
+and start it.
+
+When the object store volume was written by an image that ran as root, the
+short-lived `object-store-init` service changes the owner of the volume to UID
+65532 on the next start. The data stays in place. This start can take longer for
+a large volume.
 
 ## When the outcome of a write is uncertain
 
