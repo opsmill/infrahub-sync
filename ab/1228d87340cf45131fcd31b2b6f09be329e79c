@@ -1,0 +1,31 @@
+tests/compose/test_image_pins.py
+  s_8d92f288a8f661::t_b0f1ca5e66377d 1-104,106-183
+  s_8d92f288a8f661::t_d5f974fcbc3619 105
+tests/compose/test_compose_contract.py
+  s_8d92f288a8f661::t_6a1fb4b0237e49 680
+  s_8d92f288a8f661::t_88967d1c4eee08 20
+  s_8d92f288a8f661::t_2b191d3e0d94de 593-594,599
+  s_8d92f288a8f661::t_c3382f84133004 36
+  s_8d92f288a8f661::t_037b27a532b3ca 436-560
+  s_8d92f288a8f661::t_cac14dd8bc8684 346-352,355
+  s_8d92f288a8f661::t_9ed605ae4f1301 227-228,230-231,233
+  s_8d92f288a8f661::t_a4bd5d26fbe5c7 119-156
+dev/specs/010-prefect-from-sync-image/tasks.md
+  s_8d92f288a8f661::t_a196e8c7e81382 83-89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ab1228d87340cf45131fcd31b2b6f09be329e79c",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
