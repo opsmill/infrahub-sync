@@ -122,6 +122,16 @@ def test_the_manifest_records_no_owner_as_null(tmp_path: Path) -> None:
     assert written["lineage"]["owner"] is None
 
 
+def test_the_manifest_records_protect_on_and_the_checksum_covers_it(tmp_path: Path) -> None:
+    """FR-006: `lineage.protect` is the package's `protect` setting, and changing it changes the checksum."""
+    written = _written_manifest(tmp_path, LINEAGE.model_copy(update={"protect": True}))
+    protect_off = dict(written, lineage=dict(written["lineage"], protect=False))
+
+    assert written["lineage"]["protect"] is True
+    assert PlanManifest.model_validate(written).lineage == LINEAGE.model_copy(update={"protect": True})
+    assert compute_plan_checksum(protect_off, b"") != written["plan_checksum"]
+
+
 def _plan_resource(lineage: dict[str, Any] | None) -> PlanResource:
     return PlanResource(
         run_id=RUN_ID,

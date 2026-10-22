@@ -152,14 +152,14 @@ stay protected when it is off.
 
 ### Tests for User Story 4
 
-- [ ] T044 [P] [US4] Unit tests in `tests/adapters/test_infrahub_planned_write.py`: with `protect` on and no owner, creates and updates send `is_protected: true` on attributes and edges they write; with `protect` off, no `is_protected` key is sent (FR-006)
-- [ ] T045 [P] [US4] Registration test in `tests/configuration/test_infrahub_lineage_validation.py`: `protect` accepted as `true` or `false`, refused otherwise
+- [X] T044 [P] [US4] Unit tests in `tests/adapters/test_infrahub_planned_write.py`: with `protect` on and no owner, creates and updates send `is_protected: true` on attributes and edges they write; with `protect` off, no `is_protected` key is sent (FR-006)
+- [X] T045 [P] [US4] Registration test in `tests/configuration/test_infrahub_lineage_validation.py`: `protect` accepted as `true` or `false`, refused otherwise
 
 ### Implementation for User Story 4
 
-- [ ] T046 [US4] Add `protect` to the allowed settings of the `infrahub` entry in `infrahub_sync/configuration/capabilities.py:525`
-- [ ] T047 [US4] Pass `is_protected=True` when `protect` is on, and `None` otherwise, in the payload code of `infrahub_sync/adapters/infrahub.py:1333-1345`; record `protect` in the manifest's `lineage` field
-- [ ] T048 [US4] Opt-in integration test for quickstart scenario 4 in `tests/integration/test_infrahub_lineage_integration.py`: protected with `protect` on; with `protect` off, no flag sent and values protected earlier keep their flag; a value written before this feature keeps its owner and protection and gets the import account as source when the import next writes it (spec edge case)
+- [X] T046 [US4] Add `protect` to the allowed settings of the `infrahub` entry in `infrahub_sync/configuration/capabilities.py:525`
+- [X] T047 [US4] Pass `is_protected=True` when `protect` is on, and `None` otherwise, in the payload code of `infrahub_sync/adapters/infrahub.py:1333-1345`; record `protect` in the manifest's `lineage` field
+- [X] T048 [US4] Opt-in integration test for quickstart scenario 4 in `tests/integration/test_infrahub_lineage_integration.py`: protected with `protect` on; with `protect` off, no flag sent and values protected earlier keep their flag; a value written before this feature keeps its owner and protection and gets the import account as source when the import next writes it (spec edge case)
 
 **Checkpoint**: all four user stories work on their own.
 

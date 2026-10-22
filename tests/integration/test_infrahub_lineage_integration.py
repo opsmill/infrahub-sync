@@ -17,7 +17,8 @@ The tests then drive the import's own destination calls with that token:
 
 They cover quickstart scenario 1 (SC-001, SC-002, SC-007), scenario 2 (the `owner` setting:
 SC-003, SC-004, FR-011), scenario 3 (who last changed each value a plan updates, read with
-the plan's destination read: SC-005, FR-007) and scenario 5 (a missing permission on a
+the plan's destination read: SC-005, FR-007), scenario 4 (the `protect` setting, and values
+written before this release: FR-006) and scenario 5 (a missing permission on a
 written kind and on the owner's kind: SC-006). With an owner, the account also holds `view` on `CoreAccountGroup`,
 the only permission the owner lookup needs, because it selects the group's name only.
 
@@ -409,17 +410,21 @@ def import_adapter(
     monkeypatch: pytest.MonkeyPatch,
     *,
     owner: OwnerGroup | None = None,
+    protect: bool | None = None,
 ) -> InfrahubAdapter:
     """The Infrahub destination adapter built the way a run builds it, with the account's token.
 
     A direct run takes the token from `INFRAHUB_API_TOKEN` before the settings, so the
     environment variable is set to the account's token for the construction only. The
     construction reads the server version and the schema with that token. `owner` adds the
-    setting `owner: {kind: CoreAccountGroup, name: <the group's name>}`.
+    setting `owner: {kind: CoreAccountGroup, name: <the group's name>}`; `protect` adds the
+    setting `protect: <protect>`.
     """
     settings: dict[str, Any] = {"url": lineage.address}
     if owner is not None:
         settings["owner"] = {"kind": GROUP_KIND, "name": owner.name}
+    if protect is not None:
+        settings["protect"] = protect
     config = SyncConfig(
         name="lineage-integration",
         source=SyncAdapter(name="netbox"),
@@ -1330,3 +1335,146 @@ def test_registration_refuses_an_owner_given_as_a_bare_name() -> None:
     message = str(raised.value)
     assert "/configuration/destination/settings/owner" in message
     assert "`owner` must be `{kind, name}`" in message
+
+
+def _device_lineage(lineage: LineageBranch, device_name: str) -> dict[str, dict[str, Any]]:
+    """The source, owner and protection of the device's `name`, `serial` and each `tags` edge, by value."""
+    admin, branch = lineage.admin, lineage.branch
+    device = _read_back(admin, DEVICE_KIND, device_name, branch)
+    values = {"device.name": _value_lineage(device.name), "device.serial": _value_lineage(device.serial)}
+    values.update({f"device.tags -> {peer}": edge for peer, edge in _edge_lineage(admin, device_name, branch).items()})
+    return values
+
+
+def test_protect_on_protects_written_values_and_protect_off_keeps_earlier_flags(
+    lineage_branch: LineageBranch, account_factory: AccountFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Quickstart scenario 4 (FR-006, D-5).
+
+    With `protect: true` and no owner, a first apply creates two tags and a device that refers to
+    the first tag: every attribute and edge it writes is protected. With `protect: false`, a second
+    apply changes the serial and adds the second tag: it sends no protection flag, so the serial
+    and the first edge protected by the first apply stay protected, and the added edge is not
+    protected. Every value keeps the import account as source and has no owner.
+    """
+    account = account_factory(BRANCH_IMPORT_PERMISSIONS)
+    admin, branch = lineage_branch.admin, lineage_branch.branch
+
+    planning = import_adapter(lineage_branch, account, monkeypatch, protect=True)
+    plan_reads(planning)
+    assert planning.lineage_record is not None
+    assert planning.lineage_record.protect is True, "The plan must record `protect: true`."
+    created = save_plan(tmp_path, planning, device_tags=1)
+    apply_saved_plan(created, import_adapter(lineage_branch, account, monkeypatch, protect=True))
+
+    tags = {name: _read_back(admin, TAG_KIND, name, branch) for name in created.tag_names}
+    first_tag_id, second_tag_id = (tags[name].id for name in created.tag_names)
+    protected = {"source": account.id, "owner": None, "protected": True}
+    after_create = {f"{name}.name": _value_lineage(tag.name) for name, tag in tags.items()}
+    after_create.update(_device_lineage(lineage_branch, created.device_name))
+    assert after_create == {
+        **{f"{name}.name": protected for name in created.tag_names},
+        "device.name": protected,
+        "device.serial": protected,
+        f"device.tags -> {first_tag_id}": protected,
+    }, "With `protect: true` and no owner, every value the apply creates must be protected."
+
+    planning = import_adapter(lineage_branch, account, monkeypatch, protect=False)
+    plan_reads(planning)
+    assert planning.lineage_record is not None
+    assert planning.lineage_record.protect is False, "The plan must record `protect: false`."
+    device_id = _read_back(admin, DEVICE_KIND, created.device_name, branch).id
+    assert device_id is not None
+    updated = save_device_update_plan(tmp_path, planning, created, device_id=device_id, serial="serial-updated")
+    apply_saved_plan(updated, import_adapter(lineage_branch, account, monkeypatch, protect=False))
+
+    device = _read_back(admin, DEVICE_KIND, created.device_name, branch)
+    assert _attribute(device, "serial").value == "serial-updated", "The second apply must update the serial."
+    not_protected = {"source": account.id, "owner": None, "protected": False}
+    assert _device_lineage(lineage_branch, created.device_name) == {
+        "device.name": protected,
+        "device.serial": protected,
+        f"device.tags -> {first_tag_id}": protected,
+        f"device.tags -> {second_tag_id}": not_protected,
+    }, (
+        "With `protect: false`, the apply must send no protection flag: the values protected earlier "
+        "stay protected, and the edge it adds is not protected."
+    )
+
+
+_WRITE_BEFORE_THIS_RELEASE = """
+mutation WriteBeforeThisRelease($tag: String!, $legacy: String!) {
+  tag: TestLineageTagCreate(data: {name: {value: $tag, source: $legacy, owner: $legacy, is_protected: true}}) {
+    ok object { id }
+  }
+}
+"""
+
+_DEVICE_BEFORE_THIS_RELEASE = """
+mutation DeviceBeforeThisRelease($device: String!, $serial: String!, $legacy: String!, $tag_id: String!) {
+  TestLineageDeviceCreate(data: {
+    name: {value: $device, source: $legacy, owner: $legacy, is_protected: true}
+    serial: {value: $serial, source: $legacy, owner: $legacy, is_protected: true}
+    tags: [{id: $tag_id, _relation__source: $legacy, _relation__owner: $legacy, _relation__is_protected: true}]
+  }) { ok object { id } }
+}
+"""
+
+
+def test_a_value_written_before_this_release_keeps_its_owner_and_protection_and_gets_the_import_source(
+    lineage_branch: LineageBranch, account_factory: AccountFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Spec edge case "Values written before this release", with `protect` absent and no owner.
+
+    An earlier import wrote a tag and a device with another account as source and owner, and
+    every value protected. The import, which is not that owner, then changes the device's serial:
+    Infrahub accepts the write, and every device value the update sends (the serial it changes,
+    the name and the `tags` edge it sends again) gets the import account as source and keeps its
+    owner and its protection. The tag, which the import does not write, keeps its lineage.
+    """
+    account = account_factory(BRANCH_IMPORT_PERMISSIONS)
+    legacy = account_factory(())
+    admin, branch = lineage_branch.admin, lineage_branch.branch
+    suffix = uuid.uuid4().hex[:8]
+    tag_name, device_name = f"lineage-tag-{suffix}-0", f"lineage-device-{suffix}"
+
+    written = admin.execute_graphql(
+        query=_WRITE_BEFORE_THIS_RELEASE,
+        variables={"tag": tag_name, "legacy": legacy.id},
+        branch_name=branch,
+    )
+    tag_id = written["tag"]["object"]["id"]
+    written = admin.execute_graphql(
+        query=_DEVICE_BEFORE_THIS_RELEASE,
+        variables={"device": device_name, "serial": "serial-legacy", "legacy": legacy.id, "tag_id": tag_id},
+        branch_name=branch,
+    )
+    device_id = written["TestLineageDeviceCreate"]["object"]["id"]
+    earlier = {"source": legacy.id, "owner": legacy.id, "protected": True}
+    assert _device_lineage(lineage_branch, device_name)["device.serial"] == earlier, (
+        "Precondition: the serial must hold the lineage an earlier import wrote."
+    )
+
+    planning = import_adapter(lineage_branch, account, monkeypatch)
+    plan_reads(planning)
+    assert planning.lineage_record is not None
+    assert planning.lineage_record.protect is False, "`protect` absent must be recorded as off."
+    existing = SavedPlan(run_dir=tmp_path, run_id="", tag_names=(tag_name,), device_name=device_name)
+    updated = save_device_update_plan(tmp_path, planning, existing, device_id=device_id, serial="serial-updated")
+    apply_saved_plan(updated, import_adapter(lineage_branch, account, monkeypatch))
+
+    device = _read_back(admin, DEVICE_KIND, device_name, branch)
+    assert _attribute(device, "serial").value == "serial-updated", "The apply must update the serial."
+    observed = _device_lineage(lineage_branch, device_name)
+    observed[f"{tag_name}.name"] = _value_lineage(_read_back(admin, TAG_KIND, tag_name, branch).name)
+    rewritten = {"source": account.id, "owner": legacy.id, "protected": True}
+    assert observed == {
+        "device.name": rewritten,
+        "device.serial": rewritten,
+        f"device.tags -> {tag_id}": rewritten,
+        f"{tag_name}.name": earlier,
+    }, (
+        f"Each device value the import writes must get the import account {account.id} as source and keep "
+        f"the owner {legacy.id} and the protection an earlier import wrote; the tag's name, which the "
+        f"import does not write, must keep its lineage. Read back {observed}."
+    )

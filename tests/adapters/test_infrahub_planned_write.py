@@ -1153,6 +1153,70 @@ def test_a_create_sends_the_source_on_every_attribute_and_edge_and_no_owner_or_p
     assert "_relation__owner" not in rendered, rendered
 
 
+def _applied_with_protection(operation: PlannedOperation, *, protect: bool) -> str:
+    """Apply one operation with the import account as source, no owner and `protect` as given; return the mutation."""
+    client = RecordingClient()
+    adapter = make_adapter(client, source=IMPORT_ACCOUNT_ID, protect=protect)
+    peers = PeerResolver(adapter)
+    peers.remember(TAG_KIND, {"name": "tag-b"}, "tag-id-2")
+    peers.remember(TAG_KIND, {"name": "tag-c"}, "tag-id-3")
+    peers.remember(SITE_KIND, {"name": "site-a"}, "site-id-1")
+
+    adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert len(client.mutations) == 1
+    return client.mutations[0][1]
+
+
+TEAM_UPDATE = make_operation(
+    kind=TEAM_KIND,
+    action="update",
+    identity={"name": "team-a"},
+    payload={"name": "team-a", "description": "edge"},
+    relationships=[
+        RelationshipReference(
+            field="members", peer_kind=TAG_KIND, cardinality="many", peers=[{"name": "tag-b"}, {"name": "tag-c"}]
+        )
+    ],
+)
+
+PROTECTION_CASES = [
+    pytest.param(TEAM_CREATE, 2, 2, id="create-attributes-and-many-edges"),
+    pytest.param(server_operation("server-a"), 1, 1, id="create-attribute-and-one-edge"),
+    pytest.param(TEAM_UPDATE, 2, 2, id="update-attributes-and-many-edges"),
+]
+
+
+@pytest.mark.parametrize(("operation", "attributes", "edges"), PROTECTION_CASES)
+def test_protect_on_without_an_owner_protects_every_attribute_and_edge_written(
+    operation: PlannedOperation, attributes: int, edges: int
+) -> None:
+    """FR-006, D-5: with `protect` on and no owner, creates and updates protect every value they write."""
+    rendered = _applied_with_protection(operation, protect=True)
+
+    attribute_flags = re.findall(r"(?<!_relation__)\bis_protected:\s*true", rendered)
+    assert len(attribute_flags) == attributes, f"Every attribute written must be protected:\n{rendered}"
+    assert rendered.count("_relation__is_protected: true") == edges, (
+        f"Every relationship edge written must be protected:\n{rendered}"
+    )
+    assert re.search(r'\bowner:\s*"', rendered) is None, f"No owner may be sent:\n{rendered}"
+    assert "_relation__owner" not in rendered, rendered
+
+
+@pytest.mark.parametrize(("operation", "attributes", "edges"), PROTECTION_CASES)
+def test_protect_off_sends_no_protection_key_on_a_create_or_an_update(
+    operation: PlannedOperation, attributes: int, edges: int
+) -> None:
+    """FR-006: with `protect` off, neither a create nor an update sends `is_protected`, so earlier flags stay."""
+    rendered = _applied_with_protection(operation, protect=False)
+
+    assert "is_protected" not in rendered, f"No protection key may be sent:\n{rendered}"
+    # The source still reaches every value written, so the case is not vacuous.
+    attribute_sources = re.findall(rf'(?<!_relation__)\bsource:\s*"{IMPORT_ACCOUNT_ID}"', rendered)
+    assert len(attribute_sources) == attributes, rendered
+    assert rendered.count(f'_relation__source: "{IMPORT_ACCOUNT_ID}"') == edges, rendered
+
+
 def test_a_payload_missing_an_identity_component_is_refused_before_any_write() -> None:
     """AD042: a create whose identity does not name every HFID component cannot key itself.
 

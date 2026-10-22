@@ -38,6 +38,10 @@ REFUSED = [
         id="unknown-key",
     ),
     pytest.param({"protect": "yes"}, "protect", "`protect` must be `true` or `false`", id="protect-not-boolean"),
+    pytest.param({"protect": "true"}, "protect", "`protect` must be `true` or `false`", id="protect-quoted-true"),
+    pytest.param({"protect": 1}, "protect", "`protect` must be `true` or `false`", id="protect-integer-one"),
+    pytest.param({"protect": 0}, "protect", "`protect` must be `true` or `false`", id="protect-integer-zero"),
+    pytest.param({"protect": [True]}, "protect", "`protect` must be `true` or `false`", id="protect-list"),
 ]
 
 
@@ -82,6 +86,15 @@ def test_the_accepted_settings_register() -> None:
     accepted = package(
         _with_destination_settings(owner={"kind": "CoreAccountGroup", "name": "network-team"}, protect=False)
     )
+
+    assert collect_findings(accepted) == ()
+    validate_package_credentials(accepted)
+
+
+@pytest.mark.parametrize("protect", [pytest.param(True, id="protect-true"), pytest.param(False, id="protect-false")])
+def test_protect_registers_as_true_or_false_without_an_owner(*, protect: bool) -> None:
+    """`protect` is accepted as `true` or `false`, and needs no owner (D-5)."""
+    accepted = package(_with_destination_settings(protect=protect))
 
     assert collect_findings(accepted) == ()
     validate_package_credentials(accepted)
