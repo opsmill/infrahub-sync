@@ -9,7 +9,7 @@ The Infrahub adapter's allowed settings (`infrahub_sync/configuration/capabiliti
 
 | Setting | Type | Default | Rule |
 |---|---|---|---|
-| `source` | `{kind, name}` or absent | absent: the token's account | `kind` is one of the allowed kinds; `name` is a non-empty string |
+| `source` | `{kind, name}` or absent | absent: the import account | `kind` is one of the allowed kinds; `name` is a non-empty string |
 | `owner` | `{kind, name}` or absent | absent: no owner | same as `source` |
 | `protect` | boolean | `false` | only `true` or `false` |
 
@@ -38,8 +38,8 @@ read.
   cause names the setting, the kind and the name. Apply stops before any write.
 - In apply, the id from `client.get_user()` must equal the plan's `lineage.import_account.id`.
   Otherwise apply refuses before any write, and the cause names both accounts (FR-012).
-- A plan made before this feature has no `lineage.import_account`. What apply does with it is not
-  decided (plan.md, Items left open).
+- A plan made before this feature has no `lineage.import_account`. Apply refuses it before any
+  write, and the cause asks for a new plan (FR-012).
 
 ## Stored plan: manifest fields (additive)
 

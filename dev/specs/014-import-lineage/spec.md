@@ -53,6 +53,9 @@ Not decided yet: the oldest Infrahub version an import supports. Planning decide
   write, with the same cause as the plan.
 - Q: What does apply do when the import account differs from the account the plan recorded? → A:
   Apply refuses before any write, with a cause that names both accounts.
+- Q: What does apply do with a saved plan that records no import account, because it was made
+  before this feature? → A: Apply refuses it before any write and asks for a new plan. V3 is not
+  released, and plans saved before the upgrade are already refused for other reasons.
 - Q: Which term names the account behind the token? → A: "Import account", as defined under Key
   Entities.
 
@@ -285,8 +288,11 @@ protection flag of the values written and of a value protected earlier.
   - Test: plan with an existing group, delete the group, then apply.
 - **FR-012**: The plan MUST record its import account. Apply MUST refuse before any write when the
   import account differs from the account the plan recorded, whether or not the package names a
-  source. The cause MUST name both accounts.
-  - Test: plan with one token, then apply with the token of another account.
+  source. The cause MUST name both accounts. Apply MUST also refuse, before any write, a saved
+  plan that records no import account (a plan made before this feature), and the cause MUST ask
+  for a new plan.
+  - Test: plan with one token, then apply with the token of another account; apply a saved plan
+    that has no recorded import account.
 
 ### Key Entities
 

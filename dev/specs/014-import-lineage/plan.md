@@ -50,8 +50,8 @@ run against the pinned Infrahub 1.10.6 stack.
 read time on a 10,000-node plan is not known; tasks measure it (R-2) and record it before the
 feature merges. The sources set no threshold, so the result is information only.
 
-**Constraints**: idempotent plans (metadata must not enter the diff); no secrets in causes; format 3
-plans made before the upgrade keep applying.
+**Constraints**: idempotent plans (metadata must not enter the diff); no secrets in causes; plans made
+before the upgrade can still be reviewed, and apply refuses them (FR-012).
 
 **Scale/Scope**: imports of about 10,000 nodes (the benchmark size in
 `docs/docs/development/guides/netbox-benchmark-runner.md`).
@@ -136,9 +136,9 @@ above.
   binding: if no read in the existing requests carries it, User Story 3 stops and an amendment of
   FR-007 goes to the product owner (R-2).
 - The import account's smallest permission set is not known yet (T005, R-7).
-- What apply does with a format 3 plan made before this feature, which has no
-  `lineage.import_account` to compare (FR-012), is not decided. Proposed: apply skips the
-  comparison for such a plan and logs that it did; this needs the product owner's confirmation.
+- Closed (product owner, 2026-10-22): apply refuses, before any write, a saved plan that records
+  no import account (made before this feature) and asks for a new plan (FR-012). V3 is not
+  released, and plans saved before the upgrade are already refused for other reasons.
 - How apply tells which relationship edges an update adds (to set the owner on them only) depends
   on what apply reads from the destination before it writes. This is not checked yet (T002).
 - Whether the checkpoint artifact copies the plan directory or a fixed list of files

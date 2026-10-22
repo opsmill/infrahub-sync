@@ -47,6 +47,7 @@ The run stops before it reads the source system in both cases.
 | Condition | Cause recorded on the run |
 |---|---|
 | A named source or owner no longer exists | the same cause as in a plan (FR-011) |
+| The saved plan has no `lineage.import_account` (made before this feature) | the plan records no import account; make a new plan (FR-012) |
 | The import account differs from the plan's `lineage.import_account` | the plan recorded `CoreAccount` `netbox`; the import account is `<other account>` (FR-012) |
 
 Apply refuses before any write in both cases.

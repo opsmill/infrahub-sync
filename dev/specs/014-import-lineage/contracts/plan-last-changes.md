@@ -44,7 +44,8 @@ A record with `"updated_by": null` or `"updated_at": null` is displayed as "not 
 ## Compatibility
 
 - `format_version` stays 3. A plan without the two manifest fields is a plan made before this
-  feature; review shows no last-change column and apply is unchanged.
+  feature; review shows no last-change column, and apply refuses it before any write and asks for
+  a new plan (FR-012).
 - The checksum covers both manifest fields directly and the sidecar through `last_changes.sha256`.
   Review and apply refuse a plan whose sidecar digest does not match.
 

@@ -65,7 +65,7 @@ account differs from the plan's.
 - [ ] T010 [P] [US1] Unit tests in `tests/adapters/test_infrahub_planned_write.py`: a create sends `source` on every attribute and edge, sends no `owner`, and sends no `is_protected` key when no owner and no `protect` are set (FR-001, FR-006)
 - [ ] T011 [P] [US1] Unit tests in `tests/adapters/test_infrahub_error_classification.py` for each case in `contracts/run-errors.md`: 401, 403 with one permission, 403 with several, 403 with another message, `GraphQLError` starting "You do not have", `AuthenticationError` with no HTTP cause; the recorded cause never contains the token (FR-008, SC-006)
 - [ ] T012 [P] [US1] Unit tests in `tests/plan/test_lineage_manifest.py`: the manifest carries `lineage.import_account` and `lineage.source` as in `contracts/plan-last-changes.md`; the field is absent on a plan written without it; the checksum changes when `lineage` changes; the format version stays 3 (FR-012)
-- [ ] T013 [P] [US1] Unit tests in `tests/adapters/test_infrahub_lineage_apply.py`: apply with a different import account refuses before any write call and names both accounts, whether or not a source is named (FR-012, SC-007)
+- [ ] T013 [P] [US1] Unit tests in `tests/adapters/test_infrahub_lineage_apply.py`: apply with a different import account refuses before any write call and names both accounts, whether or not a source is named; apply of a saved plan with no `lineage.import_account` refuses before any write call and asks for a new plan (FR-012, SC-007)
 
 ### Implementation for User Story 1
 
@@ -73,7 +73,7 @@ account differs from the plan's.
 - [ ] T015 [US1] Change the write at `infrahub_sync/adapters/infrahub.py:1333-1345` to pass the resolved source id, no owner unless named, and `is_protected=None` so the key is not sent (`SDK/schema/__init__.py:222-255`)
 - [ ] T016 [US1] Add one classification function for Infrahub errors that reads the status from `AuthenticationError.__cause__.response.status_code` (`SDK/client.py:1439-1446`) and quotes the permission text, and use it in `infrahub_sync/potenda/__init__.py:220-238` and in the schema read at `infrahub_sync/configuration/capabilities.py:258-264`
 - [ ] T017 [US1] Add the `lineage` manifest field with `import_account`, `source` and `protect` (data-model.md) to `PlanManifest` in `infrahub_sync/plan/models.py:377-407` and write it in `infrahub_sync/plan/writer.py`
-- [ ] T018 [US1] In apply, compare the import account with the plan's `lineage.import_account.id` before any write and refuse with a cause that names both accounts, in the lineage-resolution method of `infrahub_sync/adapters/infrahub.py`; log the refusal with `structlog`
+- [ ] T018 [US1] In apply, before any write, refuse a saved plan with no `lineage.import_account` with a cause that asks for a new plan, and compare the import account with the plan's `lineage.import_account.id`, refusing with a cause that names both accounts, in the lineage-resolution method of `infrahub_sync/adapters/infrahub.py`; log the refusal with `structlog`
 - [ ] T019 [US1] Opt-in integration test for quickstart scenarios 1 and 5 in `tests/integration/test_infrahub_lineage_integration.py`, using an account that holds exactly the permission set from T005: created values have that account as source, no owner, no protection; created nodes have `created_by` set to it; removing one permission gives a missing-permission cause; applying with another account's token is refused (SC-001, SC-002, SC-006, SC-007)
 
 **Checkpoint**: User Story 1 works on its own; this is the MVP.
@@ -123,7 +123,7 @@ the product owner's decision on FR-007.
 ### Tests for User Story 3
 
 - [ ] T031 [P] [US3] Unit tests in `tests/adapters/test_infrahub_metadata_read.py`: on a server version of 1.7.0 or later the existing reads, including the cardinality-many read chosen in T001, pass `include_metadata=True` and no other read is added; before 1.7.0 or with an unparsable version they do not; a value Infrahub returns with `updated_by` is never shown as "not recorded"; metadata goes into the adapter's map and not into the DiffSync models, so planning twice over a value a person changed gives the same operations (FR-007, constitution principle II)
-- [ ] T032 [P] [US3] Unit tests in `tests/plan/test_last_changes.py`: `last_changes.jsonl` has one record per changed field of each update and none for a create; records are sorted and canonical; `null` values are kept; the manifest's `last_changes` digest and count match; review refuses a sidecar whose digest does not match; a plan without the sidecar is reviewed and applied as before (FR-007, SC-005)
+- [ ] T032 [P] [US3] Unit tests in `tests/plan/test_last_changes.py`: `last_changes.jsonl` has one record per changed field of each update and none for a create; records are sorted and canonical; `null` values are kept; the manifest's `last_changes` digest and count match; review refuses a sidecar whose digest does not match; a plan without the sidecar is reviewed without a last-change column (FR-007, SC-005)
 - [ ] T033 [P] [US3] Unit tests in `tests/service/test_plan_last_changes.py`: `PlanResource` carries `last_changes` for a new plan and omits it for an older plan
 
 ### Implementation for User Story 3

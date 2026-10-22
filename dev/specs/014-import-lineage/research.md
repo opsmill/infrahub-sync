@@ -183,7 +183,9 @@ Path prefixes used below:
 - Add two additive manifest fields, both covered by the checksum and absent on older plans:
   - `last_changes`: the file's path, SHA-256 digest and record count;
   - `lineage`: the import account, the resolved source, the named owner (or none), and `protect`.
-- `PlannedOperation` and `PLAN_FORMAT_VERSION` do not change, so plans in format 3 keep applying.
+- `PlannedOperation` and `PLAN_FORMAT_VERSION` do not change. Plans made before this feature can
+  still be reviewed; apply refuses them because they record no import account (FR-012, product
+  owner decision of 2026-10-22).
 - `PlanResource` gains two optional fields that carry the same records and the owner notice
   (FR-009). This changes the Sync API response (governance gate "API and plan format" in the
   spec); the field is optional, so older clients ignore it.
@@ -192,8 +194,8 @@ Path prefixes used below:
 
 **Alternatives considered**
 
-- Add a `last_changes` field to `PlannedOperation` (format 4): rejected, because apply would refuse
-  every format 3 plan made before the upgrade, and the data is for display only (D-2).
+- Add a `last_changes` field to `PlannedOperation` (format 4): rejected, because the data is for
+  display only (D-2) and a new format version would add reader changes this feature does not need.
 - Keep the data only in `PlanResource`: rejected, because `runs plan` reads the stored plan and
   would not show it.
 - Leave the sidecar outside the checksum: rejected, because a reviewer would then approve a
@@ -257,7 +259,7 @@ Path prefixes used below:
 
 **Decision**
 
-- `source`: the token's account id, or the named source's id, on every attribute and edge written.
+- `source`: the import account's id, or the named source's id, on every attribute and edge written.
 - `owner`: only on a create, and on relationship edges that an update adds (peers that the
   destination node does not have yet). Never on attributes of an existing node (D-8, FR-002).
 - `is_protected`: `True` when `protect` is on; otherwise `None`, so the key is not sent (FR-006).
