@@ -311,9 +311,10 @@ does (clarified 2026-10-22; spec 013 uses both).
   at build time with `[tool.hatch.build.targets.wheel.force-include]` is the other option; the
   byte-equality test covers either.
 - `infrahub-testcontainers` registers a pytest plugin through `pytest11`
-  (`infrahub/python_testcontainers/pyproject.toml:34-35`). FR-025 requires that it does not load
-  in the unit tier, so `tasks/tests.py` adds `-p no:pytest-infrahub-performance-test` to the
-  unit run. Sync's unit tier already excludes the `integration`, `preview`, `docker` and
+  (`infrahub/python_testcontainers/pyproject.toml:34-35`). Its session start calls
+  `psutil.cpu_freq()`, which raises on macOS arm64. By product-owner decision of 2026-10-22 the
+  plugin stays enabled, and `tests/conftest.py` wraps `psutil.cpu_freq` so it returns None on
+  failure, as the OpsMill demo repositories do. Sync's unit tier already excludes the `integration`, `preview`, `docker` and
   `compose` markers (`tasks/tests.py:22`).
 
 **Alternatives considered**: a pytest plugin entry point for Sync. Rejected: `TestInfrahubDocker`

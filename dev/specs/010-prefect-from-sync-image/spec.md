@@ -425,8 +425,10 @@ image, and complete a plan and an apply.
 - **FR-024**: Sync's `prefect` pin and the `prefect-client` pin of the `infrahub-testcontainers`
   version Sync depends on MUST name the same Prefect version. Test: reads both versions from
   `uv.lock`.
-- **FR-025**: The unit test tier MUST NOT need Docker, and the `testcontainers` pytest plugin MUST
-  NOT load in `tests.tests-unit`.
+- **FR-025**: The unit test tier MUST NOT need Docker. The `infrahub-testcontainers` pytest plugin
+  stays enabled in `tests.tests-unit`, and its session start MUST NOT fail on macOS arm64
+  (product-owner decision of 2026-10-22, which replaces the earlier rule that the plugin does not
+  load).
 
 #### CI and documentation
 

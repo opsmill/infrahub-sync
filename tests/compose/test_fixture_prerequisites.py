@@ -102,10 +102,6 @@ def run_fixture_setup(tmp_path: Path, selection: list[str]) -> tuple[subprocess.
             "addopts=",
             "-p",
             "fixture_side_effect_stub",
-            # The `infrahub-testcontainers` plugin reads host statistics at session start,
-            # which fails on some hosts; the outer unit run disables it too.
-            "-p",
-            "no:pytest-infrahub-performance-test",
             "--setup-only",
             *selection,
         ],
