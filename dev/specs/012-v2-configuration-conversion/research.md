@@ -176,8 +176,9 @@ The command needs this table to apply FR-008, FR-010 to FR-013 and FR-029.
 - **Dependency**: the left-out and problem checks need spec 009 merged. Until then the suite
   stops with "records left out and problems cannot be counted on this build", rather than
   passing, so the gate cannot report a pass it did not check.
-- **Not verified**: that `infrahub-sync==2.0.2` installs from PyPI. If it does not, the suite
-  installs from the `2.0.2` Git tag.
+- **Installation of v2**: v1 and v2 were distributed only as the `infrahub-sync` package on
+  PyPI (product owner, 2026-10-22), so the suite installs `infrahub-sync==2.0.2` from PyPI, as a
+  customer did. No Git-tag fallback.
 - **Alternatives considered**: a pytest integration test. Rejected: the `from-netbox` check is
   already a nightly script, not a pytest test (`testing-tiers.md`), and the gate needs the same
   stack.

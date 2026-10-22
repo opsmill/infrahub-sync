@@ -141,7 +141,8 @@ copied into `tests/data/v2_examples/` so unit tests do not depend on Git tags be
 - **Fixes for an unchanged second plan** (briefing D or other work): if the first V3 plan shows
   updates, each one is a defect to fix in V3 or in the conversion (FR-024). The amount of that
   work is not known until the gate runs.
-- **v2 `2.0.2` on PyPI**: not verified; the Git tag is the fallback (R10).
+- **v2 `2.0.2` from PyPI**: v1 and v2 shipped only on PyPI, so the gate installs it from there
+  (R10). The gate needs network access to PyPI.
 - **Docs layout**: the docs overhaul on `stack/v3-user-docs` moves the pages edited here (R11).
 
 ## Complexity Tracking
