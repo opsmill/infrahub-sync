@@ -1,0 +1,55 @@
+dev/specs/014-import-lineage/quickstart.md
+  s_8d92f288a8f661::t_eda78d2f9557ae 11-12,35-36,47-49,56-57,76
+  s_8d92f288a8f661::t_316f82dd48d9ce 29
+dev/specs/014-import-lineage/research.md
+  s_8d92f288a8f661::t_733991aa7f6c43 90-95,105-106,136-139,145-147,267-283,285
+  s_8d92f288a8f661::t_37d55ca341409b 284
+  s_8d92f288a8f661::t_7d6f92dacc8f93 185
+dev/specs/014-import-lineage/spec.md
+  s_8d92f288a8f661::t_d7aaca8b6f79ea 312-314
+  s_8d92f288a8f661::t_fbcaa8c2968fa5 167-168
+  s_8d92f288a8f661::t_55f4f63b4327b6 323-324
+  s_8d92f288a8f661::t_22f68c7516bfd7 238,240-241
+  s_8d92f288a8f661::t_b1bc09527620c5 159-161
+  s_8d92f288a8f661::t_cd3d2ad5c0e8c3 293-295
+  s_8d92f288a8f661::t_ca18bdd37f7573 97,182
+  s_8d92f288a8f661::t_b33026c3b2c700 123-125
+  s_8d92f288a8f661::t_167609bd8229a3 286-288
+  s_8d92f288a8f661::t_f763d458f735bb 263-267,269
+  s_8d92f288a8f661::t_9569543dde8982 145
+  s_8d92f288a8f661::t_aacc885346c532 47-58
+  s_8d92f288a8f661::t_468b35318343a1 283-285,289
+  s_8d92f288a8f661::t_f24b05699a17d6 330-332,334-335
+dev/specs/014-import-lineage/tasks.md
+  s_8d92f288a8f661::t_68ed0d4c877280 25,32,36,38,46-48,56-58,60,64-68,72-77,86-87,93-97,101-106,114-116,120-122,125-127,131-140,155-156,160-162,170-178,186-192,197,202-209,214-216,223-224,229-231,233,239
+  s_8d92f288a8f661::t_316f82dd48d9ce 54
+dev/specs/014-import-lineage/contracts/infrahub-destination-settings.md
+  s_8d92f288a8f661::t_167609bd8229a3 50
+  s_8d92f288a8f661::t_21a283de0a5dd5 41,44-49,51-52
+dev/specs/014-import-lineage/data-model.md
+  s_8d92f288a8f661::t_eda78d2f9557ae 41-42
+  s_8d92f288a8f661::t_99ba697c467609 69-70
+  s_8d92f288a8f661::t_91cdd211583780 37-38
+  s_8d92f288a8f661::t_167609bd8229a3 32-33,39-40,53-54
+dev/specs/014-import-lineage/plan.md
+  s_8d92f288a8f661::t_7fd53f67c46661 9-14,19-20,51,66,71,133-141,143,145-147
+dev/specs/014-import-lineage/contracts/plan-last-changes.md
+  s_8d92f288a8f661::t_6a0803ae9cb245 23
+  s_8d92f288a8f661::t_167609bd8229a3 20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b76bbc32ec4466c543d1f5741d169176a136ab84",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
