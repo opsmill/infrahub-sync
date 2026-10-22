@@ -22,7 +22,11 @@ refusal, not an exception.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
+
+from .capabilities import get_adapter_capabilities
+from .credentials import ENV_CREDENTIAL_PREFIX
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -34,6 +38,145 @@ CredentialOrigin = Literal["literal", "placeholder", "variable", "none"]
 
 SettingOrigin = Literal["config.yml", "variable", "--source-url", "--destination-url"]
 """Where the value written for an environment-first setting came from."""
+
+EnvironmentSettingKind = Literal["address", "credential", "other"]
+"""What a v2 setting read from the environment holds: an address, a credential, or another value."""
+
+EnvironmentPrecedence = Literal["variable", "file"]
+"""Which value v2 used when the file and a variable both held one."""
+
+
+@dataclass(frozen=True, slots=True)
+class EnvironmentSetting:
+    """One v2 setting that v2 read from environment variables, frozen at v2 ``2.0.2``.
+
+    ``variables`` are the names v2 read, in the order v2 tried them; v2 used the first one
+    that held a non-empty value. ``precedence`` is ``variable`` when v2 read the variables
+    before the file setting and ``file`` when v2 read them only when the file setting was
+    empty (``ipfabricsync``).
+    """
+
+    setting: str
+    variables: tuple[str, ...]
+    kind: EnvironmentSettingKind
+    precedence: EnvironmentPrecedence = "variable"
+
+
+V2_ENVIRONMENT_FIRST: Mapping[str, tuple[EnvironmentSetting, ...]] = MappingProxyType(
+    {
+        "infrahub": (
+            EnvironmentSetting("url", ("INFRAHUB_ADDRESS", "INFRAHUB_URL"), "address"),
+            EnvironmentSetting("token", ("INFRAHUB_API_TOKEN",), "credential"),
+        ),
+        "netbox": (
+            EnvironmentSetting("url", ("NETBOX_ADDRESS", "NETBOX_URL"), "address"),
+            EnvironmentSetting("token", ("NETBOX_TOKEN",), "credential"),
+        ),
+        "nautobot": (
+            EnvironmentSetting("url", ("NAUTOBOT_ADDRESS", "NAUTOBOT_URL"), "address"),
+            EnvironmentSetting("token", ("NAUTOBOT_TOKEN",), "credential"),
+        ),
+        "aci": (
+            EnvironmentSetting("url", ("CISCO_APIC_URL",), "address"),
+            EnvironmentSetting("username", ("CISCO_APIC_USERNAME",), "credential"),
+            EnvironmentSetting("password", ("CISCO_APIC_PASSWORD",), "credential"),
+            EnvironmentSetting("verify", ("CISCO_APIC_VERIFY",), "other"),
+        ),
+        "ipfabricsync": (
+            EnvironmentSetting("base_url", ("IPF_URL",), "address", "file"),
+            EnvironmentSetting("auth", ("IPF_TOKEN",), "credential", "file"),
+        ),
+        "prometheus": (
+            EnvironmentSetting("url", ("PROM_URL", "PROM_ADDRESS"), "address"),
+            EnvironmentSetting("username", ("PROM_USERNAME",), "credential"),
+            EnvironmentSetting("password", ("PROM_PASSWORD",), "credential"),
+            EnvironmentSetting("token", ("PROM_TOKEN",), "credential"),
+        ),
+        "genericrestapi": (
+            EnvironmentSetting("url", ("URL", "ADDRESS"), "address"),
+            EnvironmentSetting("token", ("TOKEN",), "credential"),
+            EnvironmentSetting("username", ("USERNAME",), "credential"),
+            EnvironmentSetting("password", ("PASSWORD",), "credential"),
+        ),
+        "peeringmanager": (
+            EnvironmentSetting("url", ("PEERING_MANAGER_ADDRESS", "PEERING_MANAGER_URL"), "address"),
+            EnvironmentSetting("token", ("PEERING_MANAGER_TOKEN",), "credential"),
+            EnvironmentSetting("username", ("USERNAME",), "credential"),
+            EnvironmentSetting("password", ("PASSWORD",), "credential"),
+        ),
+        "slurpitsync": (),
+    }
+)
+"""The v2 settings each bundled adapter read from the environment (research R2).
+
+For ``genericrestapi`` and ``peeringmanager`` the names are v2's defaults; a file's
+``*_env_vars`` settings never extend this table (spec FR-030).
+"""
+
+COMPOSE_WORKER_CREDENTIAL_VARIABLES: tuple[str, ...] = (
+    "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN",
+    "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
+    "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN",
+)
+"""The credential variables the ``sync-worker`` service of ``docker-compose.yml`` passes through."""
+
+_INFRAHUB_TOKEN_IDENTIFIER = f"{ENV_CREDENTIAL_PREFIX}INFRAHUB_API_TOKEN"
+
+
+class CredentialReference(NamedTuple):
+    """The credential reference name and the V3 environment variable it reads."""
+
+    reference: str
+    identifier: str
+
+
+def credential_reference(adapter: str, setting: str) -> CredentialReference:
+    """Return the reference name and identifier for one credential setting (spec FR-006).
+
+    The reference is ``<adapter>-<setting>`` in lower case with ``_`` changed to ``-``; the
+    identifier is ``INFRAHUB_SYNC_CREDENTIAL_<ADAPTER>_<SETTING>``. The Infrahub token uses
+    ``INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN``.
+
+    Raises:
+        UnknownAdapterCapabilitiesError: ``adapter`` is not a bundled adapter.
+        ValueError: ``setting`` is not a credential setting of ``adapter``.
+    """
+    if setting not in get_adapter_capabilities(adapter).credential_setting_paths:
+        msg = f"{setting!r} is not a credential setting of adapter {adapter!r}"
+        raise ValueError(msg)
+    reference = f"{adapter}-{setting}".lower().replace("_", "-")
+    if adapter == "infrahub" and setting == "token":
+        return CredentialReference(reference, _INFRAHUB_TOKEN_IDENTIFIER)
+    return CredentialReference(reference, f"{ENV_CREDENTIAL_PREFIX}{adapter}_{setting}".upper())
+
+
+def _non_credential_variables() -> tuple[str, ...]:
+    names: dict[str, None] = {}
+    for settings in V2_ENVIRONMENT_FIRST.values():
+        for entry in settings:
+            if entry.kind != "credential":
+                names.update(dict.fromkeys(entry.variables))
+    return tuple(names)
+
+
+V2_NON_CREDENTIAL_VARIABLES: tuple[str, ...] = _non_credential_variables()
+"""Every ``address`` and ``other`` variable name of ``V2_ENVIRONMENT_FIRST``, once each."""
+
+
+def visible_v2_variables(environ: Mapping[str, str]) -> Mapping[str, str]:
+    """Return the v2 address and setting variables set in ``environ``, with their values.
+
+    Only the ``address`` and ``other`` names of ``V2_ENVIRONMENT_FIRST`` are looked up, so a
+    credential variable or an unrelated name is never read (spec FR-030). A variable that is
+    empty counts as not set, as it did for v2. The keys keep the order of the table, so they
+    can be reported as the variables visible where the command ran.
+    """
+    visible: dict[str, str] = {}
+    for name in V2_NON_CREDENTIAL_VARIABLES:
+        value = environ.get(name)
+        if value:
+            visible[name] = value
+    return MappingProxyType(visible)
 
 
 class ConversionInputError(Exception):
