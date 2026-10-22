@@ -1,0 +1,37 @@
+infrahub_sync/configuration/conversion.py
+  s_9c7f8713d8e8dc::t_c7bc6a340d717d 534,540,544-584
+  s_9c7f8713d8e8dc::t_d5c02208e284cd 380-388,390-391,394
+  s_9c7f8713d8e8dc::t_0dba044c87ace0 345-352
+  s_9c7f8713d8e8dc::t_72e6a969bfa9e6 449-459
+  s_9c7f8713d8e8dc::t_d1483e9d311129 267-271,274
+  s_9c7f8713d8e8dc::t_cb56e0757dd735 618
+  s_9c7f8713d8e8dc::t_715661a95a7256 509-513,521,523-524
+  s_9c7f8713d8e8dc::t_af38aec73658ce 541-543
+  s_9c7f8713d8e8dc::t_acf3334b01f783 585-586
+tests/cli/test_convert_command.py
+  s_9c7f8713d8e8dc::t_27f9dcdf3a7096 244-283,285-317
+  s_9c7f8713d8e8dc::t_2395d6d04ab932 284
+tests/configuration/test_conversion.py
+  s_9c7f8713d8e8dc::t_246f8fc73bf817 706-851
+infrahub_sync/configuration/conversion_report.py
+  s_9c7f8713d8e8dc::t_ca26a9642e7dd0 57
+  s_9c7f8713d8e8dc::t_b3172cd50df581 65-68
+dev/specs/012-v2-configuration-conversion/tasks.md
+  s_9c7f8713d8e8dc::t_0d117f339c2d62 84-85,89-90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bb1a8034affa307c642303f61d97dc08a9d6a493",
+  "prompts": {},
+  "sessions": {
+    "s_9c7f8713d8e8dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7b4ab04-36d6-4644-a214-69334e6a0d27",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
