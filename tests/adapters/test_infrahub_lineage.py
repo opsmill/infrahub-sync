@@ -27,6 +27,8 @@ from infrahub_sync.potenda import Potenda
 
 IMPORT_ACCOUNT = {"id": "account-1", "name": {"value": "netbox-import"}}
 ACCOUNT_PROFILE_CALL = ("account_profile", {"operation_name": "IMPORT_ACCOUNT"})
+# A plan reads the server version once, after the lineage is resolved (research R-1).
+VERSION_CALL = ("version", {})
 ADAPTER_LOGGER = "infrahub_sync.adapters.infrahub"
 
 # The relationships of each kind a setting may name, as the destination schema lists them. A
@@ -53,7 +55,7 @@ class LineageSchema:
 
 
 class LineageClient:
-    """The two destination reads lineage resolution makes, recorded in order."""
+    """The destination reads lineage resolution makes, and the version read of a plan, recorded in order."""
 
     def __init__(self, *, profile: object = None, nodes: dict[tuple[str, str], str] | None = None) -> None:
         self.profile = {"AccountProfile": IMPORT_ACCOUNT} if profile is None else profile
@@ -65,6 +67,10 @@ class LineageClient:
         assert query == IMPORT_ACCOUNT_QUERY, f"lineage resolution sends only the import account query, not {query!r}"
         self.calls.append(("account_profile", {"operation_name": operation_name}))
         return self.profile
+
+    def get_version(self) -> str:
+        self.calls.append(VERSION_CALL)
+        return "1.10.6"
 
     def get(self, **kwargs: Any) -> Any:  # noqa: ANN401
         self.calls.append(("get", kwargs))
@@ -97,7 +103,7 @@ def test_without_settings_the_import_account_is_the_source_and_there_is_no_owner
         protect=False,
     )
     assert adapter.lineage is lineage
-    assert client.calls == [ACCOUNT_PROFILE_CALL]
+    assert client.calls == [ACCOUNT_PROFILE_CALL, VERSION_CALL]
 
 
 def test_no_account_is_looked_up_by_the_source_systems_name() -> None:
@@ -109,7 +115,9 @@ def test_no_account_is_looked_up_by_the_source_systems_name() -> None:
     lineage = adapter.resolve_lineage()
 
     assert lineage.source.id == "account-1", "the source is the import account, not the account named `netbox`"
-    assert [name for name, _ in client.calls] == ["account_profile"], "no `CoreAccount` lookup by name is made"
+    assert [name for name, _ in client.calls] == ["account_profile", "version"], (
+        "no `CoreAccount` lookup by name is made"
+    )
 
 
 def _loading_adapter(client: LineageClient, events: list[str]) -> InfrahubAdapter:
@@ -121,7 +129,7 @@ def _loading_adapter(client: LineageClient, events: list[str]) -> InfrahubAdapte
 
 @pytest.mark.parametrize("concurrent_load", [True, False])
 def test_a_plan_reads_the_import_account_once(tmp_path: Path, *, concurrent_load: bool) -> None:
-    """FR-001: one import account query per plan run, before either side is loaded, and no other read."""
+    """FR-001: one import account query per plan run, before either side is loaded, and the one server version read (R-1)."""
     events: list[str] = []
     client = LineageClient()
     destination = _loading_adapter(client, events)
@@ -136,7 +144,7 @@ def test_a_plan_reads_the_import_account_once(tmp_path: Path, *, concurrent_load
 
     engine.load_both_sides()
 
-    assert client.calls == [ACCOUNT_PROFILE_CALL]
+    assert client.calls == [ACCOUNT_PROFILE_CALL, VERSION_CALL]
     assert destination.lineage is not None
     assert destination.lineage.source.id == "account-1"
     assert sorted(events) == ["destination.load", "source.load"]
@@ -164,6 +172,7 @@ def test_named_source_and_owner_are_looked_up_by_kind_and_name() -> None:
         ACCOUNT_PROFILE_CALL,
         name_only_lookup("CoreRepository", "inventory"),
         name_only_lookup("CoreAccountGroup", "network-team"),
+        VERSION_CALL,
     ]
 
 
@@ -195,7 +204,7 @@ def test_a_named_account_is_looked_up_and_a_named_group_needs_no_account_read() 
     assert adapter.resolve_lineage().source == ResolvedLineageNode(
         kind="CoreAccount", name="netbox", id="account-netbox"
     )
-    assert client.calls == [ACCOUNT_PROFILE_CALL, name_only_lookup("CoreAccount", "netbox")]
+    assert client.calls == [ACCOUNT_PROFILE_CALL, name_only_lookup("CoreAccount", "netbox"), VERSION_CALL]
 
     client.calls.clear()
     adapter.lineage_settings = InfrahubLineageSettings(

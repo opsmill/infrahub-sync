@@ -140,6 +140,11 @@ class _InfrahubClient:
         return {"AccountProfile": {"id": "import-account-id", "name": {"value": "import-account"}}}
 
     @staticmethod
+    def get_version() -> str:
+        """A server older than 1.7.0, so the plan reads no `updated_by` or `updated_at` from these nodes."""
+        return "1.6.0"
+
+    @staticmethod
     def get(*_args: object, **kwargs: object) -> _Node:
         raise NodeNotFoundError(identifier={"key": [str(kwargs)]}, node_type=str(kwargs.get("kind")))
 

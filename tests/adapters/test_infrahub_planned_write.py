@@ -328,12 +328,17 @@ class RecordingClient(InfrahubClientSync):
     def execute_graphql(self, *args: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401, ARG002
         """Record the rendered mutation and answer as a successful write would.
 
-        The import account query that starts an apply is answered with the import account.
+        The import account query that starts an apply is answered with the import account, and
+        the version query of a plan with the pinned Infrahub version.
         """
         query = kwargs["query"]
         if query == IMPORT_ACCOUNT_QUERY:
             self.events.append(("account_profile", None))
             return {"AccountProfile": {"id": IMPORT_ACCOUNT_ID, "name": {"value": "import-account"}}}
+        if "InfrahubInfo" in query:
+            # The server version a plan reads after resolving its lineage (research R-1).
+            self.events.append(("version", None))
+            return {"InfrahubInfo": {"version": "1.10.6"}}
         match = re.search(r"mutation\s*\{\s*(\w+)", query)
         if match is None:
             msg = f"Unrecognised mutation rendered by the SDK: {query!r}"

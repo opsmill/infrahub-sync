@@ -156,9 +156,46 @@ Reads that do not carry the metadata, and why they do not matter for the plan:
   Sync service passes `True` (`infrahub_sync/service/flow.py:295`). So the destination read of a
   plan is the `client.all` read above. A direct Python caller that passes `full_extract=False`
   would load unchanged destination nodes from the previous snapshot, which holds no metadata, and
-  changed nodes through this read. Whether that case must load in full when metadata is requested,
-  or pass the same `include` and `include_metadata=True` here, is not decided; the User Story 3
-  tasks decide it.
+  changed nodes through this read. Decided below ("Incremental loading when metadata is read").
+
+**Incremental loading when metadata is read (task T034-T036, 2026-10-23)**
+
+Decision: when a plan reads metadata, the destination is loaded in full. While `metadata_read` is
+true, `InfrahubAdapter.cursor_tier_for` returns `CursorTier.NONE` for every kind, so no cursor is
+captured (`infrahub_sync/cache/cursors.py`, `capture_safe_cursor`) and the engine loads each kind
+through `model_loader`, the `client.all` read that carries the metadata
+(`infrahub_sync/potenda/__init__.py`, the "no safe cursor or snapshot" branch of `load_one_side`).
+
+- Rejected: pass the same `include` and `include_metadata=True` to the incremental
+  `client.filters` read. That read returns only the nodes changed since the cursor; the unchanged
+  nodes come from the previous run's snapshot, which holds no `updated_by` or `updated_at`. An
+  update to an unchanged node would then show "not recorded" for a value Infrahub holds, which
+  the product owner's rule forbids (FR-007).
+- The incremental read still passes `include_metadata=self.metadata_read` and records what it
+  returns, so it stays consistent if it is ever reached with metadata on; with the decision above
+  it is not reached while `metadata_read` is true.
+- Cost: a direct Python caller that passes `full_extract=False` gets a full destination read on
+  Infrahub 1.7.0 or later. A plan made through the shared execution surface or the Sync service
+  already loads in full, so it does not change.
+- Before 1.7.0, or with a version that cannot be read or parsed, `metadata_read` is false and
+  incremental loading works as before.
+
+**Cardinality-one relationships (task T036, 2026-10-23)**
+
+A cardinality-one relationship's metadata comes back in the same `client.all` read. The SDK
+always selects cardinality-one relationships (`SDK/node/node.py:1506-1511`), and builds their
+query part with the same `include_metadata` flag (`SDK/node/node.py:794-797`), which adds
+`relationship_metadata` to the edge (`SDK/node/related_node.py:309-313`). The edge's
+`get_relationship_metadata()` then returns it. Checked by parsing a response with SDK 1.23.2,
+without a server (`tests/adapters/test_infrahub_metadata_read.py`); what Infrahub 1.10.6 returns
+is checked by the opt-in integration test of User Story 3 (T043).
+
+**The last change of a cardinality-many relationship (task T036, 2026-10-23)**
+
+Infrahub records `updated_by` and `updated_at` on each edge, not on the relationship. The adapter
+records, for the relationship, the edge with the latest `updated_at`. An edge a person removed
+leaves no edge to read, so a removal is not part of that value. The sources do not say whether
+Infrahub records a removal anywhere this read returns.
 
 Cost noted for the measurement task (T004): with `include`, each included relationship also
 selects the peer's attributes (`SDK/node/node.py:1514-1521`), and `include_metadata=True` adds

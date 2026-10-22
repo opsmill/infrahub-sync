@@ -4,6 +4,7 @@ import ipaddress
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from diffsync import Adapter, DiffSyncModel
@@ -14,6 +15,7 @@ from infrahub_sdk import (
 )
 from infrahub_sdk.exceptions import GraphQLError, NodeNotFoundError
 from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
+from packaging.version import InvalidVersion, Version
 from pydantic import ValidationError
 
 from infrahub_sync import (
@@ -84,9 +86,10 @@ def resolved_endpoint(settings: Mapping[str, Any], branch: str | None) -> tuple[
 _TIMESTAMP_FILTER_KW = "node_metadata__updated_at__after"
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, MutableMapping, Sequence
+    from collections.abc import Iterable, Iterator, MutableMapping, Sequence
 
     from infrahub_sdk.node import InfrahubNodeSync, RelatedNodeSync, RelationshipManagerSync
+    from infrahub_sdk.node.property import NodeProperty
     from infrahub_sdk.schema import MainSchemaTypesAPI
     from infrahub_sdk.store import NodeStoreSync
 
@@ -816,6 +819,85 @@ def _import_account_from_profile(response: Mapping[str, Any]) -> ImportAccount:
     return ImportAccount(id=account_id, name=name if isinstance(name, str) and name else account_id)
 
 
+# Infrahub records `updated_by` and `updated_at` on attributes and relationship edges from 1.7.0.
+# An older server's GraphQL schema has no such fields, so a query that asks for them is refused
+# whole (research R-1).
+METADATA_MIN_VERSION = (1, 7, 0)
+
+
+def metadata_read_supported(version: str) -> bool:
+    """Whether a server of this version records `updated_by` and `updated_at`: 1.7.0 or later.
+
+    A version that cannot be parsed counts as older, so no read asks for fields the server may
+    not have. Only the release numbers are compared, so a pre-release of 1.7.0 counts as 1.7.0.
+    """
+    try:
+        release = Version(version).release
+    except InvalidVersion:
+        return False
+    return (*release, 0, 0, 0)[:3] >= METADATA_MIN_VERSION
+
+
+@dataclass(frozen=True, slots=True)
+class RecordedAccount:
+    """The account Infrahub recorded as `updated_by`, by id and display label."""
+
+    id: str
+    display_label: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class LastChange:
+    """Who last changed a destination value and when, as Infrahub recorded it.
+
+    `None` means Infrahub returned no value for that field; the plan shows it as not recorded.
+    """
+
+    updated_by: RecordedAccount | None
+    updated_at: str | None
+
+
+NOT_RECORDED = LastChange(updated_by=None, updated_at=None)
+
+
+def _recorded_account(prop: NodeProperty | None) -> RecordedAccount | None:
+    if prop is None or not prop.id:
+        return None
+    return RecordedAccount(id=prop.id, display_label=prop.display_label)
+
+
+def _edge_last_change(edge: RelatedNodeSync) -> LastChange:
+    """The `relationship_metadata` of one edge, read with `include_metadata=True`."""
+    metadata = edge.get_relationship_metadata()
+    if metadata is None:
+        return NOT_RECORDED
+    return LastChange(updated_by=_recorded_account(metadata.updated_by), updated_at=metadata.updated_at)
+
+
+def _change_time(change: LastChange) -> datetime:
+    """`updated_at` as a time to compare edges by; a missing or unparsable value sorts first."""
+    earliest = datetime.min.replace(tzinfo=timezone.utc)
+    if change.updated_at is None:
+        return earliest
+    try:
+        parsed = datetime.fromisoformat(change.updated_at.replace("Z", "+00:00"))
+    except ValueError:
+        return earliest
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def _latest_change(changes: Iterable[LastChange]) -> LastChange:
+    """The last change of a cardinality-many relationship: its most recently changed edge.
+
+    Infrahub records metadata on each edge, not on the relationship. An edge that a person removed
+    leaves no edge to read, so that removal is not part of the result.
+    """
+    recorded = [change for change in changes if change != NOT_RECORDED]
+    if not recorded:
+        return NOT_RECORDED
+    return max(recorded, key=_change_time)
+
+
 class InfrahubAdapter(DiffSyncMixin, Adapter):
     type = "Infrahub"
 
@@ -824,6 +906,13 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     # no lineage until `resolve_lineage` runs or a caller sets it.
     lineage_settings: InfrahubLineageSettings = InfrahubLineageSettings()
     lineage: ResolvedLineage | None = None
+    # Whether this plan's destination reads ask for `updated_by` and `updated_at`: set by
+    # `resolve_lineage` from the server version, false until then and during an apply.
+    metadata_read: bool = False
+    # What those reads returned, keyed by (destination node id, field name). Kept here and not
+    # in the DiffSync models, so a value a person changed is compared by its value only
+    # (constitution principle II). Set by `__init__` and reset by `resolve_lineage`.
+    last_changes: dict[tuple[str, str], LastChange]
     # Cache state: absent means hydration has not been attempted; None means
     # one attempt was exhausted; a string is the resolved DiffSync identity.
     _peer_unique_ids: dict[tuple[str, str], str | None]
@@ -876,6 +965,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             {"source": settings.get("source"), "owner": settings.get("owner"), "protect": settings.get("protect")}
         )
         self.lineage = None
+        self.metadata_read = False
+        self.last_changes = {}
 
         # We will keep a copy of the schema
         self.schema: MutableMapping[str, MainSchemaTypesAPI] = self.client.schema.all(branch=infrahub_branch)
@@ -901,6 +992,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         account, and that account's id must equal the id that query returns now;
         otherwise the apply is refused before any named node is read and before any write
         (FR-012). A plan passes no manifest.
+
+        A plan also reads the server version once, after the lineage is resolved, and keeps
+        `metadata_read` true from Infrahub 1.7.0 (research R-1). An apply loads nothing, so it
+        reads no version and keeps `metadata_read` false.
         """
         settings = self.lineage_settings
         recorded = None if saved_plan is None else require_recorded_import_account(saved_plan)
@@ -922,7 +1017,33 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             source.name,
             "none" if owner is None else f"{owner.kind} {owner.name}",
         )
+        self.metadata_read = False if saved_plan is not None else self._read_metadata_support()
+        self.last_changes = {}
         return self.lineage
+
+    def _read_metadata_support(self) -> bool:
+        """Read the server version once and return whether the destination reads ask for metadata.
+
+        A server that refuses the version query is treated like one whose version cannot be
+        parsed: the plan continues and every last change shows as not recorded (research R-1).
+        """
+        try:
+            version = self.client.get_version()
+        except GraphQLError as exc:
+            logger.warning(
+                "Infrahub refused the server version query, so this plan does not read updated_by and updated_at: %s",
+                exc,
+                extra={"infrahub_version": None, "metadata_read": False},
+            )
+            return False
+        supported = metadata_read_supported(version)
+        logger.info(
+            "Infrahub server version %s: this plan %s updated_by and updated_at",
+            version or "unknown",
+            "reads" if supported else "does not read",
+            extra={"infrahub_version": version, "metadata_read": supported},
+        )
+        return supported
 
     def _read_import_account(self) -> ImportAccount:
         """Return the account behind the token, read with one `AccountProfile` query."""
@@ -966,7 +1087,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         destination schema knows about. Kinds absent from `self.schema`
         fall back to NONE — defensive guard so the engine never attempts
         an incremental query for an unknown kind.
+
+        NONE for every kind while this plan reads metadata (`metadata_read`). An incremental
+        load takes unchanged nodes from the previous snapshot, which holds no `updated_by` or
+        `updated_at`, so a plan would show "not recorded" for values Infrahub holds (FR-007).
+        With no cursor tier, the engine loads each kind in full through `model_loader`, whose
+        one read carries the metadata (research R-2).
         """
+        if self.metadata_read:
+            return CursorTier.NONE
         if model_name in self.schema:
             return CursorTier.TIMESTAMP
         return CursorTier.NONE
@@ -986,10 +1115,14 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             kind=model_name,
             populate_store=True,
             prefetch_relationships=True,
+            include_metadata=self.metadata_read,
             **filter_kwargs,
         )
         for node in nodes:
-            yield self.infrahub_node_to_diffsync(node=node)
+            payload = self.infrahub_node_to_diffsync(node=node)
+            if self.metadata_read:
+                self._record_last_changes(node)
+            yield payload
 
     def list_existing_ids(self, model_name: str) -> Iterator[str]:
         """Yield unique IDs for all Infrahub nodes of `model_name`.
@@ -1026,12 +1159,21 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         element = next((el for el in self.config.schema_mapping if el.name == model_name), None)
         if element:
             # Retrieve all nodes corresponding to model_name (list of InfrahubNodeSync)
+            # With `include_metadata`, the same read also returns `updated_by` and `updated_at` for
+            # each attribute and each edge, cardinality-many edges included, because they are named
+            # in `include` (research R-2). No request is added.
             nodes = self.client.all(
-                kind=model_name, include=identifier_and_attribute_fields(model), populate_store=True
+                kind=model_name,
+                include=identifier_and_attribute_fields(model),
+                populate_store=True,
+                include_metadata=self.metadata_read,
             )
 
             # Transform the list of InfrahubNodeSync into a list of (node, dict) tuples
             node_dict_pairs = [(node, self.infrahub_node_to_diffsync(node=node)) for node in nodes]
+            if self.metadata_read:
+                for node in nodes:
+                    self._record_last_changes(node)
             total = len(node_dict_pairs)
 
             # Extract the list of dicts for filtering and transforming
@@ -1307,6 +1449,39 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 data[rel_schema.name] = sorted(values)
 
         return data
+
+    def _record_last_changes(self, node: InfrahubNodeSync) -> None:
+        """Keep the `updated_by` and `updated_at` of each mapped field of a node read with metadata.
+
+        The fields are those `infrahub_node_to_diffsync` converts: mapped attributes, and mapped
+        relationships whose peer kind the schema has. An attribute's values come from
+        `node.<attribute>`; a cardinality-one relationship's from its edge; a cardinality-many
+        relationship's from its most recently changed edge. A field Infrahub returned nothing
+        for is kept as `NOT_RECORDED`. Nothing here reaches the DiffSync models.
+        """
+        node_id = str(node.id)
+        node_kind = node.get_kind()
+        node_schema = self.schema[node_kind]
+        for attr_name in node_schema.attribute_names:
+            if not has_field(config=self.config, name=node_kind, field=attr_name):
+                continue
+            attr = getattr(node, attr_name)
+            self.last_changes[node_id, attr_name] = LastChange(
+                updated_by=_recorded_account(attr.updated_by), updated_at=attr.updated_at
+            )
+        for rel_schema in node_schema.relationships:
+            if not has_field(config=self.config, name=node_kind, field=rel_schema.name):
+                continue
+            if self.schema.get(rel_schema.peer) is None:
+                continue
+            if rel_schema.cardinality == "one":
+                change = _edge_last_change(getattr(node, rel_schema.name))
+            elif rel_schema.cardinality == "many":
+                rel_manager: RelationshipManagerSync = getattr(node, rel_schema.name)
+                change = _latest_change(_edge_last_change(peer) for peer in rel_manager.peers)
+            else:
+                continue
+            self.last_changes[node_id, rel_schema.name] = change
 
     def new_peer_resolver(self) -> PeerResolver:
         """Build the peer resolver for one apply (FR-014, AD086).
