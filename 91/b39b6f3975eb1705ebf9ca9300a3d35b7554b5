@@ -1,0 +1,42 @@
+tests/adapters/test_infrahub_write_payload_guard.py
+  s_8d92f288a8f661::t_1086de1ff4b2be 1-94
+  s_8d92f288a8f661::t_a5e9019c1dfca4 95-101
+docs/docs/adapters/infrahub.mdx
+  s_8d92f288a8f661::t_009d97cd83659d 53-59
+  s_8327309d287049::t_17a6cc1c825042 111-113,194,196,198,200-202,204,206-207,209-211,220-226,229-301,303-307,309
+infrahub_sync/adapters/infrahub.py
+  s_8d92f288a8f661::t_06ccc04089bb5a 1746
+  s_8d92f288a8f661::t_94d10f6c7c2ad6 1894-1912
+changelog/+import-lineage.changed.md
+  s_8d92f288a8f661::t_8a5697d012b9f6 1
+dev/specs/014-import-lineage/tasks.md
+  s_8d92f288a8f661::t_eddc99933ba8a7 170-175
+docs/docs/development/knowledge/plan-artifact.md
+  s_8d92f288a8f661::t_09167c4e67fe0a 31,35,173-174,199-218
+tests/adapters/test_infrahub_planned_write.py
+  s_8d92f288a8f661::t_8d9a8873f8c194 51,2365-2441
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "91b39b6f3975eb1705ebf9ca9300a3d35b7554b5",
+  "prompts": {},
+  "sessions": {
+    "s_8327309d287049": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a91f1a15fea17ab67",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
