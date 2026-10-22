@@ -443,3 +443,31 @@ def test_the_troubleshooting_page_covers_an_operator_file_without_the_cli_token(
     assert "`operator.env`" in troubleshooting
     assert "INFRAHUB_SYNC_API_TOKEN" in troubleshooting
     assert "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS" in troubleshooting
+
+
+PREFECT_UI_SNIPPET = REPO_ROOT / "docs" / "docs" / "snippets" / "prefect-ui.override.yml"
+PREFECT_UI_SECTION = "Open the Prefect UI"
+# The page loads the snippet file itself, so the rendered block is the file byte for byte.
+SNIPPET_IMPORT = re.compile(
+    r"^import (?P<name>\w+) from '!!raw-loader!\./snippets/prefect-ui\.override\.yml';$", re.MULTILINE
+)
+
+
+def test_the_page_renders_the_prefect_ui_snippet_file_unchanged() -> None:
+    """The documented snippet is the tested file, never a copy that can drift from it."""
+    assert PREFECT_UI_SNIPPET.is_file(), f"{PREFECT_UI_SNIPPET} is missing"
+    match = SNIPPET_IMPORT.search(page())
+    assert match, "the page does not import the Prefect UI snippet file through raw-loader"
+    assert "import CodeBlock from '@theme/CodeBlock';" in page()
+    block = f'<CodeBlock language="yaml" title="docker-compose.override.yml">{{{match["name"]}}}</CodeBlock>'
+    assert block in section(page(), PREFECT_UI_SECTION)
+
+
+def test_the_prefect_ui_section_covers_merging_the_credential_and_closing_the_port() -> None:
+    """An operator with an override file already has to merge, not overwrite, and must close the port again."""
+    body = section(page(), PREFECT_UI_SECTION)
+
+    assert "\n### Merge the snippet into an existing `docker-compose.override.yml`" in body
+    assert "`INFRAHUB_SYNC_PREFECT_AUTH_STRING`" in body
+    assert "\n### Close the Prefect UI again" in body
+    assert "docker compose up -d" in shell_lines(body)

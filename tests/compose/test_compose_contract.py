@@ -149,6 +149,10 @@ PREFECT_DATABASE_URL = "PREFECT_SERVER_DATABASE_CONNECTION_URL"
 PREFECT_DATABASE_PASSWORD_RECEIVERS = {PREFECT_SERVER, "db-bootstrap"}
 # PostgreSQL, the object store, and the Sync image.
 ROOT_IMAGE_COUNT = 3
+# The documented override snippet that turns the Prefect UI on, and the Sync
+# scratch tmpfs its UI files must go to.
+PREFECT_UI_SNIPPET = Path(__file__).resolve().parents[2] / "docs" / "docs" / "snippets" / "prefect-ui.override.yml"
+SYNC_SCRATCH_ROOT = "/tmp/infrahub-sync"  # noqa: S108 -- the image's own fixed scratch root, not a shared /tmp path
 
 
 def services(model: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -528,6 +532,42 @@ def test_the_prefect_ui_api_address_is_loopback(model: dict[str, Any]) -> None:
 
     assert address, "prefect-server does not set PREFECT_SERVER_UI_API_URL"
     assert urlsplit(address).hostname == "127.0.0.1", f"the Prefect UI calls the API on {address}"
+
+
+def test_the_prefect_ui_snippet_turns_the_ui_on_and_publishes_it_on_loopback_only(
+    contract_environment: dict[str, str],
+) -> None:
+    """The documented override snippet opens the UI on one loopback port, and changes nothing else.
+
+    The UI files go to the Sync scratch tmpfs, because the server's root
+    filesystem is read-only. The comparison with the default resolve proves the
+    snippet adds no other service publication.
+    """
+    overridden = resolve(contract_environment, files=(COMPOSE_FILE, PREFECT_UI_SNIPPET))
+    definition = service(overridden, PREFECT_SERVER)
+    environment = definition["environment"]
+    ports = published(definition)
+
+    assert environment.get("PREFECT_UI_ENABLED") == "true"
+    static = environment.get("PREFECT_UI_STATIC_DIRECTORY", "")
+    assert static.startswith(f"{SYNC_SCRATCH_ROOT}/"), f"the Prefect UI files go to {static!r}"
+    assert len(ports) == 1, f"prefect-server publishes {ports}"
+    assert ports[0].get("host_ip") == "127.0.0.1", f"prefect-server publishes on {ports[0].get('host_ip')}"
+    assert str(ports[0].get("target")) == "4200"
+    assert str(ports[0].get("published")) == "4200"
+    others = {name for name, entry in services(overridden).items() if published(entry)} - {PREFECT_SERVER}
+    assert others == {"sync-api"}, f"with the snippet, host ports are also published by {sorted(others)}"
+
+
+def test_the_prefect_ui_snippet_publishes_the_configured_port(contract_environment: dict[str, str]) -> None:
+    """`INFRAHUB_SYNC_PREFECT_PORT` takes effect through the snippet, as the release notes say."""
+    environment = {**contract_environment, "INFRAHUB_SYNC_PREFECT_PORT": "4299"}
+    overridden = resolve(environment, files=(COMPOSE_FILE, PREFECT_UI_SNIPPET))
+    ports = published(service(overridden, PREFECT_SERVER))
+
+    assert [str(entry.get("published")) for entry in ports] == ["4299"]
+    address = service(overridden, PREFECT_SERVER)["environment"]["PREFECT_SERVER_UI_API_URL"]
+    assert urlsplit(address).port == 4299, f"the Prefect UI calls the API on {address}"
 
 
 def test_the_prefect_server_runs_read_only_over_the_sync_scratch(model: dict[str, Any]) -> None:

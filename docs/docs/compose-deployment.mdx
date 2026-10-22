@@ -2,6 +2,9 @@
 title: Compose deployment
 ---
 
+import CodeBlock from '@theme/CodeBlock';
+import prefectUiSnippet from '!!raw-loader!./snippets/prefect-ui.override.yml';
+
 Each release deploys Infrahub Sync on one host from a single file,
 `docker-compose.yml`, and a `.env` file that you write beside it. The deployment
 runs the Sync API, the Sync worker, a Prefect server, PostgreSQL, and
@@ -123,7 +126,7 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_PREFECT_DATABASE_URL` | composed | The Prefect database connection string, as a whole. |
 | `INFRAHUB_SYNC_BIND_ADDRESS` | `127.0.0.1` | The address the published Sync API port binds to. |
 | `INFRAHUB_SYNC_API_PORT` | `8000` | The published Sync API port. |
-| `INFRAHUB_SYNC_PREFECT_PORT` | `4200` | The host port of the Prefect UI. The file does not publish the Prefect port, so this setting has no effect unless an override file publishes it. |
+| `INFRAHUB_SYNC_PREFECT_PORT` | `4200` | The host port of the Prefect UI. The file does not publish the Prefect port, so this setting has no effect without the override snippet in [Open the Prefect UI](#open-the-prefect-ui). |
 | `INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE` | `postgres` | The PostgreSQL administrator role. |
 | `INFRAHUB_SYNC_PRODUCT_DATABASE`, `INFRAHUB_SYNC_PRODUCT_ROLE` | `infrahub_sync` | The product database and its owner role. |
 | `INFRAHUB_SYNC_PREFECT_DATABASE`, `INFRAHUB_SYNC_PREFECT_ROLE` | `prefect` | The Prefect database and its owner role. |
@@ -323,7 +326,8 @@ answers is answered by the first run against it.
 
 The deployment publishes one port, the Sync API, and binds it to loopback by
 default: `http://127.0.0.1:8000`. It serves no Prefect UI, and the Prefect API,
-PostgreSQL and the object store publish no port.
+PostgreSQL and the object store publish no port. To view the Prefect UI during a
+support session, see [Open the Prefect UI](#open-the-prefect-ui).
 
 External exposure and TLS termination are not part of this topology.
 
@@ -379,6 +383,85 @@ check and the start.
 The default deployment serves no Prefect UI and does not publish the Prefect
 port. Only the Sync services reach the Prefect API, on the deployment's own
 network.
+
+## Open the Prefect UI
+
+The default deployment serves no Prefect UI and publishes no Prefect port. To view
+flow runs, work pools and their logs in the Prefect UI, for example during a
+support session, add the override snippet below for the time you need it, then
+remove it. The snippet makes three changes to the `prefect-server` service:
+
+- It turns the Prefect UI on.
+- It points the UI's static files at `/tmp/infrahub-sync/prefect-ui`. The
+  container's root filesystem is read-only, and this directory is on the
+  container's tmpfs.
+- It publishes the Prefect port on `127.0.0.1` only, at
+  `INFRAHUB_SYNC_PREFECT_PORT` (default `4200`).
+
+<CodeBlock language="yaml" title="docker-compose.override.yml">{prefectUiSnippet}</CodeBlock>
+
+### Turn the Prefect UI on
+
+1. Save the snippet as `docker-compose.override.yml` in the directory that holds
+   `docker-compose.yml`. Docker Compose reads a file with this name automatically.
+   If the directory already has one, merge the snippet into it instead, as
+   described in the next section.
+2. Recreate the Prefect server:
+
+   ```bash
+   docker compose up -d
+   ```
+
+3. Browse to `http://127.0.0.1:4200`, or to the port set in
+   `INFRAHUB_SYNC_PREFECT_PORT`. On a remote host, forward that port over SSH,
+   for example with `ssh -L 4200:127.0.0.1:4200 <host>`: the snippet does not
+   publish the UI on any other address.
+4. The UI asks for a password once per browser. Enter the whole value of
+   `INFRAHUB_SYNC_PREFECT_AUTH_STRING`, which is the Prefect API credential. Read
+   it from `.env` in a text editor or with
+   `sed -n 's/^INFRAHUB_SYNC_PREFECT_AUTH_STRING=//p' .env`; never `source` the
+   file. Every Prefect API call, the UI's included, is refused without it.
+
+The Prefect API answers on the same port, so anyone on the host who holds the
+credential can change the deployment the worker runs while the snippet is in
+place. See [Prefect API authentication](#prefect-api-authentication).
+
+### Merge the snippet into an existing `docker-compose.override.yml`
+
+Docker Compose reads one `docker-compose.override.yml`, and merges it into
+`docker-compose.yml` key by key. If the file already exists, do not replace it:
+
+- If the file has no `prefect-server` entry under `services`, add the
+  `prefect-server` block of the snippet under the existing `services` key.
+- If the file already has a `prefect-server` entry, add the two `environment`
+  keys and the `ports` entry of the snippet to it. Keep the entries it already
+  has.
+- Check the result before you start it. The command prints the merged file, so
+  look for `PREFECT_UI_ENABLED: "true"` and one `prefect-server` port bound to
+  `127.0.0.1`:
+
+  ```bash
+  docker compose config prefect-server
+  ```
+
+To keep the snippet in its own file instead, save it under another name, for
+example `prefect-ui.override.yml`, and name every file on each command, starting
+with `-f docker-compose.yml -f docker-compose.override.yml` if you have one:
+`docker compose -f docker-compose.yml -f prefect-ui.override.yml up -d`. A command
+that omits the file runs the deployment without it.
+
+### Close the Prefect UI again
+
+Remove the snippet: delete `docker-compose.override.yml` if it holds nothing else,
+or remove the lines you merged into it. Then recreate the Prefect server:
+
+```bash
+docker compose up -d
+```
+
+The Prefect server restarts with the UI off and no published port. The Sync
+services reconnect to it on the deployment's network, and no data is lost:
+Prefect keeps its state in PostgreSQL.
 
 ## Wrapper equivalents
 
