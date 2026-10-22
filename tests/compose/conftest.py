@@ -242,7 +242,7 @@ def resolve_privately(environment: Mapping[str, str], *, files: Sequence[Path] =
 
 
 @lru_cache(maxsize=1)
-def _compose_available() -> str | None:
+def compose_cli_version() -> str | None:
     """Return the installed Compose version, or None when the CLI is absent."""
     try:
         probe = capture(["docker", "compose", "version", "--short"], timeout=60)
@@ -254,7 +254,7 @@ def _compose_available() -> str | None:
 @pytest.fixture(scope="session")
 def compose_version() -> str:
     """Skip the contract suite where the Compose CLI is not installed."""
-    version = _compose_available()
+    version = compose_cli_version()
     if version is None:
         pytest.skip("docker compose is not installed; the Compose contract suite needs the CLI, not a daemon")
     return version
