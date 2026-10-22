@@ -72,8 +72,9 @@ def preview_settings() -> dict[str, Any]:
     A missing or trimmed settings file skips like every other
     unavailable-environment condition; these tests never fail for setup reasons.
     """
-    if os.environ.get(dev.SMOKE_STACK_VARIABLE) == "dev":
-        return _dev_stack_settings()
+    stack = os.environ.get(dev.SMOKE_STACK_VARIABLE)
+    if stack in {"dev", dev.DEPS_SMOKE_STACK}:
+        return _dev_stack_settings(host_worker=stack == dev.DEPS_SMOKE_STACK)
     try:
         values = load_preview_env()
     except PreviewError as exc:
@@ -91,12 +92,13 @@ def preview_settings() -> dict[str, Any]:
     }
 
 
-def _dev_stack_settings() -> dict[str, Any]:
+def _dev_stack_settings(*, host_worker: bool = False) -> dict[str, Any]:
     """The same settings, read from the development stack that `invoke dev.smoke` runs against.
 
     There the worker runs in a container, so a package names Infrahub by its service name
     (`urls["infrahub"]`) while the suite's own Infrahub client uses the host publication
-    (`urls["infrahub_host"]`).
+    (`urls["infrahub_host"]`). With `host_worker` (`dev.worker` on the host, after
+    `dev.deps`), the package names the host publication too.
     """
     try:
         settings = dev.dev_settings()
@@ -107,7 +109,7 @@ def _dev_stack_settings() -> dict[str, Any]:
     return {
         "values": {"PREVIEW_WORK_POOL": settings.work_pool},
         "urls": {
-            "infrahub": settings.worker_infrahub_url,
+            "infrahub": settings.infrahub_url if host_worker else settings.worker_infrahub_url,
             "infrahub_host": settings.infrahub_url,
             "prefect": settings.prefect_url,
             "sync_api": settings.sync_api_url,

@@ -303,4 +303,7 @@ def test_the_dev_namespace_holds_the_contract_tasks() -> None:
         "logs",
         "seed",
         "smoke",
+        "deps",
+        "api",
+        "worker",
     }

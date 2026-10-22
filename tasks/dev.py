@@ -11,6 +11,15 @@ services (`sync` profile) and a local Infrahub (`infrahub` profile). With
 `--infrahub-network NAME`, or `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK`, the stack leaves the
 `infrahub` profile off and connects the worker to that network instead.
 
+`dev.deps` starts the core and Infrahub services only and returns; `dev.api` and
+`dev.worker` then run the Sync API and the worker on the host, each in the foreground,
+against those containers' loopback publications. No task writes a PID file or keeps a
+process in the background. `dev.smoke` notices this mode from the running containers
+(the Prefect server runs, no `sync-api` container does) and first checks both host
+processes through the Sync API's `GET /status`.
+
+The image tag is `infrahub-sync:dev` unless `SYNC_IMAGE` names another one.
+
 Every setting the tasks print or use comes from `dev_settings()`, which asks Compose to
 resolve the development file (`docker compose config --format json`), so a shell
 variable that changes the stack changes the tasks too.
@@ -34,10 +43,12 @@ import hashlib
 import json
 import os
 import shlex
+import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from invoke import Collection, Context, task
 
@@ -81,6 +92,18 @@ _WILDCARD_OR_LOOPBACK = frozenset({"", "127.0.0.1", "localhost", "0.0.0.0", "::"
 # What `dev.smoke` sets so the smoke suite reads the development stack's settings.
 SMOKE_STACK_VARIABLE = "INFRAHUB_SYNC_SMOKE_STACK"
 SMOKE_COMMAND = "uv run pytest -m preview tests/preview -q"
+# The value `dev.smoke` sets in dependencies mode, where the worker runs on the host and a
+# package therefore names Infrahub by its host publication.
+DEPS_SMOKE_STACK = "dev-deps"
+# The profiles `dev.deps` selects: the core services, which have none, and Infrahub.
+DEPS_PROFILES = ("infrahub",)
+# Where `dev.api` listens: loopback only, like every publication of the stack.
+HOST_PROCESS_ADDRESS = "127.0.0.1"
+API_FACTORY = "infrahub_sync.service.serve:build_app"
+DATABASE_URL_VARIABLE = "INFRAHUB_SYNC_DATABASE_URL"
+S3_ENDPOINT_VARIABLE = "INFRAHUB_SYNC_S3_ENDPOINT_URL"
+# The `/status` worker states that mean a worker takes runs (see `service._service_status`).
+AVAILABLE_WORKER_STATES = frozenset({"ready", "busy"})
 
 
 class DevStackError(RuntimeError):
@@ -95,8 +118,8 @@ class Publication:
     port: str
 
     @property
-    def url(self) -> str:
-        """The HTTP URL the host reaches the publication at.
+    def address(self) -> str:
+        """The `host:port` the host reaches the publication at.
 
         Loopback also answers a wildcard publication, so only another address, such as
         the Docker bridge gateway on Linux, replaces `127.0.0.1`.
@@ -108,7 +131,12 @@ class Publication:
             host = f"[{address}]"
         else:
             host = address
-        return f"http://{host}:{self.port}"
+        return f"{host}:{self.port}"
+
+    @property
+    def url(self) -> str:
+        """The HTTP URL the host reaches the publication at."""
+        return f"http://{self.address}"
 
 
 @dataclass(frozen=True)
@@ -126,6 +154,16 @@ class DevSettings:
     infrahub_network: str
     bearer_tokens: str
     work_pool: str
+    # The image every Sync-image service runs, `SYNC_IMAGE` or `infrahub-sync:dev`.
+    image: str = DEV_IMAGE
+    # The publications the host processes of `dev.api` and `dev.worker` use; None when
+    # the file does not publish them.
+    postgres: Publication | None = None
+    object_store: Publication | None = None
+    # The resolved environments of the `sync-api` and `sync-worker` containers, which
+    # `host_environment()` moves onto the loopback publications.
+    api_environment: Mapping[str, str] = field(default_factory=dict)
+    worker_environment: Mapping[str, str] = field(default_factory=dict)
 
     @property
     def sync_api_url(self) -> str:
@@ -167,6 +205,20 @@ def _publication(services: Mapping[str, Any], name: str, target: int) -> Publica
     raise DevStackError(msg)
 
 
+def _optional_publication(services: Mapping[str, Any], name: str, target: int) -> Publication | None:
+    """Return the host publication of one service's container port, or None without one."""
+    try:
+        return _publication(services, name, target)
+    except DevStackError:
+        return None
+
+
+def _environment(services: Mapping[str, Any], name: str) -> dict[str, str]:
+    """Return one service's resolved environment; a variable without a value is left out."""
+    environment = (services.get(name) or {}).get("environment") or {}
+    return {key: str(value) for key, value in environment.items() if value is not None}
+
+
 def parse_dev_settings(resolved: Mapping[str, Any], *, infrahub_network: str = "") -> DevSettings:
     """Build the settings from the output of `docker compose config --format json`."""
     services = resolved.get("services") or {}
@@ -189,6 +241,11 @@ def parse_dev_settings(resolved: Mapping[str, Any], *, infrahub_network: str = "
         infrahub_network=infrahub_network,
         bearer_tokens=str(sync_api_environment.get("INFRAHUB_SYNC_SERVICE_BEARER_TOKENS", "")),
         work_pool=str(sync_api_environment.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "")),
+        image=str((services.get(BUILD_SERVICE) or {}).get("image") or DEV_IMAGE),
+        postgres=_optional_publication(services, "postgres", 5432),
+        object_store=_optional_publication(services, "object-store", 9000),
+        api_environment=_environment(services, "sync-api"),
+        worker_environment=_environment(services, "sync-worker"),
     )
 
 
@@ -346,11 +403,13 @@ def _attach_worker(context: Context, settings: DevSettings) -> None:
         )
 
 
-def _print_urls(settings: DevSettings) -> None:
+def _print_urls(settings: DevSettings, *, host_worker: bool = False) -> None:
     print(f" - [{NAMESPACE}] Project     {settings.project}")
     print(f" - [{NAMESPACE}] Sync API    {settings.sync_api_url}  (bearer {API_TOKEN})")
     print(f" - [{NAMESPACE}] Prefect UI  {settings.prefect_url}")
-    if settings.infrahub is not None:
+    if settings.infrahub is not None and host_worker:
+        print(f" - [{NAMESPACE}] Infrahub    {settings.infrahub_url}  (also for a package the host worker runs)")
+    elif settings.infrahub is not None:
         print(f" - [{NAMESPACE}] Infrahub    {settings.infrahub_url}  (worker: {settings.worker_infrahub_url})")
     else:
         print(f" - [{NAMESPACE}] Infrahub    {settings.worker_infrahub_url} on {settings.infrahub_network}")
@@ -378,14 +437,116 @@ def _seed_settings(context: Context) -> DevSettings:
     return settings
 
 
+def _rebuild_when_stale(context: Context, settings: DevSettings) -> None:
+    """Build the stack's image when it is missing or was built from other build inputs."""
+    if rebuild_decision(context, settings.image) == "build":
+        print(f" - [{NAMESPACE}] {settings.image} is missing or was built from other build inputs; building it")
+        _build(context, project=settings.project)
+
+
+def _on_loopback(url: str, publication: Publication) -> str:
+    """Return `url` with its host and port replaced by the publication's, keeping its credentials."""
+    parts = urlsplit(url)
+    userinfo = parts.netloc.rpartition("@")[0]
+    netloc = f"{userinfo}@{publication.address}" if userinfo else publication.address
+    return urlunsplit(parts._replace(netloc=netloc))
+
+
+def host_environment(settings: DevSettings, service: Literal["sync-api", "sync-worker"]) -> dict[str, str]:
+    """The environment of `dev.api` or `dev.worker`: the container's, moved onto loopback.
+
+    The settings are the ones the `sync-api` or `sync-worker` container would get, so a
+    shell variable that changes the containers changes the host processes too. Only the
+    addresses differ: PostgreSQL, the object store and the Prefect server are reached on
+    their loopback publications instead of their service names. A variable resolved to
+    an empty value is left out, so the shell's own value, if any, applies.
+    """
+    if settings.postgres is None or settings.object_store is None:
+        msg = f"{DEV_COMPOSE_FILE} must publish postgres and object-store for the host processes"
+        raise DevStackError(msg)
+    source = settings.api_environment if service == "sync-api" else settings.worker_environment
+    environment = {key: value for key, value in source.items() if value}
+    if DATABASE_URL_VARIABLE not in environment:
+        msg = f"{service} has no {DATABASE_URL_VARIABLE} in {DEV_COMPOSE_FILE}"
+        raise DevStackError(msg)
+    environment[DATABASE_URL_VARIABLE] = _on_loopback(environment[DATABASE_URL_VARIABLE], settings.postgres)
+    environment[S3_ENDPOINT_VARIABLE] = settings.object_store.url
+    environment["PREFECT_API_URL"] = f"{settings.prefect_url}/api"
+    if service == "sync-api":
+        environment["INFRAHUB_SYNC_SERVICE_HOST"] = HOST_PROCESS_ADDRESS
+    environment.update(_stack_env(settings))
+    return environment
+
+
+def api_command(settings: DevSettings) -> str:
+    """The Sync API on the host, on loopback and on the port the `sync-api` container publishes."""
+    return (
+        f"{shlex.quote(sys.executable)} -m uvicorn --factory {API_FACTORY} "
+        f"--host {HOST_PROCESS_ADDRESS} --port {shlex.quote(settings.sync_api.port)}"
+    )
+
+
+def worker_command(settings: DevSettings) -> str:
+    """The Sync worker on the host, polling the stack's work pool."""
+    return f"{shlex.quote(sys.executable)} -m infrahub_sync.service.worker --pool {shlex.quote(settings.work_pool)}"
+
+
+def _running_services(context: Context, settings: DevSettings) -> set[str]:
+    """Return the stack's services that have a running container."""
+    command = f"{_compose_command(settings.project, ALL_PROFILES)} ps --services --status running"
+    with context.cd(ESCAPED_REPO_PATH):
+        result = context.run(command, hide=True, warn=True, pty=False)
+    if result is None or not result.ok:
+        return set()
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def in_dependencies_mode(context: Context, settings: DevSettings) -> bool:
+    """Report whether the stack runs as `dev.deps` left it: core services up, no Sync API container.
+
+    Read from Docker, not from a file the tasks write, so it holds however the stack
+    was started. A stack that is not running at all is not in dependencies mode; the
+    smoke suite then reports the stack's state itself.
+    """
+    running = _running_services(context, settings)
+    return BUILD_SERVICE in running and "sync-api" not in running
+
+
+def check_host_processes(settings: DevSettings) -> None:
+    """Fail naming the missing host process, from the Sync API's `GET /status` alone.
+
+    No answer names `dev.api`. An answer whose worker is not available names
+    `dev.worker`. The Sync API reads worker availability from Prefect itself, so this
+    check never calls the Prefect API.
+    """
+    import httpx  # noqa: PLC0415 -- lazy so importing the tasks package never requires the service extras
+
+    status_url = f"{settings.sync_api_url}/status"
+    try:
+        response = httpx.get(status_url, timeout=10)
+        response.raise_for_status()
+        body = response.json()
+    except (httpx.HTTPError, ValueError):
+        msg = f"The Sync API does not answer at {status_url}; start it with `uv run invoke dev.api`"
+        raise DevStackError(msg) from None
+    state = str(((body or {}).get("worker") or {}).get("state", ""))
+    if state not in AVAILABLE_WORKER_STATES:
+        msg = (
+            f"The Sync API reports no available worker (state {state or 'missing'}); "
+            "start it with `uv run invoke dev.worker`"
+        )
+        raise DevStackError(msg)
+
+
 # ----- The `dev` namespace -----------------------------------------------------------------
 
 
 @task(name="build")
 def dev_build(context: Context, no_cache: bool = False) -> None:  # noqa: FBT001, FBT002 -- Invoke boolean flag idiom
     """Build infrahub-sync:dev from the working tree, labelled with its build inputs."""
-    _build(context, no_cache=no_cache, project=dev_settings(context).project)
-    print(f" - [{NAMESPACE}] Built {DEV_IMAGE}; start it with `uv run invoke dev.start`")
+    settings = dev_settings(context)
+    _build(context, no_cache=no_cache, project=settings.project)
+    print(f" - [{NAMESPACE}] Built {settings.image}; start it with `uv run invoke dev.start`")
 
 
 @task(name="start", help={"infrahub-network": "Use the Infrahub on this Docker network instead of the stack's own"})
@@ -397,9 +558,7 @@ def dev_start(context: Context, infrahub_network: str = "") -> None:
     also joins NetBox's network.
     """
     settings = dev_settings(context, infrahub_network=infrahub_network)
-    if rebuild_decision(context) == "build":
-        print(f" - [{NAMESPACE}] {DEV_IMAGE} is missing or was built from other build inputs; building it")
-        _build(context, project=settings.project)
+    _rebuild_when_stale(context, settings)
     compose(
         context,
         f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}",
@@ -444,8 +603,9 @@ def dev_destroy(context: Context) -> None:
     Destructive by design: the Postgres databases, the object store's buckets and the
     Infrahub data go with it, which is what makes the next `dev.start` a first start again.
     """
-    _destroy(context, project=dev_settings(context).project)
-    print(f" - [{NAMESPACE}] Removed the stack and its data; {DEV_IMAGE} is kept")
+    settings = dev_settings(context)
+    _destroy(context, project=settings.project)
+    print(f" - [{NAMESPACE}] Removed the stack and its data; {settings.image} is kept")
 
 
 @task(name="status")
@@ -478,6 +638,13 @@ def dev_seed(context: Context) -> None:
 def dev_smoke(context: Context) -> None:
     """Seed the smoke dataset, then run the smoke suite against the running stack."""
     settings = _seed_settings(context)
+    stack = "dev"
+    if in_dependencies_mode(context, settings):
+        print(
+            f" - [{NAMESPACE}] No Sync containers run; checking dev.api and dev.worker through {settings.sync_api_url}/status"
+        )
+        check_host_processes(settings)
+        stack = DEPS_SMOKE_STACK
     if _infrahub_reachable(settings.infrahub_url):
         print(f" - [{NAMESPACE}] The smoke suite writes, so it seeds first")
         load_smoke_dataset(context, settings.infrahub_url, settings.infrahub_admin_token)
@@ -487,7 +654,63 @@ def dev_smoke(context: Context) -> None:
     with context.cd(ESCAPED_REPO_PATH):
         # Single-process deliberately: the suite's modules share one Infrahub branch and
         # one Prefect deployment, and its collection hook orders them against each other.
-        context.run(SMOKE_COMMAND, env={SMOKE_STACK_VARIABLE: "dev"})
+        context.run(SMOKE_COMMAND, env={SMOKE_STACK_VARIABLE: stack})
+
+
+@task(name="deps", help={"infrahub-network": "Use the Infrahub on this Docker network instead of the stack's own"})
+def dev_deps(context: Context, infrahub_network: str = "") -> None:
+    """Start the core and Infrahub services only, for a Sync API and worker run on the host.
+
+    Rebuilds the image when its inputs changed, starts the containers, converges the
+    database, the bucket, the work pool and the deployment with a one-off `sync-bootstrap`
+    container, prints the URLs and returns. Run `dev.api` and `dev.worker` next, each in
+    its own terminal. With --infrahub-network NAME (or INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK),
+    the stack's own Infrahub stays off; the host worker then reaches the Infrahub at
+    INFRAHUB_SYNC_DEV_INFRAHUB_URL, which must be an address the host can resolve.
+    """
+    settings = dev_settings(context, infrahub_network=infrahub_network)
+    _rebuild_when_stale(context, settings)
+    profiles = DEPS_PROFILES if not settings.infrahub_network else ()
+    compose(
+        context,
+        f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}",
+        project=settings.project,
+        profiles=profiles,
+        pty=True,
+    )
+    compose(context, "run --rm --no-deps sync-bootstrap", project=settings.project, profiles=profiles, pty=True)
+    _print_urls(settings, host_worker=True)
+    print(f" - [{NAMESPACE}] PostgreSQL  {_publication_address(settings.postgres)}")
+    print(f" - [{NAMESPACE}] Object store {_publication_url(settings.object_store)}")
+    print(f" - [{NAMESPACE}] Next: `uv run invoke dev.api` and `uv run invoke dev.worker`, each in its own terminal")
+
+
+@task(name="api")
+def dev_api(context: Context) -> None:
+    """Run the Sync API on the host, in the foreground, against the `dev.deps` containers."""
+    settings = dev_settings(context)
+    environment = host_environment(settings, "sync-api")
+    print(f" - [{NAMESPACE}] Sync API on {settings.sync_api_url}; Ctrl-C stops it")
+    with context.cd(ESCAPED_REPO_PATH):
+        context.run(api_command(settings), env=environment, pty=True)
+
+
+@task(name="worker")
+def dev_worker(context: Context) -> None:
+    """Run the Sync worker on the host, in the foreground, against the `dev.deps` containers."""
+    settings = dev_settings(context)
+    environment = host_environment(settings, "sync-worker")
+    print(f" - [{NAMESPACE}] Worker on work pool {settings.work_pool}; Ctrl-C stops it")
+    with context.cd(ESCAPED_REPO_PATH):
+        context.run(worker_command(settings), env=environment, pty=True)
+
+
+def _publication_address(publication: Publication | None) -> str:
+    return publication.address if publication is not None else "not published"
+
+
+def _publication_url(publication: Publication | None) -> str:
+    return publication.url if publication is not None else "not published"
 
 
 ns = Collection(
@@ -501,6 +724,9 @@ ns = Collection(
     dev_logs,
     dev_seed,
     dev_smoke,
+    dev_deps,
+    dev_api,
+    dev_worker,
 )
 
 
