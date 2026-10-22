@@ -1,0 +1,19 @@
+dev/specs/014-import-lineage/spec.md
+  s_336070b1e09462::t_9bed6bc332de2c 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "66540b626c5b2d8f138e20462e84ac008fe23f8d",
+  "prompts": {},
+  "sessions": {
+    "s_336070b1e09462": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aabba2b8f8f5f781d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
