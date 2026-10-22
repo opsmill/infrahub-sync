@@ -1,0 +1,39 @@
+CLAUDE.md
+  s_8d92f288a8f661::t_a10d0d5fac3d5f 6-9
+dev/specs/009-reviewable-netbox-import/contracts/config-value-maps.md
+  s_8d92f288a8f661::t_cb66a2a3769af3 17
+  s_8d92f288a8f661::t_c75d897fcbccc4 1-16,18-40
+dev/specs/009-reviewable-netbox-import/research.md
+  s_8d92f288a8f661::t_3b961f76922b99 315,317-320
+  s_8d92f288a8f661::t_625431376d4fa7 1-97,99-314,316,321,323-335
+  s_8d92f288a8f661::t_3020b356b5d83b 98
+  s_8d92f288a8f661::t_b4a300cf53991b 322
+dev/specs/009-reviewable-netbox-import/data-model.md
+  s_8d92f288a8f661::t_1fd9df469071b7 1-130
+dev/specs/009-reviewable-netbox-import/quickstart.md
+  s_8d92f288a8f661::t_ed408724e82bfd 1-63
+dev/specs/009-reviewable-netbox-import/plan.md
+  s_8d92f288a8f661::t_5efd7cdaeb908f 1,3,5-7,11-21,25,27-28,30-32,34-35,37,39,41-43,45-47,49,53-67,74-85,88,91-123,125-132,135-212,216
+  s_8d92f288a8f661::t_3f4737c8c633df 2,4,8-10,22-24,26,29,33,36,38,40,44,48,50-52,68-73,86-87,89-90,124,133-134,213-215
+dev/specs/009-reviewable-netbox-import/contracts/api-runs-plan.md
+  s_8d92f288a8f661::t_d120c4a84c2fa6 43,45
+  s_8d92f288a8f661::t_abc47649cb147b 1-42,44,46-51
+dev/specs/009-reviewable-netbox-import/contracts/cli-runs-plan.md
+  s_8d92f288a8f661::t_5bd2da316b1054 1-102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c842d860b2c4855a5e6431dd3d53d2c281926b0f",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
