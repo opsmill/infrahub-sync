@@ -1,0 +1,60 @@
+tests/adapters/test_infrahub_planned_write.py
+  s_8d92f288a8f661::t_c27aa21291c155 1104-1105,1108-1109
+  s_8d92f288a8f661::t_2e8f30c7c0ad00 943-960
+  s_8d92f288a8f661::t_fecca8f10e3136 391-393,402
+  s_8d92f288a8f661::t_c07a78a577b845 1041-1048,1050,1061,1065-1103,1106-1107,1110,1204
+  s_8d92f288a8f661::t_a4f7debd321eda 1111-1113
+infrahub_sync/configuration/capabilities.py
+  s_8d92f288a8f661::t_071df85a7013eb 46-49,52,58-62
+  s_8d92f288a8f661::t_ad61745b31aae0 382-383,392-398,400
+tests/configuration/test_schema_validation.py
+  s_8d92f288a8f661::t_aa1c12d45031c5 663-664
+  s_8d92f288a8f661::t_b594a7335ddf88 687-705
+infrahub_sync/potenda/__init__.py
+  s_8d92f288a8f661::t_697db51f059727 221-222,224-225
+  s_8d92f288a8f661::t_ad8d6c06b72ea0 10-11
+  s_8d92f288a8f661::t_d8a549a20a395b 15
+infrahub_sync/adapters/infrahub.py
+  s_8d92f288a8f661::t_1c4c07ff6c1820 1433-1435,1437
+docs/docs/development/knowledge/repository-tour.md
+  s_8d92f288a8f661::t_805e6f9739bc24 145-149
+tests/adapters/test_infrahub_error_classification.py
+  s_8d92f288a8f661::t_8b6c38e4ac82ae 150
+  s_8d92f288a8f661::t_d209c8fdd05841 173-193
+  s_8d92f288a8f661::t_209328c5fbfe1e 17
+  s_8d92f288a8f661::t_29fb3f6faab341 75
+  s_8d92f288a8f661::t_e1a08429c34a13 35-37,39,42
+  s_8d92f288a8f661::t_f1bf3eda1ed673 1-16,18-19,21,23-34,38,40-41,43-74,76-149,151-156,158-172,194-203
+  s_8d92f288a8f661::t_d431696b21b354 20,22,157,204-205
+tests/adapters/test_infrahub_lineage.py
+  s_8d92f288a8f661::t_f357d9debadfc4 74-115
+tests/integration/test_infrahub_replace_set_shrink_integration.py
+  s_8d92f288a8f661::t_5308da13e78f33 218-219
+  s_8d92f288a8f661::t_4055c8216ea84e 281-284
+  s_8d92f288a8f661::t_d24dc974289fb8 45
+  s_8d92f288a8f661::t_0641d5626568dc 17
+dev/specs/014-import-lineage/tasks.md
+  s_8d92f288a8f661::t_d4d8d107e842ae 64-66,72-74
+infrahub_sync/configuration/schema_validation.py
+  s_8d92f288a8f661::t_bfbc881048e03b 231
+infrahub_sync/infrahub_errors.py
+  s_8d92f288a8f661::t_118caaeffa8039 1-177
+infrahub_sync/runtime_schema/worker.py
+  s_8d92f288a8f661::t_8ae0f21ab49ed9 157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fc049cf7001bb05970e8a97178a196c2057f6457",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
