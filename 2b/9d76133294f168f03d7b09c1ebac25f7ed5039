@@ -1,0 +1,36 @@
+dev/specs/013-compose-own-infrastructure/contracts/compose-settings.md
+  s_8d92f288a8f661::t_872e5f219e7b00 14-15
+  s_8d92f288a8f661::t_71eebf1a9ff555 36-43
+  s_8d92f288a8f661::t_75b7260888ece7 57
+dev/specs/013-compose-own-infrastructure/data-model.md
+  s_8d92f288a8f661::t_8ce7fbd3c4ecd3 37,40,44-48
+dev/specs/013-compose-own-infrastructure/plan.md
+  s_8d92f288a8f661::t_267d57b75c3a6e 177
+  s_8d92f288a8f661::t_c726f1181eb06a 48-49
+  s_8d92f288a8f661::t_d698bc4cfe1ca7 135
+  s_8d92f288a8f661::t_fdebb36bb7a164 165
+  s_8d92f288a8f661::t_e88572abbace75 229-231
+  s_8d92f288a8f661::t_e7ec779439fbca 79-81
+  s_8d92f288a8f661::t_341cda992e5206 24-26
+dev/specs/013-compose-own-infrastructure/contracts/startup-messages.md
+  s_8d92f288a8f661::t_54182f94dfe3fc 26-31
+  s_8d92f288a8f661::t_c73c01b93c4256 32
+dev/specs/013-compose-own-infrastructure/research.md
+  s_8d92f288a8f661::t_54a3890d85a393 276-277,279-302,306-309,312-314,316-321
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2b9d76133294f168f03d7b09c1ebac25f7ed5039",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
