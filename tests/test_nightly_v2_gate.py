@@ -58,9 +58,55 @@ def test_plan_operations_read_every_operation_and_its_values(operations: list[di
     assert update["destination_id"] == "18a0c1d2-0000-4000-8000-000000000002"
 
 
+UPDATED = ("DcimDevice", "name=dmi01-akron-rtr01")
+
+
+def test_plan_summary_reads_the_total_and_whether_deletes_were_computed(runner: ModuleType) -> None:
+    """The total and the delete flag come from the summary, not from the operation lines."""
+    assert runner.plan_summary(SAMPLE.read_text(encoding="utf-8")) == {
+        "total": 4,
+        "delete_operations_computed": True,
+    }
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        pytest.param("operations: 0\ndelete_operations_computed: false\nby_kind: \n", id="field-false"),
+        pytest.param(
+            "operations: 0\ndelete_operations_computed: true\nby_kind: \n"
+            "Delete operations were NOT computed for this plan; the review may omit destination deletes.\n",
+            id="disclosure-line",
+        ),
+        pytest.param("operations: 0\nby_kind: \n", id="field-absent"),
+    ],
+)
+def test_plan_summary_reads_deletes_not_computed(runner: ModuleType, detail: str) -> None:
+    """A plan that says deletes were not computed, or does not say, has no computed deletes."""
+    assert runner.plan_summary(detail)["delete_operations_computed"] is False
+
+
+def test_plan_summary_without_a_total_reads_none(runner: ModuleType) -> None:
+    """A missing or unreadable `operations:` total is `None`, never 0."""
+    assert runner.plan_summary("delete_operations_computed: true\nby_kind: \n")["total"] is None
+    assert runner.plan_summary("operations: many\nby_kind: \n")["total"] is None
+
+
 def test_compare_counts_and_records_each_unexpected_entry(runner: ModuleType, operations: list[dict[str, Any]]) -> None:
-    """Creates, updates and unlisted deletes are findings; a listed delete is matched."""
-    result = runner.compare_plan(operations, [EXPECTED_DELETE], left_out=[], problems=[])
+    """Creates, updates and unlisted deletes are findings; a listed delete is matched.
+
+    An update field gives the value read from the destination; a field that was not read
+    says so with the `<not read>` marker.
+    """
+    result = runner.compare_plan(
+        operations,
+        [EXPECTED_DELETE],
+        total=4,
+        deletes_computed=True,
+        current={UPDATED: {"description": "core router"}},
+        left_out=[],
+        problems=[],
+    )
     assert result["counts"] == {"create": 1, "update": 1, "delete": 2, "left_out": 0, "problems": 0}
     assert result["expected_deletes_matched"] == [EXPECTED_DELETE]
     assert result["unexpected"] == [
@@ -70,8 +116,8 @@ def test_compare_counts_and_records_each_unexpected_entry(runner: ModuleType, op
             "kind": "DcimDevice",
             "identity": "name=dmi01-akron-rtr01",
             "fields": [
-                {"name": "description", "v2": None, "v3": "edge router"},
-                {"name": "serial_number", "v2": None, "v3": "SN-123"},
+                {"name": "description", "v2": "core router", "v3": "edge router"},
+                {"name": "serial_number", "v2": "<not read>", "v3": "SN-123"},
             ],
             "relationships": [{"name": "role", "peer": {"name": "router"}}],
         },
@@ -88,7 +134,7 @@ def test_compare_passes_when_only_listed_deletes_remain(runner: ModuleType, iden
     """A plan of listed deletes passes once records left out and problems are counted at 0."""
     plan = [{"action": "delete", "kind": "IpamNamespace", "identity": "name=default"}]
     expected = [{"kind": "IpamNamespace", "identity": identity, "reason": "built-in namespace"}]
-    result = runner.compare_plan(plan, expected, left_out=[], problems=[])
+    result = runner.compare_plan(plan, expected, total=1, deletes_computed=True, left_out=[], problems=[])
     assert result["passed"] is True
     assert result["unexpected"] == []
     assert not runner.gate_failure(result)
@@ -99,6 +145,8 @@ def test_compare_records_left_out_records_and_problems(runner: ModuleType) -> No
     result = runner.compare_plan(
         [],
         [],
+        total=0,
+        deletes_computed=True,
         left_out=[{"kind": "DcimDevice", "identity": {"name": "edge"}}],
         problems=[{"kind": "LocationSite", "identity": "name=MDF"}],
     )
@@ -113,7 +161,7 @@ def test_compare_records_left_out_records_and_problems(runner: ModuleType) -> No
 
 def test_an_empty_plan_does_not_pass_until_left_out_and_problems_are_counted(runner: ModuleType) -> None:
     """Without counts for records left out and problems, the gate cannot report a pass."""
-    result = runner.compare_plan([], [])
+    result = runner.compare_plan([], [], total=0, deletes_computed=True)
     assert result["counts"]["left_out"] is None
     assert result["counts"]["problems"] is None
     assert result["passed"] is False
@@ -124,10 +172,120 @@ def test_gate_failure_names_findings_and_the_uncounted_lists(
     runner: ModuleType, operations: list[dict[str, Any]]
 ) -> None:
     """The failure message counts each kind of finding before the uncounted lists."""
-    result = runner.compare_plan(operations, [EXPECTED_DELETE])
+    result = runner.compare_plan(operations, [EXPECTED_DELETE], total=4, deletes_computed=True)
     assert runner.gate_failure(result) == (
         f"the first V3 plan holds unexpected entries: create=1, update=1, delete=1; {runner.UNCOUNTED}"
     )
+
+
+@pytest.mark.parametrize(
+    ("counted", "uncounted"),
+    [
+        pytest.param({"left_out": []}, "problems", id="only-left-out"),
+        pytest.param({"problems": []}, "left_out", id="only-problems"),
+    ],
+)
+def test_compare_does_not_pass_when_only_one_list_is_counted(
+    runner: ModuleType, counted: dict[str, list[Any]], uncounted: str
+) -> None:
+    """Both records left out and problems must be counted for a pass."""
+    result = runner.compare_plan([], [], total=0, deletes_computed=True, **counted)
+    assert result["counts"][uncounted] is None
+    assert result["passed"] is False
+    assert runner.gate_failure(result) == runner.UNCOUNTED
+
+
+def test_listed_identity_on_another_kind_is_an_unexpected_delete(runner: ModuleType) -> None:
+    """A delete matches the list only on both the kind and the identity."""
+    plan = [{"action": "delete", "kind": "LocationSite", "identity": "name=default"}]
+    result = runner.compare_plan(plan, [EXPECTED_DELETE], total=1, deletes_computed=True, left_out=[], problems=[])
+    assert result["unexpected"] == [{"finding": "delete", "kind": "LocationSite", "identity": "name=default"}]
+    assert result["expected_deletes_matched"] == []
+    assert result["passed"] is False
+
+
+@pytest.mark.parametrize(
+    ("total", "message"),
+    [
+        pytest.param(5, "the plan summary reports 5 operations but the detail lists 1", id="mismatch"),
+        pytest.param(None, "the plan summary reports no operations total", id="missing"),
+    ],
+)
+def test_compare_fails_when_the_detail_does_not_list_every_operation(
+    runner: ModuleType, total: int | None, message: str
+) -> None:
+    """A plan detail that lists fewer or more operations than its total cannot pass."""
+    plan = [{"action": "delete", "kind": "IpamNamespace", "identity": "name=default"}]
+    result = runner.compare_plan(plan, [EXPECTED_DELETE], total=total, deletes_computed=True, left_out=[], problems=[])
+    assert result["passed"] is False
+    assert runner.gate_failure(result) == message
+
+
+def test_compare_fails_when_deletes_were_not_computed(runner: ModuleType) -> None:
+    """A plan without computed deletes cannot show that no unexpected delete exists."""
+    result = runner.compare_plan([], [], total=0, deletes_computed=False, left_out=[], problems=[])
+    assert result["passed"] is False
+    assert runner.gate_failure(result) == runner.DELETES_NOT_COMPUTED
+
+
+class FakeNode:
+    """A destination node whose attributes hold a `value`, as `infrahub_sdk` returns them."""
+
+    def __init__(self, **values: object) -> None:
+        for name, value in values.items():
+            setattr(self, name, type("Attribute", (), {"value": value})())
+
+
+class FakeClient:
+    """Return one node per destination id and record each read."""
+
+    def __init__(self, nodes: dict[str, FakeNode]) -> None:
+        self.nodes = nodes
+        self.reads: list[dict[str, Any]] = []
+
+    def get(self, **kwargs: str) -> FakeNode:
+        """Return the node, or raise as `infrahub_sdk` does when it does not exist."""
+        from infrahub_sdk.exceptions import NodeNotFoundError
+
+        self.reads.append(kwargs)
+        if kwargs["id"] not in self.nodes:
+            raise NodeNotFoundError(identifier={"id": [kwargs["id"]]}, message="not found")
+        return self.nodes[kwargs["id"]]
+
+
+def test_current_values_reads_each_updated_node_by_its_destination_id(
+    runner: ModuleType, operations: list[dict[str, Any]]
+) -> None:
+    """Only updates are read, by kind and destination id on the gate branch, for the changed fields."""
+    client = FakeClient(
+        {"18a0c1d2-0000-4000-8000-000000000002": FakeNode(description="core router", serial_number=None)}
+    )
+    assert runner.current_values(operations, client) == {UPDATED: {"description": "core router", "serial_number": None}}
+    assert client.reads == [{"kind": "DcimDevice", "id": "18a0c1d2-0000-4000-8000-000000000002", "branch": "v2-gate"}]
+
+
+def test_current_values_leaves_out_a_node_it_cannot_read(runner: ModuleType, operations: list[dict[str, Any]]) -> None:
+    """A node that is not found, or an update without a destination id, is not in the mapping."""
+    without_id = [{**operation, "destination_id": None} for operation in operations]
+    assert runner.current_values(operations, FakeClient({})) == {}
+    assert runner.current_values(without_id, FakeClient({})) == {}
+
+
+def test_current_values_writes_a_value_that_is_not_json_as_text(runner: ModuleType) -> None:
+    """A value such as an IP interface is kept as its text so the result stays JSON."""
+    import ipaddress
+
+    plan = [
+        {
+            "action": "update",
+            "kind": "IpamIPAddress",
+            "identity": "address=10.0.0.1/24",
+            "destination_id": "node-1",
+            "payload": {"address": "10.0.0.1/24", "absent": "x"},
+        }
+    ]
+    client = FakeClient({"node-1": FakeNode(address=ipaddress.ip_interface("10.0.0.1/24"))})
+    assert runner.current_values(plan, client) == {("IpamIPAddress", "address=10.0.0.1/24"): {"address": "10.0.0.1/24"}}
 
 
 def test_expected_delete_list_is_reviewed_and_starts_empty(runner: ModuleType) -> None:
@@ -183,6 +341,21 @@ class FakeCli:
 GATE_ENV = {"NETBOX_TOKEN": NETBOX_TOKEN, "INFRAHUB_API_TOKEN": INFRAHUB_TOKEN, "INFRAHUB_SYNC_API_URL": "http://api"}
 
 
+@pytest.fixture
+def destination(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> list[tuple[dict[str, str], dict[str, str]]]:
+    """Answer the gate's destination reads with the sample's updated device; record each client built."""
+    built: list[tuple[dict[str, str], dict[str, str]]] = []
+    node = FakeNode(description="core router", serial_number="SN-000")
+
+    def _client(env: dict[str, str], context: dict[str, str]) -> FakeClient:
+        built.append((env, context))
+        return FakeClient({"18a0c1d2-0000-4000-8000-000000000002": node})
+
+    monkeypatch.setattr(runner, "gate_client", _client)
+    return built
+
+
+@pytest.mark.usefixtures("destination")
 def test_v2_gate_runs_v2_from_pypi_on_the_gate_branch(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     """v2 2.0.2 from PyPI generates and syncs the example once, isolated from the repository's settings."""
     cli = FakeCli(SAMPLE.read_text(encoding="utf-8"))
@@ -206,7 +379,9 @@ def test_v2_gate_runs_v2_from_pypi_on_the_gate_branch(runner: ModuleType, monkey
 
 
 def test_v2_gate_plans_the_converted_package_and_keeps_the_result(
-    runner: ModuleType, monkeypatch: pytest.MonkeyPatch
+    runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    destination: list[tuple[dict[str, str], dict[str, str]]],
 ) -> None:
     """The conversion reads the addresses from the v2 variables, and the result names what was compared."""
     cli = FakeCli(SAMPLE.read_text(encoding="utf-8"))
@@ -229,24 +404,37 @@ def test_v2_gate_plans_the_converted_package_and_keeps_the_result(
     assert result["dataset"] == {"name": "demo", "commit": "commit", "sha256": "digest"}
     assert result["counts"] == {"create": 1, "update": 1, "delete": 2, "left_out": None, "problems": None}
     assert result["passed"] is False
+    assert destination == [(GATE_ENV, CONTEXT)]
+    update = next(item for item in result["unexpected"] if item["finding"] == "update")
+    assert update["fields"] == [
+        {"name": "description", "v2": "core router", "v3": "edge router"},
+        {"name": "serial_number", "v2": "SN-000", "v3": "SN-123"},
+    ]
 
 
 def test_v2_gate_stops_on_an_empty_plan_because_left_out_and_problems_are_not_counted(
-    runner: ModuleType, monkeypatch: pytest.MonkeyPatch
+    runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    destination: list[tuple[dict[str, str], dict[str, str]]],
 ) -> None:
     """With no differences found, the gate still stops rather than report a pass it did not check."""
-    monkeypatch.setattr(runner, "run", FakeCli("run_id: gate-1\noperations: 0\nby_action: \nby_kind: \n"))
+    monkeypatch.setattr(
+        runner,
+        "run",
+        FakeCli("run_id: gate-1\noperations: 0\ndelete_operations_computed: true\nby_action: \nby_kind: \n"),
+    )
     with pytest.raises(RuntimeError, match=f"^{runner.UNCOUNTED}$"):
         runner.v2_gate(GATE_ENV, CONTEXT)
     result = json.loads((runner.REPORTS / "gate-result.json").read_text(encoding="utf-8"))
     assert result["passed"] is False
     assert result["unexpected"] == []
+    assert destination == []
 
 
 def test_summary_includes_the_gate_result(runner: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The run summary lists the v2-gate suite and the gate's counts."""
     runner.REPORTS.mkdir(parents=True)
-    result = runner.compare_plan([], [])
+    result = runner.compare_plan([], [], total=0, deletes_computed=True)
     (runner.REPORTS / "gate-result.json").write_text(json.dumps({"v2_version": "2.0.2", **result}))
     summary = tmp_path / "summary.md"
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))

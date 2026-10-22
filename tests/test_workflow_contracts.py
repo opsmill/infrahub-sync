@@ -678,6 +678,22 @@ def test_nightly_route_is_dispatch_only_and_requires_an_exact_merged_commit() ->
     assert guard_step["env"]["NIGHTLY_SHA"] == f"${{{{ inputs.{SHA_INPUT} }}}}"
 
 
+def test_nightly_job_fails_on_every_suite_but_the_v2_gate() -> None:
+    """The v2-gate cannot pass until records left out and problems are counted (T031).
+
+    Its outcome is kept out of the outcomes that fail the job, so that the other suites'
+    failures stay visible; its summary line and its result file are still kept.
+    """
+    steps = jobs(NIGHTLY_WORKFLOW)["end-to-end"]["steps"]
+    final = next(step for step in steps if step.get("name") == "Fail the run if a suite did not pass")
+    loop = final["run"].split("; do", 1)[0]
+    for variable in ("SHA_GUARD", "DEPENDENCIES", "IMAGES", "INTEGRATION", "PREVIEW", "SAVED_PLAN", "FROM_NETBOX"):
+        assert f'"${variable}"' in loop
+    assert '"$V2_GATE"' not in loop
+    text = NIGHTLY_WORKFLOW.read_text(encoding="utf-8")
+    assert "# Add V2_GATE to the failing outcomes with T031, when records left out and problems are counted." in text
+
+
 def test_nightly_suites_report_independently_and_clean_up() -> None:
     """Each selected suite retains evidence and later suites run after a failure."""
     steps = jobs(NIGHTLY_WORKFLOW)["end-to-end"]["steps"]

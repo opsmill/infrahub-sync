@@ -33,6 +33,9 @@ V2_GATE_BRANCH = "v2-gate"
 EXPECTED_DELETES = ROOT / "tests" / "data" / "v2_gate" / "expected_deletes.yml"
 GATE_RESULT = "gate-result.json"
 UNCOUNTED = "records left out and problems cannot be counted on this build"
+DELETES_NOT_COMPUTED = "the plan did not compute delete operations, so an unexpected delete cannot be ruled out"
+# The value an update finding gives for a field whose current destination value was not read.
+NOT_READ = "<not read>"
 _OPERATION_LINE = re.compile(
     r"^(?P<operation_id>\S+) (?P<action>create|update|delete) (?P<kind>\S+)(?: (?P<identity>.*?))?(?: \(not executed\))?$"
 )
@@ -249,6 +252,66 @@ def plan_operations(output: str) -> list[dict[str, Any]]:
     return operations
 
 
+def plan_summary(output: str) -> dict[str, Any]:
+    """Read the `operations:` total and whether deletes were computed from the plan summary.
+
+    Only the lines before the operations are read. The total is `None` when it is missing or
+    not a number. Deletes count as computed only when the summary says
+    `delete_operations_computed: true` and does not print the not-computed disclosure.
+    """
+    lines = output.splitlines()
+    end = next((index for index, line in enumerate(lines) if line.startswith("by_kind:")), len(lines))
+    fields = {key.strip(): value.strip() for key, _, value in (line.partition(":") for line in lines[:end])}
+    total = fields.get("operations", "")
+    disclosed = any(line.startswith("Delete operations were NOT computed") for line in lines)
+    return {
+        "total": int(total) if total.isdigit() else None,
+        "delete_operations_computed": fields.get("delete_operations_computed") == "true" and not disclosed,
+    }
+
+
+def gate_client(env: dict[str, str], context: dict[str, str]) -> Any:  # noqa: ANN401 -- live-suite dependency
+    """Return an Infrahub client for the preview Infrahub the gate plans against."""
+    from infrahub_sdk import Config, InfrahubClientSync  # noqa: PLC0415 -- live-suite dependency
+
+    return InfrahubClientSync(config=Config(address=context["infrahub_address"], api_token=env["INFRAHUB_API_TOKEN"]))
+
+
+def _json_value(value: object) -> object:
+    """Keep a JSON value as it is and write any other value, such as an IP interface, as text."""
+    if value is None or isinstance(value, (str, int, float, bool, list, dict)):
+        return value
+    return str(value)
+
+
+def current_values(operations: list[dict[str, Any]], client: Any) -> dict[tuple[str, str], dict[str, Any]]:  # noqa: ANN401
+    """Read, on the gate branch, the current value of each field an update would change.
+
+    The current value is what v2 wrote. Each updated node is read by its kind and its
+    destination id, which `runs plan --detail` prints for every update. A node that has no
+    destination id or that cannot be read is left out, and so is a field that is not an
+    attribute of the node; `compare_plan` marks what is missing as `NOT_READ`.
+    """
+    from infrahub_sdk.exceptions import Error as InfrahubError  # noqa: PLC0415 -- live-suite dependency
+
+    values: dict[tuple[str, str], dict[str, Any]] = {}
+    for operation in operations:
+        destination_id = operation.get("destination_id")
+        if operation["action"] != "update" or not destination_id:
+            continue
+        try:
+            node = client.get(kind=operation["kind"], id=destination_id, branch=V2_GATE_BRANCH)
+        except InfrahubError:
+            continue
+        read: dict[str, Any] = {}
+        for name in operation.get("payload") or {}:
+            attribute = getattr(node, name, None)
+            if attribute is not None and hasattr(attribute, "value"):
+                read[name] = _json_value(attribute.value)
+        values[operation["kind"], operation["identity"]] = read
+    return values
+
+
 def identity_text(identity: object) -> str:
     """Write an identity the way `runs plan --detail` prints it: sorted `key=value` pairs."""
     if isinstance(identity, dict):
@@ -256,17 +319,25 @@ def identity_text(identity: object) -> str:
     return str(identity)
 
 
-def compare_plan(
+def compare_plan(  # noqa: PLR0913 -- the plan detail, its summary and the lists it is compared with
     operations: list[dict[str, Any]],
     expected_deletes: list[dict[str, Any]],
     *,
+    total: int | None,
+    deletes_computed: bool,
+    current: dict[tuple[str, str], dict[str, Any]] | None = None,
     left_out: list[dict[str, Any]] | None = None,
     problems: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Compare the first V3 plan with the data v2 wrote; `None` means a list was not counted.
 
+    `total` is the `operations:` total the plan summary printed and `deletes_computed` whether
+    the plan computed deletes. `current` maps the kind and identity of each updated node to
+    the current destination values of its fields, which are the values v2 wrote.
+
     The gate passes only when the plan holds no create, no update, no delete missing from
-    the expected-delete list, and when records left out and problems were counted and are 0.
+    the expected-delete list, when records left out and problems were counted and are 0,
+    when the detail lists as many operations as the total, and when deletes were computed.
     """
     expected = {(entry["kind"], identity_text(entry["identity"])): entry for entry in expected_deletes}
     counts: dict[str, int | None] = {
@@ -292,11 +363,11 @@ def compare_plan(
             "identity": operation["identity"],
         }
         if action == "update":
-            # `runs plan --detail` prints only the values V3 would write. The value v2 wrote,
-            # which is the destination's current value, is not in the plan detail, so `v2` is
-            # null and the field names show which values differ.
+            # `runs plan --detail` prints only the values V3 would write. The value v2 wrote is
+            # the destination's current value, read separately into `current`.
+            read = (current or {}).get((operation["kind"], operation["identity"]), {})
             finding["fields"] = [
-                {"name": name, "v2": None, "v3": value}
+                {"name": name, "v2": read.get(name, NOT_READ), "v3": value}
                 for name, value in sorted((operation.get("payload") or {}).items())
             ]
             if operation.get("relationships"):
@@ -307,11 +378,15 @@ def compare_plan(
             {"finding": label, "kind": item.get("kind"), "identity": identity_text(item.get("identity", ""))}
             for item in findings or ()
         )
+    complete = total == len(operations) and deletes_computed
     return {
         "counts": counts,
         "unexpected": unexpected,
         "expected_deletes_matched": matched,
-        "passed": left_out is not None and problems is not None and not unexpected,
+        "plan_total": total,
+        "operations_listed": len(operations),
+        "delete_operations_computed": deletes_computed,
+        "passed": complete and left_out is not None and problems is not None and not unexpected,
     }
 
 
@@ -320,6 +395,15 @@ def gate_failure(result: dict[str, Any]) -> str:
     if result["passed"]:
         return ""
     reasons = []
+    if result["plan_total"] is None:
+        reasons.append("the plan summary reports no operations total")
+    elif result["plan_total"] != result["operations_listed"]:
+        reasons.append(
+            f"the plan summary reports {result['plan_total']} operations but the detail lists "
+            f"{result['operations_listed']}"
+        )
+    if not result["delete_operations_computed"]:
+        reasons.append(DELETES_NOT_COMPUTED)
     if result["unexpected"]:
         found: dict[str, int] = {}
         for finding in result["unexpected"]:
@@ -450,9 +534,21 @@ def v2_gate(env: dict[str, str], context: dict[str, str]) -> None:
     with tempfile.TemporaryDirectory(prefix="v2-gate-") as work:
         project = v2_sync(Path(work), env, context)
         run_id, detail = v3_plan(project, env, context)
-    # This build's plan summary has no records left out or problems; spec 009 adds them.
-    # T031 passes them here as `left_out=` and `problems=`; until then the gate cannot pass.
-    result = compare_plan(plan_operations(detail), expected_deletes())
+    operations = plan_operations(detail)
+    summary = plan_summary(detail)
+    current = (
+        current_values(operations, gate_client(env, context))
+        if any(operation["action"] == "update" for operation in operations)
+        else {}
+    )
+    # Pass `left_out=` and `problems=` once the plan summary reports them.
+    result = compare_plan(
+        operations,
+        expected_deletes(),
+        total=summary["total"],
+        deletes_computed=summary["delete_operations_computed"],
+        current=current,
+    )
     REPORTS.mkdir(parents=True, exist_ok=True)
     (REPORTS / GATE_RESULT).write_text(
         json.dumps(
