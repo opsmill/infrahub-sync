@@ -1,0 +1,45 @@
+infrahub_sync/cli.py
+  s_8d92f288a8f661::t_c4e7ee643fe4f3 54-55
+  s_1b4fe4f1bfdd10::t_39453d993513ba 512-517,577
+tests/adapters/test_infrahub_planned_write.py
+  s_8d92f288a8f661::t_20df0dfd71fa59 363-369
+  s_1b4fe4f1bfdd10::t_5c1bd360cb8140 53,72-79,2101-2294
+infrahub_sync/adapters/infrahub.py
+  s_8d92f288a8f661::t_5f4e79b420e13f 1606-1666,1671,1674-1675
+  s_8d92f288a8f661::t_faeaece2b1cf2c 1553-1555,1557-1561,1563-1566
+  s_8d92f288a8f661::t_3f39febdea5bbf 93,1567-1570,1667-1670,1672-1673,1676
+dev/specs/014-import-lineage/tasks.md
+  s_8d92f288a8f661::t_3395e9ef9d809e 96-97,103-105
+infrahub_sync/client/models.py
+  s_8d92f288a8f661::t_b590e3c8cca458 341-366,380-382
+infrahub_sync/service/flow.py
+  s_8d92f288a8f661::t_eba4b81ed45bfb 175
+tests/plan/test_lineage_manifest.py
+  s_8d92f288a8f661::t_0595d323876234 12,14-18,27,29,41-42,45,107-199
+infrahub_sync/client/__init__.py
+  s_1b4fe4f1bfdd10::t_e1298ff37729f9 27-29,63-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b54a9d245771121348c48c60a2948cd25e42e10f",
+  "prompts": {},
+  "sessions": {
+    "s_1b4fe4f1bfdd10": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a22da8578e010ccf2",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
