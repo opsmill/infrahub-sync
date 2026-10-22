@@ -30,6 +30,15 @@ from typing import TYPE_CHECKING
 
 from invoke import Context, task
 
+from . import smoke_dataset
+from .smoke_dataset import (  # noqa: F401 -- re-exported: the smoke suite imports these names from here
+    SCHEMA_CONVERGE_SECONDS,
+    SCHEMA_FILE,
+    SHARED_DEVICE_NAME,
+    SHARED_DEVICE_SEED_TYPE,
+    SMOKE_BRANCH,
+    SMOKE_KIND,
+)
 from .utils import ESCAPED_REPO_PATH
 
 if TYPE_CHECKING:
@@ -45,17 +54,6 @@ COMPOSE_FILES = (
     DEV_DIR / "docker-compose.infrahub.yml",
     DEV_DIR / "docker-compose.preview.yml",
 )
-SCHEMA_FILE = REPO_ROOT / "examples" / "prefect_remote_run" / "schemas" / "infra_device.yml"
-SMOKE_BRANCH = "preview-smoke"
-# The kind the preview schema defines, and the one device both branches share. It is
-# seeded on `main` *before* the smoke branch forks, so the branch inherits it; the
-# registered smoke then mutates it on `main` alone and has a real update to plan and
-# apply rather than only a create. Its name is one `custom-example`'s own source
-# already owns, so the CLI-cycle smoke still converges to zero operations instead of
-# carrying a recorded, never-executed delete for it on every re-plan.
-SMOKE_KIND = "InfraDevice"
-SHARED_DEVICE_NAME = "core01"
-SHARED_DEVICE_SEED_TYPE = "preview-seed"
 # Process name -> substring its command line must contain before a recorded pid
 # is treated as ours (guards against pid recycling by unrelated processes).
 # Settings the Unit 3 cutover retired. The supported service reads no cache location -- each
@@ -72,10 +70,6 @@ SERVICE_PROCESSES = {
     "prefect-worker": "infrahub_sync.service.worker",
 }
 WAIT_TIMEOUT_SECONDS = 420
-# Infrahub applies a loaded schema asynchronously, and the seed immediately creates a node
-# of the kind it just loaded. Without waiting for the schema to converge across Infrahub's
-# workers, that create fails with `SchemaNotFoundError` on a fresh instance.
-SCHEMA_CONVERGE_SECONDS = 120
 # The pre-stability names this preview used to register and run under. `preview.up`
 # reuses volumes and tolerates existing Prefect state, so a checkout that ran the old
 # names can still hold a live deployment, work pool, worker, or host process under them.
@@ -231,32 +225,8 @@ def _compose(context: Context, arguments: str, values: dict[str, str]) -> None:
 
 
 def ensure_smoke_branch(env: dict[str, str]) -> None:
-    """Seed the shared device on `main`, then fork the disposable smoke branch.
-
-    The order is the point. A branch inherits what `main` held when it forked, so
-    seeding first is what leaves one device present on both sides — which is what gives
-    the registered smoke an update to plan. Seeded afterwards the device would reach
-    `main` alone and that smoke would plan a create instead.
-
-    Both steps are skipped once the branch exists: seeding then could no longer reach
-    it, and re-forking would discard the destination the smokes have been writing to.
-    The seed itself upserts on the device's unique name, so a reset environment that
-    kept its data converges rather than duplicating.
-    """
-    from infrahub_sdk import InfrahubClientSync  # noqa: PLC0415 -- keep Invoke task imports lightweight
-
-    client = InfrahubClientSync(
-        address=env["INFRAHUB_ADDRESS"],
-        config={"api_token": env["INFRAHUB_API_TOKEN"]},
-    )
-    if SMOKE_BRANCH in client.branch.all():
-        return
-    client.create(
-        kind=SMOKE_KIND,
-        branch="main",
-        data={"name": SHARED_DEVICE_NAME, "type": SHARED_DEVICE_SEED_TYPE},
-    ).save(allow_upsert=True)
-    client.branch.create(SMOKE_BRANCH, sync_with_git=False)
+    """Seed the shared device on `main`, then fork the smoke branch (see `smoke_dataset.ensure_smoke_branch`)."""
+    smoke_dataset.ensure_smoke_branch(env["INFRAHUB_ADDRESS"], env["INFRAHUB_API_TOKEN"])
 
 
 _SERVER_ERROR_FLOOR = 500

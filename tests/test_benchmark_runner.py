@@ -35,13 +35,32 @@ from development.bench.records import (
 )
 from development.bench.runtime import BenchmarkError, docker_memory_mib, measured_process, output
 from development.netbox.datasets.change_netbox import expected_text, plan_changes
-from tasks import bench
+from tasks import bench, dev
+
+# What `docker compose config` resolves for a clean checkout: the development file's defaults.
+DEV_SETTINGS = dev.DevSettings(
+    project="infrahub-sync-dev",
+    sync_api=dev.Publication("127.0.0.1", "8030"),
+    prefect=dev.Publication("127.0.0.1", "4230"),
+    infrahub=dev.Publication("127.0.0.1", "8080"),
+    infrahub_admin_token="06438eb2-8019-4776-878c-0941b1f1d1ec",  # noqa: S106 -- the development default
+    worker_infrahub_url="http://infrahub-server:8000",
+    infrahub_network="",
+    bearer_tokens='{"dev": {"token": "infrahub-sync-dev-token", "administrator": true}}',
+    work_pool="infrahub-sync",
+)
 
 
 @pytest.fixture(autouse=True)
 def isolated_runner_lock(monkeypatch, tmp_path) -> None:
     """Keep unit callers separate from benchmarks running on the host."""
     monkeypatch.setattr(bench, "RUNNER_LOCK", tmp_path / "shared-runner.lock")
+
+
+@pytest.fixture(autouse=True)
+def development_settings(monkeypatch) -> None:
+    """Answer `dev.dev_settings()` without running `docker compose config`."""
+    monkeypatch.setattr(bench.dev, "dev_settings", lambda *_args, **_kwargs: DEV_SETTINGS)
 
 
 @pytest.fixture
@@ -766,8 +785,9 @@ def test_destination_identity_checks_server_and_records_image(monkeypatch, versi
 
     monkeypatch.setenv("INFRAHUB_DOCKER_IMAGE", "local/unverified-infrahub")
     stack = bench.CellStack()
-    assert stack.preview_env["INFRAHUB_DOCKER_IMAGE"] == bench.INFRAHUB_IMAGE
-    assert stack.preview_env["VERSION"] == "1.11.3"
+    assert stack.destination_env["INFRAHUB_DOCKER_IMAGE"] == bench.INFRAHUB_IMAGE
+    assert stack.destination_env["VERSION"] == "1.11.3"
+    assert stack.infrahub_url == "http://127.0.0.1:8080"
     image = SimpleNamespace(id="sha256:image", attrs={"RepoDigests": [bench.INFRAHUB_IMAGE + "@sha256:digest"]})
     filters = []
     engine = SimpleNamespace(
@@ -835,7 +855,7 @@ def test_stopped_development_worker_requires_destroy(monkeypatch) -> None:
     stack = bench.CellStack()
     monkeypatch.setattr(stack.context, "run", lambda *_args, **_kwargs: SimpleNamespace(stdout="stopped-worker"))
     monkeypatch.setattr(bench.dev, "_build", lambda _context: pytest.fail("must not build over existing stack"))
-    with pytest.raises(BenchmarkError, match=r"invoke destroy.*removes volumes"):
+    with pytest.raises(BenchmarkError, match=r"invoke dev\.destroy.*removes volumes"):
         stack.start_sync()
     assert stack.started_sync is False
 
@@ -901,8 +921,15 @@ def test_sync_cleanup_only_owns_created_containers_and_pins_compose(monkeypatch,
     assert stack.started_sync == (phase in {"start-created", "ready"})
     lifecycle = [command for command in commands if command[:2] == ["docker", "compose"]]
     assert all(
-        command[2:6] == ["--project-name", bench.netbox.DEV_STACK_PROJECT, "-f", str(bench.ROOT / "compose.yaml")]
+        command[command.index("--project-name") : command.index("--project-name") + 4]
+        == ["--project-name", bench.netbox.DEV_STACK_PROJECT, "-f", dev.DEV_COMPOSE_FILE]
         for command in lifecycle
+    )
+    # The Sync stack starts without the stack's own Infrahub: the benchmark destination is separate.
+    assert all(
+        "infrahub" not in command[: command.index("--project-name")]
+        for command in lifecycle
+        if "up" in command or "build" in command
     )
     assert any("down" in command for command in lifecycle) == stack.started_sync
     assert commands[0] == [
@@ -1027,9 +1054,9 @@ def test_real_invoke_enforces_deadline_through_stack_lifecycle(monkeypatch, phas
     stack = bench.CellStack()
     command = "exec " + shlex.join([sys.executable, "-c", "import time; time.sleep(5)"])
     monkeypatch.setattr(
-        bench.preview,
-        "_compose",
-        lambda context, _arguments, _env: context.run(command if phase == "compose" else "true"),
+        bench.dev,
+        "compose",
+        lambda context, _arguments, **_kwargs: context.run(command if phase == "compose" else "true"),
     )
     stack.context.deadline = time.monotonic() + 0.2
     started = time.monotonic()
@@ -1172,13 +1199,13 @@ def test_runner_rejects_existing_development_container_before_mutation(monkeypat
 
     monkeypatch.setattr(bench.netbox, "restore", destructive)
     monkeypatch.setattr(bench.netbox, "down", destructive)
-    monkeypatch.setattr(bench.preview, "_compose", destructive)
+    monkeypatch.setattr(bench.dev, "compose", destructive)
     monkeypatch.setattr(bench.dev, "_build", destructive)
     monkeypatch.setattr(bench.dev, "_destroy", destructive)
     bench.run_cell.body(Context(), line=line, v2_ref="2.0.1")
     row = json.loads(bench.RESULTS.read_text())
     assert row["status"] == "failed"
-    assert "uv run invoke destroy" in row["error"]
+    assert "uv run invoke dev.destroy" in row["error"]
     assert "--all" in commands[0]
     assert "com.docker.compose.project=infrahub-sync-dev" in commands[0]
     assert "com.docker.compose.service" not in commands[0]
@@ -1195,14 +1222,14 @@ def test_partial_setup_cleans_only_acquired_stacks(monkeypatch, failure) -> None
             msg = "restore failed"
             raise BenchmarkError(msg)
 
-    def compose(_context, _arguments, _env):
+    def compose(_context, _arguments, **_kwargs):
         events.append("destination")
         if len(events) == 1:
             msg = "compose failed"
             raise BenchmarkError(msg)
 
     monkeypatch.setattr(bench.netbox, "restore", restore)
-    monkeypatch.setattr(bench.preview, "_compose", compose)
+    monkeypatch.setattr(bench.dev, "compose", compose)
     monkeypatch.setattr(bench.netbox, "down", lambda _context: events.append("source"))
     monkeypatch.setattr(bench.dev, "_destroy", lambda _context: pytest.fail("unacquired Sync stack"))
     with pytest.raises(BenchmarkError):
