@@ -534,6 +534,16 @@ def test_the_prefect_ui_api_address_is_loopback(model: dict[str, Any]) -> None:
     assert urlsplit(address).hostname == "127.0.0.1", f"the Prefect UI calls the API on {address}"
 
 
+def test_the_prefect_ui_api_address_stays_loopback_with_another_bind_address(
+    contract_environment: dict[str, str],
+) -> None:
+    """The snippet publishes the Prefect port on 127.0.0.1 only, so the UI must call the API there."""
+    environment = {**contract_environment, "INFRAHUB_SYNC_BIND_ADDRESS": "0.0.0.0"}  # noqa: S104
+    address = service(resolve(environment), PREFECT_SERVER)["environment"]["PREFECT_SERVER_UI_API_URL"]
+
+    assert urlsplit(address).hostname == "127.0.0.1", f"the Prefect UI calls the API on {address}"
+
+
 def test_the_prefect_ui_snippet_turns_the_ui_on_and_publishes_it_on_loopback_only(
     contract_environment: dict[str, str],
 ) -> None:

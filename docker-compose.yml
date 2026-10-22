@@ -175,9 +175,10 @@ services:
       PREFECT_SERVER_API_PORT: "4200"
       PREFECT_UI_ENABLED: "false"
       # Set even with the UI off, so the override snippet only has to turn the
-      # UI on and publish its port.
+      # UI on and publish its port. Loopback whatever INFRAHUB_SYNC_BIND_ADDRESS
+      # is, because the snippet publishes the Prefect port on 127.0.0.1 only.
       PREFECT_SERVER_UI_API_URL: >-
-        http://${INFRAHUB_SYNC_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_SYNC_PREFECT_PORT:-4200}/api
+        http://127.0.0.1:${INFRAHUB_SYNC_PREFECT_PORT:-4200}/api
       PREFECT_SERVER_ANALYTICS_ENABLED: "false"
       # Basic authentication on the whole API, the UI's calls included: the UI
       # asks for this value once and sends it with each request. Prefect leaves
