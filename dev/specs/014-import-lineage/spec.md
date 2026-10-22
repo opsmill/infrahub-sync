@@ -44,6 +44,18 @@ Not decided yet: the oldest Infrahub version an import supports. Planning decide
 - Q: Which kinds can a package name as source or owner? → A: `CoreAccount`, `CoreAccountGroup`,
   `CoreRepository` and `CoreReadOnlyRepository`.
 
+### Session 2026-10-22 (review of the plan and tasks)
+
+- Q: Which proposed changes show who last changed the value? → A: Proposed updates to attributes
+  and relationships of nodes that already exist. A create shows no last-change record, because
+  there is no earlier value.
+- Q: What does apply do when a named source or owner no longer exists? → A: Apply stops before any
+  write, with the same cause as the plan.
+- Q: What does apply do when the import account differs from the account the plan recorded? → A:
+  Apply refuses before any write, with a cause that names both accounts.
+- Q: Which term names the account behind the token? → A: "Import account", as defined under Key
+  Entities.
+
 ## Decisions carried over from the brief
 
 - **D-1. Scope.** This specification covers six things:
@@ -82,7 +94,7 @@ Not decided yet: the oldest Infrahub version an import supports. Planning decide
 
 ## User Scenarios & Testing *(mandatory)*
 
-### User Story 1 - Import with a dedicated account (Priority: P1)
+### User Story 1 - Import with an account used only by this import (Priority: P1)
 
 The operator creates an Infrahub account for one import, for example `netbox`, gives it the
 documented permissions and no permission to read accounts, and gives its token to the worker. After
@@ -108,6 +120,9 @@ the run created.
 3. **Given** the import account is refused a write because it lacks a permission (HTTP 403),
    **When** the run fails, **Then** the run records a missing permission and quotes the permission
    Infrahub names, and does not report a rejected token.
+4. **Given** a plan made with the `netbox` token, **When** the operator applies it with the token
+   of another account, **Then** apply refuses before any write, and the cause names `netbox` and
+   the other account.
 
 ---
 
@@ -127,7 +142,7 @@ an import that creates a device; then rename the group so it no longer exists an
 
 1. **Given** a package with `owner: {kind: CoreAccountGroup, name: network-team}`, and that group
    exists, **When** the import creates a device, **Then** the device's values have owner
-   `network-team` and a source equal to the token's account.
+   `network-team` and a source equal to the import account.
 2. **Given** the same package, and the group does not exist, **When** the operator plans the run,
    **Then** the run stops before it reads the source system, and the cause names the setting
    (`owner`), the kind (`CoreAccountGroup`) and the name (`network-team`).
@@ -141,13 +156,16 @@ an import that creates a device; then rename the group so it no longer exists an
    already exists, **When** the import adds a relationship edge to that device, **Then** the new
    edge has owner `network-team`, and the owners of the device's existing attributes and edges do
    not change.
+7. **Given** a plan made while the group `network-team` existed, and the group was deleted
+   afterwards, **When** the operator applies the plan, **Then** apply stops before any write, and
+   the cause names the setting, the kind and the name.
 
 ---
 
 ### User Story 3 - View who changed a value before overwriting it (Priority: P2)
 
-Before approving a run, the operator views the plan's detail and, for each proposed change, views
-which account last changed the value and when. This tells the operator that a person, not an
+Before approving a run, the operator views the plan's detail and, for each proposed update to a
+node that already exists, views which account last changed the value and when. This tells the operator that a person, not an
 earlier import, changed the value.
 
 **Why this priority**: It lets the operator spot a manual change the run is about to overwrite. The
@@ -161,7 +179,7 @@ plan the next run and view the plan's detail.
 1. **Given** a person changed a device description after the last import, **When** the operator
    views the plan's detail, **Then** the proposed update shows `updated_by` (the person's account)
    and `updated_at`.
-2. **Given** a proposed change to a relationship, **When** the operator views the plan's detail,
+2. **Given** a proposed update to a relationship of an existing node, **When** the operator views the plan's detail,
    **Then** the change shows the relationship's `updated_by` and `updated_at`.
 3. **Given** a value whose `updated_by` Infrahub did not record, **When** the operator views the
    plan's detail, **Then** the proposed change shows "not recorded" for that field, and the plan
@@ -217,9 +235,10 @@ protection flag of the values written and of a value protected earlier.
 
 ### Functional Requirements
 
-- **FR-001**: The import MUST record the token's account as the source of every attribute and
+- **FR-001**: The import MUST record the import account as the source of every attribute and
   relationship edge it writes, unless the package names a source.
-  - Test: import with a dedicated token, then read the source of the written values.
+  - Test: import with the token of an account used only by this import, then read the source of the
+    written values.
 - **FR-002**: The import MUST set an owner only when the package names one, and only on values it
   creates: the attributes of nodes the run creates, and every relationship edge the run adds,
   including edges on nodes that already exist.
@@ -241,11 +260,13 @@ protection flag of the values written and of a value protected earlier.
   NOT send the protection flag.
   - Test: check the inputs the import sends to Infrahub, and check that a value protected earlier
     keeps its flag.
-- **FR-007**: The plan's detail MUST show `updated_by` and `updated_at` for each proposed change to
-  an attribute or a relationship. When Infrahub holds no value for one of these fields, the plan
-  MUST show "not recorded" for it and continue, on any Infrahub version.
+- **FR-007**: The plan's detail MUST show `updated_by` and `updated_at` for each proposed update to
+  an attribute or a relationship of a node that already exists. A proposed create shows no
+  last-change record. When Infrahub holds no value for one of these fields, the plan MUST show
+  "not recorded" for it and continue, on any Infrahub version. The plan MUST NOT show "not
+  recorded" for a value Infrahub holds.
   - Test: change a value as another account, then plan; plan a change to a value with no recorded
-    `updated_by`.
+    `updated_by`; plan a create and check it has no last-change record.
 - **FR-008**: The run MUST record an HTTP 403 as a missing permission, quoting the permission
   Infrahub names. Only a refused credential MUST be recorded as a token problem.
   - Test: one test for each response code.
@@ -259,11 +280,19 @@ protection flag of the values written and of a value protected earlier.
   - the resource-pool exception: on an allocated edge the import sends no source, owner or
     protection flag, and the pool stays the source;
   - how to set the owner of existing data.
+- **FR-011**: Apply MUST stop before any write when a named source or owner does not exist at the
+  start of the apply. The cause MUST name the setting, the kind and the name, as in FR-004.
+  - Test: plan with an existing group, delete the group, then apply.
+- **FR-012**: The plan MUST record its import account. Apply MUST refuse before any write when the
+  import account differs from the account the plan recorded, whether or not the package names a
+  source. The cause MUST name both accounts.
+  - Test: plan with one token, then apply with the token of another account.
 
 ### Key Entities
 
-- **Import account** (existing): the Infrahub account behind the token. It is the default source,
-  and Infrahub records it as `created_by` and `updated_by`.
+- **Import account** (existing): the Infrahub account behind the token the worker uses for the
+  import. It is the default source, and Infrahub records it as `created_by` and `updated_by`. The
+  rest of this specification calls it "the import account".
 - **Named source or owner** (existing setting, new form): `{kind, name}`, where the kind is
   `CoreAccount`, `CoreAccountGroup`, `CoreRepository` or `CoreReadOnlyRepository`.
 - **Attribute and relationship lineage** (existing in Infrahub): source, owner, protection flag,
@@ -280,8 +309,9 @@ protection flag of the values written and of a value protected earlier.
 - **API and plan format**: the plan's detail carries `updated_by` and `updated_at`.
 - **Permissions**: the documented permissions of the import account, and no permission to read
   accounts.
-- **Database or product store schema**: none expected. Planning checks whether the stored plan needs
-  new fields.
+- **Database or product store schema**: the product store database does not change. The stored
+  plan gains one file and two manifest fields, with no new plan format version (see
+  [research.md](./research.md), R-4).
 - **New dependency**: none. The pinned Infrahub SDK 1.23.2 has `include_metadata`, which arrived in
   1.18.0.
 - **CI/CD**: none.
@@ -290,15 +320,19 @@ protection flag of the values written and of a value protected earlier.
 
 ### Measurable Outcomes
 
-- **SC-001**: After an import with a dedicated token, 100% of the values it created name that
-  account as source and as `updated_by`.
+- **SC-001**: After an import with the token of an account used only by this import, 100% of the
+  values it created name that account as source and as `updated_by`.
 - **SC-002**: An import completes with only the documented permissions, without permission to read
   accounts.
 - **SC-003**: In 100% of runs with a missing named node, the run stops before reading the source
   system, and no value is written with an empty or fallback lineage.
 - **SC-004**: An owner set at creation is unchanged after any number of updates.
-- **SC-005**: 100% of proposed changes in a plan's detail show who last changed the value and when.
+- **SC-005**: 100% of proposed updates to attributes and relationships of existing nodes in a
+  plan's detail show who last changed the value and when, or "not recorded" when Infrahub holds no
+  value.
 - **SC-006**: No HTTP 403 is reported as a rejected token.
+- **SC-007**: In 100% of applies with a missing named node, or with an import account that differs
+  from the plan's, no value is written.
 
 ## Assumptions
 

@@ -8,8 +8,8 @@
 - The development stack with the pinned Infrahub 1.10.6 (`development/docker-compose.infrahub.yml`)
   and the Sync service, as in `docs/docs/development-stack.mdx`.
 - In Infrahub:
-  - an account `netbox` with the documented import permissions and no permission to read accounts,
-    and an API token for it;
+  - an account `netbox` with exactly the permission set recorded in research.md R-7, which gives no
+    permission to read accounts, and an API token for it;
   - a group `network-team` (`CoreAccountGroup`) that `netbox` can view;
   - a second account that a person uses to change values by hand.
 - A configuration package from `examples/` whose destination is Infrahub, with the `netbox` token
@@ -26,12 +26,14 @@ the payload rules for source, owner and protection ([data-model.md](./data-model
 changes on written values"), the error classification ([contracts/run-errors.md](./contracts/run-errors.md)),
 and the plan files and checksum ([contracts/plan-last-changes.md](./contracts/plan-last-changes.md)).
 
-## Scenario 1: dedicated account (User Story 1, SC-001, SC-002)
+## Scenario 1: an account used only by this import (User Story 1, SC-001, SC-002)
 
 1. Register the package with no `source`, `owner` or `protect`.
 2. Run `infrahub-sync sync` into a new branch.
 3. Expected: the run completes; every attribute and edge it created has source `netbox`, no owner
    and no protection; every node it created has `created_by` `netbox`.
+4. Run `diff`, then apply the plan with the token of another account. Expected: apply refuses
+   before any write, and the cause names `netbox` and the other account (FR-012).
 
 ## Scenario 2: owner and a missing owner (User Story 2, SC-003, SC-004)
 
@@ -42,14 +44,17 @@ and the plan files and checksum ([contracts/plan-last-changes.md](./contracts/pl
    a relationship edge added to an existing node has owner `network-team`.
 5. Rename the group in Infrahub and run `diff`. Expected: the run stops before reading the source
    system; the cause names `owner`, `CoreAccountGroup` and `network-team`.
-6. Register `owner: network-team`. Expected: registration is refused.
+6. Restore the group, run `diff`, rename the group again, then apply the plan. Expected: apply
+   stops before any write, with the same cause (FR-011).
+7. Register `owner: network-team`. Expected: registration is refused.
 
 ## Scenario 3: who last changed a value (User Story 3, SC-005)
 
 1. As the second account, change the description of a device the import wrote.
 2. Run `diff`, then `infrahub-sync runs plan <run id>`.
 3. Expected: the proposed update to `description` shows the second account and the time of the
-   change. A field with no recorded change shows "not recorded".
+   change. A field with no recorded change shows "not recorded". A proposed create shows no
+   last-change record.
 
 ## Scenario 4: protection (User Story 4)
 
@@ -68,4 +73,4 @@ and the plan files and checksum ([contracts/plan-last-changes.md](./contracts/pl
 
 Run the NetBox benchmark (`docs/docs/development/guides/netbox-benchmark-runner.md`) with and
 without metadata reads, on the default branch and on another branch, and record the destination
-read time for about 10,000 nodes in the plan's notes.
+read time for about 10,000 nodes in the plan's notes. The result is information only.

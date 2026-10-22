@@ -6,15 +6,18 @@
 
 ## Summary
 
-An import into Infrahub records the account behind its token as the source of every value it
-writes, sets an owner only when the package names one and only on values it creates, stops before
-reading the source system when a named source or owner does not exist, sends the protection flag
-only when `protect` is on, and shows in the plan who last changed each value it proposes to change.
+An import into Infrahub records the import account (the account behind its token) as the source of
+every value it writes, sets an owner only when the package names one and only on values it creates,
+stops before reading the source system when a named source or owner does not exist, sends the
+protection flag only when `protect` is on, and shows in the plan who last changed each value it
+proposes to update. Apply stops before any write when a named node is missing or when the import
+account differs from the plan's.
 
 Technical approach, from [research.md](./research.md):
 
 - The default source comes from `AccountProfile` (`client.get_user()`), which needs no permission on
-  accounts (R-3). The lookup of an account named after the source system is removed.
+  accounts (R-3). The lookup of an account named after the source system is removed. The plan
+  records the import account, and apply refuses a different one (FR-012).
 - `source` and `owner` take the form `{kind, name}`, checked at registration through the Infrahub
   adapter's `validator` hook; `protect` is a new boolean destination setting.
 - The destination read adds `include_metadata=True` to the existing SDK calls on Infrahub 1.7.0 or
@@ -45,7 +48,7 @@ run against the pinned Infrahub 1.10.6 stack.
 
 **Performance Goals**: no added requests to Infrahub for metadata. The growth of the destination
 read time on a 10,000-node plan is not known; tasks measure it (R-2) and record it before the
-feature merges.
+feature merges. The sources set no threshold, so the result is information only.
 
 **Constraints**: idempotent plans (metadata must not enter the diff); no secrets in causes; format 3
 plans made before the upgrade keep applying.
@@ -60,11 +63,12 @@ plans made before the upgrade keep applying.
 | Principle | How the design meets it |
 |---|---|
 | I. Read-only and dry-run by default | The last-change data is display only (D-2). `diff` and `runs plan` stay non-applying. `protect` is opt-in and off by default, which removes an implicit write behavior. |
-| II. Idempotency and safety | Metadata is kept out of the DiffSync models, so a value a person changed does not create a spurious change. An unchanged value is not written. 401 and 403 are handled explicitly (R-5). A missing named node stops the run instead of writing with an empty lineage. |
+| II. Idempotency and safety | Metadata is kept out of the DiffSync models, so a value a person changed does not create a spurious change. An unchanged value is not written. 401 and 403 are handled explicitly (R-5). A missing named node stops the run instead of writing with an empty lineage, and apply refuses before any write when a named node is missing or the import account differs from the plan's. |
 | III. Adapter symmetry | Settings checks use the existing capability `validator` hook; writes stay in the Infrahub adapter and flow through Potenda. Docs updated in `docs/docs/adapters/infrahub.mdx`. |
 | IV. Type safety | New settings and plan records are typed pydantic models; specific exceptions for a missing named node and a missing permission. |
 | V. Test discipline | Unit tests for each refusal, each payload rule, each response code (401, 403, GraphQL denial), and the plan files; opt-in integration tests for the quickstart scenarios. |
 | VI. Security and secrets | Causes quote the permission text only, never the token. No new credential. |
+| Logging standard | Stops and refusals are logged with `structlog`, with the setting, kind, name or account names as context, never a secret. |
 | VII. Simplicity | No new dependency, no new plan format version, no database change; one new plan file. |
 
 Post-design re-check: pass. The new `PlanResource` fields are an optional API addition, and the
@@ -126,14 +130,21 @@ above.
 
 - The oldest Infrahub version a V3 import supports is not known and stays out of this feature
   (R-1). The design works on any version.
-- The cost of the metadata read is not measured yet (R-2). Tasks measure it on the pinned stack.
-- Whether `rel_manager.fetch()` accepts `include_metadata` in SDK 1.23.2 is not checked. If it does
-  not, cardinality-many edges show "not recorded" (R-2).
+- The cost of the metadata read is not measured yet (R-2). T004 and T056 measure it on the pinned
+  stack; the result is information only.
+- Which read carries metadata for cardinality-many edges is not checked yet (T001). The outcome is
+  binding: if no read in the existing requests carries it, User Story 3 stops and an amendment of
+  FR-007 goes to the product owner (R-2).
+- The import account's smallest permission set is not known yet (T005, R-7).
+- What apply does with a format 3 plan made before this feature, which has no
+  `lineage.import_account` to compare (FR-012), is not decided. Proposed: apply skips the
+  comparison for such a plan and logs that it did; this needs the product owner's confirmation.
 - How apply tells which relationship edges an update adds (to set the owner on them only) depends
-  on what apply reads from the destination before it writes. This is not checked yet; tasks start
-  with it.
+  on what apply reads from the destination before it writes. This is not checked yet (T002).
 - Whether the checkpoint artifact copies the plan directory or a fixed list of files
-  (`infrahub_sync/product_store/bundle.py:64`) is not checked yet (R-4).
+  (`infrahub_sync/product_store/bundle.py:64`) is not checked yet (T003, R-4).
+- Whether the optional `PlanResource` fields need a change to the compatibility check
+  (`infrahub_sync/service/compatibility.py`) is not checked yet (T041).
 - Closed (product owner, 2026-10-22): the change that refuses a bare-name `source` or `owner`
   carries the release-intent label `changes/minor`. V3 is not released, so no released package
   breaks, and the v2 conversion writes the `{kind, name}` form. The news fragment type is

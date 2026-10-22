@@ -29,12 +29,17 @@ read.
 
 | Field | Type | Origin |
 |---|---|---|
-| `source` | named node with `id` | the named source, or the account from `client.get_user()` |
+| `import_account` | account name and `id` | `client.get_user()`, always |
+| `source` | named node with `id` | the named source, or the import account |
 | `owner` | named node with `id`, or none | the named owner |
 | `protect` | boolean | the setting |
 
-- A named node that does not exist stops the run. The cause names the setting, the kind and the
-  name (FR-004).
+- A named node that does not exist stops the run, in plan (FR-004) and in apply (FR-011). The
+  cause names the setting, the kind and the name. Apply stops before any write.
+- In apply, the id from `client.get_user()` must equal the plan's `lineage.import_account.id`.
+  Otherwise apply refuses before any write, and the cause names both accounts (FR-012).
+- A plan made before this feature has no `lineage.import_account`. What apply does with it is not
+  decided (plan.md, Items left open).
 
 ## Stored plan: manifest fields (additive)
 
@@ -45,10 +50,10 @@ absent on older plans; covered by the checksum (`infrahub_sync/plan/checksum.py:
 
 | Field | Type | Notes |
 |---|---|---|
-| `source` | `{kind, name}` | `kind` is `CoreAccount` for the token's account |
+| `import_account` | `{name, id}` | the account from `client.get_user()`; apply compares `id` (FR-012) |
+| `source` | `{kind, name}` | `kind` is `CoreAccount` when the source is the import account |
 | `owner` | `{kind, name}` or `null` | `null` when the package names no owner |
 | `protect` | boolean | |
-| `owner_applies_to_created_values_only` | boolean | `true` when `owner` is not `null`; drives the summary notice (FR-009) |
 
 `last_changes`:
 
@@ -61,8 +66,8 @@ absent on older plans; covered by the checksum (`infrahub_sync/plan/checksum.py:
 
 ## Stored plan: `plan/last_changes.jsonl`
 
-One JSON record for each proposed change to an attribute or a relationship on an existing node
-(an `update` operation). A `create` has no earlier change to show, so it has no record.
+One JSON record for each proposed update to an attribute or a relationship of a node that already
+exists (an `update` operation). A `create` has no last-change record (FR-007).
 
 | Field | Type | Notes |
 |---|---|---|

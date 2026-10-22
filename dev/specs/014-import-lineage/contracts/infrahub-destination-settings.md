@@ -38,6 +38,15 @@ Each case gives one validation finding at the setting's pointer.
 | Condition | Cause recorded on the run |
 |---|---|
 | `owner: {kind: CoreAccountGroup, name: network-team}` and no such group | the setting `owner` names `CoreAccountGroup` `network-team`, which does not exist |
-| The token's account cannot read the named kind | missing permission, quoting the permission Infrahub names ([run-errors.md](./run-errors.md)) |
+| The import account cannot read the named kind | missing permission, quoting the permission Infrahub names ([run-errors.md](./run-errors.md)) |
 
 The run stops before it reads the source system in both cases.
+
+## Refused at the start of an apply
+
+| Condition | Cause recorded on the run |
+|---|---|
+| A named source or owner no longer exists | the same cause as in a plan (FR-011) |
+| The import account differs from the plan's `lineage.import_account` | the plan recorded `CoreAccount` `netbox`; the import account is `<other account>` (FR-012) |
+
+Apply refuses before any write in both cases.

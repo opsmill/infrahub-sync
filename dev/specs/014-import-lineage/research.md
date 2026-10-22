@@ -87,9 +87,12 @@ Path prefixes used below:
 **Decision**
 
 - Pass `include_metadata=True` (only when R-1 allows it) to the existing reads at
-  `infrahub_sync/adapters/infrahub.py:815-817` and `:771-776`, and to the `rel_manager.fetch()`
-  read of cardinality-many relationships if that call accepts it. If it does not, the plan shows
-  "not recorded" for those edges; tasks check this first.
+  `infrahub_sync/adapters/infrahub.py:815-817` and `:771-776`, and to the read of
+  cardinality-many relationships (`rel_manager.fetch()`).
+- Binding condition (product owner, 2026-10-22): the plan must not show "not recorded" for a value
+  Infrahub holds (FR-007). Task T001 finds a read that carries metadata for cardinality-many edges
+  within the existing requests. If no such read exists, work on User Story 3 stops and an
+  amendment of FR-007 goes to the product owner; the plan does not fall back to "not recorded".
 - Keep the metadata out of the DiffSync models. The adapter records it in a separate map keyed by
   destination node id and field name. Putting it into model attributes would make every value
   that a person changed look different on every plan, and would break idempotency (constitution
@@ -99,8 +102,8 @@ Path prefixes used below:
   work for each attribute. The size of the growth is not known. Tasks measure it with the
   existing benchmark runner (`docs/docs/development/guides/netbox-benchmark-runner.md`) on the
   pinned 1.10.6 stack, on the default branch and on another branch, and record the destination
-  read time with and without metadata in the plan's notes. No target is set before the
-  measurement.
+  read time with and without metadata in the plan's notes. The sources set no threshold, so the
+  result is information only and does not block the merge.
 
 **Alternatives considered**
 
@@ -130,13 +133,18 @@ Path prefixes used below:
 **Decision**
 
 - At the start of a plan and at the start of an apply, the Infrahub adapter calls
-  `client.get_user()` once and uses the returned account id as the default source. The current
+  `client.get_user()` once and uses the returned account id as the default source. The plan
+  records this import account in the manifest's `lineage.import_account`. Apply compares it with
+  its own import account and refuses before any write when they differ, naming both accounts
+  (FR-012). The current
   lookup of a `CoreAccount` named after the source system
   (`infrahub_sync/adapters/infrahub.py:716-721`) is removed (FR-005).
 - A named `{kind, name}` is looked up with one `client.get(kind=…, name__value=…)` for each named
   node, before the source system is read. `NodeNotFoundError` stops the run with a cause that names
   the setting, the kind and the name; there is no fallback (FR-004), replacing the warnings at
-  `:727-731` and `:738-742`.
+  `:727-731` and `:738-742`. Apply repeats the lookup and stops before any write (FR-011).
+- The stop is logged with `structlog`, with the setting, kind and name as context and no secret
+  (constitution, "Logging").
 
 **Alternatives considered**
 
@@ -174,7 +182,7 @@ Path prefixes used below:
   attribute or a relationship (see [data-model.md](./data-model.md)).
 - Add two additive manifest fields, both covered by the checksum and absent on older plans:
   - `last_changes`: the file's path, SHA-256 digest and record count;
-  - `lineage`: the resolved source, the named owner (or none), and `protect`.
+  - `lineage`: the import account, the resolved source, the named owner (or none), and `protect`.
 - `PlannedOperation` and `PLAN_FORMAT_VERSION` do not change, so plans in format 3 keep applying.
 - `PlanResource` gains two optional fields that carry the same records and the owner notice
   (FR-009). This changes the Sync API response (governance gate "API and plan format" in the
@@ -256,3 +264,22 @@ Path prefixes used below:
 - If a later feature allocates from a resource pool, that edge carries none of the three
   (Clarifications Q2). A unit test asserts the rule on the payload builder so the exception holds
   when allocation is added.
+
+## R-7. Smallest permission set of the import account
+
+**Findings**
+
+- The spec relies on "the documented permissions" of the import account (SC-002, FR-010), but no
+  source lists them yet.
+- The run calls `InfrahubInfo` (`SDK/client.py:526-529`) and `AccountProfile`
+  (`SDK/client.py:540-542`). The brief records that `AccountProfile` works without permission on
+  accounts; for `InfrahubInfo` this is not known.
+
+**Decision**
+
+- Task T005 finds the smallest permission set on the pinned Infrahub 1.10.6, for the default
+  branch and for another branch, by running plan and sync with an account that starts with no
+  permission and gains one permission at a time. It includes the `InfrahubInfo` and
+  `AccountProfile` queries and the read of each allowed named kind. The result is recorded here as
+  a table, T019 tests against it, and T051 documents it.
+- Result: not known yet.

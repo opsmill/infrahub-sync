@@ -17,10 +17,10 @@ plan/
 ```json
 {
   "lineage": {
+    "import_account": {"name": "netbox", "id": "<account id>"},
     "source": {"kind": "CoreAccount", "name": "netbox"},
     "owner": {"kind": "CoreAccountGroup", "name": "network-team"},
-    "protect": false,
-    "owner_applies_to_created_values_only": true
+    "protect": false
   },
   "last_changes": {
     "path": "last_changes.jsonl",
