@@ -1,0 +1,80 @@
+tests/dev_stack/test_profiles.py
+  s_8d92f288a8f661::t_d4c1b389940e94 1-118
+development/preview.env
+  s_8d92f288a8f661::t_cd5530f54bc925 18-20
+development/docker-compose.yml
+  s_8d92f288a8f661::t_0b37c455de0fca 2-282
+  s_9c7f8713d8e8dc::t_18e34f88f0bc6b 283
+changelog/+dev-stack-profiles.changed.md
+  s_8d92f288a8f661::t_efb968bcf5f31a 1
+development/docker-compose.infrahub.yml
+  s_8d92f288a8f661::t_cf6c4092c156d5 13-16
+  s_21afcad786780f::t_a0ebfab1a33486 214,230,240,261,278,296,340
+tests/compose/test_compose_contract.py
+  s_8d92f288a8f661::t_e96e96dee4d7cf 74-76
+  s_8d92f288a8f661::t_39007a9ddd74f9 679-681,698,723,748,774,790,807
+AGENTS.md
+  s_8d92f288a8f661::t_9e1070aca1ec91 189
+README.md
+  s_8d92f288a8f661::t_95920fa4cc865c 71
+dev/specs/010-prefect-from-sync-image/tasks.md
+  s_8d92f288a8f661::t_b61767f6fd085b 119,121,123,127-130
+docs/docs/adapters/choosing-an-adapter.mdx
+  s_8d92f288a8f661::t_8a910024ff963b 42
+docs/docs/custom-certificates.mdx
+  s_8d92f288a8f661::t_7461ad43faf9d8 33
+docs/docs/development-stack.mdx
+  s_8d92f288a8f661::t_fae04fded21862 45
+docs/docs/development/knowledge/repository-tour.md
+  s_8d92f288a8f661::t_cb6c37266c23ef 215
+docs/docs/running-a-sync.mdx
+  s_8d92f288a8f661::t_8b0ba50f613944 240
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_8d92f288a8f661::t_a07e938d62f619 343
+tasks/dev.py
+  s_8d92f288a8f661::t_58a6302c70291b 5-11,21,24-25,30,37-43,48-81,98-102,104-106,140-142
+tasks/netbox.py
+  s_8d92f288a8f661::t_1a0be0c35467ae 19,113
+tests/compose/test_image_pins.py
+  s_8d92f288a8f661::t_18f3ff893c4209 45,57-58,65,80
+tests/dev_stack/test_compose_valid.py
+  s_8d92f288a8f661::t_a6bb4825f66104 3,25-28,42,51,53,62,64,71,75-76,78
+tests/dev_stack/test_infrahub_network.py
+  s_8d92f288a8f661::t_673e938ac30762 5-8
+tests/dev_stack/test_loopback_publication.py
+  s_8d92f288a8f661::t_84e042940bbccc 27
+tests/dev_stack/test_netbox_network.py
+  s_8d92f288a8f661::t_617adcfc7525bb 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d144134754efb2778b2eb9c40ca8477005822b3c",
+  "prompts": {},
+  "sessions": {
+    "s_21afcad786780f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ac43bbe9901501210",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_9c7f8713d8e8dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7b4ab04-36d6-4644-a214-69334e6a0d27",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
