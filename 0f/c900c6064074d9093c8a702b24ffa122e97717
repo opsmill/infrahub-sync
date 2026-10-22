@@ -1,0 +1,29 @@
+pyproject.toml
+  s_8d92f288a8f661::t_13b522b4216c0b 133-140
+  s_8d92f288a8f661::t_9e288c1329a7a0 161-162
+tasks/tests.py
+  s_8d92f288a8f661::t_62d9426afc38f4 61
+  s_8d92f288a8f661::t_920262dbaa9b01 22-27
+dev/specs/010-prefect-from-sync-image/tasks.md
+  s_8d92f288a8f661::t_fccbcdb2a41327 57
+tests/compose/test_fixture_prerequisites.py
+  s_8d92f288a8f661::t_a3620dedf8f4c4 105-108
+uv.lock
+  s_8d92f288a8f661::t_6e8a7620a61f33 106,1074-1077,1086,1123,1159,1179,1193,1223-1226,1238-1239,1269-1270,1285-1302,2118,2160-2212,2250-2271,3414,3417,3421,3423,3533-3547,4080-4132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0fc900c6064074d9093c8a702b24ffa122e97717",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
