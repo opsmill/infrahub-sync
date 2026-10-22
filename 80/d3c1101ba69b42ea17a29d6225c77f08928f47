@@ -1,0 +1,19 @@
+dev/specs/012-v2-configuration-conversion/alignment-check.md
+  s_9c7f8713d8e8dc::t_7ea2f0e99cb2b3 1-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "80d3c1101ba69b42ea17a29d6225c77f08928f47",
+  "prompts": {},
+  "sessions": {
+    "s_9c7f8713d8e8dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7b4ab04-36d6-4644-a214-69334e6a0d27",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
