@@ -124,7 +124,7 @@ the product owner's decision on FR-007.
 
 - [X] T031 [P] [US3] Unit tests in `tests/adapters/test_infrahub_metadata_read.py`: on a server version of 1.7.0 or later the existing reads, including the cardinality-many read chosen in T001, pass `include_metadata=True` and no other read is added; before 1.7.0 or with an unparsable version they do not; a value Infrahub returns with `updated_by` is never shown as "not recorded"; metadata goes into the adapter's map and not into the DiffSync models, so planning twice over a value a person changed gives the same operations (FR-007, constitution principle II)
 - [X] T032 [P] [US3] Unit tests in `tests/plan/test_last_changes.py`: `last_changes.jsonl` has one record per changed field of each update and none for a create; records are sorted and canonical; `null` values are kept; the manifest's `last_changes` digest and count match; review refuses a sidecar whose digest does not match; a plan without the sidecar is reviewed without a last-change column (FR-007, SC-005)
-- [ ] T033 [P] [US3] Unit tests in `tests/service/test_plan_last_changes.py`: `PlanResource` carries `last_changes` for a new plan and omits it for an older plan
+- [X] T033 [P] [US3] Unit tests in `tests/service/test_plan_last_changes.py`: `PlanResource` carries `last_changes` for a new plan and omits it for an older plan
 
 ### Implementation for User Story 3
 
@@ -134,9 +134,9 @@ the product owner's decision on FR-007.
 - [X] T037 [US3] Add the `LastChangeRecord` model and the `last_changes` manifest field (data-model.md) to `infrahub_sync/plan/models.py`
 - [X] T038 [US3] Produce one record per changed field of each update in `infrahub_sync/plan/derive.py:590-682`, using the adapter's map; write `last_changes.jsonl` before the manifest in `infrahub_sync/plan/writer.py`; read it and check its digest in `infrahub_sync/plan/reader.py` and `infrahub_sync/plan/review.py`
 - [X] T039 [US3] Include `last_changes.jsonl` in the checkpoint artifact in `infrahub_sync/product_store/bundle.py` if T003 found a fixed file list; otherwise add a test that the checkpoint carries it
-- [ ] T040 [US3] Add the optional `last_changes` field to `PlanResource` in `infrahub_sync/client/models.py:341` and fill it in `infrahub_sync/service/flow.py:178-187`
-- [ ] T041 [US3] Check whether the optional `lineage` and `last_changes` fields of `PlanResource` need a change to the client and service compatibility check in `infrahub_sync/service/compatibility.py`; make the change, or record in research.md R-4 why none is needed, with a test in `tests/service/test_compatibility.py`
-- [ ] T042 [US3] Show, for each changed field of each update in `infrahub-sync runs plan`, the display label of `updated_by` and `updated_at`, or "not recorded", in `infrahub_sync/cli.py`
+- [X] T040 [US3] Add the optional `last_changes` field to `PlanResource` in `infrahub_sync/client/models.py:341` and fill it in `infrahub_sync/service/flow.py:178-187`
+- [X] T041 [US3] Check whether the optional `lineage` and `last_changes` fields of `PlanResource` need a change to the client and service compatibility check in `infrahub_sync/service/compatibility.py`; make the change, or record in research.md R-4 why none is needed, with a test in `tests/service/test_compatibility.py`
+- [X] T042 [US3] Show, for each changed field of each update in `infrahub-sync runs plan`, the display label of `updated_by` and `updated_at`, or "not recorded", in `infrahub_sync/cli.py`
 - [ ] T043 [US3] Opt-in integration test for quickstart scenario 3 in `tests/integration/test_infrahub_lineage_integration.py`: a value changed by a second account shows that account and the time; a field with no recorded change shows "not recorded"; a create shows no last-change record
 
 **Checkpoint**: User Stories 1 to 3 work on their own.

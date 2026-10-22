@@ -27,6 +27,7 @@ from infrahub_sync.client import (
     ConfigurationVersionResource,
     CreateRunRequest,
     OrchestrationSummary,
+    PlanLastChangeResource,
     PlanOperationResource,
     PlanResource,
     PlanSummaryResource,
@@ -1099,3 +1100,101 @@ def test_help_does_not_mark_reason_as_required(command: tuple[str, ...]) -> None
     assert result.exit_code == 0, result.output
     reason_line = next(line for line in result.output.splitlines() if "--reason" in line)
     assert "required" not in reason_line.lower()
+
+
+def _plan_with_an_update(last_changes: tuple[PlanLastChangeResource, ...] | None) -> PlanResource:
+    plan = _plan()
+    update = PlanOperationResource(
+        operation_id="op_0123456789abcdef",
+        action="update",
+        kind="Site",
+        identity={"name": "par1"},
+        tier=0,
+        payload={"description": "Paris"},
+        relationships=(),
+        destination_id="site-1",
+    )
+    return plan.model_copy(update={"operations": (*plan.operations, update), "last_changes": last_changes})
+
+
+def _last_change(field: str, field_type: str, updated_by: dict[str, str | None] | None, updated_at: str | None):  # type: ignore[no-untyped-def]
+    return PlanLastChangeResource.model_validate(
+        {
+            "operation_id": "op_0123456789abcdef",
+            "field": field,
+            "field_type": field_type,
+            "updated_by": updated_by,
+            "updated_at": updated_at,
+        }
+    )
+
+
+def test_runs_plan_detail_shows_who_last_changed_each_field_an_update_changes(client: MagicMock) -> None:
+    """FR-007, SC-005: each changed field shows `updated_by` and `updated_at`, or "not recorded"."""
+    client.get_plan.return_value = _plan_with_an_update(
+        (
+            _last_change(
+                "description", "attribute", {"id": "account-2", "display_label": "Jane Doe"}, "2026-10-21T09:14:03Z"
+            ),
+            _last_change("site", "relationship", None, None),
+            _last_change("status", "attribute", {"id": "account-3", "display_label": None}, None),
+        )
+    )
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.split("\n")
+    update_line = lines.index("op_0123456789abcdef update Site name=par1")
+    assert lines[update_line + 1 : update_line + 7] == [
+        "  destination id: site-1",
+        '  payload: {"description":"Paris"}',
+        "  last change: description (attribute): updated_by=Jane Doe, updated_at=2026-10-21T09:14:03Z",
+        "  last change: site (relationship): updated_by=not recorded, updated_at=not recorded",
+        # Infrahub holds the account, without a label: the id is shown, not "not recorded".
+        "  last change: status (attribute): updated_by=account-3, updated_at=not recorded",
+        "",
+    ]
+    # A create has no last-change record, and no line.
+    create_line = lines.index("op-create create Device name=edge-01")
+    assert not lines[create_line + 1].startswith("  last change:")
+
+
+def test_runs_plan_detail_of_an_older_plan_shows_no_last_change_lines(client: MagicMock) -> None:
+    """A plan made before `last_changes.jsonl` existed is reviewed without last-change data."""
+    client.get_plan.return_value = _plan_with_an_update(None)
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert "last change:" not in result.output
+
+
+def test_runs_plan_summary_shows_no_last_change_lines(client: MagicMock) -> None:
+    """Without `--detail` the review stays a summary, however many fields a plan changes."""
+    client.get_plan.return_value = _plan_with_an_update((_last_change("site", "relationship", None, None),))
+
+    result = _invoke(client, "runs", "plan", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert "last change:" not in result.output
+
+
+def test_runs_plan_escapes_the_recorded_account_label(client: MagicMock) -> None:
+    """A display label comes from Infrahub, so it is escaped before a reviewer reads it."""
+    client.get_plan.return_value = _plan_with_an_update(
+        (
+            _last_change(
+                "description",
+                "attribute",
+                {"id": "account-2", "display_label": "Jane\x1b[2KDoe"},
+                "2026-10-21T09:14:03Z",
+            ),
+        )
+    )
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    _assert_no_terminal_controls(result.output)
+    assert "updated_by=Jane\\x1b[2KDoe" in result.output

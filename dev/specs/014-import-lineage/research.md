@@ -315,6 +315,18 @@ separate local Compose project, on macOS arm64 with 18 CPUs under Docker Desktop
 - `PlanResource` gains two optional fields that carry the same records and the owner notice
   (FR-009). This changes the Sync API response (governance gate "API and plan format" in the
   spec); the field is optional, so older clients ignore it.
+- The client and service compatibility check needs no change for `lineage` and `last_changes`
+  (task T041, 2026-10-23):
+  - The check compares one declared API version: the service declares `API_VERSIONS =
+    ("v3-unstable",)` (`infrahub_sync/service/compatibility.py:9`), and the client refuses a
+    service that does not list `v3-unstable` (`infrahub_sync/client/client.py:525-531`). The check
+    does not look at response fields.
+  - An older client reads a newer review document, because the review models allow unknown fields
+    (`_ResourceModel`, `extra="allow"`, `infrahub_sync/client/models.py:49-50`).
+  - A newer client reads an older review document, because both fields default to `None`.
+  - Raising the API version would make every older client refuse a service whose responses it can
+    still read. `tests/service/test_compatibility.py` checks the declared version and that both
+    sides read each other's review document.
 - The plan checkpoint copies a fixed list of files, not the plan directory (task T003,
   2026-10-22). `publish_plan_checkpoint` builds the bundle members from
   `plan/manifest.json`, `plan/operations.jsonl` and the paths in the manifest's

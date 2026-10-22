@@ -40,11 +40,12 @@ from infrahub_sync.client import (
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Iterator, Mapping, Sequence
 
     from infrahub_sync.client.models import (
         ConfigurationSummaryResource,
         ConfigurationVersionResource,
+        PlanLastChangeResource,
         PlanOperationResource,
     )
 
@@ -53,6 +54,8 @@ DEFAULT_POLL_INTERVAL = 2.0
 VERBOSITY_MAP = {"quiet": logging.WARNING, "default": logging.INFO, "verbose": logging.DEBUG}
 # Shown in the `runs plan` summary when the saved plan names an owner (FR-009, D-8).
 OWNER_SCOPE_NOTICE = "The owner setting applies only to values this run creates."
+# Shown for an `updated_by` or `updated_at` Infrahub holds no value for (FR-007).
+NOT_RECORDED = "not recorded"
 _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
 _KIND_ARG = "kind"
@@ -529,7 +532,21 @@ def _identity_text(identity: Mapping[str, Any]) -> str:
     return " ".join(f"{key}={identity[key]}" for key in sorted(identity))
 
 
-def _operation_detail(operation: PlanOperationResource) -> None:
+def _last_change_line(record: PlanLastChangeResource) -> str:
+    """Render who last changed one field and when, or "not recorded" for a missing value.
+
+    An account Infrahub holds without a display label is shown by its id: FR-007 forbids
+    "not recorded" for a value Infrahub holds. Labels come from Infrahub, so they are escaped.
+    """
+    account = record.updated_by
+    updated_by = NOT_RECORDED if account is None else (account.display_label or account.id)
+    updated_at = record.updated_at or NOT_RECORDED
+    return _display(
+        f"  last change: {record.field} ({record.field_type}): updated_by={updated_by}, updated_at={updated_at}"
+    )
+
+
+def _operation_detail(operation: PlanOperationResource, last_changes: Sequence[PlanLastChangeResource] = ()) -> None:
     marker = " (not executed)" if operation.action == "delete" else ""
     # Identity values come from the source, so they are escaped before a reviewer reads them.
     typer.echo(
@@ -547,6 +564,8 @@ def _operation_detail(operation: PlanOperationResource) -> None:
     relationships = operation.relationships
     if relationships:
         typer.echo(f"  relationships: {json.dumps(relationships, sort_keys=True, separators=(',', ':'))}")
+    for record in last_changes:
+        typer.echo(_last_change_line(record))
 
 
 def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = None) -> None:
@@ -576,8 +595,12 @@ def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = N
     _delete_disclosure(plan)
     _owner_scope_disclosure(plan)
     if detail:
+        # Records are grouped by operation; a plan made without them shows no last-change lines.
+        last_changes: dict[str, list[PlanLastChangeResource]] = {}
+        for record in plan.last_changes or ():
+            last_changes.setdefault(record.operation_id, []).append(record)
         for operation in operations:
-            _operation_detail(operation)
+            _operation_detail(operation, last_changes.get(operation.operation_id, ()))
 
 
 def _echo_completed_destination_branch(client: SyncClient, run_id: str) -> None:

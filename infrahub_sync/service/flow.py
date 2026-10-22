@@ -173,6 +173,11 @@ def _review_document(run_id: str, saved: SavedPlan) -> PlanResource:
         schema_fingerprint=saved.manifest.registered_schema_fingerprint,
         destination_branch=saved.manifest.destination_binding.branch if saved.manifest.destination_binding else None,
         lineage=saved.manifest.lineage.model_dump(mode="json") if saved.manifest.lineage is not None else None,
+        last_changes=(
+            None
+            if saved.last_changes is None
+            else tuple(record.model_dump(mode="json") for record in saved.last_changes)
+        ),
     )
 
 

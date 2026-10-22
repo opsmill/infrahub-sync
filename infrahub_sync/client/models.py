@@ -364,6 +364,27 @@ class PlanLineageResource(_ResourceModel):
     protect: bool
 
 
+class PlanLastChangeAccountResource(_ResourceModel):
+    """The account Infrahub recorded as `updated_by` for a value, by id and display label."""
+
+    id: str = Field(min_length=1)
+    display_label: str | None = None
+
+
+class PlanLastChangeResource(_ResourceModel):
+    """Who last changed one field an update proposes to change, and when.
+
+    `updated_by` or `updated_at` is `None` when Infrahub holds no value for it, or when the
+    plan did not read metadata; review shows such a value as "not recorded".
+    """
+
+    operation_id: str = Field(min_length=1)
+    field: str = Field(min_length=1)
+    field_type: Literal["attribute", "relationship"]
+    updated_by: PlanLastChangeAccountResource | None = None
+    updated_at: str | None = None
+
+
 class PlanResource(_ResourceModel):
     """Return a saved plan, checksum, summary, and operations."""
 
@@ -380,6 +401,9 @@ class PlanResource(_ResourceModel):
     # The lineage the plan records in its manifest. `None` for a plan whose destination
     # records no lineage. Optional, so a service that does not send it still validates.
     lineage: PlanLineageResource | None = None
+    # Who last changed each field each update proposes to change, from the plan's
+    # `last_changes.jsonl`. `None` for a plan made without the file. Optional, like `lineage`.
+    last_changes: tuple[PlanLastChangeResource, ...] | None = None
 
 
 class ResultsResource(_ResourceModel):
