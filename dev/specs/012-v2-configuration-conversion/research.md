@@ -41,7 +41,10 @@ The command needs this table to apply FR-008, FR-010 to FR-013 and FR-029.
 - **Decision**: keep this table as a constant in the conversion module, with a unit test per row.
   For `genericrestapi`, the `*_env_vars` settings are read to build the variable list and are not
   copied: V3 does not accept them (`_GENERIC_REST_SETTINGS`, `configuration/capabilities.py:135`).
-  The report says they were used and dropped.
+  The report says they were dropped. Their entries are **not** read (critique E1): only the
+  fixed names in this table are read, so an input file cannot make the command read another
+  variable. A value taken from `genericrestapi`'s generic `URL` or `ADDRESS` is reported as a
+  warning, because other software may set those names (critique X1).
 - **Rationale**: the table is fixed history (v2 is frozen at `2.0.2`). Reading v2 code at runtime
   is not possible, because V3 does not ship it.
 - **Alternatives considered**: refusing `*_env_vars`. Rejected: the settings say only where v2
@@ -55,8 +58,9 @@ The command needs this table to apply FR-008, FR-010 to FR-013 and FR-029.
 - **Finding**: v2 does not expand `${VARIABLE}` (`2.0.2`, `infrahub_sync/utils.py` loads YAML with
   `yaml.safe_load` and nothing else). The v2 ACI example still holds `url: ${CISCO_APIC_URL}` and
   `verify: ${CISCO_APIC_VERIFY}`. It worked only because the ACI adapter read those variables first.
-- **Decision**: a placeholder in a setting from the R2 table names the variable to read, placed
-  first in that setting's list. A placeholder in a credential setting is reported as the v2
+- **Decision**: a placeholder in a setting from the R2 table is read only when it names one of
+  that setting's v2 variables (it then goes first in the list). A placeholder that names any other
+  variable is not read; the report says so (spec FR-030, critique E1). A placeholder in a credential setting is reported as the v2
   origin. A placeholder in any other setting is refused (FR-015), because v2 sent the literal text.
 - **Spec change**: FR-029 and an edge case were added to `spec.md`, because otherwise SC-002 fails
   on the ACI example.
@@ -80,7 +84,8 @@ The command needs this table to apply FR-008, FR-010 to FR-013 and FR-029.
 - **Decision**: a constant tuple `COMPOSE_WORKER_CREDENTIAL_VARIABLES` in the conversion module,
   and a unit test that parses `docker-compose.yml` and asserts the tuple equals the
   `INFRAHUB_SYNC_CREDENTIAL_*` keys of the `sync-worker` environment. When the Compose work adds
-  the other variables, the test fails until the tuple is updated.
+  the other variables, the test fails until the tuple is updated. The warning reads "the Compose
+  file shipped with this version does not pass <variable> to the Sync worker" (critique E5).
 - **Alternatives considered**: no warning. Rejected by the spec (FR-009).
 
 ## R6. Which checks run before writing (FR-020)
@@ -116,6 +121,7 @@ The command needs this table to apply FR-008, FR-010 to FR-013 and FR-029.
     mapping or the refusals, and the report entries, out. It does no I/O and prints nothing.
   - `cli.py` adds `configs convert` as a thin command: read the file, call the module, print the
     report, confirm, write.
+  - The confirmation is asked only when standard input is a terminal (critique E3).
   - Exit status: 0 when written or when the engineer answers `n`; 1 when refused or when there is
     no terminal and no `--yes`; 2 when the input cannot be read, is not YAML, is already a V3
     package, or the arguments are invalid.
@@ -132,6 +138,8 @@ The command needs this table to apply FR-008, FR-010 to FR-013 and FR-029.
     The environment mapping it receives is filtered to those names before the call.
   - A literal credential value in the input is never copied into the report, a refusal or an
     exception. The report names the setting and says "a literal value in config.yml".
+  - An address that holds a user name or password is refused without printing it
+    (spec FR-030, critique E2).
   - A YAML parse error reports only the line and column. PyYAML messages can quote the failing
     line, which could hold a token.
   - Tests use a canary value, following `tests/test_credential_canary.py`, and assert it is

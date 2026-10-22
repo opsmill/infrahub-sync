@@ -14,7 +14,8 @@ The keys the command reads, with the rule each one follows ([research R1](resear
 | `source.adapter`, `destination.adapter` | dropped with a note when it names the bundled module; refused otherwise | FR-015, FR-016 |
 | credential settings | replaced by a credential reference | FR-006 to FR-008 |
 | `url` and other settings v2 read from the environment first | value from the variable, the file or a flag, with its origin | FR-010 to FR-013, FR-029 |
-| `genericrestapi` `*_env_vars` settings | read to build the variable list, then dropped with a note | research R2 |
+| `genericrestapi` `*_env_vars` settings | dropped with a note; the variables they name are not read | research R2, FR-030 |
+| an address with a user name or password | refused; the address is not printed | FR-030 |
 | other accepted settings | copied | FR-019 |
 | other settings | refused | FR-015 |
 | `store` | dropped with a warning | FR-017 |

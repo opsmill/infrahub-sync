@@ -173,8 +173,11 @@ the operations.
 - The input is not valid YAML, or is not a v1 or v2 configuration: the command refuses and names
   the first location that fails.
 - A `${VARIABLE}` placeholder sits in a setting that v2 read from the environment first, such as
-  `verify: ${CISCO_APIC_VERIFY}` in the v2 ACI example: the command treats it as the variable
-  named in the placeholder and follows FR-029.
+  `verify: ${CISCO_APIC_VERIFY}` in the v2 ACI example: the command follows FR-029 when the
+  placeholder names a variable v2 read for that setting. A placeholder that names any other
+  variable, such as `url: ${NETBOX_TOKEN}`, is not read (FR-030).
+- An address holds a user name or password, such as `https://user:secret@netbox.example.com`: the
+  command refuses and does not print the address (FR-030).
 - A `${VARIABLE}` placeholder sits in any other setting that is not a credential: the command
   refuses and names the setting, because v2 used the placeholder text as the value.
 - The v2 adapter and model files that `infrahub-sync generate` wrote beside `config.yml`: the
@@ -234,9 +237,15 @@ the operations.
 - **FR-014**: The report MUST warn when an address in the package is `localhost` or `127.0.0.1`.
 - **FR-029**: Every other setting that is not a credential and that v2 read from an environment
   variable before the file MUST follow the rules of FR-010, FR-011 and FR-013, for example ACI
-  `verify` from `CISCO_APIC_VERIFY`. A `${VARIABLE}` placeholder in such a setting names the
-  variable to read. When the setting gets no value from the file or a variable, the command MUST
-  stop and name the setting and the variables, because no flag sets it.
+  `verify` from `CISCO_APIC_VERIFY`. A `${VARIABLE}` placeholder in such a setting is read only
+  when it names one of the variables v2 itself read for that setting. When the setting gets no
+  value from the file or a variable, the command MUST stop and name the setting and the
+  variables, because no flag sets it.
+- **FR-030**: The command MUST read from the environment only the fixed, non-credential variable
+  names that v2 read for each adapter. It MUST NOT read a variable that the input file names in a
+  placeholder or in another setting when that variable is not one of those names; the report
+  MUST say that the variable was not read. The command MUST refuse an address that contains a
+  user name or password, name the setting, and not print the address.
 
 #### Refused, dropped and copied keys
 
