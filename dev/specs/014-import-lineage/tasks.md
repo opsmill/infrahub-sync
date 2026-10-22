@@ -103,7 +103,7 @@ apply before any write.
 - [X] T027 [US2] Set the owner on creates and on relationship edges an update adds (decision from T002), and never on attributes of an existing node, in the payload code of `infrahub_sync/adapters/infrahub.py:1290-1364`
 - [X] T028 [US2] Add `owner` to the manifest's `lineage` field in `infrahub_sync/plan/models.py` and `infrahub_sync/plan/writer.py`
 - [X] T029 [US2] Show the notice "The owner setting applies only to values this run creates." in the summary of `infrahub-sync runs plan` (`infrahub_sync/cli.py`) when `lineage.owner` is not `null`, and add the optional `lineage` field to `PlanResource` (`infrahub_sync/client/models.py:341`), filled in `infrahub_sync/service/flow.py:178-187`
-- [ ] T030 [US2] Opt-in integration test for quickstart scenario 2 in `tests/integration/test_infrahub_lineage_integration.py`: owner on create, unchanged after updates, set on an added edge, stop on a missing group in plan and in apply, refusal of `owner: network-team`
+- [X] T030 [US2] Opt-in integration test for quickstart scenario 2 in `tests/integration/test_infrahub_lineage_integration.py`: owner on create, unchanged after updates, set on an added edge, stop on a missing group in plan and in apply, refusal of `owner: network-team`
 
 **Checkpoint**: User Stories 1 and 2 both work on their own.
 

@@ -15,9 +15,10 @@ The tests then drive the import's own destination calls with that token:
 - a saved-plan apply through `Potenda.apply_plan`, which resolves the account again, checks it
   against the account the plan recorded and writes through the planned-write surface.
 
-They cover quickstart scenario 1 (SC-001, SC-002, SC-007) and the missing-permission half of
-scenario 5 (SC-006). The owner half of scenario 5 belongs to the owner tests, which later
-scenarios add to this module and which reuse `account_factory` and `lineage_branch`.
+They cover quickstart scenario 1 (SC-001, SC-002, SC-007), scenario 2 (the `owner` setting:
+SC-003, SC-004, FR-011) and scenario 5 (a missing permission on a written kind and on the
+owner's kind: SC-006). With an owner, the account also holds `view` on `CoreAccountGroup`,
+the only permission the owner lookup needs, because it selects the group's name only.
 
 What is written where:
 
@@ -49,17 +50,21 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import requests
+from infrahub_sdk.exceptions import AuthenticationError
+from infrahub_sdk.node.attribute import Attribute
 
 from infrahub_sync import SyncAdapter, SyncConfig
-from infrahub_sync.adapters.infrahub import InfrahubAdapter
+from infrahub_sync.adapters.infrahub import InfrahubAdapter, NamedLineageNodeNotFoundError
+from infrahub_sync.configuration import CredentialConfigurationError, validate_package_credentials
 from infrahub_sync.infrahub_errors import classify_infrahub_error
 from infrahub_sync.plan.errors import ImportAccountMismatchError, OperationApplyFailedError
 from infrahub_sync.potenda import Potenda
+from tests.configuration.validation_packages import package, package_data
 from tests.plan.artifact_fixtures import CONFIG_VERSION, operation_record, write_artifact
 from tests.plan.ownership_fixtures import granted_ownership
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Sequence
     from pathlib import Path
 
     from infrahub_sdk import InfrahubClientSync
@@ -130,6 +135,10 @@ BRANCH_IMPORT_PERMISSIONS: tuple[ObjectPermission, ...] = (
     *_kind_permissions("Test", "LineageDevice", ("view", "create", "update")),
 )
 DEVICE_CREATE = ObjectPermission(namespace="Test", name="LineageDevice", action="create")
+# The owner lookup reads the named group, selecting its name only (research R-7).
+GROUP_VIEW = ObjectPermission(namespace="Core", name="AccountGroup", action="view")
+OWNER_IMPORT_PERMISSIONS: tuple[ObjectPermission, ...] = (*BRANCH_IMPORT_PERMISSIONS, GROUP_VIEW)
+GROUP_KIND = "CoreAccountGroup"
 
 
 @dataclass(slots=True)
@@ -324,17 +333,74 @@ def account_factory(lineage_branch: LineageBranch) -> Iterator[AccountFactory]:
         factory.close()
 
 
-def import_adapter(lineage: LineageBranch, account: ImportAccount, monkeypatch: pytest.MonkeyPatch) -> InfrahubAdapter:
+def _attribute(node: InfrahubNodeSync, name: str) -> Attribute:
+    """The attribute `name` of `node`, typed as an attribute rather than as any field of the node."""
+    attribute = getattr(node, name)
+    assert isinstance(attribute, Attribute), f"{node.get_kind()}.{name} is not an attribute."
+    return attribute
+
+
+@dataclass(slots=True)
+class OwnerGroup:
+    """A `CoreAccountGroup` a test names as owner, which the test can rename and restore."""
+
+    node: InfrahubNodeSync
+    name: str
+
+    @property
+    def id(self) -> str:
+        """The id Infrahub gave the group."""
+        assert self.node.id is not None
+        return self.node.id
+
+    def rename(self, name: str) -> None:
+        """Give the group another name, as a person does in Infrahub."""
+        _attribute(self.node, "name").value = name
+        self.node.save()
+
+
+@pytest.fixture
+def owner_groups(lineage_branch: LineageBranch) -> Iterator[Callable[[], OwnerGroup]]:
+    """Make `CoreAccountGroup` nodes with no member and no role; each is deleted after the test."""
+    admin = _make_client(lineage_branch.address, lineage_branch.admin_token)
+    created: list[OwnerGroup] = []
+
+    def make() -> OwnerGroup:
+        name = f"network-team-{uuid.uuid4().hex[:8]}"
+        node = admin.create(kind=GROUP_KIND, data={"name": name})
+        node.save()
+        group = OwnerGroup(node=node, name=name)
+        created.append(group)
+        return group
+
+    try:
+        yield make
+    finally:
+        for group in reversed(created):
+            group.node.delete()
+
+
+def import_adapter(
+    lineage: LineageBranch,
+    account: ImportAccount,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    owner: OwnerGroup | None = None,
+) -> InfrahubAdapter:
     """The Infrahub destination adapter built the way a run builds it, with the account's token.
 
     A direct run takes the token from `INFRAHUB_API_TOKEN` before the settings, so the
     environment variable is set to the account's token for the construction only. The
-    construction reads the server version and the schema with that token.
+    construction reads the server version and the schema with that token. `owner` adds the
+    setting `owner: {kind: CoreAccountGroup, name: <the group's name>}`.
     """
+    settings: dict[str, Any] = {"url": lineage.address}
+    if owner is not None:
+        settings["owner"] = {"kind": GROUP_KIND, "name": owner.name}
     config = SyncConfig(
         name="lineage-integration",
         source=SyncAdapter(name="netbox"),
-        destination=SyncAdapter(name="infrahub", settings={"url": lineage.address}),
+        destination=SyncAdapter(name="infrahub", settings=settings),
     )
     with monkeypatch.context() as patched:
         patched.setenv("INFRAHUB_ADDRESS", lineage.address)
@@ -359,16 +425,38 @@ class SavedPlan:
     device_name: str
 
 
-def save_plan(tmp_path: Path, planning: InfrahubAdapter) -> SavedPlan:
-    """Write the plan a run with `planning` records: two tag creates, then a device create that refers to both.
+def _tags_reference(tag_names: Sequence[str]) -> dict[str, Any]:
+    return {
+        "field": TAGS_RELATIONSHIP,
+        "peer_kind": TAG_KIND,
+        "cardinality": "many",
+        "peers": [{"name": name} for name in tag_names],
+    }
 
-    The manifest records the lineage `planning` resolved, as the plan writer does
-    (`destination_lineage_record`), so an apply compares its account with this one.
+
+def _write_plan(
+    tmp_path: Path, planning: InfrahubAdapter, operations: list[dict[str, Any]], *, suffix: str
+) -> tuple[Path, str]:
+    """Write `operations` as a saved plan whose manifest records the lineage `planning` resolved.
+
+    The manifest records that lineage as the plan writer does (`destination_lineage_record`), so
+    an apply compares its account with this one. Returns the run directory and the run id.
     """
     record = planning.lineage_record
     assert record is not None, "Precondition: the planning adapter must have resolved its lineage."
-    suffix = uuid.uuid4().hex[:8]
     run_id = f"{datetime.now(tz=timezone.utc):%Y%m%dT%H%M}-{suffix}"
+    run_dir = tmp_path / "lineage-integration" / run_id
+    run_dir.mkdir(parents=True)
+    write_artifact(run_dir, operations, run_id=run_id, source_snapshot=[], lineage=record.model_dump(mode="json"))
+    return run_dir, run_id
+
+
+def save_plan(tmp_path: Path, planning: InfrahubAdapter, *, device_tags: int = 2) -> SavedPlan:
+    """Write the plan a run with `planning` records: two tag creates, then a device create.
+
+    The device refers to the first `device_tags` of the two tags.
+    """
+    suffix = uuid.uuid4().hex[:8]
     tag_names = (f"lineage-tag-{suffix}-0", f"lineage-tag-{suffix}-1")
     device_name = f"lineage-device-{suffix}"
     operations = [operation_record(kind=TAG_KIND, identity={"name": name}) for name in tag_names]
@@ -377,21 +465,32 @@ def save_plan(tmp_path: Path, planning: InfrahubAdapter) -> SavedPlan:
             kind=DEVICE_KIND,
             identity={"name": device_name},
             payload={"name": device_name, "serial": f"serial-{suffix}"},
-            relationships=[
-                {
-                    "field": TAGS_RELATIONSHIP,
-                    "peer_kind": TAG_KIND,
-                    "cardinality": "many",
-                    "peers": [{"name": name} for name in tag_names],
-                }
-            ],
+            relationships=[_tags_reference(tag_names[:device_tags])],
             tier=1,
         )
     )
-    run_dir = tmp_path / "lineage-integration" / run_id
-    run_dir.mkdir(parents=True)
-    write_artifact(run_dir, operations, run_id=run_id, source_snapshot=[], lineage=record.model_dump(mode="json"))
+    run_dir, run_id = _write_plan(tmp_path, planning, operations, suffix=suffix)
     return SavedPlan(run_dir=run_dir, run_id=run_id, tag_names=tag_names, device_name=device_name)
+
+
+def save_device_update_plan(
+    tmp_path: Path, planning: InfrahubAdapter, created: SavedPlan, *, device_id: str, serial: str
+) -> SavedPlan:
+    """Write the plan of a second run: one update of the device, with a new serial and both tags."""
+    suffix = uuid.uuid4().hex[:8]
+    operations = [
+        operation_record(
+            action="update",
+            kind=DEVICE_KIND,
+            identity={"name": created.device_name},
+            payload={"name": created.device_name, "serial": serial},
+            relationships=[_tags_reference(created.tag_names)],
+            tier=1,
+            destination_id=device_id,
+        )
+    ]
+    run_dir, run_id = _write_plan(tmp_path, planning, operations, suffix=suffix)
+    return SavedPlan(run_dir=run_dir, run_id=run_id, tag_names=created.tag_names, device_name=created.device_name)
 
 
 def apply_saved_plan(plan: SavedPlan, destination: InfrahubAdapter) -> None:
@@ -559,3 +658,212 @@ def test_a_missing_permission_is_recorded_as_a_missing_permission(
         f"The cause must quote the permission Infrahub names for the device kind; it quoted "
         f"{classification.permissions} and said: {message}"
     )
+
+
+_SET_OWNER_BY_HAND = """
+mutation SetOwnerByHand($device: String!, $serial: String!, $tag: String!, $owner: String!) {
+  TestLineageDeviceUpdate(data: {
+    id: $device, serial: {value: $serial, owner: $owner}, tags: [{id: $tag, _relation__owner: $owner}]
+  }) { ok }
+}
+"""
+
+
+def _set_owner_by_hand(lineage: LineageBranch, *, device: InfrahubNodeSync, tag_id: str, owner: OwnerGroup) -> None:
+    """Make `owner` the owner of the device's serial and of its edge to `tag_id`, as a person does by hand.
+
+    The device has only that edge at this point, so the list sent keeps its peers as they are.
+    """
+    lineage.admin.execute_graphql(
+        query=_SET_OWNER_BY_HAND,
+        variables={"device": device.id, "serial": _attribute(device, "serial").value, "tag": tag_id, "owner": owner.id},
+        branch_name=lineage.branch,
+    )
+
+
+class SourceNotRead:
+    """A source adapter that records each load; a plan stopped by lineage must record none."""
+
+    top_level: tuple[str, ...] = ()
+
+    def __init__(self) -> None:
+        self.loads: list[str] = []
+
+    def load(self) -> None:
+        """Record the load."""
+        self.loads.append("load")
+
+
+def plan_loads(destination: InfrahubAdapter, source: SourceNotRead) -> None:
+    """Load both sides as a plan does: the engine resolves the destination's lineage first."""
+    engine = Potenda(
+        source=source,  # ty: ignore[invalid-argument-type] — the stand-in records the load the engine starts
+        destination=destination,
+        config=None,  # ty: ignore[invalid-argument-type] — no plan is written
+        top_level=[TAG_KIND, DEVICE_KIND],
+    )
+    engine.load_both_sides()
+
+
+def test_owner_is_set_on_created_values_and_on_added_edges_only(
+    lineage_branch: LineageBranch,
+    account_factory: AccountFactory,
+    owner_groups: Callable[[], OwnerGroup],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Quickstart scenario 2, steps 1 to 4 (SC-004, FR-002, research R-6).
+
+    A first apply creates two tags and a device that refers to the first tag: every value it
+    creates has the named group as owner. A person then gives the device's serial and its edge
+    to the first tag another owner. A second apply updates the serial and adds the second tag:
+    the serial and the first edge keep the owner the person set, and only the added edge gets
+    the named group.
+    """
+    account = account_factory(OWNER_IMPORT_PERMISSIONS)
+    team = owner_groups()
+    by_hand = owner_groups()
+    admin, branch = lineage_branch.admin, lineage_branch.branch
+
+    planning = import_adapter(lineage_branch, account, monkeypatch, owner=team)
+    plan_reads(planning)
+    created = save_plan(tmp_path, planning, device_tags=1)
+    assert planning.lineage_record is not None
+    assert planning.lineage_record.owner is not None
+    assert (planning.lineage_record.owner.kind, planning.lineage_record.owner.name) == (GROUP_KIND, team.name)
+    apply_saved_plan(created, import_adapter(lineage_branch, account, monkeypatch, owner=team))
+
+    tags = {name: _read_back(admin, TAG_KIND, name, branch) for name in created.tag_names}
+    device = _read_back(admin, DEVICE_KIND, created.device_name, branch)
+    first_tag_id, second_tag_id = (tags[name].id for name in created.tag_names)
+    assert first_tag_id is not None
+    assert second_tag_id is not None
+    after_create = {f"{name}.name": _value_lineage(tag.name)["owner"] for name, tag in tags.items()}
+    after_create["device.name"] = _value_lineage(device.name)["owner"]
+    after_create["device.serial"] = _value_lineage(device.serial)["owner"]
+    after_create.update(
+        {
+            f"device.tags -> {peer}": edge["owner"]
+            for peer, edge in _edge_lineage(admin, created.device_name, branch).items()
+        }
+    )
+    assert after_create == {
+        **{f"{name}.name": team.id for name in created.tag_names},
+        "device.name": team.id,
+        "device.serial": team.id,
+        f"device.tags -> {first_tag_id}": team.id,
+    }, f"Every value the first apply created must have the group {team.name!r} ({team.id}) as owner."
+
+    _set_owner_by_hand(lineage_branch, device=device, tag_id=first_tag_id, owner=by_hand)
+
+    planning = import_adapter(lineage_branch, account, monkeypatch, owner=team)
+    plan_reads(planning)
+    assert device.id is not None
+    updated = save_device_update_plan(tmp_path, planning, created, device_id=device.id, serial="serial-updated")
+    apply_saved_plan(updated, import_adapter(lineage_branch, account, monkeypatch, owner=team))
+
+    device = _read_back(admin, DEVICE_KIND, created.device_name, branch)
+    assert _attribute(device, "serial").value == "serial-updated", (
+        "Precondition: the second apply must update the serial."
+    )
+    after_update = {
+        "device.name": _value_lineage(device.name)["owner"],
+        "device.serial": _value_lineage(device.serial)["owner"],
+        **{
+            f"device.tags -> {peer}": edge["owner"]
+            for peer, edge in _edge_lineage(admin, created.device_name, branch).items()
+        },
+    }
+    assert after_update == {
+        "device.name": team.id,
+        "device.serial": by_hand.id,
+        f"device.tags -> {first_tag_id}": by_hand.id,
+        f"device.tags -> {second_tag_id}": team.id,
+    }, (
+        f"The second apply must keep each value's owner and give only the added edge the group "
+        f"{team.name!r} ({team.id}); the owner given by hand is {by_hand.name!r} ({by_hand.id})."
+    )
+
+
+def test_a_missing_owner_stops_the_plan_before_the_source_is_read_and_the_apply_before_any_write(
+    lineage_branch: LineageBranch,
+    account_factory: AccountFactory,
+    owner_groups: Callable[[], OwnerGroup],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Quickstart scenario 2, steps 5 and 6 (SC-003, FR-004, FR-011): the same cause in plan and in apply.
+
+    The group is renamed, so the name the package gives matches no group. The plan stops before
+    the engine starts the source load. With the group restored, a plan is saved; the group is
+    renamed again, and the apply stops before any write with the cause the plan recorded.
+    """
+    account = account_factory(OWNER_IMPORT_PERMISSIONS)
+    team = owner_groups()
+    named = team.name
+    expected_cause = f"The setting `owner` names `{GROUP_KIND}` `{named}`, which does not exist."
+
+    team.rename(f"{named}-renamed")
+    source = SourceNotRead()
+    with pytest.raises(NamedLineageNodeNotFoundError) as plan_stop:
+        plan_loads(import_adapter(lineage_branch, account, monkeypatch, owner=OwnerGroup(team.node, named)), source)
+    assert str(plan_stop.value) == expected_cause
+    assert source.loads == [], "The plan must stop before the source system is read."
+
+    team.rename(named)
+    planning = import_adapter(lineage_branch, account, monkeypatch, owner=team)
+    plan_reads(planning)
+    plan = save_plan(tmp_path, planning)
+
+    team.rename(f"{named}-renamed")
+    with pytest.raises(NamedLineageNodeNotFoundError) as apply_stop:
+        apply_saved_plan(plan, import_adapter(lineage_branch, account, monkeypatch, owner=OwnerGroup(team.node, named)))
+    assert str(apply_stop.value) == str(plan_stop.value), "The apply must record the cause the plan records."
+
+    admin, branch = lineage_branch.admin, lineage_branch.branch
+    written = _existing_ids(admin, TAG_KIND, plan.tag_names, branch) + _existing_ids(
+        admin, DEVICE_KIND, [plan.device_name], branch
+    )
+    assert written == [], f"The stopped apply must write nothing; the destination holds {written}."
+
+
+def test_a_missing_permission_on_the_owner_kind_is_recorded_as_a_missing_permission(
+    lineage_branch: LineageBranch,
+    account_factory: AccountFactory,
+    owner_groups: Callable[[], OwnerGroup],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Quickstart scenario 5 with an owner (SC-006, FR-008): no `view` on `CoreAccountGroup`.
+
+    The plan's owner lookup is refused with HTTP 403, which the SDK raises as an
+    `AuthenticationError`, and not as a missing group. The cause is a missing permission that
+    quotes the permission Infrahub names (on 1.10.6, `object:Core:AccountGroup:view:allow_other`),
+    and never a rejected token.
+    """
+    account = account_factory(OWNER_IMPORT_PERMISSIONS)
+    team = owner_groups()
+    account_factory.remove_permission(account, GROUP_VIEW)
+
+    planning = import_adapter(lineage_branch, account, monkeypatch, owner=team)
+    with pytest.raises(AuthenticationError) as raised:
+        planning.resolve_lineage()
+
+    classification = classify_infrahub_error(raised.value)
+    assert classification is not None, f"The refusal must be classified; the run said: {raised.value!r}"
+    assert classification.problem == "missing_permission", f"Classified as {classification}"
+    assert any("AccountGroup" in permission for permission in classification.permissions), (
+        f"The cause must quote the permission Infrahub names for the group kind; it quoted {classification.permissions}"
+    )
+
+
+def test_registration_refuses_an_owner_given_as_a_bare_name() -> None:
+    """Quickstart scenario 2, step 7 (FR-003): `owner: network-team` is refused when the package is registered."""
+    data = package_data()
+    data["configuration"]["destination"]["settings"]["owner"] = "network-team"
+
+    with pytest.raises(CredentialConfigurationError) as raised:
+        validate_package_credentials(package(data))
+
+    message = str(raised.value)
+    assert "/configuration/destination/settings/owner" in message
+    assert "`owner` must be `{kind, name}`" in message
