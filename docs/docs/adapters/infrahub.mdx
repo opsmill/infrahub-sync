@@ -50,8 +50,13 @@ A single package moves data one way, from its source to its destination.
           $credential: infrahub-token
         branch: "main"            # Optional
         verify_ssl: true          # Optional, defaults to true
-        source: "data-sync"       # Optional, CoreAccountGroup name for lineage source
-        owner: "network-team"     # Optional, CoreAccountGroup name for lineage owner
+        source:                   # Optional, defaults to the import account
+          kind: CoreAccountGroup
+          name: data-sync
+        owner:                    # Optional, no owner by default
+          kind: CoreAccountGroup
+          name: network-team
+        protect: false            # Optional, defaults to false
     schema_mapping: []            # See the schema mapping section below
   credentials:
     netbox-token:
@@ -103,8 +108,9 @@ A single package moves data one way, from its source to its destination.
 | `token` | `$credential` reference | Yes | - | API token for authentication |
 | `branch` | string | No | See below | Branch to read or write |
 | `verify_ssl` | boolean | No | true | Verify TLS certificates |
-| `source` | string | No | - | CoreAccountGroup name to use as lineage source |
-| `owner` | string | No | - | CoreAccountGroup name to use as lineage owner |
+| `source` | `{kind, name}` mapping | No | The import account | Node recorded as the source of every value the import writes. See [Lineage tracking](#lineage-tracking) |
+| `owner` | `{kind, name}` mapping | No | No owner | Node set as the owner of the values the import creates. See [Lineage tracking](#lineage-tracking) |
+| `protect` | boolean | No | false | Mark the values the import creates or changes as protected |
 
 For the destination, a declared `branch` takes precedence over the `--branch` option of `diff`, `sync`, and `apply`. The option is used only when the package declares no branch, and `main` is used when neither is set. `INFRAHUB_DEFAULT_BRANCH` and `INFRAHUB_DEFAULT_BRANCH_FROM_GIT` do not change this choice. The completed `diff`, `sync`, and `apply` commands print `destination_branch`; `runs plan` also shows the branch saved with a plan.
 
@@ -185,22 +191,24 @@ Infrahub must be able to find each planned object by a key: the kind's human-fri
 
 ## Lineage tracking
 
-When syncing data into Infrahub, the adapter tracks the source and owner of each record using Infrahub's lineage system. This enables:
+Infrahub records three properties on each attribute and each relationship edge: a source, an owner, and a protection flag. An import sets them from the `source`, `owner`, and `protect` settings of the Infrahub destination. Infrahub also records which account last changed each value, and when. A plan shows that record for each value it updates.
 
-- Tracking which system created each record
-- Protecting source-managed attributes from manual edits
-- Assigning ownership to teams or groups
+### The import account
 
-Source and owner lineage is applied to newly created relationship edges and to relationship peers newly linked by an update. Rerunning a sync does not backfill lineage onto unchanged, pre-existing relationship edges.
-Resource-pool allocations are an exception: their relationship mutation does not include source or owner lineage.
+The import account is the Infrahub account that owns the API token the worker uses. The import reads it at the start of each plan and each apply.
 
-### Default behavior
+- When the package names no `source`, the import records the import account as the source of every attribute and relationship edge it writes.
+- Infrahub records the import account as the account that created and last changed each value the import writes.
+- A plan records its import account. Apply refuses a saved plan when its own import account is different, and the error names both accounts. Apply also refuses a saved plan made by an earlier release, because that plan records no import account. Create a new plan in that case.
 
-By default, the adapter looks for a `CoreAccount` with a name matching the source adapter name. This account is used as both the source and owner for all synced attributes.
+Create one Infrahub account for each import, for example `netbox`, and give its token only to that import:
 
-### Using account groups
+- With an administrator token, the administrator account becomes the source of every value the import writes.
+- Two imports that share one token write with the same account, so `updated_by` cannot tell their changes apart.
 
-You can override the default behavior by specifying `source` and/or `owner` in the destination settings. When specified, these values are used to look up a `CoreAccountGroup` by name:
+### Name a source or an owner
+
+`source` and `owner` each name one node by kind and name:
 
 ```yaml
 destination:
@@ -209,22 +217,96 @@ destination:
     url: "https://infrahub.example.com"
     token:
       $credential: infrahub-token
-    source: "data-sync"      # Uses CoreAccountGroup "data-sync" as source
-    owner: "network-team"    # Uses CoreAccountGroup "network-team" as owner
+    source:
+      kind: CoreAccountGroup
+      name: data-sync
+    owner:
+      kind: CoreAccountGroup
+      name: network-team
+    protect: false
 ```
 
-This allows you to:
+- The kind must be `CoreAccount`, `CoreAccountGroup`, `CoreRepository`, or `CoreReadOnlyRepository`.
+- Registration refuses a `source` or an `owner` given as a bare name, such as `owner: network-team`, and a kind outside this list.
+- At the start of a plan, before it reads the source system, the import looks up each named node. When the node does not exist, the plan stops and names the setting, the kind and the name, for example: "The setting `owner` names `CoreAccountGroup` `network-team`, which does not exist." The import does not fall back to another node. Apply makes the same lookup before its first write.
 
-- Use different groups for source and owner
-- Override only one while keeping the default account for the other
-- Assign ownership to a team rather than an individual account
+A named `source` replaces the import account as the source of every value the import writes.
 
-| Configuration | Source | Owner |
-|--------------|--------|-------|
-| Neither specified | CoreAccount (source name) | CoreAccount (source name) |
-| Only `source` specified | CoreAccountGroup | CoreAccount (source name) |
-| Only `owner` specified | CoreAccount (source name) | CoreAccountGroup |
-| Both specified | CoreAccountGroup | CoreAccountGroup |
+### Owner of the values an import writes
+
+There is no default owner. Name the team responsible for the data as the `owner`.
+
+- The owner goes on the attributes of each node the run creates, and on each relationship edge the run adds, including an edge added to a node that already exists.
+- An update does not change the owner of a value that already exists, including a value with no owner.
+- When the package names an owner, `runs plan` shows the notice "The owner setting applies only to values this run creates."
+
+To set the owner of data that already exists in Infrahub, set it in Infrahub itself: an Infrahub update mutation that carries `owner` on an attribute or a relationship edge changes the owner of that value. Running a sync again does not change it.
+
+### Protect the values an import writes
+
+`protect` is off by default.
+
+- With `protect` on, the import marks every attribute and relationship edge it creates or changes as protected.
+- With `protect` off, the import sends no protection flag. A value that is already protected keeps its protection. This includes values that an earlier release protected, because earlier releases protected every value they wrote.
+- With an owner, protection stops accounts other than the owner from editing the value in the Infrahub web interface.
+- Without an owner, Infrahub stores the protection flag, but the flag has no effect.
+
+Infrahub enforces protection in its web interface only. On Infrahub 1.10.6, an import still changes a protected value.
+
+### Values written before this release
+
+The import does not rewrite the properties of values it wrote before this release.
+
+- The next time an import writes a value again, the import records the import account, or the named `source`, as its source.
+- The owner and the protection flag of that value stay as they are.
+
+### Resource-pool allocations
+
+A relationship edge that Infrahub allocates from a resource pool is the one exception. On such an edge the import sends no source, owner, or protection flag, so the pool stays the source that Infrahub records. No current import allocates from a resource pool.
+
+### Who last changed a value
+
+`runs plan --detail` shows, for each field that a proposed update changes, the account that last changed the value and when:
+
+```text
+  last change: description (attribute): updated_by=Alice, updated_at=2026-10-01T08:00:00+00:00
+```
+
+- A proposed create has no last-change line.
+- For a cardinality-many relationship, the line shows the edge that changed most recently.
+- When Infrahub holds no record for a field, the line shows `not recorded`, and the plan continues.
+    - Infrahub records this metadata from version 1.7.0. On an earlier version, or when the plan cannot read the Infrahub version, the import does not read the metadata, and every field shows `not recorded`.
+    - On Infrahub 1.10.6, only a relationship with no edge shows `not recorded`.
+- The plan only displays this record. It does not stop a change.
+- When the import reads this record, on Infrahub 1.7.0 or later, it reads the destination in full on every plan and does not use the incremental read.
+
+### Permissions of the import account
+
+The import account needs these Infrahub permissions. They were measured on Infrahub 1.10.6.
+
+| Permission | Default branch | Any other branch | Used for |
+|------------|----------------|------------------|----------|
+| Global `edit_default_branch` | Required | Not required | Every create and update |
+| Object `view` on each mapped destination kind, and on the peer kind of each mapped relationship | Required, decision `allow_default` | Required, decision `allow_other` | The plan's read of the destination, the lookup of each related node, and apply's read of a node's current relationship peers |
+| Object `create` on each kind the import writes | Required, decision `allow_default` | Required, decision `allow_other` | Every create and update, because the import writes both as an upsert |
+| Object `update` on each kind the import writes | Required, decision `allow_default` | Required, decision `allow_other` | Every create and update, for the same reason |
+| Object `view` on the kind of a named `source` or `owner` | Required, decision `allow_default` | Required, decision `allow_other` | The lookup of the named node, only when the package names one |
+
+The import reads only the name of a named node, so it needs `view` on that kind only:
+
+- `CoreAccount`: needed only when `source` or `owner` names a `CoreAccount`.
+- `CoreAccountGroup`: needed only when `source` or `owner` names a `CoreAccountGroup`.
+- `CoreRepository` or `CoreReadOnlyRepository`: needed only when `source` or `owner` names a node of that kind.
+
+The import account needs no permission for:
+
+- reading its own account, the Infrahub version, and the schema;
+- reading other accounts, unless the package names a `CoreAccount`;
+- deleting, because apply does not delete;
+- setting the source, the owner, or the protection flag;
+- reading who last changed a value.
+
+When Infrahub refuses a request with HTTP 403, the run reports a missing permission and quotes the permission Infrahub names. A refused token is reported as a token problem.
 
 ## Common issues and troubleshooting
 

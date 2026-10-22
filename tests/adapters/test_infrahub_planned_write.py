@@ -48,6 +48,7 @@ from infrahub_sync.adapters.infrahub import (
     PeerResolver,
     ResolvedLineage,
     ResolvedLineageNode,
+    clear_lineage_on_pool_edges,
 )
 from infrahub_sync.configuration.capabilities import InfrahubLineageSettings, NamedLineageNode
 from infrahub_sync.plan.derive import operations_from_diff
@@ -2361,3 +2362,80 @@ def test_an_apply_with_a_named_owner_and_nothing_to_change_makes_no_write_call(t
     assert adapter.lineage.owner.id == OWNER_ID, "Precondition: the owner was resolved for this apply."
     assert client.mutations == []
     assert issued_reads(client) == [], "No update was applied, so no current peers were read."
+
+
+POOL_ID = "pool-1"
+
+
+def _lineage_keys(edge: dict[str, Any]) -> set[str]:
+    """The lineage properties an edge input carries."""
+    return {key for key in ("source", "owner", "is_protected") if key in edge}
+
+
+def test_an_edge_allocated_from_a_pool_carries_no_source_owner_or_protection() -> None:
+    """Clarifications Q2, R-6: the pool stays the source of an edge it allocates; other edges keep their lineage."""
+    client = RecordingClient()
+    create_data = client.schema.generate_payload_create(
+        schema=TEAM_SCHEMA,
+        data={"name": "team-a", "members": ["tag-id-2", "tag-id-3"]},
+        source=IMPORT_ACCOUNT_ID,
+        owner=OWNER_ID,
+        is_protected=True,
+    )
+    create_data["members"][0] = {"from_pool": {"id": POOL_ID}, **create_data["members"][0]}
+    del create_data["members"][0]["id"]
+
+    clear_lineage_on_pool_edges(create_data, TEAM_SCHEMA)
+
+    assert create_data["members"][0] == {"from_pool": {"id": POOL_ID}}
+    assert _lineage_keys(create_data["members"][1]) == {"source", "owner", "is_protected"}
+    assert _lineage_keys(create_data["name"]) == {"source", "owner", "is_protected"}, "Attributes keep their lineage."
+
+
+def test_a_cardinality_one_edge_allocated_from_a_pool_carries_no_lineage() -> None:
+    """Clarifications Q2: the rule holds for a cardinality-one edge too."""
+    create_data: dict[str, Any] = {
+        "name": {"value": "server-a", "source": IMPORT_ACCOUNT_ID},
+        "site": {"from_pool": {"id": POOL_ID}, "source": IMPORT_ACCOUNT_ID, "owner": OWNER_ID, "is_protected": True},
+    }
+
+    clear_lineage_on_pool_edges(create_data, SERVER_SCHEMA)
+
+    assert create_data["site"] == {"from_pool": {"id": POOL_ID}}
+    assert create_data["name"]["source"] == IMPORT_ACCOUNT_ID
+
+
+class _StopAtCreateError(Exception):
+    """Raised by the spy once the payload handed to `client.create` is recorded."""
+
+
+def test_the_write_path_clears_lineage_on_pool_edges_before_the_node_is_built() -> None:
+    """Clarifications Q2: a write path that allocates from a pool hands `client.create` no lineage on that edge."""
+    client = RecordingClient()
+    adapter = make_adapter(client, source=IMPORT_ACCOUNT_ID, owner=OWNER_ID, protect=True)
+    peers = PeerResolver(adapter)
+    peers.remember(TAG_KIND, {"name": "tag-b"}, "tag-id-2")
+    peers.remember(TAG_KIND, {"name": "tag-c"}, "tag-id-3")
+    real = client.schema.generate_payload_create
+    handed: list[dict[str, Any]] = []
+
+    def allocate_first_member(**kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
+        payload = real(**kwargs)
+        payload["members"][0]["from_pool"] = {"id": POOL_ID}
+        return payload
+
+    def record_create(*, kind: str, data: dict[str, Any], **_: Any) -> InfrahubNodeSync:  # noqa: ANN401
+        del kind
+        handed.append(data)
+        raise _StopAtCreateError
+
+    with (
+        patch.object(client.schema, "generate_payload_create", allocate_first_member),
+        patch.object(client, "create", record_create),
+        pytest.raises(_StopAtCreateError),
+    ):
+        adapter.apply_planned_operation(operation=TEAM_CREATE, peers=peers)
+
+    members = handed[0]["members"]
+    assert _lineage_keys(members[0]) == set(), members
+    assert _lineage_keys(members[1]) == {"source", "owner", "is_protected"}, members

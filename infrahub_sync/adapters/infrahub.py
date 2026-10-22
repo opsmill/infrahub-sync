@@ -1743,6 +1743,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 references=references,
                 owner_id=owner_id,
             )
+        clear_lineage_on_pool_edges(create_data, node_schema)
         node = self.client.create(kind=operation.kind, data=create_data)
         if operation.action == "update":
             # The recorded id, set on the node rather than put into `data`. The SDK renders
@@ -1888,6 +1889,25 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             "unkeyed and every re-apply would duplicate the object."
         )
         raise UnaccountedIdentityComponentError(msg)
+
+
+_LINEAGE_EDGE_PROPERTIES = ("source", "owner", "is_protected")
+
+
+def clear_lineage_on_pool_edges(create_data: dict[str, Any], node_schema: NodeSchemaAPI) -> None:
+    """Remove `source`, `owner` and `is_protected` from each relationship edge allocated from a resource pool.
+
+    Infrahub sets the pool as the source of an edge it allocates, so that edge must carry none
+    of the import's lineage properties (spec Clarifications Q2, research R-6). No V3 write path
+    allocates from a pool today; this keeps the rule in place for the write path that does.
+    An edge is allocated from a pool when its input carries the `from_pool` key.
+    """
+    for name in node_schema.relationship_names:
+        edges = create_data.get(name)
+        for edge in edges if isinstance(edges, list) else [edges]:
+            if isinstance(edge, dict) and "from_pool" in edge:
+                for prop in _LINEAGE_EDGE_PROPERTIES:
+                    edge.pop(prop, None)
 
 
 def _has_unwritable_hfid_component(node_schema: NodeSchemaAPI) -> bool:
