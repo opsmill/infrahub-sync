@@ -1,0 +1,22 @@
+dev/specs/019-import-lineage/checklists/requirements.md
+  s_8d92f288a8f661::t_84a910e95bf22c 1-46
+dev/specs/019-import-lineage/spec.md
+  s_8d92f288a8f661::t_d474b6d46ac71a 1-185,187-310
+  s_8d92f288a8f661::t_c670cdc27d1500 186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7b0a103c8b55e1918f0af940e6b8badc2f26a16b",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
