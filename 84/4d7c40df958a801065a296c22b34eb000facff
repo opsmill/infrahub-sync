@@ -1,0 +1,46 @@
+tasks/smoke_dataset.py
+  s_8d92f288a8f661::t_699949d56013d5 1-70
+tasks/__init__.py
+  s_8d92f288a8f661::t_d740c69297c802 132
+tests/test_benchmark_runner.py
+  s_8d92f288a8f661::t_749353ddcdf820 1057-1059
+  s_8d92f288a8f661::t_f9364803638633 38-51,60-65,788-790,858,924-930,932,1202,1208,1225,1232
+tasks/dev.py
+  s_8d92f288a8f661::t_769af1292cdd1e 8-17,23-28,34,37-38,40,42,45,54-57,61-62,67,69-70,75-76,79-218,250,263-264,266-267,270-280,295-300,303-305,307-308,311,315-375,377-507
+  s_8d92f288a8f661::t_986f29f8fc5492 281-291
+  s_8d92f288a8f661::t_e998541a28906e 292
+tests/dev_stack/test_dev_tasks.py
+  s_8d92f288a8f661::t_fddc3ec9b7ebb0 1-306
+tasks/preview.py
+  s_8d92f288a8f661::t_45f0a888f9cec1 33-41,228-229
+tests/preview/conftest.py
+  s_8d92f288a8f661::t_3a73d270e3d740 18,25,75-76,94-126,131
+tests/preview/test_service_api.py
+  s_8d92f288a8f661::t_e1481f3ba5a6e7 43,206
+tasks/bench.py
+  s_1b4fe4f1bfdd10::t_c5d833469fdb90 58,66-67,99-102,107-109,130-137,147,180,201,206,224,227,243,251,294
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "844d7c40df958a801065a296c22b34eb000facff",
+  "prompts": {},
+  "sessions": {
+    "s_1b4fe4f1bfdd10": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a22da8578e010ccf2",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
