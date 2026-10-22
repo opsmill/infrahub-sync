@@ -1,0 +1,27 @@
+docs/docs/development-stack.mdx
+  s_8d92f288a8f661::t_95e094bed367c9 5-9,11-14,18-21,25-27,35-37,39-40,42-51,57-59,62,65-69,71-85,94-105,110-181,184,186-187,189-192,198-244,308-309,312,314,368-369,376,381,391-410
+  s_8d92f288a8f661::t_b419789bbc2ce7 301-302
+  s_8d92f288a8f661::t_2b0c343a3f6eb8 52-56,106-109,182,193-197,245,303,315-316,411
+docs/docs/development/guides/preview-stack.md
+  s_8d92f288a8f661::t_f21e2a5ef4d325 7-11
+development/docker-compose.yml
+  s_8d92f288a8f661::t_2069b7c9c11979 39
+tests/test_development_stack_docs.py
+  s_8d92f288a8f661::t_8d78dfa8945b55 1,11-14,59-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0bfa9ec1a4a1268030116dc27416490823fcf8c5",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
