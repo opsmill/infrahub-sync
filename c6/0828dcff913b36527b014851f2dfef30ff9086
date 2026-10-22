@@ -1,0 +1,31 @@
+docker-compose.yml
+  s_8d92f288a8f661::t_6548cfc0af87a2 100-102,105,122-124,126,142,147-151,153,155-162,176-178,186-187,193
+tests/compose/test_image_pins.py
+  s_8d92f288a8f661::t_4126f8883baca7 67
+tests/compose/test_compose_contract.py
+  s_e744a4ecbb672e::t_f2f66c32345f9c 67-68,551,556,567,598,616-617,622-623,634,661
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c60828dcff913b36527b014851f2dfef30ff9086",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_e744a4ecbb672e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aea898611b704b42b",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
