@@ -1,0 +1,32 @@
+tests/test_unit_tier.py
+  s_8d92f288a8f661::t_323f4b5c5ace72 1-36
+  s_8d92f288a8f661::t_070f2c73bc8aaa 37-38
+tests/conftest.py
+  s_8d92f288a8f661::t_a38756c297ee9a 1-51
+  s_8d92f288a8f661::t_0b3b98f206b834 52-54
+  s_8d92f288a8f661::t_8e8f1805228de4 55-58
+dev/specs/010-prefect-from-sync-image/research.md
+  s_8d92f288a8f661::t_25aa8b1cbca832 314-317
+dev/specs/010-prefect-from-sync-image/spec.md
+  s_8d92f288a8f661::t_1733b355ba2909 428-431
+dev/specs/010-prefect-from-sync-image/tasks.md
+  s_8d92f288a8f661::t_89f3af04ed9ba7 196,202
+tasks/tests.py
+  s_8d92f288a8f661::t_3b999e2d97e72f 22,56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "13d9bb09f832a855659d464ff5cb5fb767bd78b1",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
