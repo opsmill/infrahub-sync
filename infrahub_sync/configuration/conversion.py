@@ -215,6 +215,10 @@ class CredentialEntry:
     worker_receives: bool
     origin_variable: str | None = None
 
+    def __post_init__(self) -> None:
+        """Reject a ``placeholder`` or ``variable`` origin that does not name its variable."""
+        _check_origin_variable(self.origin, self.origin_variable)
+
     @property
     def warnings(self) -> tuple[str, ...]:
         """The report warnings for this credential (spec FR-008, FR-009), never a value."""
@@ -231,12 +235,11 @@ class CredentialEntry:
 
 @dataclass(frozen=True, slots=True)
 class SettingOriginEntry:
-    """One setting whose value v2 read from the environment before the file.
+    """One setting that v2 could read from the environment, with the value written and its origin.
 
     ``value`` is the value written to the package and ``origin`` where it came from;
     ``origin_variable`` names the variable for the ``variable`` origin. ``other_value`` is the
-    value that lost when the file and the variable held different values. ``is_loopback`` is
-    true when the value names ``localhost`` or ``127.0.0.1``.
+    value that lost when the file and the variable held different values.
     """
 
     location: str
@@ -244,7 +247,15 @@ class SettingOriginEntry:
     origin: SettingOrigin
     origin_variable: str | None = None
     other_value: str | None = None
-    is_loopback: bool = False
+
+    def __post_init__(self) -> None:
+        """Reject a ``variable`` origin that does not name its variable."""
+        _check_origin_variable(self.origin, self.origin_variable)
+
+    @property
+    def is_loopback(self) -> bool:
+        """Whether the value is an address on ``localhost`` or ``127.0.0.1``."""
+        return _is_loopback(self.value)
 
     @property
     def warnings(self) -> tuple[str, ...]:
@@ -260,6 +271,12 @@ class SettingOriginEntry:
                 "may set; check that it holds the address v2 used"
             )
         return tuple(warnings)
+
+
+def _check_origin_variable(origin: str, origin_variable: str | None) -> None:
+    if origin in _ORIGINS_WITH_A_VARIABLE and origin_variable is None:
+        msg = f"the {origin} origin needs origin_variable"
+        raise ValueError(msg)
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,8 +310,10 @@ class NoteEntry:
 class RefusalEntry:
     """One reason the configuration cannot be converted.
 
-    ``value`` is the refused value, or ``None`` for a credential setting, whose value is never
-    reported. For a name that is not bundled, ``reason`` lists the bundled names.
+    ``value`` is the refused value, or ``None`` when it is not reported: for a credential
+    setting, a setting the bundled adapter does not accept (its value could be a credential),
+    an address with a user name or password, and a value that is a mapping or a list. For a
+    name that is not bundled, ``reason`` lists the bundled names.
     """
 
     location: str
@@ -348,7 +367,8 @@ _PLACEHOLDER_REASON = (
     "v2 did not read this setting from the environment and used the placeholder text as its value; "
     "write the value in config.yml"
 )
-_SECRET_LIKE_KEY = re.compile(r"token|password|passwd|secret|key|auth|credential", re.IGNORECASE)
+_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+_ORIGINS_WITH_A_VARIABLE = frozenset({"placeholder", "variable"})
 _ROLE_ORDER: Mapping[str, int] = MappingProxyType({"source": 0, "destination": 1})
 
 _DROP_REASONS: Mapping[str, str] = MappingProxyType(
@@ -568,15 +588,12 @@ def _holds_placeholder(value: object) -> bool:
 def _refuse_other_setting(name: str, key: str, value: object, location: str, report: _Report) -> bool:
     """Refuse a setting the bundled adapter does not accept, or that holds a placeholder v2 did not read.
 
-    The value of a setting not accepted is left out when its name suggests a secret, because
-    such a setting is not declared as a credential and its value could still be one.
+    The value of a setting not accepted is never reported: such a setting is not declared as a
+    credential, and its value could still be one whatever its name.
     """
     capabilities = BUILTIN_ADAPTER_CAPABILITIES[name]
     if key not in capabilities.allowed_settings:
-        value_text = None if _SECRET_LIKE_KEY.search(key) else _printable(value)
-        report.refusals.append(
-            RefusalEntry(location, f"the bundled {name} adapter does not accept this setting", value_text)
-        )
+        report.refusals.append(RefusalEntry(location, f"the bundled {name} adapter does not accept this setting"))
         return True
     if _holds_placeholder(value):
         report.refusals.append(RefusalEntry(location, _PLACEHOLDER_REASON, _printable(value)))
@@ -691,6 +708,7 @@ class _Candidates:
     variable_value: str | None
     flag: str | None
     placeholder: str | None
+    visible_variables: tuple[tuple[str, str], ...] = ()
 
 
 def _resolve(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -703,14 +721,17 @@ def _resolve(  # pylint: disable=too-many-arguments,too-many-positional-argument
 ) -> object:
     """Return the value v2 used for one setting, recording its origin, or ``None``."""
     candidates = _candidates(location, row, value, visible, flag, report)
-    if row.kind == "address" and _any_user_information(candidates):
-        report.refusals.append(
-            RefusalEntry(
-                location,
-                "the address holds a user name or password; remove it from the address and pass it as a credential",
+    if row.kind == "address":
+        holders = _user_information_holders(location, candidates)
+        if holders:
+            report.refusals.append(
+                RefusalEntry(
+                    location,
+                    f"the address from {', '.join(holders)} holds a user name or password; "
+                    "remove it from the address and pass it as a credential",
+                )
             )
-        )
-        return None
+            return None
     chosen = _choose(location, row, candidates)
     if chosen is None:
         _refuse_missing(location, row, candidates, report)
@@ -742,23 +763,18 @@ def _candidates(  # pylint: disable=too-many-arguments,too-many-positional-argum
                     "setting, so it was not read"
                 )
             )
-    variable, variable_value = None, None
-    for name in lookup:
-        found = visible.get(name)
-        if found:
-            variable, variable_value = name, found
-            break
-    return _Candidates(file_value, variable, variable_value, flag if row.kind == "address" else None, placeholder)
+    found = tuple((name, visible[name]) for name in lookup if visible.get(name))
+    variable, variable_value = found[0] if found else (None, None)
+    return _Candidates(
+        file_value, variable, variable_value, flag if row.kind == "address" else None, placeholder, found
+    )
 
 
 def _choose(location: str, row: EnvironmentSetting, candidates: _Candidates) -> SettingOriginEntry | None:
     """Apply flag, then v2's precedence between the variable and the file."""
-    is_address = row.kind == "address"
     if candidates.flag:
         origin = _FLAGS["source" if location.startswith("source.") else "destination"]
-        return SettingOriginEntry(
-            location, candidates.flag, origin, is_loopback=_is_loopback(candidates.flag, is_address)
-        )
+        return SettingOriginEntry(location, candidates.flag, origin)
     file_value = candidates.file_value
     variable_value = candidates.variable_value
     use_variable = variable_value is not None and (row.precedence == "variable" or file_value is None)
@@ -770,7 +786,6 @@ def _choose(location: str, row: EnvironmentSetting, candidates: _Candidates) -> 
             "variable",
             origin_variable=candidates.variable,
             other_value=other,
-            is_loopback=_is_loopback(str(variable_value), is_address),
         )
     if file_value is None:
         return None
@@ -780,7 +795,6 @@ def _choose(location: str, row: EnvironmentSetting, candidates: _Candidates) -> 
         str(file_value),
         "config.yml",
         other_value=other,
-        is_loopback=_is_loopback(str(file_value), is_address),
     )
 
 
@@ -802,23 +816,36 @@ def _refuse_missing(location: str, row: EnvironmentSetting, candidates: _Candida
     report.refusals.append(RefusalEntry(location, reason))
 
 
-def _any_user_information(candidates: _Candidates) -> bool:
-    values = (candidates.file_value, candidates.variable_value, candidates.flag)
-    return any(isinstance(value, str) and _has_user_information(value) for value in values)
+def _user_information_holders(location: str, candidates: _Candidates) -> list[str]:
+    """Name the origin of every candidate address that holds a user name or password.
+
+    Every candidate is checked, not only the one v2 used: a value that loses is still printed
+    in the report next to the value that wins.
+    """
+    holders: list[str] = []
+    if isinstance(candidates.file_value, str) and _has_user_information(candidates.file_value):
+        holders.append("config.yml")
+    holders.extend(name for name, value in candidates.visible_variables if _has_user_information(value))
+    if candidates.flag is not None and _has_user_information(candidates.flag):
+        holders.append(_FLAGS["source" if location.startswith("source.") else "destination"])
+    return holders
 
 
 def _has_user_information(address: str) -> bool:
-    """Return whether an address holds a user name or password."""
-    try:
-        parts = urlsplit(address)
-    except ValueError:
-        return "@" in address
-    return parts.username is not None or parts.password is not None
+    """Return whether an address holds a user name or password.
+
+    The authority is the text after an optional ``scheme://`` and before the first ``/``, ``?``
+    or ``#``; any ``@`` in it marks user information. Read this way, a value without a scheme,
+    such as ``user:secret@netbox.example.com``, is caught too: ``urlsplit`` reads ``user`` in
+    it as the scheme.
+    """
+    authority = _SCHEME.sub("", address.strip(), count=1)
+    for separator in ("/", "?", "#"):
+        authority = authority.split(separator, 1)[0]
+    return "@" in authority
 
 
-def _is_loopback(address: str, is_address: bool) -> bool:
-    if not is_address:
-        return False
+def _is_loopback(address: str) -> bool:
     try:
         host = urlsplit(address).hostname
     except ValueError:

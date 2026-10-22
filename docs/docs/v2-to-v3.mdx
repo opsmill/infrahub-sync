@@ -163,9 +163,8 @@ holds the addresses V2 used. Then check that the Sync worker can reach them.
 
 - The Observium and Slurpit examples hold placeholder addresses that are not absolute URLs.
   Pass `--source-url`.
-- The ACI adapter reads `url` from `CISCO_APIC_URL` and `verify` from `CISCO_APIC_VERIFY`. When
-  `config.yml` holds neither value, set both variables in the shell where you run the command.
-  No flag sets `verify`.
+- When `config.yml` holds `${CISCO_APIC_VERIFY}`, set that variable where you run the command;
+  no flag sets `verify`. Set the APIC address with `CISCO_APIC_URL` or `--source-url`.
 
 ### How the command handles each v2 key
 
@@ -202,6 +201,11 @@ this release the command refuses:
 - A `${NAME}` placeholder in a setting that V2 did not read from the environment. V2 used the
   placeholder text as the value, so write the value in `config.yml`.
 - An address that the command cannot find in the file, a V2 variable or a flag.
+- An address that holds a user name or password, in the file, in a V2 variable or in a flag.
+  The reason names the setting and where the address came from, and does not print the address.
+- A `${NAME}` placeholder in a setting that V2 read from the environment, such as
+  `verify: ${CISCO_APIC_VERIFY}`, when the V2 variable for that setting is not set where you run
+  the command.
 - A package that would fail a registration check.
 
 For the V2 example that writes to Peering Manager, the refusal is:

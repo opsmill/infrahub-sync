@@ -655,10 +655,15 @@ def _read_v2_configuration(path: Path) -> object:
         _convert_fail(f"error: {path.name} is not valid YAML", 2)
 
 
-def _write_package(output: Path, package: Mapping[str, Any]) -> None:
-    """Write through a temporary file in the target directory and a rename (research R8)."""
+def _write_package(output: Path, package: Mapping[str, Any], *, replace: bool) -> None:
+    """Write through a temporary file in the target directory, then move it in place (research R8).
+
+    With ``replace``, the move is a rename that replaces ``output``. Without it, the move is a
+    hard link, which fails with ``FileExistsError`` when ``output`` was created after the
+    command checked for it, for example while the question waited for an answer.
+    """
     text = yaml.safe_dump(dict(package), sort_keys=False, default_flow_style=False, allow_unicode=True)
-    handle = tempfile.NamedTemporaryFile(  # noqa: SIM115 - closed before the rename below.
+    handle = tempfile.NamedTemporaryFile(  # noqa: SIM115 - closed before the move below.
         "w", encoding="utf-8", dir=output.parent, prefix=f".{output.name}.", suffix=".tmp", delete=False
     )
     temporary = Path(handle.name)
@@ -666,10 +671,20 @@ def _write_package(output: Path, package: Mapping[str, Any]) -> None:
         with handle:
             handle.write(text)
         temporary.chmod(0o644)
-        temporary.replace(output)
-    except OSError:
+        if replace:
+            temporary.replace(output)
+        else:
+            os.link(temporary, output)
+    finally:
         temporary.unlink(missing_ok=True)
-        raise
+
+
+def _is_same_file(first: Path, second: Path) -> bool:
+    """Return whether two paths name the same file; a path that does not exist names none."""
+    try:
+        return first.samefile(second)
+    except OSError:
+        return False
 
 
 @configs_app.command("convert")
@@ -690,25 +705,51 @@ def configs_convert(
 ) -> None:
     """Convert a v1 or v2 config.yml into a V3 configuration package. Needs no Sync API.
 
-    The command opens no network connection and never prints a credential value. It prints a
-    report, asks before it writes, and writes nothing without a terminal unless --yes is given.
+    \b
+    The command opens no network connection and never prints a credential
+    value. It prints a report, asks before it writes, and writes nothing
+    without a terminal unless --yes is given.
 
-    The report lists each credential with the environment variable the Sync worker reads in V3,
-    each address with its origin (a flag, a v2 variable, or config.yml), each dropped key
-    with its reason, and notes. It warns when config.yml still holds a literal credential, when
-    the shipped Compose file does not pass a credential variable to the Sync worker, when an
-    address is localhost or 127.0.0.1, and when an address came from a generic variable name.
+    \b
+    The report names each credential setting with the environment variable
+    the Sync worker reads in V3, each address with its origin (a flag, a v2
+    variable, or config.yml), each dropped key with its reason, and notes.
+    It warns when config.yml still holds a literal credential, when the
+    shipped Compose file does not pass a credential variable to the Sync
+    worker, when an address is localhost or 127.0.0.1, and when an address
+    came from a generic variable name.
 
-    It refuses, writes nothing and exits with status 1 when the configuration names an adapter
-    that is not bundled, a custom adapter (INFP-654, planned for 3.0), a destination other than
-    Infrahub, a setting the bundled adapter does not accept, a placeholder v2 did not read, an
-    address with a user name or password, or a setting with no value; or when the package fails
-    a registration check. It exits with status 2 when PATH is not a v1 or v2 configuration.
+    \b
+    Exit status 1, nothing written, when the configuration has any of:
+    - a source or destination name that is not a bundled adapter
+    - a custom adapter (INFP-654, planned for 3.0)
+    - a destination other than Infrahub
+    - a setting the bundled adapter does not accept
+    - a placeholder v2 did not read
+    - an address with a user name or password
+    - a setting with no value
+
+    \b
+    Exit status 1 also when:
+    - the package fails a registration check
+    - the output file exists and --force is not given
+    - --output names the input file, even with --force
+    - there is no terminal and --yes is not given
+    - the package cannot be written
+
+    \b
+    Exit status 2 when:
+    - PATH cannot be read
+    - PATH is not valid YAML
+    - PATH is not a v1 or v2 configuration
+    - the directory of the output file does not exist
     """
     data = _read_v2_configuration(path)
     target = output if output is not None else path.parent / "package.yml"
     if not target.parent.is_dir():
         _convert_fail(f"error: the directory of {target} does not exist", 2)
+    if _is_same_file(target, path):
+        _convert_fail(f"error: --output {target} is the input file {path}; choose another path", 1)
     if target.exists() and not force:
         _convert_fail(f"{target} exists; pass --force to replace it", 1)
     try:
@@ -731,9 +772,13 @@ def configs_convert(
             typer.echo("nothing written")
             raise typer.Exit(0)
     try:
-        _write_package(target, result.package)
-    except OSError:
-        _convert_fail(f"error: cannot write {target}", 1)
+        _write_package(target, result.package, replace=force)
+    except FileExistsError:
+        _convert_fail(f"{target} exists; pass --force to replace it", 1)
+    except OSError as error:
+        # strerror describes the failure; the filename attributes are not printed.
+        reason = f": {error.strerror}" if error.strerror else ""
+        _convert_fail(f"error: cannot write {target}{reason}", 1)
     _echo_lines([f"Wrote {target}", *next_step_lines(str(target), result)])
 
 

@@ -333,20 +333,44 @@ $ infrahub-sync configs validate [OPTIONS] {CONFIG} {version}
 
 Convert a v1 or v2 config.yml into a V3 configuration package. Needs no Sync API.
 
-The command opens no network connection and never prints a credential value. It prints a
-report, asks before it writes, and writes nothing without a terminal unless --yes is given.
 
-The report lists each credential with the environment variable the Sync worker reads in V3,
-each address with its origin (a flag, a v2 variable, or config.yml), each dropped key
-with its reason, and notes. It warns when config.yml still holds a literal credential, when
-the shipped Compose file does not pass a credential variable to the Sync worker, when an
-address is localhost or 127.0.0.1, and when an address came from a generic variable name.
+The command opens no network connection and never prints a credential
+value. It prints a report, asks before it writes, and writes nothing
+without a terminal unless --yes is given.
 
-It refuses, writes nothing and exits with status 1 when the configuration names an adapter
-that is not bundled, a custom adapter (INFP-654, planned for 3.0), a destination other than
-Infrahub, a setting the bundled adapter does not accept, a placeholder v2 did not read, an
-address with a user name or password, or a setting with no value; or when the package fails
-a registration check. It exits with status 2 when PATH is not a v1 or v2 configuration.
+
+The report names each credential setting with the environment variable
+the Sync worker reads in V3, each address with its origin (a flag, a v2
+variable, or config.yml), each dropped key with its reason, and notes.
+It warns when config.yml still holds a literal credential, when the
+shipped Compose file does not pass a credential variable to the Sync
+worker, when an address is localhost or 127.0.0.1, and when an address
+came from a generic variable name.
+
+
+Exit status 1, nothing written, when the configuration has any of:
+- a source or destination name that is not a bundled adapter
+- a custom adapter (INFP-654, planned for 3.0)
+- a destination other than Infrahub
+- a setting the bundled adapter does not accept
+- a placeholder v2 did not read
+- an address with a user name or password
+- a setting with no value
+
+
+Exit status 1 also when:
+- the package fails a registration check
+- the output file exists and --force is not given
+- --output names the input file, even with --force
+- there is no terminal and --yes is not given
+- the package cannot be written
+
+
+Exit status 2 when:
+- PATH cannot be read
+- PATH is not valid YAML
+- PATH is not a v1 or v2 configuration
+- the directory of the output file does not exist
 
 **Usage**:
 

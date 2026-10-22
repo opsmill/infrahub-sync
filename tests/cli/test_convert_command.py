@@ -152,6 +152,55 @@ def test_output_sets_the_path(config_file: Path, tmp_path: Path) -> None:
     assert f"infrahub-sync configs register {target}" in stdout
 
 
+@pytest.mark.parametrize("spelling", ["same", "through-a-dot-directory"])
+def test_output_that_is_the_input_file_exits_1_even_with_force(config_file: Path, spelling: str) -> None:
+    original = config_file.read_text(encoding="utf-8")
+    output = config_file if spelling == "same" else config_file.parent / "." / config_file.name
+
+    code, stdout, stderr = _convert(str(config_file), "--output", str(output), "--yes", "--force")
+
+    assert code == 1
+    assert f"--output {output} is the input file {config_file}" in stderr
+    assert "Credentials (" not in stdout
+    assert config_file.read_text(encoding="utf-8") == original
+    assert sorted(path.name for path in config_file.parent.iterdir()) == ["config.yml"]
+
+
+def test_output_created_while_the_question_waits_is_not_replaced(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _terminal(monkeypatch)
+    package = config_file.parent / "package.yml"
+
+    def _confirm(*_: object, **__: object) -> bool:
+        package.write_text("written meanwhile\n", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(cli.typer, "confirm", _confirm)
+    code, _, stderr = _convert(str(config_file))
+
+    assert code == 1
+    assert f"{package} exists; pass --force to replace it" in stderr
+    assert package.read_text(encoding="utf-8") == "written meanwhile\n"
+    assert sorted(path.name for path in config_file.parent.iterdir()) == ["config.yml", "package.yml"]
+
+
+def test_write_failure_names_the_target_and_the_system_error(
+    config_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _refuse(*_: object, **__: object) -> None:
+        raise PermissionError(13, "Permission denied", "/a/path/that/is/not/printed")
+
+    monkeypatch.setattr(cli.tempfile, "NamedTemporaryFile", _refuse)
+    code, _, stderr = _convert(str(config_file), "--yes")
+
+    package = config_file.parent / "package.yml"
+    assert code == 1
+    assert f"error: cannot write {package}: Permission denied" in stderr
+    assert "/a/path/that/is/not/printed" not in stderr
+    assert not package.exists()
+
+
 def test_output_in_a_missing_directory_exits_2(config_file: Path, tmp_path: Path) -> None:
     code, _, stderr = _convert(str(config_file), "--output", str(tmp_path / "missing" / "p.yml"), "--yes")
 
@@ -311,7 +360,7 @@ def test_refusal_without_a_printable_value_has_an_empty_value_column(tmp_path: P
     assert code == 1
     assert stderr.splitlines()[1] == (
         f"  {'source.settings.url':<23} {'':<35} "
-        "the address holds a user name or password; remove it from the address and pass it as a credential"
+        "the address from config.yml holds a user name or password; remove it from the address and pass it as a credential"
     )
     assert _CANARY not in stderr
     assert not (tmp_path / "package.yml").exists()

@@ -7,7 +7,10 @@ can reach the conversion, and every output is scanned for it.
 - Every v2 credential variable of ``V2_ENVIRONMENT_FIRST`` is set to the canary in the
   environment the command sees. The pure function receives only ``visible_v2_variables``.
 - ``url: ${NETBOX_TOKEN}`` names a credential variable in an address placeholder.
-- An address holds the canary as its password.
+- An address holds the canary as its password, with or without a scheme, in the value v2
+  used or in the value that lost to it.
+- A setting the bundled adapter does not accept holds the canary, whatever its name.
+- A V3 package, a list and a scalar that hold the canary are given to the command.
 
 The outputs scanned are the written package, standard output, standard error and the logs
 captured at DEBUG. A control test plants the canary in a copied key to show that the scans
@@ -18,6 +21,7 @@ from __future__ import annotations
 
 import copy
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -103,9 +107,52 @@ def _netbox_with_url(url: str) -> dict[str, Any]:
     return data
 
 
-REFUSED_INPUTS: dict[str, Callable[[], dict[str, Any]]] = {
-    "url-names-a-credential-variable": lambda: _netbox_with_url("${NETBOX_TOKEN}"),
-    "address-with-password": lambda: _netbox_with_url(f"https://admin:{CANARY}@netbox.example.com"),
+def _netbox_with_setting(key: str) -> dict[str, Any]:
+    """Return the NetBox example with a setting the adapter does not accept, holding the canary."""
+    data = _with_literal_credentials(_example("netbox_to_infrahub"))
+    data["source"]["settings"][key] = CANARY
+    return data
+
+
+def _ipfabric_with_base_url(url: str) -> dict[str, Any]:
+    data = _with_literal_credentials(_example("ipfabric_to_infrahub"))
+    data["source"]["settings"]["base_url"] = url
+    return data
+
+
+@dataclass(frozen=True)
+class _RefusedInput:
+    """An input that is refused, the setting the refusal names and the v2 variables it needs."""
+
+    make: Callable[[], dict[str, Any]]
+    location: str
+    variables: dict[str, str] = field(default_factory=dict)
+
+
+_SCHEME_LESS = f"admin:{CANARY}@netbox.example.com"
+
+REFUSED_INPUTS: dict[str, _RefusedInput] = {
+    "url-names-a-credential-variable": _RefusedInput(
+        lambda: _netbox_with_url("${NETBOX_TOKEN}"), "source.settings.url"
+    ),
+    "address-with-password": _RefusedInput(
+        lambda: _netbox_with_url(f"https://admin:{CANARY}@netbox.example.com"), "source.settings.url"
+    ),
+    "scheme-less-address-wins": _RefusedInput(lambda: _netbox_with_url(_SCHEME_LESS), "source.settings.url"),
+    "scheme-less-address-loses-to-a-variable": _RefusedInput(
+        lambda: _netbox_with_url(_SCHEME_LESS),
+        "source.settings.url",
+        {"NETBOX_ADDRESS": "https://netbox.example.com"},
+    ),
+    "ipfabric-variable-loses-to-the-file": _RefusedInput(
+        lambda: _ipfabric_with_base_url("https://ipf.example.com"),
+        "source.settings.base_url",
+        {"IPF_URL": f"admin:{CANARY}@ipf.example.com"},
+    ),
+    **{
+        f"unaccepted-setting-{key}": _RefusedInput(lambda key=key: _netbox_with_setting(key), f"source.settings.{key}")
+        for key in ("api_token", "tokn", "pwd", "x")
+    },
 }
 
 
@@ -208,38 +255,66 @@ def test_command_output_never_holds_the_canary(example: str, tmp_path: Path, cap
     assert CANARY not in caplog.text
 
 
-@pytest.mark.parametrize("make_input", list(REFUSED_INPUTS.values()), ids=list(REFUSED_INPUTS))
+@pytest.mark.parametrize("refused", list(REFUSED_INPUTS.values()), ids=list(REFUSED_INPUTS))
 def test_refused_input_never_shows_the_canary_from_the_function(
-    make_input: Callable[[], dict[str, Any]],
+    refused: _RefusedInput,
     caplog: pytest.LogCaptureFixture,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     caplog.set_level(logging.DEBUG)
 
-    result = _convert_with_function(make_input(), _environment())
+    result = _convert_with_function(refused.make(), {**_environment(), **refused.variables})
 
     assert result.package is None
-    assert any(refusal.location == "source.settings.url" for refusal in result.refusals)
+    assert any(refusal.location == refused.location for refusal in result.refusals)
     captured = capsys.readouterr()
     assert CANARY not in _result_text(result)
     assert CANARY not in captured.out + captured.err
     assert CANARY not in caplog.text
 
 
-@pytest.mark.parametrize("make_input", list(REFUSED_INPUTS.values()), ids=list(REFUSED_INPUTS))
+@pytest.mark.parametrize("refused", list(REFUSED_INPUTS.values()), ids=list(REFUSED_INPUTS))
 def test_refused_input_never_shows_the_canary_from_the_command(
-    make_input: Callable[[], dict[str, Any]], tmp_path: Path, caplog: pytest.LogCaptureFixture
+    refused: _RefusedInput, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.DEBUG)
 
-    code, stdout, stderr, package = _convert_with_command(tmp_path, make_input(), _environment())
+    code, stdout, stderr, package = _convert_with_command(
+        tmp_path, refused.make(), {**_environment(), **refused.variables}
+    )
 
     assert code == 1
-    assert "source.settings.url" in stderr
+    assert refused.location in stderr
     assert not package
     assert CANARY not in stdout
     assert CANARY not in stderr
     assert CANARY not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"format_version": 1, "configuration": {"name": "x"}, "credentials": {"token": CANARY}},
+        [CANARY, {"token": CANARY}],
+        CANARY,
+    ],
+    ids=["v3-package", "list", "scalar"],
+)
+def test_input_the_conversion_cannot_read_never_shows_the_canary(
+    data: object, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    source = tmp_path / "config.yml"
+    source.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    result = _RUNNER.invoke(app, ["configs", "convert", str(source), "--yes"], env=_environment())
+
+    assert result.exit_code == 2
+    assert "cannot be converted" in result.stderr
+    assert CANARY not in result.stdout
+    assert CANARY not in result.stderr
+    assert CANARY not in caplog.text
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["config.yml"]
 
 
 def test_canary_scans_detect_a_planted_copied_value(tmp_path: Path) -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
 import yaml
@@ -523,24 +523,110 @@ def test_placeholder_naming_another_variable_is_not_read() -> None:
     assert _CANARY not in repr(result)
 
 
+_CLEAN_NETBOX = "https://netbox.example.com"
+_CLEAN_IPF = "https://ipf.example.com"
+
+
 @pytest.mark.parametrize(
-    ("settings", "visible"),
+    ("source_name", "setting", "settings", "visible", "source_url", "origin"),
     [
-        ({"url": f"https://user:{_CANARY}@netbox.example.com"}, {}),
-        ({"url": "https://netbox.example.com"}, {"NETBOX_URL": f"https://{_CANARY}@netbox.example.com"}),
+        ("netbox", "url", {"url": f"https://user:{_CANARY}@netbox.example.com"}, {}, None, "config.yml"),
+        (
+            "netbox",
+            "url",
+            {"url": _CLEAN_NETBOX},
+            {"NETBOX_URL": f"https://{_CANARY}@netbox.example.com"},
+            None,
+            "NETBOX_URL",
+        ),
+        ("netbox", "url", {"url": f"user:{_CANARY}@netbox.example.com"}, {}, None, "config.yml"),
+        ("netbox", "url", {"url": f"user@{_CANARY}.example.com"}, {}, None, "config.yml"),
+        (
+            "netbox",
+            "url",
+            {"url": f"user:{_CANARY}@netbox.example.com"},
+            {"NETBOX_ADDRESS": _CLEAN_NETBOX},
+            None,
+            "config.yml",
+        ),
+        (
+            "netbox",
+            "url",
+            {},
+            {"NETBOX_ADDRESS": _CLEAN_NETBOX, "NETBOX_URL": f"user:{_CANARY}@netbox.example.com"},
+            None,
+            "NETBOX_URL",
+        ),
+        (
+            "netbox",
+            "url",
+            {"url": f"user:{_CANARY}@netbox.example.com"},
+            {},
+            _CLEAN_NETBOX,
+            "config.yml",
+        ),
+        ("netbox", "url", {"url": _CLEAN_NETBOX}, {}, f"user:{_CANARY}@netbox.example.com", "--source-url"),
+        (
+            "ipfabricsync",
+            "base_url",
+            {"base_url": _CLEAN_IPF},
+            {"IPF_URL": f"user:{_CANARY}@ipf.example.com"},
+            None,
+            "IPF_URL",
+        ),
     ],
-    ids=["file", "variable"],
+    ids=[
+        "file",
+        "variable",
+        "scheme-less-file-winner",
+        "scheme-less-user-only",
+        "scheme-less-file-loser-to-a-variable",
+        "second-variable",
+        "file-loser-to-the-flag",
+        "flag",
+        "ipfabricsync-variable-loser",
+    ],
 )
-def test_address_with_user_information_is_refused_without_printing_it(
-    settings: dict[str, str], visible: dict[str, str]
+def test_address_with_user_information_is_refused_without_printing_it(  # noqa: PLR0913 -- one parameter per case column
+    *,
+    source_name: str,
+    setting: str,
+    settings: dict[str, str],
+    visible: dict[str, str],
+    source_url: str | None,
+    origin: str,
 ) -> None:
-    result = _convert(_config(settings), visible)
+    result = _convert(_config(settings, source_name=source_name), visible, source_url=source_url)
+    location = f"source.settings.{setting}"
     assert result.package is None
-    refusal = next(item for item in result.refusals if item.location == "source.settings.url")
+    refusal = next(item for item in result.refusals if item.location == location)
     assert refusal.value is None
     assert "user name or password" in refusal.reason
+    assert origin in refusal.reason
     assert _CANARY not in repr(result)
-    assert all(entry.location != "source.settings.url" for entry in result.setting_origins)
+    assert all(entry.location != location for entry in result.setting_origins)
+
+
+def test_address_with_an_at_sign_in_its_path_is_converted() -> None:
+    address = "https://netbox.example.com/path@x"
+    result = _convert(_config({"url": address}))
+    assert _configuration(result)["source"]["settings"]["url"] == address
+
+
+@pytest.mark.parametrize(
+    ("address", "expected"),
+    [
+        ("https://user:secret@netbox.example.com", True),
+        ("user:secret@netbox.example.com", True),
+        ("user@netbox.example.com:8443/api", True),
+        ("https://netbox.example.com/path@x", False),
+        ("https://netbox.example.com:8443?q=a@b", False),
+        ("https://netbox.example.com#a@b", False),
+        ("netbox.example.com:8443", False),
+    ],
+)
+def test_user_information_is_read_from_the_authority_only(address: str, *, expected: bool) -> None:
+    assert conversion._has_user_information(address) is expected
 
 
 def test_visible_variables_entry_lists_names_only() -> None:
@@ -758,7 +844,7 @@ _REFUSAL_CASES: list[tuple[dict[str, Any], str, str | None, str]] = [
     (
         _config({"url": "https://netbox.example.com", "site_filter": "paris"}),
         "source.settings.site_filter",
-        "paris",
+        None,
         "the bundled netbox adapter does not accept this setting",
     ),
     (
@@ -810,7 +896,7 @@ def test_every_refusal_in_one_file_is_reported_in_location_order() -> None:
     assert first.package is None
     assert [(item.location, item.value) for item in first.refusals] == [
         ("source.adapter", "./custom_adapter.py:MockdbAdapter"),
-        ("source.settings.site_filter", "paris"),
+        ("source.settings.site_filter", None),
         ("source.settings.verify_ssl", "${NETBOX_VERIFY}"),
         ("destination.name", "peeringmanager"),
     ]
@@ -849,3 +935,51 @@ def test_a_refusal_never_carries_a_credential_value(data: dict[str, Any]) -> Non
     assert result.package is None
     assert result.refusals
     assert _CANARY not in repr(result)
+
+
+# --- Entry invariants -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("origin", ["placeholder", "variable"])
+def test_credential_entry_needs_the_variable_for_its_origin(origin: Literal["placeholder", "variable"]) -> None:
+    with pytest.raises(ValueError, match="origin_variable"):
+        CredentialEntry(
+            location="source.settings.token",
+            origin=origin,
+            reference="netbox-token",
+            identifier="INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
+            worker_receives=True,
+        )
+
+
+def test_setting_origin_entry_needs_the_variable_for_the_variable_origin() -> None:
+    with pytest.raises(ValueError, match="origin_variable"):
+        SettingOriginEntry("source.settings.url", "https://netbox.example.com", "variable")
+
+
+@pytest.mark.parametrize(
+    ("value", "is_loopback"),
+    [
+        ("http://localhost:8000", True),
+        ("http://127.0.0.1", True),
+        ("https://netbox.example.com", False),
+        ("true", False),
+    ],
+)
+def test_setting_origin_entry_derives_loopback_from_its_value(value: str, *, is_loopback: bool) -> None:
+    assert SettingOriginEntry("source.settings.url", value, "config.yml").is_loopback is is_loopback
+
+
+@pytest.mark.parametrize(
+    ("package", "refusals"),
+    [
+        ({"format_version": 1}, (conversion.RefusalEntry("source.name", "not bundled"),)),
+        (None, ()),
+    ],
+    ids=["package-and-refusals", "neither"],
+)
+def test_conversion_result_holds_a_package_or_refusals(
+    package: dict[str, Any] | None, refusals: tuple[conversion.RefusalEntry, ...]
+) -> None:
+    with pytest.raises(ValueError, match="package"):
+        ConversionResult(package=package, refusals=refusals)
