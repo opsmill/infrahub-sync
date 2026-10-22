@@ -688,7 +688,23 @@ def configs_convert(
         None, "--destination-url", help="The Infrahub address. Overrides the file and the v2 variables."
     ),
 ) -> None:
-    """Convert a v1 or v2 config.yml into a V3 configuration package. Needs no Sync API."""
+    """Convert a v1 or v2 config.yml into a V3 configuration package. Needs no Sync API.
+
+    The command opens no network connection and never prints a credential value. It prints a
+    report, asks before it writes, and writes nothing without a terminal unless --yes is given.
+
+    The report lists each credential with the environment variable the Sync worker reads in V3,
+    each address with its origin (a flag, a v2 variable, or config.yml), each dropped key
+    with its reason, and notes. It warns when config.yml still holds a literal credential, when
+    the shipped Compose file does not pass a credential variable to the Sync worker, when an
+    address is localhost or 127.0.0.1, and when an address came from a generic variable name.
+
+    It refuses, writes nothing and exits with status 1 when the configuration names an adapter
+    that is not bundled, a custom adapter (INFP-654, planned for 3.0), a destination other than
+    Infrahub, a setting the bundled adapter does not accept, a placeholder v2 did not read, an
+    address with a user name or password, or a setting with no value; or when the package fails
+    a registration check. It exits with status 2 when PATH is not a v1 or v2 configuration.
+    """
     data = _read_v2_configuration(path)
     target = output if output is not None else path.parent / "package.yml"
     if not target.parent.is_dir():

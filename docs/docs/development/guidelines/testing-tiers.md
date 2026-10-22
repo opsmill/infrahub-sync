@@ -401,6 +401,49 @@ uv run invoke preview.down --volumes
 uv run invoke netbox.down
 ```
 
+##### The `v2-gate` suite
+
+The `v2-gate` suite checks that a v2 configuration converted by `configs convert` plans no
+change against the data v2 wrote. It is a suite of `.github/scripts/nightly_e2e.py`, not a
+pytest test, and the nightly end-to-end workflow runs it after the `from-netbox` check.
+
+The suite sets up the same services as the `from-netbox` check, then runs these steps:
+
+1. It resets the preview stack, loads the pinned `demo` dataset into the local NetBox, starts
+   the preview stack and loads the schema snapshot from `tests/data/nightly_schema/`.
+2. It creates the `v2-gate` branch in Infrahub.
+3. It installs `infrahub-sync==2.0.2` from PyPI in its own environment with `uvx`, together
+   with `pynetbox==7.8.0`, and runs v2 `generate` and `sync` with
+   `tests/data/v2_examples/netbox_to_infrahub/config.yml` on the `v2-gate` branch. v2 receives
+   only `PATH`, `HOME`, `TMPDIR` and its NetBox and Infrahub variables.
+4. It converts the same `config.yml` with `configs convert --yes`, registers the package, and
+   runs `diff` on the `v2-gate` branch. NetBox does not change between the v2 sync and the plan.
+5. It compares the plan with `tests/data/v2_gate/expected_deletes.yml` and writes
+   `.preview/nightly-e2e/gate-result.json`.
+
+The suite passes only when the plan holds no creates, no updates, and no deletes that are not
+on the expected-delete list. `gate-result.json` records the v2 version, the Infrahub version,
+the dataset commit and SHA-256, the counts, and each unexpected entry with its kind and
+identity. For an update, the entry gives each field with the value v2 wrote and the value V3
+would write. Treat every unexpected entry as a defect in V3 or in the conversion.
+
+The expected-delete list starts empty. Add an entry, with its `kind`, `identity` and `reason`,
+only in a pull request where a reviewer accepts the reason.
+
+The plan summary on this build does not report records left out or problems, so the suite
+cannot count them. Until it can, the suite writes `gate-result.json` and then fails with
+"records left out and problems cannot be counted on this build", so it does not report a pass.
+
+Run it from the repository root, with Docker running and no other preview stack or NetBox in
+use, because the suite resets both:
+
+```bash
+uv run python .github/scripts/nightly_e2e.py suite v2-gate
+```
+
+In the nightly workflow, the result is uploaded as the `nightly-e2e-v2-gate-result` artifact.
+When you finish a local run, remove both stacks as for the `from-netbox` check.
+
 ##### The saved-plan write-surface qualifications
 
 Three live qualifications exercise the saved-plan write surface end to end.
@@ -463,8 +506,8 @@ what the test pins is that the destination converges them.
 #### Nightly end-to-end report
 
 `.github/workflows/workflow-nightly-e2e.yml` runs the integration tests, preview
-smoke tests, saved-plan live tests, and `from-netbox` check against disposable
-services. A scheduler outside GitHub can dispatch it each night. To dispatch one run
+smoke tests, saved-plan live tests, `from-netbox` check, and `v2-gate` suite against
+disposable services. A scheduler outside GitHub can dispatch it each night. To dispatch one run
 manually, use a full commit SHA already merged into `feature/v3-develop`:
 
 ```bash

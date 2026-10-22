@@ -39,9 +39,10 @@ not, but applying it never removes those objects.
 - **Start from fresh deployment state.** Use a new directory and let the deployment generate a
   new identity and empty state. Do not copy an older deployment's instance files, operator
   environment, or secrets, and do not point the new deployment at the old data.
-- **Register the configuration again.** A V2 `config.yml` is not a registered V3 version. Bring
-  its content into the package envelope, supply the credential values on the deployment, and
-  register the package.
+- **Register the configuration again.** A V2 `config.yml` is not a registered V3 version.
+  Convert it into a package with `configs convert`, supply the credential values on the
+  deployment, and register the package. See
+  [Move a V2 configuration to V3](#move-a-v2-configuration-to-v3).
 - **Delete any `store` block.** V3 keeps sync data in memory during a run and refuses
   configurations that declare a sync store, including Redis. If you already registered
   the package, register a new version without the block and run that version. Editing
@@ -62,6 +63,168 @@ before you apply it. See
 [Planned writes and apply](./development/knowledge/planned-write-and-apply.md) for what one operation
 does at the destination.
 
+## Move a V2 configuration to V3
+
+`infrahub-sync configs convert` reads a v1 or v2 `config.yml` and writes a V3 configuration
+package next to it. You run it on your own machine: it needs no Sync API URL or token, opens no
+network connection, and does not read the adapter and model files that V2 generated. It never
+prints a credential value.
+
+### Convert the file and read the report
+
+1. Run the command on the `config.yml` you used with V2:
+
+   ```bash
+   infrahub-sync configs convert config.yml
+   ```
+
+   The package is written to `package.yml` next to `config.yml`. To write it somewhere else,
+   pass `--output <path>`. The command does not replace an existing file unless you pass
+   `--force`.
+
+2. Read the report. For the V2 NetBox example, with no V2 variable set in the shell, the report
+   is:
+
+   ```text
+   Converting config.yml (v1 or v2 configuration "from-netbox")
+
+   Credentials (set these in the Sync deployment's .env file):
+     source.settings.token        NETBOX_TOKEN (v2) -> INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN
+     destination.settings.token   INFRAHUB_API_TOKEN (v2) -> INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
+
+   Settings taken from the environment or the file:
+     source.settings.url          https://demo.netbox.dev   from config.yml
+     destination.settings.url     http://localhost:8000     from config.yml
+     warning: destination.settings.url is a loopback address; the Sync worker runs in a container and may not reach it
+     no v2 variable (NETBOX_ADDRESS, NETBOX_URL, INFRAHUB_ADDRESS, INFRAHUB_URL) is set here; values come from config.yml or the flags
+
+   Notes:
+     V3 has no generation step; the generated adapter and model files are not needed
+   ```
+
+   The report has these sections, in this order. A section with nothing to report is left out.
+
+   - `Credentials`: each credential setting, where V2 took its value from, and the
+     `INFRAHUB_SYNC_CREDENTIAL_` variable the Sync worker reads in V3. A warning follows when
+     `config.yml` still holds a literal value, and when the `docker-compose.yml` shipped with
+     this version does not pass the variable to the Sync worker. The shipped file passes only
+     `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and
+     `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN`.
+   - `Settings taken from the environment or the file`: each address, and each other setting
+     that V2 read from an environment variable, with the value written and where it came from.
+     A warning follows for a `localhost` or `127.0.0.1` address, and for an address taken from a
+     generic variable name such as `URL`. The last line names the V2 variables that are set in
+     your shell, names only.
+   - `Dropped`: each key left out of the package, and why.
+   - `Notes`: other information, for example that V3 uses its bundled adapter when `adapter:`
+     names the bundled module.
+   - `Warnings from the package checks`: the warnings that registration would report for the
+     package.
+
+3. Confirm. The command asks `Write package.yml? [y/N]`. Answer `y` to write the file. Any
+   other answer writes nothing and exits with status 0. Pass `--yes` to write without the
+   question. Without a terminal and without `--yes`, the command writes nothing and exits with
+   status 1.
+
+4. Follow the next steps that the command prints after it writes the file:
+
+   ```text
+   Next steps:
+     1. Set INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN and INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN in .env
+     2. Restart the deployment so the Sync worker receives them
+     3. infrahub-sync configs register package.yml
+   ```
+
+   Then review the first plan before you apply it. See [Run a sync](./running-a-sync.mdx).
+
+Before it writes, the command runs every registration check that needs no connection. A
+package it writes registers without edits, as long as the addresses are ones the Sync worker
+can reach.
+
+### Addresses and other settings that V2 read from the environment
+
+V2 read some settings from environment variables, for example `NETBOX_ADDRESS` or
+`INFRAHUB_ADDRESS`, and for most adapters a variable took precedence over the file. V3 reads
+only the registered package. The command writes the value that V2 would have used where you run
+it, and the report names where that value came from:
+
+- `--source-url` or `--destination-url`, when you pass it. A flag takes precedence over the
+  file and the variables.
+- Otherwise the V2 variable, when it is set and V2 read it before the file. For IP Fabric, V2
+  read the file first, and the command does the same.
+- Otherwise the value in `config.yml`.
+
+The command reads only the variable names that V2 itself read for each adapter. It does not read
+a variable that `config.yml` names in a `${NAME}` placeholder or in a `*_env_vars` setting, and
+it says so in the report.
+
+Run the command in the shell where V2 ran, or pass the addresses as flags, so that the package
+holds the addresses V2 used. Then check that the Sync worker can reach them.
+
+- The Observium and Slurpit examples hold placeholder addresses that are not absolute URLs.
+  Pass `--source-url`.
+- The ACI adapter reads `url` from `CISCO_APIC_URL` and `verify` from `CISCO_APIC_VERIFY`. When
+  `config.yml` holds neither value, set both variables in the shell where you run the command.
+  No flag sets `verify`.
+
+### How the command handles each v2 key
+
+| v2 key | What the command does |
+| --- | --- |
+| `name` | Copies it. |
+| `source.name`, `destination.name` | Copies a bundled adapter name. Refuses any other name. The destination must be `infrahub`. |
+| `source.adapter`, `destination.adapter` | Drops it with a note when it names the bundled adapter's own module. Refuses any other value. |
+| Credential settings, such as `token` or `password` | Replaces the value with a `$credential` reference and declares the reference in the `credentials` block. |
+| `url` and other settings that V2 read from the environment first | Writes the value from the flag, the variable or the file, and reports its origin. |
+| `genericrestapi` settings that end in `_env_vars` | Drops them with a note. The command does not read the variables they name. |
+| An address that holds a user name or password | Refuses it, without printing the address. |
+| Other settings that the bundled adapter accepts | Copies them. |
+| Other settings | Refuses them. |
+| `store` | Drops it with a warning: V3 keeps sync data in memory during a run. |
+| `adapters_path` | Drops it with a warning: V3 runs only its bundled adapters. |
+| `incremental` | Copies it for `infrahub`, `nautobot` and `netbox` sources. Drops it with a warning for other sources. |
+| `order`, `diffsync_flags`, `schema_mapping` | Copies them. |
+| Other top-level keys | Drops them, because V2 did not read them. |
+| `format_version` | Refuses the file, because it is already a V3 package. |
+
+### Configurations that the command refuses
+
+When the command refuses a configuration, it writes nothing, prints every reason to standard
+error and exits with status 1. A refusal never prints the value of a credential setting. In
+this release the command refuses:
+
+- An adapter that is not bundled with Infrahub Sync. The reason lists the bundled adapters.
+- A custom adapter: an `adapter:` value that is a file path, a dotted path or an entry point.
+  Custom adapters are planned for 3.0 (INFP-654).
+- A destination other than Infrahub, including Peering Manager. This release writes only to
+  Infrahub.
+- A setting that the bundled adapter does not accept.
+- A `${NAME}` placeholder in a setting that V2 did not read from the environment. V2 used the
+  placeholder text as the value, so write the value in `config.yml`.
+- An address that the command cannot find in the file, a V2 variable or a flag.
+- A package that would fail a registration check.
+
+For the V2 example that writes to Peering Manager, the refusal is:
+
+```text
+error: config.yml cannot be converted (1 reason)
+  destination.name        peeringmanager                      V3 does not write to peeringmanager yet; this release writes only to Infrahub
+```
+
+### Check of the first V3 plan against data that V2 wrote
+
+A release check compares the first V3 plan with the data V2 wrote. On a local NetBox loaded with
+the pinned `demo` dataset, V2 `2.0.2` synchronizes the NetBox example into an empty Infrahub.
+The same `config.yml` is then converted with `configs convert --yes`, registered, and planned on
+the same Infrahub branch, with no NetBox change in between. The check passes only when that plan
+holds no creates, no updates, no records left out, no problems, and only the deletes that the
+test lists as expected.
+
+{/* TODO(release): state the v2-gate result on the NetBox example once T033 has run. */}
+
+The result of this check is not published yet. Until it is, read the first V3 plan before you
+apply it: it can hold updates to nodes that V2 wrote.
+
 ## Where each action lives now
 
 | What you want to do | Current page |
@@ -69,6 +232,7 @@ does at the destination.
 | Choose how to run V3, and reach the Sync API | [Install Infrahub Sync](./installation.mdx) |
 | Start a deployment, or replace an older one | [Moving from an older version](./quickstart-compose.mdx#moving-from-an-older-version) |
 | Check what is qualified, and the product limits | [Supported platforms and limits](./operations/supported-platforms-and-limits.mdx) |
+| Convert a V2 `config.yml` into a package | [Move a V2 configuration to V3](#move-a-v2-configuration-to-v3) |
 | Write the configuration | [Create a sync project](./creating-a-sync-project.mdx) |
 | Understand the package envelope, versions, and credentials | [Configuration package](./configuration-package.mdx) |
 | Register, plan, review, apply, or run a confirmed sync | [Run a sync](./running-a-sync.mdx) |

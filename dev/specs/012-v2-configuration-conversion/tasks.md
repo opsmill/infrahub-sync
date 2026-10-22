@@ -129,13 +129,13 @@ T033 are fixed.
 
 ## Phase 7: Polish and cross-cutting concerns
 
-- [ ] T034 [P] Replace the manual steps of "Move a V2 configuration to V3" in `docs/docs/v2-to-v3.mdx` with the command, the report, the confirmation and the next steps; list each v2 key and how the command handles it (data-model.md input table); state the gate result (FR-027)
-- [ ] T035 [P] Add a short pointer to `configs convert` in `docs/docs/configuration-package.mdx` (FR-027)
-- [ ] T036 Regenerate `docs/docs/reference/cli.mdx` with `uv run invoke docs.generate` and check it documents the options, warnings and refusals (FR-028)
-- [ ] T037 [P] Add the `v2-gate` suite to `docs/docs/development/guidelines/testing-tiers.md` next to "The `from-netbox` example check"
-- [ ] T038 [P] Add the news fragment `changelog/+v2-configuration-conversion.added.md` with `uv run --extra dev towncrier create -c "..." +v2-configuration-conversion.added.md`
-- [ ] T039 Run `uv run invoke format`, `uv run invoke lint`, `uv run invoke tests.tests-unit`, and the CLI sanity commands from AGENTS.md (`--help`, `configs --help`, `runs --help`, plus `configs convert --help`)
-- [ ] T040 Run quickstart.md steps 1 to 4 and record the results in the pull request
+- [X] T034 [P] Replace the manual steps of "Move a V2 configuration to V3" in `docs/docs/v2-to-v3.mdx` with the command, the report, the confirmation and the next steps; list each v2 key and how the command handles it (data-model.md input table); state the gate result (FR-027)
+- [X] T035 [P] Add a short pointer to `configs convert` in `docs/docs/configuration-package.mdx` (FR-027)
+- [X] T036 Regenerate `docs/docs/reference/cli.mdx` with `uv run invoke docs.generate` and check it documents the options, warnings and refusals (FR-028)
+- [X] T037 [P] Add the `v2-gate` suite to `docs/docs/development/guidelines/testing-tiers.md` next to "The `from-netbox` example check"
+- [X] T038 [P] Add the news fragment `changelog/+v2-configuration-conversion.added.md` with `uv run --extra dev towncrier create -c "..." +v2-configuration-conversion.added.md`
+- [X] T039 Run `uv run invoke format`, `uv run invoke lint`, `uv run invoke tests.tests-unit`, and the CLI sanity commands from AGENTS.md (`--help`, `configs --help`, `runs --help`, plus `configs convert --help`)
+- [X] T040 Run quickstart.md steps 1 to 4 and record the results in the pull request
 
 ---
 

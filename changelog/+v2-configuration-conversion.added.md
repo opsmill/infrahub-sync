@@ -1,0 +1,1 @@
+Add `infrahub-sync configs convert`, which converts a v1 or v2 `config.yml` into a V3 configuration package. It prints each credential, address and dropped key, asks before it writes, needs no Sync API, and refuses custom adapters, destinations other than Infrahub, and settings the bundled adapter does not accept.
