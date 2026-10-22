@@ -149,14 +149,14 @@ missing process.
 
 ### Tests for User Story 3
 
-- [ ] T041 [P] [US3] In a new `tests/dev_stack/test_deps_mode.py` (no Docker; mock `context.run`): `dev.deps` starts only core and `infrahub` profiles, prints the URLs from `dev_settings()` and returns; `dev.api` and `dev.worker` run their command with `pty=True` in the foreground and write no PID file (FR-021); with `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` set, `dev.deps` starts no `infrahub` service and prints the URL from `INFRAHUB_SYNC_DEV_INFRAHUB_URL` (FR-020).
-- [ ] T042 [P] [US3] In `tests/dev_stack/test_deps_mode.py`: in dependencies mode, `dev.smoke` calls only the Sync API's `/status` route (`infrahub_sync/service/app.py:149`, which reports worker availability) and never the Prefect API; it fails with a message naming `dev.api` when `/status` does not answer and `dev.worker` when `/status` reports the worker as not available (FR-022, D-2).
+- [X] T041 [P] [US3] In a new `tests/dev_stack/test_deps_mode.py` (no Docker; mock `context.run`): `dev.deps` starts only core and `infrahub` profiles, prints the URLs from `dev_settings()` and returns; `dev.api` and `dev.worker` run their command with `pty=True` in the foreground and write no PID file (FR-021); with `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` set, `dev.deps` starts no `infrahub` service and prints the URL from `INFRAHUB_SYNC_DEV_INFRAHUB_URL` (FR-020).
+- [X] T042 [P] [US3] In `tests/dev_stack/test_deps_mode.py`: in dependencies mode, `dev.smoke` calls only the Sync API's `/status` route (`infrahub_sync/service/app.py:149`, which reports worker availability) and never the Prefect API; it fails with a message naming `dev.api` when `/status` does not answer and `dev.worker` when `/status` reports the worker as not available (FR-022, D-2).
 
 ### Implementation for User Story 3
 
-- [ ] T043 [US3] In `development/docker-compose.yml`, publish the object store on a loopback port (the value that was `PREVIEW_MINIO_PORT`) so host processes reach it; keep `postgres` on `127.0.0.1:5440`.
-- [ ] T044 [US3] In `tasks/dev.py`, implement `dev.deps [--infrahub-network]` (rebuild when stale, start core and `infrahub`, print URLs), `dev.api` and `dev.worker` (foreground host processes with the environment built from `dev_settings()`: database URL on `127.0.0.1:5440`, object store on its loopback port, `PREFECT_API_URL=http://127.0.0.1:4230/api`, Sync API on `127.0.0.1:8030`), and the missing-process check in `dev.smoke` through `GET /status` on the Sync API. The host processes may call the Prefect server; nothing else in the tasks does (D-2 as clarified on 2026-10-22). Make T041 and T042 pass.
-- [ ] T045 [US3] Run the quickstart US3 checks, including `dev.smoke` with `dev.worker` stopped.
+- [X] T043 [US3] In `development/docker-compose.yml`, publish the object store on a loopback port (the value that was `PREVIEW_MINIO_PORT`) so host processes reach it; keep `postgres` on `127.0.0.1:5440`.
+- [X] T044 [US3] In `tasks/dev.py`, implement `dev.deps [--infrahub-network]` (rebuild when stale, start core and `infrahub`, print URLs), `dev.api` and `dev.worker` (foreground host processes with the environment built from `dev_settings()`: database URL on `127.0.0.1:5440`, object store on its loopback port, `PREFECT_API_URL=http://127.0.0.1:4230/api`, Sync API on `127.0.0.1:8030`), and the missing-process check in `dev.smoke` through `GET /status` on the Sync API. The host processes may call the Prefect server; nothing else in the tasks does (D-2 as clarified on 2026-10-22). Make T041 and T042 pass.
+- [X] T045 [US3] Run the quickstart US3 checks, including `dev.smoke` with `dev.worker` stopped.
 
 **Checkpoint**: both development modes reach a passing `dev.smoke`.
 
