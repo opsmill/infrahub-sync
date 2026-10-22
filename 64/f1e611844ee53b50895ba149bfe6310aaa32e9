@@ -1,0 +1,46 @@
+tests/integration/test_infrahub_lineage_integration.py
+  s_8d92f288a8f661::t_36200b3c1d6ea7 1-529,531
+  s_8d92f288a8f661::t_d4d52e6af42a32 530,532-561
+dev/specs/014-import-lineage/data-model.md
+  s_8d92f288a8f661::t_6919d58c980b0e 32,39,53
+dev/specs/014-import-lineage/research.md
+  s_8d92f288a8f661::t_dd35786d185c6a 502-510
+dev/specs/014-import-lineage/tasks.md
+  s_8d92f288a8f661::t_6c93bb3594147f 77
+docs/docs/development/guidelines/testing-tiers.md
+  s_8d92f288a8f661::t_fac1b7a08f0b3c 429,437-445
+infrahub_sync/adapters/infrahub.py
+  s_8d92f288a8f661::t_a95f939a25316f 690,781-787,789,797-799,878-879,884,911-914
+tests/adapters/test_infrahub_lineage.py
+  s_8d92f288a8f661::t_a954e1a688c1c8 14,26-27,38-40,74,86,98,113,138,159,162,169-170,176-192
+tests/adapters/test_infrahub_planned_write.py
+  s_8d92f288a8f661::t_7cde6a4a974098 43,90,94-95,319-322,324-326,953-954,961,975
+tests/runtime_schema/test_registered_execution.py
+  s_8d92f288a8f661::t_cdd71aa7b58f23 137-140
+tests/adapters/test_infrahub_error_classification.py
+  s_21afcad786780f::t_3721faed9581cd 11,21-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "64f1e611844ee53b50895ba149bfe6310aaa32e9",
+  "prompts": {},
+  "sessions": {
+    "s_21afcad786780f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ac43bbe9901501210",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
