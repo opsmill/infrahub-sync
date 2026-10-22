@@ -1,0 +1,22 @@
+dev/specs/016-prefect-from-sync-image/checklists/requirements.md
+  s_8d92f288a8f661::t_7941836450fe83 1-46
+dev/specs/016-prefect-from-sync-image/spec.md
+  s_8d92f288a8f661::t_2de9491d277ee0 1-42,44-101,103-139,141-285,287,289-358,360-364,366-398,400-452
+  s_8d92f288a8f661::t_df194cf4a58ef3 43,102,140,286,288,359,365,399
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6d56a20f65f35fb01f32c3016f15c71f02cdb54e",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
