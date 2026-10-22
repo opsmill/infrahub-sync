@@ -1,0 +1,19 @@
+dev/specs/010-prefect-from-sync-image/tasks.md
+  s_8d92f288a8f661::t_41157c82d7c9d4 131-132,135,137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "18531ec4716c1612a3413346c75fc8c5b394748a",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
