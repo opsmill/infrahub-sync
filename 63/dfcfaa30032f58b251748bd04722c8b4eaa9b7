@@ -1,0 +1,21 @@
+dev/specs/017-compose-own-infrastructure/spec.md
+  s_8d92f288a8f661::t_eb6b02c65dca22 1-477
+dev/specs/017-compose-own-infrastructure/checklists/requirements.md
+  s_8d92f288a8f661::t_50c82972aa7f5f 1-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "63dfcfaa30032f58b251748bd04722c8b4eaa9b7",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
