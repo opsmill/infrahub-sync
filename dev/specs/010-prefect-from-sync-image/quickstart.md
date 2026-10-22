@@ -84,7 +84,7 @@ INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=dev \
 
 Expected: Infrahub starts from `infrahub-testcontainers`, Sync from the packaged root file with
 the local image, and the plan and apply test passes. Then run `uv run invoke tests.tests-unit`
-with Docker stopped: it passes, and the `infrahub-testcontainers` plugin is not loaded.
+with Docker stopped: it passes, with the `infrahub-testcontainers` plugin loaded.
 
 ## Task names
 

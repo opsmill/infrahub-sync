@@ -109,11 +109,13 @@ required.
 Python 3.10 linting uses `--extra dev --extra prefect` and runs:
 
 ```bash
-uv run ty check --exclude infrahub_sync/service --exclude tests/service .
+uv run ty check --exclude infrahub_sync/service --exclude tests/service --exclude infrahub_sync/testcontainers --exclude tests/testcontainers .
 ```
 
 Sync supports Python 3.11–3.13 only, so this exclusion is the supported direct
-Prefect profile rather than a reduced full-service check. `invoke linter.lint-ty` selects
+Prefect profile rather than a reduced full-service check. The `testcontainers` extra, which
+`infrahub_sync/testcontainers` and its tests import, also installs on Python 3.11 or later
+only, so the same profile excludes it. `invoke linter.lint-ty` selects
 the same command from the active Python version.
 
 A pull request into `feature/v3-develop` merges only when the one required status check,
