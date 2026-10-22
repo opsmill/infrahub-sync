@@ -1,0 +1,21 @@
+tasks/release.py
+  s_8d92f288a8f661::t_b748e188c1d66e 3-4,6-7
+tests/test_release_pin.py
+  s_8d92f288a8f661::t_8205a9aedcc5fe 12,27-30,37-42,60,70-74,91,118,160,175,187-189,206-208,218-231
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "61401808b499c015e1ce9b1520dc016d9b6f261a",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
