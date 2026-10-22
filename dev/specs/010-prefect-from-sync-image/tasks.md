@@ -170,14 +170,14 @@ missing process.
 
 ### Tests for User Story 4
 
-- [ ] T046 [P] [US4] In `tests/compose/test_compose_contract.py`: `docker compose -f docker-compose.yml -f docs/docs/snippets/prefect-ui.override.yml config` shows `PREFECT_UI_ENABLED == "true"`, `PREFECT_UI_STATIC_DIRECTORY` under `/tmp/infrahub-sync/`, and exactly one `prefect-server` port with `host_ip: 127.0.0.1` (FR-007).
-- [ ] T047 [P] [US4] In `tests/compose/test_documentation.py`: `docs/docs/compose-deployment.mdx` includes the snippet file's content unchanged and has a section on merging it into an existing `docker-compose.override.yml`.
+- [X] T046 [P] [US4] In `tests/compose/test_compose_contract.py`: `docker compose -f docker-compose.yml -f docs/docs/snippets/prefect-ui.override.yml config` shows `PREFECT_UI_ENABLED == "true"`, `PREFECT_UI_STATIC_DIRECTORY` under `/tmp/infrahub-sync/`, and exactly one `prefect-server` port with `host_ip: 127.0.0.1` (FR-007).
+- [X] T047 [P] [US4] In `tests/compose/test_documentation.py`: `docs/docs/compose-deployment.mdx` includes the snippet file's content unchanged and has a section on merging it into an existing `docker-compose.override.yml`.
 
 ### Implementation for User Story 4
 
-- [ ] T048 [US4] Create the snippet `docs/docs/snippets/prefect-ui.override.yml` (values in [data-model.md](data-model.md#override-snippet)) and include it in `docs/docs/compose-deployment.mdx` with steps to open the UI, the credential prompt, how to merge with an existing override file, and how to close the port again. Make T046 and T047 pass.
-- [ ] T049 [US4] Add a note to `dev/adr/0016-the-compose-deployment-is-one-tag-pinned-file.md` on the override snippet and on the root file shipped as package data (FR-010).
-- [ ] T050 [US4] Run the quickstart US4 checks on a started root deployment.
+- [X] T048 [US4] Create the snippet `docs/docs/snippets/prefect-ui.override.yml` (values in [data-model.md](data-model.md#override-snippet)) and include it in `docs/docs/compose-deployment.mdx` with steps to open the UI, the credential prompt, how to merge with an existing override file, and how to close the port again. Make T046 and T047 pass.
+- [X] T049 [US4] Add a note to `dev/adr/0016-the-compose-deployment-is-one-tag-pinned-file.md` on the override snippet and on the root file shipped as package data (FR-010).
+- [X] T050 [US4] Run the quickstart US4 checks on a started root deployment.
 
 ---
 
