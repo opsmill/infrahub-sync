@@ -1,0 +1,21 @@
+docs/docs/development/guidelines/testing-tiers.md
+  s_8d92f288a8f661::t_1e418f13b0eee9 536-613
+dev/specs/010-prefect-from-sync-image/tasks.md
+  s_8d92f288a8f661::t_2bd75fc5a37532 203-205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "12136bfc20f00761852a764b26ba89ba3f39ae35",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
