@@ -7,25 +7,45 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess  # noqa: S404 -- fixed commands run against this checkout's disposable services
 import sys
+import tempfile
 import time
 import xml.etree.ElementTree as ET  # noqa: S405 -- only local pytest reports are parsed
 from hashlib import sha256
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORTS = ROOT / ".preview" / "nightly-e2e"
-SUITES = ("integration", "preview", "saved-plan", "from-netbox")
+SUITES = ("integration", "preview", "saved-plan", "from-netbox", "v2-gate")
 EXPECTED_DEMO_OPERATIONS = 1688
 SCHEMA_SHA256 = "b74a0ff09cde3aafb1275293be7523f1b377d64073c43aca3ccc14cbe4c5a025"
+# The v2 release whose writes the first V3 plan is compared with. v1 and v2 shipped only as
+# the `infrahub-sync` package on PyPI, so the gate installs it from there, as a customer did.
+V2_VERSION = "2.0.2"
+# v2.0.2 does not depend on pynetbox; its NetBox users installed it beside the package. The
+# version is the one this repository locks.
+V2_PYNETBOX = "pynetbox==7.8.0"
+V2_EXAMPLE = ROOT / "tests" / "data" / "v2_examples" / "netbox_to_infrahub" / "config.yml"
+V2_GATE_BRANCH = "v2-gate"
+EXPECTED_DELETES = ROOT / "tests" / "data" / "v2_gate" / "expected_deletes.yml"
+GATE_RESULT = "gate-result.json"
+UNCOUNTED = "records left out and problems cannot be counted on this build"
+_OPERATION_LINE = re.compile(
+    r"^(?P<operation_id>\S+) (?P<action>create|update|delete) (?P<kind>\S+)(?: (?P<identity>.*?))?(?: \(not executed\))?$"
+)
+_DELETE_DISCLOSURE = re.compile(
+    r"^(?:\d+ delete operation\(s\) are recorded|0 delete operations are recorded|Delete operations were NOT computed)"
+)
 
 
-def run(*command: str, env: dict[str, str] | None = None, capture: bool = False) -> str:
+def run(*command: str, env: dict[str, str] | None = None, capture: bool = False, cwd: Path = ROOT) -> str:
     """Run one command and fail on a nonzero exit status."""
     result = subprocess.run(  # noqa: S603 -- argv is fixed or derived from local configuration
         command,
-        cwd=ROOT,
+        cwd=cwd,
         env=env,
         text=True,
         stdout=subprocess.PIPE if capture else None,
@@ -201,6 +221,274 @@ def from_netbox(env: dict[str, str]) -> None:
     check_import_counts(plan_run_id, env)
 
 
+def plan_operations(output: str) -> list[dict[str, Any]]:
+    """Read each operation that `runs plan --detail` prints, with its payload and relationships."""
+    operations: list[dict[str, Any]] = []
+    lines = output.splitlines()
+    # Operations follow the summary counts and the delete disclosure, which can look like one.
+    start = next((index + 1 for index, line in enumerate(lines) if line.startswith("by_kind:")), len(lines))
+    for line in lines[start:]:
+        if _DELETE_DISCLOSURE.match(line):
+            continue
+        if line.startswith("  ") and operations:
+            label, _, value = line.strip().partition(": ")
+            if label in {"payload", "relationships"}:
+                operations[-1][label] = json.loads(value)
+            elif label == "destination id":
+                operations[-1]["destination_id"] = value
+            continue
+        match = _OPERATION_LINE.match(line)
+        if match is not None:
+            operations.append(
+                {
+                    "action": match["action"],
+                    "kind": match["kind"],
+                    "identity": match["identity"] or "",
+                }
+            )
+    return operations
+
+
+def identity_text(identity: object) -> str:
+    """Write an identity the way `runs plan --detail` prints it: sorted `key=value` pairs."""
+    if isinstance(identity, dict):
+        return " ".join(f"{key}={identity[key]}" for key in sorted(identity))
+    return str(identity)
+
+
+def compare_plan(
+    operations: list[dict[str, Any]],
+    expected_deletes: list[dict[str, Any]],
+    *,
+    left_out: list[dict[str, Any]] | None = None,
+    problems: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Compare the first V3 plan with the data v2 wrote; `None` means a list was not counted.
+
+    The gate passes only when the plan holds no create, no update, no delete missing from
+    the expected-delete list, and when records left out and problems were counted and are 0.
+    """
+    expected = {(entry["kind"], identity_text(entry["identity"])): entry for entry in expected_deletes}
+    counts: dict[str, int | None] = {
+        "create": 0,
+        "update": 0,
+        "delete": 0,
+        "left_out": None if left_out is None else len(left_out),
+        "problems": None if problems is None else len(problems),
+    }
+    unexpected: list[dict[str, Any]] = []
+    matched: list[dict[str, Any]] = []
+    for operation in operations:
+        action = operation["action"]
+        counts[action] = (counts[action] or 0) + 1
+        entry = expected.get((operation["kind"], operation["identity"])) if action == "delete" else None
+        if entry is not None:
+            if entry not in matched:
+                matched.append(entry)
+            continue
+        finding: dict[str, Any] = {
+            "finding": action,
+            "kind": operation["kind"],
+            "identity": operation["identity"],
+        }
+        if action == "update":
+            # `runs plan --detail` prints only the values V3 would write. The value v2 wrote,
+            # which is the destination's current value, is not in the plan detail, so `v2` is
+            # null and the field names show which values differ.
+            finding["fields"] = [
+                {"name": name, "v2": None, "v3": value}
+                for name, value in sorted((operation.get("payload") or {}).items())
+            ]
+            if operation.get("relationships"):
+                finding["relationships"] = operation["relationships"]
+        unexpected.append(finding)
+    for label, findings in (("left_out", left_out), ("problem", problems)):
+        unexpected.extend(
+            {"finding": label, "kind": item.get("kind"), "identity": identity_text(item.get("identity", ""))}
+            for item in findings or ()
+        )
+    return {
+        "counts": counts,
+        "unexpected": unexpected,
+        "expected_deletes_matched": matched,
+        "passed": left_out is not None and problems is not None and not unexpected,
+    }
+
+
+def gate_failure(result: dict[str, Any]) -> str:
+    """Say why the gate did not pass, or return an empty string when it passed."""
+    if result["passed"]:
+        return ""
+    reasons = []
+    if result["unexpected"]:
+        found: dict[str, int] = {}
+        for finding in result["unexpected"]:
+            found[finding["finding"]] = found.get(finding["finding"], 0) + 1
+        listed = ", ".join(f"{name}={count}" for name, count in found.items())
+        reasons.append(f"the first V3 plan holds unexpected entries: {listed}")
+    if result["counts"]["left_out"] is None or result["counts"]["problems"] is None:
+        reasons.append(UNCOUNTED)
+    return "; ".join(reasons)
+
+
+def expected_deletes() -> list[dict[str, Any]]:
+    """Read the reviewed list of deletes that the gate accepts."""
+    import yaml  # noqa: PLC0415 -- the summary and log steps run without the project's packages
+
+    entries = yaml.safe_load(EXPECTED_DELETES.read_text(encoding="utf-8")) or []
+    for entry in entries:
+        if not {"kind", "identity", "reason"} <= set(entry):
+            msg = f"{EXPECTED_DELETES.name} entry {entry} needs a kind, an identity and a reason"
+            raise ValueError(msg)
+    return entries
+
+
+def gate_context() -> dict[str, str]:
+    """Name the local NetBox, the preview Infrahub and the pinned dataset the gate runs against."""
+    from tasks.netbox import (  # noqa: PLC0415 -- suite-only dependency
+        DEMO_SQL_COMMIT,
+        DEMO_SQL_SHA256,
+        load_netbox_env,
+        netbox_url,
+    )
+    from tasks.preview import load_preview_env, preview_urls  # noqa: PLC0415 -- suite-only dependency
+
+    preview = load_preview_env()
+    return {
+        "netbox_address": netbox_url(load_netbox_env()),
+        "infrahub_address": preview_urls(preview)["infrahub"],
+        "infrahub_version": preview.get("VERSION", "unknown"),
+        "dataset_commit": DEMO_SQL_COMMIT,
+        "dataset_sha256": DEMO_SQL_SHA256,
+    }
+
+
+def v2_sync(work: Path, env: dict[str, str], context: dict[str, str]) -> Path:
+    """Synchronize the v2 NetBox example once with v2 2.0.2, installed from PyPI in its own environment."""
+    import yaml  # noqa: PLC0415 -- the summary and log steps run without the project's packages
+
+    config = yaml.safe_load(V2_EXAMPLE.read_text(encoding="utf-8"))
+    config["destination"]["settings"]["branch"] = V2_GATE_BRANCH
+    project = work / "project"
+    project.mkdir()
+    (project / "config.yml").write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    # v2 `generate` reads the Infrahub address from the file only, not from INFRAHUB_ADDRESS.
+    # It runs on a copy that names the preview Infrahub, so the file that `sync` and the
+    # conversion read keeps the example's address and the variables must take precedence.
+    generator = work / "generate"
+    generator.mkdir()
+    config["destination"]["settings"]["url"] = context["infrahub_address"]
+    (generator / "config.yml").write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    # Only what v2 and uv need: the repository's environment and settings stay out.
+    v2_env = {key: value for key, value in os.environ.items() if key in {"PATH", "HOME", "TMPDIR"}}
+    v2_env.update(
+        {
+            "NETBOX_ADDRESS": context["netbox_address"],
+            "NETBOX_TOKEN": env["NETBOX_TOKEN"],
+            "INFRAHUB_ADDRESS": context["infrahub_address"],
+            "INFRAHUB_API_TOKEN": env["INFRAHUB_API_TOKEN"],
+        }
+    )
+    v2 = ("uvx", "--from", f"infrahub-sync=={V2_VERSION}", "--with", V2_PYNETBOX, "infrahub-sync")
+    run(*v2, "generate", "--name", "from-netbox", "--directory", str(generator), env=v2_env, cwd=work)
+    for adapter in ("netbox", "infrahub"):
+        shutil.copytree(generator / adapter, project / adapter)
+    run(*v2, "sync", "--name", "from-netbox", "--directory", str(project), env=v2_env, cwd=work)
+    return project
+
+
+def v3_plan(project: Path, env: dict[str, str], context: dict[str, str]) -> tuple[str, str]:
+    """Convert the v2 configuration, register it, plan on the gate branch and read the plan detail."""
+    convert_env = {
+        **env,
+        "NETBOX_ADDRESS": context["netbox_address"],
+        "INFRAHUB_ADDRESS": context["infrahub_address"],
+    }
+    cli = ("uv", "run", "--no-sync", "infrahub-sync")
+    run(*cli, "configs", "convert", str(project / "config.yml"), "--yes", env=convert_env)
+    registered = parsed_fields(
+        run(
+            *cli,
+            "configs",
+            "register",
+            str(project / "package.yml"),
+            "--reason",
+            "nightly v2-to-V3 plan gate",
+            env=env,
+            capture=True,
+        )
+    )
+    planned = parsed_fields(
+        run(
+            *cli,
+            "diff",
+            "--config-id",
+            registered["config_id"],
+            "--version",
+            registered["registry_version"],
+            "--branch",
+            V2_GATE_BRANCH,
+            "--reason",
+            "nightly v2-to-V3 plan gate",
+            "--wait-timeout",
+            "1800",
+            env=env,
+            capture=True,
+        )
+    )
+    run_id = planned["run_id"]
+    completed = parsed_fields(run(*cli, "runs", "show", run_id, env=env, capture=True))
+    if completed.get("outcome") != "planned":
+        msg = f"the gate diff run ended with {completed.get('outcome', 'no outcome')}"
+        raise RuntimeError(msg)
+    return run_id, run(*cli, "runs", "plan", run_id, "--detail", env=env, capture=True)
+
+
+def v2_gate(env: dict[str, str], context: dict[str, str]) -> None:
+    """Plan from the converted package against the data v2 wrote, and fail on every difference."""
+    run("uv", "run", "--no-sync", "infrahubctl", "branch", "create", V2_GATE_BRANCH, env=env)
+    with tempfile.TemporaryDirectory(prefix="v2-gate-") as work:
+        project = v2_sync(Path(work), env, context)
+        run_id, detail = v3_plan(project, env, context)
+    # This build's plan summary has no records left out or problems; spec 009 adds them.
+    # T031 passes them here as `left_out=` and `problems=`; until then the gate cannot pass.
+    result = compare_plan(plan_operations(detail), expected_deletes())
+    REPORTS.mkdir(parents=True, exist_ok=True)
+    (REPORTS / GATE_RESULT).write_text(
+        json.dumps(
+            {
+                "v2_version": V2_VERSION,
+                "infrahub_version": context["infrahub_version"],
+                "dataset": {
+                    "name": "demo",
+                    "commit": context["dataset_commit"],
+                    "sha256": context["dataset_sha256"],
+                },
+                "run_id": run_id,
+                **result,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    failure = gate_failure(result)
+    if failure:
+        raise RuntimeError(failure)
+
+
+def demo_suite(name: str, env: dict[str, str]) -> None:
+    """Seed the `demo` dataset, start a fresh preview stack with the schema, and run one NetBox suite."""
+    run("uv", "run", "--no-sync", "invoke", "preview.down", "--volumes", env=env)
+    run("uv", "run", "--no-sync", "invoke", "netbox.seed", "--dataset", "demo", env=env)
+    start_preview(env)
+    schema(env)
+    if name == "from-netbox":
+        from_netbox(env)
+    else:
+        v2_gate(env, gate_context())
+
+
 def suite(name: str) -> None:
     """Run one suite, retaining its result even if setup or the tests fail."""
     if name not in SUITES:
@@ -254,11 +542,7 @@ def suite(name: str) -> None:
                 env=env,
             )
         else:
-            run("uv", "run", "--no-sync", "invoke", "preview.down", "--volumes", env=env)
-            run("uv", "run", "--no-sync", "invoke", "netbox.seed", "--dataset", "demo", env=env)
-            start_preview(env)
-            schema(env)
-            from_netbox(env)
+            demo_suite(name, env)
     except (OSError, subprocess.CalledProcessError, KeyError, RuntimeError, ValueError) as exc:
         failure = str(exc)
     duration = time.monotonic() - started
@@ -300,6 +584,20 @@ def collect_logs(name: str) -> None:
                 output.write(log.read_text(encoding="utf-8", errors="replace"))
 
 
+def gate_summary() -> list[str]:
+    """Describe the v2-to-V3 plan gate result for the run summary, when the gate wrote one."""
+    gate = REPORTS / GATE_RESULT
+    if not gate.exists():
+        return []
+    result = json.loads(gate.read_text(encoding="utf-8"))
+    counts = ", ".join(f"{key}={'not counted' if value is None else value}" for key, value in result["counts"].items())
+    return [
+        "",
+        f"v2 {result['v2_version']} to V3 plan gate: passed={str(result['passed']).lower()}; {counts}; "
+        f"expected deletes matched={len(result['expected_deletes_matched'])}",
+    ]
+
+
 def summarize(sha: str, *, sha_guard: str = "success") -> None:
     """Write per-suite JUnit counts and durations to the GitHub job summary."""
     lines = [
@@ -329,6 +627,7 @@ def summarize(sha: str, *, sha_guard: str = "success") -> None:
         duration = result.get("duration")
         elapsed = f"{duration:.1f}s" if duration is not None else "incomplete run"
         lines.append(f"| {name} | {max(0, len(cases) - failed - skipped)} | {failed} | {skipped} | {elapsed} |")
+    lines.extend(gate_summary())
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
         summary.write("\n".join(lines) + "\n")
 

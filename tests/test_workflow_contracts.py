@@ -685,7 +685,7 @@ def test_nightly_suites_report_independently_and_clean_up() -> None:
     image_check = next(
         index for index, step in enumerate(steps) if "nightly_e2e.py verify-images" in str(step.get("run", ""))
     )
-    for name in ("integration", "preview", "saved-plan", "from-netbox"):
+    for name in ("integration", "preview", "saved-plan", "from-netbox", "v2-gate"):
         step = by_id[name]
         assert image_check < steps.index(step)
         assert step["continue-on-error"] is True
@@ -701,6 +701,7 @@ def test_nightly_suites_report_independently_and_clean_up() -> None:
     assert {step["with"]["path"] for step in uploads} == {
         ".preview/nightly-e2e/*.xml",
         ".preview/nightly-e2e/*-containers.log",
+        ".preview/nightly-e2e/gate-result.json",
     }
     assert all(step["if"] == "always()" for step in uploads)
     assert any(
