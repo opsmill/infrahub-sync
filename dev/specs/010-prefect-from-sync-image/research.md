@@ -422,3 +422,31 @@ Notes on the laptop runs:
   with code 0. The published ports were moved to 18010 and 14210 so that the run could not
   collide with other stacks on the host.
 - Each condition ran once. How much the times vary between runs is not known.
+
+**This feature** (T024, 2026-10-22, root file at commit `c60828dc`: `prefect-server` from the
+Sync image, the object store from
+`pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc41…`), with the same procedure and project
+name `s010-measure`:
+
+| Host | Warm start | Cold start |
+| --- | --- | --- |
+| arm64 laptop: Apple M5 Pro, macOS 26.6.2, OrbStack, Docker Engine 29.8.2, Compose 5.5.0 | 20.6 s | 28.8 s, with the Sync image already present (see below) |
+| amd64 GitHub `ubuntu-latest` runner | to be measured in CI with the commands above | to be measured in CI with the commands above |
+
+Notes on the laptop runs:
+
+- As for the baseline, the Sync image was built from the checkout
+  (`docker build -t infrahub-sync:s010-measure .`, 1.01 GB) and set through
+  `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync` and `VERSION=s010-measure`. The cold run kept it.
+  The file now names three images, and the Sync image is one of them, so the cold run pulled
+  two images only:
+  - `postgres:16-alpine` (pinned by digest): 412 MB
+  - `pgsty/silo:RELEASE.2026-10-18T00-00-00Z` (pinned by digest): 206 MB
+- No other container used either image, so both were removed before the cold run.
+- Both runs ended with `postgres`, `object-store`, `prefect-server` and `sync-api` healthy,
+  `sync-worker` running, and `db-bootstrap`, `object-store-init` and `sync-bootstrap` exited
+  with code 0. The Sync API port was moved to 18010; the file publishes no other port.
+- The cold start is 13.4 s shorter than the baseline's because the Prefect image (1238 MB) is
+  no longer pulled. On a host that also pulls the Sync image, the cold start includes pulling
+  about 1 GB for that image; that time was not measured here.
+- Each condition ran once. How much the times vary between runs is not known.
