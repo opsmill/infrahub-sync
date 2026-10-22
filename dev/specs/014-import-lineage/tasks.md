@@ -173,7 +173,7 @@ stay protected when it is off.
 - [X] T052 [P] Document `last_changes.jsonl` and the `lineage` and `last_changes` manifest fields in `docs/docs/development/knowledge/plan-artifact.md` (field table near line 164)
 - [X] T053 [P] Replace every bare-name `source:` or `owner:` in Infrahub destination settings under `examples/` and `docs/docs/` with the `{kind, name}` form, and regenerate generated examples from their YAML source
 - [X] T054 [P] Add the news fragment with `uv run --extra dev towncrier create -c "..." +import-lineage.changed.md` in `changelog/`, describing the import account as source, the `{kind, name}` form, the stop on a missing named node, the refusal of a different import account at apply, `protect` off by default, and who last changed a value in the plan; the pull request carries the label `changes/minor`
-- [ ] T055 Run `uv run invoke format`, `uv run invoke lint`, `uv run invoke tests.tests-unit`, `uv run invoke docs.generate`, and the CLI checks `uv run infrahub-sync --help`, `configs --help`, `runs --help`
+- [X] T055 Run `uv run invoke format`, `uv run invoke lint`, `uv run invoke tests.tests-unit`, `uv run invoke docs.generate`, and the CLI checks `uv run infrahub-sync --help`, `configs --help`, `runs --help`
 - [ ] T056 Run the benchmark from T004 again with metadata reads on, on the default branch and on another branch; record the read time with and without metadata in research.md R-2 and close the item in plan.md. The result is information only and does not block the merge
 - [ ] T057 Run every scenario in `quickstart.md` against the development stack and record the result in the pull request description
 

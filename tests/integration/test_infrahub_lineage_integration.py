@@ -1421,6 +1421,40 @@ mutation DeviceBeforeThisRelease($device: String!, $serial: String!, $legacy: St
 """
 
 
+@dataclass(frozen=True, slots=True)
+class ValuesBeforeThisRelease:
+    """A tag and a device written as an earlier import wrote them, with another account's lineage."""
+
+    tag_name: str
+    tag_id: str
+    device_name: str
+    device_id: str
+
+
+def _write_before_this_release(lineage_branch: LineageBranch, legacy: ImportAccount) -> ValuesBeforeThisRelease:
+    """Write a tag and a device whose every value has `legacy` as source and owner, and is protected."""
+    admin, branch = lineage_branch.admin, lineage_branch.branch
+    suffix = uuid.uuid4().hex[:8]
+    tag_name, device_name = f"lineage-tag-{suffix}-0", f"lineage-device-{suffix}"
+    tag = admin.execute_graphql(
+        query=_WRITE_BEFORE_THIS_RELEASE,
+        variables={"tag": tag_name, "legacy": legacy.id},
+        branch_name=branch,
+    )
+    tag_id = tag["tag"]["object"]["id"]
+    device = admin.execute_graphql(
+        query=_DEVICE_BEFORE_THIS_RELEASE,
+        variables={"device": device_name, "serial": "serial-legacy", "legacy": legacy.id, "tag_id": tag_id},
+        branch_name=branch,
+    )
+    return ValuesBeforeThisRelease(
+        tag_name=tag_name,
+        tag_id=tag_id,
+        device_name=device_name,
+        device_id=device["TestLineageDeviceCreate"]["object"]["id"],
+    )
+
+
 def test_a_value_written_before_this_release_keeps_its_owner_and_protection_and_gets_the_import_source(
     lineage_branch: LineageBranch, account_factory: AccountFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1435,21 +1469,8 @@ def test_a_value_written_before_this_release_keeps_its_owner_and_protection_and_
     account = account_factory(BRANCH_IMPORT_PERMISSIONS)
     legacy = account_factory(())
     admin, branch = lineage_branch.admin, lineage_branch.branch
-    suffix = uuid.uuid4().hex[:8]
-    tag_name, device_name = f"lineage-tag-{suffix}-0", f"lineage-device-{suffix}"
-
-    written = admin.execute_graphql(
-        query=_WRITE_BEFORE_THIS_RELEASE,
-        variables={"tag": tag_name, "legacy": legacy.id},
-        branch_name=branch,
-    )
-    tag_id = written["tag"]["object"]["id"]
-    written = admin.execute_graphql(
-        query=_DEVICE_BEFORE_THIS_RELEASE,
-        variables={"device": device_name, "serial": "serial-legacy", "legacy": legacy.id, "tag_id": tag_id},
-        branch_name=branch,
-    )
-    device_id = written["TestLineageDeviceCreate"]["object"]["id"]
+    written = _write_before_this_release(lineage_branch, legacy)
+    tag_name, tag_id, device_name = written.tag_name, written.tag_id, written.device_name
     earlier = {"source": legacy.id, "owner": legacy.id, "protected": True}
     assert _device_lineage(lineage_branch, device_name)["device.serial"] == earlier, (
         "Precondition: the serial must hold the lineage an earlier import wrote."
@@ -1460,11 +1481,14 @@ def test_a_value_written_before_this_release_keeps_its_owner_and_protection_and_
     assert planning.lineage_record is not None
     assert planning.lineage_record.protect is False, "`protect` absent must be recorded as off."
     existing = SavedPlan(run_dir=tmp_path, run_id="", tag_names=(tag_name,), device_name=device_name)
-    updated = save_device_update_plan(tmp_path, planning, existing, device_id=device_id, serial="serial-updated")
+    updated = save_device_update_plan(
+        tmp_path, planning, existing, device_id=written.device_id, serial="serial-updated"
+    )
     apply_saved_plan(updated, import_adapter(lineage_branch, account, monkeypatch))
 
-    device = _read_back(admin, DEVICE_KIND, device_name, branch)
-    assert _attribute(device, "serial").value == "serial-updated", "The apply must update the serial."
+    assert _attribute(_read_back(admin, DEVICE_KIND, device_name, branch), "serial").value == "serial-updated", (
+        "The apply must update the serial."
+    )
     observed = _device_lineage(lineage_branch, device_name)
     observed[f"{tag_name}.name"] = _value_lineage(_read_back(admin, TAG_KIND, tag_name, branch).name)
     rewritten = {"source": account.id, "owner": legacy.id, "protected": True}
