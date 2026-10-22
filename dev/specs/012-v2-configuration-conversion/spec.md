@@ -53,6 +53,9 @@ owner on 2026-10-22, before this specification was written.
 - Q: How is each credential reference named inside the package? → A: `<adapter>-<setting>` in
   lower case with `_` changed to `-`, and `infrahub-token` for the Infrahub token, as in the
   shipped NetBox package.
+- Q (planning, 2026-10-22): How are settings other than addresses that v2 read from the
+  environment converted, such as `verify: ${CISCO_APIC_VERIFY}` in the v2 ACI example? → A: With
+  the address rule (FR-029); otherwise SC-002 fails on the ACI example.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -169,8 +172,11 @@ the operations.
   package.
 - The input is not valid YAML, or is not a v1 or v2 configuration: the command refuses and names
   the first location that fails.
-- A `${VARIABLE}` placeholder sits in a setting that is neither a credential nor an address: the
-  command refuses and names the setting.
+- A `${VARIABLE}` placeholder sits in a setting that v2 read from the environment first, such as
+  `verify: ${CISCO_APIC_VERIFY}` in the v2 ACI example: the command treats it as the variable
+  named in the placeholder and follows FR-029.
+- A `${VARIABLE}` placeholder sits in any other setting that is not a credential: the command
+  refuses and names the setting, because v2 used the placeholder text as the value.
 - The v2 adapter and model files that `infrahub-sync generate` wrote beside `config.yml`: the
   command does not read them, and the report says V3 has no generation step.
 - v2 `2.0.2` itself fails on the `demo` dataset: the gate cannot be set up until the dataset or the
@@ -226,6 +232,11 @@ the operations.
   and name the flag and the v2 variables.
 - **FR-013**: The report MUST say which v2 address variables were visible where the command ran.
 - **FR-014**: The report MUST warn when an address in the package is `localhost` or `127.0.0.1`.
+- **FR-029**: Every other setting that is not a credential and that v2 read from an environment
+  variable before the file MUST follow the rules of FR-010, FR-011 and FR-013, for example ACI
+  `verify` from `CISCO_APIC_VERIFY`. A `${VARIABLE}` placeholder in such a setting names the
+  variable to read. When the setting gets no value from the file or a variable, the command MUST
+  stop and name the setting and the variables, because no flag sets it.
 
 #### Refused, dropped and copied keys
 
@@ -238,7 +249,10 @@ the operations.
     the bundled adapter's own module; the reason cites INFP-654 and 3.0
   - a destination other than `infrahub`
   - an adapter setting that the bundled adapter does not accept
-  - a `${VARIABLE}` placeholder in a setting that is neither a credential nor an address
+  - a `${VARIABLE}` placeholder in a setting that is not a credential and that v2 did not read
+    from the environment first
+
+  A refusal MUST NOT print the value of a credential setting.
 - **FR-016**: When `adapter:` names the bundled adapter's own module, the command MUST convert the
   configuration and note that V3 uses its bundled adapter.
 - **FR-017**: The command MUST drop the following with a warning that gives the reason: a `store`
