@@ -7,17 +7,12 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 # The one costly module-level import: apply's exception boundary must name the SDK's errors.
-from infrahub_sdk.exceptions import (
-    AuthenticationError,
-    GraphQLError,
-    ServerNotResponsiveError,
-)
-from infrahub_sdk.exceptions import (
-    Error as InfrahubSDKError,
-)
+from infrahub_sdk.exceptions import Error as InfrahubSDKError
+from infrahub_sdk.exceptions import GraphQLError, ServerNotResponsiveError
 from tqdm import tqdm
 
 from infrahub_sync import resolve_effective_diffsync_flags
+from infrahub_sync.infrahub_errors import classify_infrahub_error
 
 # These plan imports are cheap; imports that reach pyarrow stay deferred below.
 from infrahub_sync.plan.config_version import resolve_config_version, validate_config_version
@@ -223,10 +218,11 @@ def _operational_failure_summary(exc: Exception) -> str:
 
     SDK exceptions can embed a complete GraphQL request or response body in
     ``str(exc)``.  The exception remains chained for an explicitly requested
-    developer traceback, while normal CLI output receives only its category.
+    developer traceback, while normal CLI output receives only its category, or for a refused
+    token or a missing permission the classification, which quotes only the permission (FR-008).
     """
-    if isinstance(exc, AuthenticationError):
-        return "an authentication failure (AuthenticationError)"
+    if (classification := classify_infrahub_error(exc)) is not None:
+        return classification.describe()  # Every `AuthenticationError` is classified here.
     if isinstance(exc, ServerNotResponsiveError):
         return "a destination timeout (ServerNotResponsiveError)"
     if isinstance(exc, GraphQLError):

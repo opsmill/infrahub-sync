@@ -142,6 +142,11 @@ Every bundled adapter has a matching entry in `BUILTIN_ADAPTER_CAPABILITIES`; th
 makes a package using that adapter admissible. [Adapter anatomy](adapter-anatomy.md) explains
 the contract, and [Adding an adapter](../guides/adding-an-adapter.md) is the procedure.
 
+`infrahub_sync/infrahub_errors.py` sits outside the adapters package because the apply and the
+destination schema read both use it. It classifies an Infrahub error as a refused token (HTTP
+401) or a missing permission (HTTP 403, or a GraphQL permission denial), and quotes only the
+permission Infrahub names.
+
 ### Cache and incremental extraction
 
 [`infrahub_sync/cache/`][src-infrahub-sync-cache] persists a run's snapshots and drives incremental extraction:

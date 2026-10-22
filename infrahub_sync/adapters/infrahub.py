@@ -1430,8 +1430,11 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         lineage = self.lineage
         source_id = lineage.source.id if lineage is not None else None
         owner_id = lineage.owner.id if lineage is not None and lineage.owner is not None else None
+        # `None` leaves the `is_protected` key out of the payload, so a value protected earlier
+        # keeps its flag; the flag is sent only when the package turns `protect` on (FR-006).
+        is_protected = True if lineage is not None and lineage.protect else None
         create_data = self.client.schema.generate_payload_create(
-            schema=node_schema, data=data, source=source_id, owner=owner_id, is_protected=True
+            schema=node_schema, data=data, source=source_id, owner=owner_id, is_protected=is_protected
         )
         node = self.client.create(kind=operation.kind, data=create_data)
         if operation.action == "update":

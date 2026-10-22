@@ -388,7 +388,9 @@ def make_node(client: RecordingClient, kind: str, node_id: str) -> InfrahubNodeS
     return InfrahubNodeSync(client=client, schema=SCHEMAS[kind], data={"id": node_id})
 
 
-def make_adapter(client: RecordingClient, *, source: str | None = None, owner: str | None = None) -> InfrahubAdapter:
+def make_adapter(
+    client: RecordingClient, *, source: str | None = None, owner: str | None = None, protect: bool = False
+) -> InfrahubAdapter:
     """The adapter with only the state the planned-write surface reads, and no network setup."""
     adapter = InfrahubAdapter.__new__(InfrahubAdapter)
     adapter.client = client
@@ -397,7 +399,7 @@ def make_adapter(client: RecordingClient, *, source: str | None = None, owner: s
             import_account=ImportAccount(id=source, name="source-account"),
             source=ResolvedLineageNode(kind="CoreAccount", name="source-account", id=source),
             owner=None if owner is None else ResolvedLineageNode(kind="CoreAccountGroup", name="owners", id=owner),
-            protect=False,
+            protect=protect,
         )
     adapter.schema = dict(SCHEMAS)
     return adapter
@@ -938,6 +940,24 @@ def test_apply_resolves_lineage_before_the_first_write_and_writes_with_it(tmp_pa
     assert f'source: "{IMPORT_ACCOUNT_ID}"' in client.mutations[0][1]
 
 
+def test_an_apply_of_several_operations_reads_the_import_account_once(tmp_path: Path) -> None:
+    """FR-001: one `get_user()` per apply run, however many operations it writes."""
+    directory = apply_run_dir(tmp_path)
+    records = [
+        operation_record(kind=SITE_KIND, identity={"name": name}, payload={"name": name})
+        for name in ("site-a", "site-b", "site-c")
+    ]
+    write_artifact(directory, records, run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+
+    state, _ = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert state == "applied"
+    names = [name for name, _ in client.events]
+    assert names.count("mutation") == 3
+    assert names.count("get_user") == 1
+
+
 def test_apply_resolves_lineage_again_rather_than_reusing_what_was_set(tmp_path: Path) -> None:
     """Lineage already held by the adapter is replaced by the apply's own resolution."""
     directory = apply_run_dir(tmp_path)
@@ -1018,10 +1038,16 @@ def test_a_null_mandatory_cardinality_one_relationship_is_refused_before_any_wri
     assert client.mutations == [], "The refusal must happen before any destination mutation."
 
 
-def test_generate_payload_create_receives_the_source_owner_and_protection_arguments() -> None:
-    """FR-013: the planned create passes the source, owner, and protection arguments to payload generation."""
+@pytest.mark.parametrize(
+    ("protect", "is_protected"),
+    [pytest.param(False, None, id="protect-off"), pytest.param(True, True, id="protect-on")],
+)
+def test_generate_payload_create_receives_the_source_owner_and_protection_arguments(
+    *, protect: bool, is_protected: bool | None
+) -> None:
+    """The planned create passes the source, the owner and, only when `protect` is on, the protection flag."""
     client = RecordingClient()
-    adapter = make_adapter(client, source="source-account-1", owner="owner-account-1")
+    adapter = make_adapter(client, source="source-account-1", owner="owner-account-1", protect=protect)
 
     operation = make_operation(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
     with record_payload_create(client) as calls:
@@ -1032,8 +1058,57 @@ def test_generate_payload_create_receives_the_source_owner_and_protection_argume
     assert call["schema"] is SITE_SCHEMA
     assert call["source"] == "source-account-1"
     assert call["owner"] == "owner-account-1"
-    assert call["is_protected"] is True
+    assert call["is_protected"] is is_protected
     assert call["data"] == {"name": "site-a"}, "`data` is the payload plus resolved peer ids, and nothing else."
+
+
+def _created_with_default_lineage(operation: PlannedOperation) -> str:
+    """Apply one create with the import account as source, no owner and no protection; return the mutation."""
+    client = RecordingClient()
+    adapter = make_adapter(client, source=IMPORT_ACCOUNT_ID)
+    peers = PeerResolver(adapter)
+    peers.remember(TAG_KIND, {"name": "tag-b"}, "tag-id-2")
+    peers.remember(TAG_KIND, {"name": "tag-c"}, "tag-id-3")
+    peers.remember(SITE_KIND, {"name": "site-a"}, "site-id-1")
+
+    adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert len(client.mutations) == 1
+    return client.mutations[0][1]
+
+
+TEAM_CREATE = make_operation(
+    kind=TEAM_KIND,
+    identity={"name": "team-a"},
+    payload={"name": "team-a", "description": "core"},
+    relationships=[
+        RelationshipReference(
+            field="members", peer_kind=TAG_KIND, cardinality="many", peers=[{"name": "tag-b"}, {"name": "tag-c"}]
+        )
+    ],
+)
+
+
+@pytest.mark.parametrize(
+    ("operation", "attributes", "edges"),
+    [
+        pytest.param(TEAM_CREATE, 2, 2, id="attributes-and-many-edges"),
+        pytest.param(server_operation("server-a"), 1, 1, id="attribute-and-one-edge"),
+    ],
+)
+def test_a_create_sends_the_source_on_every_attribute_and_edge_and_no_owner_or_protection(
+    operation: PlannedOperation, attributes: int, edges: int
+) -> None:
+    """FR-001, FR-006: with no owner and no `protect`, a create sends the source and nothing else."""
+    rendered = _created_with_default_lineage(operation)
+
+    attribute_sources = re.findall(rf'(?<!_relation__)\bsource:\s*"{IMPORT_ACCOUNT_ID}"', rendered)
+    assert len(attribute_sources) == attributes, rendered
+    assert rendered.count(f'_relation__source: "{IMPORT_ACCOUNT_ID}"') == edges, rendered
+    assert "is_protected" not in rendered, f"No protection key may be sent:\n{rendered}"
+    # An owner property is a node id string; the `owner` relationship of `TestTeam` is not mapped.
+    assert re.search(r'\bowner:\s*"', rendered) is None, f"No owner may be sent:\n{rendered}"
+    assert "_relation__owner" not in rendered, rendered
 
 
 def test_a_payload_missing_an_identity_component_is_refused_before_any_write() -> None:
@@ -1126,7 +1201,7 @@ def test_the_upsert_carries_the_per_peer_write_metadata() -> None:
     reach the destination is the upsert's own peer list, not any later write.
     """
     client = RecordingClient()
-    adapter = make_adapter(client, source="source-account-1", owner="owner-account-1")
+    adapter = make_adapter(client, source="source-account-1", owner="owner-account-1", protect=True)
     peers = PeerResolver(adapter)
     peers.remember(TAG_KIND, {"name": "tag-b"}, "tag-id-2")
 

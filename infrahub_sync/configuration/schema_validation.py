@@ -228,7 +228,7 @@ def collect_destination_schema_findings(package: ConfigurationPackage) -> Destin
                 _finding(
                     code=_CODE_DESTINATION_SCHEMA_READ_FAILED,
                     location=_DESTINATION_LOCATION,
-                    message=f"destination schema for branch {branch!r} could not be read: {exc.reason}",
+                    message=f"destination schema for branch {branch!r} could not be read: {exc.describe()}",
                 )
             )
         else:

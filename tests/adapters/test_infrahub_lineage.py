@@ -71,6 +71,48 @@ def test_without_settings_the_import_account_is_the_source_and_there_is_no_owner
     assert client.calls == [("get_user", {})]
 
 
+def test_no_account_is_looked_up_by_the_source_systems_name() -> None:
+    """FR-005: an account named after the source system exists, and the import does not read it."""
+    client = LineageClient(nodes={("CoreAccount", "netbox"): "account-netbox"})
+    adapter = make_adapter(client)
+    adapter.config = SimpleNamespace(source=SimpleNamespace(name="netbox", adapter="netbox"))  # ty: ignore[invalid-assignment]
+
+    lineage = adapter.resolve_lineage()
+
+    assert lineage.source.id == "account-1", "the source is the import account, not the account named `netbox`"
+    assert [name for name, _ in client.calls] == ["get_user"], "no `CoreAccount` lookup by name is made"
+
+
+def _loading_adapter(client: LineageClient, events: list[str]) -> InfrahubAdapter:
+    """A real adapter whose `load` only records that it ran, so a plan can be run over it."""
+    adapter = make_adapter(client)
+    adapter.load = lambda: events.append("destination.load")  # ty: ignore[invalid-assignment]
+    return adapter
+
+
+@pytest.mark.parametrize("concurrent_load", [True, False])
+def test_a_plan_reads_the_import_account_once(tmp_path: Path, *, concurrent_load: bool) -> None:
+    """FR-001: one `get_user()` per plan run, before either side is loaded, and no other read."""
+    events: list[str] = []
+    client = LineageClient()
+    destination = _loading_adapter(client, events)
+    engine = Potenda(
+        source=_ordered_side("source", events),
+        destination=destination,
+        config=None,  # ty: ignore[invalid-argument-type]
+        top_level=[],
+        run_dir=tmp_path,
+        concurrent_load=concurrent_load,
+    )
+
+    engine.load_both_sides()
+
+    assert client.calls == [("get_user", {})]
+    assert destination.lineage is not None
+    assert destination.lineage.source.id == "account-1"
+    assert sorted(events) == ["destination.load", "source.load"]
+
+
 def test_named_source_and_owner_are_looked_up_by_kind_and_name() -> None:
     """Each named node is read with one `get(kind=..., name__value=...)` and its id is kept."""
     client = LineageClient(
