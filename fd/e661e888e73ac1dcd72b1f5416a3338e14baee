@@ -1,0 +1,45 @@
+docs/docs/reference/cli.mdx
+  s_9c7f8713d8e8dc::t_700e9470c5d45f 244-246,249-254,256-258
+  s_9c7f8713d8e8dc::t_ae67ade3f64090 247-248
+  s_9c7f8713d8e8dc::t_638ad5df6e0b2c 125,240-243,259-275
+  s_9c7f8713d8e8dc::t_c999166b142e1e 255
+  s_9c7f8713d8e8dc::t_7bc8a23d3ec3c9 276-277
+changelog/+v2-configuration-conversion.added.md
+  s_9c7f8713d8e8dc::t_638ad5df6e0b2c 1
+dev/specs/012-v2-configuration-conversion/quickstart-results.md
+  s_9c7f8713d8e8dc::t_c7c7898cde58ed 1-37
+infrahub_sync/cli.py
+  s_9c7f8713d8e8dc::t_ad9f549981cad5 507-508
+  s_9c7f8713d8e8dc::t_0dbdfe3cf9ae40 502-506,509-514,516-518
+  s_9c7f8713d8e8dc::t_734c0b8b847f4e 515
+docs/docs/development/guidelines/testing-tiers.md
+  s_9c7f8713d8e8dc::t_4e8bb3b8a8d2d3 489-490
+  s_9c7f8713d8e8dc::t_b4f2f51c841860 408
+  s_9c7f8713d8e8dc::t_dcb1b9fec29f2d 404-407,409-433,436-446
+  s_9c7f8713d8e8dc::t_6820a2a7428334 434-435
+docs/docs/configuration-package.mdx
+  s_9c7f8713d8e8dc::t_fa57c3914d1f32 159-166
+docs/docs/v2-to-v3.mdx
+  s_9c7f8713d8e8dc::t_42298a00e0ffd2 121-122
+  s_9c7f8713d8e8dc::t_20ad0976cb7455 235
+  s_9c7f8713d8e8dc::t_fff9c7f09f49be 42-45
+  s_9c7f8713d8e8dc::t_bfc5773ff28369 66-120,123-227
+dev/specs/012-v2-configuration-conversion/tasks.md
+  s_9c7f8713d8e8dc::t_6cbc83f6d780b3 132-138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fde661e888e73ac1dcd72b1f5416a3338e14baee",
+  "prompts": {},
+  "sessions": {
+    "s_9c7f8713d8e8dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7b4ab04-36d6-4644-a214-69334e6a0d27",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
