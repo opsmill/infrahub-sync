@@ -36,7 +36,7 @@
 #
 # Destination: with the `infrahub` profile the worker shares a network with
 # Infrahub and reaches it at http://infrahub-server:8000; the host reaches it at
-# http://127.0.0.1:8080. To use an Infrahub started from Infrahub's own Compose
+# http://127.0.0.1:${INFRAHUB_PORT:-8080}. To use an Infrahub started from Infrahub's own Compose
 # file (https://infrahub.opsmill.io) with `docker compose -p infrahub` instead,
 # leave the profile off: `uv run invoke start` connects sync-worker to
 # Infrahub's network, `infrahub_default`. Set
