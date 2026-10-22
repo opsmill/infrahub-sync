@@ -289,7 +289,11 @@ the full passes and are the only top-level tasks; `linter.format`, `linter.lint`
 **Evidence**: the top-level `lint` and `format` call `docs.lint` / `docs.format` and then
 `linter.lint_all` / `linter.format_all` (`tasks/__init__.py:40-50`); `linter.lint` and
 `linter.format` exist at `tasks/linter.py:36-57`. Infrahub registers the same two tasks at the
-top level (`infrahub/tasks/__init__.py:53-54`). Because `format` and `lint` keep their names,
+top level (`infrahub/tasks/__init__.py:53-54`). `uv run --no-sync invoke --list`, run on
+2026-10-22, lists top-level `format` and `lint` in `infrahub/python_sdk` ("Run RUFF to format
+all Python files", "Run all linters"), `infrahub-backup` ("Format Python (ruff) and Markdown
+(rumdl) files", "Run all linters (ruff, mypy, yamllint, rumdl)") and `styrmin` ("Format all code
+(Python and Markdown)", "Run all linters (Python, Markdown, and YAML)"). Because `format` and `lint` keep their names,
 `AGENTS.md:37-38`, `docs/docs/development/constitution.md:150-151`,
 `docs/docs/development/knowledge/quality-gates.md` and
 `docs/docs/development/guides/adding-an-adapter.md:395-396` stay valid and the constitution

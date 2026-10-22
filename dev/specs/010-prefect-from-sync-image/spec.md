@@ -40,8 +40,12 @@ Answers from the product owner.
   `docs.format` and `docs.lint` stay as subsets. `tests-all` becomes `tests.all` and
   `check-310` becomes `tests.check-310`. Every other top-level task is removed. Reason for the
   revision: the other OpsMill repositories expose top-level `format` and `lint`. Infrahub
-  registers `format_all` and `lint_all` at the top level (`infrahub/tasks/__init__.py:53-54`),
-  and the product owner reports that the Python SDK, infrahub-backup and styrmin do the same.
+  registers `format_all` and `lint_all` at the top level (`infrahub/tasks/__init__.py:53-54`).
+  `uv run --no-sync invoke --list`, run on 2026-10-22, lists top-level `format` and `lint` in
+  `infrahub/python_sdk` ("Run RUFF to format all Python files", "Run all linters"),
+  `infrahub-backup` ("Format Python (ruff) and Markdown (rumdl) files", "Run all linters (ruff,
+  mypy, yamllint, rumdl)") and `styrmin` ("Format all code (Python and Markdown)", "Run all
+  linters (Python, Markdown, and YAML)").
   The first answer, that `linter.format` and `linter.lint` would take over the documentation
   legs and that no top-level task would remain, is withdrawn.
 - Q: Does running the AGPLv3 Silo image unmodified in a separate container need any action from
