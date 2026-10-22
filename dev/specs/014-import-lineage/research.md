@@ -247,7 +247,48 @@ separate local Compose project, on macOS arm64 with 18 CPUs under Docker Desktop
   - The NetBox schema library kinds were not read, so the time for real mapped kinds with more
     attributes and relationships is not known.
 - T056 repeats the same read with `include_metadata=True` on the same data shape and records both
-  times.
+  times (below).
+
+**Destination read time with and without metadata (task T056, 2026-10-22)**
+
+Measured on a new Infrahub 1.10.6 in a separate local Compose project, on the same host (macOS
+arm64, 18 CPUs, Docker Desktop), from 23:39 to 23:58 UTC. The method is the method of T004: the
+same read shape, kinds, page size, SDK and fresh node store for each read, with
+`include_metadata=True` added for the "with metadata" rows. The data was seeded again with the T004
+shape: 10,014 `TestLinDevice` nodes, each with two tags out of 20, all created on `main`; the other
+branch was created after them and holds no change of its own.
+
+Each row is one block of four reads: the first read, then three more reads and their median. The
+blocks ran in the order of the table, so that a read without metadata and a read with metadata
+alternate twice on each branch.
+
+| Branch | Metadata | First read (s) | Next three reads (s) | Median of the three (s) |
+|--------|----------|----------------|----------------------|-------------------------|
+| `main` (default) | without | 27.46 | 22.08, 22.65, 22.56 | 22.56 |
+| `main` (default) | with | 31.79 | 31.17, 32.12, 31.60 | 31.60 |
+| `main` (default) | without | 22.77 | 22.33, 23.59, 22.43 | 22.43 |
+| `main` (default) | with | 31.90 | 32.13, 34.12, 33.35 | 33.35 |
+| `lineage-bench` (other branch) | without | 29.96 | 24.62, 24.31, 23.64 | 24.31 |
+| `lineage-bench` (other branch) | with | 58.57 | 57.55, 59.83, 61.73 | 59.83 |
+| `lineage-bench` (other branch) | without | 26.18 | 24.91, 26.01, 24.97 | 24.97 |
+| `lineage-bench` (other branch) | with | 59.78 | 61.06, 62.18, 62.58 | 62.18 |
+
+- On the default branch, the read with metadata took about 1.4 times as long as the read without:
+  a median of 31.60 s and 33.35 s against 22.56 s and 22.43 s, about 9 to 11 s more for 10,014
+  nodes.
+- On the other branch, it took about 2.5 times as long: 59.83 s and 62.18 s against 24.31 s and
+  24.97 s, about 35 to 37 s more. This matches the server cost read from the code above: on a
+  branch other than the default branch, Infrahub runs one subquery for each attribute to find the
+  latest edge.
+- The times without metadata agree with the T004 baseline within 1 to 4 s (22.4 to 25.0 s here,
+  21.1 to 21.9 s in T004).
+- Every read with metadata returned `updated_by` on the `serial` attribute of the first node; no
+  read without metadata did.
+- Not measured: the NetBox benchmark runner, and real mapped kinds with more attributes and
+  relationships, for the reasons given under the baseline. A plan reads each mapped kind once, so
+  the added time grows with the number of nodes and attributes the plan reads, and is larger on
+  a branch other than the default branch.
+- The result is information only and does not block the merge (plan.md, "Items left open").
 
 **Alternatives considered**
 

@@ -130,12 +130,13 @@ above.
 
 - The oldest Infrahub version a V3 import supports is not known and stays out of this feature
   (R-1). The design works on any version.
-- The cost of the metadata read is not measured yet (R-2). T056 measures it; the result is
-  information only. The baseline without metadata is measured in part (T004, 2026-10-22): the
-  plan's destination read of 10,014 nodes on Infrahub 1.10.6 took a median of 21.86 s on the
-  default branch and 21.10 s on another branch. It was measured with a direct SDK read on a
-  throwaway kind, not with the NetBox benchmark runner, which pins Infrahub 1.11.3, needs a
-  NetBox dump that does not exist here, and reads only the default branch (R-2).
+- Closed (T056, 2026-10-22), information only: the plan's destination read of 10,014 nodes on
+  Infrahub 1.10.6 takes about 1.4 times as long with metadata on the default branch (medians of
+  31.60 s and 33.35 s, against 22.56 s and 22.43 s without) and about 2.5 times as long on another
+  branch (59.83 s and 62.18 s, against 24.31 s and 24.97 s). Both T004 and T056 used a direct SDK
+  read on a throwaway kind, not the NetBox benchmark runner, which pins Infrahub 1.11.3, needs a
+  NetBox dump that does not exist here, and reads only the default branch. The time for real
+  mapped kinds is not known (R-2).
 - Closed (T001, 2026-10-22): the plan's destination read, `client.all(…, include=…)` at
   `infrahub_sync/adapters/infrahub.py:815-817`, carries `relationship_metadata` for the edges of
   every mapped cardinality-many relationship once `include_metadata=True` is added, with no added
