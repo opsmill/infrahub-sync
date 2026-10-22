@@ -1,0 +1,42 @@
+tests/configuration/test_infrahub_lineage_validation.py
+  s_8d92f288a8f661::t_953dd27a65468a 1-98
+tests/adapters/test_infrahub_lineage.py
+  s_8d92f288a8f661::t_1851026bc2d3f5 50-51
+  s_8d92f288a8f661::t_83f379ba1f6ccc 47-49
+  s_8d92f288a8f661::t_a9114a46ef1acc 52
+  s_0f873a5a19bd17::t_617900528c9207 5,20,30-46,62,165-166,170-210,212-216,220-223,226-234,335-362
+dev/specs/014-import-lineage/tasks.md
+  s_8d92f288a8f661::t_e7850cdfb1cae7 93-95,101-102
+infrahub_sync/adapters/infrahub.py
+  s_8d92f288a8f661::t_e24f0ec084c184 684-700,913-914,933,936-944,946-957
+infrahub_sync/configuration/capabilities.py
+  s_8d92f288a8f661::t_ca226cb980f6f4 313-326,680
+tests/adapters/test_infrahub_lineage_apply.py
+  s_8d92f288a8f661::t_69e9599c0f4c0d 14-16,18,25,45-47,51,56-71,130-163
+tests/adapters/test_infrahub_planned_write.py
+  s_8d92f288a8f661::t_f46561055ce30b 47,1001-1003,1013,1018
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "66cb116b5c4830a287c6462604e492b33595ca28",
+  "prompts": {},
+  "sessions": {
+    "s_0f873a5a19bd17": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a10368411bece3b87",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
