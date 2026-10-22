@@ -1,0 +1,295 @@
+---
+# Run from source: the whole Sync service, built from this checkout, and a local
+# Infrahub to sync into.
+#
+#     uv run invoke start
+#     # or: docker compose -f development/docker-compose.yml --profile sync --profile infrahub up --detach --wait
+#
+# The operator deployment is the other way to run V3: the root
+# docker-compose.yml pulls the released image from the OpsMill registry and
+# takes its credentials from the operator's environment. Nothing here is
+# pinned or released, every credential below is a development default in a
+# tracked file, and the image is whatever your working tree builds for your own
+# architecture.
+#
+# Services, by profile:
+#
+# - No profile: `postgres`, `object-store-init`, `object-store` and
+#   `prefect-server`. They always start.
+# - `sync`: `sync-bootstrap`, `sync-api` and `sync-worker`. Leave it off to run
+#   the Sync API and the worker as processes on the host instead.
+# - `infrahub`: the Infrahub services from `docker-compose.infrahub.yml`. Leave
+#   it off to sync into an Infrahub that already runs elsewhere.
+#
+# Every Sync-image service mounts `infrahub_sync/` and `opsmill_prefect_extras/`
+# from this checkout, read-only, over the copies the image installed. A code
+# change therefore needs a container restart, not an image rebuild. A change to
+# `Dockerfile`, `pyproject.toml` or `uv.lock` needs a rebuild.
+#
+# Every setting below reads `${NAME:-default}`, so a shell variable of that name
+# changes it and a clean checkout needs none. Compose also auto-loads a `.env`
+# from the project directory, which is this `development/` directory. The
+# repository ignores `*.env`, so a stray `development/.env` would feed this
+# stack silently.
+#
+# Destination: with the `infrahub` profile the worker shares a network with
+# Infrahub and reaches it at http://infrahub-server:8000; the host reaches it at
+# http://127.0.0.1:8080. To use an Infrahub started from Infrahub's own Compose
+# file (https://infrahub.opsmill.io) with `docker compose -p infrahub` instead,
+# leave the profile off: `uv run invoke start` connects sync-worker to
+# Infrahub's network, `infrahub_default`. Set
+# INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN for either. A package's `env`
+# credential identifiers must start with INFRAHUB_SYNC_CREDENTIAL_, and these
+# three are the ones this stack passes.
+#
+# Source: the local NetBox (`uv run invoke netbox.up` or `netbox.seed`) publishes
+# on the host's loopback address only, which no container can reach. The Invoke
+# tasks connect sync-worker to NetBox's own network instead, where it reads
+# NetBox at http://netbox:8080. `docker compose up` alone does not reconnect a
+# recreated worker to either network; `uv run invoke start` does.
+
+name: infrahub-sync-dev
+
+include:
+  - docker-compose.infrahub.yml
+
+x-sync-build: &sync-build
+  context: ..
+  dockerfile: Dockerfile
+
+x-sync-image: &sync-image "infrahub-sync:dev"
+
+# The checkout's source, mounted over the installed distribution in the image's
+# virtual environment.
+x-sync-source: &sync-source
+  - "../infrahub_sync:/opt/infrahub-sync/venv/lib/python3.13/site-packages/infrahub_sync:ro"
+  - "../opsmill_prefect_extras:/opt/infrahub-sync/venv/lib/python3.13/site-packages/opsmill_prefect_extras:ro"
+
+x-sync-env: &sync-env
+  INFRAHUB_SYNC_DATABASE_URL: "postgresql://postgres:devpassword@postgres:5432/infrahub_sync"
+  INFRAHUB_SYNC_S3_BUCKET: "infrahub-sync"
+  INFRAHUB_SYNC_S3_PREFIX: "infrahub-sync"
+  INFRAHUB_SYNC_S3_ENDPOINT_URL: "http://object-store:9000"
+  INFRAHUB_SYNC_S3_REGION: "us-east-1"
+  AWS_ACCESS_KEY_ID: "${MINIO_ACCESS_KEY:-devaccesskey}"
+  AWS_SECRET_ACCESS_KEY: "${MINIO_SECRET_KEY:-devsecretkey}"
+  INFRAHUB_SYNC_SERVICE_WORK_POOL: "${WORK_POOL:-infrahub-sync}"
+  INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "${RUN_ADMISSION_TTL_SECONDS:-300}"
+  PREFECT_WORKER_QUERY_SECONDS: "${PREFECT_WORKER_QUERY_SECONDS:-10}"
+  PREFECT_API_URL: "http://prefect-server:4200/api"
+
+x-silo-image: &silo-image >-
+  pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc4155d9a7e41ff58cdb65ddd13ba9304e67184e13c25bc5cb34016269d7
+
+services:
+  postgres:
+    image: "postgres:16-alpine"
+    environment:
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "devpassword"
+      POSTGRES_DB: "postgres"
+    ports:
+      - "127.0.0.1:${STORAGE_POSTGRES_PORT:-5440}:5432"
+    volumes:
+      - "postgres-data:/var/lib/postgresql/data"
+    # The two databases the stack needs, from the `init-databases` config below. The
+    # entrypoint runs this only when it initializes the data directory, so a volume
+    # that predates a new database in that file never gains it; the healthcheck turns
+    # that into a failed start rather than a puzzling one downstream.
+    configs:
+      - source: init-databases
+        target: /docker-entrypoint-initdb.d/10-databases.sql
+    # Reads the catalog over TCP, rather than pinging. The entrypoint runs the init
+    # file against a server that listens on the socket alone, so a socket ping reports
+    # healthy while the databases may not exist and no dependent can connect yet.
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >-
+          PGPASSWORD="$$POSTGRES_PASSWORD" psql --host 127.0.0.1 --username "$$POSTGRES_USER"
+          --dbname postgres --tuples-only --no-align
+          --command "SELECT count(*) = 2 FROM pg_database WHERE datname IN ('infrahub_sync', 'prefect')"
+          | grep -qx t
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Gives the object store's volume to the unprivileged user Silo runs as. A
+  # volume created by an earlier root-run object store is owned by root, which
+  # Silo cannot write to; a volume that is already right is left alone.
+  object-store-init:
+    image: *silo-image
+    restart: "no"
+    user: "0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        if [ "$$(stat -c %u:%g /data)" != "65532:65532" ]; then
+          chown -R 65532:65532 /data;
+        fi
+    network_mode: "none"
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN"]
+    volumes:
+      - "object-store-data:/data"
+
+  object-store:
+    # Silo, a maintained build of the MinIO server, the same pinned release as the
+    # root `docker-compose.yml`. Source: https://github.com/pgsty/silo, licensed
+    # under the AGPLv3. It reads the MINIO_* settings below.
+    image: *silo-image
+    user: "65532:65532"
+    command: ["server", "/data"]
+    depends_on:
+      object-store-init:
+        condition: service_completed_successfully
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ACCESS_KEY:-devaccesskey}"
+      MINIO_ROOT_PASSWORD: "${MINIO_SECRET_KEY:-devsecretkey}"
+      MINIO_BROWSER: "off"
+    volumes:
+      - "object-store-data:/data"
+    healthcheck:
+      test: ["CMD", "silo", "healthcheck", "ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # The Prefect server runs from the Sync image, so it serves the Prefect version
+  # the Sync processes call. The UI is on, on loopback; Prefect writes the UI's
+  # files to the static directory below at start.
+  prefect-server:
+    image: *sync-image
+    build: *sync-build
+    command:
+      - "uvicorn"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "4200"
+      - "--factory"
+      - "infrahub_sync.service.prefect_server:create_prefect_app"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PREFECT_SERVER_DATABASE_CONNECTION_URL: "postgresql+asyncpg://postgres:devpassword@postgres:5432/prefect"
+      PREFECT_SERVER_API_HOST: "0.0.0.0"
+      PREFECT_SERVER_API_PORT: "4200"
+      PREFECT_UI_ENABLED: "true"
+      PREFECT_UI_STATIC_DIRECTORY: "/tmp/infrahub-sync/prefect-ui"
+      PREFECT_SERVER_UI_API_URL: "http://127.0.0.1:${PREFECT_PORT:-4230}/api"
+      PREFECT_SERVER_ANALYTICS_ENABLED: "false"
+    ports:
+      - "127.0.0.1:${PREFECT_PORT:-4230}:4200"
+    volumes: *sync-source
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import httpx; httpx.get('http://127.0.0.1:4200/api/health', timeout=5).raise_for_status()"
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+  # Converges the product schema, the artifact bucket, the work pool, and the
+  # installed deployment. Registers no configuration. Safe to repeat, which is
+  # what makes a rebuild-and-restart a one-liner.
+  sync-bootstrap:
+    profiles: ["sync"]
+    image: *sync-image
+    build: *sync-build
+    command: ["python", "-m", "infrahub_sync.service.bootstrap"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      object-store:
+        condition: service_healthy
+      prefect-server:
+        condition: service_healthy
+    environment:
+      <<: *sync-env
+    volumes: *sync-source
+
+  sync-api:
+    profiles: ["sync"]
+    image: *sync-image
+    build: *sync-build
+    depends_on:
+      sync-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      <<: *sync-env
+      INFRAHUB_SYNC_SERVICE_HOST: "0.0.0.0"
+      # Required: the API refuses to construct its principal resolver without
+      # one, and rejects a token shorter than 16 characters.
+      INFRAHUB_SYNC_SERVICE_BEARER_TOKENS: >-
+        ${BEARER_TOKENS:-{"dev": {"token": "infrahub-sync-dev-token", "administrator": true}}}
+      INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
+    ports:
+      - "127.0.0.1:${SYNC_API_PORT:-8030}:8000"
+    volumes: *sync-source
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import httpx; httpx.get('http://127.0.0.1:8000/version', timeout=5).raise_for_status()"
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+  sync-worker:
+    profiles: ["sync"]
+    image: *sync-image
+    build: *sync-build
+    command: ["python", "-m", "infrahub_sync.service.worker", "--pool", "${WORK_POOL:-infrahub-sync}"]
+    depends_on:
+      sync-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      <<: *sync-env
+      PREFECT_WORKER_HEARTBEAT_SECONDS: "10"
+      INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN:-}"
+    volumes: *sync-source
+    # The only service that reaches a destination. The root `docker-compose.yml`
+    # carries no host route on purpose; here it lets a package reach a service published
+    # on this machine that has no Compose network to join, and it costs nothing when unused.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # The Infrahub services come from `docker-compose.infrahub.yml`, under the
+  # `infrahub` profile. Only their host publications change here: Infrahub's
+  # port avoids 8000, which a separate local Infrahub may hold, and the ports
+  # the development stack does not need are not published.
+  infrahub-server:
+    # Loopback unless INFRAHUB_BIND_ADDRESS names another address. A worker that
+    # runs in a container on Linux and is not on this stack's network reaches the
+    # port through the Docker bridge gateway, never through loopback.
+    ports: !override
+      - "${INFRAHUB_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_PORT:-8080}:8000"
+
+  message-queue:
+    ports: !reset []
+
+  database:
+    ports: !reset []
+
+configs:
+  # Read once, when Postgres initializes an empty data directory. Adding a database
+  # here does not reach a volume that already exists: `docker compose down --volumes`
+  # does.
+  init-databases:
+    content: |
+      CREATE DATABASE infrahub_sync;
+      CREATE DATABASE prefect;
+
+volumes:
+  postgres-data:
+  object-store-data:

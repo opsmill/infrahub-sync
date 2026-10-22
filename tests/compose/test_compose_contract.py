@@ -71,6 +71,9 @@ DEVELOPMENT_COMPOSE = Path(__file__).resolve().parents[2] / "development"
 DESTINATION_COMPOSE = DEVELOPMENT_COMPOSE / "docker-compose.infrahub.yml"
 PREVIEW_COMPOSE = DEVELOPMENT_COMPOSE / "docker-compose.preview.yml"
 PREVIEW_ENV = DEVELOPMENT_COMPOSE / "preview.env"
+# Every service of the destination file is under this profile. `preview.env` selects it
+# through COMPOSE_PROFILES; a resolution without that file has to name it.
+INFRAHUB_PROFILE = ("--profile", "infrahub")
 
 # The two durable volumes and the services allowed to mount them. The short-lived
 # owner repair shares the object store's volume before the server starts.
@@ -673,7 +676,9 @@ def test_destination_and_preview_default_images_are_tagged_indexes(
 ) -> None:
     """Compose's resolved defaults must retain readable tags and immutable digests."""
     del compose_version
-    result = compose(["config", "--format", "json"], files=files, env_files=env_files, inherit_environment=False)
+    result = compose(
+        [*INFRAHUB_PROFILE, "config", "--format", "json"], files=files, env_files=env_files, inherit_environment=False
+    )
     assert result.returncode == 0, result.stderr
     configured = json.loads(result.stdout)
     mutable = sorted(
@@ -690,7 +695,7 @@ def test_preview_env_tags_match_compose_pin_defaults(compose_version: str) -> No
     models = []
     for env_files in ((), (PREVIEW_ENV,)):
         result = compose(
-            ["config", "--format", "json"],
+            [*INFRAHUB_PROFILE, "config", "--format", "json"],
             files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
             env_files=env_files,
             inherit_environment=False,
@@ -715,7 +720,7 @@ def test_image_overrides_keep_their_matching_digests(compose_version: str) -> No
     infrahub_digest = "@sha256:" + "a" * 64
     prefect_digest = "@sha256:" + "b" * 64
     result = compose(
-        ["config", "--format", "json"],
+        [*INFRAHUB_PROFILE, "config", "--format", "json"],
         files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
         env_files=(PREVIEW_ENV,),
         inherit_environment=False,
@@ -740,7 +745,7 @@ def test_local_image_override_can_drop_the_digest(compose_version: str) -> None:
     """An empty digest keeps the preexisting local image override usable."""
     del compose_version
     result = compose(
-        ["config", "--format", "json"],
+        [*INFRAHUB_PROFILE, "config", "--format", "json"],
         files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
         env_files=(PREVIEW_ENV,),
         inherit_environment=False,
@@ -766,7 +771,7 @@ def test_direct_compose_local_image_override_drops_the_digest(
     """An image-name override cannot retain the shipped digest without an env file."""
     del compose_version
     result = compose(
-        ["config", "--format", "json"],
+        [*INFRAHUB_PROFILE, "config", "--format", "json"],
         files=(DESTINATION_COMPOSE,),
         inherit_environment=False,
         environment={"INFRAHUB_DOCKER_IMAGE": "local-infrahub", **digest_override},
@@ -782,7 +787,7 @@ def test_direct_compose_digest_override_replaces_the_shipped_digest(compose_vers
     del compose_version
     digest = "@sha256:" + "a" * 64
     result = compose(
-        ["config", "--format", "json"],
+        [*INFRAHUB_PROFILE, "config", "--format", "json"],
         files=(DESTINATION_COMPOSE,),
         inherit_environment=False,
         environment={"INFRAHUB_DOCKER_IMAGE_DIGEST": digest},
@@ -799,7 +804,7 @@ def test_standalone_version_override_drops_the_shipped_digest(compose_version: s
     """Direct Compose use must not pair a new tag with the shipped digest."""
     del compose_version
     result = compose(
-        ["config", "--format", "json"],
+        [*INFRAHUB_PROFILE, "config", "--format", "json"],
         files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
         inherit_environment=False,
         environment={"VERSION": "custom", "PREVIEW_PREFECT_IMAGE_TAG": "custom"},

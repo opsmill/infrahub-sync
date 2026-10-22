@@ -212,7 +212,7 @@ records the upstream commit and the local additions.
   [Run the preview stack](../guides/preview-stack.md) are the procedures.
 - The root `docker-compose.yml` is the operator deployment. It pulls the released image from
   `registry.opsmill.io/opsmill/infrahub-sync` and carries its own database bootstrap script;
-  the development stack in `development/docker-compose.dev.yml` builds from the checkout instead.
+  the development stack in `development/docker-compose.yml` builds from the checkout instead.
   [Compose deployment](../../compose-deployment.mdx) is the operator page.
 - [`examples/`][src-examples] holds fifteen directories, and they are not uniform. Four —
   `aci_to_infrahub`, `custom_adapter`, `netbox_to_infrahub` and

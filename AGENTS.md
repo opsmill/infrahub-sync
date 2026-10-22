@@ -186,7 +186,7 @@ Every normal pull request into `main` must also carry exactly one release-intent
 
 **Versions and `CHANGELOG.md` are never edited manually.** For a V2 release from `main`, merging does not prepare the release: dispatch `trigger-push-stable.yml` from Actions with `main` selected, which opens a `chore(release)` pull request carrying the version bump and the changelog assembled from the fragments it consumes. Merging that pull request creates the tag and publishes the GitHub Release. Do not bump `pyproject.toml`, edit `CHANGELOG.md`, or create tags yourself. See [RELEASING.md](RELEASING.md).
 
-The container image is published to `registry.opsmill.io/opsmill/infrahub-sync` by `ci-docker-image.yml`, for linux/amd64 and linux/arm64, signed and with SBOMs attached. A release publishes it, and a maintainer can dispatch it by hand; see [`development/guides/publishing-an-image.md`](docs/docs/development/guides/publishing-an-image.md). The operator deployment is the root `docker-compose.yml`; the development stack is `development/docker-compose.dev.yml`.
+The container image is published to `registry.opsmill.io/opsmill/infrahub-sync` by `ci-docker-image.yml`, for linux/amd64 and linux/arm64, signed and with SBOMs attached. A release publishes it, and a maintainer can dispatch it by hand; see [`development/guides/publishing-an-image.md`](docs/docs/development/guides/publishing-an-image.md). The operator deployment is the root `docker-compose.yml`; the development stack is `development/docker-compose.yml`.
 
 ## Invoke Tasks (reference)
 

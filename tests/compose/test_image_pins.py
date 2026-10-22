@@ -42,31 +42,27 @@ PREFECT_VERSION_OR_IMAGE = re.compile(r"prefecthq/|\bprefect(?:==|>=|~=|<=|[:@\s
 DOCKERFILE = REPO_ROOT / "Dockerfile"
 
 DEVELOPMENT = REPO_ROOT / "development"
-# The development stack moves from `docker-compose.dev.yml` to `docker-compose.yml`.
-DEVELOPMENT_STACK_NAMES = ("docker-compose.yml", "docker-compose.dev.yml")
+DEVELOPMENT_STACK = DEVELOPMENT / "docker-compose.yml"
 PACKAGED_COPY = REPO_ROOT / "infrahub_sync" / "testcontainers" / "docker-compose.yml"
 # The preview stack is deleted with the task renames that follow this change;
 # until then it still runs MinIO and `prefecthq/prefect`.
 PREVIEW_STACK = DEVELOPMENT / "docker-compose.preview.yml"
 
-UNTIL_THE_DEVELOPMENT_STACK_CHANGES = pytest.mark.xfail(
-    strict=True, reason="T031 moves the development stack to the Sync-image Prefect server and to Silo"
-)
 UNTIL_THE_PREVIEW_STACK_IS_DELETED = pytest.mark.xfail(
     strict=True, reason="T039 deletes the preview stack, which still runs MinIO and prefecthq/prefect"
 )
 
 
 def development_stack() -> Path | None:
-    """The development stack's Compose file, under whichever name it has."""
-    return next((path for name in DEVELOPMENT_STACK_NAMES if (path := DEVELOPMENT / name).exists()), None)
+    """The development stack's Compose file, when the checkout has it."""
+    return DEVELOPMENT_STACK if DEVELOPMENT_STACK.exists() else None
 
 
 def stacks() -> list[Any]:
     """Every stack that runs the bundled object store and a Prefect server, as test parameters."""
     found = [pytest.param(COMPOSE_FILE, CONTRACT_ENVIRONMENT, id="root")]
     if (development := development_stack()) is not None:
-        found.append(pytest.param(development, None, id="development", marks=UNTIL_THE_DEVELOPMENT_STACK_CHANGES))
+        found.append(pytest.param(development, None, id="development"))
     if PACKAGED_COPY.exists():
         found.append(pytest.param(PACKAGED_COPY, CONTRACT_ENVIRONMENT, id="packaged"))
     return found
@@ -81,11 +77,7 @@ def compose_files() -> list[Any]:
         pytest.param(
             path,
             id=str(path.relative_to(REPO_ROOT)),
-            marks=UNTIL_THE_PREVIEW_STACK_IS_DELETED
-            if path == PREVIEW_STACK
-            else UNTIL_THE_DEVELOPMENT_STACK_CHANGES
-            if path == development_stack()
-            else (),
+            marks=UNTIL_THE_PREVIEW_STACK_IS_DELETED if path == PREVIEW_STACK else (),
         )
         for path in sorted(paths)
     ]

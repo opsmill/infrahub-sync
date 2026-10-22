@@ -42,7 +42,7 @@ uv run invoke build
 uv run invoke start
 ```
 
-Both tasks drive the development stack in `development/docker-compose.dev.yml`, which
+Both tasks drive the development stack in `development/docker-compose.yml`, which
 builds the image from your checkout, rather than the root `docker-compose.yml`, which
 pulls a released image. `start` builds the image only when no `infrahub-sync:dev` image
 exists. If you already

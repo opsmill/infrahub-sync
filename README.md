@@ -68,7 +68,7 @@ To run from source, continue below.
 ## Run From Source
 
 You need Docker, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13. The
-development stack, `development/docker-compose.dev.yml`, builds the image from your checkout, for your host's own architecture, and
+development stack, `development/docker-compose.yml`, builds the image from your checkout, for your host's own architecture, and
 runs the Sync API, the worker, PostgreSQL, object storage, and Prefect:
 
 ```bash
