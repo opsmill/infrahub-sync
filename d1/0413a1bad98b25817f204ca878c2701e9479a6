@@ -1,0 +1,33 @@
+docs/docs/development/knowledge/quality-gates.md
+  s_8d92f288a8f661::t_15d1c318c8c6dd 22
+tasks/bench.py
+  s_8d92f288a8f661::t_675252180f6300 134-136
+tasks/dev.py
+  s_8d92f288a8f661::t_e95d538e870493 48,57-60,332-341,344,347-348,350-351,361,366-368,380,571,587,597,617,627,678-684
+tasks/linter.py
+  s_8d92f288a8f661::t_6623a8dc621bf2 159-162
+tasks/smoke_dataset.py
+  s_8d92f288a8f661::t_27aea64d9a108b 11,15-17
+tests/dev_stack/test_deps_mode.py
+  s_8d92f288a8f661::t_14e48d688e989a 207-208,230-231,314,316
+tests/test_benchmark_runner.py
+  s_8d92f288a8f661::t_ca0c6a76f68e98 1225
+tests/test_linter_tasks.py
+  s_8d92f288a8f661::t_bd1fa56f297121 44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d10413a1bad98b25817f204ca878c2701e9479a6",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
