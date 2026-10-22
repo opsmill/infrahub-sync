@@ -1,0 +1,19 @@
+dev/specs/012-v2-configuration-conversion/tasks.md
+  s_9c7f8713d8e8dc::t_5d91b23b8f13d1 1-200
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f5c7690ea17e3386582ab1a4d31136d7e6748cca",
+  "prompts": {},
+  "sessions": {
+    "s_9c7f8713d8e8dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7b4ab04-36d6-4644-a214-69334e6a0d27",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
