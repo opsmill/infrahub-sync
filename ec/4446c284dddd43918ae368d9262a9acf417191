@@ -1,0 +1,28 @@
+dev/specs/014-import-lineage/research.md
+  s_8d92f288a8f661::t_e27570d6c46fd2 200-217
+tests/integration/test_infrahub_lineage_integration.py
+  s_8d92f288a8f661::t_20bc31d7102929 110,113-119
+  s_8d92f288a8f661::t_0577f5c08d13e7 19-21
+  s_8d92f288a8f661::t_2e855b1f4268fd 941,954,963,965,979,999,1011,1019,1079,1082,1089,1092,1106,1133,1149,1166-1321
+  s_8d92f288a8f661::t_21bd803809943c 50
+  s_8d92f288a8f661::t_3a83825ca753b9 58-62
+  s_8d92f288a8f661::t_8c8cc831df2121 51,55,63-65,69,82-84,90,120-122,882-940,942-953,955-962,964,966-978,980-998,1000-1010,1012-1018,1020-1078,1080-1081,1083-1088,1090-1091,1093-1105,1107-1132,1134-1148,1150-1165
+dev/specs/014-import-lineage/tasks.md
+  s_8d92f288a8f661::t_13777f34d26040 140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ec4446c284dddd43918ae368d9262a9acf417191",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
