@@ -137,7 +137,7 @@ the product owner's decision on FR-007.
 - [X] T040 [US3] Add the optional `last_changes` field to `PlanResource` in `infrahub_sync/client/models.py:341` and fill it in `infrahub_sync/service/flow.py:178-187`
 - [X] T041 [US3] Check whether the optional `lineage` and `last_changes` fields of `PlanResource` need a change to the client and service compatibility check in `infrahub_sync/service/compatibility.py`; make the change, or record in research.md R-4 why none is needed, with a test in `tests/service/test_compatibility.py`
 - [X] T042 [US3] Show, for each changed field of each update in `infrahub-sync runs plan`, the display label of `updated_by` and `updated_at`, or "not recorded", in `infrahub_sync/cli.py`
-- [ ] T043 [US3] Opt-in integration test for quickstart scenario 3 in `tests/integration/test_infrahub_lineage_integration.py`: a value changed by a second account shows that account and the time; a field with no recorded change shows "not recorded"; a create shows no last-change record
+- [X] T043 [US3] Opt-in integration test for quickstart scenario 3 in `tests/integration/test_infrahub_lineage_integration.py`: a value changed by a second account shows that account and the time; a field with no recorded change shows "not recorded"; a create shows no last-change record
 
 **Checkpoint**: User Stories 1 to 3 work on their own.
 

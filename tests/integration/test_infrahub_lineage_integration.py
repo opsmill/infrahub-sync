@@ -16,8 +16,9 @@ The tests then drive the import's own destination calls with that token:
   against the account the plan recorded and writes through the planned-write surface.
 
 They cover quickstart scenario 1 (SC-001, SC-002, SC-007), scenario 2 (the `owner` setting:
-SC-003, SC-004, FR-011) and scenario 5 (a missing permission on a written kind and on the
-owner's kind: SC-006). With an owner, the account also holds `view` on `CoreAccountGroup`,
+SC-003, SC-004, FR-011), scenario 3 (who last changed each value a plan updates, read with
+the plan's destination read: SC-005, FR-007) and scenario 5 (a missing permission on a
+written kind and on the owner's kind: SC-006). With an owner, the account also holds `view` on `CoreAccountGroup`,
 the only permission the owner lookup needs, because it selects the group's name only.
 
 What is written where:
@@ -46,18 +47,26 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
+from unittest.mock import MagicMock
 
 import pytest
 import requests
+from diffsync import Adapter
 from infrahub_sdk.exceptions import AuthenticationError
 from infrahub_sdk.node.attribute import Attribute
+from pydantic import Field
+from typer.testing import CliRunner
 
-from infrahub_sync import SyncAdapter, SyncConfig
-from infrahub_sync.adapters.infrahub import InfrahubAdapter, NamedLineageNodeNotFoundError
+from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncConfig, SyncInstance
+from infrahub_sync.adapters.infrahub import InfrahubAdapter, InfrahubModel, NamedLineageNodeNotFoundError
+from infrahub_sync.cache.cursors import CursorTier
+from infrahub_sync.cache.paths import cache_root_for
+from infrahub_sync.cli import NOT_RECORDED, app
 from infrahub_sync.configuration import CredentialConfigurationError, validate_package_credentials
 from infrahub_sync.infrahub_errors import classify_infrahub_error
 from infrahub_sync.plan.errors import ImportAccountMismatchError, OperationApplyFailedError
+from infrahub_sync.plan.review import read_saved_plan
 from infrahub_sync.potenda import Potenda
 from tests.configuration.validation_packages import package, package_data
 from tests.plan.artifact_fixtures import CONFIG_VERSION, operation_record, write_artifact
@@ -70,11 +79,15 @@ if TYPE_CHECKING:
     from infrahub_sdk import InfrahubClientSync
     from infrahub_sdk.node import InfrahubNodeSync
 
+    from infrahub_sync.plan.models import PlannedOperation
+    from infrahub_sync.plan.review import SavedPlan as SavedReview
+
 pytestmark = pytest.mark.integration
 
 TAG_KIND = "TestLineageTag"
 DEVICE_KIND = "TestLineageDevice"
 TAGS_RELATIONSHIP = "tags"
+PRIMARY_TAG_RELATIONSHIP = "primary_tag"
 
 _SCHEMA = {
     "version": "1.0",
@@ -94,9 +107,19 @@ _SCHEMA = {
             "attributes": [
                 {"name": "name", "kind": "Text", "unique": True},
                 {"name": "serial", "kind": "Text", "optional": True},
+                {"name": "description", "kind": "Text", "optional": True},
             ],
             "relationships": [
-                {"name": "tags", "peer": TAG_KIND, "cardinality": "many", "kind": "Generic", "optional": True}
+                {"name": "tags", "peer": TAG_KIND, "cardinality": "many", "kind": "Generic", "optional": True},
+                # A second relationship to the same peer kind needs an identifier of its own.
+                {
+                    "name": PRIMARY_TAG_RELATIONSHIP,
+                    "peer": TAG_KIND,
+                    "cardinality": "one",
+                    "kind": "Generic",
+                    "optional": True,
+                    "identifier": "testlineagedevice__primary_tag",
+                },
             ],
         },
     ],
@@ -854,6 +877,446 @@ def test_a_missing_permission_on_the_owner_kind_is_recorded_as_a_missing_permiss
     assert any("AccountGroup" in permission for permission in classification.permissions), (
         f"The cause must quote the permission Infrahub names for the group kind; it quoted {classification.permissions}"
     )
+
+
+# --- Quickstart scenario 3: who last changed each value a plan updates -------------------------
+
+
+class LineageTagModel(InfrahubModel):
+    """The tag kind as a plan compares it: its name only."""
+
+    _modelname = TAG_KIND
+    _identifiers = ("name",)
+    _attributes = ()
+
+    name: str
+    local_data: Any | None = None
+
+
+class LineageDeviceModel(InfrahubModel):
+    """The device kind as a plan compares it: two attributes, a one-edge and a many-edge."""
+
+    _modelname = DEVICE_KIND
+    _identifiers = ("name",)
+    _attributes = ("description", PRIMARY_TAG_RELATIONSHIP, "serial", TAGS_RELATIONSHIP)
+
+    name: str
+    serial: str | None = None
+    description: str | None = None
+    primary_tag: str | None = None
+    tags: list[str] | None = Field(default_factory=list)
+    local_data: Any | None = None
+
+
+class LineagePlanDestination(InfrahubAdapter):
+    """The Infrahub destination with the two kinds' models, as a generated adapter declares them."""
+
+    TestLineageTag = LineageTagModel
+    TestLineageDevice = LineageDeviceModel
+
+
+class LineagePlanSource(Adapter):
+    """A source system held in memory: the records a plan compares the destination with."""
+
+    TestLineageTag = LineageTagModel
+    TestLineageDevice = LineageDeviceModel
+    top_level: ClassVar[list[str]] = [TAG_KIND, DEVICE_KIND]
+
+    def __init__(self, records: Sequence[InfrahubModel]) -> None:
+        super().__init__()
+        self._records = list(records)
+
+    def load(self) -> None:
+        """Add every record."""
+        for record in self._records:
+            self.add(record)
+
+    def cursor_tier_for(self, resource: str) -> CursorTier:  # noqa: ARG002, PLR6301 — always a full load
+        """No incremental load: the source is read in full."""
+        return CursorTier.NONE
+
+
+def _plan_config(lineage: LineageBranch, sync_name: str) -> SyncInstance:
+    """The configuration of the scenario 3 plan: both kinds, every field of the device mapped."""
+    device_fields = {
+        "name": None,
+        "serial": None,
+        "description": None,
+        TAGS_RELATIONSHIP: TAG_KIND,
+        PRIMARY_TAG_RELATIONSHIP: TAG_KIND,
+    }
+    return SyncInstance(
+        name=sync_name,
+        directory="/nonexistent/lineage-integration",
+        source=SyncAdapter(name="netbox"),
+        destination=SyncAdapter(name="infrahub", settings={"url": lineage.address}),
+        order=[TAG_KIND, DEVICE_KIND],
+        schema_mapping=[
+            SchemaMappingModel(
+                name=TAG_KIND,
+                mapping="tags",
+                identifiers=["name"],
+                fields=[SchemaMappingField(name="name", mapping="name")],
+            ),
+            SchemaMappingModel(
+                name=DEVICE_KIND,
+                mapping="devices",
+                identifiers=["name"],
+                fields=[
+                    SchemaMappingField(name=name, mapping=name, reference=reference)
+                    for name, reference in device_fields.items()
+                ],
+            ),
+        ],
+    )
+
+
+def _run_plan(
+    lineage: LineageBranch,
+    account: ImportAccount,
+    monkeypatch: pytest.MonkeyPatch,
+    source: LineagePlanSource,
+    sync_name: str,
+) -> str:
+    """Run a plan as `diff` does, with the account's token: load both sides, compare, write the plan.
+
+    Returns the run id. The run directory is under the test's cache root, where
+    `read_saved_plan` finds it by the synchronization's name and the run id.
+    """
+    config = _plan_config(lineage, sync_name)
+    with monkeypatch.context() as patched:
+        patched.setenv("INFRAHUB_ADDRESS", lineage.address)
+        patched.setenv("INFRAHUB_API_TOKEN", account.token)
+        destination = LineagePlanDestination(
+            target="destination", adapter=config.destination, config=config, branch=lineage.branch
+        )
+    run_id = f"{datetime.now(tz=timezone.utc):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:8]}"
+    run_dir = cache_root_for(sync_name) / run_id
+    run_dir.mkdir(parents=True)
+    engine = Potenda(
+        source=source,
+        destination=destination,
+        config=config,
+        top_level=[TAG_KIND, DEVICE_KIND],
+        run_dir=run_dir,
+        run_id=run_id,
+        show_progress=False,
+        concurrent_load=False,
+    )
+    engine.load_both_sides()
+    engine.write_plan(engine.diff())
+    return run_id
+
+
+def _primary_tag_reference(tag_name: str) -> dict[str, Any]:
+    return {
+        "field": PRIMARY_TAG_RELATIONSHIP,
+        "peer_kind": TAG_KIND,
+        "cardinality": "one",
+        "peers": [{"name": tag_name}],
+    }
+
+
+def _save_scenario_three_creates(tmp_path: Path, planning: InfrahubAdapter, suffix: str) -> SavedPlan:
+    """The import's first plan: three tags; a device with a description and both relationships; a bare device.
+
+    The first device refers to the first tag through `tags` and `primary_tag`. The second
+    device has a serial and the first tag, and no description and no `primary_tag`.
+    """
+    tag_names = tuple(f"lineage-tag-{suffix}-{index}" for index in range(3))
+    operations = [operation_record(kind=TAG_KIND, identity={"name": name}) for name in tag_names]
+    for device, payload, relationships in (
+        (
+            f"lineage-device-{suffix}-edited",
+            {"serial": f"serial-{suffix}-0", "description": "written by the import"},
+            [_tags_reference(tag_names[:1]), _primary_tag_reference(tag_names[0])],
+        ),
+        (f"lineage-device-{suffix}-bare", {"serial": f"serial-{suffix}-1"}, [_tags_reference(tag_names[:1])]),
+    ):
+        operations.append(
+            operation_record(
+                kind=DEVICE_KIND,
+                identity={"name": device},
+                payload={"name": device, **payload},
+                relationships=relationships,
+                tier=1,
+            )
+        )
+    run_dir, run_id = _write_plan(tmp_path, planning, operations, suffix=suffix)
+    return SavedPlan(run_dir=run_dir, run_id=run_id, tag_names=tag_names, device_name=f"lineage-device-{suffix}")
+
+
+_EDIT_BY_HAND = """
+mutation EditByHand($device: String!, $description: String!, $primary: String!) {
+  TestLineageDeviceUpdate(data: {id: $device, description: {value: $description}, primary_tag: {id: $primary}}) {
+    ok
+  }
+}
+"""
+
+_ADD_TAG_BY_HAND = """
+mutation AddTagByHand($device: String!, $tag: String!) {
+  RelationshipAdd(data: {id: $device, name: "tags", nodes: [{id: $tag}]}) { ok }
+}
+"""
+
+# The metadata Infrahub holds for the values the editor changed, read back as an admin.
+_LAST_CHANGES_QUERY = """
+query LastChanges($name: String!) {
+  TestLineageDevice(name__value: $name) {
+    edges { node {
+      name { updated_by { id } updated_at }
+      description { updated_by { id } updated_at }
+      primary_tag { node { id } relationship_metadata { updated_by { id } updated_at } }
+      tags { edges { node { id } relationship_metadata { updated_by { id } updated_at } } }
+    } }
+  }
+}
+"""
+
+
+def _edit_by_hand(lineage: LineageBranch, editor: ImportAccount, *, device_id: str, tag_id: str) -> None:
+    """As the editor: change the description, set `primary_tag` to the tag, and add the tag to `tags`."""
+    client = _make_client(lineage.address, editor.token, branch=lineage.branch)
+    client.execute_graphql(
+        query=_EDIT_BY_HAND,
+        variables={"device": device_id, "description": "changed by the editor", "primary": tag_id},
+        branch_name=lineage.branch,
+    )
+    client.execute_graphql(
+        query=_ADD_TAG_BY_HAND, variables={"device": device_id, "tag": tag_id}, branch_name=lineage.branch
+    )
+
+
+def _held_last_changes(lineage: LineageBranch, device_name: str, tag_id: str) -> dict[str, dict[str, Any]]:
+    """`updated_by` and `updated_at` that Infrahub holds for the device's name and the editor's three values.
+
+    For `tags`, the values of the edge to `tag_id`, the edge the editor added.
+    """
+    data = lineage.admin.execute_graphql(
+        query=_LAST_CHANGES_QUERY, variables={"name": device_name}, branch_name=lineage.branch
+    )
+    devices = data[DEVICE_KIND]["edges"]
+    assert len(devices) == 1, f"Expected one device named {device_name!r}, read back {len(devices)}."
+    node = devices[0]["node"]
+    edges = {edge["node"]["id"]: edge["relationship_metadata"] for edge in node[TAGS_RELATIONSHIP]["edges"]}
+
+    def flat(metadata: dict[str, Any]) -> dict[str, Any]:
+        return {"updated_by": (metadata.get("updated_by") or {}).get("id"), "updated_at": metadata.get("updated_at")}
+
+    return {
+        "name": flat(node["name"]),
+        "description": flat(node["description"]),
+        PRIMARY_TAG_RELATIONSHIP: flat(node[PRIMARY_TAG_RELATIONSHIP]["relationship_metadata"]),
+        TAGS_RELATIONSHIP: flat(edges[tag_id]),
+    }
+
+
+def test_the_plan_shows_who_last_changed_each_value_it_updates(
+    lineage_branch: LineageBranch,
+    account_factory: AccountFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Quickstart scenario 3 (SC-005, FR-007, research R-2 and R-7).
+
+    The import creates three tags and two devices. A second account then changes, on the first
+    device, the description, the cardinality-one `primary_tag` and the cardinality-many `tags`
+    (it adds an edge). A plan made with the import account's token, which holds no permission
+    on `CoreAccount`, proposes:
+
+    - an update of the first device's three values: each record names the second account and
+      the time Infrahub holds for that value (for `tags`, the edge the second account added);
+    - an update of the second device's `primary_tag`, which has no edge: Infrahub holds no
+      `updated_by` and no `updated_at` for it, so the record has none and review shows
+      "not recorded";
+    - a create of a third device, which has no record.
+
+    On Infrahub 1.10.6 an attribute never given a value still holds `updated_by` and
+    `updated_at` from the create of its node, so an empty relationship is the value with
+    nothing recorded.
+    """
+    account = account_factory(BRANCH_IMPORT_PERMISSIONS)
+    editor = account_factory(BRANCH_IMPORT_PERMISSIONS)
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "cache"))
+    scene = _import_then_edit(lineage_branch, account, editor, monkeypatch, tmp_path)
+    edited, bare, new = scene.edited, scene.bare, scene.new
+
+    sync_name = f"lineage-last-changes-{scene.suffix}"
+    run_id = _run_plan(lineage_branch, account, monkeypatch, _scenario_three_source(scene), sync_name)
+
+    saved = read_saved_plan(sync_name=sync_name, run_id=run_id)
+    assert saved.manifest.last_changes is not None, "The plan must record its last changes in the manifest."
+    assert saved.manifest.last_changes.metadata_read is True, "On Infrahub 1.10.6 the plan must read metadata."
+    by_device = _device_operations(saved, (edited, bare, new))
+    assert {name: operation.action for name, operation in by_device.items()} == {
+        edited: "update",
+        bare: "update",
+        new: "create",
+    }
+    observed, labels = _observed_last_changes(saved, by_device)
+    assert observed == {
+        f"{edited}.description": {"field_type": "attribute", **scene.held["description"]},
+        f"{edited}.{PRIMARY_TAG_RELATIONSHIP}": {"field_type": "relationship", **scene.held[PRIMARY_TAG_RELATIONSHIP]},
+        f"{edited}.{TAGS_RELATIONSHIP}": {"field_type": "relationship", **scene.held[TAGS_RELATIONSHIP]},
+        f"{bare}.{PRIMARY_TAG_RELATIONSHIP}": {"field_type": "relationship", "updated_by": None, "updated_at": None},
+    }, (
+        f"Each updated field must name the editor {editor.name!r} ({editor.id}) and the time Infrahub holds; "
+        f"the empty `primary_tag` must have no value; the create must have no record. Held: {scene.held}"
+    )
+    assert len(labels) == 1, f"The editor's records must carry one display label; they carry {labels}."
+    (editor_label,) = labels
+    assert editor_label, "The import account must read the editor's display label without a permission on accounts."
+
+    shown = _runs_plan_detail(run_id, saved)
+    blocks = _detail_blocks(shown, [operation.operation_id for operation in saved.operations()])
+
+    def last_change_lines(device: str) -> list[str]:
+        return [line for line in blocks[by_device[device].operation_id] if line.startswith("  last change:")]
+
+    assert last_change_lines(edited) == [
+        f"  last change: description (attribute): updated_by={editor_label}, "
+        f"updated_at={scene.held['description']['updated_at']}",
+        f"  last change: {PRIMARY_TAG_RELATIONSHIP} (relationship): updated_by={editor_label}, "
+        f"updated_at={scene.held[PRIMARY_TAG_RELATIONSHIP]['updated_at']}",
+        f"  last change: {TAGS_RELATIONSHIP} (relationship): updated_by={editor_label}, "
+        f"updated_at={scene.held[TAGS_RELATIONSHIP]['updated_at']}",
+    ], f"`runs plan --detail` showed:\n{shown}"
+    assert last_change_lines(bare) == [
+        f"  last change: {PRIMARY_TAG_RELATIONSHIP} (relationship): updated_by={NOT_RECORDED}, "
+        f"updated_at={NOT_RECORDED}",
+    ], f"`runs plan --detail` showed:\n{shown}"
+    assert last_change_lines(new) == [], f"A create must show no last change; `runs plan --detail` showed:\n{shown}"
+
+
+@dataclass(frozen=True, slots=True)
+class EditedScene:
+    """What scenario 3 holds before its plan: the names the import wrote and the values the editor changed."""
+
+    suffix: str
+    tag_names: tuple[str, ...]
+    edited: str
+    bare: str
+    new: str
+    held: dict[str, dict[str, Any]]
+
+
+def _import_then_edit(
+    lineage: LineageBranch,
+    account: ImportAccount,
+    editor: ImportAccount,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> EditedScene:
+    """The import writes three tags and two devices; the editor then changes three values of the first device.
+
+    Checks that Infrahub holds the import account for the device's name and the editor, at a
+    later time, for each value the editor changed.
+    """
+    admin, branch = lineage.admin, lineage.branch
+    suffix = uuid.uuid4().hex[:8]
+    planning = import_adapter(lineage, account, monkeypatch)
+    plan_reads(planning)
+    created = _save_scenario_three_creates(tmp_path, planning, suffix)
+    apply_saved_plan(created, import_adapter(lineage, account, monkeypatch))
+    edited, bare, new = (f"{created.device_name}-{label}" for label in ("edited", "bare", "new"))
+    tag_id_by_name = {
+        _attribute(node, "name").value: node.id
+        for node in admin.filters(kind=TAG_KIND, name__values=list(created.tag_names), branch=branch)
+    }
+    assert set(tag_id_by_name) == set(created.tag_names), f"Precondition: the import must create {tag_id_by_name}."
+    device_id = _read_back(admin, DEVICE_KIND, edited, branch).id
+    second_tag_id = tag_id_by_name[created.tag_names[1]]
+    assert device_id is not None
+    assert second_tag_id is not None
+
+    _edit_by_hand(lineage, editor, device_id=device_id, tag_id=second_tag_id)
+    held = _held_last_changes(lineage, edited, second_tag_id)
+    assert held["name"]["updated_by"] == account.id, f"Precondition: the import wrote the name; Infrahub holds {held}."
+    for value in ("description", PRIMARY_TAG_RELATIONSHIP, TAGS_RELATIONSHIP):
+        assert held[value]["updated_by"] == editor.id, (
+            f"Precondition: the editor changed {value}; Infrahub holds {held}."
+        )
+        assert held[value]["updated_at"] > held["name"]["updated_at"], f"Precondition failed for {value}: {held}"
+    return EditedScene(suffix=suffix, tag_names=created.tag_names, edited=edited, bare=bare, new=new, held=held)
+
+
+def _scenario_three_source(scene: EditedScene) -> LineagePlanSource:
+    """The source system's records for scenario 3.
+
+    The first device's description and both relationships differ from the destination, the
+    second device gains a `primary_tag`, and a third device is new.
+    """
+    first, _, third = scene.tag_names
+    return LineagePlanSource(
+        [
+            *(LineageTagModel(name=name) for name in scene.tag_names),
+            LineageDeviceModel(
+                name=scene.edited,
+                serial=f"serial-{scene.suffix}-0",
+                description="from the source system",
+                primary_tag=third,
+                tags=sorted([first, third]),
+            ),
+            LineageDeviceModel(name=scene.bare, serial=f"serial-{scene.suffix}-1", primary_tag=first, tags=[first]),
+            LineageDeviceModel(name=scene.new, serial=f"serial-{scene.suffix}-2"),
+        ]
+    )
+
+
+def _device_operations(saved: SavedReview, names: Sequence[str]) -> dict[str, PlannedOperation]:
+    """The plan's operation on each named device, by device name."""
+    operations = {(operation.kind, operation.identity["name"]): operation for operation in saved.operations()}
+    return {name: operations[DEVICE_KIND, name] for name in names}
+
+
+def _observed_last_changes(
+    saved: SavedReview, by_device: dict[str, PlannedOperation]
+) -> tuple[dict[str, dict[str, Any]], set[str | None]]:
+    """The plan's last-change records by `<device>.<field>`, and the display labels of the accounts they name."""
+    device_by_operation = {operation.operation_id: name for name, operation in by_device.items()}
+    records = saved.last_changes or []
+    observed = {
+        f"{device_by_operation[record.operation_id]}.{record.field}": {
+            "field_type": record.field_type,
+            "updated_by": None if record.updated_by is None else record.updated_by.id,
+            "updated_at": record.updated_at,
+        }
+        for record in records
+    }
+    labels = {record.updated_by.display_label for record in records if record.updated_by is not None}
+    return observed, labels
+
+
+def _runs_plan_detail(run_id: str, saved: SavedReview) -> str:
+    """The output of `infrahub-sync runs plan <run id> --detail` for the plan review the Sync API publishes.
+
+    The review document is the one the service builds from the stored plan; the client that
+    would fetch it over HTTP returns it directly.
+    """
+    review = pytest.importorskip("infrahub_sync.service.flow")._review_document(run_id, saved)
+    client = MagicMock()
+    client.get_plan.return_value = review
+    result = CliRunner().invoke(app, ["runs", "plan", run_id, "--detail"], obj={"client": client})
+    assert result.exit_code == 0, result.output
+    return result.output
+
+
+def _detail_blocks(shown: str, operation_ids: Sequence[str]) -> dict[str, list[str]]:
+    """The lines `runs plan --detail` prints for each operation, keyed by operation id.
+
+    An operation's block starts at the line that begins with its id and ends before the next
+    such line.
+    """
+    blocks: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for line in shown.splitlines():
+        starts = next((operation_id for operation_id in operation_ids if line.startswith(f"{operation_id} ")), None)
+        if starts is not None:
+            current = blocks.setdefault(starts, [])
+        elif current is not None:
+            current.append(line)
+    return blocks
 
 
 def test_registration_refuses_an_owner_given_as_a_bare_name() -> None:

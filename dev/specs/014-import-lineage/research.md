@@ -197,6 +197,24 @@ records, for the relationship, the edge with the latest `updated_at`. An edge a 
 leaves no edge to read, so a removal is not part of that value. The sources do not say whether
 Infrahub records a removal anywhere this read returns.
 
+**What Infrahub 1.10.6 returns, checked live (task T043, 2026-10-23)**
+
+Checked against Infrahub 1.10.6 with SDK 1.23.2, on a branch, by the opt-in test
+`test_the_plan_shows_who_last_changed_each_value_it_updates` in
+`tests/integration/test_infrahub_lineage_integration.py`:
+
+- The plan's destination read with `include_metadata=True` returns `updated_by` and `updated_at`
+  for an attribute, a cardinality-one edge and each edge of a cardinality-many relationship. The
+  values equal what an admin reads back with its own query.
+- The read works with the import account of R-7, which holds no permission on `CoreAccount`.
+  `updated_by` still carries the other account's id and display label.
+- An attribute that was never given a value (an optional attribute left empty at create) still
+  holds `updated_by` and `updated_at`: the account and time of the node's create. So "not
+  recorded" never shows for an attribute of a node created on 1.10.6.
+- A relationship with no edge holds nothing: a cardinality-one relationship returns
+  `relationship_metadata: null`, and an empty cardinality-many relationship returns no edge. The
+  plan records `null` for both values, and review shows "not recorded".
+
 Cost noted for the measurement task (T004): with `include`, each included relationship also
 selects the peer's attributes (`SDK/node/node.py:1514-1521`), and `include_metadata=True` adds
 attribute and node metadata to those peer fields too. This makes each response larger, but adds
