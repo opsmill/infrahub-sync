@@ -26,7 +26,7 @@ from unittest.mock import patch
 
 import pytest
 from infrahub_sdk import Config, InfrahubClientSync
-from infrahub_sdk.exceptions import AuthenticationError, GraphQLError, ServerNotResponsiveError
+from infrahub_sdk.exceptions import AuthenticationError, GraphQLError, NodeNotFoundError, ServerNotResponsiveError
 from infrahub_sdk.node import InfrahubNodeSync
 from infrahub_sdk.node.attribute import Attribute
 from infrahub_sdk.schema import NodeSchemaAPI
@@ -40,10 +40,14 @@ from infrahub_sdk.schema.main import (
 )
 
 from infrahub_sync.adapters.infrahub import (
+    ImportAccount,
     InfrahubAdapter,
     InfrahubModel,
     PeerResolver,
+    ResolvedLineage,
+    ResolvedLineageNode,
 )
+from infrahub_sync.configuration.capabilities import InfrahubLineageSettings, NamedLineageNode
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
     NullRelationshipValueError,
@@ -81,6 +85,8 @@ TEAM_KIND = "TestTeam"
 GROUP_KIND = "TestGroup"
 
 NODE_ID = "written-node-1"
+# The account `get_user()` answers for at the start of an apply.
+IMPORT_ACCOUNT_ID = "import-account-1"
 # The destination id a fixture update carries unless its case is about the id itself.
 DEFAULT_DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
 
@@ -306,6 +312,11 @@ class RecordingClient(InfrahubClientSync):
             raise self.write_error
         return {mutation_name: {"ok": True, "object": {"id": NODE_ID}}}
 
+    def get_user(self) -> dict[str, Any]:
+        """Answer the import account query that starts an apply, and record that it happened."""
+        self.events.append(("get_user", None))
+        return {"AccountProfile": {"id": IMPORT_ACCOUNT_ID, "display_label": "import-account"}}
+
     def get(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
         """Answer a destination read with the seeded peer set — and record that it happened.
 
@@ -381,8 +392,13 @@ def make_adapter(client: RecordingClient, *, source: str | None = None, owner: s
     """The adapter with only the state the planned-write surface reads, and no network setup."""
     adapter = InfrahubAdapter.__new__(InfrahubAdapter)
     adapter.client = client
-    adapter.source_node = make_node(client, SITE_KIND, source) if source else None
-    adapter.owner_node = make_node(client, SITE_KIND, owner) if owner else None
+    if source is not None:
+        adapter.lineage = ResolvedLineage(
+            import_account=ImportAccount(id=source, name="source-account"),
+            source=ResolvedLineageNode(kind="CoreAccount", name="source-account", id=source),
+            owner=None if owner is None else ResolvedLineageNode(kind="CoreAccountGroup", name="owners", id=owner),
+            protect=False,
+        )
     adapter.schema = dict(SCHEMAS)
     return adapter
 
@@ -901,6 +917,65 @@ def test_direct_apply_writes_every_reviewed_field_without_drift(tmp_path: Path) 
     assert len(client.mutations) == 1
     assert re.search(r'description:\s*\{\s*value:\s*"reviewed"', client.mutations[0][1])
     assert client.schema_fetches == 1
+
+
+def test_apply_resolves_lineage_before_the_first_write_and_writes_with_it(tmp_path: Path) -> None:
+    """An apply reads the import account before its first write, and the write carries it as source."""
+    directory = apply_run_dir(tmp_path)
+    operation = operation_record(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
+    write_artifact(directory, [operation], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+    adapter = make_adapter(client)
+
+    state, _ = apply_and_record_state(engine_over(directory, adapter))
+
+    assert state == "applied"
+    names = [name for name, _ in client.events]
+    assert names.count("get_user") == 1
+    assert names.index("get_user") < names.index("mutation")
+    assert adapter.lineage is not None
+    assert adapter.lineage.source.id == IMPORT_ACCOUNT_ID
+    assert f'source: "{IMPORT_ACCOUNT_ID}"' in client.mutations[0][1]
+
+
+def test_apply_resolves_lineage_again_rather_than_reusing_what_was_set(tmp_path: Path) -> None:
+    """Lineage already held by the adapter is replaced by the apply's own resolution."""
+    directory = apply_run_dir(tmp_path)
+    operation = operation_record(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
+    write_artifact(directory, [operation], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+    adapter = make_adapter(client, source="stale-account")
+
+    state, _ = apply_and_record_state(engine_over(directory, adapter))
+
+    assert state == "applied"
+    assert adapter.lineage is not None
+    assert adapter.lineage.source.id == IMPORT_ACCOUNT_ID
+    assert "stale-account" not in client.mutations[0][1]
+
+
+def test_a_named_lineage_node_that_does_not_exist_stops_the_apply_before_any_write(tmp_path: Path) -> None:
+    """A named owner the destination does not have stops the apply with nothing written, and no fallback."""
+    directory = apply_run_dir(tmp_path)
+    operation = operation_record(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
+    write_artifact(directory, [operation], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    adapter.lineage_settings = InfrahubLineageSettings(owner=NamedLineageNode(kind="CoreAccountGroup", name="missing"))
+
+    def _no_such_node(**kwargs: Any) -> Any:  # noqa: ANN401
+        client.events.append(("get", kwargs))
+        raise NodeNotFoundError(identifier={"name__value": ["missing"]}, node_type="CoreAccountGroup")
+
+    client.get = _no_such_node  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(NodeNotFoundError):
+        engine_over(directory, adapter).apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
+
+    assert client.mutations == []
+    assert [payload for name, payload in client.events if name == "get"] == [
+        {"kind": "CoreAccountGroup", "name__value": "missing"}
+    ]
 
 
 @pytest.mark.parametrize("action", ["create", "update"])

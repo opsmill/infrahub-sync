@@ -30,7 +30,7 @@ from infrahub_sync.plan.errors import (
     SkippedDeleteOperation,
 )
 from infrahub_sync.plan.models import ACTIONS, DESTINATION_ID_FORMAT_VERSION, ApplyRecord
-from infrahub_sync.plan.write_surface import PlannedWriteDestination
+from infrahub_sync.plan.write_surface import PlannedWriteDestination, resolve_destination_lineage
 
 # Justified once here rather than per site. Nearly every `infrahub_sync`
 # import in this module is deliberately deferred into the function that needs it: the cache
@@ -42,6 +42,7 @@ from infrahub_sync.plan.write_surface import PlannedWriteDestination
 # pylint: disable=import-outside-toplevel
 
 logger = logging.getLogger(__name__)
+
 
 # The apply path's **operational** exception boundary. An exception from
 # the write surface is reported as `OperationApplyFailedError` — a designed destination refusal,
@@ -523,7 +524,9 @@ class Potenda:
 
         Exceptions from either side are surfaced: the first failure to
         complete is re-raised, just like the sequential path would do.
+        The destination's lineage is resolved first, before the source system is read.
         """
+        resolve_destination_lineage(self.destination)
         if not self.concurrent_load:
             self.source_load()
             self.destination_load()
@@ -871,6 +874,8 @@ class Potenda:
         # Check the entire artifact before dispatching its first operation.
         _validate_infrahub_plan_payload(destination, loaded.operations, run_id=run_id)
 
+        # Resolved again before the first write, never reused from the plan.
+        resolve_destination_lineage(destination)
         self._last_applied_plan_action_counts = {
             action: sum(operation.action == action for operation in loaded.operations) for action in ACTIONS
         }

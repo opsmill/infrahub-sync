@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from diffsync import Adapter, DiffSyncModel
@@ -22,6 +23,11 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.cache.cursors import CursorState, CursorTier
+from infrahub_sync.configuration.capabilities import (
+    InfrahubLineageSettings,
+    NamedLineageNode,
+    parse_infrahub_lineage_settings,
+)
 from infrahub_sync.configuration.credentials import (
     is_registered_context,
     pin_infrahub_sdk_authority,
@@ -660,10 +666,80 @@ def _unresolved_peer_identifiers(
     )
 
 
+class InfrahubLineageSettingsError(ValueError):
+    """The destination's `source`, `owner` or `protect` setting is refused.
+
+    The message lists one refusal per setting, each naming the setting.
+    """
+
+
+class ImportAccountUnreadableError(RuntimeError):
+    """Infrahub answered the import account query without an account id."""
+
+
+@dataclass(frozen=True, slots=True)
+class ImportAccount:
+    """The account behind the token the import uses, as `client.get_user()` returns it."""
+
+    id: str
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedLineageNode:
+    """A source or owner node, with the id Infrahub gave it."""
+
+    kind: str
+    name: str
+    id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedLineage:
+    """The lineage one run writes, resolved against the destination before any source read.
+
+    `source` is the named source node, or the import account when no source is named.
+    `owner` is the named owner node, or `None` when no owner is named.
+    """
+
+    import_account: ImportAccount
+    source: ResolvedLineageNode
+    owner: ResolvedLineageNode | None
+    protect: bool
+
+
+def require_lineage_settings(settings: Mapping[str, Any]) -> InfrahubLineageSettings:
+    """Return the typed lineage settings, or raise `InfrahubLineageSettingsError` naming each refusal."""
+    parsed = parse_infrahub_lineage_settings(settings)
+    if parsed.settings is None:
+        msg = "; ".join(finding.message for finding in parsed.findings)
+        raise InfrahubLineageSettingsError(msg)
+    return parsed.settings
+
+
+def _import_account_from_profile(response: Mapping[str, Any]) -> ImportAccount:
+    """Read the account id and name out of the `AccountProfile` answer of `client.get_user()`."""
+    profile = response.get("AccountProfile")
+    if not isinstance(profile, Mapping):
+        profile = {}
+    account_id = profile.get("id")
+    if not isinstance(account_id, str) or not account_id:
+        msg = "Infrahub returned no account id for the import account's token."
+        raise ImportAccountUnreadableError(msg)
+    # `GET_PROFILE_DETAILS` selects no `name`; the display label is the account's name unless
+    # the schema changes the display label of `CoreAccount`.
+    label = profile.get("display_label")
+    return ImportAccount(id=account_id, name=label if isinstance(label, str) and label else account_id)
+
+
 class InfrahubAdapter(DiffSyncMixin, Adapter):
     type = "Infrahub"
 
     continue_on_error: bool = False
+    # Class defaults so an adapter built without `__init__` (tests of the write path) has
+    # no lineage until `resolve_lineage` runs or a caller sets it.
+    lineage_settings: InfrahubLineageSettings = InfrahubLineageSettings()
+    lineage: ResolvedLineage | None = None
     # Cache state: absent means hydration has not been attempted; None means
     # one attempt was exhausted; a string is the resolved DiffSync identity.
     _peer_unique_ids: dict[tuple[str, str], str | None]
@@ -710,39 +786,60 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         self.client = InfrahubClientSync(address=infrahub_url, config=Config(**sdk_config))
 
-        # Resolve source and owner nodes for lineage tracking
-        # Default: use CoreAccount matching config.source.name
-        # Override: if source/owner specified in destination settings, use CoreAccountGroup
-        remote_account = config.source.name
-        try:
-            default_account = self.client.get(kind="CoreAccount", name__value=remote_account)
-        except NodeNotFoundError:
-            default_account = None
-
-        # Resolve source - group if specified in settings, else default account
-        source_setting = settings.get("source")
-        if source_setting:
-            try:
-                self.source_node = self.client.get(kind="CoreAccountGroup", hfid=[source_setting])
-            except NodeNotFoundError:
-                logger.warning("CoreAccountGroup '%s' not found for source, falling back to account", source_setting)
-                self.source_node = default_account
-        else:
-            self.source_node = default_account
-
-        # Resolve owner - group if specified in settings, else default account
-        owner_setting = settings.get("owner")
-        if owner_setting:
-            try:
-                self.owner_node = self.client.get(kind="CoreAccountGroup", hfid=[owner_setting])
-            except NodeNotFoundError:
-                logger.warning("CoreAccountGroup '%s' not found for owner, falling back to account", owner_setting)
-                self.owner_node = default_account
-        else:
-            self.owner_node = default_account
+        # Parsed here, resolved against the destination by `resolve_lineage` at the start of
+        # each plan and each apply. Nothing is read from the destination for lineage now.
+        self.lineage_settings = require_lineage_settings(
+            {"source": settings.get("source"), "owner": settings.get("owner"), "protect": settings.get("protect")}
+        )
+        self.lineage = None
 
         # We will keep a copy of the schema
         self.schema: MutableMapping[str, MainSchemaTypesAPI] = self.client.schema.all(branch=infrahub_branch)
+
+    def resolve_lineage(self) -> ResolvedLineage:
+        """Resolve the import account, the source and the owner this run writes, and keep them.
+
+        The engine calls this once at the start of a plan, before either side is loaded, and
+        once at the start of an apply, before the first write. Each call reads the destination
+        again, so an apply does not reuse what the plan resolved.
+
+        The import account is the account behind the token, from `client.get_user()`, which
+        needs no permission on accounts. It is the source unless the `source` setting names
+        a node. There is no lookup of an account named after the source system and no
+        fallback: a named node that the destination does not have stops the run.
+        """
+        settings = self.lineage_settings
+        import_account = self._read_import_account()
+        if settings.source is None:
+            source = ResolvedLineageNode(kind="CoreAccount", name=import_account.name, id=import_account.id)
+        else:
+            source = self._resolve_named_lineage_node(settings.source)
+        owner = None if settings.owner is None else self._resolve_named_lineage_node(settings.owner)
+        self.lineage = ResolvedLineage(
+            import_account=import_account, source=source, owner=owner, protect=settings.protect
+        )
+        logger.info(
+            "Resolved lineage: import account %s, source %s %s, owner %s",
+            import_account.name,
+            source.kind,
+            source.name,
+            "none" if owner is None else f"{owner.kind} {owner.name}",
+        )
+        return self.lineage
+
+    def _read_import_account(self) -> ImportAccount:
+        """Return the account behind the token, read with one `client.get_user()`."""
+        return _import_account_from_profile(self.client.get_user())
+
+    def _resolve_named_lineage_node(self, named: NamedLineageNode) -> ResolvedLineageNode:
+        """Return the id of the node a `source` or `owner` setting names.
+
+        One `client.get(kind=..., name__value=...)`. `NodeNotFoundError` propagates, so a named
+        node that does not exist stops the run with no fallback.
+        """
+        node = self.client.get(kind=named.kind, name__value=named.name)
+        node_id = _require_node_id(node, context=f"for the {named.kind} named {named.name!r}")
+        return ResolvedLineageNode(kind=named.kind, name=named.name, id=node_id)
 
     def cursor_tier_for(self, model_name: str) -> CursorTier:
         """TIMESTAMP for any kind present in the live Infrahub schema.
@@ -1330,8 +1427,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             if not _has_unwritable_hfid_component(node_schema):
                 self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
 
-        source_id = self.source_node.id if self.source_node else None
-        owner_id = self.owner_node.id if self.owner_node else None
+        lineage = self.lineage
+        source_id = lineage.source.id if lineage is not None else None
+        owner_id = lineage.owner.id if lineage is not None and lineage.owner is not None else None
         create_data = self.client.schema.generate_payload_create(
             schema=node_schema, data=data, source=source_id, owner=owner_id, is_protected=True
         )

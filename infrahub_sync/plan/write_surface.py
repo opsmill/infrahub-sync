@@ -39,3 +39,22 @@ class PlannedWriteDestination(Protocol):
 
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerResolver) -> str:
         """Execute one planned operation convergently, returning the destination node id (FR-013)."""
+
+
+@runtime_checkable
+class LineageResolvingDestination(Protocol):
+    """A destination that resolves the lineage it writes, before a plan reads and before an apply writes."""
+
+    def resolve_lineage(self) -> object:
+        """Resolve and keep the lineage this run writes; raise to stop the run."""
+
+
+def resolve_destination_lineage(destination: object) -> None:
+    """Resolve the destination's lineage when the destination writes lineage; otherwise do nothing.
+
+    The engine calls this before either side of a plan is loaded and before the first write
+    of an apply, so a lineage refusal stops the run before the source system is read and
+    before anything is written.
+    """
+    if isinstance(destination, LineageResolvingDestination):
+        destination.resolve_lineage()

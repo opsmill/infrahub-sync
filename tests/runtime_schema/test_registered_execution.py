@@ -134,6 +134,11 @@ class _InfrahubClient:
         self.created: list[tuple[str, dict[str, Any]]] = []
 
     @staticmethod
+    def get_user() -> dict[str, Any]:
+        """The import account behind the token, as `AccountProfile` answers it."""
+        return {"AccountProfile": {"id": "import-account-id", "display_label": "import-account"}}
+
+    @staticmethod
     def get(*_args: object, **kwargs: object) -> _Node:
         raise NodeNotFoundError(identifier={"key": [str(kwargs)]}, node_type=str(kwargs.get("kind")))
 

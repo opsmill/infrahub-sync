@@ -180,8 +180,6 @@ def make_adapter(client: ConformanceClient) -> InfrahubAdapter:
     """The adapter with only the state the planned-write surface reads, and no network setup."""
     adapter = InfrahubAdapter.__new__(InfrahubAdapter)
     adapter.client = client
-    adapter.source_node = None
-    adapter.owner_node = None
     adapter.schema = dict(SCHEMAS)
     return adapter
 

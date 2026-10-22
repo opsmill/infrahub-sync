@@ -43,9 +43,9 @@ records its result in [research.md](./research.md) and updates "Items left open"
 
 **Purpose**: Typed settings and the run-start step that every story uses.
 
-- [ ] T006 Add typed models `NamedLineageNode` (`kind` in `CoreAccount`, `CoreAccountGroup`, `CoreRepository`, `CoreReadOnlyRepository`; non-empty `name`; no other key) and `InfrahubLineageSettings` (`source`, `owner`, `protect: bool = False`), plus one parser that returns typed findings, in `infrahub_sync/configuration/capabilities.py`
-- [ ] T007 [P] Unit tests for the parser in `tests/configuration/test_infrahub_lineage_settings.py`: each allowed kind accepted; bare string, unknown kind, empty name, extra key and non-boolean `protect` refused; absent settings give no source, no owner, `protect` false
-- [ ] T008 Add a `ResolvedLineage` type (import account, source node with id, owner node with id or none, `protect`) and a lineage-resolution method on the Infrahub adapter in `infrahub_sync/adapters/infrahub.py`; call it from Potenda in `infrahub_sync/potenda/__init__.py` before the two parallel loads are submitted (:532-536), in plan and in apply; remove the account-by-source-name lookup and both fallbacks (`infrahub_sync/adapters/infrahub.py:713-742`)
+- [X] T006 Add typed models `NamedLineageNode` (`kind` in `CoreAccount`, `CoreAccountGroup`, `CoreRepository`, `CoreReadOnlyRepository`; non-empty `name`; no other key) and `InfrahubLineageSettings` (`source`, `owner`, `protect: bool = False`), plus one parser that returns typed findings, in `infrahub_sync/configuration/capabilities.py`
+- [X] T007 [P] Unit tests for the parser in `tests/configuration/test_infrahub_lineage_settings.py`: each allowed kind accepted; bare string, unknown kind, empty name, extra key and non-boolean `protect` refused; absent settings give no source, no owner, `protect` false
+- [X] T008 Add a `ResolvedLineage` type (import account, source node with id, owner node with id or none, `protect`) and a lineage-resolution method on the Infrahub adapter in `infrahub_sync/adapters/infrahub.py`; call it from Potenda in `infrahub_sync/potenda/__init__.py` before the two parallel loads are submitted (:532-536), in plan and in apply; remove the account-by-source-name lookup and both fallbacks (`infrahub_sync/adapters/infrahub.py:713-742`)
 
 **Checkpoint**: settings parse to typed models; lineage is resolved once per run before any source read.
 
