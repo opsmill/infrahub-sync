@@ -17,7 +17,9 @@
 # - No profile: `postgres`, `object-store-init`, `object-store` and
 #   `prefect-server`. They always start.
 # - `sync`: `sync-bootstrap`, `sync-api` and `sync-worker`. Leave it off to run
-#   the Sync API and the worker as processes on the host instead.
+#   the Sync API and the worker as processes on the host instead
+#   (`uv run invoke dev.deps`, then `dev.api` and `dev.worker`). They reach
+#   PostgreSQL, the object store and the Prefect server on their loopback ports.
 # - `infrahub`: the Infrahub services from `docker-compose.infrahub.yml`. Leave
 #   it off to sync into an Infrahub that already runs elsewhere.
 #
@@ -57,7 +59,8 @@ x-sync-build: &sync-build
   context: ..
   dockerfile: Dockerfile
 
-x-sync-image: &sync-image "infrahub-sync:dev"
+# SYNC_IMAGE names another tag, so two checkouts can build and run their own image.
+x-sync-image: &sync-image "${SYNC_IMAGE:-infrahub-sync:dev}"
 
 # The checkout's source, mounted over the installed distribution in the image's
 # virtual environment.
@@ -148,6 +151,10 @@ services:
       MINIO_ROOT_USER: "${MINIO_ACCESS_KEY:-devaccesskey}"
       MINIO_ROOT_PASSWORD: "${MINIO_SECRET_KEY:-devsecretkey}"
       MINIO_BROWSER: "off"
+    # On loopback, for the Sync API and the worker when they run on the host
+    # (`uv run invoke dev.deps`); the containers use http://object-store:9000.
+    ports:
+      - "127.0.0.1:${MINIO_PORT:-9010}:9000"
     volumes:
       - "object-store-data:/data"
     healthcheck:
