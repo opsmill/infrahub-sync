@@ -95,8 +95,8 @@ step 2).
 
 ## Phase 5: Cross-story verification of the examples and of secrets (US1, US2)
 
-- [ ] T024 [P] [US2] Create `tests/configuration/test_conversion_examples.py`: the 12 examples that read from a bundled adapter and write to Infrahub convert and their packages have no error finding; `custom_adapter` and `infrahub_to_peering-manager` are refused with their reasons. Set `CISCO_APIC_URL` and `CISCO_APIC_VERIFY` in the visible variables for the ACI example, because its file holds placeholders for both (SC-002, research.md R3)
-- [ ] T025 [P] [US1] Create `tests/configuration/test_conversion_secrets.py` with a canary value, following `tests/test_credential_canary.py`: a literal token in the file, every v2 credential variable of `V2_ENVIRONMENT_FIRST` set to the canary, `url: ${NETBOX_TOKEN}`, and an address with a password; assert the canary is absent from the package, standard output, standard error and captured logs (SC-003, FR-007, FR-030)
+- [X] T024 [P] [US2] Create `tests/configuration/test_conversion_examples.py`: the 12 examples that read from a bundled adapter and write to Infrahub convert and their packages have no error finding; `custom_adapter` and `infrahub_to_peering-manager` are refused with their reasons. Set `CISCO_APIC_URL` and `CISCO_APIC_VERIFY` in the visible variables for the ACI example, because its file holds placeholders for both (SC-002, research.md R3)
+- [X] T025 [P] [US1] Create `tests/configuration/test_conversion_secrets.py` with a canary value, following `tests/test_credential_canary.py`: a literal token in the file, every v2 credential variable of `V2_ENVIRONMENT_FIRST` set to the canary, `url: ${NETBOX_TOKEN}`, and an address with a password; assert the canary is absent from the package, standard output, standard error and captured logs (SC-003, FR-007, FR-030)
 
 ---
 
