@@ -74,6 +74,7 @@ from infrahub_sync.plan.keying import (
     refuse_unkeyed_create,
     require_infrahub_create_schema,
 )
+from infrahub_sync.plan.last_changes import changed_fields
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 from infrahub_sync.plan.reference_candidates import literal_peer_kind_is_unambiguous, reference_candidates
 
@@ -81,6 +82,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from infrahub_sync import SyncConfig
+    from infrahub_sync.plan.last_changes import LastChangeCollector
 
 logger = logging.getLogger(__name__)
 
@@ -594,6 +596,7 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
     tier_of: Callable[[str], int],
     source_adapter: Any,
     destination_adapter: Any,
+    last_changes: LastChangeCollector | None = None,
 ) -> list[PlannedOperation]:
     """Derive the create and update operations a comparison result proposes (FR-002).
 
@@ -603,6 +606,9 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
 
     `tier_of` is the one-argument tier resolver — `functools.partial(tier_of, tiers=…,
     top_level=…)` binds this module's own function into it.
+
+    `last_changes`, when given, receives one record for each field each update proposes to
+    change, looked up by the update's destination id (FR-007). A create gets none.
 
     Raises:
         UnwalkedDiffChildrenError: an element carries child elements, which this walk does
@@ -667,18 +673,19 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
                     kind=kind,
                     identity=identity,
                 )
-            operations.append(
-                PlannedOperation(
-                    operation_id=operation_id(action, kind, identity),
-                    action=action,
-                    kind=kind,
-                    identity=identity,
-                    tier=tier_of(kind),
-                    payload=payload,
-                    relationships=references or None,
-                    destination_id=destination_id,
-                )
+            operation = PlannedOperation(
+                operation_id=operation_id(action, kind, identity),
+                action=action,
+                kind=kind,
+                identity=identity,
+                tier=tier_of(kind),
+                payload=payload,
+                relationships=references or None,
+                destination_id=destination_id,
             )
+            operations.append(operation)
+            if last_changes is not None and destination_id is not None:
+                last_changes.add(operation, fields=changed_fields(element, payload=payload, references=resolved))
     return operations
 
 

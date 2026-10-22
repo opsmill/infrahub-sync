@@ -38,11 +38,13 @@ from infrahub_sync.plan.errors import PlanArtifactUnreadableError
 from infrahub_sync.plan.models import (
     SUPPORTED_FORMAT_VERSIONS,
     DestinationBindingRecord,
+    PlanLastChangesRecord,
     VerificationFailure,
     require_run_relative_path,
 )
 from infrahub_sync.plan.reader import (
     DuplicateManifestKeyError,
+    last_changes_mismatch,
     load_manifest_mapping,
     operation_record_lines,
     stat_or_unreadable,
@@ -209,6 +211,33 @@ def _operations_failures(run_id: str, artifact: RawPlanArtifact, mapping: dict[s
 
     failure = plan_checksum_failure(run_id=run_id, manifest_mapping=mapping, operations_bytes=operations_bytes)
     return [] if failure is None else [failure]
+
+
+def _last_changes_failures(
+    run_id: str, artifact: RawPlanArtifact, mapping: dict[str, Any]
+) -> list[VerificationFailure]:
+    """Check `last_changes.jsonl` against the manifest's `last_changes` field (FR-007).
+
+    No failure for a plan without the field. The field itself is covered by the plan
+    checksum; this check covers the file the field describes, by its digest and count.
+    """
+    if "last_changes" not in mapping:
+        return []
+    try:
+        record = PlanLastChangesRecord.model_validate(mapping["last_changes"])
+    except ValidationError:
+        return [
+            _failure(
+                "last_changes",
+                run_id=run_id,
+                expected="a 'last_changes' record with a path, a SHA-256 digest, a count and 'metadata_read'",
+                found="a malformed 'last_changes' record",
+            )
+        ]
+    mismatch = last_changes_mismatch(record, artifact.last_changes_bytes)
+    if mismatch is None:
+        return []
+    return [_failure("last_changes", run_id=run_id, expected=mismatch[0], found=mismatch[1])]
 
 
 def plan_checksum_failure(
@@ -499,6 +528,7 @@ def verify_plan(
     failures: list[VerificationFailure] = []
     failures.extend(_run_binding_failures(run_id, mapping))
     failures.extend(_operations_failures(run_id, artifact, mapping))
+    failures.extend(_last_changes_failures(run_id, artifact, mapping))
     failures.extend(source_snapshot_failures(run_id=run_id, run_dir=artifact.run_dir, mapping=mapping))
     failures.extend(_config_version_failures(run_id, mapping, config_version))
     failures.extend(_write_surface_failures(run_id, write_surface_missing_on))

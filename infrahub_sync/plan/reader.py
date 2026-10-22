@@ -14,7 +14,10 @@ with the artifact before any of its contents are interpreted:
 4. a `format_version` outside `SUPPORTED_FORMAT_VERSIONS` → `PlanFormatVersionError`
    listing the versions supported, deliberately distinct in wording from (1) because the
    remedies differ (FR-027, SC-018);
-5. an operation whose `action` is outside `ACTIONS` → `UnsupportedOperationActionError`
+5. a manifest whose `last_changes` field names a `last_changes.jsonl` that is absent, whose
+   digest or record count differs, or whose records do not name an update of the plan →
+   `PlanArtifactTornError` naming the file, so review and apply refuse it (FR-007);
+6. an operation whose `action` is outside `ACTIONS` → `UnsupportedOperationActionError`
    listing `ACTIONS`. This is what puts FR-017's genuinely-unsupported class **before any
    destination write**, and because the review path reads through this same function, an
    unrecognized action refuses review too — the one bound on AD031's "review renders
@@ -34,6 +37,7 @@ model and therefore stay inside the recomputed checksum (FR-027, AD028).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import stat as stat_module
 from dataclasses import dataclass
@@ -48,7 +52,9 @@ from infrahub_sync.plan.errors import (
     PlanFormatVersionError,
 )
 from infrahub_sync.plan.models import (
+    LAST_CHANGES_FILE_NAME,
     SUPPORTED_FORMAT_VERSIONS,
+    LastChangeRecord,
     PlanManifest,
     PlannedOperation,
 )
@@ -58,6 +64,8 @@ if TYPE_CHECKING:
     import os
     from collections.abc import Sequence
     from pathlib import Path
+
+    from infrahub_sync.plan.models import PlanLastChangesRecord
 
 # The run-identifier enumeration's bound (AD073). Nothing in this repository prunes a run
 # directory and retention is out of scope, so an hourly pipeline would otherwise answer a
@@ -78,12 +86,16 @@ class LoadedPlan:
     over exactly those two things — the manifest as it was written, unknown fields included,
     and the operations file's raw bytes — so a caller recomputing it never has to re-read or
     re-encode the artifact and risk a re-encoding that differs from what was hashed.
+
+    `last_changes` holds the records of `last_changes.jsonl`, or `None` for a plan whose
+    manifest has no `last_changes` field (FR-007).
     """
 
     manifest: PlanManifest
     operations: list[PlannedOperation]
     manifest_mapping: dict[str, Any]
     operations_bytes: bytes
+    last_changes: list[LastChangeRecord] | None = None
 
 
 @dataclass(frozen=True)
@@ -101,6 +113,9 @@ class RawPlanArtifact:
     run_dir: Path
     manifest_bytes: bytes | None
     operations_bytes: bytes | None
+    # `None` when absent: a plan made before the file existed, or one whose destination keeps
+    # no last changes. Whether it must exist is the manifest's `last_changes` field's to say.
+    last_changes_bytes: bytes | None = None
 
 
 def read_plan_artifact_bytes(run_dir: Path) -> RawPlanArtifact:
@@ -114,7 +129,28 @@ def read_plan_artifact_bytes(run_dir: Path) -> RawPlanArtifact:
         run_dir=run_dir,
         manifest_bytes=_read_optional_bytes(directory / MANIFEST_FILE_NAME, description="plan manifest"),
         operations_bytes=_read_optional_bytes(directory / OPERATIONS_FILE_NAME, description="plan operations file"),
+        last_changes_bytes=_read_optional_bytes(
+            directory / LAST_CHANGES_FILE_NAME, description="plan last-change file"
+        ),
     )
+
+
+def last_changes_mismatch(record: PlanLastChangesRecord, sidecar_bytes: bytes | None) -> tuple[str, str] | None:
+    """Compare `last_changes.jsonl`'s bytes with the manifest's record of them.
+
+    Returns `(expected, found)` when the file is absent, or its digest or record count
+    differs from the record; `None` when they match. Shared by the reader and the pre-apply
+    verifier, so review and apply refuse the same files.
+    """
+    if sidecar_bytes is None:
+        return f"{record.count} record(s) at {PLAN_DIR_NAME}/{LAST_CHANGES_FILE_NAME}", "no last-change file"
+    digest = hashlib.sha256(sidecar_bytes).hexdigest()
+    if digest != record.sha256:
+        return f"a file whose SHA-256 digest is {record.sha256}", f"a file whose SHA-256 digest is {digest}"
+    count = len(operation_record_lines(sidecar_bytes))
+    if count != record.count:
+        return f"{record.count} record(s)", f"{count} record(s)"
+    return None
 
 
 def supported_versions_text() -> str:
@@ -437,6 +473,57 @@ def _parse_operations(
     return operations, operations_bytes
 
 
+def _parse_last_changes(
+    raw: RawPlanArtifact, manifest: PlanManifest, operations: Sequence[PlannedOperation], run_id: str
+) -> list[LastChangeRecord] | None:
+    """Check `last_changes.jsonl` against the manifest and return its records (FR-007).
+
+    `None` when the manifest has no `last_changes` field: the plan was made before the file
+    existed, or its destination keeps no last changes. The digest is part of the checksummed
+    manifest, so a file that does not match it was changed after the plan was written.
+    """
+    record = manifest.last_changes
+    if record is None:
+        return None
+    mismatch = last_changes_mismatch(record, raw.last_changes_bytes)
+    if mismatch is not None:
+        raise _torn(
+            run_id,
+            f"{LAST_CHANGES_FILE_NAME} does not match the manifest's record of it",
+            expected=mismatch[0],
+            found=mismatch[1],
+        )
+    assert raw.last_changes_bytes is not None  # `last_changes_mismatch` refuses an absent file
+    updates = {operation.operation_id for operation in operations if operation.action == "update"}
+    records: list[LastChangeRecord] = []
+    for number, line in enumerate(operation_record_lines(raw.last_changes_bytes), start=1):
+        try:
+            change = LastChangeRecord.model_validate(json.loads(line))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise _torn(
+                run_id,
+                f"{LAST_CHANGES_FILE_NAME} line {number} is not parseable JSON",
+                expected="one canonical JSON object per line",
+                found=f"unparseable text on line {number}",
+            ) from exc
+        except ValidationError as exc:
+            raise _torn(
+                run_id,
+                f"{LAST_CHANGES_FILE_NAME} line {number} is not a valid last-change record",
+                expected="a complete last-change record",
+                found=f"line {number} — {_describe_validation_error(exc)}",
+            ) from exc
+        if change.operation_id not in updates:
+            raise _torn(
+                run_id,
+                f"{LAST_CHANGES_FILE_NAME} line {number} names no update of this plan",
+                expected="the operation id of an update in operations.jsonl",
+                found=f"operation {change.operation_id!r}",
+            )
+        records.append(change)
+    return records
+
+
 def require_plan_directory(run_dir: Path) -> Path:
     """Return `<run_dir>/plan/`, refusing when it is absent or is not a directory.
 
@@ -492,7 +579,8 @@ def parse_plan_artifact(raw: RawPlanArtifact, *, run_id: str) -> LoadedPlan:
         PlanArtifactTornError: the artifact is incomplete or inconsistent — a missing or
             malformed manifest, an absent operations file, a line count disagreeing with
             `operations_count`, or an operations line that fails record validation for a
-            reason other than its action (FR-010).
+            reason other than its action (FR-010); or a `last_changes.jsonl` that does not
+            match the manifest's record of it (FR-007).
         PlanFormatVersionError: `format_version` is outside `SUPPORTED_FORMAT_VERSIONS`
             (FR-027).
         UnsupportedOperationActionError: an operation's `action` is outside `ACTIONS`,
@@ -506,6 +594,7 @@ def parse_plan_artifact(raw: RawPlanArtifact, *, run_id: str) -> LoadedPlan:
         operations=operations,
         manifest_mapping=mapping,
         operations_bytes=operations_bytes,
+        last_changes=_parse_last_changes(raw, manifest, operations, run_id),
     )
 
 

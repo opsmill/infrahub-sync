@@ -13,8 +13,10 @@ harden it; what it fixes is the static boundary, where `ty` verifies every call 
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from infrahub_sync.plan.last_changes import LastChangeCollector
 from infrahub_sync.plan.models import PlanLineageRecord
 
 if TYPE_CHECKING:
@@ -78,3 +80,15 @@ def destination_lineage_record(destination: object) -> PlanLineageRecord | None:
     """
     record = getattr(destination, "lineage_record", None)
     return record if isinstance(record, PlanLineageRecord) else None
+
+
+def destination_last_changes(destination: object) -> LastChangeCollector | None:
+    """A collector over the last changes the destination read for this plan (FR-007).
+
+    `None` when the destination keeps no last changes (it is not Infrahub), so the plan is
+    written without `plan/last_changes.jsonl` and without the manifest's `last_changes` field.
+    """
+    changes = getattr(destination, "last_changes", None)
+    if not isinstance(changes, Mapping):
+        return None
+    return LastChangeCollector(changes, metadata_read=getattr(destination, "metadata_read", False) is True)

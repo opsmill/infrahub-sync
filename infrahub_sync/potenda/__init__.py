@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # the engine owns load, compare, plan writing and apply
 from __future__ import annotations
 
 import logging
@@ -647,10 +648,11 @@ class Potenda:
             warn_missing_convergence_key,
         )
         from infrahub_sync.plan.models import SourceSnapshotRecord
-        from infrahub_sync.plan.write_surface import destination_lineage_record
+        from infrahub_sync.plan.write_surface import destination_last_changes, destination_lineage_record
         from infrahub_sync.plan.writer import write_plan_artifact as write_artifact
 
         resolve_tier = partial(tier_of, tiers=self.tiers, top_level=self.top_level)
+        last_changes = destination_last_changes(self.destination)  # FR-007; `None` writes no last-change file
         operations = []
         for diff in diffs:
             operations.extend(
@@ -660,6 +662,7 @@ class Potenda:
                     tier_of=resolve_tier,
                     source_adapter=self.source,
                     destination_adapter=self.destination,
+                    last_changes=last_changes,
                 )
             )
 
@@ -703,6 +706,8 @@ class Potenda:
             configuration_binding=self.configuration_binding,
             schema_fingerprint=self.schema_fingerprint,
             lineage=destination_lineage_record(self.destination),
+            last_changes=None if last_changes is None else last_changes.records,
+            metadata_read=last_changes is not None and last_changes.metadata_read,
         )
         logger.info(
             "Plan artifact: wrote %d operation(s) to %s (deletes computed: %s)",

@@ -1,7 +1,7 @@
 """The plan artifact writer (FR-004, FR-010, FR-019, FR-021, FR-022, FR-026, FR-027).
 
-`operations.jsonl` is written **first** and `manifest.json` **last**, and that order is the
-commit point (AD014): the manifest's presence is what makes the artifact complete, so a
+`operations.jsonl` is written **first**, then `last_changes.jsonl` when the plan has one, and
+`manifest.json` **last**; that order is the commit point (AD014): the manifest's presence is what makes the artifact complete, so a
 failure part-way through the operations write leaves a run directory with a `plan/`
 directory and no manifest — which the reader classifies as **torn** — while a run that
 never reached this writer has no `plan/` directory at all and is classified as the
@@ -21,6 +21,7 @@ observable to a test.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import tempfile
 from datetime import datetime, timezone
@@ -30,22 +31,35 @@ from typing import TYPE_CHECKING, Any
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.errors import DuplicateOperationIdError, PlanGenerationExistsError
-from infrahub_sync.plan.models import PLAN_FORMAT_VERSION, PlanManifest
+from infrahub_sync.plan.models import LAST_CHANGES_FILE_NAME, PLAN_FORMAT_VERSION, PlanManifest
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from infrahub_sync.plan.models import (
         DestinationBindingRecord,
+        LastChangeRecord,
         PlanLineageRecord,
         PlannedOperation,
         SourceSnapshotRecord,
     )
 
-# The artifact's directory and its two files, in the order they are written.
+# The artifact's directory and its files, in the order they are written. The last-change
+# file is defined with its manifest record in `models.py` and re-exported here.
 PLAN_DIR_NAME = "plan"
 OPERATIONS_FILE_NAME = "operations.jsonl"
 MANIFEST_FILE_NAME = "manifest.json"
+
+__all__ = [
+    "LAST_CHANGES_FILE_NAME",
+    "MANIFEST_FILE_NAME",
+    "OPERATIONS_FILE_NAME",
+    "PLAN_DIR_NAME",
+    "committed_manifest_path",
+    "encode_last_changes",
+    "require_uncommitted_plan",
+    "write_plan_artifact",
+]
 
 
 def _atomic_write_bytes(path: Path, payload: bytes) -> None:
@@ -180,6 +194,17 @@ def _encode_operations(operations: Sequence[PlannedOperation]) -> bytes:
     )
 
 
+def encode_last_changes(records: Sequence[LastChangeRecord]) -> bytes:
+    """Encode the last-change records as `last_changes.jsonl`'s exact bytes.
+
+    Sorted by `operation_id`, then `field`, one canonical JSON object per line, every line
+    LF-terminated, so the same plan inputs give the same bytes. `None` values are kept as
+    `null`. Zero records encode to zero bytes.
+    """
+    ordered = sorted(records, key=lambda record: (record.operation_id, record.field))
+    return b"".join(canonical_json_bytes(record.model_dump()) + b"\n" for record in ordered)
+
+
 def write_plan_artifact(
     *,
     run_dir: Path,
@@ -192,6 +217,8 @@ def write_plan_artifact(
     configuration_binding: tuple[str, int, str] | None = None,
     schema_fingerprint: str | None = None,
     lineage: PlanLineageRecord | None = None,
+    last_changes: Sequence[LastChangeRecord] | None = None,
+    metadata_read: bool = False,
 ) -> PlanManifest:
     """Write `<run_dir>/plan/` and return the manifest that was written.
 
@@ -213,6 +240,11 @@ def write_plan_artifact(
     compares its own import account with (FR-012). `None` (a destination that records no
     lineage) writes a manifest without the field.
 
+    `last_changes` are the records of `last_changes.jsonl`, written after the operations and
+    before the manifest; the manifest's `last_changes` field records the file's digest and
+    record count, and `metadata_read`. `None` (a destination that keeps no last changes)
+    writes neither the file nor the field.
+
     Raises:
         PlanGenerationExistsError: the run already holds a committed plan generation, which
             is never overwritten.
@@ -229,6 +261,18 @@ def write_plan_artifact(
     plan_dir = run_dir / PLAN_DIR_NAME
     # FIRST. A failure here leaves no manifest, so the artifact reads as torn (AD014).
     _atomic_write_bytes(plan_dir / OPERATIONS_FILE_NAME, operations_bytes)
+
+    last_changes_field: dict[str, Any] | None = None
+    if last_changes is not None:
+        last_changes_bytes = encode_last_changes(last_changes)
+        # Before the manifest: a failure here leaves no manifest, so the artifact reads as torn.
+        _atomic_write_bytes(plan_dir / LAST_CHANGES_FILE_NAME, last_changes_bytes)
+        last_changes_field = {
+            "path": LAST_CHANGES_FILE_NAME,
+            "sha256": hashlib.sha256(last_changes_bytes).hexdigest(),
+            "count": len(last_changes),
+            "metadata_read": metadata_read,
+        }
 
     body: dict[str, Any] = {
         "format_version": PLAN_FORMAT_VERSION,
@@ -254,6 +298,9 @@ def write_plan_artifact(
     if lineage is not None:
         # Before the checksum below, so the recorded import account is covered by it.
         body["lineage"] = lineage.model_dump()
+    if last_changes_field is not None:
+        # Before the checksum below, so the file's digest, and through it its bytes, are covered.
+        body["last_changes"] = last_changes_field
     body["plan_checksum"] = compute_plan_checksum(body, operations_bytes)
     manifest = PlanManifest.model_validate(body)
 

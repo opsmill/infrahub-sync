@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from infrahub_sync import SyncConfig
-    from infrahub_sync.plan.models import PlanManifest, PlannedOperation, VerificationFailure
+    from infrahub_sync.plan.models import LastChangeRecord, PlanManifest, PlannedOperation, VerificationFailure
     from infrahub_sync.plan.reader import RawPlanArtifact
 
 # Re-exported from the reader, which owns the bound and the enumeration's wording because
@@ -73,6 +73,10 @@ class SavedPlan:
         verification_notes: Human-readable notes about any check that did not pass — the
             plan checksum, and the source-snapshot binding FR-010 puts on this path too.
             An empty list is the only "nothing to report" answer.
+        last_changes: The records of `last_changes.jsonl`: who last changed each field each
+            update proposes to change, and when (FR-007). `None` for a plan without the file,
+            which review shows without last-change data. A file that does not match the
+            manifest's digest is refused while reading, not noted.
     """
 
     def __init__(
@@ -83,8 +87,10 @@ class SavedPlan:
         checksum_ok: bool,
         verification_notes: Iterable[str],
         declared_kinds: Iterable[str] | None = None,
+        last_changes: Iterable[LastChangeRecord] | None = None,
     ) -> None:
         self.manifest = manifest
+        self.last_changes = None if last_changes is None else list(last_changes)
         self.checksum_ok = checksum_ok
         self.verification_notes = list(verification_notes)
         self._operations = list(operations)
@@ -383,7 +389,8 @@ def read_saved_plan(
             the most recent stored identifiers, or states plainly that the sync has no
             stored runs (AD073).
         PlanFormatV1Error: the run exists but holds no `plan/` directory (FR-019).
-        PlanArtifactTornError: the artifact is present but incomplete (FR-010).
+        PlanArtifactTornError: the artifact is present but incomplete (FR-010), or its
+            `last_changes.jsonl` does not match the manifest's digest or count (FR-007).
         PlanFormatVersionError: the artifact's `format_version` is unsupported (FR-027).
         PlanArtifactUnreadableError: a path exists but could not be read (AD036).
         UnsupportedOperationActionError: an operation's `action` is outside `ACTIONS`. The
@@ -423,4 +430,5 @@ def read_saved_plan(
         checksum_ok=checksum_failure is None,
         verification_notes=notes,
         declared_kinds=declared_kinds,
+        last_changes=loaded.last_changes,
     )

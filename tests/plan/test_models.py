@@ -702,6 +702,9 @@ PLAN_MANIFEST_FIELDS = {
     # Additive: the import account and the lineage the plan writes. An identity an apply
     # compares, not a grouping of operations.
     "lineage",
+    # Additive: the digest and record count of the last-change file. Display data about
+    # single fields, not a grouping of operations.
+    "last_changes",
 }
 
 # Vocabulary a grouping field would plausibly be named with. Belt and braces beside the
@@ -807,6 +810,7 @@ def test_plan_manifest_still_requires_its_declared_fields() -> None:
         "package_checksum",
         "schema_fingerprint",
         "lineage",
+        "last_changes",
     }
     for missing in PLAN_MANIFEST_FIELDS - optional:
         record = _manifest()

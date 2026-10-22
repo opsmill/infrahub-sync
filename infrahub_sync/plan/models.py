@@ -408,6 +408,55 @@ class PlanLineageRecord(BaseModel):
     protect: bool
 
 
+# The last-change file, relative to the plan directory. The manifest's `last_changes.path`
+# must name exactly this file, so a manifest cannot point the reader at another path.
+LAST_CHANGES_FILE_NAME = "last_changes.jsonl"
+
+LastChangeFieldType = Literal["attribute", "relationship"]
+
+
+class RecordedAccountRecord(BaseModel):
+    """The account Infrahub recorded as `updated_by` for a value, by id and display label."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    display_label: str | None = None
+
+
+class LastChangeRecord(BaseModel):
+    """Who last changed one field an update proposes to change, and when (FR-007).
+
+    One line of `plan/last_changes.jsonl`. `updated_by` or `updated_at` is `None` when
+    Infrahub holds no value for it, or when the plan did not read metadata; review shows
+    such a value as "not recorded". The record is display data: apply does not read it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    operation_id: str = Field(pattern=OPERATION_ID_PATTERN)
+    field: str = Field(min_length=1)
+    field_type: LastChangeFieldType
+    updated_by: RecordedAccountRecord | None
+    updated_at: str | None
+
+
+class PlanLastChangesRecord(BaseModel):
+    """The manifest's record of `plan/last_changes.jsonl`: its path, digest and record count.
+
+    The plan checksum covers this record, and through `sha256` the file's bytes.
+    `metadata_read` is `False` when the plan did not ask Infrahub for `updated_by` and
+    `updated_at`: the server is older than 1.7.0 or its version could not be parsed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: Literal["last_changes.jsonl"]
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    count: int = Field(ge=0)
+    metadata_read: bool
+
+
 class PlanManifest(BaseModel):
     """The artifact's header, and the format contract (FR-027).
 
@@ -443,6 +492,10 @@ class PlanManifest(BaseModel):
     # destination records no lineage, and on plans made before the field existed; an
     # Infrahub apply refuses such a plan (FR-012).
     lineage: PlanLineageRecord | None = None
+    # Additive: the digest and record count of `plan/last_changes.jsonl`. Absent on a plan
+    # whose destination keeps no last changes, and on plans made before the field existed;
+    # review then shows no last-change data.
+    last_changes: PlanLastChangesRecord | None = None
 
     @field_validator("registry_version", mode="before")
     @classmethod
@@ -508,6 +561,8 @@ class PlanManifest(BaseModel):
             data.pop("schema_fingerprint", None)
         if self.lineage is None:
             data.pop("lineage", None)
+        if self.last_changes is None:
+            data.pop("last_changes", None)
         if self.configuration_binding is None:
             data.pop("config_id", None)
             data.pop("registry_version", None)
@@ -618,6 +673,7 @@ VerificationCheck: TypeAlias = Literal[
     "source_snapshot",
     "config_version",
     "torn_operations",
+    "last_changes",
     "write_surface",
     "destination_binding",
 ]
