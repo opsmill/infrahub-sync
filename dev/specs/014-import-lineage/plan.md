@@ -132,17 +132,25 @@ above.
   (R-1). The design works on any version.
 - The cost of the metadata read is not measured yet (R-2). T004 and T056 measure it on the pinned
   stack; the result is information only.
-- Which read carries metadata for cardinality-many edges is not checked yet (T001). The outcome is
-  binding: if no read in the existing requests carries it, User Story 3 stops and an amendment of
-  FR-007 goes to the product owner (R-2).
+- Closed (T001, 2026-10-22): the plan's destination read, `client.all(…, include=…)` at
+  `infrahub_sync/adapters/infrahub.py:815-817`, carries `relationship_metadata` for the edges of
+  every mapped cardinality-many relationship once `include_metadata=True` is added, with no added
+  request. User Story 3 proceeds (R-2).
+- Whether a direct Python plan with `full_extract=False`, which loads unchanged destination nodes
+  from the previous snapshot, must load in full when metadata is requested is not decided. The
+  shared execution surface and the Sync service always load in full (R-2). The User Story 3 tasks
+  decide it.
 - The import account's smallest permission set is not known yet (T005, R-7).
 - Closed (product owner, 2026-10-22): apply refuses, before any write, a saved plan that records
   no import account (made before this feature) and asks for a new plan (FR-012). V3 is not
   released, and plans saved before the upgrade are already refused for other reasons.
-- How apply tells which relationship edges an update adds (to set the owner on them only) depends
-  on what apply reads from the destination before it writes. This is not checked yet (T002).
-- Whether the checkpoint artifact copies the plan directory or a fixed list of files
-  (`infrahub_sync/product_store/bundle.py:64`) is not checked yet (T003, R-4).
+- Closed (T002, 2026-10-22): apply reads nothing that tells which edges an update adds, and the
+  plan does not record it. When an owner is named, apply reads the node's current peers once for
+  each update with relationship references, and sends the owner only on edges to peers the node
+  does not have (R-6).
+- Closed (T003, 2026-10-22): the plan checkpoint copies a fixed list of files.
+  `plan/last_changes.jsonl` is added to the members in `publish_plan_checkpoint`
+  (`infrahub_sync/service/checkpoints.py:82-87`); rehydration needs no change (R-4).
 - Whether the optional `PlanResource` fields need a change to the compatibility check
   (`infrahub_sync/service/compatibility.py`) is not checked yet (T041).
 - Closed (product owner, 2026-10-22): the change that refuses a bare-name `source` or `owner`

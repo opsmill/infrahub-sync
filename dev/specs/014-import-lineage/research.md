@@ -86,13 +86,15 @@ Path prefixes used below:
 
 **Decision**
 
-- Pass `include_metadata=True` (only when R-1 allows it) to the existing reads at
-  `infrahub_sync/adapters/infrahub.py:815-817` and `:771-776`, and to the read of
-  cardinality-many relationships (`rel_manager.fetch()`).
+- Pass `include_metadata=True` (only when R-1 allows it) to the existing read at
+  `infrahub_sync/adapters/infrahub.py:815-817`. That read already carries the metadata of
+  cardinality-many edges (see "Read that carries the metadata of cardinality-many edges" below);
+  `rel_manager.fetch()` cannot carry it and is not changed.
 - Binding condition (product owner, 2026-10-22): the plan must not show "not recorded" for a value
   Infrahub holds (FR-007). Task T001 finds a read that carries metadata for cardinality-many edges
   within the existing requests. If no such read exists, work on User Story 3 stops and an
   amendment of FR-007 goes to the product owner; the plan does not fall back to "not recorded".
+  Result: such a read exists, so User Story 3 proceeds.
 - Keep the metadata out of the DiffSync models. The adapter records it in a separate map keyed by
   destination node id and field name. Putting it into model attributes would make every value
   that a person changed look different on every plan, and would break idempotency (constitution
@@ -104,6 +106,64 @@ Path prefixes used below:
   pinned 1.10.6 stack, on the default branch and on another branch, and record the destination
   read time with and without metadata in the plan's notes. The sources set no threshold, so the
   result is information only and does not block the merge.
+
+**Read that carries the metadata of cardinality-many edges (task T001, 2026-10-22)**
+
+Result: found. The destination read of a plan,
+`client.all(kind=…, include=identifier_and_attribute_fields(model), populate_store=True)`
+(`infrahub_sync/adapters/infrahub.py:815-817`), returns `relationship_metadata` for every edge of
+each mapped cardinality-many relationship when `include_metadata=True` is added to it. No request
+is added.
+
+- The `include` list names every mapped relationship that is not a component:
+  `identifier_and_attribute_fields` returns the model's identifiers and `_attributes`
+  (`infrahub_sync/adapters/infrahub.py:93-100`), and the generated `_attributes` lists the mapped
+  relationships whose kind is not `Component` (`infrahub_sync/generator/__init__.py:101-119`,
+  template `infrahub_sync/generator/templates/diffsync_models.j2:33`).
+- A cardinality-many relationship named in `include` is put into the node query
+  (`SDK/node/node.py:1506-1511`), and its query part is built with the same `include_metadata`
+  flag (`SDK/node/node.py:1523`, `:807-810`). With the flag on, each edge selects
+  `relationship_metadata { updated_at updated_by { id display_label __typename } }` and
+  `node_metadata` (`SDK/node/relationship.py:153-155`).
+- The response edges become the relationship manager's peers, and the manager is marked as
+  initialized (`SDK/node/relationship.py:201-222`). Each peer reads `relationship_metadata` from
+  its edge (`SDK/node/related_node.py:122-124`) and returns it from `get_relationship_metadata()`
+  (`SDK/node/related_node.py:243-253`).
+- Because the manager is initialized, the converter does not call `rel_manager.fetch()`
+  (`infrahub_sync/adapters/infrahub.py:1070-1074`). That call is therefore not part of this read.
+- Checked by building the query and parsing a response with SDK 1.23.2, without a server: a
+  `TestDevice` schema with a cardinality-many `tags` relationship, `generate_query_data(include=
+  ["name", "tags"], include_metadata=True)`. The `tags.edges` part of the query held the keys
+  `node`, `node_metadata` and `relationship_metadata`. A response shaped like that query, parsed
+  into `InfrahubNodeSync`, gave `tags.initialized == True` and returned the edge's `updated_at` and
+  `updated_by.id` from `get_relationship_metadata()`. This check does not prove what Infrahub
+  1.10.6 returns; the opt-in integration test for User Story 3 checks that.
+
+Reads that do not carry the metadata, and why they do not matter for the plan:
+
+- `RelationshipManager.fetch()` takes no argument. When the manager is not initialized, it calls
+  `client.get(…, include=[relationship])` without `include_metadata`, then one `client.filters`
+  for each peer kind (`SDK/node/relationship.py:233-277`). It is reached only for a relationship
+  that the read did not include: a mapped relationship of kind `Component`, which is not a
+  DiffSync attribute and so never appears in a proposed change.
+- The incremental read `client.filters(…, prefetch_relationships=True, …)`
+  (`infrahub_sync/adapters/infrahub.py:771-776`) names no `include`, so cardinality-many
+  relationships are left out of its query (`SDK/node/node.py:1506-1511`) and are read later through
+  `fetch()`. This read is used only by incremental loading (`infrahub_sync/cache/incremental.py:219`,
+  called from `infrahub_sync/potenda/__init__.py:482`). Incremental loading can apply to either
+  side (`:505`, `:509`), but a plan made through the shared execution surface always loads in full:
+  `full_extract` defaults to `True` (`infrahub_sync/execution.py:1132`, set at `:1236`), and the
+  Sync service passes `True` (`infrahub_sync/service/flow.py:295`). So the destination read of a
+  plan is the `client.all` read above. A direct Python caller that passes `full_extract=False`
+  would load unchanged destination nodes from the previous snapshot, which holds no metadata, and
+  changed nodes through this read. Whether that case must load in full when metadata is requested,
+  or pass the same `include` and `include_metadata=True` here, is not decided; the User Story 3
+  tasks decide it.
+
+Cost noted for the measurement task (T004): with `include`, each included relationship also
+selects the peer's attributes (`SDK/node/node.py:1514-1521`), and `include_metadata=True` adds
+attribute and node metadata to those peer fields too. This makes each response larger, but adds
+no request.
 
 **Alternatives considered**
 
@@ -189,8 +249,22 @@ Path prefixes used below:
 - `PlanResource` gains two optional fields that carry the same records and the owner notice
   (FR-009). This changes the Sync API response (governance gate "API and plan format" in the
   spec); the field is optional, so older clients ignore it.
-- Tasks check whether the checkpoint artifact (`infrahub_sync/product_store/bundle.py:64`) copies
-  the whole plan directory or a fixed list of files, and add the new file if it uses a list.
+- The plan checkpoint copies a fixed list of files, not the plan directory (task T003,
+  2026-10-22). `publish_plan_checkpoint` builds the bundle members from
+  `plan/manifest.json`, `plan/operations.jsonl` and the paths in the manifest's
+  `source_snapshot` (`infrahub_sync/service/checkpoints.py:82-87`, member names at `:47-48`), and
+  passes them to `write_bundle` (`:93`). `bundle.py:64` only names the artifact; the bundle format
+  stores whatever members it is given and checks them against its own bundle manifest
+  (`infrahub_sync/product_store/bundle.py:147-162`), so it needs no change. The path
+  `plan/last_changes.jsonl` matches the accepted member path pattern (`bundle.py:80`).
+  - File to change: `infrahub_sync/service/checkpoints.py`, adding `plan/last_changes.jsonl` to
+    the members in `publish_plan_checkpoint` (`:82-85`). Its docstring (`:76-80`) explains why the
+    list follows the manifest, so the new file is added when the manifest's `last_changes` field
+    names it.
+  - The comment on `MAX_BUNDLE_MEMBERS` says "the plan's two files"
+    (`infrahub_sync/product_store/bundle.py:55-56`) and must say three.
+  - Rehydration extracts every member of the bundle (`infrahub_sync/service/checkpoints.py:118-136`,
+    `extract_bundle` at `:135`), so the verify and apply stages receive the new file without a change there.
 
 **Alternatives considered**
 
@@ -266,6 +340,66 @@ Path prefixes used below:
 - If a later feature allocates from a resource pool, that edge carries none of the three
   (Clarifications Q2). A unit test asserts the rule on the payload builder so the exception holds
   when allocation is added.
+
+**How an update tells which relationship edges it adds (task T002, 2026-10-22)**
+
+Findings:
+
+- Apply loads neither side and compares nothing: it reads the stored operations and runs them in
+  order (`infrahub_sync/potenda/__init__.py:743-745`, loop at `:885-902`). The only destination
+  reads before a write are:
+  - the schema, cached by the adapter;
+  - one `client.filters` for each peer identity that the peer resolver has not met yet
+    (`infrahub_sync/adapters/infrahub.py:420`, `:552-556`; results kept by `remember` at `:416`).
+  Neither read returns the peers that the destination node has now.
+- The stored operation cannot tell either. An update's payload and references come from the
+  source side of the comparison only (`infrahub_sync/plan/derive.py:636-681`). The comparison
+  stores every attribute of the source object, changed or not (`diffsync/helpers.py:223`), and the
+  destination's values (`dest_attrs`) are not written to the plan. So a cardinality-many reference
+  lists every desired peer, and a cardinality-one reference names the desired peer, whether or not
+  the destination already has them.
+- The write sends the whole peer list. `generate_payload_create` copies the same `source`, `owner`
+  and `is_protected` onto every edge (`SDK/schema/__init__.py:244-253`), and the update is an
+  upsert keyed by the recorded id (`infrahub_sync/adapters/infrahub.py:1335-1345`, `:1364`).
+- On the server, an edge to a peer the node does not have is created with the properties sent
+  (`BE/core/relationship/model.py:1574-1578`). An edge the node already has is updated for every
+  property whose sent value differs from the stored one (`:1580-1597`, comparison at `:435-454`),
+  and a property sent as `None` is skipped (`:493-508`). So sending an owner on an edge that exists
+  replaces its owner, and leaving the owner out keeps it. The server offers no option that sets an
+  owner on new edges only.
+- The SDK accepts properties on each peer separately: each item of a cardinality-many list is a
+  dictionary whose `owner` key is read for that edge alone (`SDK/node/related_node.py:96`,
+  `:111-119`).
+
+Decision:
+
+- When the package names an owner, apply reads the destination node's current peers before it
+  writes an update that carries relationship references. It makes one
+  `client.get(kind=operation.kind, id=operation.destination_id, include=[…], exclude=[…])` for the
+  operation, naming the cardinality-many relationships the update writes, the same request shape
+  that `RelationshipManager.fetch()` uses (`SDK/node/relationship.py:245-253`). Cardinality-one
+  relationships come back in the same read, because the SDK always selects them
+  (`SDK/node/node.py:1506-1511`).
+- An edge counts as added when its resolved peer id is not among the node's current peers for that
+  relationship (cardinality many), or differs from the current peer (cardinality one). Only those
+  edges carry `owner`. Every other edge and every attribute of the update is written without the
+  `owner` key, so the server keeps the owner it holds, including an empty one (D-8).
+- When no owner is named, apply makes no extra read; the update sends no owner at all.
+- Cost: one read for each update operation with relationship references, and only when an owner is
+  named. Creates need no read, because every edge of a new node is added.
+- Not covered: a person who adds the same edge between this read and the write. The edge then gets
+  the named owner. The sources say nothing about this case.
+
+Alternatives considered:
+
+- Record the added peers in the plan, from the comparison's destination values: rejected, because
+  a new field on `PlannedOperation` or `RelationshipReference` needs a new plan format version
+  (`infrahub_sync/plan/models.py:80`, `dev/adr/0001-saved-plan-artifact-format.md:84-112`), and
+  the destination can change between the plan and the apply.
+- Use the last-changes file to carry the added peers: rejected, because that file is display only
+  (D-2), and apply would then depend on data the reviewer views but does not approve as writes.
+- Send the owner on every edge of an update: rejected, because it replaces the owner of edges the
+  node already has (D-8, FR-002).
 
 ## R-7. Smallest permission set of the import account
 
