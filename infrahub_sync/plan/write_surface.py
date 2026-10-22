@@ -15,9 +15,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from infrahub_sync.plan.models import PlanLineageRecord
+
 if TYPE_CHECKING:
     from infrahub_sync.adapters.infrahub import PeerResolver
-    from infrahub_sync.plan.models import PlannedOperation
+    from infrahub_sync.plan.models import PlanManifest, PlannedOperation
 
 
 @runtime_checkable
@@ -45,16 +47,34 @@ class PlannedWriteDestination(Protocol):
 class LineageResolvingDestination(Protocol):
     """A destination that resolves the lineage it writes, before a plan reads and before an apply writes."""
 
-    def resolve_lineage(self) -> object:
-        """Resolve and keep the lineage this run writes; raise to stop the run."""
+    def resolve_lineage(self, *, saved_plan: PlanManifest | None = None) -> object:
+        """Resolve and keep the lineage this run writes; raise to stop the run.
+
+        An apply passes the saved plan's manifest, so the destination can compare the
+        lineage the plan recorded with the lineage it resolves now. A plan passes none.
+        """
 
 
-def resolve_destination_lineage(destination: object) -> None:
+def resolve_destination_lineage(destination: object, *, saved_plan: PlanManifest | None = None) -> None:
     """Resolve the destination's lineage when the destination writes lineage; otherwise do nothing.
 
     The engine calls this before either side of a plan is loaded and before the first write
     of an apply, so a lineage refusal stops the run before the source system is read and
-    before anything is written.
+    before anything is written. An apply passes `saved_plan`; a plan does not, so the
+    plan-time call is unchanged for destinations that take no argument.
     """
-    if isinstance(destination, LineageResolvingDestination):
+    if not isinstance(destination, LineageResolvingDestination):
+        return
+    if saved_plan is None:
         destination.resolve_lineage()
+    else:
+        destination.resolve_lineage(saved_plan=saved_plan)
+
+
+def destination_lineage_record(destination: object) -> PlanLineageRecord | None:
+    """The lineage the destination resolved for this plan, for the manifest's `lineage` field.
+
+    `None` when the destination records no lineage, so the plan is written without the field.
+    """
+    record = getattr(destination, "lineage_record", None)
+    return record if isinstance(record, PlanLineageRecord) else None

@@ -63,7 +63,8 @@ from infrahub_sync.plan.models import ApplyRecord, PlannedOperation, Relationshi
 from infrahub_sync.plan.review import read_saved_plan
 from infrahub_sync.plan.write_surface import PlannedWriteDestination
 from infrahub_sync.potenda import Potenda
-from tests.plan.artifact_fixtures import CONFIG_VERSION, SYNC_NAME, operation_record, write_artifact
+from tests.plan.artifact_fixtures import CONFIG_VERSION, SYNC_NAME, operation_record
+from tests.plan.artifact_fixtures import write_artifact as write_fixture_artifact
 from tests.plan.ownership_fixtures import granted_ownership
 
 if TYPE_CHECKING:
@@ -89,6 +90,20 @@ NODE_ID = "written-node-1"
 IMPORT_ACCOUNT_ID = "import-account-1"
 # The destination id a fixture update carries unless its case is about the id itself.
 DEFAULT_DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
+# The lineage a saved plan records: the import account `get_user()` answers for, so an apply
+# runs with the account the plan was made with (FR-012).
+RECORDED_LINEAGE: dict[str, Any] = {
+    "import_account": {"name": "import-account", "id": IMPORT_ACCOUNT_ID},
+    "source": {"kind": "CoreAccount", "name": "import-account"},
+    "owner": None,
+    "protect": False,
+}
+
+
+def write_artifact(run_directory: Path, records: Any = (), **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
+    """Write a saved plan as the fixture builder does, recording `RECORDED_LINEAGE` unless a case sets its own."""
+    kwargs.setdefault("lineage", RECORDED_LINEAGE)
+    return write_fixture_artifact(run_directory, records, **kwargs)
 
 
 def _text(attr_id: str, name: str, *, optional: bool = True) -> AttributeSchemaAPI:

@@ -374,6 +374,40 @@ class DestinationBindingRecord(BaseModel):
         return _normalized_destination_url(value)
 
 
+class LineageAccountRecord(BaseModel):
+    """The import account a plan was computed with: the account behind the token."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    id: str = Field(min_length=1)
+
+
+class LineageNodeRecord(BaseModel):
+    """A source or owner node, by kind and name, as the plan recorded it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+
+
+class PlanLineageRecord(BaseModel):
+    """The lineage a plan writes, recorded in the manifest (FR-012).
+
+    `import_account` is what an apply compares its own account with, by `id`. `source` is
+    `CoreAccount` and the import account's name when the package names no source. `owner`
+    is `None` when the package names no owner.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    import_account: LineageAccountRecord
+    source: LineageNodeRecord
+    owner: LineageNodeRecord | None = None
+    protect: bool
+
+
 class PlanManifest(BaseModel):
     """The artifact's header, and the format contract (FR-027).
 
@@ -405,6 +439,10 @@ class PlanManifest(BaseModel):
     # on a registered plan and absent from an unregistered one, so a registered apply always
     # has something to compare the live schema against and legacy manifests keep reading.
     schema_fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    # Additive: the import account and the lineage the plan writes. Absent on a plan whose
+    # destination records no lineage, and on plans made before the field existed; an
+    # Infrahub apply refuses such a plan (FR-012).
+    lineage: PlanLineageRecord | None = None
 
     @field_validator("registry_version", mode="before")
     @classmethod
@@ -468,6 +506,8 @@ class PlanManifest(BaseModel):
             data.pop("destination_binding", None)
         if self.schema_fingerprint is None:
             data.pop("schema_fingerprint", None)
+        if self.lineage is None:
+            data.pop("lineage", None)
         if self.configuration_binding is None:
             data.pop("config_id", None)
             data.pop("registry_version", None)

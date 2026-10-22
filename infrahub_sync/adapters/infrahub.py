@@ -36,9 +36,11 @@ from infrahub_sync.configuration.credentials import (
 from infrahub_sync.generator import has_field
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.errors import (
+    ImportAccountMismatchError,
     NullRelationshipValueError,
     PeerAmbiguousError,
     PeerNotFoundError,
+    PlanLineageMissingError,
     ReviewedPayloadFieldMissingError,
     SkippedDeleteOperation,
     StaleDestinationIdError,
@@ -51,7 +53,13 @@ from infrahub_sync.plan.keying import (
     refuse_unkeyed_create_coverage,
     writable_convergence_reason,
 )
-from infrahub_sync.plan.models import DestinationBindingRecord
+from infrahub_sync.plan.models import (
+    DestinationBindingRecord,
+    LineageAccountRecord,
+    LineageNodeRecord,
+    PlanLineageRecord,
+    PlanManifest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -707,6 +715,59 @@ class ResolvedLineage:
     owner: ResolvedLineageNode | None
     protect: bool
 
+    def plan_record(self) -> PlanLineageRecord:
+        """The manifest's `lineage` field: the import account by name and id, source and owner by kind and name."""
+        return PlanLineageRecord(
+            import_account=LineageAccountRecord(name=self.import_account.name, id=self.import_account.id),
+            source=LineageNodeRecord(kind=self.source.kind, name=self.source.name),
+            owner=None if self.owner is None else LineageNodeRecord(kind=self.owner.kind, name=self.owner.name),
+            protect=self.protect,
+        )
+
+
+def require_recorded_import_account(saved_plan: PlanManifest) -> LineageAccountRecord:
+    """Return the import account the saved plan recorded, or refuse a plan that records none (FR-012)."""
+    if saved_plan.lineage is None:
+        logger.warning(
+            "Apply refused: saved plan %s records no import account",
+            saved_plan.run_id,
+            extra={"run_id": saved_plan.run_id},
+        )
+        msg = (
+            f"The saved plan for run {saved_plan.run_id!r} records no import account, so this apply cannot "
+            "check that it runs with the account the plan was made with. Nothing was written to the destination."
+        )
+        raise PlanLineageMissingError(msg)
+    return saved_plan.lineage.import_account
+
+
+def refuse_other_import_account(
+    *, saved_plan: PlanManifest, recorded: LineageAccountRecord, live: ImportAccount
+) -> None:
+    """Refuse an apply whose import account is not the one the saved plan recorded, naming both (FR-012)."""
+    if recorded.id == live.id:
+        return
+    logger.warning(
+        "Apply refused: plan import account %s (%s), apply import account %s (%s)",
+        recorded.name,
+        recorded.id,
+        live.name,
+        live.id,
+        extra={
+            "run_id": saved_plan.run_id,
+            "plan_import_account": recorded.name,
+            "plan_import_account_id": recorded.id,
+            "apply_import_account": live.name,
+            "apply_import_account_id": live.id,
+        },
+    )
+    msg = (
+        f"The saved plan for run {saved_plan.run_id!r} was made with the import account {recorded.name!r} "
+        f"(id {recorded.id}), and this apply runs with the import account {live.name!r} (id {live.id}). "
+        "Nothing was written to the destination."
+    )
+    raise ImportAccountMismatchError(msg)
+
 
 def require_lineage_settings(settings: Mapping[str, Any]) -> InfrahubLineageSettings:
     """Return the typed lineage settings, or raise `InfrahubLineageSettingsError` naming each refusal."""
@@ -796,7 +857,12 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # We will keep a copy of the schema
         self.schema: MutableMapping[str, MainSchemaTypesAPI] = self.client.schema.all(branch=infrahub_branch)
 
-    def resolve_lineage(self) -> ResolvedLineage:
+    @property
+    def lineage_record(self) -> PlanLineageRecord | None:
+        """The lineage a plan records in its manifest, or `None` before `resolve_lineage` runs."""
+        return None if self.lineage is None else self.lineage.plan_record()
+
+    def resolve_lineage(self, *, saved_plan: PlanManifest | None = None) -> ResolvedLineage:
         """Resolve the import account, the source and the owner this run writes, and keep them.
 
         The engine calls this once at the start of a plan, before either side is loaded, and
@@ -807,9 +873,17 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         needs no permission on accounts. It is the source unless the `source` setting names
         a node. There is no lookup of an account named after the source system and no
         fallback: a named node that the destination does not have stops the run.
+
+        `saved_plan` is the manifest an apply is about to write. It must record an import
+        account, and that account's id must equal the id `client.get_user()` returns now;
+        otherwise the apply is refused before any named node is read and before any write
+        (FR-012). A plan passes no manifest.
         """
         settings = self.lineage_settings
+        recorded = None if saved_plan is None else require_recorded_import_account(saved_plan)
         import_account = self._read_import_account()
+        if saved_plan is not None and recorded is not None:
+            refuse_other_import_account(saved_plan=saved_plan, recorded=recorded, live=import_account)
         if settings.source is None:
             source = ResolvedLineageNode(kind="CoreAccount", name=import_account.name, id=import_account.id)
         else:

@@ -699,6 +699,9 @@ PLAN_MANIFEST_FIELDS = {
     # Additive: the consumed destination-schema semantics a registered plan was computed
     # against. An identity to compare at apply time, not a grouping of operations.
     "schema_fingerprint",
+    # Additive: the import account and the lineage the plan writes. An identity an apply
+    # compares, not a grouping of operations.
+    "lineage",
 }
 
 # Vocabulary a grouping field would plausibly be named with. Belt and braces beside the
@@ -797,7 +800,14 @@ def test_planned_operation_rejects_unknown_fields() -> None:
 
 def test_plan_manifest_still_requires_its_declared_fields() -> None:
     """`extra="allow"` does not make the declared fields optional."""
-    optional = {"destination_binding", "config_id", "registry_version", "package_checksum", "schema_fingerprint"}
+    optional = {
+        "destination_binding",
+        "config_id",
+        "registry_version",
+        "package_checksum",
+        "schema_fingerprint",
+        "lineage",
+    }
     for missing in PLAN_MANIFEST_FIELDS - optional:
         record = _manifest()
         del record[missing]

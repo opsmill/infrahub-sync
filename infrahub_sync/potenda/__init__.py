@@ -647,6 +647,7 @@ class Potenda:
             warn_missing_convergence_key,
         )
         from infrahub_sync.plan.models import SourceSnapshotRecord
+        from infrahub_sync.plan.write_surface import destination_lineage_record
         from infrahub_sync.plan.writer import write_plan_artifact as write_artifact
 
         resolve_tier = partial(tier_of, tiers=self.tiers, top_level=self.top_level)
@@ -701,6 +702,7 @@ class Potenda:
             destination_binding=getattr(self.destination, "destination_binding", None),
             configuration_binding=self.configuration_binding,
             schema_fingerprint=self.schema_fingerprint,
+            lineage=destination_lineage_record(self.destination),
         )
         logger.info(
             "Plan artifact: wrote %d operation(s) to %s (deletes computed: %s)",
@@ -870,8 +872,8 @@ class Potenda:
         # Check the entire artifact before dispatching its first operation.
         _validate_infrahub_plan_payload(destination, loaded.operations, run_id=run_id)
 
-        # Resolved again before the first write, never reused from the plan.
-        resolve_destination_lineage(destination)
+        # Resolved again before the first write, never reused; compared with the plan's (FR-012).
+        resolve_destination_lineage(destination, saved_plan=loaded.manifest)
         self._last_applied_plan_action_counts = {
             action: sum(operation.action == action for operation in loaded.operations) for action in ACTIONS
         }

@@ -411,6 +411,31 @@ class ReviewedPayloadFieldMissingError(PlanArtifactError):
     next_action = "Create a new plan against the current destination schema and review it before applying."
 
 
+class PlanLineageMissingError(PlanArtifactError):
+    """The saved plan records no import account, so an apply cannot compare its own (FR-012).
+
+    A plan made before the import account was recorded. Raised before the first write.
+    """
+
+    wrote = False
+    next_action = (
+        "Create a new plan for this configuration and review it: the new plan records the import account "
+        "that apply compares with."
+    )
+
+
+class ImportAccountMismatchError(PlanArtifactError):
+    """The apply's import account is not the account the saved plan recorded (FR-012).
+
+    Raised before the first write. The message names both accounts.
+    """
+
+    wrote = False
+    next_action = (
+        "Apply with a token of the account the plan recorded, or create a new plan with this token and review it."
+    )
+
+
 class OperationApplyFailedError(PlanArtifactError):
     """The destination rejected an operation, or transport failed while applying it (AD027).
 

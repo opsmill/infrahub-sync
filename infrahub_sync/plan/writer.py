@@ -35,7 +35,12 @@ from infrahub_sync.plan.models import PLAN_FORMAT_VERSION, PlanManifest
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from infrahub_sync.plan.models import DestinationBindingRecord, PlannedOperation, SourceSnapshotRecord
+    from infrahub_sync.plan.models import (
+        DestinationBindingRecord,
+        PlanLineageRecord,
+        PlannedOperation,
+        SourceSnapshotRecord,
+    )
 
 # The artifact's directory and its two files, in the order they are written.
 PLAN_DIR_NAME = "plan"
@@ -186,6 +191,7 @@ def write_plan_artifact(
     destination_binding: DestinationBindingRecord | None = None,
     configuration_binding: tuple[str, int, str] | None = None,
     schema_fingerprint: str | None = None,
+    lineage: PlanLineageRecord | None = None,
 ) -> PlanManifest:
     """Write `<run_dir>/plan/` and return the manifest that was written.
 
@@ -202,6 +208,10 @@ def write_plan_artifact(
     against. It is **required** alongside `configuration_binding`: a registered plan whose
     caller supplies none is refused by `PlanManifest` rather than written without the
     binding a registered apply compares against.
+
+    `lineage` is the import account and the lineage the plan writes, which an Infrahub apply
+    compares its own import account with (FR-012). `None` (a destination that records no
+    lineage) writes a manifest without the field.
 
     Raises:
         PlanGenerationExistsError: the run already holds a committed plan generation, which
@@ -241,6 +251,9 @@ def write_plan_artifact(
     if schema_fingerprint is not None:
         # Before the checksum below, so the recorded schema identity is covered by it.
         body["schema_fingerprint"] = schema_fingerprint
+    if lineage is not None:
+        # Before the checksum below, so the recorded import account is covered by it.
+        body["lineage"] = lineage.model_dump()
     body["plan_checksum"] = compute_plan_checksum(body, operations_bytes)
     manifest = PlanManifest.model_validate(body)
 
