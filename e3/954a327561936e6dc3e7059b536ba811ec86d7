@@ -1,0 +1,39 @@
+dev/specs/013-compose-own-infrastructure/contracts/release-evidence.md
+  s_8d92f288a8f661::t_bc5efab604fca6 1-58
+CLAUDE.md
+  s_8d92f288a8f661::t_1aaa82ee075fa0 6-10
+dev/specs/013-compose-own-infrastructure/research.md
+  s_8d92f288a8f661::t_cb83a7367d7fca 303
+  s_8d92f288a8f661::t_1b74528055115f 1-302,304-316
+dev/specs/013-compose-own-infrastructure/contracts/startup-messages.md
+  s_8d92f288a8f661::t_c95455ebbdd1e3 1-59
+dev/specs/013-compose-own-infrastructure/plan.md
+  s_8d92f288a8f661::t_bd7caed99643fa 1,3,5,9-55,58-62,64-67,69,71-74,76,78,80,82-85,87,89-92,94,96-102,106,111-126,133-145,151-166,172-197,200-202,204-211,213-227,229-232
+  s_8d92f288a8f661::t_6da05089ce3dfb 168-171
+  s_8d92f288a8f661::t_29d0621ab5d716 103-105
+  s_8d92f288a8f661::t_5c192e5e0c9351 2,4,6-8,56-57,63,68,70,75,77,79,81,86,88,93,95,107-110,127-132,146-150,167,198-199,203,212,228
+dev/specs/013-compose-own-infrastructure/contracts/lifecycle-tier.md
+  s_8d92f288a8f661::t_71dec305106d58 1-55
+dev/specs/013-compose-own-infrastructure/contracts/compose-settings.md
+  s_8d92f288a8f661::t_6fccc17e05b68c 1-55
+dev/specs/013-compose-own-infrastructure/data-model.md
+  s_8d92f288a8f661::t_49aefb0e9fd92c 1-155
+dev/specs/013-compose-own-infrastructure/quickstart.md
+  s_8d92f288a8f661::t_573abf296f829a 1-117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e3954a327561936e6dc3e7059b536ba811ec86d7",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
