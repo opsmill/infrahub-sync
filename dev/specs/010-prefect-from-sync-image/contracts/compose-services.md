@@ -9,6 +9,7 @@ profiles are included. The entities are described in [data-model.md](../data-mod
 | Check | Requirement |
 |-------|-------------|
 | No image reference contains `prefecthq/prefect` | FR-001, SC-004 |
+| No Compose file and no `Dockerfile` line names a Prefect version string or a Prefect image | FR-005, SC-007 |
 | `prefect-server.image` equals `sync-api.image` and `sync-worker.image` | FR-002 |
 | `prefect-server.command` is `uvicorn --host 0.0.0.0 --port 4200 --factory infrahub_sync.service.prefect_server:create_prefect_app` | FR-001 |
 | `prefect-server.healthcheck` calls `http://127.0.0.1:4200/api/health` with the image's Python | FR-001 |
@@ -27,6 +28,7 @@ profiles are included. The entities are described in [data-model.md](../data-mod
 | `prefect-server` is `read_only: true` with the Sync tmpfs scratch mounts | R2 |
 | The Prefect database password appears only in `prefect-server` and `db-bootstrap` | FR-003 |
 | `cli.environment` has no `PREFECT_*` credential (`PREFECT_API_AUTH_STRING`, database URL) | FR-003 |
+| No service outside the Sync-image services holds `PREFECT_API_URL` or a Prefect credential | FR-004 |
 | Distinct images: PostgreSQL, Silo, Sync — three | SC-001 |
 | `infrahub_sync/testcontainers/docker-compose.yml` is byte-equal to `docker-compose.yml` | FR-023 |
 

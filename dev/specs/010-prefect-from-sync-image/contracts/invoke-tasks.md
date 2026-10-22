@@ -48,7 +48,7 @@ Names not listed here (`linter.lint-*`, `linter.format-ruff`, `docs.rumdl`,
 | `dev.status` | Shows the containers, their health and the URLs | — |
 | `dev.logs [--name SERVICE] [--lines N]` | Shows a service's logs | — |
 | `dev.seed` | Loads the smoke dataset into Infrahub | — |
-| `dev.smoke` | Seeds, then runs the smoke suite; in `dev.deps` mode, fails and names `dev.api` or `dev.worker` when one does not answer | FR-022 |
+| `dev.smoke` | Seeds, then runs the smoke suite; in `dev.deps` mode, reads `GET /status` on the Sync API and fails naming `dev.api` (no answer) or `dev.worker` (worker not available); never calls the Prefect API | FR-022 |
 
 `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` has the same effect as `--infrahub-network`. No task writes
 a PID file or starts a background process (FR-021).

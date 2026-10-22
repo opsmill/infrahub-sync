@@ -14,7 +14,7 @@ only the Sync API port; a documented override file opens the UI on the loopback 
 stack runs the bundled object store from `pgsty/silo` pinned by tag and digest. The two
 development Compose files and `development/preview.env` become one file with `sync` and
 `infrahub` profiles, the `dev` namespace gains two modes (`dev.start`, `dev.deps`), and every
-invoke task keeps one namespaced name. A new optional extra provides `TestInfrahubSyncDocker`
+invoke task has one name, with `format` and `lint` as the only top-level tasks. A new optional extra provides `TestInfrahubSyncDocker`
 for end-to-end tests. The research behind each choice is in [research.md](research.md).
 
 ## Technical Context
@@ -169,11 +169,18 @@ into the base install.
 2. Silo in every Compose file, health checks and the repair service. Completes User Story 1.
 3. Development stack merge, profiles, checkout mounts, `dev.*` tasks, stale-image label,
    `dev_settings()`, `bench.py`. Delivers User Stories 2 and 3.
-4. Task renames (top-level `format` and `lint` stay), `AGENTS.md`, documentation, workflows.
-5. `infrahub_sync.testcontainers`, the extra, the version-match test, the CI end-to-end tier.
+4. `infrahub_sync.testcontainers`, the extra, the version-match test, the CI end-to-end tier.
    Delivers User Story 5.
-6. ADR 0019 amendment, ADR 0016 note, release note with the `down -v` instruction, measured
+5. ADR 0019 amendment, ADR 0016 note, release note with the `down -v` instruction, measured
    first-start times. Delivers User Story 4's documentation and FR-008 to FR-010.
+6. In a separate pull request (product-owner decision, 2026-10-22): the task renames and
+   deletions (top-level `format` and `lint` stay) and the callers that use the old names:
+   `tasks/__init__.py`, `tasks/netbox.py`, `AGENTS.md`, the documentation and the workflows
+   (tasks T036, T037 and T061–T064). Constitution principle VII asks not to mix a refactor with
+   behaviour changes.
+
+Steps 1–5 add the new `dev.*` tasks next to the existing names; the old top-level names and the
+`preview` namespace stay until step 6, so each pull request leaves every caller working.
 
 ## Still open after planning
 
@@ -183,6 +190,9 @@ into the base install.
   does not exist (R6). The plan points it at the new development file either way.
 - Record that D-5 reverses the 2026-10-15 product decision, and update Jira card INFP-692.
   This is a product task outside the repository.
+- Spec 013 checked its table of 010 deliveries against commit `e4660c15`. It should be checked
+  again against the current 010 artifacts, in particular the `infrahub_sync_compose_files` hook
+  and the `os.environ` rule of the fixture.
 
 ## Complexity Tracking
 

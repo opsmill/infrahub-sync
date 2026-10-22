@@ -101,6 +101,8 @@ equal → start without a build (FR-018, R5).
 | Dependencies only | `dev.deps` | core, `infrahub` | `dev.api` and `dev.worker`, each in the foreground |
 
 Both modes drop the `infrahub` profile when `--infrahub-network` or
-`INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` names a running Infrahub (FR-020). `dev.smoke` in
-dependencies mode fails and names `dev.api` or `dev.worker` when one is not answering
-(FR-022).
+`INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` names a running Infrahub; its URL then comes from
+`INFRAHUB_SYNC_DEV_INFRAHUB_URL`, default `http://infrahub-server:8000` (FR-020). `dev.smoke` in
+dependencies mode reads the Sync API's `GET /status`: no answer names `dev.api`, a worker that
+is not available names `dev.worker` (FR-022). Only the host processes `dev.api` and
+`dev.worker` call the Prefect server (D-2 as clarified on 2026-10-22).

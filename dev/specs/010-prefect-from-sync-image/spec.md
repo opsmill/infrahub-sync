@@ -62,6 +62,27 @@ Answers from the product owner.
   the development Compose file, and the `dev.*` tasks and the benchmark runner read them from
   there or from the Compose defaults.
 
+### Session 2026-10-22 (analysis follow-up)
+
+Changes the product owner approved after the cross-artifact analysis.
+
+- Q: Does "nothing outside the Sync image calls the Prefect API" (D-2, FR-004) cover the
+  development host processes? → A: No. The rule covers the root file and the test fixture. In
+  the development stack, `dev.api` and `dev.worker` run on the host and call the Prefect server
+  on `127.0.0.1:4230`. `dev.smoke` checks the worker through the Sync API's `/status` route, not
+  through the Prefect API.
+- Q: How does a test add a Compose file to the Sync project in `TestInfrahubSyncDocker`? → A:
+  Through the class-scoped fixture `infrahub_sync_compose_files`, which returns a list of paths
+  and is empty by default. Spec 013 uses this name.
+- Q: Where do the fixture's settings come from? → A: Each variable the root file reads is taken
+  from `os.environ` when it is set, and from a test default otherwise, as `InfrahubDockerCompose`
+  does.
+- Q: How does the development stack find an Infrahub instance given by `--infrahub-network`? →
+  A: Its URL comes from `INFRAHUB_SYNC_DEV_INFRAHUB_URL` (default `http://infrahub-server:8000`
+  inside the network); the ports of the included Infrahub file are not used in that case.
+- Q: Are the task renames delivered with the stack changes? → A: No. The task renames and
+  deletions go in a separate pull request from the development stack and mode changes.
+
 ## Decisions carried from the idea brief
 
 These are final product-owner decisions. This specification does not reopen them.
@@ -69,8 +90,9 @@ These are final product-owner decisions. This specification does not reopen them
 - **D-1**: `prefect-server` is its own service that runs the Sync image. `sync-api` does not
   proxy the Prefect API. OpsMill engineers can opt in to publishing the Prefect port on the
   loopback address.
-- **D-2**: Nothing outside the Sync image calls the Prefect API. The CLI holds no Prefect
-  credential.
+- **D-2** (scope clarified 2026-10-22): in the root file and the test fixture, nothing outside
+  the Sync image calls the Prefect API. The CLI holds no Prefect credential. In the development
+  stack, the host processes `dev.api` and `dev.worker` may call it.
 - **D-3**: [ADR 0019](../../adr/0019-prefect-is-an-internal-component-of-sync.md) is amended:
   later, the Prefect API will be reachable only through the Sync API, either as one process or
   through a proxy (not decided yet). Keeping the Prefect database password out of `sync-api` is
@@ -296,10 +318,13 @@ image, and complete a plan and an apply.
   hold no Prefect credential. The development stack is not covered and keeps one local password
   for all its services. Test: a contract test over the resolved environment of each service in
   the root file.
-- **FR-004**: `sync-api` MUST NOT proxy the Prefect API, and nothing outside the Sync image MUST
-  call the Prefect API.
+- **FR-004**: `sync-api` MUST NOT proxy the Prefect API. In the root file and the test fixture,
+  nothing outside the Sync image MUST call the Prefect API. The development host processes
+  `dev.api` and `dev.worker` are allowed to. Test: a contract test finds no `PREFECT_API_URL` or
+  Prefect credential outside the Sync-image services of the root file.
 - **FR-005**: Changing the `prefect` pin in `pyproject.toml` and `uv.lock` MUST change the
-  Prefect server version in every stack, with no other file edited.
+  Prefect server version in every stack, with no other file edited. Test: a contract test finds
+  no Prefect version string and no Prefect image in any Compose file or in the `Dockerfile`.
 
 #### Root deployment
 
@@ -347,27 +372,23 @@ image, and complete a plan and an apply.
   `development/preview.env` holds today MUST be written directly in the development Compose file,
   and the `dev.*` tasks MUST read them from that file or from its defaults. Test: file inventory
   and `docker compose config --profiles`.
-- **FR-016**: The `dev` namespace MUST provide `dev.build`, `dev.deps`, `dev.start`,
-  `dev.restart`, `dev.stop`, `dev.destroy`, `dev.status`, `dev.logs`, `dev.seed`, `dev.smoke`,
-  `dev.api` and `dev.worker`. The `netbox` namespace MUST provide `netbox.start` and
-  `netbox.destroy` in place of `netbox.up` and `netbox.down`. The top-level `format` and `lint`
-  tasks MUST stay. Test: task inventory.
-- **FR-017**: Every invoke task MUST have exactly one name. The only top-level tasks MUST be
-  `format` and `lint`:
-  - `format` MUST stay the full format pass: `docs.format`, then `linter.format`.
-  - `lint` MUST stay the full lint pass: `docs.lint`, then `linter.lint`.
-  - `linter.format`, `linter.lint`, `docs.format` and `docs.lint` stay as subsets.
+- **FR-016**: The task inventory MUST be:
+  - top level: `format` (`docs.format`, then `linter.format`) and `lint` (`docs.lint`, then
+    `linter.lint`), the full passes;
+  - `dev`: `dev.build`, `dev.deps`, `dev.start`, `dev.restart`, `dev.stop`, `dev.destroy`,
+    `dev.status`, `dev.logs`, `dev.seed`, `dev.smoke`, `dev.api` and `dev.worker`;
+  - `netbox`: `netbox.start` and `netbox.destroy` in place of `netbox.up` and `netbox.down`;
+  - `tests`: `tests.all` (unit and integration tiers) and `tests.check-310`, next to the
+    existing `tests.tests-unit` and `tests.tests-integration`;
+  - `docs`, `linter`: unchanged, including the subsets `docs.format`, `docs.lint`,
+    `linter.format` and `linter.lint`.
 
-  The top-level `docusaurus`, `generate-doc`, `tests-unit`, `tests-integration`, `tests-all`,
-  `check-310`, `build`, `start` and `destroy` tasks and the `preview` namespace MUST be
-  removed, with these replacements:
-  - `tests.all` MUST replace `tests-all` and run the unit and integration tiers.
-  - `tests.check-310` MUST replace `check-310`.
-  - `docs.docusaurus`, `docs.generate`, `tests.tests-unit`, `tests.tests-integration` and
-    `dev.build`, `dev.start`, `dev.destroy` are the remaining names.
-
-  Test: a task inventory test finds no duplicate names and no top-level task other than `format`
-  and `lint`.
+  Test: task inventory.
+- **FR-017**: Every invoke task MUST have exactly one name, and `format` and `lint` MUST be the
+  only top-level tasks. The top-level `docusaurus`, `generate-doc`, `tests-unit`,
+  `tests-integration`, `tests-all`, `check-310`, `build`, `start` and `destroy` tasks and the
+  `preview` namespace MUST be removed; their replacements are in FR-016. Test: a task inventory
+  test finds no duplicate names and no other top-level task.
 - **FR-018**: `dev.start` and `dev.deps` MUST rebuild the Sync image when the dependencies or the
   `Dockerfile` changed since the image was built. Code changes alone MUST NOT need a rebuild.
   Test: run against an image built from an older lock file.
@@ -378,12 +399,14 @@ image, and complete a plan and an apply.
 - **FR-020**: `dev.start` and `dev.deps` MUST start Infrahub from
   `development/docker-compose.infrahub.yml` by default. `--infrahub-network` or
   `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` MUST attach the stack to an Infrahub instance that is
-  already running. Test: command-line tests.
+  already running; the tasks then take its URL from `INFRAHUB_SYNC_DEV_INFRAHUB_URL` (default
+  `http://infrahub-server:8000`), not from the included Infrahub file. Test: command-line tests.
 - **FR-021**: `dev.deps` MUST start containers only and print their URLs. `dev.api` and
   `dev.worker` MUST run the host processes in the foreground. The tasks MUST NOT write PID files
   or manage background processes.
 - **FR-022**: `dev.smoke` MUST fail and name the missing process when it runs in `dev.deps` mode
-  without `dev.api` or `dev.worker`.
+  without `dev.api` or `dev.worker`. It checks both through the Sync API: no answer from `/status`
+  names `dev.api`; a `/status` answer whose worker is not available names `dev.worker`.
 
 #### End-to-end test fixture
 
@@ -393,14 +416,17 @@ image, and complete a plan and an apply.
   repository file. The module MUST be documented as experimental until a demo repository adopts
   it. By default the class MUST run `registry.opsmill.io/opsmill/infrahub-sync` tagged with the
   installed `infrahub-sync` package version; `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION`, the root
-  file's image variables, MUST override it, and CI MUST set them to its own image. Test: a
-  byte-equality test; a test of the default and overridden image reference; the CI end-to-end
-  tier uses the class.
+  file's image variables, MUST override it, and CI MUST set them to its own image. Each other
+  variable the root file reads MUST be taken from `os.environ` when set and from a test default
+  otherwise. A class-scoped fixture `infrahub_sync_compose_files` (a list of paths, empty by
+  default) MUST add Compose files to the Sync project. Test: a byte-equality test; a test of the
+  default and overridden image reference; a test that an extra file and an `os.environ` value
+  reach the Sync project; the CI end-to-end tier uses the class.
 - **FR-024**: Sync's `prefect` pin and the `prefect-client` pin of the `infrahub-testcontainers`
   version Sync depends on MUST name the same Prefect version. Test: reads both versions from
   `uv.lock`.
 - **FR-025**: The unit test tier MUST NOT need Docker, and the `testcontainers` pytest plugin MUST
-  NOT load in `tests.unit`.
+  NOT load in `tests.tests-unit`.
 
 #### CI and documentation
 
@@ -430,11 +456,12 @@ image, and complete a plan and an apply.
   database password for all its services.
 - **Sync image** (existing): now also runs `prefect-server`.
 - **Prefect server module** (new): the module in the Sync package that builds the Prefect server
-  application for uvicorn. Its name is not decided; the brief gives
-  `infrahub_sync.service.prefect_server` as an example.
+  application for uvicorn: `create_prefect_app()` in `infrahub_sync/service/prefect_server.py`,
+  as decided in planning.
 - **`TestInfrahubSyncDocker`** (new): the pytest base class for end-to-end tests of Infrahub plus
   Sync. It runs the published Sync image of the installed package version unless the root file's
-  image variables name another image.
+  image variables name another image, and takes extra Sync Compose files from
+  `infrahub_sync_compose_files`.
 - **Override snippet** (new, documentation): the `docker-compose.override.yml` content that opens
   the Prefect UI on the loopback address.
 

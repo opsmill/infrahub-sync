@@ -26,13 +26,33 @@ class TestMyPackage(TestInfrahubSyncDocker):
 - Inherits `infrahub_testcontainers.helpers.TestInfrahubDocker`, so every Infrahub fixture
   (`infrahub_app`, `infrahub_port`, `default_branch`, `tmp_directory`, …) is available
   unchanged.
-- Adds class-scoped fixtures. Names are proposed and fixed in implementation:
+- Adds class-scoped fixtures. `infrahub_sync_compose_files` is a fixed name (spec 013 overrides
+  it); the others are proposed and fixed in implementation:
 
 | Fixture | Value |
 |---------|-------|
 | `infrahub_sync_image` | Image reference used for every Sync-image service |
-| `infrahub_sync_compose` | The started Compose project for the packaged root file |
+| `infrahub_sync_compose_files` | Hook: a list of extra Compose file paths for the Sync project, passed with `-f` after the packaged root file, in order. Default `[]`. A subclass overrides it to add an override file. |
+| `infrahub_sync_compose` | The started Compose project for the packaged root file plus `infrahub_sync_compose_files` |
 | `sync_api_url` | URL of the Sync API on the loopback address |
+
+The Infrahub project's own `infrahub_compose` fixture is unchanged and starts Infrahub only; a
+Sync override file goes through `infrahub_sync_compose_files`, not through `infrahub_compose`.
+
+```python
+class TestWithProxy(TestInfrahubSyncDocker):
+    @pytest.fixture(scope="class")
+    def infrahub_sync_compose_files(self) -> list[Path]:
+        return [Path(__file__).parent / "proxy.override.yml"]
+```
+
+## Settings
+
+Each variable the root file reads is written to the generated `.env` as
+`os.environ.get(name, test_default)`, as `InfrahubDockerCompose.create_env_file` does
+(`infrahub/python_testcontainers/infrahub_testcontainers/container.py:162-197`). A test or CI job
+sets a value by exporting it before the class starts; an unset variable gets a test default
+(test-only credentials, loopback ports).
 
 ## Image selection
 
@@ -46,8 +66,8 @@ CI sets both variables to the image it built. These are the same variables the r
 
 ## Behaviour
 
-- Starts Infrahub first (through the parent class), then the packaged root file, with a
-  generated `.env` that holds test-only credentials.
+- Starts Infrahub first (through the parent class), then the packaged root file and the files
+  from `infrahub_sync_compose_files`, with the generated `.env` described under Settings.
 - Connects `sync-worker` to the Infrahub project's network so the worker reaches
   `infrahub-server`.
 - On teardown, stops both projects and removes their volumes; collects logs when a test failed,

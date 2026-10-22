@@ -57,7 +57,8 @@ uv run invoke dev.worker        # terminal 3, stays in the foreground
 uv run invoke dev.smoke         # terminal 1
 ```
 
-Expected: `dev.smoke` passes. Stop `dev.worker` and run `dev.smoke` again: it fails and names
+Expected: `dev.smoke` passes. Stop `dev.worker` and run `dev.smoke` again: it reads the Sync
+API's `/status`, fails and names
 `dev.worker`.
 
 ## User Story 4: open the Prefect UI on a deployment

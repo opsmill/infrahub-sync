@@ -214,6 +214,11 @@ of `preview.load_preview_env()` and `preview.preview_urls()`, and calls `dev._co
 - `docker compose config --format json` resolves interpolation, profiles and defaults the same
   way `up` does, so the tasks and the stack cannot read different values.
 - No GitHub workflow runs the benchmark runner (no file under `.github/` mentions `bench`).
+- With `--infrahub-network` (or `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK`), the included Infrahub
+  file is not started, so its ports do not describe the running Infrahub. In that case
+  `dev_settings()` resolves without the `infrahub` profile and takes the Infrahub URL from
+  `INFRAHUB_SYNC_DEV_INFRAHUB_URL`, default `http://infrahub-server:8000` (clarified
+  2026-10-22).
 
 **Alternatives considered**: duplicating the defaults as Python constants (two sources for one
 value); parsing the YAML file directly (misses interpolation and shell overrides).
@@ -247,7 +252,11 @@ fixture starts the packaged file after Infrahub, with `INFRAHUB_SYNC_DOCKER_IMAG
 taken from the environment or defaulting to `registry.opsmill.io/opsmill/infrahub-sync` and the
 installed `infrahub-sync` version. It attaches `sync-worker` to the Infrahub project's network
 so the worker reaches `infrahub-server`. A byte-equality test compares the packaged file with
-the root `docker-compose.yml`.
+the root `docker-compose.yml`. Because the parent class has no hook for extra compose files, the
+Sync class adds one: the class-scoped fixture `infrahub_sync_compose_files`, a list of paths
+(default empty) passed with `-f` after the packaged file. Each variable the root file reads is
+taken from `os.environ` when set and from a test default otherwise, as `InfrahubDockerCompose`
+does (clarified 2026-10-22; spec 013 uses both).
 
 **Evidence**:
 
