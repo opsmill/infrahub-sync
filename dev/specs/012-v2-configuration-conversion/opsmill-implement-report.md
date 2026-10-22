@@ -1,0 +1,89 @@
+# Implementation report: Convert a v1 or v2 configuration and prove the first V3 plan
+
+- **Spec directory**: `dev/specs/012-v2-configuration-conversion`
+- **Branch**: `012-v2-configuration-conversion`, in the worktree `.claude/worktrees/012-v2-conversion` (not pushed)
+- **Base commit**: `7dc0d4c9`
+- **Head commit**: `be357bd3`
+- **Run status**: INCOMPLETE. 38 of 40 tasks are done. T031 is blocked on spec 009, and T033 (the first real gate run) is deferred. All local-pass evidence is present.
+
+## 1. Chunk ledger
+
+| # | Chunk | Tasks | ✅ / ⚠️ / ❌ | Commits | Flagged upward |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Setup | T001–T003 | 3 / 0 / 0 | `a332f437` | yamllint ignores `tests/data/v2_examples` (4 copied files break its rules); report sections are typed tuples |
+| 2 | Foundational | T004–T008 | 5 / 0 / 0 | `b628eb70` | research R2 was wrong for Peering Manager (reads `PEERING_MANAGER_*`) and IP Fabric (file first); corrected in `33338ec3`, `95e438ba` |
+| 3 | US1 conversion core | T009–T012, T014–T017, T019 | 9 / 0 / 0 | `d5a2eded` | absent ACI `verify` is left out of the package; unknown top-level v2 keys dropped with a note; fixed a credential-prefix literal from chunk 2 |
+| 4 | US1 CLI | T013, T018 | 2 / 0 / 0 | `cbd8a6dd` | report text moved to `conversion_report.py` (Pylint module size); header says "v1 or v2 configuration" |
+| 5 | US2 refusals | T020–T023 | 4 / 0 / 0 | `bb1a8034` | also fixed the missing "no v2 variable is set here" line (FR-013) |
+| 6 | Examples and secrets | T024, T025 | 2 / 0 / 0 | `8df24194` | observium and slurpit examples hold placeholder text as `url`; they convert with `--source-url` |
+| 7 | US3 gate | T026–T030, T032 | 6 / 0 / 0 | `d0638806` | v2 needs `generate` before `sync` and `pynetbox` added; nightly job timeout 240 → 300 minutes |
+| 8 | Polish | T034–T040 | 7 / 0 / 0 | `fde661e8` | gate result left as a `TODO(release)` in `v2-to-v3.mdx`; `configs convert` docstring extended so the CLI reference lists refusals |
+
+## 2. Tasks not completed
+
+- **T031**: records left out and problems in the gate. Blocked on spec 009 (`009-plan-problem-reporting`) being merged into `feature/v3-develop`. Until then the `v2-gate` suite stops with "records left out and problems cannot be counted on this build" and never reports a pass. The task also adds `V2_GATE` to the outcomes that fail the nightly job.
+- **T033**: the first real gate run. Deferred because it seeds the NetBox `demo` dataset and resets the preview stack (`preview.down --volumes`), which other sessions on this machine use. Command: `uv run python .github/scripts/nightly_e2e.py suite v2-gate`.
+
+## 3. Local-pass evidence
+
+Times are UTC on 2026-10-22, on macOS with Python 3.11.8 in the worktree's `.venv`, unless noted.
+
+| Test id | Type | Run command | Passed at | Environment | Verbatim pass line |
+| --- | --- | --- | --- | --- | --- |
+| `tests/configuration/test_conversion.py` (tables, naming, visible variables; 91 cases) and `test_conversion_worker_variables.py` | unit | `uv run pytest tests/configuration/test_conversion.py tests/configuration/test_conversion_worker_variables.py -q` | 19:22:24Z | n/a | `92 passed in 0.10s` |
+| `tests/configuration/test_conversion.py` (conversion core, 54 cases) | unit | `uv run pytest tests/configuration -q` | 19:31:56Z | n/a | `904 passed in 1.59s` |
+| `tests/cli/test_convert_command.py` (20 cases) | unit | `uv run pytest tests/cli/test_convert_command.py -q` | 19:38:14Z | n/a | `20 passed in 0.39s` |
+| refusal tests (`test_refusal` and 7 others, 19 cases) | unit | `uv run pytest tests/cli tests/configuration -q` | 19:43:34Z | n/a | `1039 passed in 2.46s` |
+| `tests/configuration/test_conversion_examples.py` (17), `test_conversion_secrets.py` (30) | unit | `uv run pytest tests/configuration/test_conversion_examples.py tests/configuration/test_conversion_secrets.py -q` | 19:47:43Z | n/a | `47 passed in 0.71s` |
+| `tests/test_nightly_v2_gate.py` (14), `tests/test_workflow_contracts.py` (modified) | unit | `uv run pytest tests/test_nightly_v2_gate.py -q -rA`; `uv run pytest tests/test_nightly_e2e.py tests/test_workflow_contracts.py -q` | 19:56:45Z, 19:56:57Z | n/a | `14 passed in 0.16s`; `215 passed in 11.88s` |
+| review fixes: secrets, addresses, gate, CLI write, types | unit | `uv run pytest tests/cli tests/configuration tests/test_nightly_v2_gate.py tests/test_nightly_e2e.py tests/test_workflow_contracts.py tests/test_credential_canary.py -q` | 20:23:12Z | n/a | `1378 passed in 16.11s` |
+| code-review fixes (16 new tests) | unit | `uv run invoke tests.tests-unit` | 2026-10-22, after `313bd898` | n/a | 6031 passed (reported by the code-review run) |
+| credential and placeholder decisions (20 + 6 cases) | unit | `uv run pytest tests/cli tests/configuration tests/test_credential_canary.py -q` | 21:24:54Z | n/a | `1196 passed in 3.84s` |
+| whole unit tier at head | unit | `uv run invoke tests.tests-unit` | 21:25:19Z | n/a | `6077 passed, 4 skipped, 203 deselected, 4 warnings in 145.37s` |
+| `v2-gate` suite | e2e | `uv run python .github/scripts/nightly_e2e.py suite v2-gate` | deferred — local E2E not run (T033) | Docker, NetBox `demo` dataset, preview stack | n/a |
+
+The quickstart steps that run without a Sync API passed; results are in
+[quickstart-results.md](quickstart-results.md). `configs register` was not run because it needs a
+running Sync API.
+
+## 4. Review findings
+
+Three speckit review agents (code and errors, tests and types, comments and docs), then
+`/code-review xhigh --fix`.
+
+| Severity | File | Finding | Status |
+| --- | --- | --- | --- |
+| High | `conversion.py` | A refused, misspelled credential setting (`tokn`) printed its value | Fixed `cadf833f`: refusals for unaccepted settings never carry a value |
+| High (security) | `conversion.py` | A scheme-less address (`user:secret@host`) hid its user information, and the value that lost was printed | Fixed `cadf833f`: every candidate checked; no value printed |
+| High | `nightly_e2e.py`, `testing-tiers.md` | The gate recorded no value v2 wrote (FR-025) | Fixed `180c8dc5`: current values read from Infrahub by destination id; `<not read>` when unavailable |
+| Medium | `nightly_e2e.py` | The gate could pass with operations it did not parse, or with deletes not computed | Fixed `180c8dc5` |
+| Medium | `workflow-nightly-e2e.yml` | The nightly job would fail every night until T031 | Fixed `180c8dc5`: `V2_GATE` is out of the failing outcomes until T031 |
+| Medium | `conversion.py` | Every declared credential got a reference, so genericrestapi, prometheus and slurpit packages needed unused secrets | Fixed `be357bd3` after the product owner's decision: references follow the v2 authentication method |
+| Medium | `conversion.py` | A placeholder changed the variable order away from v2's | Fixed `be357bd3` after the product owner's decision: v2's fixed order |
+| Medium | `conversion.py` | `*_env_vars` lists ignored; Peering Manager not handled like genericrestapi; non-mapping settings accepted; booleans compared as text | Fixed `313bd898` |
+| Medium | `conversion.py` | Same adapter on both sides shares one credential reference | Report note added `313bd898`; naming unchanged (FR-006) |
+| Low | `cli.py` | Output could be the input file; a file created during the prompt could be replaced; write errors gave no reason; hard links unavailable on some file systems; YAML aliases in the package | Fixed `cadf833f`, `313bd898` |
+| Medium | type design | Entries allowed a placeholder or variable origin without a variable; `is_loopback` stored separately | Fixed `cadf833f` |
+| Low | docs | Exit-status text, ACI wording, two missing refusals, changelog wording | Fixed `cadf833f` |
+| Low | `nightly_e2e.py` | Expected-delete identities are compared without the CLI's display escaping | Deferred: the list is empty; matching would import a private CLI helper |
+| Low | docs | Refusal text cites the internal key INFP-654 | Deferred: kept as agreed in the grilling session |
+
+The simplify aspect of the speckit review did not run separately; `/code-review` included
+simplification findings, which were applied.
+
+## 5. Autonomous decisions to revisit
+
+- The implementation ran in a separate worktree, and the shared checkout was switched back to `cli-optional-reason`.
+- T031 and T033 were not attempted (see section 2).
+- The gate reads the value v2 wrote through the Infrahub SDK by destination id, not by HFID.
+- `V2_GATE` does not fail the nightly job until T031 lands; its result is still in the run summary and uploaded.
+- Prometheus: an unknown `auth_method` is refused, although v2 silently sent no credential; `basic` now needs both username and password, although v2 accepted an empty password.
+- Slurpit: only `api_key` is referenced; a `token` setting would have failed in v2 too.
+- `tests/test_workflow_contracts.py` failed 6 tests in one run and passed in the next two; the cause was not found.
+
+## 6. Suggested next steps
+
+1. Review the branch and decide on the base: it still carries the two `cli-optional-reason` commits.
+2. Run T033 on a machine where the preview stack and NetBox can be reset, attach `gate-result.json`, and open a defect for each finding.
+3. Do T031 once spec 009 is merged.
+4. Open a pull request when you ask for it.
