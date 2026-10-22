@@ -9,14 +9,15 @@ import json
 import logging
 import os
 import sys
+import tempfile
 import unicodedata
 from contextlib import contextmanager
 from enum import Enum
 from functools import wraps
 from math import isfinite
-from pathlib import Path  # noqa: TC003 - Typer resolves command annotations at runtime.
+from pathlib import Path
 from time import sleep
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, NoReturn, TypeVar, cast
 from uuid import uuid4
 
 import typer
@@ -54,6 +55,12 @@ from infrahub_sync.client.models import (
     SCHEMA_CHANGED_NEXT_ACTION,
     ListPage,
 )
+from infrahub_sync.configuration.conversion import (
+    ConversionInputError,
+    convert_v2_configuration,
+    visible_v2_variables,
+)
+from infrahub_sync.configuration.conversion_report import next_step_lines, refusal_lines, report_lines
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 
 if TYPE_CHECKING:
@@ -610,6 +617,108 @@ def configs_validate(
     with _client_errors():
         config_id = _config_id(ctx, config)
         _echo_validation(_client(ctx).validate_config(config_id, version, offset=offset, limit=limit))
+
+
+# --- configs convert: a local command that needs no Sync API ------------------------------
+
+
+def _stdin_is_terminal() -> bool:
+    """Return whether standard input is a terminal; tests replace this to cover both paths."""
+    return sys.stdin.isatty()
+
+
+def _echo_lines(lines: list[str], *, err: bool = False) -> None:
+    for line in lines:
+        typer.echo(_display(line), err=err)
+
+
+def _convert_fail(message: str, code: int) -> NoReturn:
+    """Print ``message`` to standard error and stop with exit status ``code``."""
+    typer.echo(_display(message), err=True)
+    raise typer.Exit(code)
+
+
+def _read_v2_configuration(path: Path) -> object:
+    """Read and parse ``path``; a YAML error names only the line and column (research R9)."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        _convert_fail(f"error: cannot read {path}", 2)
+    try:
+        return yaml.safe_load(text)
+    except yaml.MarkedYAMLError as error:
+        # The problem text can quote the failing token, which may be a credential.
+        mark = error.problem_mark or error.context_mark
+        where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark is not None else ""
+        _convert_fail(f"error: {path.name} is not valid YAML{where}", 2)
+    except yaml.YAMLError:
+        _convert_fail(f"error: {path.name} is not valid YAML", 2)
+
+
+def _write_package(output: Path, package: Mapping[str, Any]) -> None:
+    """Write through a temporary file in the target directory and a rename (research R8)."""
+    text = yaml.safe_dump(dict(package), sort_keys=False, default_flow_style=False, allow_unicode=True)
+    handle = tempfile.NamedTemporaryFile(  # noqa: SIM115 - closed before the rename below.
+        "w", encoding="utf-8", dir=output.parent, prefix=f".{output.name}.", suffix=".tmp", delete=False
+    )
+    temporary = Path(handle.name)
+    try:
+        with handle:
+            handle.write(text)
+        temporary.chmod(0o644)
+        temporary.replace(output)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+@configs_app.command("convert")
+def configs_convert(
+    path: Path = typer.Argument(..., help="The v1 or v2 config.yml to read."),
+    *,
+    output: Path | None = typer.Option(
+        None, "--output", help="Where to write the package. Defaults to package.yml next to PATH."
+    ),
+    force: bool = typer.Option(False, "--force", help="Replace an existing output file."),  # noqa: FBT003
+    yes: bool = typer.Option(False, "--yes", help="Write without asking."),  # noqa: FBT003
+    source_url: str | None = typer.Option(
+        None, "--source-url", help="The source address. Overrides the file and the v2 variables."
+    ),
+    destination_url: str | None = typer.Option(
+        None, "--destination-url", help="The Infrahub address. Overrides the file and the v2 variables."
+    ),
+) -> None:
+    """Convert a v1 or v2 config.yml into a V3 configuration package. Needs no Sync API."""
+    data = _read_v2_configuration(path)
+    target = output if output is not None else path.parent / "package.yml"
+    if not target.parent.is_dir():
+        _convert_fail(f"error: the directory of {target} does not exist", 2)
+    if target.exists() and not force:
+        _convert_fail(f"{target} exists; pass --force to replace it", 1)
+    try:
+        result = convert_v2_configuration(
+            cast("Mapping[str, Any]", data),
+            visible_v2_variables(os.environ),
+            source_url=source_url,
+            destination_url=destination_url,
+        )
+    except ConversionInputError as error:
+        _convert_fail(f"error: {path.name} cannot be converted: {error}", 2)
+    if result.package is None:
+        _echo_lines(refusal_lines(path.name, result.refusals), err=True)
+        raise typer.Exit(1)
+    _echo_lines([*report_lines(path.name, cast("dict[str, Any]", data)["name"], result), ""])
+    if not yes:
+        if not _stdin_is_terminal():
+            _convert_fail("nothing written; run again with --yes", 1)
+        if not typer.confirm(f"Write {target}?", default=False):
+            typer.echo("nothing written")
+            raise typer.Exit(0)
+    try:
+        _write_package(target, result.package)
+    except OSError:
+        _convert_fail(f"error: cannot write {target}", 1)
+    _echo_lines([f"Wrote {target}", *next_step_lines(str(target), result)])
 
 
 def _echo_run(resource: RunResource) -> None:
