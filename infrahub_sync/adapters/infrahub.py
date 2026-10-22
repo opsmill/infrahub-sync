@@ -687,7 +687,7 @@ class ImportAccountUnreadableError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class ImportAccount:
-    """The account behind the token the import uses, as `client.get_user()` returns it."""
+    """The account behind the token the import uses, as its `AccountProfile` query returns it."""
 
     id: str
     name: str
@@ -778,8 +778,15 @@ def require_lineage_settings(settings: Mapping[str, Any]) -> InfrahubLineageSett
     return parsed.settings
 
 
+# The caller's own account, as the `AccountProfile` query of `client.get_user()` reads it, with
+# the account's `name` selected as well. `client.get_user()` selects only `display_label`, which
+# Infrahub 1.10 renders from the `label` attribute: it fills `label` from the name in title case,
+# so the account `netbox` is labelled `Netbox`. `AccountProfile` needs no permission on accounts.
+IMPORT_ACCOUNT_QUERY = "query IMPORT_ACCOUNT { AccountProfile { id name { value } } }"
+
+
 def _import_account_from_profile(response: Mapping[str, Any]) -> ImportAccount:
-    """Read the account id and name out of the `AccountProfile` answer of `client.get_user()`."""
+    """Read the account id and name out of the `AccountProfile` answer of `IMPORT_ACCOUNT_QUERY`."""
     profile = response.get("AccountProfile")
     if not isinstance(profile, Mapping):
         profile = {}
@@ -787,10 +794,9 @@ def _import_account_from_profile(response: Mapping[str, Any]) -> ImportAccount:
     if not isinstance(account_id, str) or not account_id:
         msg = "Infrahub returned no account id for the import account's token."
         raise ImportAccountUnreadableError(msg)
-    # `GET_PROFILE_DETAILS` selects no `name`; the display label is the account's name unless
-    # the schema changes the display label of `CoreAccount`.
-    label = profile.get("display_label")
-    return ImportAccount(id=account_id, name=label if isinstance(label, str) and label else account_id)
+    name_attribute = profile.get("name")
+    name = name_attribute.get("value") if isinstance(name_attribute, Mapping) else None
+    return ImportAccount(id=account_id, name=name if isinstance(name, str) and name else account_id)
 
 
 class InfrahubAdapter(DiffSyncMixin, Adapter):
@@ -869,13 +875,13 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         once at the start of an apply, before the first write. Each call reads the destination
         again, so an apply does not reuse what the plan resolved.
 
-        The import account is the account behind the token, from `client.get_user()`, which
-        needs no permission on accounts. It is the source unless the `source` setting names
+        The import account is the account behind the token, from one `AccountProfile` query
+        (`IMPORT_ACCOUNT_QUERY`), which needs no permission on accounts. It is the source unless the `source` setting names
         a node. There is no lookup of an account named after the source system and no
         fallback: a named node that the destination does not have stops the run.
 
         `saved_plan` is the manifest an apply is about to write. It must record an import
-        account, and that account's id must equal the id `client.get_user()` returns now;
+        account, and that account's id must equal the id that query returns now;
         otherwise the apply is refused before any named node is read and before any write
         (FR-012). A plan passes no manifest.
         """
@@ -902,8 +908,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         return self.lineage
 
     def _read_import_account(self) -> ImportAccount:
-        """Return the account behind the token, read with one `client.get_user()`."""
-        return _import_account_from_profile(self.client.get_user())
+        """Return the account behind the token, read with one `AccountProfile` query."""
+        return _import_account_from_profile(
+            self.client.execute_graphql(query=IMPORT_ACCOUNT_QUERY, operation_name="IMPORT_ACCOUNT")
+        )
 
     def _resolve_named_lineage_node(self, named: NamedLineageNode) -> ResolvedLineageNode:
         """Return the id of the node a `source` or `owner` setting names.

@@ -11,6 +11,7 @@ import pytest
 from infrahub_sdk.exceptions import NodeNotFoundError
 
 from infrahub_sync.adapters.infrahub import (
+    IMPORT_ACCOUNT_QUERY,
     ImportAccount,
     ImportAccountUnreadableError,
     InfrahubAdapter,
@@ -22,7 +23,8 @@ from infrahub_sync.adapters.infrahub import (
 from infrahub_sync.configuration.capabilities import InfrahubLineageSettings, NamedLineageNode
 from infrahub_sync.potenda import Potenda
 
-IMPORT_ACCOUNT = {"id": "account-1", "display_label": "netbox-import"}
+IMPORT_ACCOUNT = {"id": "account-1", "name": {"value": "netbox-import"}}
+ACCOUNT_PROFILE_CALL = ("account_profile", {"operation_name": "IMPORT_ACCOUNT"})
 
 
 class LineageClient:
@@ -33,8 +35,9 @@ class LineageClient:
         self.nodes = nodes or {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    def get_user(self) -> object:
-        self.calls.append(("get_user", {}))
+    def execute_graphql(self, *, query: str, operation_name: str | None = None) -> object:
+        assert query == IMPORT_ACCOUNT_QUERY, f"lineage resolution sends only the import account query, not {query!r}"
+        self.calls.append(("account_profile", {"operation_name": operation_name}))
         return self.profile
 
     def get(self, **kwargs: Any) -> Any:  # noqa: ANN401
@@ -68,7 +71,7 @@ def test_without_settings_the_import_account_is_the_source_and_there_is_no_owner
         protect=False,
     )
     assert adapter.lineage is lineage
-    assert client.calls == [("get_user", {})]
+    assert client.calls == [ACCOUNT_PROFILE_CALL]
 
 
 def test_no_account_is_looked_up_by_the_source_systems_name() -> None:
@@ -80,7 +83,7 @@ def test_no_account_is_looked_up_by_the_source_systems_name() -> None:
     lineage = adapter.resolve_lineage()
 
     assert lineage.source.id == "account-1", "the source is the import account, not the account named `netbox`"
-    assert [name for name, _ in client.calls] == ["get_user"], "no `CoreAccount` lookup by name is made"
+    assert [name for name, _ in client.calls] == ["account_profile"], "no `CoreAccount` lookup by name is made"
 
 
 def _loading_adapter(client: LineageClient, events: list[str]) -> InfrahubAdapter:
@@ -92,7 +95,7 @@ def _loading_adapter(client: LineageClient, events: list[str]) -> InfrahubAdapte
 
 @pytest.mark.parametrize("concurrent_load", [True, False])
 def test_a_plan_reads_the_import_account_once(tmp_path: Path, *, concurrent_load: bool) -> None:
-    """FR-001: one `get_user()` per plan run, before either side is loaded, and no other read."""
+    """FR-001: one import account query per plan run, before either side is loaded, and no other read."""
     events: list[str] = []
     client = LineageClient()
     destination = _loading_adapter(client, events)
@@ -107,7 +110,7 @@ def test_a_plan_reads_the_import_account_once(tmp_path: Path, *, concurrent_load
 
     engine.load_both_sides()
 
-    assert client.calls == [("get_user", {})]
+    assert client.calls == [ACCOUNT_PROFILE_CALL]
     assert destination.lineage is not None
     assert destination.lineage.source.id == "account-1"
     assert sorted(events) == ["destination.load", "source.load"]
@@ -132,7 +135,7 @@ def test_named_source_and_owner_are_looked_up_by_kind_and_name() -> None:
     assert lineage.owner == ResolvedLineageNode(kind="CoreAccountGroup", name="network-team", id="group-1")
     assert lineage.protect is True
     assert client.calls == [
-        ("get_user", {}),
+        ACCOUNT_PROFILE_CALL,
         ("get", {"kind": "CoreRepository", "name__value": "inventory"}),
         ("get", {"kind": "CoreAccountGroup", "name__value": "network-team"}),
     ]
@@ -153,21 +156,38 @@ def test_a_named_node_that_does_not_exist_stops_resolution_without_a_fallback(se
 
 @pytest.mark.parametrize(
     "profile",
-    [{}, {"AccountProfile": None}, {"AccountProfile": {"display_label": "x"}}, {"AccountProfile": {"id": ""}}],
+    [{}, {"AccountProfile": None}, {"AccountProfile": {"name": {"value": "x"}}}, {"AccountProfile": {"id": ""}}],
 )
 def test_an_account_profile_without_an_id_is_refused(profile: object) -> None:
-    """An answer to `get_user()` that carries no account id stops resolution."""
+    """An answer to the import account query that carries no account id stops resolution."""
     adapter = make_adapter(LineageClient(profile=profile))
 
     with pytest.raises(ImportAccountUnreadableError):
         adapter.resolve_lineage()
 
 
-def test_an_account_profile_without_a_label_is_named_by_its_id() -> None:
-    """The account name falls back to the id when Infrahub returns no display label."""
+def test_an_account_profile_without_a_name_is_named_by_its_id() -> None:
+    """The account name falls back to the id when Infrahub returns no name."""
     adapter = make_adapter(LineageClient(profile={"AccountProfile": {"id": "account-9"}}))
 
     assert adapter.resolve_lineage().import_account == ImportAccount(id="account-9", name="account-9")
+
+
+def test_the_import_account_is_named_by_its_name_and_not_its_display_label() -> None:
+    """Infrahub labels the account `netbox` as `Netbox`; plans and refusals name the account `netbox`."""
+    profile = {"AccountProfile": {"id": "account-1", "display_label": "Netbox", "name": {"value": "netbox"}}}
+    adapter = make_adapter(LineageClient(profile=profile))
+
+    lineage = adapter.resolve_lineage()
+
+    assert lineage.import_account == ImportAccount(id="account-1", name="netbox")
+    assert lineage.source == ResolvedLineageNode(kind="CoreAccount", name="netbox", id="account-1")
+
+
+def test_the_import_account_query_selects_the_account_name() -> None:
+    """The query reads `AccountProfile`, which needs no permission on accounts, and selects `name`."""
+    assert "AccountProfile" in IMPORT_ACCOUNT_QUERY
+    assert "name { value }" in IMPORT_ACCOUNT_QUERY
 
 
 def test_refused_lineage_settings_stop_the_adapter_with_each_refusal_named() -> None:

@@ -426,7 +426,7 @@ the derived plan carries the create, update and delete those perturbations imply
 A second run against the same instance sees the first run's canary and fails in
 setup. Reset between runs.
 
-Two further qualifications need no source system, only `INFRAHUB_ADDRESS` and
+Three further qualifications need no source system, only `INFRAHUB_ADDRESS` and
 `INFRAHUB_API_TOKEN`:
 
 - `tests/integration/test_infrahub_replace_set_shrink_integration.py` — keyed
@@ -434,7 +434,15 @@ Two further qualifications need no source system, only `INFRAHUB_ADDRESS` and
 - `tests/integration/test_infrahub_keyed_write_integration.py` — a kind whose
   human-friendly ID crosses a relationship, created and then re-applied to prove it
   converges rather than duplicating; an update keyed by its recorded id, renaming in
-  place; and a recorded id the destination cannot find, refused with nothing written.
+  place; and a recorded id the destination cannot find, refused with nothing written;
+- `tests/integration/test_infrahub_lineage_integration.py` — an import account that holds
+  only its documented permissions: the values and edges it creates have it as source, the
+  nodes have it as `created_by`, an apply with another account's token is refused with
+  nothing written, and a removed permission is recorded as a missing permission. Its
+  `INFRAHUB_API_TOKEN` must be able to manage accounts and permissions, such as the initial
+  admin token, and anonymous access should be off. It creates accounts, roles, groups and
+  permissions on `main` and deletes them after each test.
+
   Each runs on a branch the test creates and deletes.
 
 The interface kinds are covered there: they are written like any other kind now, and

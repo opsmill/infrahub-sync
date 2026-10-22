@@ -499,7 +499,15 @@ Limits of the probe:
   query that matched no node; the permission check runs before the query, so the result does not
   change which permission is needed.
 - The source of written relationship edges was not read back; the attribute source and owner
-  were.
+  were. Task T019 read it back on 1.10.6: each `tags` edge an apply created has the import
+  account as source, no owner and `is_protected` `null`. SDK 1.23.2 leaves the edge `source`
+  unset on a cardinality-many relationship read with `property=True`, so the test reads the
+  edge `properties` with a GraphQL query of its own.
+- Task T019 found that the import account's name cannot come from `client.get_user()`: its
+  query selects only `display_label`, which Infrahub 1.10.6 renders from the account's `label`,
+  and Infrahub fills `label` from the name in title case (the account `admin` is labelled
+  `Admin`). The adapter sends its own `AccountProfile` query, selecting `id` and `name`, which
+  also passed for an account with no permission on accounts.
 - An object permission with decision `allow_all` (value 6, the sum of `allow_default` 2 and
   `allow_other` 4) should cover both branches; this was not tested.
 - The code before this feature looks up a `CoreAccount` named after the source system

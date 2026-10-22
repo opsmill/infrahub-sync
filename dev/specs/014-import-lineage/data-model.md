@@ -29,14 +29,14 @@ read.
 
 | Field | Type | Origin |
 |---|---|---|
-| `import_account` | account name and `id` | `client.get_user()`, always |
+| `import_account` | account name and `id` | the `AccountProfile` query (research R-7), always |
 | `source` | named node with `id` | the named source, or the import account |
 | `owner` | named node with `id`, or none | the named owner |
 | `protect` | boolean | the setting |
 
 - A named node that does not exist stops the run, in plan (FR-004) and in apply (FR-011). The
   cause names the setting, the kind and the name. Apply stops before any write.
-- In apply, the id from `client.get_user()` must equal the plan's `lineage.import_account.id`.
+- In apply, the id from the `AccountProfile` query must equal the plan's `lineage.import_account.id`.
   Otherwise apply refuses before any write, and the cause names both accounts (FR-012).
 - A plan made before this feature has no `lineage.import_account`. Apply refuses it before any
   write, and the cause asks for a new plan (FR-012).
@@ -50,7 +50,7 @@ absent on older plans; covered by the checksum (`infrahub_sync/plan/checksum.py:
 
 | Field | Type | Notes |
 |---|---|---|
-| `import_account` | `{name, id}` | the account from `client.get_user()`; apply compares `id` (FR-012) |
+| `import_account` | `{name, id}` | the account from the `AccountProfile` query; apply compares `id` (FR-012) |
 | `source` | `{kind, name}` | `kind` is `CoreAccount` when the source is the import account |
 | `owner` | `{kind, name}` or `null` | `null` when the package names no owner |
 | `protect` | boolean | |

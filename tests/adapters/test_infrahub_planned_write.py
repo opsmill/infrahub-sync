@@ -40,6 +40,7 @@ from infrahub_sdk.schema.main import (
 )
 
 from infrahub_sync.adapters.infrahub import (
+    IMPORT_ACCOUNT_QUERY,
     ImportAccount,
     InfrahubAdapter,
     InfrahubModel,
@@ -86,12 +87,12 @@ TEAM_KIND = "TestTeam"
 GROUP_KIND = "TestGroup"
 
 NODE_ID = "written-node-1"
-# The account `get_user()` answers for at the start of an apply.
+# The account the import account query answers for at the start of an apply.
 IMPORT_ACCOUNT_ID = "import-account-1"
 # The destination id a fixture update carries unless its case is about the id itself.
 DEFAULT_DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
-# The lineage a saved plan records: the import account `get_user()` answers for, so an apply
-# runs with the account the plan was made with (FR-012).
+# The lineage a saved plan records: the account the import account query answers for, so an
+# apply runs with the account the plan was made with (FR-012).
 RECORDED_LINEAGE: dict[str, Any] = {
     "import_account": {"name": "import-account", "id": IMPORT_ACCOUNT_ID},
     "source": {"kind": "CoreAccount", "name": "import-account"},
@@ -315,8 +316,14 @@ class RecordingClient(InfrahubClientSync):
     # -- the transport edge ------------------------------------------------------------
 
     def execute_graphql(self, *args: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401, ARG002
-        """Record the rendered mutation and answer as a successful write would."""
+        """Record the rendered mutation and answer as a successful write would.
+
+        The import account query that starts an apply is answered with the import account.
+        """
         query = kwargs["query"]
+        if query == IMPORT_ACCOUNT_QUERY:
+            self.events.append(("account_profile", None))
+            return {"AccountProfile": {"id": IMPORT_ACCOUNT_ID, "name": {"value": "import-account"}}}
         match = re.search(r"mutation\s*\{\s*(\w+)", query)
         if match is None:
             msg = f"Unrecognised mutation rendered by the SDK: {query!r}"
@@ -326,11 +333,6 @@ class RecordingClient(InfrahubClientSync):
         if self.write_error is not None and len(self.mutations) > self.write_error_after_mutations:
             raise self.write_error
         return {mutation_name: {"ok": True, "object": {"id": NODE_ID}}}
-
-    def get_user(self) -> dict[str, Any]:
-        """Answer the import account query that starts an apply, and record that it happened."""
-        self.events.append(("get_user", None))
-        return {"AccountProfile": {"id": IMPORT_ACCOUNT_ID, "display_label": "import-account"}}
 
     def get(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
         """Answer a destination read with the seeded peer set — and record that it happened.
@@ -948,15 +950,15 @@ def test_apply_resolves_lineage_before_the_first_write_and_writes_with_it(tmp_pa
 
     assert state == "applied"
     names = [name for name, _ in client.events]
-    assert names.count("get_user") == 1
-    assert names.index("get_user") < names.index("mutation")
+    assert names.count("account_profile") == 1
+    assert names.index("account_profile") < names.index("mutation")
     assert adapter.lineage is not None
     assert adapter.lineage.source.id == IMPORT_ACCOUNT_ID
     assert f'source: "{IMPORT_ACCOUNT_ID}"' in client.mutations[0][1]
 
 
 def test_an_apply_of_several_operations_reads_the_import_account_once(tmp_path: Path) -> None:
-    """FR-001: one `get_user()` per apply run, however many operations it writes."""
+    """FR-001: one import account query per apply run, however many operations it writes."""
     directory = apply_run_dir(tmp_path)
     records = [
         operation_record(kind=SITE_KIND, identity={"name": name}, payload={"name": name})
@@ -970,7 +972,7 @@ def test_an_apply_of_several_operations_reads_the_import_account_once(tmp_path: 
     assert state == "applied"
     names = [name for name, _ in client.events]
     assert names.count("mutation") == 3
-    assert names.count("get_user") == 1
+    assert names.count("account_profile") == 1
 
 
 def test_apply_resolves_lineage_again_rather_than_reusing_what_was_set(tmp_path: Path) -> None:

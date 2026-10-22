@@ -8,16 +8,18 @@ token in its headers.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
 from infrahub_sdk import Config, InfrahubClientSync
 from infrahub_sdk.exceptions import AuthenticationError, GraphQLError
-from infrahub_sdk.types import HTTPMethod
 
 from infrahub_sync.infrahub_errors import InfrahubErrorClassification, classify_infrahub_error
 from infrahub_sync.potenda import _operational_failure_summary  # noqa: PLC2701 -- the run's recorded cause
+
+if TYPE_CHECKING:
+    from infrahub_sdk.types import HTTPMethod
 
 TOKEN = "18795e9c-b6e7-4e2b-a0e9-token-canary"  # noqa: S105 -- a canary, not a credential
 ADDRESS = "http://infrahub.invalid"

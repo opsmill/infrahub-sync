@@ -134,9 +134,10 @@ class _InfrahubClient:
         self.created: list[tuple[str, dict[str, Any]]] = []
 
     @staticmethod
-    def get_user() -> dict[str, Any]:
-        """The import account behind the token, as `AccountProfile` answers it."""
-        return {"AccountProfile": {"id": "import-account-id", "display_label": "import-account"}}
+    def execute_graphql(*, query: str, operation_name: str | None = None) -> dict[str, Any]:
+        """The import account behind the token, as its `AccountProfile` query answers it."""
+        assert "AccountProfile" in query, f"unexpected GraphQL query {operation_name!r}"
+        return {"AccountProfile": {"id": "import-account-id", "name": {"value": "import-account"}}}
 
     @staticmethod
     def get(*_args: object, **kwargs: object) -> _Node:
