@@ -234,12 +234,16 @@ jobs:
           version: latest
           python-version: "3.13"
 
+      # The `testcontainers` extra is what tests/compose/test_testcontainers_fixture.py
+      # runs on: it starts Infrahub through infrahub-testcontainers and Sync through
+      # `infrahub_sync.testcontainers`.
       - name: "Install test dependencies"
-        run: uv sync --frozen --extra dev --extra prefect --extra service
+        run: uv sync --frozen --extra dev --extra prefect --extra service --extra testcontainers
 
       # The suite runs the root docker-compose.yml against the image this commit
       # builds, named the way an operator names a tag: INFRAHUB_SYNC_DOCKER_IMAGE
-      # and VERSION. It is never pulled: the engine already holds it.
+      # and VERSION. It is never pulled: the engine already holds it. The
+      # `TestInfrahubSyncDocker` classes read the same two variables.
       - name: "Build the image under test"
         run: docker build -t infrahub-sync:compose-test .
 
