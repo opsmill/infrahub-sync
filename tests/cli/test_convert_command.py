@@ -241,3 +241,77 @@ def test_source_url_flag_overrides_the_file(config_file: Path) -> None:
     assert "from --source-url" in stdout
     written = yaml.safe_load((config_file.parent / "package.yml").read_text(encoding="utf-8"))
     assert written["configuration"]["source"]["settings"]["url"] == "https://nb.internal"
+
+
+def test_no_visible_v2_variable_is_reported(config_file: Path) -> None:
+    code, stdout, stderr = _convert(str(config_file), "--yes")
+
+    assert code == 0, stderr
+    assert (
+        "  no v2 variable (NETBOX_ADDRESS, NETBOX_URL, INFRAHUB_ADDRESS, INFRAHUB_URL) is set here; "
+        "values come from config.yml or the flags"
+    ) in stdout.splitlines()
+
+
+# --- T021: refusals go to standard error, nothing is written, exit 1 (FR-015) -----------
+
+_CANARY = "canary-refused-credential-value"
+
+
+def test_refusal_prints_every_reason_to_stderr_in_the_contract_layout(tmp_path: Path) -> None:
+    source = tmp_path / "config.yml"
+    source.write_text(
+        yaml.safe_dump(
+            {
+                "name": "refused",
+                "source": {
+                    "name": "netbox",
+                    "adapter": "./custom_adapter.py:MockdbAdapter",
+                    "settings": {"url": "https://netbox.example.com", "token": _CANARY},
+                },
+                "destination": {
+                    "name": "peeringmanager",
+                    "settings": {"url": "https://peering.example.com", "token": _CANARY},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code, stdout, stderr = _convert(str(source), "--yes")
+
+    assert code == 1
+    assert not stdout
+    assert stderr.splitlines() == [
+        "error: config.yml cannot be converted (2 reasons)",
+        "  source.adapter          ./custom_adapter.py:MockdbAdapter   "
+        "custom adapters are not available in this release (INFP-654, planned for 3.0)",
+        "  destination.name        peeringmanager                      "
+        "V3 does not write to peeringmanager yet; this release writes only to Infrahub",
+    ]
+    assert _CANARY not in stderr
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["config.yml"]
+
+
+def test_refusal_without_a_printable_value_has_an_empty_value_column(tmp_path: Path) -> None:
+    source = tmp_path / "config.yml"
+    source.write_text(
+        yaml.safe_dump(
+            {
+                "name": "refused",
+                "source": {"name": "netbox", "settings": {"url": f"https://user:{_CANARY}@netbox.example.com"}},
+                "destination": {"name": "infrahub", "settings": {"url": "https://infrahub.example.com"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    code, _, stderr = _convert(str(source), "--yes")
+
+    assert code == 1
+    assert stderr.splitlines()[1] == (
+        f"  {'source.settings.url':<23} {'':<35} "
+        "the address holds a user name or password; remove it from the address and pass it as a credential"
+    )
+    assert _CANARY not in stderr
+    assert not (tmp_path / "package.yml").exists()

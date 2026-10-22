@@ -54,7 +54,7 @@ def _credential_section(result: ConversionResult) -> list[str]:
 
 def _setting_section(result: ConversionResult) -> list[str]:
     visible = result.visible_variables.names if result.visible_variables is not None else ()
-    if not result.setting_origins and not visible:
+    if not result.setting_origins and result.visible_variables is None:
         return []
     width = max((len(entry.value) for entry in result.setting_origins), default=0)
     lines = ["", "Settings taken from the environment or the file:"]
@@ -62,6 +62,10 @@ def _setting_section(result: ConversionResult) -> list[str]:
     lines.extend(f"  warning: {warning}" for entry in result.setting_origins for warning in entry.warnings)
     if visible:
         lines.append(f"  v2 variables visible here: {', '.join(visible)}")
+    elif result.visible_variables is not None:
+        looked_up = result.visible_variables.looked_up
+        names = f" ({', '.join(looked_up)})" if looked_up else ""
+        lines.append(f"  no v2 variable{names} is set here; values come from config.yml or the flags")
     return lines
 
 

@@ -264,9 +264,14 @@ class SettingOriginEntry:
 
 @dataclass(frozen=True, slots=True)
 class VisibleVariablesEntry:
-    """The v2 address and setting variables that were set where the command ran, names only."""
+    """The v2 address and setting variables that were set where the command ran, names only.
+
+    ``looked_up`` names the variables v2 read for the configuration's source and destination
+    adapters, so the report can name them when none was set (spec FR-013).
+    """
 
     names: tuple[str, ...]
+    looked_up: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,6 +342,14 @@ _COPIED_KEYS = frozenset({"name", "order", "diffsync_flags", "schema_mapping"})
 _DEFAULT_ADDRESS = EnvironmentSetting("url", (), "address")
 _ENV_VARS_SUFFIX = "_env_vars"
 _ENV_VARS_ADAPTERS = frozenset({"genericrestapi"})
+_ONLY_DESTINATION = "infrahub"
+_CUSTOM_ADAPTER_REASON = "custom adapters are not available in this release (INFP-654, planned for 3.0)"
+_PLACEHOLDER_REASON = (
+    "v2 did not read this setting from the environment and used the placeholder text as its value; "
+    "write the value in config.yml"
+)
+_SECRET_LIKE_KEY = re.compile(r"token|password|passwd|secret|key|auth|credential", re.IGNORECASE)
+_ROLE_ORDER: Mapping[str, int] = MappingProxyType({"source": 0, "destination": 1})
 
 _DROP_REASONS: Mapping[str, str] = MappingProxyType(
     {
@@ -364,14 +377,21 @@ class _Report:
     findings: list[ValidationFinding] = field(default_factory=list)
     credentials_block: dict[str, dict[str, str]] = field(default_factory=dict)
 
-    def result(self, package: dict[str, Any], visible_names: tuple[str, ...]) -> ConversionResult:
-        """Return the result: the package only when nothing was refused."""
+    def result(self, package: dict[str, Any], visible_variables: VisibleVariablesEntry) -> ConversionResult:
+        """Return the result: the package only when nothing was refused.
+
+        The refusals are ordered by location: the source first, then the destination, then
+        the rest; within each, in the order they were found, which follows the file.
+        """
+        refusals = sorted(
+            self.refusals, key=lambda item: _ROLE_ORDER.get(item.location.split(".", 1)[0], len(_ROLE_ORDER))
+        )
         return ConversionResult(
-            package=None if self.refusals else package,
-            refusals=tuple(self.refusals),
+            package=None if refusals else package,
+            refusals=tuple(refusals),
             credentials=tuple(self.credentials),
             setting_origins=tuple(self.setting_origins),
-            visible_variables=VisibleVariablesEntry(visible_names),
+            visible_variables=visible_variables,
             dropped=tuple(self.dropped),
             notes=tuple(self.notes),
             findings=tuple(self.findings),
@@ -426,7 +446,17 @@ def convert_v2_configuration(
     if not report.refusals:
         _check_package(package, report)
     names = tuple(name for name in V2_NON_CREDENTIAL_VARIABLES if visible.get(name))
-    return report.result(package, names)
+    return report.result(package, VisibleVariablesEntry(names, _looked_up_variables(data)))
+
+
+def _looked_up_variables(data: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return the v2 address and setting variables of the source and destination adapters, once each."""
+    names: dict[str, None] = {}
+    for role in ("source", "destination"):
+        for row in V2_ENVIRONMENT_FIRST.get(data[role]["name"], ()):
+            if row.kind != "credential":
+                names.update(dict.fromkeys(row.variables))
+    return tuple(names)
 
 
 def _check_shape(data: Mapping[str, Any]) -> None:
@@ -476,6 +506,11 @@ def _convert_adapter(
     """Convert one ``source`` or ``destination`` block."""
     name: str = block["name"]
     converted: dict[str, Any] = {"name": name}
+    capabilities = BUILTIN_ADAPTER_CAPABILITIES.get(name)
+    if capabilities is None:
+        report.refusals.append(RefusalEntry(f"{role}.name", _not_bundled_reason(name), name))
+    elif role == "destination" and name != _ONLY_DESTINATION:
+        report.refusals.append(RefusalEntry(f"{role}.name", _destination_reason(name), name))
     adapter = block.get("adapter")
     if adapter is not None:
         if _is_bundled_module(adapter, name):
@@ -483,12 +518,10 @@ def _convert_adapter(
                 NoteEntry(f"{role}.adapter names the module of the bundled {name} adapter; V3 uses its bundled adapter")
             )
         else:
-            # Refused by the pre-write check until the adapter refusals name it (FR-015).
-            converted["adapter"] = adapter
-    capabilities = BUILTIN_ADAPTER_CAPABILITIES.get(name)
+            report.refusals.append(RefusalEntry(f"{role}.adapter", _CUSTOM_ADAPTER_REASON, _printable(adapter)))
     if capabilities is None:
-        # No settings are carried for an adapter V3 does not bundle: they could hold a
-        # credential, and the pre-write check refuses the name.
+        # The settings of an adapter V3 does not bundle are not read: any of them could hold
+        # a credential, and the name is already refused.
         converted["settings"] = {}
         return converted
     settings: Mapping[str, Any] = block.get("settings") or {}
@@ -498,10 +531,57 @@ def _convert_adapter(
 
 def _is_bundled_module(adapter: object, name: str) -> bool:
     """Return whether ``adapter`` names the bundled module of adapter ``name`` (research R7)."""
-    if not isinstance(adapter, str):
+    if not isinstance(adapter, str) or name not in BUILTIN_ADAPTER_CAPABILITIES:
         return False
     module = adapter.split(":", 1)[0]
     return module == f"{_BUNDLED_MODULE_PREFIX}{name}"
+
+
+def _not_bundled_reason(name: str) -> str:
+    return (
+        f"{name} is not a bundled adapter; the bundled adapters are {', '.join(sorted(BUILTIN_ADAPTER_CAPABILITIES))}"
+    )
+
+
+def _destination_reason(name: str) -> str:
+    return f"V3 does not write to {name} yet; this release writes only to Infrahub"
+
+
+def _printable(value: object) -> str | None:
+    """Return a scalar value as text for a refusal, or ``None`` for a mapping or a list."""
+    if isinstance(value, (str, int, float, bool)):
+        return str(value)
+    return None
+
+
+def _holds_placeholder(value: object) -> bool:
+    """Return whether a ``${NAME}`` placeholder appears anywhere in a setting value."""
+    if isinstance(value, str):
+        return _PLACEHOLDER.search(value) is not None
+    if isinstance(value, dict):
+        return any(_holds_placeholder(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_holds_placeholder(item) for item in value)
+    return False
+
+
+def _refuse_other_setting(name: str, key: str, value: object, location: str, report: _Report) -> bool:
+    """Refuse a setting the bundled adapter does not accept, or that holds a placeholder v2 did not read.
+
+    The value of a setting not accepted is left out when its name suggests a secret, because
+    such a setting is not declared as a credential and its value could still be one.
+    """
+    capabilities = BUILTIN_ADAPTER_CAPABILITIES[name]
+    if key not in capabilities.allowed_settings:
+        value_text = None if _SECRET_LIKE_KEY.search(key) else _printable(value)
+        report.refusals.append(
+            RefusalEntry(location, f"the bundled {name} adapter does not accept this setting", value_text)
+        )
+        return True
+    if _holds_placeholder(value):
+        report.refusals.append(RefusalEntry(location, _PLACEHOLDER_REASON, _printable(value)))
+        return True
+    return False
 
 
 def _environment_settings(name: str) -> dict[str, EnvironmentSetting]:
@@ -535,7 +615,7 @@ def _convert_settings(  # pylint: disable=too-many-arguments,too-many-positional
             )
         elif name in _ENV_VARS_ADAPTERS and key.endswith(_ENV_VARS_SUFFIX):
             report.dropped.append(DroppedEntry(location, _ENV_VARS_REASON))
-        else:
+        elif not _refuse_other_setting(name, key, value, location, report):
             converted[key] = copy.deepcopy(value)
     for key in credential_settings:
         if key not in settings:

@@ -703,3 +703,149 @@ def test_v1_netbox_example_converts_like_the_v2_example() -> None:
     assert "incremental" not in v1_configuration
     assert _credential(v1_result, "source.settings.token").origin == "literal"
     assert _credential(v2_result, "source.settings.token").origin == "variable"
+
+
+# --- T020: refusals (FR-015, FR-016) ----------------------------------------------------
+
+_BUNDLED_NAMES = ", ".join(sorted(BUILTIN_ADAPTER_CAPABILITIES))
+_CUSTOM_ADAPTER_REASON = "custom adapters are not available in this release (INFP-654, planned for 3.0)"
+
+
+def _with_source_adapter(adapter: str) -> dict[str, Any]:
+    data = _config()
+    data["source"]["adapter"] = adapter
+    return data
+
+
+def _with_destination(name: str, settings: dict[str, Any]) -> dict[str, Any]:
+    data = _config()
+    data["destination"] = {"name": name, "settings": settings}
+    return data
+
+
+_REFUSAL_CASES: list[tuple[dict[str, Any], str, str | None, str]] = [
+    (
+        _config({"db_path": "./mock_db.json"}, source_name="mockdb"),
+        "source.name",
+        "mockdb",
+        f"mockdb is not a bundled adapter; the bundled adapters are {_BUNDLED_NAMES}",
+    ),
+    (
+        _with_source_adapter("./custom_adapter.py:MockdbAdapter"),
+        "source.adapter",
+        "./custom_adapter.py:MockdbAdapter",
+        _CUSTOM_ADAPTER_REASON,
+    ),
+    (
+        _with_source_adapter("my_company.adapters.netbox:NetboxAdapter"),
+        "source.adapter",
+        "my_company.adapters.netbox:NetboxAdapter",
+        _CUSTOM_ADAPTER_REASON,
+    ),
+    (_with_source_adapter("mockdb_plugin"), "source.adapter", "mockdb_plugin", _CUSTOM_ADAPTER_REASON),
+    (
+        _with_source_adapter("infrahub_sync.adapters.nautobot"),
+        "source.adapter",
+        "infrahub_sync.adapters.nautobot",
+        _CUSTOM_ADAPTER_REASON,
+    ),
+    (
+        _with_destination("peeringmanager", {"url": "https://peering.example.com"}),
+        "destination.name",
+        "peeringmanager",
+        "V3 does not write to peeringmanager yet; this release writes only to Infrahub",
+    ),
+    (
+        _config({"url": "https://netbox.example.com", "site_filter": "paris"}),
+        "source.settings.site_filter",
+        "paris",
+        "the bundled netbox adapter does not accept this setting",
+    ),
+    (
+        _config(destination_settings={"url": "http://infrahub.example.com:8000", "branch": "${SYNC_BRANCH}"}),
+        "destination.settings.branch",
+        "${SYNC_BRANCH}",
+        "v2 did not read this setting from the environment and used the placeholder text as its value; "
+        "write the value in config.yml",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("data", "location", "value", "reason"),
+    _REFUSAL_CASES,
+    ids=[
+        "name-not-bundled",
+        "adapter-filesystem-path",
+        "adapter-dotted-path",
+        "adapter-entry-point",
+        "adapter-module-of-another-adapter",
+        "destination-peeringmanager",
+        "unaccepted-setting",
+        "placeholder-not-read-by-v2",
+    ],
+)
+def test_refusal(data: dict[str, Any], location: str, value: str | None, reason: str) -> None:
+    result = _convert(data)
+    assert result.package is None
+    assert [(item.location, item.value, item.reason) for item in result.refusals] == [(location, value, reason)]
+
+
+def test_every_refusal_in_one_file_is_reported_in_location_order() -> None:
+    data: dict[str, Any] = {
+        "name": "everything-refused",
+        "destination": {"name": "peeringmanager", "settings": {"url": "https://peering.example.com"}},
+        "source": {
+            "name": "netbox",
+            "adapter": "./custom_adapter.py:MockdbAdapter",
+            "settings": {
+                "url": "https://netbox.example.com",
+                "site_filter": "paris",
+                "verify_ssl": "${NETBOX_VERIFY}",
+            },
+        },
+    }
+    first = _convert(data)
+    second = _convert(copy.deepcopy(data))
+    assert first.package is None
+    assert [(item.location, item.value) for item in first.refusals] == [
+        ("source.adapter", "./custom_adapter.py:MockdbAdapter"),
+        ("source.settings.site_filter", "paris"),
+        ("source.settings.verify_ssl", "${NETBOX_VERIFY}"),
+        ("destination.name", "peeringmanager"),
+    ]
+    assert first.refusals == second.refusals
+
+
+def test_unbundled_names_on_both_sides_are_both_reported() -> None:
+    data = _config({"db_path": "./mock_db.json"}, source_name="mockdb")
+    data["destination"] = {"name": "mysink", "settings": {"url": "https://sink.example.com"}}
+    data["source"]["adapter"] = "./custom_adapter.py:MockdbAdapter"
+    result = _convert(data)
+    assert [item.location for item in result.refusals] == ["source.name", "source.adapter", "destination.name"]
+    assert all(_BUNDLED_NAMES in item.reason for item in result.refusals if item.location.endswith(".name"))
+
+
+def test_generic_rest_env_vars_settings_are_not_refused_as_unaccepted() -> None:
+    settings = {"url": "https://rest.example.com", "api_endpoint": "/api", "url_env_vars": ["CUSTOM_URL"]}
+    result = _convert(_config(settings, source_name="genericrestapi"))
+    assert all(item.location != "source.settings.url_env_vars" for item in result.refusals)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        _with_destination("peeringmanager", {"url": "https://peering.example.com", "token": _CANARY}),
+        _with_source_adapter("./custom_adapter.py:MockdbAdapter"),
+        _config({"db_path": "./mock_db.json", "token": _CANARY, "password": _CANARY}, source_name="mockdb"),
+        _config({"url": "https://netbox.example.com", "token": _CANARY, "site_filter": "paris"}),
+        _config({"url": f"https://user:{_CANARY}@netbox.example.com", "token": _CANARY}),
+    ],
+    ids=["destination", "adapter", "unbundled-name", "unaccepted-setting", "address-user-information"],
+)
+def test_a_refusal_never_carries_a_credential_value(data: dict[str, Any]) -> None:
+    data["source"]["settings"]["token"] = _CANARY
+    result = _convert(data)
+    assert result.package is None
+    assert result.refusals
+    assert _CANARY not in repr(result)

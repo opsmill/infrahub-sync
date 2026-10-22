@@ -81,13 +81,13 @@ step 2).
 
 ### Tests for User Story 2
 
-- [ ] T020 [P] [US2] In `tests/configuration/test_conversion.py`, parametrize one fixture per refusal: a name that is not bundled (reason lists the bundled names), `adapter:` as a filesystem path, a dotted path and an entry point (reason cites INFP-654 and 3.0), destination `peeringmanager` ("V3 does not write to `peeringmanager` yet; this release writes only to Infrahub"), an unaccepted adapter setting, a placeholder in a setting v2 did not read from the environment; plus one fixture holding all of them that yields every reason; plus a check that a refusal never carries a credential setting's value (FR-015, FR-016)
-- [ ] T021 [P] [US2] In `tests/cli/test_convert_command.py`, test that a refusal prints to standard error in the contract's layout, writes no file and exits 1
+- [X] T020 [P] [US2] In `tests/configuration/test_conversion.py`, parametrize one fixture per refusal: a name that is not bundled (reason lists the bundled names), `adapter:` as a filesystem path, a dotted path and an entry point (reason cites INFP-654 and 3.0), destination `peeringmanager` ("V3 does not write to `peeringmanager` yet; this release writes only to Infrahub"), an unaccepted adapter setting, a placeholder in a setting v2 did not read from the environment; plus one fixture holding all of them that yields every reason; plus a check that a refusal never carries a credential setting's value (FR-015, FR-016)
+- [X] T021 [P] [US2] In `tests/cli/test_convert_command.py`, test that a refusal prints to standard error in the contract's layout, writes no file and exits 1
 
 ### Implementation for User Story 2
 
-- [ ] T022 [US2] Implement refusal collection in `infrahub_sync/configuration/conversion.py` so every refusal in the file is gathered before returning, and `package` is empty whenever a refusal exists (FR-015)
-- [ ] T023 [US2] Print refusals in `infrahub_sync/cli.py` per the contract's refusal layout, with an empty value column for credential settings
+- [X] T022 [US2] Implement refusal collection in `infrahub_sync/configuration/conversion.py` so every refusal in the file is gathered before returning, and `package` is empty whenever a refusal exists (FR-015)
+- [X] T023 [US2] Print refusals in `infrahub_sync/cli.py` per the contract's refusal layout, with an empty value column for credential settings
 
 **Checkpoint**: User Stories 1 and 2 work independently; quickstart.md step 2 passes.
 
