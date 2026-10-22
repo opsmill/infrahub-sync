@@ -15,7 +15,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -33,14 +33,13 @@
 
 ## Notes
 
-- One [NEEDS CLARIFICATION] marker remains in FR-007: the oldest Infrahub version that records
-  `updated_by` and `updated_at` on attributes and relationships. It is kept on purpose for the
-  `/speckit-clarify` round.
+- The [NEEDS CLARIFICATION] marker in FR-007 was resolved in the clarification session of
+  2026-10-22. The oldest Infrahub version an import supports stays open for planning.
 - The spec names Infrahub kinds (`CoreAccount`, `CoreAccountGroup`), configuration keys (`source`,
   `owner`, `protect`) and metadata fields (`updated_by`, `updated_at`, `created_by`). These are the
   operator's vocabulary, not implementation choices. Code paths appear only in the Summary,
-  Decisions and Sources sections as evidence for the current behavior.
+  Decisions, Edge Cases, Assumptions and Sources sections as evidence for Infrahub behavior.
 - FR-008 and SC-006 name HTTP 403 because the operator sees that response code; the brief states it
   this way.
-- The lineage recorded for resource-pool allocations is not known from the brief (D-6 names only the
-  exception); planning needs to settle it.
+- The lineage of resource-pool allocations was settled in the clarification session of
+  2026-10-22.

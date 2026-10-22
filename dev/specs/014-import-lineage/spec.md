@@ -28,8 +28,21 @@ import record the account behind its token as the source, sets an owner only whe
 names one, stops the run when a named source or owner does not exist, makes protection an opt-in,
 and shows in the plan who last changed each value the run proposes to change.
 
-Not decided yet: the oldest Infrahub version that records who last changed an attribute or a
-relationship and when (see FR-007).
+Not decided yet: the oldest Infrahub version an import supports. Planning decides it.
+
+## Clarifications
+
+### Session 2026-10-22
+
+- Q: What does the plan show when Infrahub holds no `updated_by` or `updated_at` for a value? → A:
+  The plan shows "not recorded" for the missing field and continues, on any Infrahub version.
+- Q: What lineage does the import write on an edge allocated from a resource pool? → A: The import
+  sends no source, owner or protection flag on that edge, and the pool stays its source.
+- Q: Which values does the owner setting cover as "values the run creates"? → A: The attributes of
+  nodes the run creates, and every relationship edge the run adds, including edges on nodes that
+  already exist.
+- Q: Which kinds can a package name as source or owner? → A: `CoreAccount`, `CoreAccountGroup`,
+  `CoreRepository` and `CoreReadOnlyRepository`.
 
 ## Decisions carried over from the brief
 
@@ -60,7 +73,8 @@ relationship and when (see FR-007).
   are the exception, and the documentation says so.
 - **D-7.** A source or owner is named as `{kind, name}`, and a bare name is refused when the package
   is registered.
-  - Allowed kinds: `CoreAccount`, `CoreAccountGroup` and the repository kinds.
+  - Allowed kinds: `CoreAccount`, `CoreAccountGroup` and the repository kinds (`CoreRepository`
+    and `CoreReadOnlyRepository`, see Clarifications).
   - At the start of the plan, before the source system is read, the import looks up each named
     node.
 - **D-8.** The import never changes an existing owner, including an empty one. The plan's summary
@@ -123,6 +137,10 @@ an import that creates a device; then rename the group so it no longer exists an
    allowed list, **When** the operator registers the package, **Then** the registration is refused.
 5. **Given** a package that names an owner, **When** the operator views the plan's summary,
    **Then** the summary says that the owner setting applies only to values the run creates.
+6. **Given** a package with `owner: {kind: CoreAccountGroup, name: network-team}` and a device that
+   already exists, **When** the import adds a relationship edge to that device, **Then** the new
+   edge has owner `network-team`, and the owners of the device's existing attributes and edges do
+   not change.
 
 ---
 
@@ -145,6 +163,9 @@ plan the next run and view the plan's detail.
    and `updated_at`.
 2. **Given** a proposed change to a relationship, **When** the operator views the plan's detail,
    **Then** the change shows the relationship's `updated_by` and `updated_at`.
+3. **Given** a value whose `updated_by` Infrahub did not record, **When** the operator views the
+   plan's detail, **Then** the proposed change shows "not recorded" for that field, and the plan
+   continues.
 
 ---
 
@@ -181,10 +202,16 @@ protection flag of the values written and of a value protected earlier.
 - **Imports that share one token**: `updated_by` cannot tell them apart. The documentation says so.
 - **A value with an empty owner**: the import does not set an owner on it, even when the package
   names one (D-8).
-- **Resource-pool allocations**: they do not follow the attribute rules (D-6). How their lineage is
-  recorded is not known from the brief; the documentation states the exception.
-- **An Infrahub version that does not record `updated_by` and `updated_at` on attributes and
-  relationships**: what the plan shows is not known yet (see FR-007).
+- **A relationship edge added to a node that already exists**: the edge is a value the run creates,
+  so it gets the named owner. The owners of the node's existing values do not change.
+- **Resource-pool allocations**: they do not follow the attribute rules (D-6). On an edge allocated
+  from a resource pool, the import sends no source, owner or protection flag, and the pool stays
+  the source that Infrahub records
+  (`../infrahub/backend/infrahub/core/relationship/model.py:643`). The documentation states the
+  exception.
+- **No `updated_by` or `updated_at` recorded for a value**: this happens on Infrahub versions before
+  1.7.0, and on 1.7.0 or later for a value last changed before the upgrade. The plan shows "not
+  recorded" for the missing field and continues.
 
 ## Requirements *(mandatory)*
 
@@ -194,11 +221,14 @@ protection flag of the values written and of a value protected earlier.
   relationship edge it writes, unless the package names a source.
   - Test: import with a dedicated token, then read the source of the written values.
 - **FR-002**: The import MUST set an owner only when the package names one, and only on values it
-  creates.
-  - Test: create values with and without an owner setting; then update the values with an owner
-    setting present and check that the owners do not change.
+  creates: the attributes of nodes the run creates, and every relationship edge the run adds,
+  including edges on nodes that already exist.
+  - Test: create values with and without an owner setting; add an edge to an existing node with an
+    owner setting present; then update the values with an owner setting present and check that the
+    owners do not change.
 - **FR-003**: Registration MUST refuse a `source` or `owner` given as a bare name, and a kind
-  outside the allowed list (`CoreAccount`, `CoreAccountGroup` and the repository kinds).
+  outside the allowed list: `CoreAccount`, `CoreAccountGroup`, `CoreRepository` and
+  `CoreReadOnlyRepository`.
   - Test: register packages using each form.
 - **FR-004**: The plan MUST stop before it reads the source system when a named source or owner does
   not exist. The cause MUST name the setting, the kind and the name. The plan MUST NOT fall back to
@@ -212,10 +242,10 @@ protection flag of the values written and of a value protected earlier.
   - Test: check the inputs the import sends to Infrahub, and check that a value protected earlier
     keeps its flag.
 - **FR-007**: The plan's detail MUST show `updated_by` and `updated_at` for each proposed change to
-  an attribute or a relationship. [NEEDS CLARIFICATION: the oldest Infrahub version that records
-  `updated_by` and `updated_at` on attributes and relationships, starting from migration
-  `m050_backfill_vertex_metadata`. This decides what the plan shows on older versions.]
-  - Test: change a value as another account, then plan.
+  an attribute or a relationship. When Infrahub holds no value for one of these fields, the plan
+  MUST show "not recorded" for it and continue, on any Infrahub version.
+  - Test: change a value as another account, then plan; plan a change to a value with no recorded
+    `updated_by`.
 - **FR-008**: The run MUST record an HTTP 403 as a missing permission, quoting the permission
   Infrahub names. Only a refused credential MUST be recorded as a token problem.
   - Test: one test for each response code.
@@ -226,7 +256,8 @@ protection flag of the values written and of a value protected earlier.
   - the read permission each allowed source or owner kind needs;
   - what `protect` does with an owner and without one;
   - that values written before this release keep their protection;
-  - the resource-pool exception;
+  - the resource-pool exception: on an allocated edge the import sends no source, owner or
+    protection flag, and the pool stays the source;
   - how to set the owner of existing data.
 
 ### Key Entities
@@ -234,7 +265,7 @@ protection flag of the values written and of a value protected earlier.
 - **Import account** (existing): the Infrahub account behind the token. It is the default source,
   and Infrahub records it as `created_by` and `updated_by`.
 - **Named source or owner** (existing setting, new form): `{kind, name}`, where the kind is
-  `CoreAccount`, `CoreAccountGroup` or a repository kind.
+  `CoreAccount`, `CoreAccountGroup`, `CoreRepository` or `CoreReadOnlyRepository`.
 - **Attribute and relationship lineage** (existing in Infrahub): source, owner, protection flag,
   `updated_by` and `updated_at`.
 - **Node metadata** (existing in Infrahub): `created_at`, `created_by`, `updated_at` and
@@ -276,6 +307,24 @@ protection flag of the values written and of a value protected earlier.
 - Every import is expected to run with its own account.
 - The v2 conversion brief translates `source` and `owner` into `{kind: CoreAccountGroup, name}`.
   That brief is being worked on separately.
+- Infrahub records `updated_by` and `updated_at` on attributes and relationships from version
+  1.7.0, and does not backfill `updated_by`:
+  - the GraphQL fields came in with commits 6092620bb6 (2025-11-19, "IFC-1940: Add metadata to
+    graphql response"), c2e78ce106 and 134027ca4d; the first tag that contains them is
+    `infrahub-v1.7.0b0`;
+  - migration `m050_backfill_vertex_metadata`
+    (`../infrahub/backend/infrahub/core/migrations/graph/m050_backfill_vertex_metadata.py`, added
+    as `m049_backfill_vertex_metadata` in commit 480b930e0d, PR #7928) first ships in
+    `infrahub-v1.7.0b0`; it backfills only `created_at` and `updated_at`, on the default and
+    global branches;
+  - the 1.7.0 release notes
+    (`../infrahub/docs/docs/release-notes/infrahub/release-1_7_0.mdx`, lines 45-46) say that
+    `created_by` and `updated_by` are set only for changes made after the release.
+- The oldest Infrahub version an import supports is not known. Planning decides it.
+- `CoreAccount`, `CoreAccountGroup`, `CoreRepository` and `CoreReadOnlyRepository` can be both a
+  source and an owner in Infrahub
+  (`../infrahub/backend/infrahub/core/schema/definitions/core/account.py:30`,
+  `permission.py:172`, `repository.py:37` and `:246`).
 - The `protect` setting and the `{kind, name}` form are set once for the whole configuration; a
   setting for each attribute is out of scope.
 
