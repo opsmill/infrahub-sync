@@ -1,0 +1,221 @@
+---
+name: from-ipfabric
+source:
+  name: ipfabricsync
+  settings:
+    base_url: "https://<IPFABRIC-ENDPOINT>"
+    auth: "<TOKEN>"
+
+destination:
+  name: infrahub
+  settings:
+    url: "http://localhost:8000"
+
+# order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
+# Uncomment and edit only if you need to override the computed order:
+# order: [
+#   "LocationGeneric",
+#   "OrganizationGeneric",
+#   "InfraPlatform",
+#   "ChoiceDeviceType",
+#   "InfraNOSVersion",
+#   "InfraDevice",
+#   "InfraPartNumber",
+#   "InfraVLAN",
+#   "InfraVRF",
+#   "InfraInterfaceL3",
+#   "InfraPrefix",
+#   "InfraIPAddress",
+# ]
+
+schema_mapping:
+  - name: LocationGeneric
+    mapping: tables/inventory/sites
+    fields:
+      - name: name
+        mapping: siteName
+      - name: description
+        mapping: name
+      - name: type
+        static: "Site"
+
+  - name: OrganizationGeneric
+    mapping: tables/inventory/summary/vendors
+    fields:
+      - name: name
+        mapping: vendor
+      - name: type
+        static: "Vendor"
+
+  - name: InfraPlatform
+    mapping: tables/inventory/summary/platforms
+    fields:
+      - name: name
+        mapping: platform
+      - name: description
+        static: "Platform"
+
+  - name: ChoiceDeviceType
+    mapping: tables/inventory/summary/models
+    identifiers: ["name", "manufacturer"]
+    fields:
+      - name: name
+        mapping: model
+      - name: description
+        static: "Device Choice"
+      - name: manufacturer
+        mapping: vendor
+        reference: OrganizationGeneric
+
+  - name: InfraNOSVersion
+    identifiers: ["manufacturer", "model", "version"]
+    filters:
+      - field: version
+        operation: is_not_empty
+    # mapping: tables/management/osver-consistency # This is for version <7.0 of IPFabric.
+    mapping: tables/inventory/os-version-consistency/platforms # This is for versions >= 7.0 of IPFabric.
+    fields:
+      - name: version
+        mapping: version
+      - name: manufacturer
+        mapping: vendor
+        reference: OrganizationGeneric
+      - name: platform
+        mapping: platform
+        reference: InfraPlatform
+      - name: model
+        mapping: model
+        reference: ChoiceDeviceType
+
+  - name: InfraDevice
+    identifiers: ["hostname"]
+    mapping: tables/inventory/devices
+    fields:
+      - name: hostname
+        mapping: hostname
+      - name: serial_number
+        mapping: sn
+      - name: hardware_serial_number
+        mapping: snHw
+      - name: fqdn
+        mapping: fqdn
+      - name: model
+        mapping: model
+        reference: ChoiceDeviceType
+      # - name: status
+      #   mapping: status
+      #   reference: StatusGeneric
+      - name: location
+        mapping: siteName
+        reference: LocationGeneric
+      - name: platform
+        mapping: platform
+        reference: InfraPlatform
+      - name: version
+        mapping: version
+        reference: InfraNOSVersion
+
+  - name: InfraPartNumber
+    identifiers: ["device", "name"]
+    mapping: tables/inventory/pn
+    fields:
+      - name: name
+        mapping: name
+      - name: description
+        mapping: dscr
+      - name: part_id
+        mapping: pid
+      - name: part_sn
+        mapping: sn
+      - name: part_vid
+        mapping: vid
+      - name: manufacturer
+        mapping: vendor
+        reference: OrganizationGeneric
+      - name: model
+        mapping: model
+        reference: ChoiceDeviceType
+      - name: device
+        mapping: hostname
+        reference: InfraDevice
+
+  - name: InfraVLAN
+    identifiers: ["location", "vlan_id"]
+    mapping: tables/vlan/site-summary
+    fields:
+      - name: name
+        mapping: vlanName
+      - name: description
+        mapping: dscr
+      - name: vlan_id
+        mapping: vlanId
+      - name: location
+        mapping: siteName
+        reference: LocationGeneric
+
+  - name: InfraVRF
+    identifiers: ["name"]
+    mapping: tables/vrf/detail
+    fields:
+      - name: name
+        mapping: vrf
+      - name: vrf_rd
+        mapping: rd
+
+  - name: InfraInterfaceL3
+    identifiers: ["device", "name"]
+    mapping: tables/inventory/interfaces
+    fields:
+      - name: device
+        mapping: hostname
+        reference: InfraDevice
+      - name: name
+        mapping: intName
+      - name: description
+        mapping: dscr
+      - name: speed
+        mapping: speedValue
+      - name: mtu
+        mapping: mtu
+      - name: mac_address
+        mapping: mac
+
+  - name: InfraPrefix
+    identifiers: ["vrf", "prefix"]
+    filters:
+      - field: net
+        operation: is_not_empty
+    mapping: tables/networks
+    fields:
+      - name: prefix
+        mapping: net
+      - name: vrf
+        mapping: vrf
+        reference: InfraVRF
+      - name: vlan
+        mapping: vlanId
+        reference: InfraVLAN
+      - name: location
+        mapping: siteName
+        reference: LocationGeneric
+
+  - name: InfraIPAddress
+    identifiers: ["interface", "address"]
+    filters:
+      - field: net
+        operation: is_not_empty
+    transforms:
+      - field: address
+        expression: "{{ ip }}/{{ net.split('/')[1] }}"
+    mapping: tables/addressing/managed-devs
+    fields:
+      - name: address
+        mapping: address
+      - name: description
+        mapping: dscr
+      - name: prefix
+        mapping: net
+        reference: InfraPrefix
+      - name: interface
+        mapping: intName
+        reference: InfraInterfaceL3

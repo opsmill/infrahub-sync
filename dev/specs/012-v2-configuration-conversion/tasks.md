@@ -23,9 +23,9 @@ Source in `infrahub_sync/`, tests in `tests/`, nightly scripts in `.github/scrip
 
 ## Phase 1: Setup
 
-- [ ] T001 [P] Copy each v2 example `config.yml` from the `2.0.2` tag into `tests/data/v2_examples/<example directory>/config.yml` (14 files, `git show 2.0.2:examples/<dir>/config.yml`), and the v1 NetBox example from `1.6.1` into `tests/data/v2_examples/v1_netbox_to_infrahub/config.yml`; add `tests/data/v2_examples/README.md` naming the tags and saying the files must not be edited
-- [ ] T002 [P] Create `tests/data/v2_gate/expected_deletes.yml` as an empty list, with a header comment giving the entry format (`kind`, `identity`, `reason`) and the rule that an entry is added only with a reason accepted in review (data-model.md)
-- [ ] T003 Create `infrahub_sync/configuration/conversion.py` with the module docstring and the typed, frozen result types from data-model.md "Conversion result": `ConversionResult`, `CredentialEntry`, `SettingOriginEntry`, `VisibleVariablesEntry`, `DroppedEntry`, `NoteEntry`, `RefusalEntry`, and the exception `ConversionInputError`; no logic yet
+- [X] T001 [P] Copy each v2 example `config.yml` from the `2.0.2` tag into `tests/data/v2_examples/<example directory>/config.yml` (14 files, `git show 2.0.2:examples/<dir>/config.yml`), and the v1 NetBox example from `1.6.1` into `tests/data/v2_examples/v1_netbox_to_infrahub/config.yml`; add `tests/data/v2_examples/README.md` naming the tags and saying the files must not be edited
+- [X] T002 [P] Create `tests/data/v2_gate/expected_deletes.yml` as an empty list, with a header comment giving the entry format (`kind`, `identity`, `reason`) and the rule that an entry is added only with a reason accepted in review (data-model.md)
+- [X] T003 Create `infrahub_sync/configuration/conversion.py` with the module docstring and the typed, frozen result types from data-model.md "Conversion result": `ConversionResult`, `CredentialEntry`, `SettingOriginEntry`, `VisibleVariablesEntry`, `DroppedEntry`, `NoteEntry`, `RefusalEntry`, and the exception `ConversionInputError`; no logic yet
 
 ---
 
