@@ -130,6 +130,14 @@ ipfabric = [
 slurpit = [
     "slurpit-sdk>=0.9.52,<0.10; python_version >= '3.11'",
 ]
+# The CI end-to-end fixture `TestInfrahubSyncDocker` inherits Infrahub's
+# `TestInfrahubDocker`. `infrahub-testcontainers` pins `prefect-client` exactly;
+# that pin must equal the `prefect` pin above, which `tests/test_release_pin.py`
+# checks in `uv.lock`. Move both pins together.
+testcontainers = [
+    "infrahub-testcontainers>=1.11.8,<2; python_version >= '3.11'",
+    "testcontainers>=4.8,<4.9; python_version >= '3.11'",
+]
 dev = [
     "yamllint>=1.37.1",
     "pylint>=3.3",
@@ -150,6 +158,8 @@ dev = [
     "types-python-slugify>=8.0.2.20240310",
     "towncrier>=24.8,<27",
     "rumdl>=0.1.68",
+    "infrahub-testcontainers>=1.11.8,<2; python_version >= '3.11'",
+    "testcontainers>=4.8,<4.9; python_version >= '3.11'",
 ]
 
 [tool.uv]

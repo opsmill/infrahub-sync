@@ -19,7 +19,12 @@ MAIN_DIRECTORY = CURRENT_DIRECTORY.parent
 @task
 def tests_unit(context: Context) -> None:
     """Run tests excluding the integration, preview, Docker, and Compose markers."""
-    command = 'pytest -m "not integration and not preview and not docker and not compose"'
+    # `infrahub-testcontainers` registers this plugin; it reads host statistics at session
+    # start, which fails on some hosts and is not needed without Docker.
+    command = (
+        'pytest -m "not integration and not preview and not docker and not compose"'
+        " -p no:pytest-infrahub-performance-test"
+    )
     if sys.version_info < (3, 11):
         command += " --ignore=tests/service --ignore=tests/runtime_schema/test_worker_path.py"
     with context.cd(MAIN_DIRECTORY):
@@ -53,7 +58,7 @@ def tests_product_store_postgresql(context: Context) -> None:
         with context.cd(MAIN_DIRECTORY):
             result = context.run(
                 "pytest -m integration tests/product_store tests/service/test_apply_versus_verify_race.py "
-                f"-p no:cacheprovider -q --no-cov -rs --junitxml={shlex.quote(str(report))}",
+                f"-p no:cacheprovider -p no:pytest-infrahub-performance-test -q --no-cov -rs --junitxml={shlex.quote(str(report))}",
                 warn=True,
                 pty=True,
             )
