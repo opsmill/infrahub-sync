@@ -1,0 +1,20 @@
+dev/specs/014-import-lineage/tasks.md
+  s_8d92f288a8f661::t_00a09fdb8fb49a 1-157,159-226
+  s_8d92f288a8f661::t_cd2227ba447e9e 158
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "062a0234734801f3fd55d8dde653b45104da6afc",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
