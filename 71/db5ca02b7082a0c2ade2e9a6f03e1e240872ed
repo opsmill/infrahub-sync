@@ -1,0 +1,24 @@
+dev/specs/013-compose-own-infrastructure/research.md
+  s_8d92f288a8f661::t_680ee6c5bfdde8 289-303,306-314
+dev/specs/013-compose-own-infrastructure/plan.md
+  s_8d92f288a8f661::t_20e7f370e72c41 247
+  s_8d92f288a8f661::t_ab7f3f05300c37 40-42,46-68
+  s_8d92f288a8f661::t_3ee357b68bf978 166
+  s_8d92f288a8f661::t_205950dfe2125f 230-233
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "71db5ca02b7082a0c2ade2e9a6f03e1e240872ed",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
