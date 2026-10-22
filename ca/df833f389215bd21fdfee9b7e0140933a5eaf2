@@ -1,0 +1,50 @@
+docs/docs/reference/cli.mdx
+  s_9c7f8713d8e8dc::t_e23117a0c9ae0f 244-281
+infrahub_sync/configuration/conversion.py
+  s_9c7f8713d8e8dc::t_1e4f5d480cd830 218-221,238,242,250-258,276-281,313-316,370-371,591-592,596,711,724-732,734,766-770,777,819-831,835,837-845,847-848
+tests/configuration/test_conversion_secrets.py
+  s_9c7f8713d8e8dc::t_65d5d982a924d6 10-13,24,110-155,258,260,266,269,276,278,282-284,287,294-317
+  s_8d92f288a8f661::t_8778fc2ac99c3d 318-319
+docs/docs/v2-to-v3.mdx
+  s_9c7f8713d8e8dc::t_e0f51cc68c5c21 166-167,204-208
+tests/cli/test_convert_command.py
+  s_9c7f8713d8e8dc::t_3c87701417efbb 155-203
+  s_9c7f8713d8e8dc::t_723a2f0b195688 363
+infrahub_sync/cli.py
+  s_9c7f8713d8e8dc::t_c93845613b6af8 469-475,477,485-489,491-498,562-563,586-592
+  s_9c7f8713d8e8dc::t_4b25c0d5892744 533-556
+  s_9c7f8713d8e8dc::t_f7c1c5648efb13 519-531
+  s_9c7f8713d8e8dc::t_a942c553129795 532
+changelog/+v2-configuration-conversion.added.md
+  s_9c7f8713d8e8dc::t_e0f51cc68c5c21 1
+tests/configuration/test_conversion.py
+  s_9c7f8713d8e8dc::t_1a4863a0dce7e4 938-943,945-947,949-968,970-985
+  s_9c7f8713d8e8dc::t_5a6dbb426e84a8 610-611,614-627,629
+  s_9c7f8713d8e8dc::t_1569c8099e2ac3 526-529,531,533-587,592-597,599-600,602,605,607-609,612-613,847,899
+  s_9c7f8713d8e8dc::t_637ac59d6443a5 8,944,948
+  s_9c7f8713d8e8dc::t_88c1e3f59790d8 590-591,628,969
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cadf833f389215bd21fdfee9b7e0140933a5eaf2",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_9c7f8713d8e8dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7b4ab04-36d6-4644-a214-69334e6a0d27",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
