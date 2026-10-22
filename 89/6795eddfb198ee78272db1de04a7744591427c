@@ -1,0 +1,34 @@
+dev/specs/014-import-lineage/research.md
+  s_8d92f288a8f661::t_4694567006d2aa 262
+  s_8d92f288a8f661::t_cd3cf443b8400e 186-188,197-198
+dev/specs/014-import-lineage/tasks.md
+  s_8d92f288a8f661::t_862b1ddd529a2b 126
+  s_8d92f288a8f661::t_4694567006d2aa 68,76
+dev/specs/014-import-lineage/spec.md
+  s_8d92f288a8f661::t_4694567006d2aa 56-58,291-295
+dev/specs/014-import-lineage/plan.md
+  s_8d92f288a8f661::t_4694567006d2aa 139-141
+  s_8d92f288a8f661::t_681270c4983f04 53-54
+dev/specs/014-import-lineage/contracts/infrahub-destination-settings.md
+  s_8d92f288a8f661::t_4694567006d2aa 50
+dev/specs/014-import-lineage/contracts/plan-last-changes.md
+  s_8d92f288a8f661::t_4694567006d2aa 47-48
+dev/specs/014-import-lineage/data-model.md
+  s_8d92f288a8f661::t_4694567006d2aa 12,41-42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "896795eddfb198ee78272db1de04a7744591427c",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
