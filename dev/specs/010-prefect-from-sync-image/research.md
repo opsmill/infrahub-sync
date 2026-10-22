@@ -120,6 +120,39 @@ creation in `sync-bootstrap`, which already uses the S3 API.
 - **Entrypoint**: the binary is `silo`; the entrypoint still accepts `server` as the first
   argument (`command: ["server", "/data"]` keeps working). The web console listens on a random
   port unless `--console-address` is set; the stacks keep `MINIO_BROWSER=off`.
+- **linux/amd64 run (task T001, 2026-10-22)**: the amd64 image ran on an arm64 host (Apple
+  M5 Pro, macOS 26.6.2, OrbStack 2.2.4, Docker 29.8.2) through OrbStack's amd64 emulation,
+  which uses Rosetta, not QEMU. `uname -m` in the container printed `x86_64`, and the server
+  log printed `Version: RELEASE.2026-10-18T00-00-00Z (go1.27.2 linux/amd64)`. Every step
+  passed:
+
+  ```bash
+  IMG=pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc4155d9a7e41ff58cdb65ddd13ba9304e67184e13c25bc5cb34016269d7
+  docker pull --platform linux/amd64 "$IMG"
+  docker volume create s010-t001-data
+  docker network create s010-t001-net
+  # Repair step: the new volume is 0:0 before and 65532:65532 after; exit 0.
+  docker run --rm --platform linux/amd64 --entrypoint sh -v s010-t001-data:/data "$IMG" \
+    -c 'stat -c "%u:%g" /data; chown -R 65532:65532 /data; stat -c "%u:%g" /data'
+  # Server as 65532:65532 with the console off; dummy credentials.
+  docker run -d --name s010-t001-silo --platform linux/amd64 --network s010-t001-net \
+    --user 65532:65532 -e MINIO_BROWSER=off \
+    -e MINIO_ROOT_USER=s010dummyuser -e MINIO_ROOT_PASSWORD=s010dummypassword \
+    -v s010-t001-data:/data "$IMG" server /data
+  # Prints "ready: ok (200, 5ms)" and exits 0 (second attempt, about 2 seconds after start).
+  docker exec s010-t001-silo silo healthcheck ready
+  # Run twice: the first call returns {"Location": "/s010-check"} and exits 0; the second
+  # returns "An error occurred (BucketAlreadyOwnedByYou) when calling the CreateBucket
+  # operation" and exits 254.
+  docker run --rm --network s010-t001-net \
+    -e AWS_ACCESS_KEY_ID=s010dummyuser -e AWS_SECRET_ACCESS_KEY=s010dummypassword \
+    -e AWS_DEFAULT_REGION=us-east-1 amazon/aws-cli:2.22.0 \
+    --endpoint-url http://s010-t001-silo:9000 s3api create-bucket --bucket s010-check
+  ```
+
+  The run used emulation, so it shows that the amd64 binary works; it does not show behaviour
+  on a native amd64 kernel. On a GitHub `ubuntu-latest` runner the same commands run natively
+  without `--platform`. Whether they have been run there is not known.
 
 **Alternatives considered**: the `-distroless` variant (no shell, so the repair service and its
 `stat` test cannot run in it); a second image only for the repair (adds a fourth image, against
@@ -324,3 +357,67 @@ compose suite moves to `TestInfrahubSyncDocker` (D-15).
 digests with `docker compose config --images` against the preview and NetBox files (`:70-87`).
 The `compose-suite` job (`:189-250`) builds `infrahub-sync:compose-test` and runs
 `pytest -m compose tests/compose`.
+
+## R11. First-start measurement procedure (FR-008)
+
+**Decision**: measure the first start of the root `docker-compose.yml` under two conditions, on
+two hosts, with the procedure below. This section records the baseline, with Prefect from
+`prefecthq/prefect`. Task T024 adds the times for this feature with the same procedure.
+
+**Procedure**: run it in an empty directory that holds only `docker-compose.yml` and an `.env`
+written as in `docs/docs/compose-deployment.mdx` (the generator script there). Use a project
+name that no other stack on the host uses. Clear an exported `VERSION`, which overrides `.env`.
+
+1. Warm start, every image already pulled, no volumes:
+
+   ```bash
+   docker compose -p s010-measure pull
+   docker compose -p s010-measure down -v
+   time docker compose -p s010-measure up -d --wait --wait-timeout 420
+   docker compose -p s010-measure down -v
+   ```
+
+2. Cold start, no image and no volume:
+
+   ```bash
+   docker compose -p s010-measure down -v
+   docker compose -p s010-measure config --images | sort -u | xargs docker image rm
+   time docker compose -p s010-measure up -d --wait --wait-timeout 420
+   docker compose -p s010-measure down -v
+   ```
+
+   `down -v` removes only the volumes of this project. A global `docker volume prune` would
+   also remove the volumes of other stacks on the host, so the procedure does not use it.
+   Before `docker image rm`, check with `docker ps -a --filter ancestor=<image ID>` that no
+   other container uses the image; when one does, keep the image and record the run as
+   partly warm.
+
+3. Record the `real` time of `time`, the date, the host (CPU, operating system, Docker Engine
+   and Compose versions) and every image that was not pulled during the cold run.
+
+Hosts: an amd64 GitHub `ubuntu-latest` runner and an arm64 laptop.
+
+**Baseline** (2026-10-22, root file at commit `0fc900c6`):
+
+| Host | Warm start | Cold start |
+| --- | --- | --- |
+| arm64 laptop: Apple M5 Pro, 18 cores, 48 GiB, macOS 26.6.2, OrbStack 2.2.4, Docker Engine 29.8.2, Compose 5.5.0 | 20.5 s | 42.2 s, with the Sync image already present (see below) |
+| amd64 GitHub `ubuntu-latest` runner | to be measured in CI with the commands above | to be measured in CI with the commands above |
+
+Notes on the laptop runs:
+
+- The Sync image the file names, `registry.opsmill.io/opsmill/infrahub-sync:3.0.0a5`, was not
+  in the registry (`docker pull` returned `not found`). The runs used an image built from the
+  checkout instead (`docker build -t s010-baseline-sync:local .`, about 19 seconds with a warm
+  build cache, 989 MB), set through `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION`. A local image
+  cannot be pulled again, so the cold run kept it: the cold time includes pulling the other
+  three images only.
+- Images pulled during the cold run, with their unpacked size:
+  - `postgres:16-alpine`: 411 MB
+  - `cgr.dev/chainguard/minio:latest-dev`: 288 MB
+  - `prefecthq/prefect:3.8.6-python3.13`: 1238 MB
+- Both runs ended with `postgres`, `object-store`, `prefect-server`, `sync-api` and
+  `sync-worker` healthy and `db-bootstrap`, `object-store-init` and `sync-bootstrap` exited
+  with code 0. The published ports were moved to 18010 and 14210 so that the run could not
+  collide with other stacks on the host.
+- Each condition ran once. How much the times vary between runs is not known.
