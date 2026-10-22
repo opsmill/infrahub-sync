@@ -1,0 +1,37 @@
+tests/compose/test_documentation.py
+  s_8d92f288a8f661::t_a7f5ea9f6f28d0 412-430
+docs/docs/compose-deployment.mdx
+  s_8d92f288a8f661::t_3f999964f77d9a 8-10
+  s_8d92f288a8f661::t_4f1958f3c276b6 124,126
+  s_8d92f288a8f661::t_417ed9906c36b8 36-37
+  s_8d92f288a8f661::t_4729ffb948788e 294,300-303,305-312
+  s_8d92f288a8f661::t_f53fb101f60d36 304
+  s_8d92f288a8f661::t_73a4bdb888da3c 324-326
+  s_8d92f288a8f661::t_49f890bd03de2c 379-381
+  s_8d92f288a8f661::t_0b1cf7666d74ec 842-844
+  s_8d92f288a8f661::t_685ad026cf0173 835
+  s_8d92f288a8f661::t_b90b700df8a84f 845-853
+  s_8d92f288a8f661::t_1432469442e9ce 56-57
+  s_8d92f288a8f661::t_8a81d835525550 68-77
+changelog/+prefect-from-sync-image.changed.md
+  s_8d92f288a8f661::t_d63d5f7acd48b8 1
+  s_8d92f288a8f661::t_5489a1ab784dd9 2-5
+docs/docs/quickstart-compose.mdx
+  s_8d92f288a8f661::t_af7546d346e7b2 35,89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "552d2127a74ee86bd49cebeb4ca1ff3ac90a54f4",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
