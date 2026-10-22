@@ -130,8 +130,12 @@ above.
 
 - The oldest Infrahub version a V3 import supports is not known and stays out of this feature
   (R-1). The design works on any version.
-- The cost of the metadata read is not measured yet (R-2). T004 and T056 measure it on the pinned
-  stack; the result is information only.
+- The cost of the metadata read is not measured yet (R-2). T056 measures it; the result is
+  information only. The baseline without metadata is measured in part (T004, 2026-10-22): the
+  plan's destination read of 10,014 nodes on Infrahub 1.10.6 took a median of 21.86 s on the
+  default branch and 21.10 s on another branch. It was measured with a direct SDK read on a
+  throwaway kind, not with the NetBox benchmark runner, which pins Infrahub 1.11.3, needs a
+  NetBox dump that does not exist here, and reads only the default branch (R-2).
 - Closed (T001, 2026-10-22): the plan's destination read, `client.all(…, include=…)` at
   `infrahub_sync/adapters/infrahub.py:815-817`, carries `relationship_metadata` for the edges of
   every mapped cardinality-many relationship once `include_metadata=True` is added, with no added
@@ -140,7 +144,11 @@ above.
   from the previous snapshot, must load in full when metadata is requested is not decided. The
   shared execution surface and the Sync service always load in full (R-2). The User Story 3 tasks
   decide it.
-- The import account's smallest permission set is not known yet (T005, R-7).
+- Closed (T005, 2026-10-22): the import account's smallest permission set on Infrahub 1.10.6 is
+  `view`, `create` and `update` on each mapped destination kind (and `view` on the peer kinds of
+  its included relationships), plus the global `edit_default_branch` on the default branch only,
+  plus `view` on each kind the package names as source or owner. `InfrahubInfo`,
+  `AccountProfile` and the schema read need no permission (R-7).
 - Closed (product owner, 2026-10-22): apply refuses, before any write, a saved plan that records
   no import account (made before this feature) and asks for a new plan (FR-012). V3 is not
   released, and plans saved before the upgrade are already refused for other reasons.

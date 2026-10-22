@@ -165,6 +165,35 @@ selects the peer's attributes (`SDK/node/node.py:1514-1521`), and `include_metad
 attribute and node metadata to those peer fields too. This makes each response larger, but adds
 no request.
 
+**Baseline destination read time without metadata (task T004, 2026-10-22, partial)**
+
+Measured on Infrahub 1.10.6 (image digest from `development/docker-compose.infrahub.yml`), in a
+separate local Compose project, on macOS arm64 with 18 CPUs under Docker Desktop:
+
+| Branch | Nodes read | First read (s) | Next three reads (s) | Median of the three (s) |
+|--------|------------|----------------|----------------------|-------------------------|
+| `main` (default) | 10,014 | 26.33 | 21.16, 21.86, 21.95 | 21.86 |
+| `lineage-bench` (other branch) | 10,014 | 26.21 | 21.43, 21.10, 20.60 | 21.10 |
+
+- The read is the plan's destination read shape:
+  `client.all(kind="TestLinDevice", include=["name", "serial", "tags"], populate_store=True)` with
+  the SDK page size of 50 (201 pages), SDK 1.23.2, no `include_metadata`, a fresh node store for
+  each read.
+- Data: a throwaway kind `TestLinDevice` with two text attributes (`name`, `serial`) and a
+  cardinality-many `tags` relationship to `TestLinTag`; 10,000 nodes with two tags each out of 20,
+  plus 14 nodes left by the permission probe of T005. All nodes were created on `main`; the other
+  branch was created after them and holds no change of its own.
+- Not measured, and why:
+  - The NetBox benchmark runner (`tasks/bench.py`) was not used. It pins Infrahub 1.11.3
+    (`tasks/bench.py:63`), not 1.10.6; it needs a seeded and dumped NetBox tier, and no dump exists
+    in this checkout; it reads and writes only the default branch; and it reports the whole sync
+    time (`wall_seconds`, `plan_seconds`), not the destination read alone. It also uses fixed
+    shared Compose projects and a host lock, which another run on this machine was using.
+  - The NetBox schema library kinds were not read, so the time for real mapped kinds with more
+    attributes and relationships is not known.
+- T056 repeats the same read with `include_metadata=True` on the same data shape and records both
+  times.
+
 **Alternatives considered**
 
 - A second query for metadata, only for nodes with proposed changes: rejected, because it adds
@@ -418,4 +447,61 @@ Alternatives considered:
   permission and gains one permission at a time. It includes the `InfrahubInfo` and
   `AccountProfile` queries and the read of each allowed named kind. The result is recorded here as
   a table, T019 tests against it, and T051 documents it.
-- Result: not known yet.
+
+**Smallest permission set (task T005, 2026-10-22)**
+
+Found on Infrahub 1.10.6 (local Compose project, anonymous access off). Each of two accounts, one
+for the default branch and one for the branch `lineage-probe`, started as a member of a group whose
+only role held no permission. A probe ran every destination call of a plan and an apply with the
+account's API token. After each run, the first refused call's message named the missing
+permission, and one permission was added to the role. When every call passed, each permission was
+removed in turn and the probe run again, to prove it was needed.
+
+| Permission | Default branch | Other branch | Needed for | How it was proven needed |
+|------------|----------------|--------------|------------|--------------------------|
+| No permission | Enough | Enough | `InfrahubInfo` (`client.get_version()`), `AccountProfile` (`client.get_user()`), the schema read (`client.schema.all`) | All three passed for an account with no permission |
+| Global `edit_default_branch` (decision `allow_all`) | Needed | Not needed | Every create and update | Without it, every write on `main` was refused with "You are not allowed to change data in the default branch"; every write on the other branch passed without it |
+| Object `view` on each destination kind the plan reads, including the peer kind of each included relationship | `allow_default` | `allow_other` | The plan read (`client.all(…, include=…)`, with or without `include_metadata=True`), the peer lookup (`client.filters`), and apply's read of a node's current peers (`client.get(…, include=[…])`) | Removing `view` on `TestLinDevice` refused its read; removing `view` on `TestLinTag` refused its own read and the read of `TestLinDevice`, whose `tags` peers are `TestLinTag` |
+| Object `create` on each kind written | `allow_default` | `allow_other` | Every create and every update | The adapter writes both through an upsert (`node.save(allow_upsert=True)`, `infrahub_sync/adapters/infrahub.py:1364`), and the server asks for `create` and `update` on an upsert; removing `create` refused both |
+| Object `update` on each kind written | `allow_default` | `allow_other` | Every create and every update | Removing `update` refused both, for the same reason |
+| Object `view` on `CoreAccount`, `CoreAccountGroup`, `CoreRepository` or `CoreReadOnlyRepository` | `allow_default` | `allow_other` | Only when the package names a node of that kind as `source` or `owner`: the lookup by name | Without it, the lookup of that kind was refused; with only it, the lookup of that kind passed and the lookups of the three other kinds stayed refused |
+
+Read with the name only. A lookup of a named node that selects only `name` and leaves out the
+kind's relationships (`client.get(kind=…, name__value=…, include=["name"], exclude=[…every
+relationship…])`) needs only `view` on that kind. With the SDK's default fields, the lookup also
+needs:
+
+- `CoreAccountGroup`: `view` on `CoreAccountRole` and `CoreGroup`;
+- `CoreRepository` and `CoreReadOnlyRepository`: `view` on `CoreCredential`,
+  `CorePasswordCredential` and `BuiltinTag`;
+- `CoreAccount`: nothing more.
+
+Not needed:
+
+- `delete`: a V3 apply records deletes and never runs them (ADR 0004). It was not probed.
+- `manage_accounts`, and `view` on `CoreAccount` for the import account itself: writes that set
+  `source` to the import account and `owner` to a `CoreAccountGroup` passed without them. An admin
+  read afterwards showed the import account as the attribute source, the group as the owner, and
+  `is_protected` false.
+- Anything for `protect`: a create with `is_protected=True` passed with the same set.
+- `view` on `CoreAccount` for metadata: the plan read with `include_metadata=True` passed without
+  it and returned `updated_by` as the import account and the edge metadata of `tags` (SC-002).
+
+Limits of the probe:
+
+- The probe issued the adapter's request shapes directly with SDK 1.23.2, against two throwaway
+  kinds (`TestLinDevice` with a cardinality-many `tags` to `TestLinTag`); it did not run the Sync
+  service end to end. A real package needs the same three object permissions for each of its
+  mapped destination kinds and for the peer kinds of their included relationships.
+- No `CoreRepository` or `CoreReadOnlyRepository` could be created: the server refused the
+  create with "Unable to clone the repository …", because the probe's Git location does not
+  exist. The repository lookups were proven on a
+  query that matched no node; the permission check runs before the query, so the result does not
+  change which permission is needed.
+- The source of written relationship edges was not read back; the attribute source and owner
+  were.
+- An object permission with decision `allow_all` (value 6, the sum of `allow_default` 2 and
+  `allow_other` 4) should cover both branches; this was not tested.
+- The code before this feature looks up a `CoreAccount` named after the source system
+  (`infrahub_sync/adapters/infrahub.py:718`), which needs `view` on `CoreAccount`. The design
+  removes that lookup (FR-005), so the table above does not list it.
