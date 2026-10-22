@@ -1,0 +1,32 @@
+.github/scripts/nightly_e2e.py
+  s_9c7f8713d8e8dc::t_88c1e3f59790d8 322
+  s_9c7f8713d8e8dc::t_d03cd82a4a83d6 36-38,255-263,265-314,326-328,334-337,339-340,366-368,370,381,386-389,398-406,537-551
+  s_9c7f8713d8e8dc::t_6ffd757f114635 264
+tests/test_nightly_v2_gate.py
+  s_9c7f8713d8e8dc::t_88c1e3f59790d8 246
+  s_9c7f8713d8e8dc::t_af972d6a05e0c2 61-94,96-109,119-120,137,148-149,164,175,181-245,247-290,344-358,382-384,407-412,416-418,421-425,431,437
+.github/workflows/workflow-nightly-e2e.yml
+  s_9c7f8713d8e8dc::t_621910017e79c5 202-204,207
+dev/specs/012-v2-configuration-conversion/tasks.md
+  s_9c7f8713d8e8dc::t_621910017e79c5 121
+tests/test_workflow_contracts.py
+  s_9c7f8713d8e8dc::t_f0a35690780e99 681-696
+docs/docs/development/guidelines/testing-tiers.md
+  s_9c7f8713d8e8dc::t_e0f51cc68c5c21 421-423,426-438,446-447
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "180c8dc529deba4d262b6f7b51f2b7404b0cc95f",
+  "prompts": {},
+  "sessions": {
+    "s_9c7f8713d8e8dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7b4ab04-36d6-4644-a214-69334e6a0d27",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
