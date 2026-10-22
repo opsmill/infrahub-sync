@@ -1,0 +1,36 @@
+dev/specs/009-reviewable-netbox-import/data-model.md
+  s_8d92f288a8f661::t_c9f634cead3dbf 117-135
+dev/specs/009-reviewable-netbox-import/spec.md
+  s_8d92f288a8f661::t_ae5bc1ff1e3943 203-205,210-212,216-218
+  s_8d92f288a8f661::t_defda417aaedc8 345-349
+  s_8d92f288a8f661::t_706142d2e3d40b 223-225
+  s_8d92f288a8f661::t_762025a93a54ae 72-76
+  s_8d92f288a8f661::t_b2281dd793835e 406-407
+  s_8d92f288a8f661::t_4b41a18d2ee1ab 273-274
+dev/specs/009-reviewable-netbox-import/plan.md
+  s_8d92f288a8f661::t_c2d447904a6491 181-184
+  s_8d92f288a8f661::t_8f166714d6d53c 204-205
+dev/specs/009-reviewable-netbox-import/quickstart.md
+  s_8d92f288a8f661::t_320d39259c255c 42-43
+dev/specs/009-reviewable-netbox-import/contracts/cli-runs-plan.md
+  s_8d92f288a8f661::t_a28f6b48bb81b6 31,34-36
+  s_8d92f288a8f661::t_48c177108e6442 37
+dev/specs/009-reviewable-netbox-import/contracts/api-runs-plan.md
+  s_8d92f288a8f661::t_500c6050c4f31d 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bd9a749be95d15f993fd2b160d091d950704bba2",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
