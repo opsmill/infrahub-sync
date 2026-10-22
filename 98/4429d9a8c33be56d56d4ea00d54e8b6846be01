@@ -1,0 +1,77 @@
+docs/docs/reference/cli.mdx
+  s_8d92f288a8f661::t_1bba4355ef2dc4 48,70,95,142,163
+docs/docs/operations/compose-troubleshooting.mdx
+  s_8d92f288a8f661::t_64a09277bde694 47-49,55
+infrahub_sync/product_store/models.py
+  s_8d92f288a8f661::t_dbf39d3a7eda47 305,402
+docs/docs/development/guides/adding-an-adapter.md
+  s_8d92f288a8f661::t_7a8e8bc85ecf28 427-428,446-448
+tests/service/test_config_routes.py
+  s_8d92f288a8f661::t_e16e4ea009dadc 1239-1279
+docs/docs/operations/day-2-operations.mdx
+  s_8d92f288a8f661::t_c014d8f3f21ffb 49,88-90,98
+tests/product_store/test_contract.py
+  s_8d92f288a8f661::t_645eb69c64f8b7 5155-5188,5191,5193,5195-5237,5247-5251,5253-5270,5272-5280
+  s_8d92f288a8f661::t_c11ea79020fcec 5238-5244,5246,5252,5271
+  s_8d92f288a8f661::t_49ba2890bebffa 4466-4467,4493,4498,4511,4522-4523,4530-4534,4543-4544,4547
+  s_8d92f288a8f661::t_2dd1b640cb00dc 5189-5190,5192,5194
+  s_8d92f288a8f661::t_9c8f3862ba2bb0 5245
+tests/compose/test_documentation.py
+  s_8d92f288a8f661::t_b7d6a561fde1ef 6-7,36-40,47,50,60,289-290,296,298,311-313
+  s_8d92f288a8f661::t_07b8e35366b6fe 314-315
+infrahub_sync/cli.py
+  s_8d92f288a8f661::t_c8af233dccec57 337,360,626,657,689
+  s_8d92f288a8f661::t_e485a1eb44b8e2 490,591
+docs/docs/running-a-sync.mdx
+  s_8d92f288a8f661::t_0434382e6692e0 32-34,50-52,61-64,84-87,96-99,120-124,180-182,193,229-233
+  s_8d92f288a8f661::t_c4373d4bb659a8 19-21,23-24,26-29,31,36-40
+  s_8d92f288a8f661::t_7c3315bb5daf76 234
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_8d92f288a8f661::t_8ce1e50e053cd2 245-247,250-254,256-262,272,287,297,306,324-325
+  s_8d92f288a8f661::t_d3a5813e0df118 45
+  s_8d92f288a8f661::t_2042450072e54a 255
+tests/cli/test_client_commands.py
+  s_8d92f288a8f661::t_06f9e44ed63ad1 1054-1101
+tests/client/test_models.py
+  s_8d92f288a8f661::t_119cae230ee9c1 13-21,142-186
+infrahub_sync/product_store/store.py
+  s_8d92f288a8f661::t_8032824ee880b2 69,95,235-237,577,669,673-675,679-709
+infrahub_sync/client/models.py
+  s_8d92f288a8f661::t_dbf39d3a7eda47 61,74,83,89,93,97,101-102
+docs/docs/tutorials/netbox-to-existing-infrahub.mdx
+  s_8d92f288a8f661::t_d3a5813e0df118 41
+  s_8d92f288a8f661::t_8ce1e50e053cd2 246-248,251-255,257-263,273,288,298,307,325-326
+  s_8d92f288a8f661::t_2042450072e54a 256
+tests/service/test_http_api.py
+  s_8d92f288a8f661::t_0694f8b5f0b6ee 2062-2066
+  s_8d92f288a8f661::t_4d9a9c51a5a280 2013-2017,2019-2061,2067-2078
+  s_8d92f288a8f661::t_e635ebebd2bb5c 73,2018
+docs/docs/reference/sync-http-api.mdx
+  s_8d92f288a8f661::t_7a8e8bc85ecf28 264-269
+changelog/+optional-audit-reason.changed.md
+  s_8d92f288a8f661::t_08f996243f63f1 1
+infrahub_sync/service/service.py
+  s_8d92f288a8f661::t_dbf39d3a7eda47 550,635,710,739,769,794,840,989,1017
+docs/docs/compose-deployment.mdx
+  s_8d92f288a8f661::t_8c8c1a4774b534 462-477,510-517,525,547,551-561,563,635-636,746,792,866-867
+docs/docs/reference/python-api.mdx
+  s_8d92f288a8f661::t_7a8e8bc85ecf28 44-46
+infrahub_sync/service/config_routes.py
+  s_8d92f288a8f661::t_dbf39d3a7eda47 186,259,263
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "984429d9a8c33be56d56d4ea00d54e8b6846be01",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
