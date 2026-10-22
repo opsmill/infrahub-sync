@@ -1,0 +1,39 @@
+dev/specs/014-import-lineage/research.md
+  s_8d92f288a8f661::t_2ee90cb6864f67 1-121,124-143,146-199,202-214,221-225,228,230-258
+  s_8d92f288a8f661::t_5df2e888d52a01 144-145
+  s_8d92f288a8f661::t_dbe767121bd235 200-201
+  s_8d92f288a8f661::t_d3206e998cbdf8 215-220,226-227,229
+  s_8d92f288a8f661::t_cda6745333f61f 122-123
+dev/specs/014-import-lineage/contracts/run-errors.md
+  s_8d92f288a8f661::t_e9c262b013eaac 5-6
+  s_8d92f288a8f661::t_aa1c01a8495aac 1-4,7-17
+dev/specs/014-import-lineage/contracts/plan-last-changes.md
+  s_8d92f288a8f661::t_237cee4efae9db 1-56
+dev/specs/014-import-lineage/data-model.md
+  s_8d92f288a8f661::t_1467dabef621ed 1-99
+dev/specs/014-import-lineage/quickstart.md
+  s_8d92f288a8f661::t_18d35275cefd7d 1-71
+dev/specs/014-import-lineage/plan.md
+  s_8d92f288a8f661::t_19014a970211f4 2,4,6-8,28-30,32,35,38,41,43,45,49,52,55-57,73-78,90-94,109-110,120-121,138-140
+  s_8d92f288a8f661::t_fe01f399f9a0c9 1,3,5,9-27,31,33-34,36-37,39-40,42,44,46-48,50-51,53-54,58-72,79-89,95-108,111-119,122-137,141
+CLAUDE.md
+  s_8d92f288a8f661::t_13eab017156806 6-7,9
+dev/specs/014-import-lineage/contracts/infrahub-destination-settings.md
+  s_8d92f288a8f661::t_cf432ebbedf43d 1-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3c56c37b47d3f4522db2c7a54ba1544181b26f7b",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
