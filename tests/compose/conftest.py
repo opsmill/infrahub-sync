@@ -51,6 +51,11 @@ ZERO_SKIP_OPTION = "--compose-zero-skip"
 # deployment's containers and volumes from another's.
 PROJECT_LABEL = "com.docker.compose.project"
 
+# The prefix of every Compose project the Docker-backed suites create. Set
+# INFRAHUB_SYNC_COMPOSE_PROJECT_PREFIX when another checkout runs the same suite
+# on the same Docker engine, so neither run reaches the other's projects.
+PROJECT_PREFIX = os.environ.get("INFRAHUB_SYNC_COMPOSE_PROJECT_PREFIX") or "infrahub-sync"
+
 
 @lru_cache(maxsize=1)
 def interpolated_settings() -> frozenset[str]:
@@ -310,7 +315,7 @@ def mount_sources(definition: Mapping[str, Any]) -> set[str]:
 # managed rows — a real Infrahub. They are opt-in under the `compose` marker and
 # share one session-scoped stack, so they run single-process.
 
-FIXTURE_PROJECT = "infrahub-sync-suite-fixture"
+FIXTURE_PROJECT = f"{PROJECT_PREFIX}-suite-fixture"
 # Deliberately not the development stack's own port: a developer's preview keeps
 # working while this suite runs its own copy of the same pinned release.
 FIXTURE_INFRAHUB_PORT = "8081"

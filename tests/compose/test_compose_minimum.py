@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.compose.conftest import COMPOSE_FILE, resolve
+from tests.compose.conftest import COMPOSE_FILE, PROJECT_PREFIX, resolve
 from tests.compose.lifecycle import docker
 from tests.compose.redaction import Captured, capture
 
@@ -214,7 +214,7 @@ def test_the_pinned_release_starts_a_local_image_with_an_inline_config_and_a_com
         "      print('converged')\n",
         encoding="utf-8",
     )
-    project = "infrahub-sync-minimum-fixture"
+    project = f"{PROJECT_PREFIX}-minimum-fixture"
     base = ["--project-name", project, "--file", str(fixture)]
     started = host_minimum_compose(
         pinned_binary,

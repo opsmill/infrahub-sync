@@ -7,6 +7,10 @@
 # private network needs a route to the host, which the shipped topology has no
 # reason to carry: a deployment's destination is a real address it resolves like
 # any other.
+#
+# `prefect-server` needs nothing here: it runs the image under test through the
+# same INFRAHUB_SYNC_DOCKER_IMAGE and VERSION settings as the Sync services, and
+# the suite reaches it on the deployment's own network, not on a host port.
 services:
   # The one service that reaches the destination: the worker that runs against
   # it. The API resolves runs out of PostgreSQL and dispatches through Prefect,

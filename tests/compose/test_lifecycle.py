@@ -23,7 +23,7 @@ import httpx
 import pytest
 
 from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
-from tests.compose.conftest import FIXTURE_INFRAHUB_PORT, PROJECT_LABEL
+from tests.compose.conftest import FIXTURE_INFRAHUB_PORT, PROJECT_LABEL, PROJECT_PREFIX
 from tests.compose.lifecycle import (
     DURABLE_STATE,
     READY_TIMEOUT_SECONDS,
@@ -143,7 +143,7 @@ def volume_exists(name: str) -> bool:
 
 def plant_foreign_volume() -> str:
     """Create a volume named the way another project's would be."""
-    name = f"infrahub-sync-{uuid.uuid4().hex[:16]}_postgres-data"
+    name = f"{PROJECT_PREFIX}-{uuid.uuid4().hex[:16]}_postgres-data"
     created = docker(["volume", "create", "--label", f"{PROJECT_LABEL}=someone-else", name])
     assert created.returncode == 0, created.stderr
     return name
