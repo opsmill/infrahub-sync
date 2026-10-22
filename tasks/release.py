@@ -1,7 +1,10 @@
 """Release tasks: keep the root `docker-compose.yml` pinned to the release version.
 
-Every Sync service in the root Compose file names its image as
+Every Sync-image service in the root Compose file, `prefect-server` included, names
+its image as
 `${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-X}`.
+Every other image, PostgreSQL and the Silo object store, is a third-party digest pin
+that these tasks never rewrite.
 `update-docker-compose` rewrites `X` on those lines, and `validate-docker-compose`
 refuses a file where any of them names another version. Both edit or read the file
 as text, line by line, so comments, ordering and third-party pins stay byte-for-byte.

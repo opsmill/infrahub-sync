@@ -9,6 +9,7 @@ fixture in `tmp_path`; the one exception only reads the repository's own
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -23,12 +24,22 @@ PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
 THIRD_PARTY_IMAGE = (
     'image: "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"'
 )
+# The object store's pin, written as a folded scalar the way the root file writes it.
+SILO_IMAGE = (
+    "pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc4155d9a7e41ff58cdb65ddd13ba9304e67184e13c25bc5cb34016269d7"
+)
 
 FIXTURE = f"""---
 # A comment that mentions ${{VERSION:-1.0.0}} must survive the rewrite.
 services:
   postgres:
     {THIRD_PARTY_IMAGE}
+  object-store:
+    # A third-party digest pin the tasks leave alone.
+    image: >-
+      {SILO_IMAGE}
+  prefect-server:
+    image: "${{INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}}:${{VERSION:-3.0.0a5}}"
   sync-api:
     # Pinned by the release tasks.
     image: "${{INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}}:${{VERSION:-3.0.0a5}}"
@@ -46,7 +57,7 @@ services:
 
 MIXED_PINS = FIXTURE.replace("${VERSION:-3.0.0a5}", "${VERSION:-3.0.0a4}", 1)
 PINNED_WORKER = 'image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"'
-# Each replaces the second Sync image line (line 10) with a reference the tasks cannot pin.
+# Each replaces the last Sync image line (line 16) with a reference the tasks cannot pin.
 MISFORMATTED_SYNC_IMAGES = {
     "hard-coded-tag": 'image: "registry.opsmill.io/opsmill/infrahub-sync:3.0.0a5"',
     "latest": "image: registry.opsmill.io/opsmill/infrahub-sync:latest",
@@ -54,6 +65,11 @@ MISFORMATTED_SYNC_IMAGES = {
         'image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5"'
     ),
 }
+
+
+# The Sync image lines of the fixture: `prefect-server`, `sync-api` and `sync-worker`.
+SYNC_LINE_NUMBERS = (11, 14, 16)
+SYNC_LINE_COUNT = len(SYNC_LINE_NUMBERS)
 
 
 def _sync_lines(text: str) -> list[str]:
@@ -72,7 +88,7 @@ def test_every_sync_image_line_is_rewritten(compose_file: Path, version: str) ->
     update_docker_compose(Context(), version=version, docker_file=str(compose_file))
 
     lines = _sync_lines(compose_file.read_text(encoding="utf-8"))
-    assert len(lines) == 2
+    assert len(lines) == SYNC_LINE_COUNT
     assert all(line.endswith(f':${{VERSION:-{version}}}"') for line in lines)
 
 
@@ -99,6 +115,7 @@ def test_a_third_party_image_line_is_untouched(compose_file: Path) -> None:
 
     text = compose_file.read_text(encoding="utf-8")
     assert f"    {THIRD_PARTY_IMAGE}\n" in text
+    assert f"    image: >-\n      {SILO_IMAGE}\n" in text
     assert 'image: "example.invalid/other:${VERSION:-0.1.0}"' in text
     assert "# A comment that mentions ${VERSION:-1.0.0} must survive the rewrite." in text
 
@@ -140,7 +157,7 @@ def test_validate_passes_when_every_sync_line_matches(compose_file: Path, versio
 
 @pytest.mark.parametrize(
     ("content", "offending"),
-    [(FIXTURE, ["3.0.0a5", "3.0.0a5"]), (MIXED_PINS, ["3.0.0a4", "3.0.0a5"])],
+    [(FIXTURE, ["3.0.0a5", "3.0.0a5", "3.0.0a5"]), (MIXED_PINS, ["3.0.0a4", "3.0.0a5", "3.0.0a5"])],
     ids=["all-other", "one-other"],
 )
 def test_validate_fails_on_a_mismatch_and_lists_the_offending_lines(
@@ -155,7 +172,7 @@ def test_validate_fails_on_a_mismatch_and_lists_the_offending_lines(
     message = str(raised.value.message)
     assert raised.value.code != 0
     assert "3.0.0a6" in message
-    for line_number, found in zip((8, 10), offending, strict=True):
+    for line_number, found in zip(SYNC_LINE_NUMBERS, offending, strict=True):
         assert f"line {line_number}: pins {found}" in message
 
 
@@ -167,8 +184,9 @@ def test_validate_fails_on_a_single_mismatched_line_among_matches(tmp_path: Path
         validate_docker_compose(Context(), version="3.0.0a5", docker_file=str(path))
 
     message = str(raised.value.message)
-    assert "line 8: pins 3.0.0a4" in message
-    assert "line 10" not in message
+    assert "line 11: pins 3.0.0a4" in message
+    assert "line 14" not in message
+    assert "line 16" not in message
 
 
 @pytest.mark.parametrize("task", [update_docker_compose, validate_docker_compose], ids=["update", "validate"])
@@ -185,8 +203,9 @@ def test_a_sync_image_line_outside_the_pinned_form_fails(tmp_path: Path, task: C
 
     message = str(raised.value.message)
     assert raised.value.code != 0
-    assert f"line 10: {line}" in message
-    assert "line 8" not in message
+    assert f"line 16: {line}" in message
+    assert "line 11" not in message
+    assert "line 14" not in message
     assert path.read_text(encoding="utf-8") == content
 
 
@@ -196,3 +215,17 @@ def test_the_repository_compose_file_pins_the_project_version() -> None:
     version = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]["version"]
 
     validate_docker_compose(Context(), version=version, docker_file=str(DOCKER_COMPOSE_FILE))
+
+
+def test_the_repository_prefect_server_is_pinned_with_the_sync_services(tmp_path: Path) -> None:
+    """`prefect-server` runs the Sync image, so a release moves it with the other Sync services."""
+    path = tmp_path / "docker-compose.yml"
+    path.write_text(DOCKER_COMPOSE_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+
+    update_docker_compose(Context(), version="9.9.9", docker_file=str(path))
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    start = lines.index("  prefect-server:")
+    end = next(index for index in range(start + 1, len(lines)) if re.fullmatch(r"  [a-z][a-z0-9-]*:", lines[index]))
+    pinned = [line for line in lines[start:end] if line.endswith(':${VERSION:-9.9.9}"')]
+    assert len(pinned) == 1, f"prefect-server image lines after the release: {lines[start:end]}"
