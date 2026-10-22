@@ -78,3 +78,9 @@ Two later changes extend this decision without changing it.
   from the root `docker-compose.yml` for end-to-end tests, so the Python package ships that file
   as package data, byte-equal to the repository file. The root file stays the one source; a test
   fails when the packaged copy differs from it. The release pin of this decision applies to both.
+  The copy is committed at `infrahub_sync/testcontainers/docker-compose.yml`, not copied in at
+  build time with hatch's `force-include`, because an editable install reads the package from
+  the source tree and a build-time copy would be missing there. `release.update-docker-compose`
+  writes the pinned root file over the copy, and `release.validate-docker-compose` refuses a
+  copy that differs from the root file. A unit test compares the two files byte for byte, and
+  another builds the wheel and compares the file it ships.

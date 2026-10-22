@@ -11,6 +11,12 @@ as text, line by line, so comments, ordering and third-party pins stay byte-for-
 Both also refuse an `image:` line that references the Sync image in any other form,
 such as a hard-coded tag or `:latest`, rather than skip it.
 
+The package ships a byte-equal copy of the root file,
+`infrahub_sync/testcontainers/docker-compose.yml`, which the end-to-end test class
+starts. Run without `--docker-file`, `update-docker-compose` writes the pinned root
+file over that copy too, and `validate-docker-compose` also refuses a copy that differs
+from the root file. With `--docker-file`, both tasks act on that one file only.
+
 Unlike infrahub, which bumps only for stable releases, this runs for pre-releases
 too: every tag in this repository publishes an image of the same version.
 """
@@ -30,6 +36,8 @@ from .utils import REPO_BASE
 log = structlog.get_logger(__name__)
 
 DOCKER_COMPOSE_FILE = REPO_BASE / "docker-compose.yml"
+# The copy the Python package ships for `infrahub_sync.testcontainers`; always byte-equal to the root file.
+PACKAGED_COMPOSE_FILE = REPO_BASE / "infrahub_sync" / "testcontainers" / "docker-compose.yml"
 # Only a line carrying this is a Sync image line; any other `${VERSION:-...}` is left alone.
 SYNC_IMAGE_MARKER = "registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-"
 # Any `image:` value that names the Sync image, in whatever form.
@@ -68,6 +76,13 @@ def _compose_path(docker_file: str | None) -> Path:
         msg = f"{path} does not exist."
         raise Exit(msg, code=1)
     return path
+
+
+def _packaged_copy(docker_file: str | None, packaged_file: str | None) -> Path | None:
+    """Return the packaged copy to keep in step, or None when the task acts on one named file."""
+    if packaged_file:
+        return Path(packaged_file)
+    return None if docker_file else PACKAGED_COMPOSE_FILE
 
 
 def _sync_image_pins(path: Path, lines: list[str]) -> list[tuple[int, re.Match[str]]]:
@@ -112,10 +127,19 @@ def _require_pins(path: Path, lines: list[str]) -> list[tuple[int, re.Match[str]
     help={
         "version": "Release version to pin, in canonical PEP 440 form (for example 3.0.0a6).",
         "docker_file": "Compose file to edit (default: the repository's root docker-compose.yml).",
+        "packaged_file": (
+            "Copy to overwrite with the pinned file (default: the packaged copy, "
+            "infrahub_sync/testcontainers/docker-compose.yml, unless --docker-file is given)."
+        ),
     }
 )
-def update_docker_compose(context: Context, version: str, docker_file: str | None = None) -> None:  # noqa: ARG001  # pylint: disable=unused-argument
-    """Pin every Sync image line of the root Compose file to `version`."""
+def update_docker_compose(
+    context: Context,  # noqa: ARG001  # pylint: disable=unused-argument
+    version: str,
+    docker_file: str | None = None,
+    packaged_file: str | None = None,
+) -> None:
+    """Pin every Sync image line of the root Compose file to `version`, and copy it over the packaged copy."""
     version = _canonical(version)
     path = _compose_path(docker_file)
     lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
@@ -130,15 +154,30 @@ def update_docker_compose(context: Context, version: str, docker_file: str | Non
         path.write_text("".join(lines), encoding="utf-8")
     log.info("compose_image_pinned", file=str(path), version=version, sync_lines=len(pins), changed_lines=changed)
 
+    copy = _packaged_copy(docker_file, packaged_file)
+    if copy is not None and (not copy.is_file() or copy.read_bytes() != path.read_bytes()):
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_bytes(path.read_bytes())
+        log.info("compose_packaged_copy_written", file=str(copy), source=str(path))
+
 
 @task(
     help={
         "version": "Release version every Sync image line must pin.",
         "docker_file": "Compose file to check (default: the repository's root docker-compose.yml).",
+        "packaged_file": (
+            "Copy that must be byte-equal to the checked file (default: the packaged copy, "
+            "infrahub_sync/testcontainers/docker-compose.yml, unless --docker-file is given)."
+        ),
     }
 )
-def validate_docker_compose(context: Context, version: str, docker_file: str | None = None) -> None:  # noqa: ARG001  # pylint: disable=unused-argument
-    """Refuse a Compose file whose Sync image lines pin anything but `version`."""
+def validate_docker_compose(
+    context: Context,  # noqa: ARG001  # pylint: disable=unused-argument
+    version: str,
+    docker_file: str | None = None,
+    packaged_file: str | None = None,
+) -> None:
+    """Refuse a Compose file whose Sync image lines pin anything but `version`, or whose packaged copy differs."""
     path = _compose_path(docker_file)
     pins = _require_pins(path, path.read_text(encoding="utf-8").splitlines())
 
@@ -146,5 +185,11 @@ def validate_docker_compose(context: Context, version: str, docker_file: str | N
     if offending:
         log.error("compose_image_pin_mismatch", file=str(path), expected=version, offending=offending)
         msg = f"{path} does not pin every Sync image to {version}:\n  " + "\n  ".join(offending)
+        raise Exit(msg, code=1)
+
+    copy = _packaged_copy(docker_file, packaged_file)
+    if copy is not None and (not copy.is_file() or copy.read_bytes() != path.read_bytes()):
+        log.error("compose_packaged_copy_differs", file=str(copy), source=str(path))
+        msg = f"{copy} is not byte-equal to {path}; run release.update-docker-compose to copy it."
         raise Exit(msg, code=1)
     log.info("compose_image_pin_valid", file=str(path), version=version, sync_lines=len(pins))

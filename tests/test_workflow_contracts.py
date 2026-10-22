@@ -1776,10 +1776,12 @@ def test_the_release_pull_request_commits_the_pinned_compose_file() -> None:
     _index, step = _step_running(
         prepare_release_steps(), "open the release pull request", lambda s: "git commit" in str(s.get("run"))
     )
-    added = RELEASE_PR_GIT_ADD.findall(str(step["run"]))
+    # A backslash at the end of a line continues the command; join it before reading the paths.
+    added = RELEASE_PR_GIT_ADD.findall(re.sub(r"\\\n\s*", " ", str(step["run"])))
 
     assert len(added) == 1
     assert "docker-compose.yml" in added[0].split()
+    assert "infrahub_sync/testcontainers/docker-compose.yml" in added[0].split()
 
 
 def test_the_tag_is_refused_for_a_compose_file_pinned_to_another_version() -> None:
