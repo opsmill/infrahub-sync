@@ -230,7 +230,9 @@ the operations.
   MUST show where each one came from: `config.yml`, a v2 variable such as `NETBOX_URL`, or
   `--source-url` / `--destination-url`.
 - **FR-011**: When `config.yml` and a v2 address variable both give an address and they differ,
-  the command MUST use the variable and print both. The flags MUST override both.
+  the command MUST use the value v2 used and print both: the variable for every adapter except
+  `ipfabricsync`, where v2 read the variable only when the file setting was empty. The flags MUST
+  override both.
 - **FR-012**: When neither the file, a variable nor a flag gives an address, the command MUST stop
   and name the flag and the v2 variables.
 - **FR-013**: The report MUST say which v2 address variables were visible where the command ran.
