@@ -1,0 +1,39 @@
+dev/specs/012-v2-configuration-conversion/quickstart.md
+  s_9c7f8713d8e8dc::t_81dc1a998ef2ef 1-8,10-34,36-68
+  s_9c7f8713d8e8dc::t_3bbc0d52ef2860 9,35
+dev/specs/012-v2-configuration-conversion/spec.md
+  s_9c7f8713d8e8dc::t_48cb8a34a2ac0b 56-58
+  s_9c7f8713d8e8dc::t_34a509649a4195 235-239
+  s_9c7f8713d8e8dc::t_af30f6d87e5321 252-255
+  s_9c7f8713d8e8dc::t_1e9649146d95ac 175-179
+dev/specs/012-v2-configuration-conversion/plan.md
+  s_9c7f8713d8e8dc::t_2ec6ead1f3b62f 1,3,5,9-28,32-33,35-36,38,40-41,43-44,46,48-49,51-52,54,60-70,77-87,93-96,99-116,119-145,149
+  s_9c7f8713d8e8dc::t_9823c476e564d9 2,4,6-8,29-31,34,37,39,42,45,47,50,53,55-59,71-76,88-92,97-98,117-118,146-148
+CLAUDE.md
+  s_9c7f8713d8e8dc::t_8686f8da4b93e4 6-8,10
+dev/specs/012-v2-configuration-conversion/contracts/convert-command.md
+  s_9c7f8713d8e8dc::t_72fd2fb8ddb5cf 25-27
+  s_9c7f8713d8e8dc::t_da1cb78e7c150a 1-24,30-33,36-83
+  s_9c7f8713d8e8dc::t_9bb92de85df7e3 34-35
+  s_9c7f8713d8e8dc::t_a678fb9ad0f2f6 28-29
+dev/specs/012-v2-configuration-conversion/research.md
+  s_9c7f8713d8e8dc::t_a38365b5833273 1-185
+dev/specs/012-v2-configuration-conversion/data-model.md
+  s_9c7f8713d8e8dc::t_37a44c8be27bf4 1-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7dd2e4c8e74d1977ccc8daa2eeeda34dec59bc03",
+  "prompts": {},
+  "sessions": {
+    "s_9c7f8713d8e8dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7b4ab04-36d6-4644-a214-69334e6a0d27",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
