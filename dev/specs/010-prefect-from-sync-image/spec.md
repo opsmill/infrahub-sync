@@ -24,12 +24,34 @@ open the UI on the loopback address through a documented override file. The bund
 moves to `pgsty/silo`, a maintained MinIO fork. Engineers get one development Compose file and one
 `dev` task namespace with two modes, and every invoke task has one name.
 
-Not decided yet: the replacement name for the combined `format` and `lint` tasks, and whether the
-Silo licence needs any action. Both are marked below.
-
 This feature is the first of two. A second feature, built on this one, covers the remaining
 3.0 blockers listed under Jira card INFP-692: an external S3 store, credentials for every adapter,
 a custom certificate authority, lifecycle reliability, and the release digest and SBOM.
+
+## Clarifications
+
+### Session 2026-10-22
+
+Answers from the product owner.
+
+- Q: Which task names run the full format pass and the full lint pass once the top-level `format`
+  and `lint` tasks are removed? → A: `linter.format` and `linter.lint` take over the
+  documentation legs and become the full passes; `docs.format` and `docs.lint` stay as subsets;
+  `tests-all` becomes `tests.all`; `check-310` becomes `tests.check-310`; no top-level task
+  remains.
+- Q: Does running the AGPLv3 Silo image unmodified in a separate container need any action from
+  OpsMill? → A: The operator documentation names the Silo image, its AGPLv3 licence and a link to
+  its source. No notice file ships. This is recorded as the product owner's decision.
+- Q: Which stacks does the rule "only `prefect-server` holds the Prefect database password"
+  cover? → A: The root file, and so the test fixture that ships it. `db-bootstrap` is an allowed
+  exception because it creates the Prefect role. The development stack keeps one local password.
+- Q: Which Sync image does `TestInfrahubSyncDocker` use by default? → A:
+  `registry.opsmill.io/opsmill/infrahub-sync` tagged with the installed `infrahub-sync` package
+  version. The root file's image variables (`INFRAHUB_SYNC_DOCKER_IMAGE`, `VERSION`) override
+  it, and CI sets them to its own image.
+- Q: What happens to `development/preview.env`? → A: It is removed. Its values go directly into
+  the development Compose file, and the `dev.*` tasks and the benchmark runner read them from
+  there or from the Compose defaults.
 
 ## Decisions carried from the idea brief
 
@@ -115,8 +137,8 @@ CLI.
 2. **Given** the default root deployment, **When** the team lists the published host ports,
    **Then** `sync-api` is the only service that publishes a host port.
 3. **Given** the default root deployment, **When** the team inspects the resolved environment of
-   each service, **Then** among the services that run the Sync image only `prefect-server` holds
-   the Prefect database password, and the `cli` service holds no Prefect credential.
+   each service, **Then** only `prefect-server`, and `db-bootstrap` which creates the Prefect
+   role, hold the Prefect database password, and the `cli` service holds no Prefect credential.
 4. **Given** the default root deployment, **When** the team starts it from an empty volume,
    **Then** the bundled object store runs `pgsty/silo` pinned by release tag and digest, reaches
    healthy, and `sync-bootstrap` creates the bucket.
@@ -220,7 +242,8 @@ image, and complete a plan and an apply.
 
 1. **Given** a test class inheriting `TestInfrahubSyncDocker`, **When** pytest runs it, **Then**
    Infrahub starts from `infrahub-testcontainers`, Sync starts from the packaged root Compose file
-   with the CI-built image, the Sync worker reaches `infrahub-server`, and a plan and an apply
+   and the CI-built image set through `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION`, the Sync worker
+   reaches `infrahub-server`, and a plan and an apply
    complete.
 2. **Given** the unit test tier, **When** it runs, **Then** it needs no Docker and the
    `testcontainers` pytest plugin does not load.
@@ -256,11 +279,12 @@ image, and complete a plan and an apply.
   reference `prefecthq/prefect`. Test: a contract test finds zero `prefecthq/prefect` references.
 - **FR-002**: In each stack, `prefect-server` MUST run the same image reference as `sync-api` and
   `sync-worker`. Test: `docker compose config` comparison per stack.
-- **FR-003**: Among the services that run the Sync image, `prefect-server` MUST be the only one
-  that holds the Prefect database password. The `cli` service MUST hold no Prefect credential.
-  Today, `db-bootstrap` (PostgreSQL image) also holds the password because it creates the
-  Prefect role; whether that stays is not stated in the brief. Test: a contract test over the
-  resolved environment of each service.
+- **FR-003**: In the root file, and so in the test fixture that ships it, `prefect-server` MUST be
+  the only service that holds the Prefect database password, with one allowed exception:
+  `db-bootstrap` (PostgreSQL image), because it creates the Prefect role. The `cli` service MUST
+  hold no Prefect credential. The development stack is not covered and keeps one local password
+  for all its services. Test: a contract test over the resolved environment of each service in
+  the root file.
 - **FR-004**: `sync-api` MUST NOT proxy the Prefect API, and nothing outside the Sync image MUST
   call the Prefect API.
 - **FR-005**: Changing the `prefect` pin in `pyproject.toml` and `uv.lock` MUST change the
@@ -298,29 +322,35 @@ image, and complete a plan and an apply.
 - **FR-013**: Every object store health check, and the repair of the volume owner, MUST use only
   what the Silo image contains, because the Chainguard `-dev` build supplied `wget` and `mc`.
   Test: a Compose start from an empty volume reaches healthy.
-- **FR-014**: The project MUST record whether running Silo, licensed under AGPLv3, unmodified as a
-  separate container needs further action. [NEEDS CLARIFICATION: Does running the AGPLv3 Silo
-  image unmodified in a separate container need any action from OpsMill (for example a licence
-  notice in the documentation or in the release), and who confirms it?]
+- **FR-014**: The operator documentation MUST name the Silo image, its AGPLv3 licence and a link
+  to its source. No third-party notice file ships with the release. The product owner decided on
+  2026-10-22 that running Silo unmodified in a separate container needs no further action. Test:
+  a documentation test for the image name, the licence and the link.
 
 #### Development stack and invoke tasks
 
 - **FR-015**: The development stack MUST be one Compose file with core services (PostgreSQL, the
   object store, `prefect-server` on `127.0.0.1:4230`), a `sync` profile (`sync-bootstrap`,
   `sync-api`, `sync-worker`) and an `infrahub` profile, with the Prefect UI on.
-  `docker-compose.preview.yml` MUST be removed. Test: file inventory and
-  `docker compose config --profiles`.
+  `docker-compose.preview.yml` and `development/preview.env` MUST be removed. The settings that
+  `development/preview.env` holds today MUST be written directly in the development Compose file,
+  and the `dev.*` tasks MUST read them from that file or from its defaults. Test: file inventory
+  and `docker compose config --profiles`.
 - **FR-016**: The `dev` namespace MUST provide `dev.build`, `dev.deps`, `dev.start`,
   `dev.restart`, `dev.stop`, `dev.destroy`, `dev.status`, `dev.logs`, `dev.seed`, `dev.smoke`,
   `dev.api` and `dev.worker`. The `netbox` namespace MUST provide `netbox.start` and
   `netbox.destroy` in place of `netbox.up` and `netbox.down`. Test: task inventory.
-- **FR-017**: Every invoke task MUST have exactly one name. The top-level `format`, `lint`,
-  `docusaurus`, `generate-doc` and `tests-*` tasks and the `preview` namespace MUST be removed.
-  The top-level `format` and `lint` tasks run both the documentation and the Python formatters or
-  linters; no namespaced task does both today. [NEEDS CLARIFICATION: Which single task name do
-  engineers and the `AGENTS.md` required workflow use to run the full format pass and the full
-  lint pass once the top-level `format` and `lint` tasks are removed?] Test: a task inventory
-  test finds no duplicate names.
+- **FR-017**: Every invoke task MUST have exactly one name, and no top-level task MUST remain. The
+  top-level `format`, `lint`, `docusaurus`, `generate-doc`, `tests-unit`, `tests-integration`,
+  `tests-all` and `check-310` tasks and the `preview` namespace MUST be removed, with these
+  replacements:
+  - `linter.format` MUST run the documentation formatter and then the Python formatter, and
+    becomes the full format pass. `docs.format` stays as the documentation-only subset.
+  - `linter.lint` MUST run the documentation linter and then the Python linters, and becomes the
+    full lint pass. `docs.lint` stays as the documentation-only subset.
+  - `tests.all` MUST replace `tests-all` and run the unit and integration tiers.
+  - `tests.check-310` MUST replace `check-310`.
+  Test: a task inventory test finds no duplicate names and no top-level task.
 - **FR-018**: `dev.start` and `dev.deps` MUST rebuild the Sync image when the dependencies or the
   `Dockerfile` changed since the image was built. Code changes alone MUST NOT need a rebuild.
   Test: run against an image built from an older lock file.
@@ -344,7 +374,11 @@ image, and complete a plan and an apply.
   `infrahub_sync.testcontainers` with the class `TestInfrahubSyncDocker`, which inherits
   `TestInfrahubDocker`. The root `docker-compose.yml` MUST ship as package data, byte-equal to the
   repository file. The module MUST be documented as experimental until a demo repository adopts
-  it. Test: a byte-equality test; the CI end-to-end tier uses the class.
+  it. By default the class MUST run `registry.opsmill.io/opsmill/infrahub-sync` tagged with the
+  installed `infrahub-sync` package version; `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION`, the root
+  file's image variables, MUST override it, and CI MUST set them to its own image. Test: a
+  byte-equality test; a test of the default and overridden image reference; the CI end-to-end
+  tier uses the class.
 - **FR-024**: Sync's `prefect` pin and the `prefect-client` pin of the `infrahub-testcontainers`
   version Sync depends on MUST name the same Prefect version. Test: reads both versions from
   `uv.lock`.
@@ -354,8 +388,14 @@ image, and complete a plan and an apply.
 #### CI and documentation
 
 - **FR-026**: The CI end-to-end tier, the nightly workflow and the benchmark runner MUST use the
-  new task names or the fixture. `AGENTS.md` and the documentation MUST name only the new tasks.
-  Test: a search over `.github/`, `docs/` and `AGENTS.md` finds no old task name.
+  new task names or the fixture. `AGENTS.md` and the documentation MUST name only the new tasks,
+  including `AGENTS.md` (required workflow and policy), `docs/docs/development/constitution.md`,
+  `docs/docs/development/knowledge/quality-gates.md` and
+  `docs/docs/development/guides/adding-an-adapter.md`, which use `invoke format` and
+  `invoke lint` today. The benchmark runner (`tasks/bench.py`) reads `development/preview.env`
+  today; it MUST read the same settings from the development Compose file or its defaults. How it
+  reads them is not known. Test: a search over `.github/`, `docs/` and `AGENTS.md` finds no old
+  task name.
 - **FR-027**: [`development-stack.mdx`](../../../docs/docs/development-stack.mdx) MUST describe both
   modes well enough for an engineer with a fresh checkout to reach a passing `dev.smoke` without
   other documents.
@@ -366,14 +406,16 @@ image, and complete a plan and an apply.
   the customer deployment. Changes: `prefect-server` runs the Sync image, the Prefect UI is off,
   the Prefect port is not published, the object store runs Silo. Also ships as package data.
 - **Development stack** (existing, merged): one Compose file that replaces
-  `development/docker-compose.dev.yml` and `development/docker-compose.preview.yml`. Whether
-  `development/preview.env` stays is not known.
+  `development/docker-compose.dev.yml`, `development/docker-compose.preview.yml` and
+  `development/preview.env`. It holds the development settings directly and uses one local
+  database password for all its services.
 - **Sync image** (existing): now also runs `prefect-server`.
 - **Prefect server module** (new): the module in the Sync package that builds the Prefect server
   application for uvicorn. Its name is not decided; the brief gives
   `infrahub_sync.service.prefect_server` as an example.
 - **`TestInfrahubSyncDocker`** (new): the pytest base class for end-to-end tests of Infrahub plus
-  Sync.
+  Sync. It runs the published Sync image of the installed package version unless the root file's
+  image variables name another image.
 - **Override snippet** (new, documentation): the `docker-compose.override.yml` content that opens
   the Prefect UI on the loopback address.
 
@@ -400,8 +442,9 @@ Against the [project constitution](../../../docs/docs/development/constitution.m
 
 - **VII. Simplicity and maintainability**: supported. Fewer Compose files, fewer tasks, no
   background process handling.
-- **VI. Security, secrets, and input boundaries**: supported. The Prefect database password is in
-  one Sync service, the CLI holds no Prefect credential, the Prefect port is closed by default.
+- **VI. Security, secrets, and input boundaries**: supported. In the root file, the Prefect
+  database password is in one Sync service (plus `db-bootstrap`, which creates the role), the CLI
+  holds no Prefect credential, and the Prefect port is closed by default.
 - **V. Test discipline**: the end-to-end tier stays opt-in by marker; the unit tier stays free of
   Docker (FR-025).
 - **I. Read-only and dry-run by default**: not affected.
