@@ -51,7 +51,11 @@ dependencies = [
     "filelock>=3.13",
     "jinja2>=3.1.6",
     "typer>=0.23.1",
-    "pydantic>=2.10.2,<3",
+    # Pydantic 2.13 writes a float exponent with a sign (`-1e+100`, not `-1e100`), so a
+    # numeric secret no longer matches its serialized token and public JSON artifacts stop
+    # masking it (`tests/product_store/test_contract.py`, the `pydantic-exponent` cases).
+    # Lift the cap once redaction matches numeric tokens independently of their spelling.
+    "pydantic>=2.10.2,<2.13",
     "packaging>=22.0",
     "requests>=2.28.2",
     "urllib3>=1.26.9",
@@ -70,6 +74,9 @@ infrahub-sync = "infrahub_sync.cli:app"
 # prefect; a base install never loads it.
 prefect = [
     "prefect==3.8.6",
+    # FastAPI 0.159 breaks `prefect.server.api.server.create_app` (Prefect 3.8.6 passes
+    # `min_items` to `Body()`), so hold the version the Prefect server is verified with.
+    "fastapi==0.141.1",
 ]
 # Sync HTTP service and worker profile (Python 3.11-3.13). Every runtime
 # imported directly by `infrahub_sync.service` is declared here; the reusable
@@ -80,7 +87,8 @@ prefect = [
 # `opsmill_prefect_extras/VENDORED.md` for the freeze and re-adoption rules.
 service = [
     "boto3>=1.35,<2; python_version >= '3.11'",
-    "fastapi>=0.115,<1; python_version >= '3.11'",
+    # Same reason as in `prefect`: the Prefect server factory needs this FastAPI release.
+    "fastapi==0.141.1; python_version >= '3.11'",
     # `infrahubctl` ships in the SDK's `[ctl]` extra. It belongs to this profile,
     # not to `dev`: the image installs `--no-dev --extra service`, and a dev-only
     # placement leaves `infrahubctl` unable to start there for a missing
@@ -124,9 +132,9 @@ ipfabric = [
 # The Slurp'it adapter uses the async SDK API. Version 0.9.52 is the first
 # inspected release with async device/planning/site calls, Planning.slug,
 # search_plannings(limit=...), and api(verify=...); 0.9.47 lacks verify.
-# The 0.9 line requires httpx<0.28. Keep it separate from service so the
-# default image retains its current httpx. These extras need separate uv
-# resolutions because the SDK's httpx<0.28 would lower service's httpx.
+# Current 0.9 releases (0.9.156) resolve with httpx 0.28.1, so the SDK no longer
+# lowers service's httpx. The `service`/`slurpit` conflict below still keeps the
+# two extras in separate uv resolutions, which the Slurp'it adapter page documents.
 slurpit = [
     "slurpit-sdk>=0.9.52,<0.10; python_version >= '3.11'",
 ]
@@ -164,6 +172,10 @@ dev = [
 
 [tool.uv]
 conflicts = [[{ extra = "service" }, { extra = "slurpit" }]]
+# `ujson` is a transitive dependency (through `infrahub-sdk`). It stays in the 5.x series
+# that carries the known fix, which `tests/image/test_version_policy.py` checks in `uv.lock`;
+# moving to ujson 6 is a separate, reviewed change to that range.
+constraint-dependencies = ["ujson>=5.12.1,<6"]
 
 [build-system]
 requires = ["hatchling"]
