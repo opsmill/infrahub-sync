@@ -1,0 +1,32 @@
+dev/specs/010-prefect-from-sync-image/spec.md
+  s_8d92f288a8f661::t_9223af06d4c4f5 391-398
+  s_8d92f288a8f661::t_752f2e27190e19 245-246
+  s_8d92f288a8f661::t_32a0f185a129e6 31-55
+  s_8d92f288a8f661::t_0309de01965a13 325-328
+  s_8d92f288a8f661::t_d447606dce42a3 335-338
+  s_8d92f288a8f661::t_ba60da4eba6bd3 409-411
+  s_8d92f288a8f661::t_adb09950d6f8c8 417-418
+  s_8d92f288a8f661::t_3ab06b13e4fb1d 445-447
+  s_8d92f288a8f661::t_ea091decc53424 282-287
+  s_8d92f288a8f661::t_0dba6bab292dac 377-381
+  s_8d92f288a8f661::t_fd0908dfd29090 140-141
+  s_8d92f288a8f661::t_cac241c2cddf93 343-353
+dev/specs/010-prefect-from-sync-image/checklists/requirements.md
+  s_8d92f288a8f661::t_a8e7d2fa80f03a 16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b79b727b83baf6855a113035b3dda89d92d426f5",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
