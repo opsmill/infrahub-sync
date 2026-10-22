@@ -44,10 +44,8 @@ import json
 import os
 import shlex
 import sys
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from invoke import Collection, Context, task
@@ -55,6 +53,10 @@ from invoke import Collection, Context, task
 from .netbox import DEV_STACK_PROJECT, WORKER_INFRAHUB_URL, attach_dev_worker, connect_dev_worker, load_netbox_env
 from .smoke_dataset import load_smoke_dataset
 from .utils import ESCAPED_REPO_PATH, REPO_BASE
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+    from pathlib import Path
 
 NAMESPACE = "INFRAHUB-SYNC-DEV"
 
@@ -327,24 +329,26 @@ def _compose_command(project: str = "", profiles: Sequence[str] = START_PROFILES
     return f"{command} -f {shlex.quote(DEV_COMPOSE_FILE)}"
 
 
-def compose(
-    context: Context,
-    arguments: str,
-    *,
-    project: str = "",
-    profiles: Sequence[str] = START_PROFILES,
-    env: Mapping[str, str] | None = None,
-    pty: bool = False,
-) -> None:
+@dataclass(frozen=True)
+class ComposeTarget:
+    """The Compose project and profiles one command runs against, and the shell values it adds."""
+
+    project: str = ""
+    profiles: Sequence[str] = START_PROFILES
+    env: Mapping[str, str] | None = None
+
+
+def compose(context: Context, arguments: str, target: ComposeTarget | None = None, *, pty: bool = False) -> None:
     """Run one Compose command against the development file from the repository root.
 
-    `env` is passed only when it holds values, so a caller's `config.run.env` (the
+    `target.env` is passed only when it holds values, so a caller's `config.run.env` (the
     benchmark runner sets one) is not replaced by an empty mapping.
     """
-    command = f"{_compose_command(project, profiles)} {arguments}"
+    target = target or ComposeTarget()
+    command = f"{_compose_command(target.project, target.profiles)} {arguments}"
     with context.cd(ESCAPED_REPO_PATH):
-        if env:
-            context.run(command, env=dict(env), pty=pty)
+        if target.env:
+            context.run(command, env=dict(target.env), pty=pty)
         else:
             context.run(command, pty=pty)
 
@@ -354,12 +358,14 @@ def _build(context: Context, *, no_cache: bool = False, project: str = "") -> No
     arguments = f"build --build-arg BUILD_INPUTS={build_inputs_hash()}"
     if no_cache:
         arguments += " --no-cache"
-    compose(context, f"{arguments} {BUILD_SERVICE}", project=project, pty=True)
+    compose(context, f"{arguments} {BUILD_SERVICE}", ComposeTarget(project=project), pty=True)
 
 
 def _start(context: Context, *, project: str = "", attach_infrahub: bool = True) -> None:
     """Start the Sync services and reattach the worker; the benchmark runner pins the project."""
-    compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}", project=project, pty=True)
+    compose(
+        context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}", ComposeTarget(project=project), pty=True
+    )
     # `up` recreates the worker whenever its settings change, which drops a network it
     # was connected to afterwards. Reconnect it to local NetBox and, unless the caller
     # connects its own destination network (the benchmark runner does), Infrahub.
@@ -371,7 +377,7 @@ def _start(context: Context, *, project: str = "", attach_infrahub: bool = True)
 
 def _destroy(context: Context, *, project: str = "") -> None:
     """Remove the stack and its volumes; the benchmark runner pins the project."""
-    compose(context, "down --volumes --remove-orphans", project=project, profiles=ALL_PROFILES, pty=True)
+    compose(context, "down --volumes --remove-orphans", ComposeTarget(project=project, profiles=ALL_PROFILES), pty=True)
 
 
 def _stack_env(settings: DevSettings) -> dict[str, str]:
@@ -562,9 +568,7 @@ def dev_start(context: Context, infrahub_network: str = "") -> None:
     compose(
         context,
         f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}",
-        project=settings.project,
-        profiles=settings.profiles,
-        env=_stack_env(settings),
+        ComposeTarget(project=settings.project, profiles=settings.profiles, env=_stack_env(settings)),
         pty=True,
     )
     _attach_worker(context, settings)
@@ -580,9 +584,7 @@ def dev_restart(context: Context) -> None:
     compose(
         context,
         f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS} --force-recreate --no-deps {services}",
-        project=settings.project,
-        profiles=settings.profiles,
-        env=_stack_env(settings),
+        ComposeTarget(project=settings.project, profiles=settings.profiles, env=_stack_env(settings)),
         pty=True,
     )
     _attach_worker(context, settings)
@@ -592,7 +594,7 @@ def dev_restart(context: Context) -> None:
 @task(name="stop")
 def dev_stop(context: Context) -> None:
     """Stop the containers and keep their volumes."""
-    compose(context, "stop", project=dev_settings(context).project, profiles=ALL_PROFILES, pty=True)
+    compose(context, "stop", ComposeTarget(project=dev_settings(context).project, profiles=ALL_PROFILES), pty=True)
     print(f" - [{NAMESPACE}] Stopped; `uv run invoke dev.start` starts it again with its data")
 
 
@@ -612,7 +614,7 @@ def dev_destroy(context: Context) -> None:
 def dev_status(context: Context) -> None:
     """Show the containers, their health and the URLs."""
     settings = dev_settings(context)
-    compose(context, "ps --all", project=settings.project, profiles=ALL_PROFILES)
+    compose(context, "ps --all", ComposeTarget(project=settings.project, profiles=ALL_PROFILES))
     _print_urls(settings)
 
 
@@ -622,8 +624,7 @@ def dev_logs(context: Context, name: str = "sync-api", lines: int = 50) -> None:
     compose(
         context,
         f"logs --no-color --tail {int(lines)} {shlex.quote(name)}",
-        project=dev_settings(context).project,
-        profiles=ALL_PROFILES,
+        ComposeTarget(project=dev_settings(context).project, profiles=ALL_PROFILES),
     )
 
 
@@ -674,11 +675,15 @@ def dev_deps(context: Context, infrahub_network: str = "") -> None:
     compose(
         context,
         f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}",
-        project=settings.project,
-        profiles=profiles,
+        ComposeTarget(project=settings.project, profiles=profiles),
         pty=True,
     )
-    compose(context, "run --rm --no-deps sync-bootstrap", project=settings.project, profiles=profiles, pty=True)
+    compose(
+        context,
+        "run --rm --no-deps sync-bootstrap",
+        ComposeTarget(project=settings.project, profiles=profiles),
+        pty=True,
+    )
     _print_urls(settings, host_worker=True)
     print(f" - [{NAMESPACE}] PostgreSQL  {_publication_address(settings.postgres)}")
     print(f" - [{NAMESPACE}] Object store {_publication_url(settings.object_store)}")

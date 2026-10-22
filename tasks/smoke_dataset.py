@@ -8,10 +8,12 @@ and imports no other task module, so both task modules can use it.
 from __future__ import annotations
 
 import shlex
-
-from invoke import Context
+from typing import TYPE_CHECKING
 
 from .utils import REPO_BASE
+
+if TYPE_CHECKING:
+    from invoke import Context
 
 NAMESPACE = "INFRAHUB-SYNC-SMOKE"
 

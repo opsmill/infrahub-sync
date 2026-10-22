@@ -1222,7 +1222,7 @@ def test_partial_setup_cleans_only_acquired_stacks(monkeypatch, failure) -> None
             msg = "restore failed"
             raise BenchmarkError(msg)
 
-    def compose(_context, _arguments, **_kwargs):
+    def compose(_context: object, _arguments: str, **_kwargs: object) -> None:
         events.append("destination")
         if len(events) == 1:
             msg = "compose failed"

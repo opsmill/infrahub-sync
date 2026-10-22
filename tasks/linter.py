@@ -156,8 +156,10 @@ def lint_ruff(context: Context) -> None:
     """Run Ruff checks."""
 
     print(f" - [{NAMESPACE}] Check code with ruff")
-    exec_cmd = f"ruff format --check --diff {MAIN_DIRECTORY} &&"
-    exec_cmd += f"ruff check --diff {MAIN_DIRECTORY}"
+    exec_cmd = f"ruff format --check --diff {MAIN_DIRECTORY} && "
+    # `ruff check --diff` implies `--fix-only`, which ignores every violation Ruff cannot
+    # fix; the plain check reports them all, as CI's `ruff check .` does.
+    exec_cmd += f"ruff check {MAIN_DIRECTORY}"
     with context.cd(ESCAPED_REPO_PATH):
         context.run(exec_cmd)
 

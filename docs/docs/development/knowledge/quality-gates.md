@@ -19,7 +19,7 @@ documents their ordering, Pylint gate, and archive-formatting boundary.
 | Order | Leg | Command |
 |---|---|---|
 | 1 | `docs.rumdl` | `rumdl check .` |
-| 2 | `linter.lint-ruff` | `ruff format --check --diff . && ruff check --diff .` |
+| 2 | `linter.lint-ruff` | `ruff format --check --diff . && ruff check .` |
 | 3 | `linter.lint-pylint` | `pylint --output-format=json2 infrahub_sync/` |
 | 4 | `linter.lint-yaml` | `yamllint .` |
 | 5 | `linter.lint-ty` | Profile-aware `uv run ty check` (see [CI](#ci)) |

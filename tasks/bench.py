@@ -131,9 +131,9 @@ class CellStack:
         dev.compose(
             self.context,
             arguments,
-            project=self.destination_project,
-            profiles=("infrahub",),
-            env=self.destination_env,
+            target=dev.ComposeTarget(
+                project=self.destination_project, profiles=("infrahub",), env=self.destination_env
+            ),
         )
 
     def reset(self, tier: str) -> None:

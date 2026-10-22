@@ -41,7 +41,7 @@ def test_lint_yaml_runs_from_the_repository_root(monkeypatch: pytest.MonkeyPatch
     [
         (
             linter.lint_ruff,
-            f"cd {ESCAPED_REPO_PATH} && ruff format --check --diff . &&ruff check --diff .",
+            f"cd {ESCAPED_REPO_PATH} && ruff format --check --diff . && ruff check .",
         ),
         (
             linter.format_ruff,

@@ -204,7 +204,8 @@ def test_dev_api_runs_in_the_foreground_against_the_loopback_publications(
         f"{sys.executable} -m uvicorn --factory infrahub_sync.service.serve:build_app --host 127.0.0.1 --port 8030"
     )
     assert kwargs["pty"] is True
-    assert not kwargs.get("asynchronous") and not kwargs.get("disown")
+    assert not kwargs.get("asynchronous")
+    assert not kwargs.get("disown")
     environment = kwargs["env"]
     assert environment["INFRAHUB_SYNC_DATABASE_URL"] == "postgresql://postgres:devpassword@127.0.0.1:5440/infrahub_sync"
     assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == "http://127.0.0.1:9010"
@@ -226,7 +227,8 @@ def test_dev_worker_runs_in_the_foreground_against_the_loopback_publications(
     command, kwargs = fake.calls[-1]
     assert command == f"{sys.executable} -m infrahub_sync.service.worker --pool infrahub-sync"
     assert kwargs["pty"] is True
-    assert not kwargs.get("asynchronous") and not kwargs.get("disown")
+    assert not kwargs.get("asynchronous")
+    assert not kwargs.get("disown")
     environment = kwargs["env"]
     assert environment["INFRAHUB_SYNC_DATABASE_URL"] == "postgresql://postgres:devpassword@127.0.0.1:5440/infrahub_sync"
     assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == "http://127.0.0.1:9010"
@@ -309,8 +311,9 @@ def test_dev_smoke_with_both_host_processes_runs_the_suite_for_a_host_worker(
     assert kwargs["env"] == {dev.SMOKE_STACK_VARIABLE: dev.DEPS_SMOKE_STACK}
 
 
+@pytest.mark.usefixtures("smoke")
 def test_dev_smoke_with_the_sync_containers_skips_the_host_process_check(
-    context: Context, fake: FakeDocker, http: FakeHttp, smoke: list[str]
+    context: Context, fake: FakeDocker, http: FakeHttp
 ) -> None:
     fake.running = CORE_RUNNING + "sync-api\nsync-worker\n"
 
