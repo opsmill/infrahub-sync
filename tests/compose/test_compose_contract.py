@@ -64,8 +64,8 @@ CREDENTIALS = (
 BOOTSTRAP_CONFIG = "db-bootstrap-script"
 BOOTSTRAP_TARGET = "/usr/local/bin/databases.sh"
 TAGGED_INDEX_REFERENCE = re.compile(r"^(?:[^\s/@]+/)*[^/\s@:]+:[^/\s@:]+@sha256:[0-9a-f]{64}$")
-MINIO_IMAGE = (
-    "cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba"
+SILO_IMAGE = (
+    "pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc4155d9a7e41ff58cdb65ddd13ba9304e67184e13c25bc5cb34016269d7"
 )
 DEVELOPMENT_COMPOSE = Path(__file__).resolve().parents[2] / "development"
 DESTINATION_COMPOSE = DEVELOPMENT_COMPOSE / "docker-compose.infrahub.yml"
@@ -146,13 +146,6 @@ PREFECT_DATABASE_URL = "PREFECT_SERVER_DATABASE_CONNECTION_URL"
 PREFECT_DATABASE_PASSWORD_RECEIVERS = {PREFECT_SERVER, "db-bootstrap"}
 # PostgreSQL, the object store, and the Sync image.
 ROOT_IMAGE_COUNT = 3
-
-# The tests below marked with this describe the root file once `prefect-server`
-# runs from the Sync image and the object store from Silo. The marker is strict,
-# so each test fails the tier the moment it passes and its marker must come off.
-UNTIL_THE_ROOT_FILE_CHANGES = pytest.mark.xfail(
-    strict=True, reason="T014-T016 move prefect-server to the Sync image and the object store to Silo"
-)
 
 
 def services(model: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -343,7 +336,6 @@ def test_a_missing_credential_stops_compose_naming_it(compose_version: str, name
 # ---------------------------------------------------------------------------
 
 
-@UNTIL_THE_ROOT_FILE_CHANGES
 def test_only_the_api_publishes_a_host_port(model: dict[str, Any]) -> None:
     """One host port: Prefect, PostgreSQL, the object store, the worker, and every job stay private.
 
@@ -444,7 +436,6 @@ def sync_image_services(resolved: Mapping[str, Any]) -> set[str]:
     return {name for name, definition in services(resolved).items() if definition.get("image") == reference}
 
 
-@UNTIL_THE_ROOT_FILE_CHANGES
 def test_the_prefect_server_runs_the_image_the_sync_services_run(model: dict[str, Any]) -> None:
     """One image reference, so the server and its clients always run the same Prefect version."""
     images = {name: service(model, name)["image"] for name in (PREFECT_SERVER, "sync-api", "sync-worker")}
@@ -452,7 +443,6 @@ def test_the_prefect_server_runs_the_image_the_sync_services_run(model: dict[str
     assert len(set(images.values())) == 1, f"the Prefect server and the Sync services run different images: {images}"
 
 
-@UNTIL_THE_ROOT_FILE_CHANGES
 def test_nothing_outside_the_sync_image_reaches_the_prefect_api(
     cli_model: dict[str, Any], contract_environment: dict[str, str]
 ) -> None:
@@ -481,13 +471,11 @@ def test_nothing_outside_the_sync_image_reaches_the_prefect_api(
     assert by_value == [], f"services outside the Sync image hold the Prefect API credential: {by_value}"
 
 
-@UNTIL_THE_ROOT_FILE_CHANGES
 def test_the_prefect_server_starts_the_sync_package_factory(model: dict[str, Any]) -> None:
     """uvicorn serves the server application the Sync package builds, not the `prefect` CLI."""
     assert service(model, PREFECT_SERVER)["command"] == PREFECT_SERVER_COMMAND
 
 
-@UNTIL_THE_ROOT_FILE_CHANGES
 def test_the_prefect_server_health_check_calls_the_api_with_httpx(model: dict[str, Any]) -> None:
     """The check uses the image's own Python and `httpx`, on the loopback address."""
     test = service(model, PREFECT_SERVER)["healthcheck"]["test"]
@@ -526,7 +514,6 @@ def test_the_prefect_database_password_reaches_only_the_server_and_the_role_boot
     assert cli_settings == [], f"the CLI service holds Prefect settings: {cli_settings}"
 
 
-@UNTIL_THE_ROOT_FILE_CHANGES
 def test_the_prefect_ui_is_off_by_default(model: dict[str, Any]) -> None:
     """The UI turns on only through the documented override snippet."""
     assert service(model, PREFECT_SERVER)["environment"].get("PREFECT_UI_ENABLED") == "false"
@@ -540,7 +527,6 @@ def test_the_prefect_ui_api_address_is_loopback(model: dict[str, Any]) -> None:
     assert urlsplit(address).hostname == "127.0.0.1", f"the Prefect UI calls the API on {address}"
 
 
-@UNTIL_THE_ROOT_FILE_CHANGES
 def test_the_prefect_server_runs_read_only_over_the_sync_scratch(model: dict[str, Any]) -> None:
     """The same tmpfs roots as every Sync-image service, and nothing else writable."""
     definition = service(model, PREFECT_SERVER)
@@ -550,7 +536,6 @@ def test_the_prefect_server_runs_read_only_over_the_sync_scratch(model: dict[str
     assert definition.get("tmpfs") == expected, f"prefect-server declares scratch {definition.get('tmpfs')}"
 
 
-@UNTIL_THE_ROOT_FILE_CHANGES
 def test_the_root_file_names_three_images(cli_model: dict[str, Any]) -> None:
     """PostgreSQL, Silo and Sync: a deployment pulls three images, the opt-in CLI included."""
     images = image_references(cli_model)
@@ -563,12 +548,12 @@ def test_the_root_file_names_three_images(cli_model: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_object_store_uses_the_pinned_minio_build_and_migrates_existing_data(model: dict[str, Any]) -> None:
+def test_object_store_uses_the_pinned_silo_release_and_migrates_existing_data(model: dict[str, Any]) -> None:
     """Ownership repair completes before the server starts without root privileges."""
     init = service(model, "object-store-init")
     object_store = service(model, "object-store")
 
-    assert init["image"] == MINIO_IMAGE
+    assert init["image"] == SILO_IMAGE
     assert init["user"] == "0"
     assert init["entrypoint"] == ["/bin/sh", "-ec"]
     assert 'if [ "$$(stat -c %u:%g /data)" != "65532:65532" ]; then' in init["command"][0]
@@ -579,7 +564,7 @@ def test_object_store_uses_the_pinned_minio_build_and_migrates_existing_data(mod
     assert init["cap_drop"] == ["ALL"]
     assert init["cap_add"] == ["CHOWN"]
     assert {mount["source"] for mount in init["volumes"]} == {"object-store-data"}
-    assert object_store["image"] == MINIO_IMAGE
+    assert object_store["image"] == SILO_IMAGE
     assert object_store["user"] == "65532:65532"
     assert object_store["command"] == ["server", "/data"]
     assert object_store["depends_on"]["object-store-init"]["condition"] == "service_completed_successfully"
@@ -610,7 +595,7 @@ def sync_image_lines() -> dict[str, str]:
         heading = re.fullmatch(r"  ([a-z][a-z0-9-]*):\s*", line)
         if heading:
             current = heading.group(1)
-        elif current in ALL_SYNC_SERVICES and line.lstrip().startswith("image:"):
+        elif current in SYNC_IMAGE_SERVICES and line.lstrip().startswith("image:"):
             found[current] = line
     return found
 
@@ -628,14 +613,14 @@ def test_every_sync_service_names_the_registry_image_and_the_release_version() -
     """`${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-X}`, verbatim.
 
     Read from the text, because the model only shows what the defaults resolved
-    to. Every Sync service carries the same reference, so one `VERSION` moves
-    all four together.
+    to. Every Sync-image service carries the same reference, so one `VERSION`
+    moves all five together.
     """
     lines = sync_image_lines()
     versions = pinned_versions()
 
-    assert set(lines) == set(ALL_SYNC_SERVICES), f"Sync services with an image line: {sorted(lines)}"
-    assert set(versions) == set(ALL_SYNC_SERVICES), (
+    assert set(lines) == set(SYNC_IMAGE_SERVICES), f"Sync services with an image line: {sorted(lines)}"
+    assert set(versions) == set(SYNC_IMAGE_SERVICES), (
         f"services off the reference form: {sorted(set(lines) - set(versions))}"
     )
     assert len(set(versions.values())) == 1, f"the Sync services name different versions: {versions}"
@@ -646,7 +631,7 @@ def test_the_sync_image_defaults_to_the_registry_at_the_pinned_version(cli_model
     (pinned,) = set(pinned_versions().values())
     expected = f"{DEFAULT_IMAGE_REPOSITORY}:{pinned}"
 
-    resolved = {name: service(cli_model, name)["image"] for name in ALL_SYNC_SERVICES}
+    resolved = {name: service(cli_model, name)["image"] for name in SYNC_IMAGE_SERVICES}
 
     assert set(resolved.values()) == {expected}, resolved
 
@@ -673,7 +658,7 @@ def test_the_operator_selects_another_sync_image_with_two_settings(
     assert result.returncode == 0, result.stderr
     resolved = services(json.loads(result.stdout))
 
-    assert {resolved[name]["image"] for name in ALL_SYNC_SERVICES} == {expected}
+    assert {resolved[name]["image"] for name in SYNC_IMAGE_SERVICES} == {expected}
     assert all(
         IMMUTABLE_REFERENCE.fullmatch(str(definition["image"]))
         for name, definition in resolved.items()

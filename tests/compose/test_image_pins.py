@@ -49,9 +49,6 @@ PACKAGED_COPY = REPO_ROOT / "infrahub_sync" / "testcontainers" / "docker-compose
 # until then it still runs MinIO and `prefecthq/prefect`.
 PREVIEW_STACK = DEVELOPMENT / "docker-compose.preview.yml"
 
-UNTIL_THE_ROOT_FILE_CHANGES = pytest.mark.xfail(
-    strict=True, reason="T014-T016 move the root file to the Sync-image Prefect server and to Silo"
-)
 UNTIL_THE_DEVELOPMENT_STACK_CHANGES = pytest.mark.xfail(
     strict=True, reason="T031 moves the development stack to the Sync-image Prefect server and to Silo"
 )
@@ -67,7 +64,7 @@ def development_stack() -> Path | None:
 
 def stacks() -> list[Any]:
     """Every stack that runs the bundled object store and a Prefect server, as test parameters."""
-    found = [pytest.param(COMPOSE_FILE, CONTRACT_ENVIRONMENT, id="root", marks=UNTIL_THE_ROOT_FILE_CHANGES)]
+    found = [pytest.param(COMPOSE_FILE, CONTRACT_ENVIRONMENT, id="root")]
     if (development := development_stack()) is not None:
         found.append(pytest.param(development, None, id="development", marks=UNTIL_THE_DEVELOPMENT_STACK_CHANGES))
     if PACKAGED_COPY.exists():
@@ -86,8 +83,6 @@ def compose_files() -> list[Any]:
             id=str(path.relative_to(REPO_ROOT)),
             marks=UNTIL_THE_PREVIEW_STACK_IS_DELETED
             if path == PREVIEW_STACK
-            else UNTIL_THE_ROOT_FILE_CHANGES
-            if path == COMPOSE_FILE
             else UNTIL_THE_DEVELOPMENT_STACK_CHANGES
             if path == development_stack()
             else (),
