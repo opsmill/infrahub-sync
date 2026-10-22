@@ -12,7 +12,8 @@ The keys the command reads, with the rule each one follows ([research R1](resear
 | `name` | copied | FR-019 |
 | `source.name`, `destination.name` | copied when bundled; refused otherwise; destination must be `infrahub` | FR-015 |
 | `source.adapter`, `destination.adapter` | dropped with a note when it names the bundled module; refused otherwise | FR-015, FR-016 |
-| credential settings | replaced by a credential reference | FR-006 to FR-008 |
+| credential settings | replaced by a credential reference when the v2 authentication method uses the setting or `config.yml` holds a value or placeholder for it; otherwise left out with a note | FR-006 to FR-008, research R4 |
+| `auth_method` (`genericrestapi`, `peeringmanager`, `prometheus`) | copied when v2 accepted the value; refused otherwise | FR-006 |
 | `url` and other settings v2 read from the environment first | value from the variable, the file or a flag, with its origin | FR-010 to FR-013, FR-029 |
 | `genericrestapi` `*_env_vars` settings | dropped with a note; the variables they name are not read | research R2, FR-030 |
 | an address with a user name or password | refused; the address is not printed | FR-030 |
@@ -71,8 +72,9 @@ What the pure conversion returns to the CLI.
   3. **Visible variables entry**: the R2 variables that were set where the command ran, names
      only.
   4. **Dropped entry**: key location and reason.
-  5. **Note entry**: free notes, for example "V3 has no generation step" or "`adapter:` names the
-     bundled module".
+  5. **Note entry**: free notes, for example "V3 has no generation step", "`adapter:` names the
+     bundled module" or "not referenced: `source.settings.token` (auth_method basic does not use
+     it)".
   6. **Finding entry**: warning findings from `collect_findings`.
 - **Refusal entry**: location, the value (never for a credential setting), and the reason. For an
   unbundled name, the reason lists the bundled names.

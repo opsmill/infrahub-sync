@@ -56,6 +56,10 @@ owner on 2026-10-22, before this specification was written.
 - Q (planning, 2026-10-22): How are settings other than addresses that v2 read from the
   environment converted, such as `verify: ${CISCO_APIC_VERIFY}` in the v2 ACI example? → A: With
   the address rule (FR-029); otherwise SC-002 fails on the ACI example.
+- Q (implementation review, 2026-10-22): Which credential settings get a reference? → A: Those the
+  v2 authentication method uses, plus any that holds a value or placeholder in config.yml.
+- Q (implementation review, 2026-10-22): Does a placeholder change the variable order? → A: No;
+  v2's fixed order applies (FR-011).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -174,8 +178,12 @@ the operations.
   the first location that fails.
 - A `${VARIABLE}` placeholder sits in a setting that v2 read from the environment first, such as
   `verify: ${CISCO_APIC_VERIFY}` in the v2 ACI example: the command follows FR-029 when the
-  placeholder names a variable v2 read for that setting. A placeholder that names any other
-  variable, such as `url: ${NETBOX_TOKEN}`, is not read (FR-030).
+  placeholder names a variable v2 read for that setting, and reads the variables in v2's order. A
+  placeholder that names any other variable, such as `url: ${NETBOX_TOKEN}`, is not read (FR-030).
+- The v2 authentication method does not use a credential setting, such as `token` when
+  `auth_method` is `basic`: the package holds no reference for it unless `config.yml` holds a value
+  or placeholder for it, and the report notes that it is not referenced (FR-006). An `auth_method`
+  value that v2 did not accept is refused and the setting is named.
 - An address holds a user name or password, such as `https://user:secret@netbox.example.com`: the
   command refuses and does not print the address (FR-030).
 - A `${VARIABLE}` placeholder sits in any other setting that is not a credential: the command
@@ -207,11 +215,19 @@ the operations.
 
 #### Credentials
 
-- **FR-006**: For each credential setting that the bundled adapter declares, the package MUST hold
-  a credential reference with an environment entry named
-  `INFRAHUB_SYNC_CREDENTIAL_<ADAPTER>_<SETTING>` in upper case. The Infrahub token MUST use
-  `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`. This applies whether the v2 setting held a
-  literal value, a `${VARIABLE}` placeholder, or nothing. The reference MUST be named
+- **FR-006**: For each credential setting that the bundled adapter declares and that the v2
+  authentication method of the configuration uses, the package MUST hold a credential reference
+  with an environment entry named `INFRAHUB_SYNC_CREDENTIAL_<ADAPTER>_<SETTING>` in upper case.
+  A credential setting that holds a literal value or a `${VARIABLE}` placeholder in `config.yml`
+  MUST also get a reference. A credential setting that the method does not use and that holds
+  nothing MUST get no reference, and the report MUST list it as not referenced with the reason.
+  The methods are those of v2 `2.0.2`: for `genericrestapi` and `peeringmanager`, `auth_method`
+  (default `token`) `token`, `x-auth-token`, `api-key` and `key` use `token`, `basic` uses
+  `username` and `password`, and `none` uses none; for `prometheus`, `auth_method` (default
+  `none`) `bearer` uses `token`, `basic` uses `username` and `password`, and `none` uses none;
+  `slurpitsync` uses `api_key`; every other adapter uses every credential setting it declares.
+  An `auth_method` value that v2 did not accept MUST be refused, naming the setting. The Infrahub
+  token MUST use `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`. The reference MUST be named
   `<adapter>-<setting>` in lower case, with each `_` in the setting name changed to `-` (for
   example `netbox-token`, `aci-password`, `slurpitsync-api-key`). The Infrahub token's reference
   MUST be named `infrahub-token`, as in the shipped NetBox package
@@ -239,8 +255,9 @@ the operations.
 - **FR-014**: The report MUST warn when an address in the package is `localhost` or `127.0.0.1`.
 - **FR-029**: Every other setting that is not a credential and that v2 read from an environment
   variable before the file MUST follow the rules of FR-010, FR-011 and FR-013, for example ACI
-  `verify` from `CISCO_APIC_VERIFY`. A `${VARIABLE}` placeholder in such a setting is read only
-  when it names one of the variables v2 itself read for that setting. When the setting gets no
+  `verify` from `CISCO_APIC_VERIFY`. A `${VARIABLE}` placeholder in such a setting counts as no
+  value in the file when it names one of the variables v2 read for that setting; the variables
+  are then read in v2's order. When the setting gets no
   value from the file or a variable, the command MUST stop and name the setting and the
   variables, because no flag sets it.
 - **FR-030**: The command MUST read from the environment only the fixed, non-credential variable

@@ -740,8 +740,8 @@ def configs_convert(
     without a terminal unless --yes is given.
 
     \b
-    The report names each credential setting with the environment variable
-    the Sync worker reads in V3, each address with its origin (a flag, a v2
+    The report names each credential setting that v2 used with the
+    environment variable the Sync worker reads in V3, each address with its origin (a flag, a v2
     variable, or config.yml), each dropped key with its reason, and notes.
     It warns when config.yml still holds a literal credential, when the
     shipped Compose file does not pass a credential variable to the Sync
@@ -754,6 +754,7 @@ def configs_convert(
     - a custom adapter (INFP-654, planned for 3.0)
     - a destination other than Infrahub
     - a setting the bundled adapter does not accept
+    - an auth_method value v2 did not accept
     - a placeholder v2 did not read
     - an address with a user name or password
     - a setting with no value

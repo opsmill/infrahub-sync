@@ -97,6 +97,44 @@ def test_example_converts_and_its_package_has_no_error_finding(example: str) -> 
     assert errors == []
 
 
+@pytest.mark.parametrize("example", CONVERTED)
+def test_example_package_has_no_reference_for_an_unused_credential(example: str) -> None:
+    """Each reference is one that v2's authentication method used or that config.yml filled (FR-006)."""
+    data = _load(example)
+    result = _convert(example)
+    assert result.package is not None
+    source = data["source"]
+    used = _used_source_credentials(source["name"], source.get("settings") or {})
+    referenced = {
+        key
+        for key, value in result.package["configuration"]["source"]["settings"].items()
+        if isinstance(value, dict) and "$credential" in value
+    }
+    assert referenced == used
+    expected_references = {f"{source['name']}-{key}".replace("_", "-") for key in used} | {"infrahub-token"}
+    assert set(result.package["credentials"]) == expected_references
+
+
+def _used_source_credentials(name: str, settings: dict[str, Any]) -> set[str]:
+    """Return the credential settings v2 ``2.0.2`` read for these examples, written out by hand."""
+    filled = {key for key in ("token", "username", "password", "api_key", "auth") if settings.get(key)}
+    if name in {"genericrestapi", "peeringmanager"}:
+        method = settings.get("auth_method", "token")
+        used = {"basic": {"username", "password"}, "none": set()}.get(method, {"token"})
+    elif name == "prometheus":
+        method = settings.get("auth_method", "none")
+        used = {"basic": {"username", "password"}, "bearer": {"token"}}.get(method, set())
+    elif name == "slurpitsync":
+        used = {"api_key"}
+    elif name == "aci":
+        used = {"username", "password"}
+    elif name == "ipfabricsync":
+        used = {"auth"}
+    else:
+        used = {"token"}
+    return used | filled
+
+
 @pytest.mark.parametrize(("example", "reasons"), list(REFUSED.items()), ids=list(REFUSED))
 def test_example_is_refused_with_its_reasons(example: str, reasons: list[tuple[str, str]]) -> None:
     result = convert_v2_configuration(_load(example), {})

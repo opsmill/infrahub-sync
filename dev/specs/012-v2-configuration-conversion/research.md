@@ -65,12 +65,18 @@ The command needs this table to apply FR-008, FR-010 to FR-013 and FR-029.
 - **Finding**: v2 does not expand `${VARIABLE}` (`2.0.2`, `infrahub_sync/utils.py` loads YAML with
   `yaml.safe_load` and nothing else). The v2 ACI example still holds `url: ${CISCO_APIC_URL}` and
   `verify: ${CISCO_APIC_VERIFY}`. It worked only because the ACI adapter read those variables first.
-- **Decision**: a placeholder in a setting from the R2 table is read only when it names one of
-  that setting's v2 variables (it then goes first in the list). A placeholder that names any other
+- **Decision**: a placeholder in a setting from the R2 table that names one of that setting's v2
+  variables counts as no value in the file, and the variables are read in v2's order. v2 never
+  expanded the placeholder, so the name in it did not change which variable v2 used (spec FR-011).
+  A placeholder that names any other
   variable is not read; the report says so (spec FR-030, critique E1). A placeholder in a credential setting is reported as the v2
   origin. A placeholder in any other setting is refused (FR-015), because v2 sent the literal text.
 - **Spec change**: FR-029 and an edge case were added to `spec.md`, because otherwise SC-002 fails
   on the ACI example.
+- **Correction during implementation review (2026-10-22)**: the first decision moved the variable
+  a placeholder names to the front of the list. With `url: ${NETBOX_URL}` and both
+  `NETBOX_ADDRESS` and `NETBOX_URL` set, that picked `NETBOX_URL`, while v2 used `NETBOX_ADDRESS`.
+  The product owner decided that v2's fixed order applies.
 
 ## R4. Credential settings, names and the prefix
 
@@ -82,6 +88,26 @@ The command needs this table to apply FR-008, FR-010 to FR-013 and FR-029.
   second table. Reference name `<adapter>-<setting>` (lower case, `_` to `-`); identifier
   `INFRAHUB_SYNC_CREDENTIAL_<ADAPTER>_<SETTING>`; Infrahub uses `infrahub-token` and
   `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` (spec FR-006, clarification of 2026-10-22).
+- **Correction during implementation review (2026-10-22)**: the first decision gave every declared
+  credential setting a reference. V3 refuses a referenced variable that is missing or empty, so
+  converted `genericrestapi`, `prometheus` and `slurpitsync` packages could not run until the
+  engineer set secrets that v2 never used. A setting now gets a reference when the v2
+  authentication method uses it, or when `config.yml` holds a value or placeholder for it. The
+  methods, read from `2.0.2`:
+
+  | Adapter | v2 code | `auth_method` default | Credential settings used |
+  | --- | --- | --- | --- |
+  | `genericrestapi` | `genericrestapi.py:71,108-114`, `rest_api_client.py:32-50` | `token` | `token`, `x-auth-token`, `api-key`, `key`: `token`; `basic`: `username`, `password`; `none`: none; any other value raised an error |
+  | `peeringmanager` | `peeringmanager.py:27-28` (generic REST adapter) | `token` | as `genericrestapi` |
+  | `prometheus` | `prometheus.py:73,90-95,381-384` | `none` | `bearer`: `token`; `basic`: `username`, `password`; `none`: none |
+  | `slurpitsync` | `slurpitsync.py:39-40` | no `auth_method` | `api_key`; the settings go to `slurpit.api(url, api_key, verify, ...)`, which has no `token` parameter |
+  | other adapters | | no `auth_method` | every declared credential setting |
+
+  An `auth_method` value outside the table is refused and the setting is named. For
+  `prometheus`, v2 did not raise an error on such a value; it sent no credential. The value is
+  still refused, as the product owner decided. The table is kept as `V2_AUTHENTICATION_METHODS`
+  and `V2_FIXED_CREDENTIALS` in `infrahub_sync/configuration/conversion_authentication.py`. A setting that gets no reference is
+  listed in the report as a note: `not referenced: <setting> (auth_method <value> does not use it)`.
 
 ## R5. The worker's credential variables (FR-009)
 

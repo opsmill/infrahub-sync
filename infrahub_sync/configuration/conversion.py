@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from urllib.parse import urlsplit
 
 from .capabilities import BUILTIN_ADAPTER_CAPABILITIES, get_adapter_capabilities
+from .conversion_authentication import UnknownAuthenticationMethodError, UsedCredentials, used_credentials
 from .credentials import ENV_CREDENTIAL_PREFIX
 from .models import ConfigurationPackageParseError, parse_configuration_package
 from .validation import collect_findings
@@ -118,6 +119,7 @@ V2_ENVIRONMENT_FIRST: Mapping[str, tuple[EnvironmentSetting, ...]] = MappingProx
 For ``genericrestapi`` and ``peeringmanager`` the names are v2's defaults; a file's
 ``*_env_vars`` settings never extend this table (spec FR-030).
 """
+
 
 # Built from the prefix so that only ``credentials.py`` spells the namespace out
 # (``test_no_service_setting_uses_the_credential_namespace``); this module never reads them.
@@ -657,6 +659,7 @@ def _convert_settings(  # pylint: disable=too-many-arguments,too-many-positional
 ) -> dict[str, Any]:
     """Convert the settings of one bundled adapter, keeping the order of the file."""
     credential_settings = capabilities.credential_setting_paths
+    used = _used_credentials(role, name, credential_settings, settings, report)
     replaced = _replaced_variables(name, settings)
     environment = _environment_settings(name, replaced)
     flag = flags.for_role(role)
@@ -664,7 +667,7 @@ def _convert_settings(  # pylint: disable=too-many-arguments,too-many-positional
     for key, value in settings.items():
         location = f"{role}.settings.{key}"
         if key in credential_settings:
-            converted[key] = _convert_credential(role, name, key, value, report, replaced=replaced)
+            _set_resolved(converted, key, _reference_credential(role, name, key, value, used, report, replaced))
         elif key in environment:
             _set_resolved(converted, key, _resolve(location, environment[key], value, visible, flag, report))
         elif name in _ENV_VARS_ADAPTERS and isinstance(key, str) and key.endswith(_ENV_VARS_SUFFIX):
@@ -673,7 +676,7 @@ def _convert_settings(  # pylint: disable=too-many-arguments,too-many-positional
             converted[key] = copy.deepcopy(value)
     for key in credential_settings:
         if key not in settings:
-            converted[key] = _convert_credential(role, name, key, None, report, replaced=replaced)
+            _set_resolved(converted, key, _reference_credential(role, name, key, None, used, report, replaced))
     for key, row in environment.items():
         if key not in settings:
             location = f"{role}.settings.{key}"
@@ -687,6 +690,41 @@ def _set_resolved(settings: dict[str, Any], key: str, value: object) -> None:
 
 
 # --- Credentials (FR-006 to FR-009) -----------------------------------------------------
+
+
+def _used_credentials(
+    role: AdapterRole, name: str, declared: tuple[str, ...], settings: Mapping[str, Any], report: _Report
+) -> UsedCredentials:
+    """Return the credential settings the v2 authentication method of this block used (spec FR-006).
+
+    An ``auth_method`` that v2 did not accept is refused; an ``auth_method`` with a placeholder
+    is already refused as a setting v2 did not read from the environment. Either way every
+    declared setting is kept, so the refusal is the only thing reported.
+    """
+    method = settings.get("auth_method")
+    if _holds_placeholder(method):
+        return UsedCredentials(frozenset(declared), "")
+    try:
+        return used_credentials(name, declared, settings)
+    except UnknownAuthenticationMethodError as exc:
+        report.refusals.append(RefusalEntry(f"{role}.settings.auth_method", str(exc), _printable(method)))
+        return UsedCredentials(frozenset(declared), "")
+
+
+def _reference_credential(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    role: AdapterRole,
+    name: str,
+    setting: str,
+    value: object,
+    used: UsedCredentials,
+    report: _Report,
+    replaced: frozenset[str],
+) -> dict[str, str] | None:
+    """Return the reference for a credential setting v2 used or the file fills, or note that it has none."""
+    if setting in used.settings or not _is_empty(value):
+        return _convert_credential(role, name, setting, value, report, replaced=replaced)
+    report.notes.append(NoteEntry(f"not referenced: {role}.settings.{setting} ({used.reason})"))
+    return None
 
 
 def _convert_credential(  # pylint: disable=too-many-arguments
@@ -812,22 +850,24 @@ def _candidates(  # pylint: disable=too-many-arguments,too-many-positional-argum
     flag: _Flag,
     report: _Report,
 ) -> _Candidates:
-    """Collect the file value, the first visible v2 variable and the flag for one setting."""
+    """Collect the file value, the first visible v2 variable and the flag for one setting.
+
+    A placeholder counts as no value in the file. When it names one of the setting's v2
+    variables, the variables are still read in v2's order (spec FR-011, FR-029): v2 never
+    expanded the placeholder, so the name in it did not change which variable v2 used.
+    """
     placeholder = _placeholder_name(value)
-    lookup = row.variables
     file_value: object = None if _is_empty(value) else value
     if placeholder is not None:
         file_value = None
-        if placeholder in row.variables:
-            lookup = (placeholder, *(name for name in row.variables if name != placeholder))
-        else:
+        if placeholder not in row.variables:
             report.notes.append(
                 NoteEntry(
                     f"{location} holds ${{{placeholder}}}; {placeholder} is not a variable v2 read for this "
                     "setting, so it was not read"
                 )
             )
-    found = tuple((name, visible[name]) for name in lookup if visible.get(name))
+    found = tuple((name, visible[name]) for name in row.variables if visible.get(name))
     variable, variable_value = found[0] if found else (None, None)
     return _Candidates(
         file_value=file_value,

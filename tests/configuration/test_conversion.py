@@ -334,15 +334,145 @@ def test_destination_infrahub_token_uses_the_infrahub_reference() -> None:
     assert entry.identifier == "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
 
 
-def test_every_declared_credential_setting_gets_a_reference() -> None:
-    result = _convert(_config({"url": "https://prometheus.example.com"}, source_name="prometheus"))
-    locations = {entry.location for entry in result.credentials}
-    assert locations == {
-        "source.settings.token",
-        "source.settings.username",
-        "source.settings.password",
-        "destination.settings.token",
+_REST = {"api_endpoint": "/api"}
+
+
+@pytest.mark.parametrize(
+    ("source_name", "settings", "referenced"),
+    [
+        ("netbox", {}, {"token"}),
+        ("nautobot", {}, {"token"}),
+        ("infrahub", {}, {"token"}),
+        ("aci", {}, {"username", "password"}),
+        ("ipfabricsync", {}, {"auth"}),
+        ("genericrestapi", _REST, {"token"}),
+        ("genericrestapi", {**_REST, "auth_method": "token"}, {"token"}),
+        ("genericrestapi", {**_REST, "auth_method": "x-auth-token"}, {"token"}),
+        ("genericrestapi", {**_REST, "auth_method": "api-key"}, {"token"}),
+        ("genericrestapi", {**_REST, "auth_method": "key"}, {"token"}),
+        ("genericrestapi", {**_REST, "auth_method": "basic"}, {"username", "password"}),
+        ("genericrestapi", {**_REST, "auth_method": "none"}, set()),
+        ("peeringmanager", {}, {"token"}),
+        ("peeringmanager", {"auth_method": "basic"}, {"username", "password"}),
+        ("peeringmanager", {"auth_method": "none"}, set()),
+        ("prometheus", {}, set()),
+        ("prometheus", {"auth_method": "none"}, set()),
+        ("prometheus", {"auth_method": "basic"}, {"username", "password"}),
+        ("prometheus", {"auth_method": "bearer"}, {"token"}),
+        ("slurpitsync", {}, {"api_key"}),
+    ],
+)
+def test_credential_references_follow_the_v2_authentication_method(
+    source_name: str, settings: dict[str, Any], referenced: set[str]
+) -> None:
+    address = "base_url" if source_name == "ipfabricsync" else "url"
+    result = _convert(_config({address: "https://source.example.com", **settings}, source_name=source_name))
+    source = _configuration(result)["source"]["settings"]
+    declared = set(BUILTIN_ADAPTER_CAPABILITIES[source_name].credential_setting_paths)
+    assert {entry.location for entry in result.credentials if entry.location.startswith("source.")} == {
+        f"source.settings.{setting}" for setting in referenced
     }
+    assert declared & set(source) == referenced
+    not_referenced = {
+        note.text.split(" ", 3)[2] for note in result.notes if note.text.startswith("not referenced: source.")
+    }
+    assert not_referenced == {f"source.settings.{setting}" for setting in declared - referenced}
+
+
+@pytest.mark.parametrize(
+    ("settings", "expected"),
+    [
+        (
+            {"auth_method": "basic"},
+            "not referenced: source.settings.token (auth_method basic does not use it)",
+        ),
+        ({}, "not referenced: source.settings.token (auth_method none, the v2 default, does not use it)"),
+    ],
+)
+def test_unused_credential_is_noted_with_the_authentication_method(settings: dict[str, Any], expected: str) -> None:
+    result = _convert(_config({"url": "https://prometheus.example.com", **settings}, source_name="prometheus"))
+    assert expected in {note.text for note in result.notes}
+
+
+def test_slurpit_token_is_not_referenced_because_v2_did_not_read_it() -> None:
+    result = _convert(_config({"url": "https://slurpit.example.com"}, source_name="slurpitsync"))
+    assert "not referenced: source.settings.token (v2's slurpitsync adapter does not read it)" in {
+        note.text for note in result.notes
+    }
+
+
+def test_unused_credential_that_holds_a_value_or_placeholder_is_still_referenced() -> None:
+    settings = {"url": "https://prometheus.example.com", "username": _CANARY, "token": "${PROM_TOKEN}", "password": ""}
+    result = _convert(_config(settings, source_name="prometheus"))
+    source = _configuration(result)["source"]["settings"]
+    assert source["username"] == {"$credential": "prometheus-username"}
+    assert source["token"] == {"$credential": "prometheus-token"}
+    assert "password" not in source
+    assert _credential(result, "source.settings.username").origin == "literal"
+    assert _credential(result, "source.settings.token").origin == "placeholder"
+    assert "prometheus-password" not in (result.package or {})["credentials"]
+    assert _CANARY not in repr(result)
+
+
+@pytest.mark.parametrize(
+    ("source_name", "auth_method", "value"),
+    [
+        ("genericrestapi", "oauth", "oauth"),
+        ("genericrestapi", "Token", "Token"),
+        ("peeringmanager", None, None),
+        ("prometheus", "digest", "digest"),
+    ],
+)
+def test_unknown_authentication_method_is_refused_naming_the_setting(
+    source_name: str, auth_method: str | None, value: str | None
+) -> None:
+    settings = {"url": "https://source.example.com", **_REST, "auth_method": auth_method}
+    result = _convert(_config(settings, source_name=source_name))
+    assert result.package is None
+    refusal = next(item for item in result.refusals if item.location == "source.settings.auth_method")
+    assert refusal.value == value
+    assert "did not accept this authentication method" in refusal.reason
+    assert not any(note.text.startswith("not referenced:") for note in result.notes)
+
+
+def test_authentication_method_placeholder_is_refused_once() -> None:
+    settings = {"url": "https://rest.example.com", **_REST, "auth_method": "${AUTH_METHOD}"}
+    result = _convert(_config(settings, source_name="genericrestapi"))
+    assert [item.location for item in result.refusals] == ["source.settings.auth_method"]
+
+
+def test_device42_example_references_username_and_password_but_no_token() -> None:
+    result = _convert(_example("device42_to_infrahub"))
+    source = _configuration(result)["source"]["settings"]
+    assert source["username"] == {"$credential": "genericrestapi-username"}
+    assert source["password"] == {"$credential": "genericrestapi-password"}
+    assert "token" not in source
+    assert result.package is not None
+    assert "genericrestapi-token" not in result.package["credentials"]
+
+
+def test_prometheus_example_references_no_source_credential() -> None:
+    result = _convert(_example("prometheus_to_infrahub (node_exporter)"))
+    assert {entry.location for entry in result.credentials} == {"destination.settings.token"}
+    assert result.package is not None
+    assert set(result.package["credentials"]) == {"infrahub-token"}
+
+
+def test_device42_package_resolves_with_only_its_referenced_variables(monkeypatch: pytest.MonkeyPatch) -> None:
+    from infrahub_sync.configuration.runtime import resolve_runtime_instance
+
+    result = _convert(_example("device42_to_infrahub"))
+    assert result.package is not None
+    monkeypatch.delenv("INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_TOKEN", raising=False)
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_USERNAME", "device42-user")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_PASSWORD", _CANARY)
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "infrahub-token-value")
+    package = parse_configuration_package(copy.deepcopy(dict(result.package)))
+    instance = resolve_runtime_instance(package, directory="/registered")
+    assert instance.source.settings is not None
+    assert instance.source.settings["username"] == "device42-user"
+    assert instance.source.settings["password"] == _CANARY
+    assert "token" not in instance.source.settings
 
 
 def test_setting_without_v2_variable_and_value_has_origin_none() -> None:
@@ -484,6 +614,27 @@ def test_aci_verify_placeholder_reads_its_own_variable() -> None:
     assert (source["url"], source["verify"]) == ("https://apic.example.com", "false")
     entry = _origin(result, "source.settings.verify")
     assert (entry.origin, entry.origin_variable) == ("variable", "CISCO_APIC_VERIFY")
+
+
+def test_placeholder_does_not_change_the_v2_variable_order() -> None:
+    visible = {"NETBOX_ADDRESS": "https://address.example.com", "NETBOX_URL": "https://url.example.com"}
+    result = _convert(_config({"url": "${NETBOX_URL}"}), visible)
+    assert _configuration(result)["source"]["settings"]["url"] == "https://address.example.com"
+    entry = _origin(result, "source.settings.url")
+    assert (entry.origin, entry.origin_variable) == ("variable", "NETBOX_ADDRESS")
+
+
+def test_placeholder_naming_the_second_variable_reads_it_when_the_first_is_not_set() -> None:
+    result = _convert(_config({"url": "${NETBOX_URL}"}), {"NETBOX_URL": "https://url.example.com"})
+    entry = _origin(result, "source.settings.url")
+    assert (entry.value, entry.origin_variable) == ("https://url.example.com", "NETBOX_URL")
+
+
+def test_ipfabric_placeholder_counts_as_no_file_value() -> None:
+    settings = {"base_url": "${IPF_URL}"}
+    result = _convert(_config(settings, source_name="ipfabricsync"), {"IPF_URL": "https://ipf.example.com"})
+    entry = _origin(result, "source.settings.base_url")
+    assert (entry.value, entry.origin, entry.origin_variable) == ("https://ipf.example.com", "variable", "IPF_URL")
 
 
 def test_aci_verify_without_value_is_refused_naming_setting_and_variable() -> None:
