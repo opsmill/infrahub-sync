@@ -30,12 +30,14 @@ and add this command in the build stage after the final `uv sync` command:
 
 ```dockerfile
 RUN uv pip install --python /opt/infrahub-sync/venv/bin/python \
-    'ariadne-codegen==0.15.3' 'slurpit-sdk>=0.9.52,<0.10' \
+    'slurpit-sdk>=0.9.52,<0.10' \
     && uv pip check --python /opt/infrahub-sync/venv/bin/python
 ```
 
-The current SDK requires `httpx>=0.27,<0.28`. The custom image also uses `ariadne-codegen==0.15.3` because the default service image's 0.18 release requires httpx 0.28. The default service image keeps httpx 0.28 and real urllib3.
-The `service` and `slurpit` extras are marked as conflicting in uv because `uv sync --extra service --extra slurpit` cannot preserve the default service resolution.
+Current SDK releases (0.9.156) install with the httpx 0.28 release that the default service
+image uses, so the command does not change the image's httpx or `ariadne-codegen` versions.
+The `service` and `slurpit` extras are still declared as conflicting in `pyproject.toml`, so uv
+keeps them in separate resolutions.
 
 ## Sync directions supported
 
