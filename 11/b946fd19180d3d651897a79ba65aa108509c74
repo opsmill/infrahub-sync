@@ -1,0 +1,42 @@
+infrahub_sync/plan/errors.py
+  s_8d92f288a8f661::t_bf070b70c879ac 414-438
+tests/plan/test_lineage_manifest.py
+  s_8d92f288a8f661::t_5746b39e77680a 1-97
+tests/adapters/test_infrahub_lineage_apply.py
+  s_8d92f288a8f661::t_f2273ab4f9192f 1-113
+  s_8d92f288a8f661::t_ac6664f70663be 114-133
+infrahub_sync/plan/models.py
+  s_8d92f288a8f661::t_2b9faa3c11dab1 442-445
+  s_8d92f288a8f661::t_bf2975902b0206 509-510
+  s_8d92f288a8f661::t_16ca960a95aa87 377-410
+dev/specs/014-import-lineage/tasks.md
+  s_8d92f288a8f661::t_ca7af768552fe8 67-68,75-76
+infrahub_sync/adapters/infrahub.py
+  s_8d92f288a8f661::t_b6ba78339319e7 39,43,56-62,718-770,860-865,876-880,883,885-886
+infrahub_sync/plan/write_surface.py
+  s_8d92f288a8f661::t_f4ca654f474d38 18-19,22,50-55,58,63-64,66-68,70-80
+infrahub_sync/plan/writer.py
+  s_8d92f288a8f661::t_55838750dae01b 38-43,194,212-215,254-256
+infrahub_sync/potenda/__init__.py
+  s_8d92f288a8f661::t_e10c7cb1147045 650,705,875-876
+tests/adapters/test_infrahub_planned_write.py
+  s_8d92f288a8f661::t_e040e81d53b6b7 66-67,93-106
+tests/plan/test_models.py
+  s_8d92f288a8f661::t_0a5fd8e95fc358 702-704,803-810
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "11b946fd19180d3d651897a79ba65aa108509c74",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
