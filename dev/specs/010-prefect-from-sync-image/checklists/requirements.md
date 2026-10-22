@@ -31,8 +31,6 @@
 
 ## Notes
 
-- Two [NEEDS CLARIFICATION] markers remain (FR-014, Silo licence; FR-017, replacement name for
-  the combined `format` and `lint` tasks). They are left for the `/speckit-clarify` round.
 - Implementation details: the feature's subject is the deployment and development interface
   itself, so Compose service names, image references, environment variables and invoke task
   names are what operators and engineers use, and they come from product-owner decisions D-1 to
@@ -41,6 +39,6 @@
 - Success criteria SC-004 and SC-007 name Prefect and `pyproject.toml`, because the outcome the
   customer and engineer care about is the Prefect version itself. Accepted as written in the
   brief.
-- FR-003 notes that `db-bootstrap` holds the Prefect database password today to create the role;
-  the brief does not say whether that stays. Not marked, because the requirement scopes itself to
-  services that run the Sync image.
+- FR-026: how the benchmark runner (`tasks/bench.py`) reads the development settings from the
+  development Compose file or its defaults is not known, because the 2026-10-22 answer does not
+  say. It is left to planning.
