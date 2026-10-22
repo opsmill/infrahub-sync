@@ -183,7 +183,7 @@ class ConfigurationRoutes:
         resource_kind: Literal["configuration", "configuration-registry"],
         resource_id: str,
         package: dict[str, Any],
-        reason: str,
+        reason: str | None,
     ) -> tuple[int, dict[str, Any]]:
         """Persist one configuration mutation response and replay it exactly."""
         now = datetime.now(timezone.utc)
@@ -256,11 +256,11 @@ class ConfigurationRoutes:
         return completed.response_status, completed.response_body
 
     @_provider_error_boundary
-    def audit_refusal(self, actor: str, operation: str, reason: str) -> None:
+    def audit_refusal(self, actor: str, operation: str, reason: str | None) -> None:
         """Record a refused configuration mutation without reserving it."""
         self._audit(actor, operation, reason, "refused-authorization")
 
-    def _audit(self, actor: str, operation: str, reason: str, outcome: str) -> None:
+    def _audit(self, actor: str, operation: str, reason: str | None, outcome: str) -> None:
         self._store_projection().record_audit(
             AuditEvent(
                 event_id=f"a-{uuid4().hex}",

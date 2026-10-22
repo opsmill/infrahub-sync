@@ -261,9 +261,12 @@ verdict still carries that execution's live detail.
 ## Routes
 
 Every route below requires `Authorization: Bearer <token>`. Every `POST` route that writes or
-requests a change also requires a non-empty `Idempotency-Key` header and a non-empty `reason` in
-its JSON body; `POST /configs/{config_id}/versions/{registry_version}/validate` is the one
-exception, since it only re-checks an already-registered version and takes no body.
+requests a change also requires a non-empty `Idempotency-Key` header and a JSON body;
+`POST /configs/{config_id}/versions/{registry_version}/validate` is the one exception, since it
+only re-checks an already-registered version and takes no body. The body's `reason` is
+optional. When present, it must be non-empty, and the service records it in the audit history.
+When it is absent or `null`, the service records the request without a reason. For idempotency,
+an absent reason and a `null` reason are the same value, and both differ from any text.
 
 | Route | Behavior |
 | --- | --- |

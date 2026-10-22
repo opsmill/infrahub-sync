@@ -302,7 +302,7 @@ class MutationReceipt(BaseModel):
     operation: str = Field(min_length=1)
     target_run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
     request_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
-    reason: str = Field(min_length=1)
+    reason: str | None = Field(default=None, min_length=1)
     resource_kind: Literal["run", "configuration", "configuration-registry"] = "run"
     resource_id: str = Field(min_length=1)
     run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
@@ -399,7 +399,7 @@ class AuditEvent(BaseModel):
     run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
     actor: str = Field(min_length=1)
     operation: str = Field(min_length=1)
-    reason: str = Field(min_length=1)
+    reason: str | None = Field(default=None, min_length=1)
     outcome: str = Field(min_length=1)
     created_at: datetime
 

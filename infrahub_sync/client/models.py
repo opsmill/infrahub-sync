@@ -58,7 +58,7 @@ class CreateRunRequest(_RequestModel):
     registry_version: int
     branch: str | None = None
     confirm_writes: bool = False
-    reason: str = Field(min_length=1)
+    reason: str | None = Field(default=None, min_length=1)
 
     @field_validator("registry_version", mode="before")
     @classmethod
@@ -71,7 +71,7 @@ class CreateRunRequest(_RequestModel):
 class VerifyRunRequest(_RequestModel):
     """Request verification of a saved run plan."""
 
-    reason: str = Field(min_length=1)
+    reason: str | None = Field(default=None, min_length=1)
 
 
 class ApplyRunRequest(_RequestModel):
@@ -80,26 +80,26 @@ class ApplyRunRequest(_RequestModel):
     expected_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     confirm_writes: bool = False
     branch: str | None = None
-    reason: str = Field(min_length=1)
+    reason: str | None = Field(default=None, min_length=1)
 
 
 class CancelRunRequest(_RequestModel):
     """Request cancellation of an accepted run."""
 
-    reason: str = Field(min_length=1)
+    reason: str | None = Field(default=None, min_length=1)
 
 
 class ConfigMutationRequest(_RequestModel):
-    """Submit a configuration package with an audit reason."""
+    """Submit a configuration package with an optional audit reason."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=False)
     package: dict[str, Any]
-    reason: str = Field(min_length=1, max_length=512)
+    reason: str | None = Field(default=None, min_length=1, max_length=512)
 
     @field_validator("reason")
     @classmethod
-    def _require_reason(cls, value: str) -> str:
-        if value != value.strip() or not value.isprintable():
+    def _require_reason(cls, value: str | None) -> str | None:
+        if value is not None and (value != value.strip() or not value.isprintable()):
             raise ValueError(_REASON_MESSAGE)
         return value
 

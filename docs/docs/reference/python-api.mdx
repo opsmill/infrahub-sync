@@ -41,8 +41,9 @@ client instance.
 
 ## Register and inspect configurations
 
-Configuration mutations require a reason and an idempotency key. A retry after an uncertain
-transport result must reuse the same key.
+Configuration mutations require an idempotency key. A reason is optional; when given, it is
+recorded in the audit history. A retry after an uncertain transport result must reuse the same
+key.
 
 ```python
 from infrahub_sync.client import ConfigMutationRequest, SyncClient

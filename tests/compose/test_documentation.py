@@ -3,8 +3,8 @@
 None of these links is covered by the documentation build: Docusaurus only warns
 about a broken Markdown link, and a page listed nowhere still builds cleanly
 while nobody can find it. The rest is the part of the operator contract that a
-copy-and-paste would break: the CLI calls an operator makes through the `cli`
-service, and the Python client example.
+copy-and-paste would break: the CLI calls an operator makes against the deployment,
+and the Python client example.
 """
 
 from __future__ import annotations
@@ -33,18 +33,21 @@ COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
 # Every command of the removed `infrahub-sync-compose` wrapper. An operator who used
 # one has to find its `docker compose` replacement on the page.
 WRAPPER_COMMANDS = ("init", "preflight", "start", "status", "logs", "stop", "restart", "reset", "cli")
-# How every CLI call of the operator sequence is run against the deployment.
-CLI_PREFIX = "docker compose run --rm --no-deps -T"
+# How every CLI call of the operator sequence is run against the deployment: the plain
+# CLI, pointed at the published Sync API port. The `cli` service is an alternative.
+CLI_PREFIX = "infrahub-sync "
+# The Compose service that runs the same CLI in a container.
+CLI_SERVICE_PREFIX = "docker compose run --rm --no-deps -T"
 # The opt-in suite, as the page tells a contributor to run it.
 COMPOSE_SUITE_COMMAND = (
     "INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose"
 )
 
 # The CLI calls of the reviewed-run procedure, as an operator passes them to
-# `docker compose run --rm cli ...`. Each has to be a call the shipped CLI has.
+# `infrahub-sync`. Each has to be a call the shipped CLI has.
 CLI_CALLS = (
     "configs list",
-    "configs register /input/package.yaml --reason 'register my configuration'",
+    "configs register package.yml --reason 'register my configuration'",
     "configs show CONFIG_ID",
     "configs versions CONFIG_ID",
     "configs validate CONFIG_ID 1",
@@ -54,7 +57,7 @@ CLI_CALLS = (
     "runs show RUN_ID",
     "runs results RUN_ID",
     "diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'verify unchanged source'",
-    "configs version CONFIG_ID /input/package.yaml --reason 'register edited configuration'",
+    "configs version CONFIG_ID edited-package.yml --reason 'register edited configuration'",
 )
 
 
@@ -283,16 +286,16 @@ def test_the_reset_equivalent_warns_that_it_deletes_the_data() -> None:
     assert "deletes" in row, row
 
 
-def test_the_page_runs_the_whole_operator_sequence_in_order_through_the_cli_service() -> None:
-    """The reviewed-run procedure is the `CLI_CALLS` sequence, each run through `cli`.
+def test_the_page_runs_the_whole_operator_sequence_in_order_through_the_cli() -> None:
+    """The reviewed-run procedure is the `CLI_CALLS` sequence, each run as `infrahub-sync`.
 
     A step written for the removed wrapper, or out of order, is a procedure an operator
     cannot copy.
     """
     calls = [
-        line.split(" cli ", 1)[1]
+        line.removeprefix(CLI_PREFIX)
         for line in shell_lines(section(page(), "Prepare a configuration"))
-        if line.startswith(CLI_PREFIX) and " cli " in line
+        if line.startswith(CLI_PREFIX)
     ]
 
     remaining = iter(calls)
@@ -303,6 +306,11 @@ def test_the_page_runs_the_whole_operator_sequence_in_order_through_the_cli_serv
 def test_every_documented_cli_invocation_uses_the_cli_service() -> None:
     """No shell line on the page still calls the removed wrapper."""
     assert [line for line in shell_lines(page()) if "infrahub-sync-compose" in line] == []
+
+
+def test_the_page_still_names_the_cli_service() -> None:
+    """The plain CLI is the default, and the page still shows how to run it in a container."""
+    assert any(line.startswith(f"{CLI_SERVICE_PREFIX} cli ") for line in shell_lines(section(page(), "Use it")))
 
 
 @pytest.mark.parametrize("variable", sorted(required_compose_variables()))

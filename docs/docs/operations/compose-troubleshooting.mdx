@@ -44,14 +44,15 @@ deployment starts empty.
 
 ## Command-line client failures
 
-`docker compose run --rm --no-deps -T cli ...` calls the Sync API with
-`INFRAHUB_SYNC_API_TOKEN`.
+The `infrahub-sync` CLI calls the Sync API with `INFRAHUB_SYNC_API_TOKEN`. On your
+machine, the CLI reads it from your environment. The deployment's `cli` service, run as
+`docker compose run --rm --no-deps -T cli ...`, reads it from `.env`.
 
 - **Every call fails to authenticate.** `INFRAHUB_SYNC_API_TOKEN` is empty, or differs
   from the principal's token in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. An `operator.env`
   carried over from an earlier alpha may lack the `INFRAHUB_SYNC_API_TOKEN` line entirely.
   Add it to `.env`, with the token already inside `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`.
-- **The CLI cannot read a mounted package.** The image runs as UID 10001, so the file
+- **The `cli` service cannot read a mounted package.** The image runs as UID 10001, so the file
   must be readable by other users. Run `chmod 0644` on it, and mount it read-only as in
   [Registering a package](../compose-deployment#registering-a-package).
 

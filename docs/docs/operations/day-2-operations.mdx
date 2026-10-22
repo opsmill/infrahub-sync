@@ -46,7 +46,7 @@ describes each action:
 
 Before planned maintenance, ask everyone who submits runs to this deployment to stop
 submitting new runs. Then check each run you know of with
-`docker compose run --rm --no-deps -T cli runs show RUN_ID`, and wait until its
+`infrahub-sync runs show RUN_ID`, and wait until its
 `execution_state` is `completed`, `failed`, `cancelled`, `abandoned`, or `interrupted`.
 A `ready` worker says nothing about runs still executing. If you cannot account for
 every submitted run, postpone the maintenance.
@@ -85,9 +85,9 @@ run `docker compose up -d --wait`, which recreates the services whose environmen
 changed. `docker compose restart` keeps the environment the containers already had.
 
 This release has no tested procedure for rotating credentials. The Sync API token that
-the `cli` service presents, `INFRAHUB_SYNC_API_TOKEN`, must equal the principal's token
-in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`; change both together. See
-[Use it](../compose-deployment#use-it).
+the CLI presents, `INFRAHUB_SYNC_API_TOKEN`, must equal the principal's token in
+`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`; change both together. The `cli` service reads
+`INFRAHUB_SYNC_API_TOKEN` from `.env`. See [Use it](../compose-deployment#use-it).
 
 Never `source` `.env` or put a credential on a command line. Keep values out of logs,
 shell history, and configuration packages.
@@ -95,7 +95,7 @@ shell history, and configuration packages.
 ## Recover from a write with an unknown outcome
 
 A write has an unknown outcome when the run ended without a record of what reached the
-destination. `docker compose run --rm --no-deps -T cli runs show RUN_ID` then reports
+destination. `infrahub-sync runs show RUN_ID` then reports
 `reconciliation_required: true`, or an apply ends with phase `apply-failed` and
 `summary.may_have_partially_written` set.
 
