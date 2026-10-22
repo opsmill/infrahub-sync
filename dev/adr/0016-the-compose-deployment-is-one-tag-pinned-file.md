@@ -57,3 +57,24 @@ no wrapper, no mounted scripts and no secret files.
 - **A root `docker-compose.override.yml` for development.** Rejected. A developer running
   `docker compose up` in a checkout would silently merge development credentials into the
   operator file.
+
+## Note: the Prefect UI override snippet and the packaged copy of the file
+
+**Date**: 2026-10-23
+
+Two later changes extend this decision without changing it.
+
+- **Prefect UI override snippet.** The root file publishes only the Sync API port and runs the
+  Prefect server with its UI off. The operator documentation ships one override snippet,
+  `docs/docs/snippets/prefect-ui.override.yml`, that an operator saves as
+  `docker-compose.override.yml` beside the file. It turns the Prefect UI on, points the UI's
+  static files at the Sync scratch tmpfs because the root filesystem is read-only, and publishes
+  the Prefect port on `127.0.0.1` only, at `INFRAHUB_SYNC_PREFECT_PORT`. Removing it and running
+  `docker compose up -d` closes the port again. The snippet is an override and not a second
+  shipped file, so the deployment stays one file, and the UI is opened only on request. The
+  compose contract tests resolve the root file with the snippet, and the documentation page
+  renders the snippet file itself, so the documented text is the tested text.
+- **Root file shipped as package data.** The `infrahub-sync[testcontainers]` extra starts Sync
+  from the root `docker-compose.yml` for end-to-end tests, so the Python package ships that file
+  as package data, byte-equal to the repository file. The root file stays the one source; a test
+  fails when the packaged copy differs from it. The release pin of this decision applies to both.
