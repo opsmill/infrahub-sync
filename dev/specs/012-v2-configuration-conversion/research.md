@@ -30,14 +30,21 @@ The command needs this table to apply FR-008, FR-010 to FR-013 and FR-029.
 | `aci` | `url` | `CISCO_APIC_URL` | address |
 | `aci` | `username`, `password` | `CISCO_APIC_USERNAME`, `CISCO_APIC_PASSWORD` | credential |
 | `aci` | `verify` | `CISCO_APIC_VERIFY` | other (FR-029) |
-| `ipfabricsync` | `base_url` | `IPF_URL` | address |
-| `ipfabricsync` | `auth` | `IPF_TOKEN` | credential |
+| `ipfabricsync` | `base_url` | `IPF_URL`, read only when the file setting is empty | address |
+| `ipfabricsync` | `auth` | `IPF_TOKEN`, read only when the file setting is empty | credential |
 | `prometheus` | `url` | `PROM_URL`, `PROM_ADDRESS` | address |
 | `prometheus` | `username`, `password`, `token` | `PROM_USERNAME`, `PROM_PASSWORD`, `PROM_TOKEN` | credential |
 | `genericrestapi` | `url` | the `url_env_vars` setting, default `URL`, `ADDRESS` | address |
 | `genericrestapi` | `token`, `username`, `password` | `token_env_vars` (default `TOKEN`), `username_env_vars` (`USERNAME`), `password_env_vars` (`PASSWORD`) | credential |
-| `peeringmanager`, `slurpitsync` | none | none | none |
+| `peeringmanager` | `url` | `PEERING_MANAGER_ADDRESS`, `PEERING_MANAGER_URL` (generic REST adapter with its own defaults) | address |
+| `peeringmanager` | `token`, `username`, `password` | `PEERING_MANAGER_TOKEN`, `USERNAME`, `PASSWORD` | credential |
+| `slurpitsync` | none | none | none |
 
+- **Correction during implementation (chunk 2)**: the first version of this table said
+  `peeringmanager` reads no variable and that `ipfabricsync` reads the variable first. The `2.0.2`
+  code shows otherwise (`peeringmanager.py:31-34`, `ipfabricsync.py:48-56`); the table above
+  follows the code. For `ipfabricsync` the file wins, so FR-011's "variable wins" applies only
+  where v2 read the variable first.
 - **Decision**: keep this table as a constant in the conversion module, with a unit test per row.
   For `genericrestapi`, the `*_env_vars` settings are read to build the variable list and are not
   copied: V3 does not accept them (`_GENERIC_REST_SETTINGS`, `configuration/capabilities.py:135`).
