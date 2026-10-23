@@ -1,0 +1,62 @@
+docs/docs/development-stack.mdx
+  s_8d92f288a8f661::t_96bde03b99c4fd 82-85
+  s_8d92f288a8f661::t_fa6f7c23be890d 80
+  s_8d92f288a8f661::t_14e6e16d989a45 81
+  s_db97df234ae605::t_bbf17a0a0f7c6b 73,100-101,176,236,332
+changelog/+sync-api-port-8001.changed.md
+  s_8d92f288a8f661::t_fc205440d45c06 1
+docs/docs/compose-deployment.mdx
+  s_8d92f288a8f661::t_7737bcafc7b02a 40-41
+  s_8d92f288a8f661::t_7b1cfc1eb142f1 39
+  s_db97df234ae605::t_64e5b9e45a6162 129,329,477,714,742,779
+README.md
+  s_8d92f288a8f661::t_29c1728fc307e8 86,91-92
+dev/specs/010-prefect-from-sync-image/contracts/compose-services.md
+  s_8d92f288a8f661::t_65a5c59f8e071a 26,53
+dev/specs/010-prefect-from-sync-image/data-model.md
+  s_8d92f288a8f661::t_d2170fb161ca03 35
+dev/specs/010-prefect-from-sync-image/plan.md
+  s_8d92f288a8f661::t_2241ecabbfb898 13-14
+dev/specs/010-prefect-from-sync-image/quickstart.md
+  s_8d92f288a8f661::t_124d622c6d7077 32
+dev/specs/010-prefect-from-sync-image/spec.md
+  s_8d92f288a8f661::t_ba77a5e0ecc3ef 334-336
+docs/docs/contributing.mdx
+  s_8d92f288a8f661::t_2944ed7a964c0b 164
+docs/docs/operations/day-2-operations.mdx
+  s_8d92f288a8f661::t_30b4be97e94756 16
+docs/docs/quickstart-compose.mdx
+  s_8d92f288a8f661::t_d15bdd63d3d5df 35,90,104
+docs/docs/running-a-sync.mdx
+  s_8d92f288a8f661::t_a454e1e1bbee64 44
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_8d92f288a8f661::t_6b83d2bdb71a4b 238
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_8d92f288a8f661::t_905dea337451ba 194
+docs/docs/tutorials/netbox-to-existing-infrahub.mdx
+  s_8d92f288a8f661::t_b1be2d86ca245f 239
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0aa51bdaceb6d5d98d285510763b9806cf63f9a0",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_db97df234ae605": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-acff3aaab22af0c6f",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
