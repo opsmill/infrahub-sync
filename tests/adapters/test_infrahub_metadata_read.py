@@ -14,13 +14,15 @@ query with `include_metadata=True`; only the client's transport is replaced.
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from typing import Any, ClassVar
 
+import httpx
 import pytest
 from diffsync import Adapter
 from infrahub_sdk import Config, InfrahubClientSync
-from infrahub_sdk.exceptions import GraphQLError
+from infrahub_sdk.exceptions import AuthenticationError, GraphQLError
 from infrahub_sdk.node import InfrahubNodeSync
 from infrahub_sdk.schema.main import NodeSchemaAPI
 
@@ -361,6 +363,55 @@ def test_before_1_7_0_or_with_an_unreadable_version_no_read_asks_for_metadata(ve
     assert destination.metadata_read is False
     assert all(kwargs["include_metadata"] is False for name, kwargs in client.calls if name == "all")
     assert destination.last_changes == {}
+
+
+def _authentication_error(status: int, message: str) -> AuthenticationError:
+    """The `AuthenticationError` the SDK raises for `status`, chained from the response as the SDK chains it."""
+    request = httpx.Request("POST", "http://infrahub.invalid/graphql", headers={"X-INFRAHUB-KEY": VERSION_TOKEN})
+    response = httpx.Response(status, json={"errors": [{"message": message}]}, request=request)
+    error = AuthenticationError(message)
+    error.__cause__ = httpx.HTTPStatusError(message, request=request, response=response)
+    return error
+
+
+VERSION_TOKEN = "version-token-canary-71c2"  # noqa: S105 -- a canary, not a credential
+
+
+def test_a_version_query_refused_with_http_403_continues_without_metadata(caplog: pytest.LogCaptureFixture) -> None:
+    """R-1: a missing permission on the version query is "cannot read the version", so the plan continues."""
+    refusal = _authentication_error(403, "You do not have the following permission: global:view_info:allow_all")
+    client = MetadataClient(version=refusal, rows=_person_changed_rows())
+
+    with caplog.at_level(logging.WARNING, logger="infrahub_sync.adapters.infrahub"):
+        destination = _plan(client)
+
+    assert destination.metadata_read is False
+    assert destination.last_changes == {}
+    (record,) = [record for record in caplog.records if "server version query" in record.getMessage()]
+    assert "the permission `global:view_info:allow_all`" in record.getMessage()
+    assert VERSION_TOKEN not in caplog.text
+
+
+def test_a_version_query_refused_with_http_401_stops_the_plan() -> None:
+    """A refused token refuses every later read too, so the plan stops at the version query."""
+    client = MetadataClient(version=_authentication_error(401, "Invalid token"), rows=_person_changed_rows())
+
+    with pytest.raises(AuthenticationError):
+        _plan(client)
+
+
+def test_a_refused_version_query_is_logged_without_the_error_text(caplog: pytest.LogCaptureFixture) -> None:
+    """The SDK's `GraphQLError` text can hold the whole query and response, so only its class is logged."""
+    body = f"query {{ InfrahubInfo {{ version }} }} {VERSION_TOKEN}"
+    client = MetadataClient(version=GraphQLError(errors=[{"message": body}], query=body), rows=_person_changed_rows())
+
+    with caplog.at_level(logging.WARNING, logger="infrahub_sync.adapters.infrahub"):
+        destination = _plan(client)
+
+    assert destination.metadata_read is False
+    (record,) = [record for record in caplog.records if "server version query" in record.getMessage()]
+    assert record.getMessage().endswith(": GraphQLError")
+    assert VERSION_TOKEN not in caplog.text
 
 
 def test_an_apply_does_not_read_the_server_version() -> None:

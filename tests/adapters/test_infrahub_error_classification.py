@@ -15,7 +15,11 @@ import pytest
 from infrahub_sdk import Config, InfrahubClientSync
 from infrahub_sdk.exceptions import AuthenticationError, GraphQLError
 
-from infrahub_sync.infrahub_errors import InfrahubErrorClassification, classify_infrahub_error
+from infrahub_sync.infrahub_errors import (
+    InfrahubErrorClassification,
+    classify_infrahub_error,
+    classify_infrahub_error_chain,
+)
 from infrahub_sync.potenda import _operational_failure_summary  # noqa: PLC2701 -- the run's recorded cause
 
 if TYPE_CHECKING:
@@ -205,3 +209,42 @@ def test_a_quoted_server_message_drops_control_characters_and_is_capped() -> Non
     assert "\x07" not in classification.server_message
     assert "\n" not in classification.server_message
     assert len(classification.server_message) <= 300
+
+
+def _wrapped(cause: BaseException, message: str) -> ValueError:
+    """A `ValueError` raised `from` `cause`, as `Potenda` wraps a load failure."""
+    wrapper = ValueError(message)
+    wrapper.__cause__ = cause
+    return wrapper
+
+
+def test_the_chain_classification_finds_a_403_a_plan_wrapped_twice() -> None:
+    """A plan wraps a destination read failure in two `ValueError`s; the 403 is still a missing permission."""
+    denial = _raised(403, _denied(ONE_PERMISSION))
+    inner = _wrapped(denial, f"An error occurred while loading InfrahubAdapter: {denial}")
+    wrapped = _wrapped(inner, f"An error occurred while loading the sync: {inner}")
+
+    assert classify_infrahub_error(wrapped) is None
+    classification = classify_infrahub_error_chain(wrapped)
+
+    assert classification == classify_infrahub_error(denial)
+    assert classification is not None
+    assert classification.problem == "missing_permission"
+    _assert_recorded_without_the_token(denial, classification)
+
+
+def test_the_chain_classification_follows_an_implicit_context_and_stops_at_a_cycle() -> None:
+    denial = _raised(403, _denied(ONE_PERMISSION))
+
+    suppressed = RuntimeError("cleanup failed")
+    suppressed.__context__ = denial
+    suppressed.__suppress_context__ = True
+    assert classify_infrahub_error_chain(suppressed) is None, "a suppressed context is not walked"
+
+    looping = ValueError("a")
+    looping.__cause__ = _wrapped(looping, "b")
+    assert classify_infrahub_error_chain(looping) is None
+
+    with_context = RuntimeError("while handling")
+    with_context.__context__ = denial
+    assert classify_infrahub_error_chain(with_context) == classify_infrahub_error(denial)

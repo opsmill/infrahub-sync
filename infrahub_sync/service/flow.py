@@ -62,6 +62,7 @@ from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, RuntimeModel
 
 from .apply_guard import ApplyGuard, hold_apply_guard
 from .checkpoints import publish_final_checkpoint, publish_plan_checkpoint, rehydrate_plan_checkpoint
+from .failure_cause import operator_cause
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME, run_name
@@ -706,8 +707,11 @@ def _failure_evidence(
     *,
     outcome: str,
     record: ApplyRecord | None,
+    secrets: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Describe one failure, with whatever is known about what it wrote.
+
+    The failure's operator cause is recorded too, when it has one: see `operator_cause`.
 
     A failure raised by the engine carries its own partial record; a failure raised after
     the engine returned — a sidecar write, the guard's release, the product commit — carries
@@ -733,6 +737,7 @@ def _failure_evidence(
     }
     if isinstance(exc, UnsupportedSyncStoreError):
         evidence.update(reason=UNSUPPORTED_STORE_REASON, message=UNSUPPORTED_STORE_MESSAGE)
+    evidence.update(operator_cause(exc, secrets))
     if stage == "apply" and isinstance(exc, RegisteredPlanVerificationError) and exc.recovery_action is not None:
         evidence["recovery_action"] = exc.recovery_action
     written = effective_apply_record(exc, record)
@@ -794,7 +799,7 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
         else:
             ambiguous = dispatch_started
         terminal_state, terminal_outcome = ("interrupted", "ambiguous") if ambiguous else ("failed", "failed")
-        evidence = _failure_evidence(stage, exc, outcome=terminal_outcome, record=record)
+        evidence = _failure_evidence(stage, exc, outcome=terminal_outcome, record=record, secrets=secrets)
         results: dict[str, Any] = {f"{stage}_failure": evidence}
         if stage == "verify":
             writeback: ExecutionWriteback = ExecutionMergeWriteback(results=results)

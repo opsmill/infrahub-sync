@@ -1337,3 +1337,212 @@ def test_a_completed_record_is_left_to_the_dispatch_rule(
     assert evidence["failed_operation"] is None, "A completed record names no failing operation."
     assert evidence["may_have_partially_written"] is False
     assert stored.phase == "apply-failed"
+
+
+# ---------------------------------------------------------------------------------------
+# FR-008, FR-011, FR-012 — the operator cause of a plan or apply failure is recorded
+# ---------------------------------------------------------------------------------------
+
+LINEAGE_TOKEN = "lineage-token-canary-5c0a9e"  # noqa: S105 -- a canary, not a credential
+LINEAGE_PERMISSION = "object:*:Core:AccountGroup:view:allow_all"
+
+
+def _sdk_403(permission: str = LINEAGE_PERMISSION) -> Exception:
+    """The `AuthenticationError` the SDK raises for an HTTP 403, chained from a request carrying the token."""
+    from infrahub_sdk import Config, InfrahubClientSync
+    from infrahub_sdk.exceptions import AuthenticationError
+
+    address = "http://infrahub.invalid"
+
+    def requester(url: str, method: Any, headers: dict[str, Any], timeout: int, payload: dict | None = None) -> Any:  # noqa: ANN401
+        del timeout, payload
+        request = httpx.Request(method.value, url, headers=headers)
+        body = {"errors": [{"message": f"You do not have the following permission: {permission}"}]}
+        return httpx.Response(403, json=body, request=request)
+
+    client = InfrahubClientSync(
+        address=address, config=Config(address=address, api_token=LINEAGE_TOKEN, sync_requester=requester)
+    )
+    with pytest.raises(AuthenticationError) as caught:
+        client.execute_graphql(query="query { AccountProfile { id } }")
+    cause = caught.value.__cause__
+    assert isinstance(cause, httpx.HTTPStatusError)
+    assert LINEAGE_TOKEN in str(cause.request.headers), "the token check below is not vacuous"
+    return caught.value
+
+
+def _plan_load_failure(tmp_path: Path, *, resolve: Exception | None = None, load: Exception | None = None) -> Exception:
+    """The exception `Potenda.load` raises for a plan whose lineage resolution or destination read fails."""
+    from unittest.mock import MagicMock
+
+    from infrahub_sync.potenda import Potenda
+
+    source = MagicMock()
+    source.top_level = []
+    destination = MagicMock()
+    destination.top_level = []
+    if resolve is not None:
+        destination.resolve_lineage.side_effect = resolve
+    if load is not None:
+        destination.load.side_effect = load
+    engine = Potenda(
+        source=source,
+        destination=destination,
+        config=None,  # ty: ignore[invalid-argument-type]
+        top_level=[],
+        run_dir=tmp_path / "engine",
+        concurrent_load=False,
+    )
+    with pytest.raises(ValueError, match="An error occurred while loading the sync") as caught:
+        engine.load()
+    return caught.value
+
+
+def _record_plan_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: str, failure: Exception):
+    """Run the plan stage so it fails with `failure`, and return the stored run."""
+    projection = _create_product_run(tmp_path.resolve(), run_id)
+    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    bind_granting_guard(monkeypatch, service_flow)
+    monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
+    monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
+    monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
+
+    def fail_plan(*_args: object, **_kwargs: object) -> NoReturn:
+        raise failure
+
+    monkeypatch.setattr(service_flow, "_plan", fail_plan)
+    with pytest.raises(RuntimeError):
+        service_sync_run.fn(run_id, "plan", *_binding(projection, run_id))
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    return stored
+
+
+def _record_apply_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    run_id: str,
+    failure: Exception,
+    *,
+    secrets: tuple[str, ...] = (),
+):
+    """Run the apply stage so the engine fails with `failure`, and return the stored run."""
+    projection = _create_product_run(tmp_path.resolve(), run_id)
+    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    bind_granting_guard(monkeypatch, service_flow)
+    monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
+    monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
+    monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: secrets)
+    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
+
+    def fail_apply(*_args: object, **_kwargs: object) -> NoReturn:
+        raise failure
+
+    monkeypatch.setattr(service_flow, "execute_run", fail_apply)
+    with pytest.raises(RuntimeError):
+        service_sync_run.fn(
+            run_id, "apply", *_binding(projection, run_id), expected_checksum="a" * 64, confirm_writes=True
+        )
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    return stored
+
+
+MISSING_PERMISSION_EVIDENCE = {
+    "infrahub_error": {"problem": "missing_permission", "http_status": 403, "permissions": [LINEAGE_PERMISSION]},
+    "cause": (
+        f"a missing permission: the import account needs the permission `{LINEAGE_PERMISSION}` "
+        "(AuthenticationError, HTTP 403)"
+    ),
+}
+
+
+@pytest.mark.usefixtures("_claimed_worker_execution")
+@pytest.mark.parametrize("where", ["destination_read", "lineage_resolution"])
+def test_a_plan_records_a_403_as_a_missing_permission(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, where: str
+) -> None:
+    """FR-008, SC-006: the load wraps the 403 in `ValueError`s, and the run still records the permission."""
+    sdk_error = _sdk_403()
+    failure = (
+        _plan_load_failure(tmp_path, load=sdk_error)
+        if where == "destination_read"
+        else _plan_load_failure(tmp_path, resolve=sdk_error)
+    )
+
+    stored = _record_plan_failure(monkeypatch, tmp_path, f"run-plan-403-{where}", failure)
+
+    evidence = stored.results["plan_failure"]
+    assert evidence["error_type"] == "ValueError"
+    assert {key: evidence[key] for key in MISSING_PERMISSION_EVIDENCE} == MISSING_PERMISSION_EVIDENCE
+    assert "refused the token" not in stored.model_dump_json()
+    assert LINEAGE_TOKEN not in stored.model_dump_json()
+
+
+@pytest.mark.usefixtures("_claimed_worker_execution")
+def test_an_apply_records_a_403_during_lineage_resolution_as_a_missing_permission(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """FR-008: the lineage is resolved outside the operation loop, and its 403 is still classified."""
+    stored = _record_apply_failure(monkeypatch, tmp_path, "run-apply-403-lineage", _sdk_403())
+
+    evidence = stored.results["apply_failure"]
+    assert evidence["error_type"] == "AuthenticationError"
+    assert {key: evidence[key] for key in MISSING_PERMISSION_EVIDENCE} == MISSING_PERMISSION_EVIDENCE
+    assert LINEAGE_TOKEN not in stored.model_dump_json()
+
+
+@pytest.mark.usefixtures("_claimed_worker_execution")
+def test_a_plan_records_a_missing_named_node_with_its_cause_and_next_action(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """FR-004: the cause names the setting, the kind and the name, through the load's `ValueError` wrapping."""
+    from infrahub_sync.plan.errors import NamedLineageNodeNotFoundError
+
+    refusal = NamedLineageNodeNotFoundError(setting="owner", kind="CoreAccountGroup", name="network-team")
+    failure = _plan_load_failure(tmp_path, resolve=refusal)
+
+    stored = _record_plan_failure(monkeypatch, tmp_path, "run-plan-missing-owner", failure)
+
+    evidence = stored.results["plan_failure"]
+    assert evidence["cause"] == "The setting `owner` names `CoreAccountGroup` `network-team`, which does not exist."
+    assert evidence["next_action"] == refusal.next_action
+    assert "infrahub_error" not in evidence
+
+
+@pytest.mark.usefixtures("_claimed_worker_execution")
+def test_an_apply_records_an_account_mismatch_with_both_accounts_and_its_next_action(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """FR-012, SC-007: the recorded cause names both accounts; control characters are removed and secrets masked."""
+    from infrahub_sync.plan.errors import ImportAccountMismatchError
+
+    message = (
+        "The saved plan for run 'r' was made with the import account 'netbox' (id a-1), and this apply runs "
+        f"with the import account 'other\x1b[2J' (id a-2). {LINEAGE_TOKEN}"
+    )
+    stored = _record_apply_failure(
+        monkeypatch, tmp_path, "run-apply-mismatch", ImportAccountMismatchError(message), secrets=(LINEAGE_TOKEN,)
+    )
+
+    evidence = stored.results["apply_failure"]
+    assert evidence["error_type"] == "ImportAccountMismatchError"
+    assert evidence["cause"].startswith("The saved plan for run 'r' was made with the import account 'netbox' (id a-1)")
+    assert "'other [2J' (id a-2)" in evidence["cause"]
+    assert "\x1b" not in evidence["cause"]
+    assert evidence["next_action"] == ImportAccountMismatchError.next_action
+    assert LINEAGE_TOKEN not in stored.model_dump_json()
+
+
+@pytest.mark.usefixtures("_claimed_worker_execution")
+def test_an_unclassified_failure_records_no_cause_text(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Only the repository's own refusals and the classification are recorded as text."""
+    stored = _record_plan_failure(
+        monkeypatch, tmp_path, "run-plan-unclassified", ValueError(f"server said {LINEAGE_TOKEN}")
+    )
+
+    evidence = stored.results["plan_failure"]
+    assert "cause" not in evidence
+    assert "next_action" not in evidence
+    assert LINEAGE_TOKEN not in stored.model_dump_json()

@@ -69,6 +69,7 @@ from infrahub_sync.infrahub_errors import classify_infrahub_error
 from infrahub_sync.plan.errors import ImportAccountMismatchError, OperationApplyFailedError
 from infrahub_sync.plan.review import read_saved_plan
 from infrahub_sync.potenda import Potenda
+from infrahub_sync.service.failure_cause import operator_cause
 from tests.configuration.validation_packages import package, package_data
 from tests.plan.artifact_fixtures import CONFIG_VERSION, operation_record, write_artifact
 from tests.plan.ownership_fixtures import granted_ownership
@@ -860,6 +861,7 @@ def test_a_missing_permission_on_the_owner_kind_is_recorded_as_a_missing_permiss
     account_factory: AccountFactory,
     owner_groups: Callable[[], OwnerGroup],
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """Quickstart scenario 5 with an owner (SC-006, FR-008): no `view` on `CoreAccountGroup`.
 
@@ -882,6 +884,27 @@ def test_a_missing_permission_on_the_owner_kind_is_recorded_as_a_missing_permiss
     assert any("AccountGroup" in permission for permission in classification.permissions), (
         f"The cause must quote the permission Infrahub names for the group kind; it quoted {classification.permissions}"
     )
+
+    # The plan wraps the refusal in a `ValueError`; the worker still records the permission.
+    source = MagicMock()
+    source.top_level = []
+    engine = Potenda(
+        source=source,
+        destination=planning,
+        config=None,  # ty: ignore[invalid-argument-type]
+        top_level=[],
+        run_dir=tmp_path / "plan-403",
+        concurrent_load=False,
+    )
+    with pytest.raises(ValueError, match="An error occurred while loading the sync") as wrapped:
+        engine.load()
+    recorded = operator_cause(wrapped.value, secrets=())
+    assert recorded["infrahub_error"]["problem"] == "missing_permission"
+    assert recorded["infrahub_error"]["http_status"] == 403
+    assert recorded["infrahub_error"]["permissions"] == list(classification.permissions)
+    assert recorded["cause"] == classification.describe()
+    assert account.token not in repr(recorded)
+    source.load.assert_not_called()
 
 
 # --- Quickstart scenario 3: who last changed each value a plan updates -------------------------

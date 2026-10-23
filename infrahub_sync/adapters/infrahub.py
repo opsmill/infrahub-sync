@@ -13,7 +13,7 @@ from infrahub_sdk import (
     Config,
     InfrahubClientSync,
 )
-from infrahub_sdk.exceptions import GraphQLError, NodeNotFoundError
+from infrahub_sdk.exceptions import AuthenticationError, GraphQLError, NodeNotFoundError, SchemaNotFoundError
 from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
 from packaging.version import InvalidVersion, Version
 from pydantic import ValidationError
@@ -36,9 +36,11 @@ from infrahub_sync.configuration.credentials import (
     select_runtime_credential,
 )
 from infrahub_sync.generator import has_field
+from infrahub_sync.infrahub_errors import classify_infrahub_error
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.errors import (
     ImportAccountMismatchError,
+    NamedLineageNodeNotFoundError,
     NullRelationshipValueError,
     PeerAmbiguousError,
     PeerNotFoundError,
@@ -684,23 +686,6 @@ class InfrahubLineageSettingsError(ValueError):
     """
 
 
-class NamedLineageNodeNotFoundError(LookupError):
-    """The node a `source` or `owner` setting names does not exist in the destination (FR-004, FR-011).
-
-    Raised at the start of a plan, before the source system is read, and at the start of an
-    apply, before any write. The message names the setting, the kind and the name, and is the
-    same in both, so an apply records the cause a plan would have recorded.
-    """
-
-    wrote = False
-
-    def __init__(self, *, setting: str, kind: str, name: str) -> None:
-        self.setting = setting
-        self.kind = kind
-        self.name = name
-        super().__init__(f"The setting `{setting}` names `{kind}` `{name}`, which does not exist.")
-
-
 class ImportAccountUnreadableError(RuntimeError):
     """Infrahub answered the import account query without an account id."""
 
@@ -1026,13 +1011,24 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         A server that refuses the version query is treated like one whose version cannot be
         parsed: the plan continues and every last change shows as not recorded (research R-1).
+        A refusal is a GraphQL error, or an HTTP 403 the SDK raises as `AuthenticationError`.
+        An HTTP 401 still stops the plan: the token is refused, and every later read would be
+        refused too.
+
+        The warning names the error class, or the classification of a missing permission. It
+        never includes the error's text, which can hold the whole request or response.
         """
         try:
             version = self.client.get_version()
-        except GraphQLError as exc:
+        except (GraphQLError, AuthenticationError) as exc:
+            classification = classify_infrahub_error(exc)
+            if isinstance(exc, AuthenticationError) and (
+                classification is None or classification.problem != "missing_permission"
+            ):
+                raise
             logger.warning(
                 "Infrahub refused the server version query, so this plan does not read updated_by and updated_at: %s",
-                exc,
+                type(exc).__name__ if classification is None else classification.describe(),
                 extra={"infrahub_version": None, "metadata_read": False},
             )
             return False
@@ -1062,9 +1058,25 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         has cached, which `get` reads anyway.
 
         A named node that does not exist raises `NamedLineageNodeNotFoundError`, so the run
-        stops with no fallback node.
+        stops with no fallback node. So does a kind the destination schema does not have on the
+        branch the run reads, with a message that says so (FR-004).
         """
-        relationships = [relationship.name for relationship in self.client.schema.get(kind=named.kind).relationships]
+        extra = {"lineage_setting": setting, "lineage_kind": named.kind, "lineage_name": named.name}
+        try:
+            schema = self.client.schema.get(kind=named.kind)
+        except SchemaNotFoundError as exc:
+            logger.warning(
+                "Lineage refused: the setting %s names %s %s, and the destination schema has no kind %s",
+                setting,
+                named.kind,
+                named.name,
+                named.kind,
+                extra=extra,
+            )
+            raise NamedLineageNodeNotFoundError(
+                setting=setting, kind=named.kind, name=named.name, kind_missing=True
+            ) from exc
+        relationships = [relationship.name for relationship in schema.relationships]
         try:
             node = self.client.get(kind=named.kind, name__value=named.name, include=["name"], exclude=relationships)
         except NodeNotFoundError as exc:
@@ -1073,7 +1085,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 setting,
                 named.kind,
                 named.name,
-                extra={"lineage_setting": setting, "lineage_kind": named.kind, "lineage_name": named.name},
+                extra=extra,
             )
             raise NamedLineageNodeNotFoundError(setting=setting, kind=named.kind, name=named.name) from exc
         node_id = _require_node_id(node, context=f"for the {named.kind} named {named.name!r}")

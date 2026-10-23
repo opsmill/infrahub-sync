@@ -613,6 +613,50 @@ def _echo_completed_destination_branch(client: SyncClient, run_id: str) -> None:
     _echo_fields((("destination_branch", plan.destination_branch),))
 
 
+_MAX_PRINTED_CAUSE = 1000
+
+
+def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
+    """Print what the service recorded about a failed stage, before the run-terminal error.
+
+    `<stage> failed: <error type>`, then `cause:` and `hint:` when the run recorded an operator
+    cause (a missing permission, a refused token or a lineage refusal) and its next action. The
+    record is the API's, and the API stores only text written for the operator. Each value is
+    still capped and printed through `_display`, so recorded text cannot reach the terminal as
+    an escape sequence.
+    """
+    try:
+        failure = client.get_results(run_id).results.get(f"{stage}_failure")
+    except SyncClientError:
+        return
+    if not isinstance(failure, dict) or failure.get("stage") != stage:
+        return
+    error_type = failure.get("error_type")
+    if not (
+        isinstance(error_type, str) and len(error_type) <= 128 and error_type.isascii() and error_type.isidentifier()
+    ):
+        return
+    typer.echo(f"{stage} failed: {error_type}", err=True)
+    cause = failure.get("cause")
+    if isinstance(cause, str) and cause:
+        typer.echo(f"cause: {_display(cause[:_MAX_PRINTED_CAUSE])}", err=True)
+    next_action = failure.get("next_action")
+    if isinstance(next_action, str) and next_action:
+        typer.echo(f"hint: {_display(next_action[:_MAX_PRINTED_CAUSE])}", err=True)
+    elif error_type == "PlanSchemaChangedError":
+        typer.echo("hint: create and review a new plan before applying again", err=True)
+    elif error_type == "RegisteredPlanVerificationError":
+        recovery_action = failure.get("recovery_action")
+        if recovery_action == "rebuild":
+            typer.echo("hint: re-run diff for this sync, review the new plan, then apply that run", err=True)
+        elif recovery_action == "compatible_version":
+            typer.echo(
+                "hint: re-run diff with this version and review the new plan, "
+                "or apply the reviewed plan with the version that wrote it",
+                err=True,
+            )
+
+
 def _admit_run(
     ctx: typer.Context,
     *,
@@ -640,13 +684,18 @@ def _admit_run(
     )
     accepted = client.plan(request, key) if operation == "plan" else client.sync(request, key)
     _echo_run(accepted)
-    return client, _wait(
-        client,
-        accepted,
-        wait=wait,
-        wait_timeout=wait_timeout,
-        poll_interval=poll_interval,
-    )
+    try:
+        completed = _wait(
+            client,
+            accepted,
+            wait=wait,
+            wait_timeout=wait_timeout,
+            poll_interval=poll_interval,
+        )
+    except RunTerminalError as error:
+        _echo_stage_failure(client, error.run_id, stage=operation)
+        raise
+    return client, completed
 
 
 @app.command("diff")
@@ -753,35 +802,7 @@ def apply_cmd(
                 poll_interval=poll_interval,
             )
         except RunTerminalError as error:
-            try:
-                failure = client.get_results(error.run_id).results.get("apply_failure")
-            except SyncClientError:
-                failure = None
-            if isinstance(failure, dict):
-                stage = failure.get("stage")
-                error_type = failure.get("error_type")
-                if (
-                    stage == "apply"
-                    and isinstance(error_type, str)
-                    and len(error_type) <= 128
-                    and error_type.isascii()
-                    and error_type.isidentifier()
-                ):
-                    typer.echo(f"{stage} failed: {error_type}", err=True)
-                    if error_type == "PlanSchemaChangedError":
-                        typer.echo("hint: create and review a new plan before applying again", err=True)
-                    elif error_type == "RegisteredPlanVerificationError":
-                        recovery_action = failure.get("recovery_action")
-                        if recovery_action == "rebuild":
-                            typer.echo(
-                                "hint: re-run diff for this sync, review the new plan, then apply that run", err=True
-                            )
-                        elif recovery_action == "compatible_version":
-                            typer.echo(
-                                "hint: re-run diff with this version and review the new plan, "
-                                "or apply the reviewed plan with the version that wrote it",
-                                err=True,
-                            )
+            _echo_stage_failure(client, error.run_id, stage="apply")
             raise
         if wait:
             _echo_run(completed)

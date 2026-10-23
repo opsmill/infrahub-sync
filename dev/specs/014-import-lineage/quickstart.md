@@ -167,6 +167,29 @@ Run on 2026-10-23 from 00:00 to 00:09 UTC (task T057), with the code of commit `
   failures (`infrahub_sync/potenda/__init__.py:225`) and to the destination schema read
   (`infrahub_sync/configuration/capabilities.py:366-408`), not to a plan failure of this kind.
 
+### Re-run after the review fixes: what the CLI prints for a failed run
+
+Run on 2026-10-23 from 00:34 to 00:38 UTC, with the code of this change before it was committed, on
+a new pair of Compose projects set up as in [What ran](#what-ran): the development stack with its
+own image tag, and an Infrahub 1.10.6 project with anonymous access off. Scenarios 1, 2 and 5 were
+re-run only for the steps whose CLI output the fixes change.
+
+- Scenario 5, step 2: passed. With `view` on `CoreAccountGroup` removed, `diff` printed
+  `plan failed: AuthenticationError` and "cause: a missing permission: the import account needs
+  the permission `object:Core:AccountGroup:view:allow_other` (AuthenticationError, HTTP 403)".
+  `runs results` held `infrahub_error` with `problem: missing_permission`, `http_status: 403` and
+  that permission, and the same text under `cause`.
+- Scenario 1, step 3: passed. `apply` with the `operator` token printed
+  `apply failed: ImportAccountMismatchError`, a `cause:` line naming the import account `netbox`
+  and the import account `operator` with their ids, and the `hint:` line "Apply with a token of
+  the account the plan recorded, or create a new plan with this token and review it."
+- Scenario 2, step 5, on a branch created after the rename: passed. `diff` printed
+  `plan failed: NamedLineageNodeNotFoundError`, "cause: The setting `owner` names
+  `CoreAccountGroup` `network-team`, which does not exist." and a `hint:` line.
+- None of the tokens of the run appeared in the CLI output or in the worker log.
+- The case found in scenario 2 on a branch created before the rename was not re-run; the fixes do
+  not change it.
+
 ### Covered only by the opt-in integration tests
 
 `tests/integration/test_infrahub_lineage_integration.py`, 10 tests, passed on 2026-10-22 at

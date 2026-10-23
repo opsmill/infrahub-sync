@@ -273,6 +273,10 @@ def _parse_named_node_fields(setting: LineageSettingName, value: Mapping[Any, ob
     name = value["name"]
     if not isinstance(name, str) or not name.strip():
         return f"`{setting}` name must be a non-empty string"
+    if name != name.strip():
+        # Infrahub matches the name exactly, so a padded name would refuse every plan with a
+        # node that looks like the one that exists.
+        return f"`{setting}` name {_echo(name)} has leading or trailing whitespace"
     return NamedLineageNode.model_validate({"kind": kind, "name": name})
 
 

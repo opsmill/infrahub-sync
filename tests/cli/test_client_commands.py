@@ -508,6 +508,115 @@ def test_failed_apply_keeps_terminal_verdict_when_failure_evidence_is_unavailabl
     assert "outcome: failed" in result.output
 
 
+MISSING_PERMISSION_CAUSE = (
+    "a missing permission: the import account needs the permission `object:*:Core:Account:view:allow_all` "
+    "(AuthenticationError, HTTP 403)"
+)
+MISMATCH_CAUSE = (
+    "The saved plan for run 'service-run-1' was made with the import account 'netbox' (id a-1), and this apply "
+    "runs with the import account 'other' (id a-2). Nothing was written to the destination."
+)
+MISMATCH_NEXT_ACTION = (
+    "Apply with a token of the account the plan recorded, or create a new plan with this token and review it."
+)
+
+
+def _terminal(phase: str) -> RunTerminalError:
+    return RunTerminalError(
+        "service-run-1", terminal_state="failed", terminal_outcome="failed", phase=phase, outcome="failed"
+    )
+
+
+@pytest.mark.parametrize(
+    ("arguments", "stage"),
+    [
+        (("diff", "--config-id", "edge-sync", "--version", "1", "--reason", "review"), "plan"),
+        (("sync", "--config-id", "edge-sync", "--version", "1", "--reason", "sync now"), "sync"),
+        (("apply", "service-run-1", "--expected-checksum", CHECKSUM, "--reason", "apply reviewed plan"), "apply"),
+    ],
+)
+def test_a_failed_run_prints_the_recorded_missing_permission(
+    client: MagicMock, arguments: tuple[str, ...], stage: str
+) -> None:
+    """FR-008: a 403 at any stage is printed as a missing permission naming the permission, never a refused token."""
+    client.wait_for_run.side_effect = _terminal(f"{stage}-failed")
+    client.get_results.return_value = ResultsResource(
+        run_id="service-run-1",
+        results={
+            f"{stage}_failure": {
+                "stage": stage,
+                "outcome": "failed",
+                "error_type": "ValueError",
+                "cause_type": "ValueError",
+                "infrahub_error": {
+                    "problem": "missing_permission",
+                    "http_status": 403,
+                    "permissions": ["object:*:Core:Account:view:allow_all"],
+                },
+                "cause": MISSING_PERMISSION_CAUSE,
+            }
+        },
+    )
+
+    result = _invoke(client, *arguments)
+
+    assert result.exit_code == 1
+    assert f"{stage} failed: ValueError" in result.output
+    assert f"cause: {MISSING_PERMISSION_CAUSE}" in result.output
+    assert "refused the token" not in result.output
+    assert "error: run-terminal" in result.output
+
+
+def test_a_failed_apply_prints_the_account_mismatch_and_its_next_action(client: MagicMock) -> None:
+    """FR-012, SC-007: the operator reads both accounts and what to do, not only the error class."""
+    client.wait_for_run.side_effect = _terminal("apply-failed")
+    client.get_results.return_value = ResultsResource(
+        run_id="service-run-1",
+        results={
+            "apply_failure": {
+                "stage": "apply",
+                "outcome": "failed",
+                "error_type": "ImportAccountMismatchError",
+                "cause_type": None,
+                "cause": MISMATCH_CAUSE,
+                "next_action": MISMATCH_NEXT_ACTION,
+            }
+        },
+    )
+
+    result = _invoke(
+        client, "apply", "service-run-1", "--expected-checksum", CHECKSUM, "--reason", "apply reviewed plan"
+    )
+
+    assert result.exit_code == 1
+    assert "apply failed: ImportAccountMismatchError" in result.output
+    assert f"cause: {MISMATCH_CAUSE}" in result.output
+    assert f"hint: {MISMATCH_NEXT_ACTION}" in result.output
+
+
+def test_a_recorded_cause_is_printed_with_its_control_characters_made_visible(client: MagicMock) -> None:
+    client.wait_for_run.side_effect = _terminal("plan-failed")
+    client.get_results.return_value = ResultsResource(
+        run_id="service-run-1",
+        results={
+            "plan_failure": {
+                "stage": "plan",
+                "outcome": "failed",
+                "error_type": "ValueError",
+                "cause": "line\x1b[2Jone",
+                "next_action": "x" * 5000,
+            }
+        },
+    )
+
+    result = _invoke(client, "diff", "--config-id", "edge-sync", "--version", "1", "--reason", "review")
+
+    assert "\x1b" not in result.output
+    assert "cause: line\\x1b[2Jone" in result.output
+    hint = next(line for line in result.output.splitlines() if line.startswith("hint: "))
+    assert len(hint) <= len("hint: ") + 1000
+
+
 def test_runs_show_renders_the_service_record_and_its_selected_execution(client: MagicMock) -> None:
     """An operator following a run needs the Prefect correlation, not just the phase."""
     client.get_run.return_value = _run(operation="apply", phase="applied")

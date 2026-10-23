@@ -9,7 +9,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from infrahub_sdk.exceptions import NodeNotFoundError
+from infrahub_sdk.exceptions import NodeNotFoundError, SchemaNotFoundError
 
 from infrahub_sync.adapters.infrahub import (
     IMPORT_ACCOUNT_QUERY,
@@ -241,6 +241,33 @@ def test_a_named_node_that_does_not_exist_stops_resolution_without_a_fallback(
     assert record.__dict__["lineage_setting"] == setting
     assert record.__dict__["lineage_kind"] == "CoreAccountGroup"
     assert record.__dict__["lineage_name"] == "missing"
+
+
+@pytest.mark.parametrize("setting", ["source", "owner"])
+def test_a_named_kind_missing_from_the_destination_schema_stops_resolution_naming_the_setting(setting: str) -> None:
+    """FR-004: a kind the branch's schema does not have stops the run with the setting's cause, not an SDK error."""
+
+    class MissingKindSchema:
+        @staticmethod
+        def get(*, kind: str, **_: Any) -> SimpleNamespace:  # noqa: ANN401
+            raise SchemaNotFoundError(identifier=kind)
+
+    client = LineageClient()
+    client.schema = MissingKindSchema()  # ty: ignore[invalid-assignment]
+    named = NamedLineageNode(kind="CoreAccountGroup", name="network-team")
+    adapter = make_adapter(client, InfrahubLineageSettings.model_validate({setting: named}))
+
+    with pytest.raises(NamedLineageNodeNotFoundError) as raised:
+        adapter.resolve_lineage()
+
+    assert str(raised.value) == (
+        f"The setting `{setting}` names `CoreAccountGroup` `network-team`, which does not exist. "
+        "The destination schema has no kind `CoreAccountGroup`."
+    )
+    assert isinstance(raised.value.__cause__, SchemaNotFoundError)
+    assert f"the setting `{setting}`" in raised.value.next_action
+    assert adapter.lineage is None
+    assert [call for call in client.calls if call[0] == "get"] == [], "no node is read for a kind that is missing"
 
 
 @pytest.mark.parametrize(

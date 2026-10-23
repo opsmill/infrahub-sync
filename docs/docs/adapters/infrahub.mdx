@@ -306,7 +306,7 @@ The import account needs no permission for:
 - setting the source, the owner, or the protection flag;
 - reading who last changed a value.
 
-When Infrahub refuses a request with HTTP 403, the run reports a missing permission and quotes the permission Infrahub names. A refused token is reported as a token problem.
+When Infrahub refuses a request with HTTP 403, the run reports a missing permission and quotes the permission Infrahub names. This applies to a plan and to an apply. A refused token is reported as a token problem. `diff`, `sync` and `apply` print the cause on a `cause:` line, and `runs results RUN_ID` shows it under `cause` and `infrahub_error`. If Infrahub refuses only the version query with HTTP 403, the plan continues and does not record who last changed each value.
 
 ## Common issues and troubleshooting
 

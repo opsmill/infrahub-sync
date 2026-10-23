@@ -92,6 +92,23 @@ def classify_infrahub_error(exc: BaseException) -> InfrahubErrorClassification |
     return None
 
 
+def classify_infrahub_error_chain(exc: BaseException) -> InfrahubErrorClassification | None:
+    """Classify the first error in `exc`'s cause chain that `classify_infrahub_error` classifies.
+
+    A plan wraps every load failure, the lineage resolution among them, in a `ValueError` raised
+    `from` the original, so the Infrahub error is a cause of the error the run fails with. The walk
+    follows `__cause__`, then `__context__` unless it is suppressed, and stops at a cycle.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if (classification := classify_infrahub_error(current)) is not None:
+            return classification
+        current = current.__cause__ or (None if current.__suppress_context__ else current.__context__)
+    return None
+
+
 def _classify_authentication_error(exc: AuthenticationError) -> InfrahubErrorClassification:
     """A 403 cause is a missing permission; a 401 cause, or no HTTP cause, is a refused token."""
     cause = exc.__cause__

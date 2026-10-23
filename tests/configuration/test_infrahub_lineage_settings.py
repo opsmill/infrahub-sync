@@ -48,6 +48,18 @@ def test_each_allowed_kind_is_accepted(setting: str, kind: str) -> None:
             "`owner` name must be a non-empty string",
             id="blank-name",
         ),
+        pytest.param(
+            {"owner": {"kind": "CoreAccountGroup", "name": " network-team"}},
+            "owner",
+            "`owner` name ` network-team` has leading or trailing whitespace",
+            id="leading-whitespace",
+        ),
+        pytest.param(
+            {"source": {"kind": "CoreAccount", "name": "netbox\n"}},
+            "source",
+            "`source` name that is given has leading or trailing whitespace",
+            id="trailing-newline",
+        ),
         pytest.param({"source": {"name": "x"}}, "source", "`source` has no `kind`", id="no-kind"),
         pytest.param(
             {"owner": {"kind": "CoreAccountGroup", "name": "x", "id": "y"}},
