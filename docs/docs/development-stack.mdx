@@ -84,6 +84,11 @@ the containerized worker runs names that address, not the host address. `dev.sta
 worker the stack's Infrahub admin token as `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`,
 unless your shell already exports that variable.
 
+When the local NetBox from the `netbox` tasks is running, `dev.start` and `dev.restart` also
+connect the worker to NetBox's Docker network and print `it reads NetBox at
+http://netbox:8080`. This happens whenever that network exists, also when you do not plan to
+read NetBox. [Run a first sync](#run-a-first-sync) uses this connection.
+
 Check the service:
 
 ```bash
