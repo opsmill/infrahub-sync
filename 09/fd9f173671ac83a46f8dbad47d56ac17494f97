@@ -1,0 +1,23 @@
+tests/integration/test_infrahub_lineage_integration.py
+  s_8d92f288a8f661::t_9009b1edead54a 495-507,513,520-521,523-525,527-529,533
+  s_8d92f288a8f661::t_d6fdde3118d71e 543-560
+  s_8d92f288a8f661::t_0661362c82cf58 789,794,829-830,834,837-839,853,865,868,871,874,876,1003,1009-1011,1036,1040-1042,1070,1084-1085,1087,1108,1133,1642,1647-1649,1663,1670-1672
+dev/specs/014-import-lineage/opsmill-implement-report.md
+  s_8d92f288a8f661::t_c0bd5ae233c4fe 60-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "09fd9f173671ac83a46f8dbad47d56ac17494f97",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
