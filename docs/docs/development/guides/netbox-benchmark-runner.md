@@ -64,6 +64,15 @@ Infrahub 1.11.3. It uses the preview connection settings and local NetBox settin
 including personal connection overrides. The runner enforces the OpsMill image repository
 and version, ignoring preview image overrides. Keep the preview stack stopped so its ports are available.
 
+The runner reaches the destination Infrahub from the host at the port the development
+Compose file publishes for `infrahub-server` (`INFRAHUB_PORT`, default `8000`). When
+`INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` is set, the development settings hold only the
+address on that Docker network, such as `http://infrahub-server:8000`, which the host
+cannot reach. Pass `--infrahub-url` or set `INFRAHUB_SYNC_DEV_INFRAHUB_HOST_URL` to the
+address the host reaches Infrahub at. Without either, the runner stops before it restores
+NetBox or starts Infrahub, and names the variable. `--infrahub-url` takes precedence over
+the variable, and either one replaces the published port.
+
 ```bash
 uv run invoke bench.run --line v3 --tier S --scenario cold --repetitions 3
 uv run invoke bench.run --line v3 --tier S --scenario warm --repetitions 3

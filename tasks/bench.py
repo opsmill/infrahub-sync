@@ -66,7 +66,34 @@ INFRAHUB_IMAGE = "registry.opsmill.io/opsmill/infrahub"
 # The pinned destination's Compose project, apart from the development stack's own.
 DESTINATION_PROJECT = "infrahub-sync-benchmark"
 RUNNER_LOCK = Path("/tmp/infrahub-sync-benchmark-infrahub-sync-dev-netbox.lock")  # noqa: S108 -- machine-wide lock
+# The Infrahub address the host uses, for when the development settings hold only the
+# in-network address (`INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` set). `--infrahub-url` wins.
+INFRAHUB_HOST_URL_VARIABLE = "INFRAHUB_SYNC_DEV_INFRAHUB_HOST_URL"
 log = structlog.get_logger()
+
+
+def infrahub_host_url(settings: dev.DevSettings, option: str = "") -> str:
+    """Return the Infrahub URL the benchmark uses from the host.
+
+    `--infrahub-url`, else `INFRAHUB_SYNC_DEV_INFRAHUB_HOST_URL`, else the host port the
+    development file publishes for `infrahub-server`. With an Infrahub network selected,
+    the development settings hold only the address on that network, which the host cannot
+    reach, so one of the two must be set.
+
+    Raises:
+        BenchmarkError: when an Infrahub network is selected and neither is set.
+    """
+    chosen = option or os.environ.get(INFRAHUB_HOST_URL_VARIABLE, "")
+    if chosen:
+        return chosen.rstrip("/")
+    if settings.infrahub is None:
+        msg = (
+            f"{dev.INFRAHUB_NETWORK_VARIABLE} is set, so the development settings hold only the Infrahub"
+            f" address on that network ({settings.worker_infrahub_url}), which the host cannot reach;"
+            f" set {INFRAHUB_HOST_URL_VARIABLE} or pass --infrahub-url with the address the host reaches"
+        )
+        raise BenchmarkError(msg)
+    return settings.infrahub.url
 
 
 def cell_options(  # noqa: PLR0913, PLR0917 -- cell coordinates
@@ -93,7 +120,7 @@ def cell_options(  # noqa: PLR0913, PLR0917 -- cell coordinates
 class CellStack:
     """Manage only disposable benchmark stacks, with quiet legacy task calls."""
 
-    def __init__(self) -> None:
+    def __init__(self, infrahub_url: str = "") -> None:
         self.context = QuietContext()
         self.netbox_env = netbox.load_netbox_env()
         # The destination is the development file's Infrahub services under their own
@@ -105,7 +132,7 @@ class CellStack:
             "INFRAHUB_DOCKER_IMAGE_DIGEST": "",
         }
         settings = dev.dev_settings()
-        self.infrahub_url = settings.infrahub_url
+        self.infrahub_url = infrahub_host_url(settings, infrahub_url)
         self.infrahub_token = settings.infrahub_admin_token
         self.worker = ""
         self.deadline = time.monotonic() + LIMIT_SECONDS
@@ -443,7 +470,15 @@ def v3_sync(stack: CellStack, registered: tuple[str, int], record: ResultRecord,
         )
 
 
-@task(name="run")
+@task(
+    name="run",
+    help={
+        "infrahub-url": (
+            f"The Infrahub URL the host uses; default {INFRAHUB_HOST_URL_VARIABLE}, else the port the"
+            " development file publishes. Required when an Infrahub network is selected"
+        )
+    },
+)
 def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record per repetition
     _context: Context,
     line: str = "v3",
@@ -452,6 +487,7 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record
     variant: str = "full",
     repetitions: int = 1,
     v2_ref: str = "",
+    infrahub_url: str = "",
 ) -> None:
     """Run a destructive, manual cell, restoring both databases for every repetition."""
     if sys.version_info < (3, 11):
@@ -501,7 +537,7 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record
                 harness_commit=harness_commit,
                 mapping_sha256=mapping_sha256,
             )
-            stack = CellStack()
+            stack = CellStack(infrahub_url=infrahub_url)
             mapping = None
             try:
                 if line == "v2":

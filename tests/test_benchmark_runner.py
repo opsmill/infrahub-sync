@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import os
 import shlex
@@ -49,6 +50,10 @@ DEV_SETTINGS = dev.DevSettings(
     bearer_tokens='{"dev": {"token": "infrahub-sync-dev-token", "administrator": true}}',
     work_pool="infrahub-sync",
 )
+# The same settings with `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` set: no host publication of
+# Infrahub, only its address on that network.
+NETWORK_DEV_SETTINGS = dataclasses.replace(DEV_SETTINGS, infrahub=None, infrahub_network="infrahub_default")
+HOST_URL = "http://127.0.0.1:18000"
 
 
 @pytest.fixture(autouse=True)
@@ -399,7 +404,7 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0913, PLR091
     monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
     monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
     monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
-    monkeypatch.setattr(bench, "CellStack", Stack)
+    monkeypatch.setattr(bench, "CellStack", lambda **_kwargs: Stack())
     monkeypatch.setenv("INFRAHUB_SYNC_API_TOKEN", "test-api-token")
     monkeypatch.setattr(bench, "SyncClient", Client)
     monkeypatch.setattr(bench, "v3_sync", sync)
@@ -608,6 +613,74 @@ def test_v2_flags_are_only_sent_to_the_isolated_release(tmp_path, variant) -> No
     assert ("--parallel" in command) == (variant == "parallel")
     assert ("--concurrent-load" in command) == (variant == "parallel")
     assert ("--no-full-extract" in command) == (variant == "incremental")
+
+
+@pytest.fixture
+def infrahub_network_selected(monkeypatch) -> pytest.MonkeyPatch:
+    """Answer `dev.dev_settings()` as Compose resolves it with an Infrahub network selected."""
+    monkeypatch.setattr(bench.dev, "dev_settings", lambda *_args, **_kwargs: NETWORK_DEV_SETTINGS)
+    monkeypatch.delenv(bench.INFRAHUB_HOST_URL_VARIABLE, raising=False)
+    return monkeypatch
+
+
+def test_the_benchmark_uses_the_published_infrahub_port_by_default(monkeypatch) -> None:
+    monkeypatch.delenv(bench.INFRAHUB_HOST_URL_VARIABLE, raising=False)
+
+    assert DEV_SETTINGS.infrahub is not None
+    assert bench.CellStack().infrahub_url == DEV_SETTINGS.infrahub.url
+
+
+@pytest.mark.usefixtures("infrahub_network_selected")
+def test_an_infrahub_network_without_a_host_url_is_refused() -> None:
+    with pytest.raises(BenchmarkError, match=bench.INFRAHUB_HOST_URL_VARIABLE) as refused:
+        bench.CellStack()
+
+    assert "--infrahub-url" in str(refused.value)
+
+
+def test_an_infrahub_network_takes_the_host_url_from_the_variable(
+    infrahub_network_selected: pytest.MonkeyPatch,
+) -> None:
+    infrahub_network_selected.setenv(bench.INFRAHUB_HOST_URL_VARIABLE, HOST_URL + "/")
+
+    stack = bench.CellStack()
+
+    assert stack.infrahub_url == HOST_URL
+    assert stack.infrahub_url != NETWORK_DEV_SETTINGS.worker_infrahub_url
+
+
+def test_the_option_wins_over_the_host_url_variable(infrahub_network_selected: pytest.MonkeyPatch) -> None:
+    infrahub_network_selected.setenv(bench.INFRAHUB_HOST_URL_VARIABLE, "http://127.0.0.1:19000")
+
+    assert bench.CellStack(infrahub_url=HOST_URL).infrahub_url == HOST_URL
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="benchmark cells require Python 3.11 to 3.13")
+def test_the_run_task_passes_its_infrahub_url_to_the_stack(monkeypatch, tmp_path) -> None:
+    received = []
+
+    class Stack:
+        @staticmethod
+        def reset(_tier: str) -> None:
+            raise KeyboardInterrupt
+
+        @staticmethod
+        def close() -> None:
+            pass
+
+    def stack(**kwargs: str) -> Stack:
+        received.append(kwargs)
+        return Stack()
+
+    monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
+    monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
+    monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
+    monkeypatch.setattr(bench, "CellStack", stack)
+    monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "harness-sha")
+    with pytest.raises(KeyboardInterrupt):
+        bench.run_cell.body(Context(), infrahub_url=HOST_URL)
+
+    assert received == [{"infrahub_url": HOST_URL}]
 
 
 def test_destination_start_includes_the_schema_task_worker(monkeypatch) -> None:
@@ -836,7 +909,7 @@ def test_runner_distinguishes_setup_timeout_from_cell_deadline(monkeypatch, tmp_
     monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
     monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
     monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
-    monkeypatch.setattr(bench, "CellStack", Stack)
+    monkeypatch.setattr(bench, "CellStack", lambda **_kwargs: Stack())
     monkeypatch.setattr(bench, "output", lambda argv, **_kwargs: "abc" if "rev-parse" in argv else " M tasks/bench.py")
     bench.run_cell.body(QuietContext())
     row = json.loads(bench.RESULTS.read_text())
@@ -983,7 +1056,7 @@ def test_runner_lock_excludes_other_checkouts_before_reset_and_releases(monkeypa
     monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
     monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
     monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "commit")
-    monkeypatch.setattr(bench, "CellStack", Stack)
+    monkeypatch.setattr(bench, "CellStack", lambda **_kwargs: Stack())
     if interrupted:
         with pytest.raises(KeyboardInterrupt):
             bench.run_cell.body(Context())
@@ -1166,7 +1239,7 @@ def test_runner_records_keyboard_interrupt_before_propagating(monkeypatch, tmp_p
     monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
     monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
     monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
-    monkeypatch.setattr(bench, "CellStack", Stack)
+    monkeypatch.setattr(bench, "CellStack", lambda **_kwargs: Stack())
     monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "harness-sha")
     with pytest.raises(KeyboardInterrupt):
         bench.run_cell.body(Context(), repetitions=2)
@@ -1410,7 +1483,7 @@ def test_setup_interrupt_stops_sleeping_grandchild_and_records_reason(monkeypatc
     monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
     monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
     monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
-    monkeypatch.setattr(bench, "CellStack", Stack)
+    monkeypatch.setattr(bench, "CellStack", lambda **_kwargs: Stack())
     monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "harness-sha")
     started = time.monotonic()
     try:
