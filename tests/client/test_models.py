@@ -10,7 +10,15 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from infrahub_sync.client.models import OrchestrationSummary, PublicRunResource
+from infrahub_sync.client.models import (
+    ApplyRunRequest,
+    CancelRunRequest,
+    ConfigMutationRequest,
+    CreateRunRequest,
+    OrchestrationSummary,
+    PublicRunResource,
+    VerifyRunRequest,
+)
 from infrahub_sync.product_store.models import PrefectExecutionLink, ProductRun
 from infrahub_sync.service.models import public_run_resource
 
@@ -131,3 +139,48 @@ def test_server_projects_store_run_into_a_self_contained_resource() -> None:
         "last_observed_state": None,
         "last_observed_at": None,
     }
+
+
+_REQUEST_FIELDS: dict[type, dict[str, object]] = {
+    CreateRunRequest: {"config_id": "cfg", "registry_version": 1},
+    VerifyRunRequest: {},
+    ApplyRunRequest: {"expected_checksum": "a" * 64, "confirm_writes": True},
+    CancelRunRequest: {},
+    ConfigMutationRequest: {"package": {"format_version": 1}},
+}
+
+
+@pytest.mark.parametrize("model", list(_REQUEST_FIELDS), ids=lambda model: model.__name__)
+def test_a_request_without_a_reason_sends_null(model: type) -> None:
+    """The audit reason is optional; an omitted reason is sent as null, never as made-up text."""
+    omitted = model(**_REQUEST_FIELDS[model])
+    explicit_null = model(**_REQUEST_FIELDS[model], reason=None)
+
+    assert omitted.reason is None
+    assert omitted.model_dump(mode="json")["reason"] is None
+    assert explicit_null == omitted
+
+
+@pytest.mark.parametrize("model", list(_REQUEST_FIELDS), ids=lambda model: model.__name__)
+def test_a_present_reason_must_not_be_empty(model: type) -> None:
+    with pytest.raises(ValidationError):
+        model(**_REQUEST_FIELDS[model], reason="")
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        pytest.param(" leading space", id="untrimmed"),
+        pytest.param("line\nbreak", id="unprintable"),
+        pytest.param("x" * 513, id="too-long"),
+    ],
+)
+def test_a_present_configuration_reason_keeps_its_validation(reason: str) -> None:
+    with pytest.raises(ValidationError):
+        ConfigMutationRequest(package={"format_version": 1}, reason=reason)
+
+
+def test_a_valid_configuration_reason_is_kept_unchanged() -> None:
+    request = ConfigMutationRequest(package={"format_version": 1}, reason="register inventory")
+
+    assert request.reason == "register inventory"

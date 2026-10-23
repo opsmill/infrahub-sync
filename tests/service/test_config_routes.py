@@ -1236,3 +1236,44 @@ def test_build_app_validates_complete_liveness_policy_before_constructing_depend
         )
 
     assert constructed == []
+
+
+@pytest.mark.parametrize(
+    ("retry_reason", "replayed"),
+    [
+        pytest.param({}, True, id="absent-then-absent"),
+        pytest.param({"reason": None}, True, id="absent-then-null"),
+        pytest.param({"reason": "now with a reason"}, False, id="absent-then-present"),
+    ],
+)
+def test_configuration_mutation_without_a_reason_replays_by_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retry_reason: dict[str, object], *, replayed: bool
+) -> None:
+    """A registration may omit its reason; an omitted reason is one value for idempotency."""
+    monkeypatch.setenv(
+        PRINCIPALS_ENV, json.dumps({"admin": {"token": "admin-token-canary-0003", "administrator": True}})
+    )
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    projection = local_product_projection(tmp_path)
+    client = TestClient(
+        create_app(
+            RunService(projection, _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(product_projection=local_product_projection(tmp_path), secrets=resolver.secret_values),
+        )
+    )
+    headers = {"Authorization": "Bearer admin-token-canary-0003", "Idempotency-Key": "register-without-reason"}
+
+    first = client.post("/configs", headers=headers, json={"package": package_data()})
+    retry = client.post("/configs", headers=headers, json={"package": package_data(), **retry_reason})
+
+    assert first.status_code == 201, first.text
+    assert retry.status_code == (201 if replayed else 409)
+    if replayed:
+        assert retry.json() == first.json()
+    assert len(projection.list_configurations()) == 1
+    receipt = projection.lookup_mutation("admin", sha256(b"register-without-reason").hexdigest()).value
+    assert receipt is not None
+    assert receipt.reason is None
+    accepted = [event for event in projection.audit_events() if event.outcome == "accepted"]
+    assert [event.reason for event in accepted] == [None]

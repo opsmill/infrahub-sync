@@ -2,9 +2,6 @@
 title: Run a sync
 ---
 
-import Tabs from '@theme/Tabs';
-import TabItem from '@theme/TabItem';
-
 The Infrahub Sync CLI is a client of the Sync API. The Sync service stores your
 configuration packages and plans. Its worker connects to the source and the destination.
 The CLI does not load adapters and does not run a sync locally.
@@ -19,37 +16,28 @@ A reviewed sync has five steps:
 
 ## Connect the CLI to the Sync API
 
-The commands on this page are the same for both ways to run V3. Only the command prefix
-differs:
+The commands on this page are written as `infrahub-sync <command>`. To get the CLI, see
+[Install Infrahub Sync](./installation.mdx). From a repository checkout, run each command
+as `uv run infrahub-sync <command>`.
 
-<Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run the container image" default>
+The CLI reads the Sync API URL and the bearer token from two environment variables. Set
+them before the first command. For the local development stack, these are:
 
-  Run each command as `docker compose run --rm --no-deps -T cli <command>` from the
-  directory that holds `docker-compose.yml` and `.env`. The `cli` service supplies the Sync
-  API URL and token.
+```bash
+export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8030
+export INFRAHUB_SYNC_API_TOKEN=infrahub-sync-dev-token
+```
 
-  A command that reads a file from your machine needs that file mounted read-only at
-  `/input/package.yaml`, with `-v "$PWD/package.yml:/input/package.yaml:ro"` before `cli`.
-  The image runs as UID 10001, so the file must be readable by other users. See
-  [Registering a package](./compose-deployment.mdx#registering-a-package).
+The token has no command-line option, so it does not appear in shell history or in
+process arguments. `--api-url` overrides the URL for one command. For a
+[Compose deployment](./compose-deployment.mdx) with the default port, the URL is
+`http://127.0.0.1:8000`, and the token is the `INFRAHUB_SYNC_API_TOKEN` value in its `.env`.
 
-  </TabItem>
-  <TabItem value="source" label="Run from source">
-
-  Run each command as `uv run infrahub-sync <command>` from the repository checkout. Set the
-  Sync API URL and bearer token first. For the local development stack, these are:
-
-  ```bash
-  export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8030
-  export INFRAHUB_SYNC_API_TOKEN=infrahub-sync-dev-token
-  ```
-
-  The token has no command-line option, so it does not appear in shell history or in
-  process arguments. `--api-url` overrides the URL for one command.
-
-  </TabItem>
-</Tabs>
+The same commands also run from the `cli` service of a
+[Compose deployment](./compose-deployment.mdx#use-it), as
+`docker compose run --rm --no-deps -T cli <command>`. That service supplies the URL and the
+token. A command that reads a package file then needs the file mounted into the container;
+see [Registering a package](./compose-deployment.mdx#registering-a-package).
 
 Before its first authenticated request, the CLI checks that the service is compatible. It
 refuses an incompatible service before it sends the token.
@@ -59,23 +47,9 @@ the previous command printed, and `BRANCH` with the destination branch.
 
 ## Register the package
 
-<Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run the container image" default>
-
-  ```bash
-  docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro" \
-    cli configs register /input/package.yaml --reason "register inventory import"
-  ```
-
-  </TabItem>
-  <TabItem value="source" label="Run from source">
-
-  ```bash
-  uv run infrahub-sync configs register package.yml --reason "register inventory import"
-  ```
-
-  </TabItem>
-</Tabs>
+```bash
+infrahub-sync configs register package.yml --reason "register inventory import"
+```
 
 The output includes the `config_id` and the `registry_version`, which is `1` for a new
 registration. Every later command names the package by these two values. The file itself is
@@ -84,24 +58,10 @@ not read again. For what registration checks and returns, see
 
 ## Validate the registered version
 
-<Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run the container image" default>
-
-  ```bash
-  docker compose run --rm --no-deps -T cli configs validate CONFIG_ID 1
-  docker compose run --rm --no-deps -T cli configs show CONFIG_ID --version 1
-  ```
-
-  </TabItem>
-  <TabItem value="source" label="Run from source">
-
-  ```bash
-  uv run infrahub-sync configs validate CONFIG_ID 1
-  uv run infrahub-sync configs show CONFIG_ID --version 1
-  ```
-
-  </TabItem>
-</Tabs>
+```bash
+infrahub-sync configs validate CONFIG_ID 1
+infrahub-sync configs show CONFIG_ID --version 1
+```
 
 `configs validate` reports findings in the declared content. It does not connect to the
 source or the destination.
@@ -121,24 +81,10 @@ To inspect what is registered, use `configs list`, `configs show CONFIG_ID`, and
 
 ## Create a plan
 
-<Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run the container image" default>
-
-  ```bash
-  docker compose run --rm --no-deps -T cli diff --config-id CONFIG_ID --version 1 \
-    --branch BRANCH --reason "review inventory import"
-  ```
-
-  </TabItem>
-  <TabItem value="source" label="Run from source">
-
-  ```bash
-  uv run infrahub-sync diff --config-id CONFIG_ID --version 1 \
-    --branch BRANCH --reason "review inventory import"
-  ```
-
-  </TabItem>
-</Tabs>
+```bash
+infrahub-sync diff --config-id CONFIG_ID --version 1 \
+  --branch BRANCH --reason "review inventory import"
+```
 
 `diff` asks the service to create a plan. The worker reads the source and the destination
 and saves the plan. It writes nothing to the destination. By default, `diff` waits for the
@@ -147,24 +93,10 @@ by kind.
 
 ## Review the plan
 
-<Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run the container image" default>
-
-  ```bash
-  docker compose run --rm --no-deps -T cli runs plan RUN_ID --detail
-  docker compose run --rm --no-deps -T cli runs plan RUN_ID --detail --kind <destination-kind>
-  ```
-
-  </TabItem>
-  <TabItem value="source" label="Run from source">
-
-  ```bash
-  uv run infrahub-sync runs plan RUN_ID --detail
-  uv run infrahub-sync runs plan RUN_ID --detail --kind <destination-kind>
-  ```
-
-  </TabItem>
-</Tabs>
+```bash
+infrahub-sync runs plan RUN_ID --detail
+infrahub-sync runs plan RUN_ID --detail --kind <destination-kind>
+```
 
 `runs plan` prints the summary and the checksum. `--detail` also prints every operation, and
 `--kind` limits the list to one destination kind. A kind that matches no operation is an
@@ -185,26 +117,11 @@ See [Deletes in a plan](./reference/cache-layout#deletes-in-a-plan).
 
 Pass the checksum that the review printed, and the same `--branch` that you gave `diff`:
 
-<Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run the container image" default>
-
-  ```bash
-  docker compose run --rm --no-deps -T cli apply RUN_ID --expected-checksum CHECKSUM \
-    --branch BRANCH --reason "apply reviewed inventory import"
-  docker compose run --rm --no-deps -T cli runs show RUN_ID
-  ```
-
-  </TabItem>
-  <TabItem value="source" label="Run from source">
-
-  ```bash
-  uv run infrahub-sync apply RUN_ID --expected-checksum CHECKSUM \
-    --branch BRANCH --reason "apply reviewed inventory import"
-  uv run infrahub-sync runs show RUN_ID
-  ```
-
-  </TabItem>
-</Tabs>
+```bash
+infrahub-sync apply RUN_ID --expected-checksum CHECKSUM \
+  --branch BRANCH --reason "apply reviewed inventory import"
+infrahub-sync runs show RUN_ID
+```
 
 The service compares the checksum with the saved plan and refuses a mismatch before it
 writes. The CLI never reads or builds a local plan. When `runs show` reports
@@ -260,23 +177,9 @@ the destination now holds, so it contains only what is still missing or differen
 A registered version never changes. To change a package, edit the file and register it as a
 new version of the same configuration:
 
-<Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run the container image" default>
-
-  ```bash
-  docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro" \
-    cli configs version CONFIG_ID /input/package.yaml --reason "update inventory mapping"
-  ```
-
-  </TabItem>
-  <TabItem value="source" label="Run from source">
-
-  ```bash
-  uv run infrahub-sync configs version CONFIG_ID package.yml --reason "update inventory mapping"
-  ```
-
-  </TabItem>
-</Tabs>
+```bash
+infrahub-sync configs version CONFIG_ID package.yml --reason "update inventory mapping"
+```
 
 Then validate the new version and create a plan with `--version` set to the new version
 number. Do not use `configs register` for an edited package: it creates a separate
@@ -286,17 +189,8 @@ configuration with a new `config_id`.
 
 `sync` creates a plan and applies it in the same run, with no pause for review:
 
-Run from source:
-
 ```bash
-uv run infrahub-sync sync --config-id CONFIG_ID --version 1 --branch BRANCH \
-  --reason "scheduled synchronization"
-```
-
-Run the container image:
-
-```bash
-docker compose run --rm --no-deps -T cli sync --config-id CONFIG_ID --version 1 --branch BRANCH \
+infrahub-sync sync --config-id CONFIG_ID --version 1 --branch BRANCH \
   --reason "scheduled synchronization"
 ```
 
@@ -331,6 +225,12 @@ and the retry key. Check the run later with `runs show RUN_ID` or `runs plan RUN
   last phase, outcome, and execution state. The run continues on the service.
 - Ctrl-C stops the wait, prints the last record, and exits with status 130. It does not
   cancel the run.
+
+### Audit reasons
+
+`configs register`, `configs version`, `diff`, `sync`, and `apply` accept `--reason`. The
+reason is optional. When you give one, the service records it in the audit history of the
+request. When you omit it, the service records the request without a reason.
 
 ### Retry keys
 

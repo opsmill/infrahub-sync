@@ -1051,3 +1051,51 @@ def test_store_refusal_explains_how_to_keep_data_in_memory(tmp_path: Path, clien
     assert result.exit_code == 1
     assert "Configured sync stores, including Redis, are not supported in V3." in result.output
     assert "Remove the store block to keep sync data in memory." in result.output
+
+
+@pytest.mark.parametrize(
+    ("arguments", "method"),
+    [
+        pytest.param(("configs", "register", "{package}"), "register_config", id="configs-register"),
+        pytest.param(("configs", "version", "edge-sync", "{package}"), "create_config_version", id="configs-version"),
+        pytest.param(("diff", "--config-id", "edge-sync", "--version", "1"), "plan", id="diff"),
+        pytest.param(("sync", "--config-id", "edge-sync", "--version", "1"), "sync", id="sync"),
+        pytest.param(("apply", "service-run-1", "--expected-checksum", CHECKSUM), "apply", id="apply"),
+    ],
+)
+def test_a_mutation_without_reason_sends_no_reason(
+    client: MagicMock, tmp_path: Path, arguments: tuple[str, ...], method: str
+) -> None:
+    """`--reason` is optional: when it is omitted, the request carries no reason at all."""
+    package = tmp_path / "package.yaml"
+    package.write_text("name: edge-sync\n", encoding="utf-8")
+
+    result = _invoke(client, *(argument.format(package=package) for argument in arguments))
+
+    assert result.exit_code == 0, result.output
+    request = next(argument for argument in getattr(client, method).call_args.args if hasattr(argument, "reason"))
+    assert request.reason is None
+    assert request.model_dump(mode="json")["reason"] is None
+    assert "None" not in result.output
+
+
+@pytest.mark.parametrize("reason", ["", "line\nbreak"])
+def test_a_given_reason_is_still_validated(client: MagicMock, tmp_path: Path, reason: str) -> None:
+    package = tmp_path / "package.yaml"
+    package.write_text("name: edge-sync\n", encoding="utf-8")
+
+    result = _invoke(client, "configs", "register", str(package), "--reason", reason)
+
+    assert result.exit_code != 0
+    client.register_config.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "command", [("configs", "register"), ("configs", "version"), ("diff",), ("sync",), ("apply",)], ids=" ".join
+)
+def test_help_does_not_mark_reason_as_required(command: tuple[str, ...]) -> None:
+    result = RUNNER.invoke(app, [*command, "--help"], env={"NO_COLOR": "1", "COLUMNS": "200", "TERM": "dumb"})
+
+    assert result.exit_code == 0, result.output
+    reason_line = next(line for line in result.output.splitlines() if "--reason" in line)
+    assert "required" not in reason_line.lower()

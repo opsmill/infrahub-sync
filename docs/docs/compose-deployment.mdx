@@ -459,8 +459,22 @@ Infrahub instance's responsibility; this deployment's CLI does not load it.
 
 ## Use it
 
-The `cli` service runs the shipped CLI against this deployment, in a container of
-the same image, on the deployment's own network:
+Run the `infrahub-sync` CLI from your machine against the published Sync API port.
+From the directory that holds `.env`, point it at this deployment, then run a
+command:
+
+```bash
+export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8000
+export INFRAHUB_SYNC_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_API_TOKEN=//p' .env)"
+infrahub-sync configs list
+```
+
+See [Connect the CLI to the Sync API](running-a-sync#connect-the-cli-to-the-sync-api).
+The commands on this page use the CLI this way.
+
+The deployment also has a `cli` service. It runs the same CLI in a container of
+the same image, on the deployment's own network, so any command on this page can
+also run as `docker compose run --rm --no-deps -T cli <command>`:
 
 ```bash
 docker compose run --rm --no-deps -T cli configs list
@@ -493,8 +507,14 @@ that uses them.
 
 ### Registering a package
 
-A package is a file on your machine, and the CLI runs in a container. Mount the
-file read-only at `/input/package.yaml` for the one call that reads it:
+A package is a file on your machine. Register it by its path:
+
+```bash
+infrahub-sync configs register package.yml --reason 'register my configuration'
+```
+
+The `cli` service runs in a container, so to register from it, mount the file
+read-only at `/input/package.yaml` for the one call that reads it:
 
 ```bash
 chmod 0644 package.yml
@@ -502,7 +522,7 @@ docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro
 ```
 
 The image runs as UID 10001, so the file must be readable by other users, or the
-CLI cannot open it. After registration the declared content lives in PostgreSQL:
+`cli` service cannot open it. After registration the declared content lives in PostgreSQL:
 no host file is mounted by the API or the worker, and the file you registered
 from is not needed again. Every later command names the configuration by its
 identifier and version.
@@ -524,23 +544,23 @@ requires a manual `order`.
 ### The operator sequence
 
 ```bash
-docker compose run --rm --no-deps -T cli configs list
+infrahub-sync configs list
 # Add destination and source credentials to .env before planning, then recreate
 # the affected services. restart alone keeps the old container environment.
 docker compose up -d --wait
-docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro" cli configs register /input/package.yaml --reason 'register my configuration'
-docker compose run --rm --no-deps -T cli configs show CONFIG_ID
-docker compose run --rm --no-deps -T cli configs versions CONFIG_ID
-docker compose run --rm --no-deps -T cli configs validate CONFIG_ID 1
-docker compose run --rm --no-deps -T cli configs show CONFIG_ID --version 1
-docker compose run --rm --no-deps -T cli diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'review initial sync'
-docker compose run --rm --no-deps -T cli runs plan RUN_ID --detail
-docker compose run --rm --no-deps -T cli apply RUN_ID --expected-checksum CHECKSUM --branch BRANCH_NAME --reason 'apply reviewed initial sync'
-docker compose run --rm --no-deps -T cli runs show RUN_ID
-docker compose run --rm --no-deps -T cli runs results RUN_ID
-docker compose run --rm --no-deps -T cli diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'verify unchanged source'
+infrahub-sync configs register package.yml --reason 'register my configuration'
+infrahub-sync configs show CONFIG_ID
+infrahub-sync configs versions CONFIG_ID
+infrahub-sync configs validate CONFIG_ID 1
+infrahub-sync configs show CONFIG_ID --version 1
+infrahub-sync diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'review initial sync'
+infrahub-sync runs plan RUN_ID --detail
+infrahub-sync apply RUN_ID --expected-checksum CHECKSUM --branch BRANCH_NAME --reason 'apply reviewed initial sync'
+infrahub-sync runs show RUN_ID
+infrahub-sync runs results RUN_ID
+infrahub-sync diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'verify unchanged source'
 # Versioning is explicit, and never rewrites a registered version:
-docker compose run --rm --no-deps -T -v "$PWD/edited-package.yml:/input/package.yaml:ro" cli configs version CONFIG_ID /input/package.yaml --reason 'register edited configuration'
+infrahub-sync configs version CONFIG_ID edited-package.yml --reason 'register edited configuration'
 ```
 
 `CONFIG_ID`, `RUN_ID` and `CHECKSUM` are results the previous commands printed.
@@ -612,8 +632,8 @@ export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8000
 curl -sS "$INFRAHUB_SYNC_API_URL/status"
 ```
 
-An authenticated call is what the `cli` service is for: `configs list` reads the
-same route. For a route the CLI has no command for, put the header in a private
+An authenticated call is what the CLI is for: `configs list` reads the same
+route. For a route the CLI has no command for, put the header in a private
 curl configuration rather than on the command line, where the value would be
 visible to every process on the host while the request runs:
 
@@ -723,7 +743,7 @@ deployment to stop new submissions. For each `RUN_ID` returned by a submission,
 check:
 
 ```bash
-docker compose run --rm --no-deps -T cli runs show RUN_ID
+infrahub-sync runs show RUN_ID
 ```
 
 Wait until its `execution_state` is `completed`, `failed`, `cancelled`,
@@ -769,7 +789,7 @@ start stopped dependencies, and it does not pick up a changed `.env`; use
 Before maintenance, read a version of an existing registered configuration:
 
 ```bash
-docker compose run --rm --no-deps -T cli configs show CONFIG_ID --version VERSION
+infrahub-sync configs show CONFIG_ID --version VERSION
 ```
 
 Replace `CONFIG_ID` and `VERSION` with the identifier and version you registered.
@@ -843,8 +863,8 @@ field that appeared only when it was true could not be told apart from one this
 command does not report. `runs results` prints what the run itself recorded.
 
 ```bash
-docker compose run --rm --no-deps -T cli runs show RUN_ID
-docker compose run --rm --no-deps -T cli runs results RUN_ID
+infrahub-sync runs show RUN_ID
+infrahub-sync runs results RUN_ID
 ```
 
 Two different records mean an uncertain write. A write execution that ended

@@ -38,7 +38,7 @@ The two YAML files have different purposes:
 - `schema.yml` defines the types and fields in Infrahub. Load it with
   `infrahubctl`.
 - `package.yml` declares the Sync source, destination, mappings, and credential
-  references. Register it with the deployment's `cli` service.
+  references. Register it with the `infrahub-sync` CLI.
 
 ## Measured scenario
 
@@ -243,16 +243,26 @@ Continue only when the `/status` response shows `worker.state` as `ready`.
 `up -d --wait` recreates the services whose environment changed;
 `docker compose restart` keeps the environment from when the containers were created.
 
-Register your package with the included Sync CLI:
+The commands below use the `infrahub-sync` CLI on your machine; see
+[Connect the CLI to the Sync API](../running-a-sync.mdx#connect-the-cli-to-the-sync-api).
+Point it at this deployment, from the directory that holds `.env`:
 
 ```sh
-chmod 0644 package.yml
-docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro" \
-  cli configs register /input/package.yaml --reason 'register NetBox first preview'
+export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8000
+export INFRAHUB_SYNC_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_API_TOKEN=//p' .env)"
 ```
 
-The `-v` option mounts the host file read-only at `/input/package.yaml` for this
-one call. The image runs as UID 10001, so the file must be readable by other users.
+The same commands also run from the deployment's `cli` service, as
+`docker compose run --rm --no-deps -T cli <command>`. A command that reads
+`package.yml` then needs the file mounted into the container; see
+[Registering a package](../compose-deployment.mdx#registering-a-package).
+
+Register your package:
+
+```sh
+infrahub-sync configs register package.yml --reason 'register NetBox first preview'
+```
+
 Sync stores the declared package, and the CLI prints `config_id` and
 `registry_version`. Record both; replace `CONFIG_ID` and `VERSION` below with
 those values.
@@ -260,7 +270,7 @@ those values.
 ## Validate the configuration
 
 ```sh
-docker compose run --rm --no-deps -T cli configs validate CONFIG_ID VERSION
+infrahub-sync configs validate CONFIG_ID VERSION
 ```
 
 Read `total_findings` and every `finding` line. If `next_offset` is not `<none>`,
@@ -275,8 +285,7 @@ performs the reads against both servers.
 If you edit `package.yml` after registration, register a new immutable version:
 
 ```sh
-docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro" \
-  cli configs version CONFIG_ID /input/package.yaml --reason 'correct first-preview package'
+infrahub-sync configs version CONFIG_ID package.yml --reason 'correct first-preview package'
 ```
 
 Use the returned `registry_version` as `VERSION`, then validate it again.
@@ -286,7 +295,7 @@ Use the returned `registry_version` as `VERSION`, then validate it again.
 Use the same `BRANCH_NAME` where you loaded the schema:
 
 ```sh
-docker compose run --rm --no-deps -T cli diff --config-id CONFIG_ID --version VERSION \
+infrahub-sync diff --config-id CONFIG_ID --version VERSION \
   --branch BRANCH_NAME --reason 'preview NetBox sites and devices'
 ```
 
@@ -295,7 +304,7 @@ then prints `run_id`, `plan_checksum`, `checksum_ok`, and operation counts.
 Record the run ID and inspect the complete plan:
 
 ```sh
-docker compose run --rm --no-deps -T cli runs plan RUN_ID --detail
+infrahub-sync runs plan RUN_ID --detail
 ```
 
 Expect `checksum_ok: true` and operations for `TestingSite` and `TestingDevice`.
@@ -313,8 +322,8 @@ If the run fails, the CLI's own error output includes `run_id`; use that value
 to inspect the run's record:
 
 ```sh
-docker compose run --rm --no-deps -T cli runs show RUN_ID
-docker compose run --rm --no-deps -T cli runs results RUN_ID
+infrahub-sync runs show RUN_ID
+infrahub-sync runs results RUN_ID
 ```
 
 `runs show` reports the run's status and Prefect execution ID (`flow_run_id`).

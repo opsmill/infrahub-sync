@@ -45,7 +45,7 @@ $ infrahub-sync diff [OPTIONS]
 
 * `--config-id <str>`: Registered configuration identity.  [required]
 * `--version <int>`: Registered configuration version.  [required]
-* `--reason <str>`: Audit reason for the plan.  [required]
+* `--reason <str>`: Optional audit reason for the plan.
 * `--branch <str>`: Destination branch admitted by the Sync API.
 * `--idempotency-key <str>`: Retry key.
 * `--wait / --no-wait`: Wait for this run&#x27;s execution.  [default: wait]
@@ -67,7 +67,7 @@ $ infrahub-sync sync [OPTIONS]
 
 * `--config-id <str>`: Registered configuration identity.  [required]
 * `--version <int>`: Registered configuration version.  [required]
-* `--reason <str>`: Audit reason for the synchronization.  [required]
+* `--reason <str>`: Optional audit reason for the synchronization.
 * `--branch <str>`: Destination branch admitted by the Sync API.
 * `--idempotency-key <str>`: Retry key.
 * `--wait / --no-wait`: Wait for this run&#x27;s execution.  [default: wait]
@@ -92,7 +92,7 @@ $ infrahub-sync apply [OPTIONS] {run_id}
 **Options**:
 
 * `--expected-checksum <str>`: Checksum printed by `runs plan`.  [required]
-* `--reason <str>`: Audit reason for the apply.  [required]
+* `--reason <str>`: Optional audit reason for the apply.
 * `--branch <str>`: Destination branch admitted by the Sync API.
 * `--idempotency-key <str>`: Retry key.
 * `--wait / --no-wait`: Wait for this run&#x27;s apply execution.  [default: wait]
@@ -139,7 +139,7 @@ $ infrahub-sync configs register [OPTIONS] {package}
 
 **Options**:
 
-* `--reason <str>`: Audit reason for the mutation.  [required]
+* `--reason <str>`: Optional audit reason for the mutation.
 * `--idempotency-key <str>`: Retry key. A new key is generated and printed when omitted.
 * `--help`: Show this message and exit.
 
@@ -160,7 +160,7 @@ $ infrahub-sync configs version [OPTIONS] {config_id} {package}
 
 **Options**:
 
-* `--reason <str>`: Audit reason for the mutation.  [required]
+* `--reason <str>`: Optional audit reason for the mutation.
 * `--idempotency-key <str>`: Retry key. A new key is generated and printed when omitted.
 * `--help`: Show this message and exit.
 
