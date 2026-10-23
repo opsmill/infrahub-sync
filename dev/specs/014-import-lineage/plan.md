@@ -166,6 +166,18 @@ above.
   carries the release-intent label `changes/minor`. V3 is not released, so no released package
   breaks, and the v2 conversion writes the `{kind, name}` form. The news fragment type is
   `changed`.
+- Closed (product owner, 2026-10-23): a named source or owner is looked up on the destination
+  branch the run uses, with no code change (FR-011, spec Clarifications 2026-10-23). On Infrahub
+  1.10.6, a filter by the earlier name of a node renamed on `main` still matches it on a branch
+  created before the rename. Whether to report this upstream is not decided.
+- Open, follow-up work, not part of this feature (product owner, 2026-10-23): an update sends only
+  the fields the plan changes. Today an update sends unchanged values again, so those values also
+  get the import account (or the named source) as source. Their owner and protection stay as they
+  were.
+- Open, follow-up work, not part of this feature (product owner, 2026-10-23): the package logs
+  with the standard `logging` module, and this feature keeps it. The constitution
+  (`docs/docs/development/constitution.md`) says "Use `structlog` for structured logging", and `AGENTS.md` says the same. Either move the package
+  to `structlog`, or amend that line of the constitution to match the code.
 
 ## Complexity Tracking
 

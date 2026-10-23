@@ -229,7 +229,8 @@ destination:
 - The kind must be `CoreAccount`, `CoreAccountGroup`, `CoreRepository`, or `CoreReadOnlyRepository`.
 - Registration refuses a `source` or an `owner` given as a bare name, such as `owner: network-team`, and a kind outside this list.
 - At the start of a plan, before it reads the source system, the import looks up each named node. When the node does not exist, the plan stops and names the setting, the kind and the name, for example: "The setting `owner` names `CoreAccountGroup` `network-team`, which does not exist." The import does not fall back to another node. Apply makes the same lookup before its first write.
-- The import looks up a named node on the destination branch the run uses. On Infrahub 1.10.6 the schema marks all four kinds as branch-agnostic: each node of these kinds is the same node on every branch. So renaming or deleting the node on any branch, `main` included, also changes it on the branch the run uses, and the next plan or apply stops with the cause above.
+- The plan and apply look up a named node on the destination branch the run uses. On Infrahub 1.10.6 the schema marks all four kinds as `branch: agnostic`: these kinds are not tied to a branch, so a rename or deletion on any branch, `main` included, applies to every branch. After a deletion, the next plan or apply stops with the cause above.
+- On Infrahub 1.10.6, a lookup by name does not always follow a rename. When the node is renamed on `main`, a lookup by its earlier name on a branch created before the rename still finds the node, so the plan and apply on that branch do not stop and use the renamed node. On a branch created after the rename, the plan stops with the cause above.
 
 A named `source` replaces the import account as the source of every value the import writes.
 

@@ -59,6 +59,18 @@ Not decided yet: the oldest Infrahub version an import supports. Planning decide
 - Q: Which term names the account behind the token? → A: "Import account", as defined under Key
   Entities.
 
+### Session 2026-10-23 (product owner, after the quickstart run)
+
+- Q: On which branch must a named source or owner exist (FR-011)? → A: The plan and apply look it
+  up on the destination branch the run uses. On Infrahub 1.10.6 the four allowed kinds
+  (`CoreAccount`, `CoreAccountGroup`, `CoreRepository`, `CoreReadOnlyRepository`) are not tied to
+  a branch: the schema marks them `branch: agnostic`. So a rename or deletion on any branch applies
+  to every branch. No code change.
+  - Observed on Infrahub 1.10.6 (quickstart.md, "Scenario 2", and a reproduction on 2026-10-23): a
+    deletion on `main` applies to every branch. After a rename on `main`, a filter by the earlier
+    name still matches the group on a branch created before the rename, so the plan and apply on
+    that branch do not stop. A draft upstream bug report exists; filing it is not decided.
+
 ## Decisions carried over from the brief
 
 - **D-1. Scope.** This specification covers six things:
@@ -284,7 +296,11 @@ protection flag of the values written and of a value protected earlier.
     protection flag, and the pool stays the source;
   - how to set the owner of existing data.
 - **FR-011**: Apply MUST stop before any write when a named source or owner does not exist at the
-  start of the apply. The cause MUST name the setting, the kind and the name, as in FR-004.
+  start of the apply. The cause MUST name the setting, the kind and the name, as in FR-004. The plan
+  and apply look up a named source or owner on the destination branch the run uses. On Infrahub
+  1.10.6 the four allowed kinds are not tied to a branch (the schema marks them
+  `branch: agnostic`), so a rename or deletion on any branch applies to every branch (see
+  Clarifications, 2026-10-23).
   - Test: plan with an existing group, delete the group, then apply.
 - **FR-012**: The plan MUST record its import account. Apply MUST refuse before any write when the
   import account differs from the account the plan recorded, whether or not the package names a

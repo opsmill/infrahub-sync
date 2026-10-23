@@ -86,22 +86,25 @@ All runs were local on macOS arm64 with Python 3.11.8 and infrahub-sdk 1.23.2. E
 ## Autonomous decisions
 
 - Chunks: phases with more than about 6 tasks were split into 2 to 4 chunks, each with its tests next to their implementation. Integration tasks (T019, T030, T043) were separate chunks.
-- Logging: AGENTS.md and the constitution ask for `structlog`, but no module in `infrahub_sync/` uses it. The new code follows the adapter's stdlib `logging` with `extra=`. Please confirm this, or ask for a migration as separate work.
+- Logging: AGENTS.md and the constitution ask for `structlog`, but no module in `infrahub_sync/` uses it. The new code follows the adapter's stdlib `logging` with `extra=`.
 - T004 and T057 are accepted as partial, for the reasons above.
 - The product owner's psutil workaround was passed to every chunk. No chunk reported needing it.
 - `docs.generate` rewrites `docs/docs/reference/cli.mdx` and drops a hand-written paragraph about `INFRAHUB_SYNC_API_TOKEN`. That drift existed before this branch, so the change was reverted each time and not committed.
 - Medium and low review findings were deferred where they are refactors with no change in behaviour.
 
-## Questions for the product owner
+## Product-owner decisions (2026-10-23)
 
-1. FR-011 on a branch. The two runs disagree. The T057 quickstart run on Infrahub 1.10.6 found that, on a branch created before the owner group was renamed on `main`, a lookup by the old name still matched the group. In that run the plan did not stop, and the apply wrote with the renamed group as owner. The review-fix run found that the live schema marks CoreAccount, CoreAccountGroup, CoreRepository and CoreReadOnlyRepository as branch-agnostic, and the CLI run then stopped on a renamed group. Questions:
-   - Is the old-name match an Infrahub behaviour to report upstream?
-   - Should FR-011 say on which branch a named node must exist?
-   - The adapter page currently says that a rename on any branch applies to every branch.
-2. Update behaviour. On an update, the import sends unchanged values again, so they also get the import account as source, which changes their `source`. Owner and protection stay as they were. Is that acceptable, or should an update send only the changed fields?
+1. Branch of a named source or owner (FR-011): the plan and apply look up a named source or owner on the destination branch the run uses. On Infrahub 1.10.6 the four allowed kinds are `branch: agnostic`, so a rename or deletion on any branch applies to every branch. No code change.
+   - Recorded in `spec.md` (FR-011, and Clarifications, session 2026-10-23), `plan.md` ("Items left open") and `docs/docs/adapters/infrahub.mdx` ("Name a source or an owner").
+   - A reproduction on 2026-10-23 on Infrahub 1.10.6 confirmed the quickstart finding. After a rename on `main`, a filter by the earlier name on a branch created before the rename still matches the group, which reports its new name. On a branch created after the rename, and on `main`, the filter matches nothing. A deletion on `main` applies to every branch. The two earlier runs differ because the review-fix run used a branch created after the rename.
+   - A draft upstream bug report is at `/private/tmp/claude-503/-Users-bkohler-automation-opsmill-infrahub-sync/98127f2a-4ebb-4d16-a202-bb38be574daa/scratchpad/draft-infrahub-issue-branch-agnostic-rename.md`. It is not filed.
+2. Update payloads: an update should send only the fields the plan changes. Not implemented in this feature. Recorded as an open follow-up item in `plan.md` ("Items left open").
+3. Logging: keep the standard `logging` module. Moving to `structlog`, or amending the constitution's logging line to match the code, is recorded as an open follow-up item in `plan.md` ("Items left open"). The constitution is not changed.
 
 ## Suggested next steps
 
-1. Answer the two product-owner questions.
+1. Decide whether to file the draft upstream issue at `/private/tmp/claude-503/-Users-bkohler-automation-opsmill-infrahub-sync/98127f2a-4ebb-4d16-a202-bb38be574daa/scratchpad/draft-infrahub-issue-branch-agnostic-rename.md`.
 2. Open a pull request with the label `changes/minor`. Use the quickstart.md section "Quickstart results, for the pull request description".
 3. Address the deferred medium review findings, starting with the split of `potenda/__init__.py`.
+4. Follow-up work: make an update send only the fields the plan changes, so unchanged values keep their source.
+5. Follow-up work: move the package to `structlog`, or amend the constitution's logging line to match the code.
