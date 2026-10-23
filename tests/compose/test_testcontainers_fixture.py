@@ -28,10 +28,12 @@ import pytest
 
 pytest.importorskip("infrahub_testcontainers", reason="needs the `testcontainers` extra")
 
-from infrahub_testcontainers.container import PROJECT_ENV_VARIABLES
-
 from infrahub_sync import testcontainers as sync_testcontainers
 from tests.compose.lifecycle import await_phase, idempotency, register
+
+# The module comes from `importorskip`, not from a static import: the Python 3.10 profile has
+# no `infrahub-testcontainers`, and its type check covers this file.
+TESTCONTAINERS = pytest.importorskip("infrahub_testcontainers.container")
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -47,7 +49,7 @@ OVERRIDE_VALUE = "set-by-the-override-file"
 # `sync-worker` joins the Infrahub project's network and reaches the server by its
 # service name; the host reaches the same server at the port Docker published.
 INFRAHUB_INTERNAL_URL = "http://infrahub-server:8000"
-INFRAHUB_TOKEN = PROJECT_ENV_VARIABLES["INFRAHUB_TESTING_INITIAL_ADMIN_TOKEN"]
+INFRAHUB_TOKEN: str = TESTCONTAINERS.PROJECT_ENV_VARIABLES["INFRAHUB_TESTING_INITIAL_ADMIN_TOKEN"]
 SOURCE_BRANCH = "testcontainers-source"
 TAG_KIND = "BuiltinTag"
 

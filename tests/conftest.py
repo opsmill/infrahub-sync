@@ -21,7 +21,9 @@ plugin is absent too, so a missing psutil leaves nothing to patch.
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Callable
+from types import ModuleType
 from typing import ParamSpec, TypeVar
 
 P = ParamSpec("P")
@@ -49,12 +51,22 @@ def cpu_freq_or_none(original: Callable[P, R]) -> Callable[P, R | None]:
     return wrapper
 
 
+def patch_cpu_freq(module: ModuleType) -> None:
+    """Replace `module.cpu_freq` with a wrapper that returns None on a known failure.
+
+    The replacement is written into the module's namespace, so the type check does not compare
+    it with psutil's own signature, whose return type does not allow None.
+    """
+    namespace = vars(module)
+    namespace["cpu_freq"] = cpu_freq_or_none(namespace["cpu_freq"])
+
+
 try:
-    # The Python 3.10 profile has no psutil, so its type check cannot resolve it; on 3.11+ the
-    # directive is unused and ty reports only a warning.
-    import psutil  # ty: ignore[unresolved-import]
+    # Imported by name: the Python 3.10 profile has no psutil, so a static import would not
+    # resolve there, while on 3.11+ a suppression for it would be unused.
+    psutil = importlib.import_module("psutil")
 except ImportError:  # pragma: no cover -- without psutil the plugin is not installed either
     pass
 else:
     # psutil's own `cpu_freq` returns None on some platforms too, so callers already handle it.
-    psutil.cpu_freq = cpu_freq_or_none(psutil.cpu_freq)  # ty: ignore[invalid-assignment]
+    patch_cpu_freq(psutil)

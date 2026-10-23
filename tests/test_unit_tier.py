@@ -2,13 +2,14 @@
 
 import contextlib
 import shlex
+import types
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 from tasks import tests as tests_tasks
-from tests.conftest import CPU_FREQ_FAILURES, cpu_freq_or_none
+from tests.conftest import CPU_FREQ_FAILURES, cpu_freq_or_none, patch_cpu_freq
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 # The name `infrahub-testcontainers` registers its pytest plugin under (`pytest11` entry point).
@@ -46,6 +47,22 @@ def test_cpu_freq_wrapper_does_not_hide_other_errors() -> None:
 
     with pytest.raises(ValueError, match="unexpected"):
         cpu_freq_or_none(broken_cpu_freq)()
+
+
+def test_patch_cpu_freq_replaces_the_module_function() -> None:
+    """After the patch, the module's `cpu_freq` returns None where the original raised."""
+
+    def failing_cpu_freq() -> object:
+        message = "frequency unavailable"
+        raise SystemError(message)
+
+    module = types.ModuleType("fake_psutil")
+    module.__dict__["cpu_freq"] = failing_cpu_freq
+
+    patch_cpu_freq(module)
+
+    assert module.__dict__["cpu_freq"] is not failing_cpu_freq
+    assert module.__dict__["cpu_freq"]() is None
 
 
 class _RecordingContext:
