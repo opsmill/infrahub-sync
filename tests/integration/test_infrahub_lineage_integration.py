@@ -1123,7 +1123,7 @@ def test_a_missing_permission_on_the_owner_kind_is_recorded_as_a_missing_permiss
 
     The plan's owner lookup is refused with HTTP 403, which the SDK raises as an
     `AuthenticationError`, and not as a missing group. The cause is a missing permission that
-    quotes the permission Infrahub names (on 1.10.6, `object:Core:AccountGroup:view:allow_other`),
+    quotes the permission Infrahub names (on 1.11.9, `object:Core:AccountGroup:view:allow_other`),
     and never a rejected token.
     """
     account = account_factory(OWNER_IMPORT_PERMISSIONS)
@@ -1416,7 +1416,7 @@ def test_the_plan_shows_who_last_changed_each_value_it_updates(
       "not recorded";
     - a create of a third device, which has no record.
 
-    On Infrahub 1.10.6 an attribute never given a value still holds `updated_by` and
+    On Infrahub 1.11.9 an attribute never given a value still holds `updated_by` and
     `updated_at` from the create of its node, so an empty relationship is the value with
     nothing recorded.
     """
@@ -1431,7 +1431,7 @@ def test_the_plan_shows_who_last_changed_each_value_it_updates(
 
     saved = read_saved_plan(sync_name=sync_name, run_id=run_id)
     assert saved.manifest.last_changes is not None, "The plan must record its last changes in the manifest."
-    assert saved.manifest.last_changes.metadata_read is True, "On Infrahub 1.10.6 the plan must read metadata."
+    assert saved.manifest.last_changes.metadata_read is True, "On Infrahub 1.11.9 the plan must read metadata."
     by_device = _device_operations(saved, (edited, bare, new))
     assert {name: operation.action for name, operation in by_device.items()} == {
         edited: "update",
@@ -1870,7 +1870,7 @@ def test_the_default_branch_permission_set_plans_and_applies_on_main(
     classification = classify_infrahub_error(raised.value.__cause__) if raised.value.__cause__ else None
     assert classification is not None, f"The refusal's cause must be classified; the run said: {message}"
     assert classification.problem == "missing_permission", f"Classified as {classification}; the run said: {message}"
-    # Infrahub 1.10.6 names no permission here; the cause quotes its message instead.
+    # Infrahub 1.11.9 names no permission here; the cause quotes its message instead.
     assert classification.server_message == "You are not allowed to change data in the default branch", (
         f"Classified as {classification}"
     )

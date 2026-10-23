@@ -37,7 +37,11 @@ Path prefixes used below:
 **Decision**
 
 - The oldest supported Infrahub version stays not known: the repository neither enforces nor
-  documents one, and this feature does not set one. The measured version stays 1.10.6.
+  documents one, and this feature does not set one.
+- This feature is measured on Infrahub 1.11.9 (product owner, 2026-10-23). The first live checks
+  ran on 1.10.6, and their results stay recorded below, labelled with that version. The
+  repository-wide pin of 1.10.6 listed in the findings above predates this feature, and this
+  feature does not change it.
 - At the start of a plan, the Infrahub adapter reads the server version once with
   `client.get_version()`. On 1.7.0 or later it requests metadata (R-2). Before 1.7.0, or when the
   version cannot be parsed, it does not request metadata, and every proposed change shows
@@ -102,8 +106,8 @@ Path prefixes used below:
 - Cost on a 10,000-node plan: the number of requests stays 10,000 / 50 = 200 pages for each kind
   read, the same as today. Each response grows by the metadata fields, and the server does more
   work for each attribute. The size of the growth is not known. Tasks measure it with the
-  existing benchmark runner (`docs/docs/development/guides/netbox-benchmark-runner.md`) on the
-  pinned 1.10.6 stack, on the default branch and on another branch, and record the destination
+  existing benchmark runner (`docs/docs/development/guides/netbox-benchmark-runner.md`) on
+  Infrahub 1.11.9 (the first measurements below ran on 1.10.6), on the default branch and on another branch, and record the destination
   read time with and without metadata in the plan's notes. The sources set no threshold, so the
   result is information only and does not block the merge.
 
@@ -137,7 +141,7 @@ is added.
   `node`, `node_metadata` and `relationship_metadata`. A response shaped like that query, parsed
   into `InfrahubNodeSync`, gave `tags.initialized == True` and returned the edge's `updated_at` and
   `updated_by.id` from `get_relationship_metadata()`. This check does not prove what Infrahub
-  1.10.6 returns; the opt-in integration test for User Story 3 checks that.
+  returns; the opt-in integration test for User Story 3 checks that, on 1.10.6 and on 1.11.9.
 
 Reads that do not carry the metadata, and why they do not matter for the plan:
 
@@ -187,8 +191,8 @@ always selects cardinality-one relationships (`SDK/node/node.py:1506-1511`), and
 query part with the same `include_metadata` flag (`SDK/node/node.py:794-797`), which adds
 `relationship_metadata` to the edge (`SDK/node/related_node.py:309-313`). The edge's
 `get_relationship_metadata()` then returns it. Checked by parsing a response with SDK 1.23.2,
-without a server (`tests/adapters/test_infrahub_metadata_read.py`); what Infrahub 1.10.6 returns
-is checked by the opt-in integration test of User Story 3 (T043).
+without a server (`tests/adapters/test_infrahub_metadata_read.py`); what Infrahub returns is
+checked by the opt-in integration test of User Story 3 (T043), on 1.10.6 and on 1.11.9.
 
 **The last change of a cardinality-many relationship (task T036, 2026-10-23)**
 
@@ -214,6 +218,19 @@ Checked against Infrahub 1.10.6 with SDK 1.23.2, on a branch, by the opt-in test
 - A relationship with no edge holds nothing: a cardinality-one relationship returns
   `relationship_metadata: null`, and an empty cardinality-many relationship returns no edge. The
   plan records `null` for both values, and review shows "not recorded".
+
+**What Infrahub 1.11.9 returns, checked live (2026-10-23)**
+
+Checked against Infrahub 1.11.9 (`registry.opsmill.io/opsmill/infrahub:1.11.9`, digest
+`sha256:bc9a36f0d02a4bcf2d67c8b24f36cc4010e2960de79a086aaa485cd1ab88265f`) with SDK 1.23.2, in a
+local Compose project with anonymous access off:
+
+- The same opt-in test passed at 2026-10-23T18:21:26Z, with the 15 other test ids of the file.
+- A direct read at 2026-10-23T18:28:45Z, on `main` and on a branch, of a `TestLinDevice` created
+  with its optional `serial` left empty and no `tags` edge: `serial` returned `value: null` with
+  `updated_by` set to the creating account and `updated_at` set; `tags` returned no edge.
+- Difference from 1.10.6: none. Every result in the list above holds on 1.11.9, so "not
+  recorded" shows only for a relationship with no edge.
 
 Cost noted for the measurement task (T004): with `include`, each included relationship also
 selects the peer's attributes (`SDK/node/node.py:1514-1521`), and `include_metadata=True` adds
@@ -289,6 +306,8 @@ alternate twice on each branch.
   the added time grows with the number of nodes and attributes the plan reads, and is larger on
   a branch other than the default branch.
 - The result is information only and does not block the merge (plan.md, "Items left open").
+- The read times above were measured on 1.10.6 only. They were not measured again on 1.11.9, so
+  the read time on 1.11.9 is not known.
 
 **Alternatives considered**
 
@@ -550,7 +569,7 @@ Alternatives considered:
 
 **Decision**
 
-- Task T005 finds the smallest permission set on the pinned Infrahub 1.10.6, for the default
+- Task T005 finds the smallest permission set on Infrahub 1.10.6, then again on 1.11.9, for the default
   branch and for another branch, by running plan and sync with an account that starts with no
   permission and gains one permission at a time. It includes the `InfrahubInfo` and
   `AccountProfile` queries and the read of each allowed named kind. The result is recorded here as
@@ -621,3 +640,62 @@ Limits of the probe:
 - The code before this feature looks up a `CoreAccount` named after the source system
   (`infrahub_sync/adapters/infrahub.py:718`), which needs `view` on `CoreAccount`. The design
   removes that lookup (FR-005), so the table above does not list it.
+
+**Smallest permission set on Infrahub 1.11.9 (2026-10-23)**
+
+The probe of T005 ran again, unchanged, on Infrahub 1.11.9
+(`registry.opsmill.io/opsmill/infrahub:1.11.9`, digest
+`sha256:bc9a36f0d02a4bcf2d67c8b24f36cc4010e2960de79a086aaa485cd1ab88265f`), in a new local Compose
+project with anonymous access off, from 18:27:14 to 18:28:06 UTC. The same two accounts, one for
+`main` and one for the branch `lineage-probe`, started with no permission. One permission was added
+at a time, then each was removed in turn to prove it was needed. SDK 1.23.2.
+
+- Every row of the table above holds on 1.11.9, for the default branch and for the other branch.
+- The probe added the same permissions, in the same order: seven on `main` (`view`, `create` and
+  `update` with `allow_default` on `TestLinDevice` and on `TestLinTag`, and global
+  `edit_default_branch`), and six on `lineage-probe` (the same object permissions with
+  `allow_other`, and no global permission).
+- Removing each permission refused the same calls as on 1.10.6.
+- `InfrahubInfo`, `AccountProfile` and the schema read passed with no permission.
+- For each of `CoreAccount`, `CoreAccountGroup`, `CoreRepository` and `CoreReadOnlyRepository`,
+  `view` on that kind alone let the name-only lookup of that kind pass, and the lookups of the
+  three other kinds stayed refused. With the SDK's default fields, the lookups needed the same
+  extra kinds as on 1.10.6.
+- An admin read afterwards showed, on both branches: the import account as the attribute source,
+  the group as the owner, `is_protected` false on a value written without `protect` and true on a
+  value written with it. The import account's read with `include_metadata=True` returned
+  `updated_by` and the edge metadata of `tags`, without `view` on `CoreAccount`.
+- The schema read from `main` reports `branch: agnostic` for `CoreAccount`, `CoreAccountGroup`,
+  `CoreRepository` and `CoreReadOnlyRepository`, and for their `name` attribute.
+- The same limits apply: no `CoreRepository` or `CoreReadOnlyRepository` could be created, so the
+  repository lookups were proven on a query that matched no node.
+
+Differences between 1.10.6 and 1.11.9:
+
+- No difference in the permission set, in which call each permission is needed for, or in the
+  written source, owner and protection.
+- The only difference observed is the order in which a refusal message lists the permissions it
+  needs. On the other branch, the lookup of `CoreAccountGroup` with the SDK's default fields listed
+  `object:Core:AccountGroup:view:allow_other | object:Core:Group:view:allow_other |
+  object:Core:AccountRole:view:allow_other` on 1.10.6, and the same three permissions with the last
+  two in the other order on 1.11.9. The lookups of `CoreRepository` and `CoreReadOnlyRepository`
+  with the default fields listed the same four permissions in a different order. The set of
+  permissions in each message is the same.
+
+**Lookup by name after a rename on `main`, on Infrahub 1.11.9 (2026-10-23)**
+
+The reproduction of the branch-agnostic rename (plan.md, "Items left open"; spec.md, FR-011) ran
+again on 1.11.9 at 18:28:14 UTC, with the same script and SDK 1.23.2. The results are the same as
+on 1.10.6:
+
+- On a branch created before a rename of a `CoreAccountGroup` on `main`, a filter by the earlier
+  name still returns the group, which reports the new name. `client.get` by the earlier name
+  returns it too.
+- On `main` and on a branch created after the rename, the filter by the earlier name returns
+  nothing, and `client.get` raises `NodeNotFoundError`.
+- After a deletion on `main`, a filter by name and a filter by id return nothing on a branch
+  created before the deletion.
+
+This was checked at the lookup level: `client.get(kind=…, name__value=…)`, the call the import's
+lookup makes (`infrahub_sync/adapters/infrahub.py:1091`), with the SDK's default fields. A plan
+through the Sync service on a branch created before a rename was not run again on 1.11.9.

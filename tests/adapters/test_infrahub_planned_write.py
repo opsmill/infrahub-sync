@@ -340,7 +340,7 @@ class RecordingClient(InfrahubClientSync):
         if "InfrahubInfo" in query:
             # The server version a plan reads after resolving its lineage.
             self.events.append(("version", None))
-            return {"InfrahubInfo": {"version": "1.10.6"}}
+            return {"InfrahubInfo": {"version": "1.11.9"}}
         match = re.search(r"mutation\s*\{\s*(\w+)", query)
         if match is None:
             msg = f"Unrecognised mutation rendered by the SDK: {query!r}"

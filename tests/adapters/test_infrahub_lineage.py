@@ -70,7 +70,7 @@ class LineageClient:
 
     def get_version(self) -> str:
         self.calls.append(VERSION_CALL)
-        return "1.10.6"
+        return "1.11.9"
 
     def get(self, **kwargs: Any) -> Any:  # noqa: ANN401
         self.calls.append(("get", kwargs))

@@ -201,7 +201,7 @@ def _strip_metadata(value: object) -> object:
 class MetadataClient(InfrahubClientSync):
     """A real SDK client whose server answers are fixed, with every destination call recorded."""
 
-    def __init__(self, *, version: str | Exception = "1.10.6", rows: dict[str, list[dict[str, Any]]]) -> None:
+    def __init__(self, *, version: str | Exception = "1.11.9", rows: dict[str, list[dict[str, Any]]]) -> None:
         super().__init__(config=Config(address="http://localhost:8000", api_token="token"))  # noqa: S106
         self.version = version
         self.rows = rows
@@ -310,7 +310,7 @@ def _person_changed_rows() -> dict[str, list[dict[str, Any]]]:
     [
         ("1.7.0", True),
         ("1.7", True),
-        ("1.10.6", True),
+        ("1.11.9", True),
         ("2.0.0", True),
         ("1.6.9", False),
         ("1.6", False),
@@ -324,7 +324,7 @@ def test_metadata_is_read_from_infrahub_1_7_0(version: str, *, supported: bool) 
 
 def test_on_1_7_0_or_later_the_existing_reads_ask_for_metadata_and_no_read_is_added() -> None:
     """One version read per plan; the same `all` reads, each with `include_metadata=True`."""
-    with_metadata = MetadataClient(version="1.10.6", rows=_person_changed_rows())
+    with_metadata = MetadataClient(version="1.11.9", rows=_person_changed_rows())
     without_metadata = MetadataClient(version="1.6.0", rows=_person_changed_rows())
 
     assert _plan(with_metadata).metadata_read is True

@@ -40,7 +40,8 @@ v2, DiffSync through the Potenda engine, FastAPI and Prefect for the service. No
 (`infrahub_sync/product_store/store.py:48-114`) is unchanged.
 
 **Testing**: pytest through `uv run invoke tests.tests-unit`; integration tests marked opt-in and
-run against the pinned Infrahub 1.10.6 stack.
+run against Infrahub 1.11.9 (product owner, 2026-10-23; the first runs used the repository's
+pinned 1.10.6 stack).
 
 **Target Platform**: Linux container (the Sync service and worker) and the CLI.
 
@@ -116,7 +117,7 @@ tests/
 ├── configuration/   # registration refusals
 ├── plan/            # sidecar, manifest fields, checksum coverage
 ├── service/         # PlanResource fields
-└── integration/     # quickstart scenarios against Infrahub 1.10.6 (opt-in)
+└── integration/     # quickstart scenarios against Infrahub 1.11.9 (opt-in)
 
 docs/docs/adapters/infrahub.mdx                      # lineage section rewritten (FR-010)
 docs/docs/development/knowledge/plan-artifact.md     # new file and manifest fields
@@ -131,7 +132,8 @@ above.
 - The oldest Infrahub version a V3 import supports is not known and stays out of this feature
   (R-1). The design works on any version.
 - Closed (T056, 2026-10-22), information only: the plan's destination read of 10,014 nodes on
-  Infrahub 1.10.6 takes about 1.4 times as long with metadata on the default branch (medians of
+  Infrahub 1.10.6 (not measured on 1.11.9) takes about 1.4 times as long with metadata on the
+  default branch (medians of
   31.60 s and 33.35 s, against 22.56 s and 22.43 s without) and about 2.5 times as long on another
   branch (59.83 s and 62.18 s, against 24.31 s and 24.97 s). Both T004 and T056 used a direct SDK
   read on a throwaway kind, not the NetBox benchmark runner, which pins Infrahub 1.11.3, needs a
@@ -145,7 +147,8 @@ above.
   from the previous snapshot, must load in full when metadata is requested is not decided. The
   shared execution surface and the Sync service always load in full (R-2). The User Story 3 tasks
   decide it.
-- Closed (T005, 2026-10-22): the import account's smallest permission set on Infrahub 1.10.6 is
+- Closed (T005, 2026-10-22; confirmed on 1.11.9 on 2026-10-23, research R-7): the import
+  account's smallest permission set on Infrahub 1.10.6 and 1.11.9 is
   `view`, `create` and `update` on each mapped destination kind (and `view` on the peer kinds of
   its included relationships), plus the global `edit_default_branch` on the default branch only,
   plus `view` on each kind the package names as source or owner. `InfrahubInfo`,
@@ -168,8 +171,8 @@ above.
   `changed`.
 - Closed (product owner, 2026-10-23): a named source or owner is looked up on the destination
   branch the run uses, with no code change (FR-011, spec Clarifications 2026-10-23). On Infrahub
-  1.10.6, a filter by the earlier name of a node renamed on `main` still matches it on a branch
-  created before the rename. Whether to report this upstream is not decided.
+  1.10.6, and again on 1.11.9 (research R-7), a filter by the earlier name of a node renamed on
+  `main` still matches it on a branch created before the rename. Whether to report this upstream is not decided.
 - Open, follow-up work, not part of this feature (product owner, 2026-10-23): an update sends only
   the fields the plan changes. Today an update sends unchanged values again, so those values also
   get the import account (or the named source) as source. Their owner and protection stay as they

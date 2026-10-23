@@ -5,8 +5,8 @@
 ## Prerequisites
 
 - Full development profile: `uv sync --extra dev --extra prefect --extra service`.
-- The development stack with the pinned Infrahub 1.10.6 (`development/docker-compose.infrahub.yml`)
-  and the Sync service, as in `docs/docs/development-stack.mdx`.
+- The development stack with Infrahub 1.11.9: `development/docker-compose.infrahub.yml` with
+  `VERSION=1.11.9` (the file pins 1.10.6 when `VERSION` is not set), and the Sync service, as in `docs/docs/development-stack.mdx`.
 - In Infrahub:
   - an account `netbox` with exactly the permission set recorded in research.md R-7, which gives no
     permission to read accounts, and an API token for it;
@@ -126,7 +126,8 @@ Run on 2026-10-23 from 00:00 to 00:09 UTC (task T057), with the code of commit `
   source system was read, with "The setting `owner` names `CoreAccountGroup` `network-team`,
   which does not exist."
 - Step 5 failed on a branch created before the rename: the plan completed. On Infrahub 1.10.6, a
-  filter by name on such a branch still matches the group by its earlier name. A direct read
+  filter by name on such a branch still matches the group by its earlier name. The same filter
+  gave the same result on 1.11.9 (research R-7). A direct read
   showed the same: on `main` the filter by the earlier name returned nothing; on a branch created
   before the rename it returned the renamed group.
 - Step 6 failed for the same reason: the branch was created and planned while the group had its
@@ -145,7 +146,7 @@ Run on 2026-10-23 from 00:00 to 00:09 UTC (task T057), with the code of commit `
 - Passed. An update that adds the first edge of an empty `tags` relationship showed
   `tags (relationship): updated_by=not recorded, updated_at=not recorded`. A proposed create
   showed no last-change line.
-- On 1.10.6 every attribute has a record, so "not recorded" shows only for a relationship with no
+- On 1.10.6 and 1.11.9 every attribute has a record, so "not recorded" shows only for a relationship with no
   edge (research R-2).
 
 ### Scenario 4: protection
