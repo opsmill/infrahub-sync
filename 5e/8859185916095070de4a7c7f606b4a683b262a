@@ -1,0 +1,42 @@
+dev/specs/014-import-lineage/research.md
+  s_8d92f288a8f661::t_a091ec4ba643be 222-234
+  s_8d92f288a8f661::t_f1132934182224 40-44
+  s_8d92f288a8f661::t_7596450621372c 309-310
+  s_8d92f288a8f661::t_9cefd8de016d84 109-110,144,194-195,572,643-701
+dev/specs/014-import-lineage/opsmill-implement-report.md
+  s_8d92f288a8f661::t_4f2efc8b07adbc 14,25-26,40,64-68,98,105
+dev/specs/014-import-lineage/plan.md
+  s_8d92f288a8f661::t_31a08aa4222e12 43-44,120,135-136,150-151,174-175
+dev/specs/014-import-lineage/quickstart.md
+  s_8d92f288a8f661::t_d22e4b8e164605 8-9,129-130,149
+dev/specs/014-import-lineage/spec.md
+  s_8d92f288a8f661::t_8a376d35aedcd1 65,69-72,301
+dev/specs/014-import-lineage/tasks.md
+  s_8d92f288a8f661::t_f3033b250ef2fd 36
+docs/docs/adapters/infrahub.mdx
+  s_8d92f288a8f661::t_4b27b4894d99cc 232-233,253,280,286
+tests/adapters/test_infrahub_lineage.py
+  s_8d92f288a8f661::t_63afd1047f91e9 73
+tests/adapters/test_infrahub_metadata_read.py
+  s_8d92f288a8f661::t_eca876c1410c2e 204,313,327
+tests/adapters/test_infrahub_planned_write.py
+  s_8d92f288a8f661::t_0dafac5bf37678 343
+tests/integration/test_infrahub_lineage_integration.py
+  s_8d92f288a8f661::t_62303098fd8b9a 1126,1419,1434,1873
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5e8859185916095070de4a7c7f606b4a683b262a",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
