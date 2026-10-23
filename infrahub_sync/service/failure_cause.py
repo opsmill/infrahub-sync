@@ -38,10 +38,10 @@ def operator_cause(exc: BaseException, secrets: Sequence[str]) -> dict[str, Any]
     raises the original, so the walk covers both stages.
 
     - A lineage refusal (`LINEAGE_REFUSALS`) records its `message` as `cause` and its
-      `next_action` (FR-004, FR-011, FR-012). This repository writes those messages, and they
+      `next_action`. This repository writes those messages, and they
       name settings, kinds, node names, account names and ids only.
     - A refused token or a missing permission records `infrahub_error` and its description as
-      `cause` (FR-008). The description quotes only the permission Infrahub names, or a
+      `cause`. The description quotes only the permission Infrahub names, or a
       capped server message, never the request or the token.
 
     Both texts are redacted, stripped of control characters and capped, like every value a

@@ -1,4 +1,7 @@
-"""Who last changed each value a plan proposes to change (FR-007, `contracts/plan-last-changes.md`).
+"""Who last changed each value a plan proposes to change.
+
+The file format is described in `docs/docs/development/knowledge/plan-artifact.md`, section
+"The last-change file".
 
 The Infrahub adapter keeps, outside its DiffSync models, a map from (destination node id,
 field name) to the `updated_by` and `updated_at` it read with the destination. While a plan is
@@ -26,7 +29,8 @@ class LastChangeCollector:
     about that value's last change: an object with `updated_by` (with `id` and
     `display_label`, or `None`) and `updated_at`. A field the map holds nothing for gets a
     record with `None` values, which review shows as "not recorded". `metadata_read` is
-    `False` when the destination did not ask for that metadata (Infrahub before 1.7.0).
+    `False` when the destination did not ask for that metadata: Infrahub is older than 1.7.0,
+    its version could not be parsed, or Infrahub refused the version query.
     """
 
     def __init__(self, changes: Mapping[tuple[str, str], Any], *, metadata_read: bool = False) -> None:

@@ -52,9 +52,10 @@ if TYPE_CHECKING:
 DEFAULT_WAIT_TIMEOUT = 30 * 60.0
 DEFAULT_POLL_INTERVAL = 2.0
 VERBOSITY_MAP = {"quiet": logging.WARNING, "default": logging.INFO, "verbose": logging.DEBUG}
-# Shown in the `runs plan` summary when the saved plan names an owner (FR-009, D-8).
+# Shown in the `runs plan` summary when the saved plan names an owner: the import never
+# changes an existing owner, so the owner setting covers only the values a run creates.
 OWNER_SCOPE_NOTICE = "The owner setting applies only to values this run creates."
-# Shown for an `updated_by` or `updated_at` Infrahub holds no value for (FR-007).
+# Shown for an `updated_by` or `updated_at` Infrahub holds no value for.
 NOT_RECORDED = "not recorded"
 _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
@@ -513,7 +514,7 @@ def _echo_counts(name: str, counts: Mapping[str, int]) -> None:
 
 
 def _owner_scope_disclosure(plan: PlanResource) -> None:
-    """Say that a named owner covers only the values this run creates (D-8)."""
+    """Say that a named owner covers only the values this run creates, never an existing owner."""
     if plan.lineage is not None and plan.lineage.owner is not None:
         typer.echo(OWNER_SCOPE_NOTICE)
 
@@ -535,8 +536,8 @@ def _identity_text(identity: Mapping[str, Any]) -> str:
 def _last_change_line(record: PlanLastChangeResource) -> str:
     """Render who last changed one field and when, or "not recorded" for a missing value.
 
-    An account Infrahub holds without a display label is shown by its id: FR-007 forbids
-    "not recorded" for a value Infrahub holds. Labels come from Infrahub, so they are escaped.
+    An account Infrahub holds without a display label is shown by its id, because a value
+    Infrahub holds is never shown as "not recorded". Labels come from Infrahub, so they are escaped.
     """
     account = record.updated_by
     updated_by = NOT_RECORDED if account is None else (account.display_label or account.id)

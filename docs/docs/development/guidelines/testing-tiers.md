@@ -438,12 +438,24 @@ Three further qualifications need no source system, only `INFRAHUB_ADDRESS` and
 - `tests/integration/test_infrahub_lineage_integration.py` — an import account that holds
   only its documented permissions: the values and edges it creates have it as source, the
   nodes have it as `created_by`, an apply with another account's token is refused with
-  nothing written, and a removed permission is recorded as a missing permission. Its
-  `INFRAHUB_API_TOKEN` must be able to manage accounts and permissions, such as the initial
-  admin token, and anonymous access should be off. It creates accounts, roles, groups and
-  permissions on `main` and deletes them after each test.
+  nothing written, and a removed permission is recorded as a missing permission. It also
+  names a group, an account and a repository as `source`, and checks the one permission
+  each lookup needs. Its `INFRAHUB_API_TOKEN` must be able to manage accounts and
+  permissions, such as the initial admin token, and anonymous access should be off. It
+  creates accounts, roles, groups, repositories and permissions, which Infrahub keeps on
+  every branch, and deletes them after each test. Two parts are opt-in and skip without
+  their setting:
+    - `INFRAHUB_SYNC_LINEAGE_REPOSITORY_LOCATION` runs the repository tests. Infrahub clones
+  a repository when it is created, so the setting must be a Git location that the
+  Infrahub server and its task workers can clone. For a local Compose project, copy a
+  bare repository into those containers with `docker cp` and use its `file://` path, such
+  as `file:///tmp/lineage-repo.git`.
+    - `INFRAHUB_SYNC_LINEAGE_WRITE_DEFAULT_BRANCH=1` runs the default-branch test, which
+  plans and applies on `main` with the permission set for the default branch. It loads
+  the throwaway schema on `main` and leaves it there; it deletes the nodes it writes on
+  `main`. Set it only for a disposable Infrahub, never for a shared one.
 
-  Each runs on a branch the test creates and deletes.
+  Each runs on a branch the test creates and deletes, except the default-branch test.
 
 The interface kinds are covered there: they are written like any other kind now, and
 what the test pins is that the destination converges them.

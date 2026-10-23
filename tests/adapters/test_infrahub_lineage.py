@@ -27,7 +27,7 @@ from infrahub_sync.potenda import Potenda
 
 IMPORT_ACCOUNT = {"id": "account-1", "name": {"value": "netbox-import"}}
 ACCOUNT_PROFILE_CALL = ("account_profile", {"operation_name": "IMPORT_ACCOUNT"})
-# A plan reads the server version once, after the lineage is resolved (research R-1).
+# A plan reads the server version once, after the lineage is resolved.
 VERSION_CALL = ("version", {})
 ADAPTER_LOGGER = "infrahub_sync.adapters.infrahub"
 
@@ -107,7 +107,7 @@ def test_without_settings_the_import_account_is_the_source_and_there_is_no_owner
 
 
 def test_no_account_is_looked_up_by_the_source_systems_name() -> None:
-    """FR-005: an account named after the source system exists, and the import does not read it."""
+    """An account named after the source system exists, and the import does not read it."""
     client = LineageClient(nodes={("CoreAccount", "netbox"): "account-netbox"})
     adapter = make_adapter(client)
     adapter.config = SimpleNamespace(source=SimpleNamespace(name="netbox", adapter="netbox"))  # ty: ignore[invalid-assignment]
@@ -129,7 +129,7 @@ def _loading_adapter(client: LineageClient, events: list[str]) -> InfrahubAdapte
 
 @pytest.mark.parametrize("concurrent_load", [True, False])
 def test_a_plan_reads_the_import_account_once(tmp_path: Path, *, concurrent_load: bool) -> None:
-    """FR-001: one import account query per plan run, before either side is loaded, and the one server version read (R-1)."""
+    """One import account query per plan run, before either side is loaded, and one server version read."""
     events: list[str] = []
     client = LineageClient()
     destination = _loading_adapter(client, events)
@@ -178,7 +178,7 @@ def test_named_source_and_owner_are_looked_up_by_kind_and_name() -> None:
 
 @pytest.mark.parametrize("kind", sorted(RELATIONSHIPS))
 def test_a_named_node_is_read_with_its_name_only(kind: str) -> None:
-    """R-7: the lookup selects `name` and excludes every relationship, so it needs `view` on the kind only.
+    """The lookup selects `name` and excludes every relationship, so it needs `view` on the kind only.
 
     With the SDK's default fields, a `CoreAccountGroup` lookup also needs `view` on
     `CoreAccountRole` and `CoreGroup`, and a repository lookup `view` on credentials and tags.
@@ -195,7 +195,7 @@ def test_a_named_node_is_read_with_its_name_only(kind: str) -> None:
 
 
 def test_a_named_account_is_looked_up_and_a_named_group_needs_no_account_read() -> None:
-    """FR-005: a named `CoreAccount` source is read by name; a named group owner reads no account."""
+    """A named `CoreAccount` source is read by name; a named group owner reads no account."""
     client = LineageClient(
         nodes={("CoreAccount", "netbox"): "account-netbox", ("CoreAccountGroup", "network-team"): "group-1"}
     )
@@ -221,7 +221,7 @@ def test_a_named_account_is_looked_up_and_a_named_group_needs_no_account_read() 
 def test_a_named_node_that_does_not_exist_stops_resolution_without_a_fallback(
     setting: str, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """FR-004: the cause names the setting, the kind and the name; no other node is used in its place."""
+    """The cause names the setting, the kind and the name; no other node is used in its place."""
     client = LineageClient(nodes={("CoreAccountGroup", "fallback"): "group-fallback"})
     named = NamedLineageNode(kind="CoreAccountGroup", name="missing")
     adapter = make_adapter(client, InfrahubLineageSettings.model_validate({setting: named}))
@@ -245,7 +245,7 @@ def test_a_named_node_that_does_not_exist_stops_resolution_without_a_fallback(
 
 @pytest.mark.parametrize("setting", ["source", "owner"])
 def test_a_named_kind_missing_from_the_destination_schema_stops_resolution_naming_the_setting(setting: str) -> None:
-    """FR-004: a kind the branch's schema does not have stops the run with the setting's cause, not an SDK error."""
+    """A kind the branch's schema does not have stops the run with the setting's cause, not an SDK error."""
 
     class MissingKindSchema:
         @staticmethod
@@ -373,7 +373,7 @@ def test_a_lineage_refusal_stops_the_plan_before_the_source_is_read(tmp_path: Pa
 def test_a_missing_named_node_stops_the_plan_before_the_source_adapter_loads(
     tmp_path: Path, setting: str, *, concurrent_load: bool
 ) -> None:
-    """SC-003: with the real adapter as destination, a missing named node stops the plan before either load."""
+    """With the real adapter as destination, a missing named node stops the plan before either load."""
     events: list[str] = []
     destination = _loading_adapter(LineageClient(), events)
     destination.lineage_settings = InfrahubLineageSettings.model_validate(

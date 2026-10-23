@@ -1,4 +1,4 @@
-"""No write payload carries `updated_at` or `_relation__updated_at` (research R-6).
+"""No write payload carries `updated_at` or `_relation__updated_at`.
 
 A plan reads the destination with `include_metadata=True`, and apply reads a node's current
 peers before an update that adds edges. Infrahub's mutation inputs do not accept the
@@ -78,7 +78,7 @@ SERVER_UPDATE = server_operation("server-a").model_copy(update={"action": "updat
 )
 @pytest.mark.parametrize("owner", [None, OWNER_ID], ids=["no-owner", "owner"])
 def test_no_write_payload_carries_a_change_time(operation: PlannedOperation, owner: str | None) -> None:
-    """R-6: neither a create nor an update sends `updated_at` or `_relation__updated_at`."""
+    """Neither a create nor an update sends `updated_at` or `_relation__updated_at`."""
     client = MetadataClient()
     client.existing_peers[TEAM_KIND, "members"] = ["tag-id-2"]
     client.existing_peers[operation.kind, "site"] = ["site-id-1"]

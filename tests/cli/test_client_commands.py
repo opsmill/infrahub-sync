@@ -538,7 +538,7 @@ def _terminal(phase: str) -> RunTerminalError:
 def test_a_failed_run_prints_the_recorded_missing_permission(
     client: MagicMock, arguments: tuple[str, ...], stage: str
 ) -> None:
-    """FR-008: a 403 at any stage is printed as a missing permission naming the permission, never a refused token."""
+    """A 403 at any stage is printed as a missing permission naming the permission, never a refused token."""
     client.wait_for_run.side_effect = _terminal(f"{stage}-failed")
     client.get_results.return_value = ResultsResource(
         run_id="service-run-1",
@@ -568,7 +568,7 @@ def test_a_failed_run_prints_the_recorded_missing_permission(
 
 
 def test_a_failed_apply_prints_the_account_mismatch_and_its_next_action(client: MagicMock) -> None:
-    """FR-012, SC-007: the operator reads both accounts and what to do, not only the error class."""
+    """The operator reads both accounts and what to do, not only the error class."""
     client.wait_for_run.side_effect = _terminal("apply-failed")
     client.get_results.return_value = ResultsResource(
         run_id="service-run-1",
@@ -1239,7 +1239,7 @@ def _last_change(field: str, field_type: str, updated_by: dict[str, str | None] 
 
 
 def test_runs_plan_detail_shows_who_last_changed_each_field_an_update_changes(client: MagicMock) -> None:
-    """FR-007, SC-005: each changed field shows `updated_by` and `updated_at`, or "not recorded"."""
+    """Each changed field shows `updated_by` and `updated_at`, or "not recorded"."""
     client.get_plan.return_value = _plan_with_an_update(
         (
             _last_change(

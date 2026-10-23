@@ -1,6 +1,6 @@
-"""The plan's last-change file, `plan/last_changes.jsonl` (FR-007, SC-005).
+"""The plan's last-change file, `plan/last_changes.jsonl`.
 
-`contracts/plan-last-changes.md` and `data-model.md` fix the shape: one record for each field
+The shape is one record for each field
 an update proposes to change, none for a create, sorted by operation id then field and written
 as canonical JSON. The manifest's `last_changes` field records the file's digest and record
 count, so the plan checksum covers the file. A plan without the field is a plan made before

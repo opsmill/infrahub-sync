@@ -1,12 +1,11 @@
-"""The destination read of a plan carries `updated_by` and `updated_at` from Infrahub 1.7.0 (FR-007).
+"""The destination read of a plan carries `updated_by` and `updated_at` from Infrahub 1.7.0.
 
 On 1.7.0 or later, the existing destination reads ask for metadata with `include_metadata=True`, and
-no read is added: cardinality-many edges come back in the same `client.all` read (research R-2).
+no read is added: cardinality-many edges come back in the same `client.all` read.
 Before 1.7.0, or when the server version cannot be read or parsed, no read asks for metadata.
 
 The metadata goes into the adapter's own map, keyed by destination node id and field name, and not
-into the DiffSync models. So two plans over a value a person changed give the same operations
-(constitution principle II).
+into the DiffSync models. So two plans over a value a person changed give the same operations.
 
 The nodes here are real `InfrahubNodeSync` objects parsed from response data shaped like the SDK's
 query with `include_metadata=True`; only the client's transport is replaced.
@@ -324,7 +323,7 @@ def test_metadata_is_read_from_infrahub_1_7_0(version: str, *, supported: bool) 
 
 
 def test_on_1_7_0_or_later_the_existing_reads_ask_for_metadata_and_no_read_is_added() -> None:
-    """FR-007, R-2: one version read per plan; the same `all` reads, each with `include_metadata=True`."""
+    """One version read per plan; the same `all` reads, each with `include_metadata=True`."""
     with_metadata = MetadataClient(version="1.10.6", rows=_person_changed_rows())
     without_metadata = MetadataClient(version="1.6.0", rows=_person_changed_rows())
 
@@ -334,7 +333,7 @@ def test_on_1_7_0_or_later_the_existing_reads_ask_for_metadata_and_no_read_is_ad
     reads = [call for call in with_metadata.calls if call[0] == "all"]
     assert [kwargs["kind"] for _, kwargs in reads] == list(LOAD_ORDER)
     assert all(kwargs["include_metadata"] is True for _, kwargs in reads)
-    # The cardinality-many relationship comes back in the same read (T001): it is in `include`.
+    # The cardinality-many relationship comes back in the same read: it is in `include`.
     (device_read,) = [kwargs for _, kwargs in reads if kwargs["kind"] == DEVICE_KIND]
     assert device_read["include"] == ["name", "description", "site", "tags"]
 
@@ -355,7 +354,7 @@ def test_on_1_7_0_or_later_the_existing_reads_ask_for_metadata_and_no_read_is_ad
     ids=["older", "empty", "unparsable", "unreadable"],
 )
 def test_before_1_7_0_or_with_an_unreadable_version_no_read_asks_for_metadata(version: str | Exception) -> None:
-    """R-1: the plan continues without metadata; nothing is recorded in the map."""
+    """The plan continues without metadata; nothing is recorded in the map."""
     client = MetadataClient(version=version, rows=_person_changed_rows())
 
     destination = _plan(client)
@@ -378,7 +377,7 @@ VERSION_TOKEN = "version-token-canary-71c2"  # noqa: S105 -- a canary, not a cre
 
 
 def test_a_version_query_refused_with_http_403_continues_without_metadata(caplog: pytest.LogCaptureFixture) -> None:
-    """R-1: a missing permission on the version query is "cannot read the version", so the plan continues."""
+    """A missing permission on the version query is "cannot read the version", so the plan continues."""
     refusal = _authentication_error(403, "You do not have the following permission: global:view_info:allow_all")
     client = MetadataClient(version=refusal, rows=_person_changed_rows())
 
@@ -436,7 +435,7 @@ def test_an_apply_does_not_read_the_server_version() -> None:
 
 
 def test_a_value_infrahub_returns_with_updated_by_is_recorded_for_it() -> None:
-    """FR-007: attributes, a cardinality-one edge and cardinality-many edges, from the one read."""
+    """Attributes, a cardinality-one edge and cardinality-many edges, from the one read."""
     destination = _plan(MetadataClient(rows=_person_changed_rows()))
 
     alice = RecordedAccount(id="account-alice", display_label="Alice")
@@ -492,7 +491,7 @@ def _operations(destination: Destination) -> dict[str, Any]:
 
 
 def test_metadata_does_not_enter_the_models_so_two_plans_give_the_same_operations() -> None:
-    """Constitution principle II: a value a person changed is compared by its value only."""
+    """A value a person changed is compared by its value only, so two plans give the same operations."""
     first = _plan(MetadataClient(rows=_person_changed_rows()))
     # Between the two plans another person touched the description again, leaving the same value.
     second = _plan(MetadataClient(rows=_rows(description_by=ALICE, description_at="2026-10-06T08:00:00+00:00")))
@@ -512,7 +511,7 @@ def test_metadata_does_not_enter_the_models_so_two_plans_give_the_same_operation
 
 
 def test_with_metadata_the_destination_is_loaded_in_full() -> None:
-    """R-2 open item, decided: unchanged nodes would come from a snapshot that holds no metadata.
+    """No incremental load while metadata is read: unchanged nodes would come from a snapshot without it.
 
     So when metadata is read, every kind reports no cursor tier, no cursor is captured, and the
     engine loads each kind with `model_loader` (the `client.all` read that carries metadata).

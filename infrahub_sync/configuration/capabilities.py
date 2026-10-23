@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -191,8 +191,8 @@ def _validate_relative_rest_mapping_endpoints(
 
 # The node kinds an Infrahub destination's `source` and `owner` settings may name. They are
 # the kinds Infrahub accepts as the source or owner of a value.
-LINEAGE_NODE_KINDS: tuple[str, ...] = ("CoreAccount", "CoreAccountGroup", "CoreRepository", "CoreReadOnlyRepository")
 LineageNodeKind = Literal["CoreAccount", "CoreAccountGroup", "CoreRepository", "CoreReadOnlyRepository"]
+LINEAGE_NODE_KINDS: tuple[str, ...] = get_args(LineageNodeKind)
 LineageSettingName = Literal["source", "owner"]
 _LINEAGE_NODE_KEYS = frozenset({"kind", "name"})
 _LINEAGE_FINDING_CODE = "invalid-lineage-setting"
@@ -318,7 +318,7 @@ def _validate_infrahub_lineage_settings(
     package: ConfigurationPackage,
     role: AdapterRole,
 ) -> tuple[ValidationFinding, ...]:
-    """Refuse the destination's `source`, `owner` and `protect` settings the lineage parser refuses (FR-003).
+    """Refuse the destination's `source`, `owner` and `protect` settings the lineage parser refuses.
 
     One finding per refused setting, at `/configuration/destination/settings/<setting>`. The
     settings are lineage only when Infrahub is the destination, so the source role gives none.
@@ -408,7 +408,7 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
         msg = f"destination schema read timed out: {type(exc).__name__}"
         raise DestinationSchemaReadError(msg, reason="timeout") from None
     except (AuthenticationError, httpx.HTTPStatusError) as exc:
-        # A 403 is a missing permission and only a 401 is a refused token (FR-008, SC-006).
+        # A 403 is a missing permission and only a 401 is a refused token.
         classification = classify_infrahub_error(exc)
         if classification is None:
             msg = f"destination refused the schema read: {type(exc).__name__}"

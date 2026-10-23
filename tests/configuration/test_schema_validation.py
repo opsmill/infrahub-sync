@@ -660,7 +660,7 @@ def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
         ),
         pytest.param(sdk_exceptions.AuthenticationError("denied"), "unauthorized", id="sdk-authentication"),
         pytest.param(_http_status_error(401), "unauthorized", id="http-status-401"),
-        # A 403 is a missing permission, never a refused token (FR-008, SC-006).
+        # A 403 is a missing permission, never a refused token.
         pytest.param(_http_status_error(403), "forbidden", id="http-status-403"),
         pytest.param(_http_status_error(500), "unreachable", id="http-status-500"),
         pytest.param(httpx.ConnectError("refused"), "unreachable", id="httpx-transport"),

@@ -1,4 +1,4 @@
-"""The `last_changes` field of the published plan review, `PlanResource` (FR-007, SC-005).
+"""The `last_changes` field of the published plan review, `PlanResource`.
 
 A plan made with `last_changes.jsonl` publishes its records in the review document, so
 `runs plan` shows who last changed each value an update changes. A plan made before the file
@@ -56,7 +56,7 @@ def _saved(last_changes: tuple[LastChangeRecord, ...] | None) -> SavedPlan:
 
 
 def test_the_review_of_a_new_plan_carries_its_last_change_records() -> None:
-    """FR-007: each record reaches the review, `null` values kept as `null`."""
+    """Each record reaches the review, `null` values kept as `null`."""
     document = service_flow._review_document(RUN_ID, _saved(RECORDS))
 
     assert document.last_changes is not None

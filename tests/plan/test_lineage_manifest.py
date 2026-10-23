@@ -1,4 +1,4 @@
-"""The `lineage` field of a saved plan's manifest (FR-012, `contracts/plan-last-changes.md`).
+"""The `lineage` field of a saved plan's manifest.
 
 The plan records the import account it was computed with, and the source it writes, so an
 apply can compare the account it runs with. The field is additive: the format version stays
@@ -56,7 +56,7 @@ def _written_manifest(tmp_path: Path, lineage: PlanLineageRecord | None) -> dict
 
 
 def test_the_manifest_records_the_import_account_and_the_source(tmp_path: Path) -> None:
-    """The shape of `contracts/plan-last-changes.md`: the account's name and id, the source's kind and name."""
+    """The recorded shape: the account's name and id, the source's kind and name."""
     written = _written_manifest(tmp_path, LINEAGE)
 
     assert written["lineage"]["import_account"] == {"name": "netbox", "id": "account-1"}
@@ -107,7 +107,7 @@ def test_the_format_version_stays_3(tmp_path: Path) -> None:
 
 
 def test_the_manifest_records_the_named_owner_by_kind_and_name(tmp_path: Path) -> None:
-    """FR-009: `lineage.owner` is the owner the package names."""
+    """`lineage.owner` is the owner the package names."""
     written = _written_manifest(tmp_path, LINEAGE.model_copy(update={"owner": OWNER}))
 
     assert written["lineage"]["owner"] == {"kind": "CoreAccountGroup", "name": "network-team"}
@@ -115,7 +115,7 @@ def test_the_manifest_records_the_named_owner_by_kind_and_name(tmp_path: Path) -
 
 
 def test_the_manifest_records_no_owner_as_null(tmp_path: Path) -> None:
-    """FR-009: with no owner named, `lineage.owner` is present and `null`."""
+    """With no owner named, `lineage.owner` is present and `null`."""
     written = _written_manifest(tmp_path, LINEAGE)
 
     assert "owner" in written["lineage"]
@@ -123,7 +123,7 @@ def test_the_manifest_records_no_owner_as_null(tmp_path: Path) -> None:
 
 
 def test_the_manifest_records_protect_on_and_the_checksum_covers_it(tmp_path: Path) -> None:
-    """FR-006: `lineage.protect` is the package's `protect` setting, and changing it changes the checksum."""
+    """`lineage.protect` is the package's `protect` setting, and changing it changes the checksum."""
     written = _written_manifest(tmp_path, LINEAGE.model_copy(update={"protect": True}))
     protect_off = dict(written, lineage=dict(written["lineage"], protect=False))
 
@@ -156,7 +156,7 @@ def _plan_resource(lineage: dict[str, Any] | None) -> PlanResource:
 def test_the_plan_summary_shows_the_owner_notice_exactly_when_an_owner_is_named(
     owner: dict[str, str] | None, *, notice_shown: bool
 ) -> None:
-    """FR-009, D-8: `runs plan` says the owner setting covers only values the run creates."""
+    """`runs plan` says the owner setting covers only values the run creates."""
     client = MagicMock(spec=SyncClient)
     client.get_plan.return_value = _plan_resource(LINEAGE.model_dump(mode="json") | {"owner": owner})
 

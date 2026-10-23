@@ -1,4 +1,4 @@
-"""Apply compares its import account with the account the saved plan recorded (FR-012, SC-007).
+"""Apply compares its import account with the account the saved plan recorded.
 
 An apply refuses, before any write, a plan made with another account's token, whether or not
 the package names a source, and a saved plan that records no import account at all.
@@ -131,7 +131,7 @@ def test_a_saved_plan_with_no_recorded_import_account_is_refused_before_any_writ
 def test_a_named_node_deleted_after_the_plan_stops_apply_before_any_write(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, setting: str
 ) -> None:
-    """FR-011, SC-007: apply reads the named node again, and its absence stops apply with the plan's cause."""
+    """Apply reads the named node again, and its absence stops apply with the plan's cause."""
     named = {"kind": NAMED_SOURCE.kind, "name": NAMED_SOURCE.name}
     account = {"name": "import-account", "id": IMPORT_ACCOUNT_ID}
     directory = _plan(tmp_path, lineage=_lineage(account=account, **{setting: named}))
@@ -173,6 +173,7 @@ def test_an_apply_with_the_recorded_import_account_writes(tmp_path: Path) -> Non
 def test_a_plan_records_the_lineage_the_destination_resolved() -> None:
     """The manifest's `lineage` is what `resolve_lineage` resolved at the start of the plan."""
     adapter = make_adapter(RecordingClient())
+    adapter.lineage = None
     assert destination_lineage_record(adapter) is None, "nothing is recorded before resolution"
 
     adapter.resolve_lineage()

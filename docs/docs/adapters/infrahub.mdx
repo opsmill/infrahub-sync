@@ -229,6 +229,7 @@ destination:
 - The kind must be `CoreAccount`, `CoreAccountGroup`, `CoreRepository`, or `CoreReadOnlyRepository`.
 - Registration refuses a `source` or an `owner` given as a bare name, such as `owner: network-team`, and a kind outside this list.
 - At the start of a plan, before it reads the source system, the import looks up each named node. When the node does not exist, the plan stops and names the setting, the kind and the name, for example: "The setting `owner` names `CoreAccountGroup` `network-team`, which does not exist." The import does not fall back to another node. Apply makes the same lookup before its first write.
+- The import looks up a named node on the destination branch the run uses. On Infrahub 1.10.6 the schema marks all four kinds as branch-agnostic: each node of these kinds is the same node on every branch. So renaming or deleting the node on any branch, `main` included, also changes it on the branch the run uses, and the next plan or apply stops with the cause above.
 
 A named `source` replaces the import account as the source of every value the import writes.
 
@@ -248,10 +249,9 @@ To set the owner of data that already exists in Infrahub, set it in Infrahub its
 
 - With `protect` on, the import marks every attribute and relationship edge it creates or changes as protected.
 - With `protect` off, the import sends no protection flag. A value that is already protected keeps its protection. This includes values that an earlier release protected, because earlier releases protected every value they wrote.
-- With an owner, protection stops accounts other than the owner from editing the value in the Infrahub web interface.
-- Without an owner, Infrahub stores the protection flag, but the flag has no effect.
+- On Infrahub 1.10.6, Infrahub stores the protection flag with or without an owner, and an import still changes a protected value.
 
-Infrahub enforces protection in its web interface only. On Infrahub 1.10.6, an import still changes a protected value.
+What protection does in the web interface was not tested against a running Infrahub. The Infrahub 1.10.6 web interface code disables the edit field of a protected value for accounts other than its owner, and does not disable it when the value has no owner. So without an owner, the flag has no effect on who can edit the value.
 
 ### Values written before this release
 

@@ -1,6 +1,6 @@
-"""A missing permission is never recorded as a refused token (FR-008, SC-006).
+"""A missing permission is never recorded as a refused token.
 
-One case per row of the run-errors contract. The SDK's own request path builds the
+One case per kind of refusal the classification tells apart. The SDK's own request path builds the
 `AuthenticationError` from an `httpx.Response`, so the exception chain is the one a run sees:
 the status is on `__cause__.response.status_code`, and the request on that cause carries the
 token in its headers.

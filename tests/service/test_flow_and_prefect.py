@@ -1340,7 +1340,7 @@ def test_a_completed_record_is_left_to_the_dispatch_rule(
 
 
 # ---------------------------------------------------------------------------------------
-# FR-008, FR-011, FR-012 — the operator cause of a plan or apply failure is recorded
+# The operator cause of a plan or apply failure is recorded
 # ---------------------------------------------------------------------------------------
 
 LINEAGE_TOKEN = "lineage-token-canary-5c0a9e"  # noqa: S105 -- a canary, not a credential
@@ -1463,7 +1463,7 @@ MISSING_PERMISSION_EVIDENCE = {
 def test_a_plan_records_a_403_as_a_missing_permission(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, where: str
 ) -> None:
-    """FR-008, SC-006: the load wraps the 403 in `ValueError`s, and the run still records the permission."""
+    """The load wraps the 403 in `ValueError`s, and the run still records the permission."""
     sdk_error = _sdk_403()
     failure = (
         _plan_load_failure(tmp_path, load=sdk_error)
@@ -1484,7 +1484,7 @@ def test_a_plan_records_a_403_as_a_missing_permission(
 def test_an_apply_records_a_403_during_lineage_resolution_as_a_missing_permission(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """FR-008: the lineage is resolved outside the operation loop, and its 403 is still classified."""
+    """The lineage is resolved outside the operation loop, and its 403 is still classified."""
     stored = _record_apply_failure(monkeypatch, tmp_path, "run-apply-403-lineage", _sdk_403())
 
     evidence = stored.results["apply_failure"]
@@ -1497,7 +1497,7 @@ def test_an_apply_records_a_403_during_lineage_resolution_as_a_missing_permissio
 def test_a_plan_records_a_missing_named_node_with_its_cause_and_next_action(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """FR-004: the cause names the setting, the kind and the name, through the load's `ValueError` wrapping."""
+    """The cause names the setting, the kind and the name, through the load's `ValueError` wrapping."""
     from infrahub_sync.plan.errors import NamedLineageNodeNotFoundError
 
     refusal = NamedLineageNodeNotFoundError(setting="owner", kind="CoreAccountGroup", name="network-team")
@@ -1515,7 +1515,7 @@ def test_a_plan_records_a_missing_named_node_with_its_cause_and_next_action(
 def test_an_apply_records_an_account_mismatch_with_both_accounts_and_its_next_action(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """FR-012, SC-007: the recorded cause names both accounts; control characters are removed and secrets masked."""
+    """The recorded cause names both accounts; control characters are removed and secrets masked."""
     from infrahub_sync.plan.errors import ImportAccountMismatchError
 
     message = (

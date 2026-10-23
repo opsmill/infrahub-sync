@@ -44,6 +44,7 @@ from infrahub_sync.adapters.infrahub import (
     ImportAccount,
     InfrahubAdapter,
     InfrahubModel,
+    LineageNotResolvedError,
     NamedLineageNodeNotFoundError,
     PeerResolver,
     ResolvedLineage,
@@ -337,7 +338,7 @@ class RecordingClient(InfrahubClientSync):
             self.events.append(("account_profile", None))
             return {"AccountProfile": {"id": IMPORT_ACCOUNT_ID, "name": {"value": "import-account"}}}
         if "InfrahubInfo" in query:
-            # The server version a plan reads after resolving its lineage (research R-1).
+            # The server version a plan reads after resolving its lineage.
             self.events.append(("version", None))
             return {"InfrahubInfo": {"version": "1.10.6"}}
         match = re.search(r"mutation\s*\{\s*(\w+)", query)
@@ -429,20 +430,30 @@ def make_node(client: RecordingClient, kind: str, node_id: str) -> InfrahubNodeS
 
 
 def make_adapter(
-    client: RecordingClient, *, source: str | None = None, owner: str | None = None, protect: bool = False
+    client: RecordingClient, *, source: str = IMPORT_ACCOUNT_ID, owner: str | None = None, protect: bool = False
 ) -> InfrahubAdapter:
-    """The adapter with only the state the planned-write surface reads, and no network setup."""
+    """The adapter with only the state the planned-write surface reads, and no network setup.
+
+    The lineage is resolved as an apply resolves it before its first write: `source` is the
+    import account and the source of every value, with the given owner and protection.
+    """
     adapter = InfrahubAdapter.__new__(InfrahubAdapter)
     adapter.client = client
-    if source is not None:
-        adapter.lineage = ResolvedLineage(
-            import_account=ImportAccount(id=source, name="source-account"),
-            source=ResolvedLineageNode(kind="CoreAccount", name="source-account", id=source),
-            owner=None if owner is None else ResolvedLineageNode(kind="CoreAccountGroup", name="owners", id=owner),
-            protect=protect,
-        )
+    adapter.lineage = resolved_lineage(source=source, owner=owner, protect=protect)
     adapter.schema = dict(SCHEMAS)
     return adapter
+
+
+def resolved_lineage(
+    *, source: str = IMPORT_ACCOUNT_ID, owner: str | None = None, protect: bool = False
+) -> ResolvedLineage:
+    """A lineage as `resolve_lineage` returns it: the import account `source` as source."""
+    return ResolvedLineage(
+        import_account=ImportAccount(id=source, name="source-account"),
+        source=ResolvedLineageNode(kind="CoreAccount", name="source-account", id=source),
+        owner=None if owner is None else ResolvedLineageNode(kind="CoreAccountGroup", name="owners", id=owner),
+        protect=protect,
+    )
 
 
 def make_operation(
@@ -598,6 +609,20 @@ def test_the_write_is_client_create_then_an_upsert_of_payload_plus_resolved_peer
     assert rendered_related_id(query, "site") == "site-id-1", (
         f"The relationship must reach the write as the resolved destination node id. Rendered:\n{query}"
     )
+
+
+def test_a_write_before_the_lineage_is_resolved_is_refused_with_no_request() -> None:
+    """Without a resolved lineage the write would carry no source, owner or protection, so it is refused."""
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    adapter.lineage = None
+    peers = PeerResolver(adapter)
+    peers.remember(SITE_KIND, {"name": "site-a"}, "site-id-1")
+
+    with pytest.raises(LineageNotResolvedError, match="No destination write was attempted"):
+        adapter.apply_planned_operation(operation=server_operation("server-a"), peers=peers)
+
+    assert client.events == [], f"A refused write must send no request; the client recorded {client.events}."
 
 
 def test_no_unmapped_destination_field_is_written() -> None:
@@ -1192,7 +1217,7 @@ PROTECTION_CASES = [
 def test_protect_on_without_an_owner_protects_every_attribute_and_edge_written(
     operation: PlannedOperation, attributes: int, edges: int
 ) -> None:
-    """FR-006, D-5: with `protect` on and no owner, creates and updates protect every value they write."""
+    """FR-006: with `protect` on and no owner, creates and updates protect every value they write."""
     rendered = _applied_with_protection(operation, protect=True)
 
     attribute_flags = re.findall(r"(?<!_relation__)\bis_protected:\s*true", rendered)
@@ -2171,7 +2196,7 @@ def test_a_failing_transport_or_auth_on_peer_resolution_is_named_and_actionable(
 
 
 # ---------------------------------------------------------------------------------------
-# The owner: set on creates and on the relationship edges an update adds (FR-002, D-8)
+# The owner: set on creates and on the relationship edges an update adds, never changed (FR-002)
 # ---------------------------------------------------------------------------------------
 
 OWNER_ID = "owner-group-1"
@@ -2224,7 +2249,7 @@ def test_a_create_sends_the_named_owner_on_every_attribute_and_edge(
 
 
 def test_an_update_sends_no_owner_on_attributes() -> None:
-    """D-8: the attributes of an existing node keep the owner they have, including an empty one."""
+    """The attributes of an existing node keep the owner they have, including an empty one."""
     operation = make_operation(
         kind=TEAM_KIND,
         action="update",
@@ -2241,7 +2266,7 @@ def test_an_update_sends_no_owner_on_attributes() -> None:
 
 
 def test_an_update_sends_the_owner_only_on_the_cardinality_many_edges_it_adds() -> None:
-    """R-6: an edge to a peer the node already has is written without the owner key."""
+    """An edge to a peer the node already has is written without the owner key."""
     client = RecordingClient()
     client.existing_peers[TEAM_KIND, "members"] = ["tag-id-2"]
     operation = team_operation(["tag-b", "tag-c"]).model_copy(
@@ -2272,7 +2297,7 @@ def test_an_update_sends_the_owner_only_on_the_cardinality_many_edges_it_adds() 
 def test_an_update_sends_the_owner_on_a_cardinality_one_edge_only_when_the_peer_changes(
     current_site: str | None, planned_site: str, *, owner_on_edge: bool
 ) -> None:
-    """R-6: a cardinality-one edge is added when the planned peer differs from the current one."""
+    """A cardinality-one edge is added when the planned peer differs from the current one."""
     client = RecordingClient()
     if current_site is not None:
         client.existing_peers[SERVER_KIND, "site"] = [current_site]
@@ -2373,7 +2398,7 @@ def _lineage_keys(edge: dict[str, Any]) -> set[str]:
 
 
 def test_an_edge_allocated_from_a_pool_carries_no_source_owner_or_protection() -> None:
-    """Clarifications Q2, R-6: the pool stays the source of an edge it allocates; other edges keep their lineage."""
+    """The pool stays the source of an edge it allocates; other edges keep their lineage."""
     client = RecordingClient()
     create_data = client.schema.generate_payload_create(
         schema=TEAM_SCHEMA,
@@ -2393,7 +2418,7 @@ def test_an_edge_allocated_from_a_pool_carries_no_source_owner_or_protection() -
 
 
 def test_a_cardinality_one_edge_allocated_from_a_pool_carries_no_lineage() -> None:
-    """Clarifications Q2: the rule holds for a cardinality-one edge too."""
+    """The pool rule holds for a cardinality-one edge too."""
     create_data: dict[str, Any] = {
         "name": {"value": "server-a", "source": IMPORT_ACCOUNT_ID},
         "site": {"from_pool": {"id": POOL_ID}, "source": IMPORT_ACCOUNT_ID, "owner": OWNER_ID, "is_protected": True},
@@ -2410,7 +2435,7 @@ class _StopAtCreateError(Exception):
 
 
 def test_the_write_path_clears_lineage_on_pool_edges_before_the_node_is_built() -> None:
-    """Clarifications Q2: a write path that allocates from a pool hands `client.create` no lineage on that edge."""
+    """A write path that allocates from a pool hands `client.create` no lineage on that edge."""
     client = RecordingClient()
     adapter = make_adapter(client, source=IMPORT_ACCOUNT_ID, owner=OWNER_ID, protect=True)
     peers = PeerResolver(adapter)

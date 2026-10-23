@@ -1,6 +1,6 @@
-"""Registration refuses invalid `source`, `owner` and `protect` settings of an Infrahub destination (FR-003).
+"""Registration refuses invalid `source`, `owner` and `protect` settings of an Infrahub destination.
 
-Each refused input in `contracts/infrahub-destination-settings.md` gives one finding at
+Each refused input gives one finding at
 `/configuration/destination/settings/<setting>`, and registration raises on it.
 """
 
@@ -93,7 +93,7 @@ def test_the_accepted_settings_register() -> None:
 
 @pytest.mark.parametrize("protect", [pytest.param(True, id="protect-true"), pytest.param(False, id="protect-false")])
 def test_protect_registers_as_true_or_false_without_an_owner(*, protect: bool) -> None:
-    """`protect` is accepted as `true` or `false`, and needs no owner (D-5)."""
+    """`protect` is accepted as `true` or `false`, and needs no owner: Infrahub accepts the flag alone."""
     accepted = package(_with_destination_settings(protect=protect))
 
     assert collect_findings(accepted) == ()

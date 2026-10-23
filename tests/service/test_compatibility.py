@@ -74,7 +74,7 @@ def test_installed_server_version_accepts_builtin_pep440_versions_without_normal
     assert compatibility.installed_server_version() == metadata_value
 
 
-# The review document gained two optional fields, `lineage` and `last_changes` (research.md R-4).
+# The review document gained two optional fields, `lineage` and `last_changes`.
 _ADDITIVE_PLAN_FIELDS = ("lineage", "last_changes")
 
 

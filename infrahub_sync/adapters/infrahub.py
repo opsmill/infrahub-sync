@@ -690,6 +690,14 @@ class ImportAccountUnreadableError(RuntimeError):
     """Infrahub answered the import account query without an account id."""
 
 
+class LineageNotResolvedError(RuntimeError):
+    """A planned write was attempted before `resolve_lineage` set the source, owner and protection.
+
+    Without a resolved lineage the write would carry no source, no owner and no protection, so
+    the operation is refused before any destination write.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class ImportAccount:
     """The account behind the token the import uses, as its `AccountProfile` query returns it."""
@@ -806,7 +814,7 @@ def _import_account_from_profile(response: Mapping[str, Any]) -> ImportAccount:
 
 # Infrahub records `updated_by` and `updated_at` on attributes and relationship edges from 1.7.0.
 # An older server's GraphQL schema has no such fields, so a query that asks for them is refused
-# whole (research R-1).
+# whole.
 METADATA_MIN_VERSION = (1, 7, 0)
 
 
@@ -895,8 +903,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     # `resolve_lineage` from the server version, false until then and during an apply.
     metadata_read: bool = False
     # What those reads returned, keyed by (destination node id, field name). Kept here and not
-    # in the DiffSync models, so a value a person changed is compared by its value only
-    # (constitution principle II). Set by `__init__` and reset by `resolve_lineage`.
+    # in the DiffSync models, so a value a person changed is compared by its value only and two
+    # plans over the same values give the same operations. Set by `__init__` and reset by `resolve_lineage`.
     last_changes: dict[tuple[str, str], LastChange]
     # Cache state: absent means hydration has not been attempted; None means
     # one attempt was exhausted; a string is the resolved DiffSync identity.
@@ -969,9 +977,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         again, so an apply does not reuse what the plan resolved.
 
         The import account is the account behind the token, from one `AccountProfile` query
-        (`IMPORT_ACCOUNT_QUERY`), which needs no permission on accounts. It is the source unless the `source` setting names
-        a node. There is no lookup of an account named after the source system and no
-        fallback: a named node that the destination does not have stops the run.
+        (`IMPORT_ACCOUNT_QUERY`), which needs no permission on accounts. It is the source
+        unless the `source` setting names a node. There is no lookup of an account named after
+        the source system and no fallback: a named node that the destination does not have
+        stops the run.
 
         `saved_plan` is the manifest an apply is about to write. It must record an import
         account, and that account's id must equal the id that query returns now;
@@ -979,7 +988,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         (FR-012). A plan passes no manifest.
 
         A plan also reads the server version once, after the lineage is resolved, and keeps
-        `metadata_read` true from Infrahub 1.7.0 (research R-1). An apply loads nothing, so it
+        `metadata_read` true from Infrahub 1.7.0, the first version that records `updated_by`
+        and `updated_at`. An apply loads nothing, so it
         reads no version and keeps `metadata_read` false.
         """
         settings = self.lineage_settings
@@ -1010,7 +1020,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """Read the server version once and return whether the destination reads ask for metadata.
 
         A server that refuses the version query is treated like one whose version cannot be
-        parsed: the plan continues and every last change shows as not recorded (research R-1).
+        parsed: the plan continues and every last change shows as not recorded.
         A refusal is a GraphQL error, or an HTTP 403 the SDK raises as `AuthenticationError`.
         An HTTP 401 still stops the plan: the token is refused, and every later read would be
         refused too.
@@ -1054,7 +1064,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         relationship of the kind. With the SDK's default fields the read also needs `view` on
         the peer kinds of those relationships (`CoreAccountRole` and `CoreGroup` for a group,
         credentials and tags for a repository); with the name only it needs `view` on the
-        named kind only (research R-7). The kind's relationships come from the schema the SDK
+        named kind only. The kind's relationships come from the schema the SDK
         has cached, which `get` reads anyway.
 
         A named node that does not exist raises `NamedLineageNodeNotFoundError`, so the run
@@ -1104,7 +1114,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         load takes unchanged nodes from the previous snapshot, which holds no `updated_by` or
         `updated_at`, so a plan would show "not recorded" for values Infrahub holds (FR-007).
         With no cursor tier, the engine loads each kind in full through `model_loader`, whose
-        one read carries the metadata (research R-2).
+        one read carries the metadata.
         """
         if self.metadata_read:
             return CursorTier.NONE
@@ -1173,7 +1183,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             # Retrieve all nodes corresponding to model_name (list of InfrahubNodeSync)
             # With `include_metadata`, the same read also returns `updated_by` and `updated_at` for
             # each attribute and each edge, cardinality-many edges included, because they are named
-            # in `include` (research R-2). No request is added.
+            # in `include`. No request is added.
             nodes = self.client.all(
                 kind=model_name,
                 include=identifier_and_attribute_fields(model),
@@ -1625,6 +1635,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         Raises:
             SkippedDeleteOperation: the operation is a recorded delete (a designed
                 limitation, not a failure), and no skip is recorded — see above.
+            LineageNotResolvedError: `resolve_lineage` has not set this run's source, owner
+                and protection, so no write is made for this operation.
             ReviewedPayloadFieldMissingError: the live schema or SDK mutation would omit
                 a reviewed direct payload field, so no write is made for this operation.
             UnaccountedIdentityComponentError: a human-friendly-ID component of the
@@ -1644,6 +1656,17 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 "destination was not touched."
             )
             raise SkippedDeleteOperation(msg)
+
+        # Checked before the schema read and the peer lookups, so a refused operation reads and
+        # writes nothing.
+        lineage = self.lineage
+        if lineage is None:
+            msg = (
+                f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} was refused: "
+                "the import's source, owner and protection were not resolved before the write. "
+                "No destination write was attempted."
+            )
+            raise LineageNotResolvedError(msg)
 
         # Preflight refreshed this cache once for the whole plan. Reuse the schema that
         # the SDK will render with; a fresh full-branch download per operation is costly
@@ -1731,15 +1754,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             if not _has_unwritable_hfid_component(node_schema):
                 self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
 
-        lineage = self.lineage
-        source_id = lineage.source.id if lineage is not None else None
-        owner_id = lineage.owner.id if lineage is not None and lineage.owner is not None else None
+        source_id = lineage.source.id
+        owner_id = None if lineage.owner is None else lineage.owner.id
         # `None` leaves the `is_protected` key out of the payload, so a value protected earlier
         # keeps its flag; the flag is sent only when the package turns `protect` on (FR-006).
-        is_protected = True if lineage is not None and lineage.protect else None
+        is_protected = True if lineage.protect else None
         # The owner goes on every value a create writes. An update sends it on no attribute,
-        # so the server keeps the owner each value holds, including an empty one (FR-002,
-        # D-8); it goes only on the relationship edges the update adds (research R-6).
+        # so the server keeps the owner each value holds, including an empty one (FR-002);
+        # it goes only on the relationship edges the update adds, because an edge the update
+        # sends again keeps the owner it holds.
         create_data = self.client.schema.generate_payload_create(
             schema=node_schema,
             data=data,
@@ -1841,7 +1864,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         references: Sequence[RelationshipReference],
         owner_id: str,
     ) -> None:
-        """Put the owner on the relationship edges an update adds, and on no other edge (R-6).
+        """Put the owner on the relationship edges an update adds, and on no other edge.
 
         An edge is added when its peer is not among the node's current peers (cardinality
         many), or differs from the current peer (cardinality one). Infrahub replaces an
@@ -1910,7 +1933,7 @@ def clear_lineage_on_pool_edges(create_data: dict[str, Any], node_schema: NodeSc
     """Remove `source`, `owner` and `is_protected` from each relationship edge allocated from a resource pool.
 
     Infrahub sets the pool as the source of an edge it allocates, so that edge must carry none
-    of the import's lineage properties (spec Clarifications Q2, research R-6). No V3 write path
+    of the import's lineage properties, and the pool stays its source. No V3 write path
     allocates from a pool today; this keeps the rule in place for the write path that does.
     An edge is allocated from a pool when its input carries the `from_pool` key.
     """

@@ -1,9 +1,9 @@
 """The plan artifact writer (FR-004, FR-010, FR-019, FR-021, FR-022, FR-026, FR-027).
 
 `operations.jsonl` is written **first**, then `last_changes.jsonl` when the plan has one, and
-`manifest.json` **last**; that order is the commit point (AD014): the manifest's presence is what makes the artifact complete, so a
-failure part-way through the operations write leaves a run directory with a `plan/`
-directory and no manifest — which the reader classifies as **torn** — while a run that
+`manifest.json` **last**; that order is the commit point (AD014): the manifest's presence is
+what makes the artifact complete, so a failure part-way through the operations write leaves a
+run directory with a `plan/` directory and no manifest — which the reader classifies as **torn** — while a run that
 never reached this writer has no `plan/` directory at all and is classified as the
 pre-existing v1 format. The two verdicts are therefore disjoint by construction rather
 than by heuristic.

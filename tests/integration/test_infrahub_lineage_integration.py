@@ -1,38 +1,59 @@
 """Import lineage against a live Infrahub: who wrote each value, with which permissions.
 
 The import runs with the token of an account used only by this import. Each test creates that
-account with the permission set documented in research R-7 of the import-lineage
-specification, for a branch other than the default branch:
+account with the smallest permission set the adapter documents. On a branch other than the
+default branch, that set is:
 
 - `view`, `create` and `update` (decision `allow_other`) on each kind the import writes;
-- `view` on the peer kind of each relationship it writes, here the same tag kind.
+- `view` on the peer kind of each relationship it writes, here the same tag kind;
+- with a `source` or an `owner` setting, `view` on the named node's kind, and nothing more,
+  because the lookup selects the node's name only.
+
+On the default branch, the object permissions take the decision `allow_default`, and the
+account also holds the global permission `edit_default_branch`.
 
 The tests then drive the import's own destination calls with that token:
 
 - the adapter's construction, which reads the server version and the schema;
-- the lineage resolution, which reads the account behind the token;
+- the lineage resolution, which reads the account behind the token and each named node;
 - the reads a plan makes of each kind;
 - a saved-plan apply through `Potenda.apply_plan`, which resolves the account again, checks it
   against the account the plan recorded and writes through the planned-write surface.
 
-They cover quickstart scenario 1 (SC-001, SC-002, SC-007), scenario 2 (the `owner` setting:
-SC-003, SC-004, FR-011), scenario 3 (who last changed each value a plan updates, read with
-the plan's destination read: SC-005, FR-007), scenario 4 (the `protect` setting, and values
-written before this release: FR-006) and scenario 5 (a missing permission on a
-written kind and on the owner's kind: SC-006). With an owner, the account also holds `view` on `CoreAccountGroup`,
-the only permission the owner lookup needs, because it selects the group's name only.
+They cover:
+
+- the import account as the source of what it writes, and the refusal of an apply made with
+  another account's token;
+- a `source` setting naming a group, an account or a repository, and the permission each
+  lookup needs;
+- the `owner` setting: set on created values and added edges only;
+- a named node that does not exist, which stops the plan and the apply;
+- who last changed each value a plan updates;
+- the `protect` setting, and values written before this release;
+- a missing permission on a written kind and on the named node's kind;
+- the permission set for the default branch, which writes to `main` (opt-in, see below).
 
 What is written where:
 
 - The throwaway schema and every node the import writes go to a branch the module creates and
-  deletes, never to `main`.
-- Accounts, roles, groups and object permissions are global: Infrahub keeps them on `main`.
-  Each test deletes the ones it created at teardown. A permission that already existed is
-  reused and left in place.
+  deletes. Only the default-branch test writes to `main`.
+- Accounts, roles, groups, repositories and permissions are branch-agnostic: Infrahub keeps
+  them on every branch at once. Each test deletes the ones it created at teardown. A
+  permission that already existed is reused and left in place.
 
 The destination needs `INFRAHUB_ADDRESS` and `INFRAHUB_API_TOKEN`, the token of an account that
 can manage accounts and permissions (the initial admin). Anonymous access should be off, so that
-a missing permission cannot be granted by the anonymous role. Run with::
+a missing permission cannot be granted by the anonymous role. Two groups of tests need more and
+skip without it:
+
+- The repository tests need `INFRAHUB_SYNC_LINEAGE_REPOSITORY_LOCATION`: a Git location the
+  Infrahub server and task workers can clone, such as `file:///tmp/lineage-repo.git` for a bare
+  repository copied into those containers. Infrahub clones a repository when it is created.
+- The default-branch test needs `INFRAHUB_SYNC_LINEAGE_WRITE_DEFAULT_BRANCH=1`. It loads the
+  throwaway schema on `main` and leaves it there, and writes nodes on `main` that it deletes
+  at teardown. Set it only for a disposable Infrahub.
+
+Run with::
 
     INFRAHUB_ADDRESS=http://localhost:8000 \\
     INFRAHUB_API_TOKEN=<admin token> \\
@@ -127,8 +148,11 @@ _SCHEMA = {
     ],
 }
 
-# `decision` values of an object permission (Infrahub `PermissionDecision`).
+# `decision` values of a permission (Infrahub `PermissionDecision`).
+ALLOW_DEFAULT = 2
 ALLOW_OTHER = 4
+ALLOW_ALL = 6
+_DECISION_LABELS = {ALLOW_DEFAULT: "allow_default", ALLOW_OTHER: "allow_other", ALLOW_ALL: "allow_all"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,27 +167,61 @@ class ObjectPermission:
     @property
     def label(self) -> str:
         """The permission as Infrahub names it in a denial."""
-        decision = {2: "allow_default", 4: "allow_other", 6: "allow_all"}[self.decision]
-        return f"object:{self.namespace}:{self.name}:{self.action}:{decision}"
+        return f"object:{self.namespace}:{self.name}:{self.action}:{_DECISION_LABELS[self.decision]}"
 
 
-def _kind_permissions(namespace: str, name: str, actions: Sequence[str]) -> tuple[ObjectPermission, ...]:
-    return tuple(ObjectPermission(namespace=namespace, name=name, action=action) for action in actions)
+@dataclass(frozen=True, slots=True)
+class GlobalPermission:
+    """One global permission, as Infrahub renders it: `global:<action>:<decision>`."""
+
+    action: str
+    decision: int = ALLOW_ALL
+
+    @property
+    def label(self) -> str:
+        """The permission as Infrahub names it in a denial."""
+        return f"global:{self.action}:{_DECISION_LABELS[self.decision]}"
 
 
-# The smallest permission set of research R-7, for a branch other than the default branch: the
-# import writes both kinds and reads the tag kind as the peer kind of `tags`. No global
-# permission is needed off the default branch, and none is needed for `get_version`,
-# `get_user` or the schema read.
+Permission = ObjectPermission | GlobalPermission
+
+
+def _kind_permissions(
+    namespace: str, name: str, actions: Sequence[str], decision: int = ALLOW_OTHER
+) -> tuple[ObjectPermission, ...]:
+    return tuple(
+        ObjectPermission(namespace=namespace, name=name, action=action, decision=decision) for action in actions
+    )
+
+
+# The smallest permission set for a branch other than the default branch: the import writes
+# both kinds and reads the tag kind as the peer kind of `tags`. No global permission is needed
+# off the default branch, and none is needed for `get_version`, the import account query or
+# the schema read.
 BRANCH_IMPORT_PERMISSIONS: tuple[ObjectPermission, ...] = (
     *_kind_permissions("Test", "LineageTag", ("view", "create", "update")),
     *_kind_permissions("Test", "LineageDevice", ("view", "create", "update")),
 )
+# The smallest permission set for the default branch: the same object permissions with the
+# decision `allow_default`, and the global permission to change data on the default branch.
+EDIT_DEFAULT_BRANCH = GlobalPermission(action="edit_default_branch")
+DEFAULT_BRANCH_IMPORT_PERMISSIONS: tuple[Permission, ...] = (
+    *_kind_permissions("Test", "LineageTag", ("view", "create", "update"), decision=ALLOW_DEFAULT),
+    *_kind_permissions("Test", "LineageDevice", ("view", "create", "update"), decision=ALLOW_DEFAULT),
+    EDIT_DEFAULT_BRANCH,
+)
 DEVICE_CREATE = ObjectPermission(namespace="Test", name="LineageDevice", action="create")
-# The owner lookup reads the named group, selecting its name only (research R-7).
+# A `source` or `owner` lookup reads the named node, selecting its name only, so it needs
+# `view` on the named node's kind and on no peer kind.
 GROUP_VIEW = ObjectPermission(namespace="Core", name="AccountGroup", action="view")
+ACCOUNT_VIEW = ObjectPermission(namespace="Core", name="Account", action="view")
 OWNER_IMPORT_PERMISSIONS: tuple[ObjectPermission, ...] = (*BRANCH_IMPORT_PERMISSIONS, GROUP_VIEW)
 GROUP_KIND = "CoreAccountGroup"
+ACCOUNT_KIND = "CoreAccount"
+REPOSITORY_KINDS = ("CoreRepository", "CoreReadOnlyRepository")
+REPOSITORY_LOCATION_VARIABLE = "INFRAHUB_SYNC_LINEAGE_REPOSITORY_LOCATION"
+WRITE_DEFAULT_BRANCH_VARIABLE = "INFRAHUB_SYNC_LINEAGE_WRITE_DEFAULT_BRANCH"
+DEFAULT_BRANCH = "main"
 
 
 @dataclass(slots=True)
@@ -174,7 +232,7 @@ class ImportAccount:
     id: str
     token: str = field(repr=False)
     role_id: str
-    permission_ids: dict[ObjectPermission, str]
+    permission_ids: dict[Permission, str]
 
 
 def _env_or_skip() -> tuple[str, str]:
@@ -278,9 +336,9 @@ class AccountFactory:
         self._admin = _make_client(address, admin_token)
         self._created: list[InfrahubNodeSync] = []
         self._created_permissions: list[InfrahubNodeSync] = []
-        self._permission_ids: dict[ObjectPermission, str] = {}
+        self._permission_ids: dict[Permission, str] = {}
 
-    def __call__(self, permissions: Sequence[ObjectPermission]) -> ImportAccount:
+    def __call__(self, permissions: Sequence[Permission]) -> ImportAccount:
         """Return a new account whose only permissions are `permissions`."""
         name = f"lineage-import-{uuid.uuid4().hex[:8]}"
         password = secrets.token_urlsafe(24)
@@ -310,7 +368,7 @@ class AccountFactory:
             permission_ids=permission_ids,
         )
 
-    def remove_permission(self, account: ImportAccount, permission: ObjectPermission) -> None:
+    def remove_permission(self, account: ImportAccount, permission: Permission) -> None:
         """Take `permission` away from the account's role, leaving every other permission in place."""
         permission_id = account.permission_ids.pop(permission)
         _graphql(
@@ -321,21 +379,33 @@ class AccountFactory:
             headers={"X-INFRAHUB-KEY": self._admin_token},
         )
 
-    def _permission_id(self, permission: ObjectPermission) -> str:
+    def add_permission(self, account: ImportAccount, permission: Permission) -> None:
+        """Give the account's role `permission` as well, leaving every other permission in place."""
+        permission_id = self._permission_id(permission)
+        account.permission_ids[permission] = permission_id
+        _graphql(
+            self._address,
+            "mutation { RelationshipAdd(data: {"
+            f'id: "{account.role_id}", name: "permissions", nodes: [{{id: "{permission_id}"}}]'
+            "}) { ok } }",
+            headers={"X-INFRAHUB-KEY": self._admin_token},
+        )
+
+    def _permission_id(self, permission: Permission) -> str:
         if permission in self._permission_ids:
             return self._permission_ids[permission]
-        data = {
-            "namespace": permission.namespace,
-            "name": permission.name,
-            "action": permission.action,
-            "decision": permission.decision,
-        }
+        kind = "CoreObjectPermission"
+        data: dict[str, Any] = {"action": permission.action, "decision": permission.decision}
+        if isinstance(permission, ObjectPermission):
+            data.update({"namespace": permission.namespace, "name": permission.name})
+        else:
+            kind = "CoreGlobalPermission"
         filters: dict[str, Any] = {f"{key}__value": value for key, value in data.items()}
-        found = self._admin.filters(kind="CoreObjectPermission", **filters)
+        found = self._admin.filters(kind=kind, **filters)
         if found:
             node = found[0]
         else:
-            node = self._admin.create(kind="CoreObjectPermission", data=data)
+            node = self._admin.create(kind=kind, data=data)
             node.save()
             self._created_permissions.append(node)
         assert node.id is not None
@@ -366,43 +436,60 @@ def _attribute(node: InfrahubNodeSync, name: str) -> Attribute:
 
 
 @dataclass(slots=True)
-class OwnerGroup:
-    """A `CoreAccountGroup` a test names as owner, which the test can rename and restore."""
+class NamedNode:
+    """A node a test names as `source` or `owner`, which the test can rename and restore.
+
+    `name` is the name the package gives, which differs from the node's name once the test
+    renames the node.
+    """
 
     node: InfrahubNodeSync
+    kind: str
     name: str
 
     @property
     def id(self) -> str:
-        """The id Infrahub gave the group."""
+        """The id Infrahub gave the node."""
         assert self.node.id is not None
         return self.node.id
 
     def rename(self, name: str) -> None:
-        """Give the group another name, as a person does in Infrahub."""
+        """Give the node another name, as a person does in Infrahub."""
         _attribute(self.node, "name").value = name
         self.node.save()
 
 
-@pytest.fixture
-def owner_groups(lineage_branch: LineageBranch) -> Iterator[Callable[[], OwnerGroup]]:
-    """Make `CoreAccountGroup` nodes with no member and no role; each is deleted after the test."""
-    admin = _make_client(lineage_branch.address, lineage_branch.admin_token)
-    created: list[OwnerGroup] = []
+def _named_node_data(kind: str, name: str) -> dict[str, Any]:
+    """The data that creates a node of `kind` named `name` with nothing else: no member, role or permission."""
+    if kind == GROUP_KIND:
+        return {"name": name}
+    if kind == ACCOUNT_KIND:
+        return {"name": name, "password": secrets.token_urlsafe(24), "account_type": "User"}
+    location = os.environ.get(REPOSITORY_LOCATION_VARIABLE)
+    if not location:
+        pytest.skip(f"{REPOSITORY_LOCATION_VARIABLE} must name a Git location the Infrahub server can clone")
+    return {"name": name, "location": location, **({"ref": "main"} if kind == "CoreReadOnlyRepository" else {})}
 
-    def make() -> OwnerGroup:
+
+@pytest.fixture
+def named_nodes(lineage_branch: LineageBranch) -> Iterator[Callable[..., NamedNode]]:
+    """Make nodes a test names as `source` or `owner`: a group by default; each is deleted after the test."""
+    admin = _make_client(lineage_branch.address, lineage_branch.admin_token)
+    created: list[NamedNode] = []
+
+    def make(kind: str = GROUP_KIND) -> NamedNode:
         name = f"network-team-{uuid.uuid4().hex[:8]}"
-        node = admin.create(kind=GROUP_KIND, data={"name": name})
+        node = admin.create(kind=kind, data=_named_node_data(kind, name))
         node.save()
-        group = OwnerGroup(node=node, name=name)
-        created.append(group)
-        return group
+        named = NamedNode(node=node, kind=kind, name=name)
+        created.append(named)
+        return named
 
     try:
         yield make
     finally:
-        for group in reversed(created):
-            group.node.delete()
+        for named in reversed(created):
+            named.node.delete()
 
 
 def import_adapter(
@@ -410,20 +497,24 @@ def import_adapter(
     account: ImportAccount,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    owner: OwnerGroup | None = None,
+    source: NamedNode | None = None,
+    owner: NamedNode | None = None,
     protect: bool | None = None,
+    branch: str | None = None,
 ) -> InfrahubAdapter:
     """The Infrahub destination adapter built the way a run builds it, with the account's token.
 
     A direct run takes the token from `INFRAHUB_API_TOKEN` before the settings, so the
     environment variable is set to the account's token for the construction only. The
-    construction reads the server version and the schema with that token. `owner` adds the
-    setting `owner: {kind: CoreAccountGroup, name: <the group's name>}`; `protect` adds the
-    setting `protect: <protect>`.
+    construction reads the server version and the schema with that token. `source` and `owner`
+    add the settings `source: {kind, name}` and `owner: {kind, name}` with the node's kind and
+    the name the package gives; `protect` adds the setting `protect: <protect>`. The run uses
+    the module's branch unless `branch` names another.
     """
     settings: dict[str, Any] = {"url": lineage.address}
-    if owner is not None:
-        settings["owner"] = {"kind": GROUP_KIND, "name": owner.name}
+    for setting, named in (("source", source), ("owner", owner)):
+        if named is not None:
+            settings[setting] = {"kind": named.kind, "name": named.name}
     if protect is not None:
         settings["protect"] = protect
     config = SyncConfig(
@@ -434,11 +525,13 @@ def import_adapter(
     with monkeypatch.context() as patched:
         patched.setenv("INFRAHUB_ADDRESS", lineage.address)
         patched.setenv("INFRAHUB_API_TOKEN", account.token)
-        return InfrahubAdapter(target="destination", adapter=config.destination, config=config, branch=lineage.branch)
+        return InfrahubAdapter(
+            target="destination", adapter=config.destination, config=config, branch=branch or lineage.branch
+        )
 
 
 def plan_reads(adapter: InfrahubAdapter) -> None:
-    """The reads a plan makes of the destination: lineage, then each kind with its fields (SC-002)."""
+    """The reads a plan makes of the destination: lineage, then each kind with its fields."""
     adapter.resolve_lineage()
     adapter.client.all(kind=TAG_KIND, include=["name"], populate_store=True)
     adapter.client.all(kind=DEVICE_KIND, include=["name", "serial", TAGS_RELATIONSHIP], populate_store=True)
@@ -587,14 +680,52 @@ def _edge_lineage(admin: InfrahubClientSync, device_name: str, branch: str) -> d
     return lineage
 
 
+@dataclass(frozen=True, slots=True)
+class WrittenLineage:
+    """What an admin reads back for every value and node a saved plan of `save_plan` created."""
+
+    values: dict[str, dict[str, Any]]
+    created_by: dict[str, str | None]
+
+
+def _written_lineage(admin: InfrahubClientSync, plan: SavedPlan, branch: str) -> WrittenLineage:
+    """The source, owner and protection of each attribute and `tags` edge, and each node's `created_by`."""
+    values: dict[str, dict[str, Any]] = {}
+    created_by: dict[str, str | None] = {}
+    nodes: list[tuple[str, str, tuple[str, ...]]] = [(TAG_KIND, name, ("name",)) for name in plan.tag_names]
+    nodes.append((DEVICE_KIND, plan.device_name, ("name", "serial")))
+    for kind, name, attributes in nodes:
+        node = _read_back(admin, kind, name, branch)
+        for attribute in attributes:
+            values[f"{name}.{attribute}"] = _value_lineage(getattr(node, attribute))
+        created_by[name] = getattr(getattr(node.get_node_metadata(), "created_by", None), "id", None)
+    edges = _edge_lineage(admin, plan.device_name, branch)
+    assert len(edges) == len(plan.tag_names), f"Expected {len(plan.tag_names)} tags edges, read back {edges}."
+    for peer_id, edge in edges.items():
+        values[f"{plan.device_name}.tags -> {peer_id}"] = edge
+    return WrittenLineage(values=values, created_by=created_by)
+
+
+def _assert_written_with(written: WrittenLineage, *, source: str, account: ImportAccount, what: str) -> None:
+    """Every value has `source` as source, no owner and no protection; every node has the account as `created_by`."""
+    expected = {"source": source, "owner": None, "protected": False}
+    wrong_values = {key: value for key, value in written.values.items() if value != expected}
+    wrong_nodes = {key: value for key, value in written.created_by.items() if value != account.id}
+    assert not wrong_values, f"Every value the import created must have {what} as source. Differs: {wrong_values}"
+    assert not wrong_nodes, (
+        f"Every node the import created must have the import account {account.name!r} ({account.id}) as "
+        f"`created_by`. Differs: {wrong_nodes}"
+    )
+
+
 def test_values_created_by_the_import_carry_the_import_account_as_source(
     lineage_branch: LineageBranch, account_factory: AccountFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Quickstart scenario 1 (SC-001, SC-002): a plan and an apply with only the documented permissions.
+    """A plan and an apply with only the documented permissions for a branch other than the default branch.
 
     Every attribute and every relationship edge the apply created has the import account as
     source, no owner and no protection, and every node it created has `created_by` set to the
-    import account. The edge source was not read back by the permission probe of research R-7.
+    import account.
     """
     account = account_factory(BRANCH_IMPORT_PERMISSIONS)
 
@@ -604,39 +735,125 @@ def test_values_created_by_the_import_carry_the_import_account_as_source(
 
     apply_saved_plan(plan, import_adapter(lineage_branch, account, monkeypatch))
 
-    admin, branch = lineage_branch.admin, lineage_branch.branch
-    expected = {"source": account.id, "owner": None, "protected": False}
-    observed: dict[str, dict[str, Any]] = {}
-    for name in plan.tag_names:
-        tag = _read_back(admin, TAG_KIND, name, branch)
-        observed[f"{name}.name"] = _value_lineage(tag.name)
-        metadata = tag.get_node_metadata()
-        observed[f"{name} created_by"] = {"id": getattr(getattr(metadata, "created_by", None), "id", None)}
-    device = _read_back(admin, DEVICE_KIND, plan.device_name, branch)
-    observed[f"{plan.device_name}.name"] = _value_lineage(device.name)
-    observed[f"{plan.device_name}.serial"] = _value_lineage(device.serial)
-    metadata = device.get_node_metadata()
-    observed[f"{plan.device_name} created_by"] = {"id": getattr(getattr(metadata, "created_by", None), "id", None)}
-    edges = _edge_lineage(admin, plan.device_name, branch)
-    assert len(edges) == len(plan.tag_names), f"Expected {len(plan.tag_names)} tags edges, read back {edges}."
-    for peer_id, edge in edges.items():
-        observed[f"{plan.device_name}.tags -> {peer_id}"] = edge
+    written = _written_lineage(lineage_branch.admin, plan, lineage_branch.branch)
+    _assert_written_with(
+        written, source=account.id, account=account, what=f"the import account {account.name!r} ({account.id})"
+    )
 
-    wrong = {
-        key: value
-        for key, value in observed.items()
-        if value != ({"id": account.id} if key.endswith("created_by") else expected)
-    }
-    assert not wrong, (
-        f"Every value the import created must have the import account {account.name!r} ({account.id}) as "
-        f"source, no owner and no protection, and every node must have it as `created_by`. Differs: {wrong}"
+
+def test_a_named_group_source_is_the_source_of_every_value_and_edge_the_import_writes(
+    lineage_branch: LineageBranch,
+    account_factory: AccountFactory,
+    named_nodes: Callable[..., NamedNode],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`source: {kind: CoreAccountGroup, name: ...}` replaces the import account as source.
+
+    The account holds `view` on `CoreAccountGroup` and nothing more than the branch set. Every
+    attribute and every `tags` edge the apply created has the group as source, no owner and no
+    protection. Each node's `created_by` is still the import account, because Infrahub records
+    the account behind the token there.
+    """
+    account = account_factory(OWNER_IMPORT_PERMISSIONS)
+    team = named_nodes()
+
+    planning = import_adapter(lineage_branch, account, monkeypatch, source=team)
+    plan_reads(planning)
+    assert planning.lineage_record is not None
+    assert (planning.lineage_record.source.kind, planning.lineage_record.source.name) == (GROUP_KIND, team.name)
+    plan = save_plan(tmp_path, planning)
+    apply_saved_plan(plan, import_adapter(lineage_branch, account, monkeypatch, source=team))
+
+    written = _written_lineage(lineage_branch.admin, plan, lineage_branch.branch)
+    _assert_written_with(written, source=team.id, account=account, what=f"the group {team.name!r} ({team.id})")
+
+
+def _assert_lookup_refused_for_kind(adapter: InfrahubAdapter, permission: ObjectPermission) -> None:
+    """The lineage lookup is refused with HTTP 403, classified as a missing `permission`, never a refused token."""
+    with pytest.raises(AuthenticationError) as raised:
+        adapter.resolve_lineage()
+    classification = classify_infrahub_error(raised.value)
+    assert classification is not None, f"The refusal must be classified; the run said: {raised.value!r}"
+    assert classification.problem == "missing_permission", f"Classified as {classification}"
+    assert permission.label in classification.permissions, (
+        f"The cause must quote {permission.label}; it quoted {classification.permissions}"
+    )
+
+
+def test_a_named_account_source_needs_view_on_core_account_and_nothing_more(
+    lineage_branch: LineageBranch,
+    account_factory: AccountFactory,
+    named_nodes: Callable[..., NamedNode],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`source: {kind: CoreAccount, name: ...}`: refused without `view` on `CoreAccount`, written with it.
+
+    Without the permission, the lookup is a missing permission that quotes
+    `object:Core:Account:view:allow_other`. With that one permission added to the branch set,
+    the plan and the apply pass, and every value and edge has the named account as source.
+    """
+    account = account_factory(BRANCH_IMPORT_PERMISSIONS)
+    named_account = named_nodes(ACCOUNT_KIND)
+
+    _assert_lookup_refused_for_kind(
+        import_adapter(lineage_branch, account, monkeypatch, source=named_account), ACCOUNT_VIEW
+    )
+
+    account_factory.add_permission(account, ACCOUNT_VIEW)
+    planning = import_adapter(lineage_branch, account, monkeypatch, source=named_account)
+    plan_reads(planning)
+    plan = save_plan(tmp_path, planning)
+    apply_saved_plan(plan, import_adapter(lineage_branch, account, monkeypatch, source=named_account))
+
+    written = _written_lineage(lineage_branch.admin, plan, lineage_branch.branch)
+    _assert_written_with(
+        written,
+        source=named_account.id,
+        account=account,
+        what=f"the account {named_account.name!r} ({named_account.id})",
+    )
+
+
+@pytest.mark.parametrize("kind", REPOSITORY_KINDS)
+def test_a_named_repository_source_needs_view_on_its_kind_and_nothing_more(
+    kind: str,
+    lineage_branch: LineageBranch,
+    account_factory: AccountFactory,
+    named_nodes: Callable[..., NamedNode],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`source` naming a repository: refused without `view` on its kind, written with only that permission.
+
+    Skipped unless `INFRAHUB_SYNC_LINEAGE_REPOSITORY_LOCATION` names a Git location the server
+    can clone, because Infrahub clones a repository when it is created.
+    """
+    account = account_factory(BRANCH_IMPORT_PERMISSIONS)
+    repository = named_nodes(kind)
+    repository_view = ObjectPermission(namespace="Core", name=kind.removeprefix("Core"), action="view")
+
+    _assert_lookup_refused_for_kind(
+        import_adapter(lineage_branch, account, monkeypatch, source=repository), repository_view
+    )
+
+    account_factory.add_permission(account, repository_view)
+    planning = import_adapter(lineage_branch, account, monkeypatch, source=repository)
+    plan_reads(planning)
+    plan = save_plan(tmp_path, planning)
+    apply_saved_plan(plan, import_adapter(lineage_branch, account, monkeypatch, source=repository))
+
+    written = _written_lineage(lineage_branch.admin, plan, lineage_branch.branch)
+    _assert_written_with(
+        written, source=repository.id, account=account, what=f"the {kind} {repository.name!r} ({repository.id})"
     )
 
 
 def test_an_apply_with_another_accounts_token_is_refused_before_any_write(
     lineage_branch: LineageBranch, account_factory: AccountFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Quickstart scenario 1, step 4 (SC-007, FR-012): the cause names both accounts and nothing is written."""
+    """An apply with another account's token is refused: the cause names both accounts and nothing is written."""
     planner = account_factory(BRANCH_IMPORT_PERMISSIONS)
     other = account_factory(BRANCH_IMPORT_PERMISSIONS)
 
@@ -660,7 +877,7 @@ def test_an_apply_with_another_accounts_token_is_refused_before_any_write(
 def test_a_missing_permission_is_recorded_as_a_missing_permission(
     lineage_branch: LineageBranch, account_factory: AccountFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Quickstart scenario 5 (SC-006, FR-008): one permission removed, and the cause names it.
+    """A missing permission on a written kind: one permission removed, and the cause names it.
 
     The account loses `create` on the device kind after the plan is saved. The apply writes the
     tags, then the device write is refused with HTTP 403 or a GraphQL permission denial. The
@@ -698,7 +915,7 @@ mutation SetOwnerByHand($device: String!, $serial: String!, $tag: String!, $owne
 """
 
 
-def _set_owner_by_hand(lineage: LineageBranch, *, device: InfrahubNodeSync, tag_id: str, owner: OwnerGroup) -> None:
+def _set_owner_by_hand(lineage: LineageBranch, *, device: InfrahubNodeSync, tag_id: str, owner: NamedNode) -> None:
     """Make `owner` the owner of the device's serial and of its edge to `tag_id`, as a person does by hand.
 
     The device has only that edge at this point, so the list sent keeps its peers as they are.
@@ -737,11 +954,11 @@ def plan_loads(destination: InfrahubAdapter, source: SourceNotRead) -> None:
 def test_owner_is_set_on_created_values_and_on_added_edges_only(
     lineage_branch: LineageBranch,
     account_factory: AccountFactory,
-    owner_groups: Callable[[], OwnerGroup],
+    named_nodes: Callable[..., NamedNode],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Quickstart scenario 2, steps 1 to 4 (SC-004, FR-002, research R-6).
+    """The owner goes on every value an apply creates, and on the edges an update adds only.
 
     A first apply creates two tags and a device that refers to the first tag: every value it
     creates has the named group as owner. A person then gives the device's serial and its edge
@@ -750,8 +967,8 @@ def test_owner_is_set_on_created_values_and_on_added_edges_only(
     the named group.
     """
     account = account_factory(OWNER_IMPORT_PERMISSIONS)
-    team = owner_groups()
-    by_hand = owner_groups()
+    team = named_nodes()
+    by_hand = named_nodes()
     admin, branch = lineage_branch.admin, lineage_branch.branch
 
     planning = import_adapter(lineage_branch, account, monkeypatch, owner=team)
@@ -814,39 +1031,50 @@ def test_owner_is_set_on_created_values_and_on_added_edges_only(
     )
 
 
-def test_a_missing_owner_stops_the_plan_before_the_source_is_read_and_the_apply_before_any_write(
+@pytest.mark.parametrize("setting", ["source", "owner"])
+def test_a_missing_named_node_stops_the_plan_before_the_source_is_read_and_the_apply_before_any_write(
+    setting: str,
     lineage_branch: LineageBranch,
     account_factory: AccountFactory,
-    owner_groups: Callable[[], OwnerGroup],
+    named_nodes: Callable[..., NamedNode],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Quickstart scenario 2, steps 5 and 6 (SC-003, FR-004, FR-011): the same cause in plan and in apply.
+    """A `source` or `owner` naming a group that does not exist: the same cause in plan and in apply.
 
     The group is renamed, so the name the package gives matches no group. The plan stops before
     the engine starts the source load. With the group restored, a plan is saved; the group is
     renamed again, and the apply stops before any write with the cause the plan recorded.
     """
     account = account_factory(OWNER_IMPORT_PERMISSIONS)
-    team = owner_groups()
-    named = team.name
-    expected_cause = f"The setting `owner` names `{GROUP_KIND}` `{named}`, which does not exist."
+    team = named_nodes()
 
-    team.rename(f"{named}-renamed")
+    def adapter() -> InfrahubAdapter:
+        return import_adapter(
+            lineage_branch,
+            account,
+            monkeypatch,
+            source=team if setting == "source" else None,
+            owner=team if setting == "owner" else None,
+        )
+
+    expected_cause = f"The setting `{setting}` names `{GROUP_KIND}` `{team.name}`, which does not exist."
+
+    team.rename(f"{team.name}-renamed")
     source = SourceNotRead()
     with pytest.raises(NamedLineageNodeNotFoundError) as plan_stop:
-        plan_loads(import_adapter(lineage_branch, account, monkeypatch, owner=OwnerGroup(team.node, named)), source)
+        plan_loads(adapter(), source)
     assert str(plan_stop.value) == expected_cause
     assert source.loads == [], "The plan must stop before the source system is read."
 
-    team.rename(named)
-    planning = import_adapter(lineage_branch, account, monkeypatch, owner=team)
+    team.rename(team.name)
+    planning = adapter()
     plan_reads(planning)
     plan = save_plan(tmp_path, planning)
 
-    team.rename(f"{named}-renamed")
+    team.rename(f"{team.name}-renamed")
     with pytest.raises(NamedLineageNodeNotFoundError) as apply_stop:
-        apply_saved_plan(plan, import_adapter(lineage_branch, account, monkeypatch, owner=OwnerGroup(team.node, named)))
+        apply_saved_plan(plan, adapter())
     assert str(apply_stop.value) == str(plan_stop.value), "The apply must record the cause the plan records."
 
     admin, branch = lineage_branch.admin, lineage_branch.branch
@@ -859,11 +1087,11 @@ def test_a_missing_owner_stops_the_plan_before_the_source_is_read_and_the_apply_
 def test_a_missing_permission_on_the_owner_kind_is_recorded_as_a_missing_permission(
     lineage_branch: LineageBranch,
     account_factory: AccountFactory,
-    owner_groups: Callable[[], OwnerGroup],
+    named_nodes: Callable[..., NamedNode],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Quickstart scenario 5 with an owner (SC-006, FR-008): no `view` on `CoreAccountGroup`.
+    """A missing permission on the owner's kind: no `view` on `CoreAccountGroup`.
 
     The plan's owner lookup is refused with HTTP 403, which the SDK raises as an
     `AuthenticationError`, and not as a missing group. The cause is a missing permission that
@@ -871,7 +1099,7 @@ def test_a_missing_permission_on_the_owner_kind_is_recorded_as_a_missing_permiss
     and never a rejected token.
     """
     account = account_factory(OWNER_IMPORT_PERMISSIONS)
-    team = owner_groups()
+    team = named_nodes()
     account_factory.remove_permission(account, GROUP_VIEW)
 
     planning = import_adapter(lineage_branch, account, monkeypatch, owner=team)
@@ -907,7 +1135,7 @@ def test_a_missing_permission_on_the_owner_kind_is_recorded_as_a_missing_permiss
     source.load.assert_not_called()
 
 
-# --- Quickstart scenario 3: who last changed each value a plan updates -------------------------
+# --- Who last changed each value a plan updates -------------------------------------------------
 
 
 class LineageTagModel(InfrahubModel):
@@ -1146,7 +1374,7 @@ def test_the_plan_shows_who_last_changed_each_value_it_updates(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Quickstart scenario 3 (SC-005, FR-007, research R-2 and R-7).
+    """A plan records who last changed each value it updates, read with its own destination read.
 
     The import creates three tags and two devices. A second account then changes, on the first
     device, the description, the cardinality-one `primary_tag` and the cardinality-many `tags`
@@ -1348,7 +1576,7 @@ def _detail_blocks(shown: str, operation_ids: Sequence[str]) -> dict[str, list[s
 
 
 def test_registration_refuses_an_owner_given_as_a_bare_name() -> None:
-    """Quickstart scenario 2, step 7 (FR-003): `owner: network-team` is refused when the package is registered."""
+    """`owner: network-team`, a bare name, is refused when the package is registered."""
     data = package_data()
     data["configuration"]["destination"]["settings"]["owner"] = "network-team"
 
@@ -1372,7 +1600,7 @@ def _device_lineage(lineage: LineageBranch, device_name: str) -> dict[str, dict[
 def test_protect_on_protects_written_values_and_protect_off_keeps_earlier_flags(
     lineage_branch: LineageBranch, account_factory: AccountFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Quickstart scenario 4 (FR-006, D-5).
+    """`protect: true` protects what an apply writes; `protect: false` keeps the flags written earlier.
 
     With `protect: true` and no owner, a first apply creates two tags and a device that refers to
     the first tag: every attribute and edge it writes is protected. With `protect: false`, a second
@@ -1481,7 +1709,7 @@ def _write_before_this_release(lineage_branch: LineageBranch, legacy: ImportAcco
 def test_a_value_written_before_this_release_keeps_its_owner_and_protection_and_gets_the_import_source(
     lineage_branch: LineageBranch, account_factory: AccountFactory, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Spec edge case "Values written before this release", with `protect` absent and no owner.
+    """Values written before this release, with `protect` absent and no owner.
 
     An earlier import wrote a tag and a device with another account as source and owner, and
     every value protected. The import, which is not that owner, then changes the device's serial:
@@ -1525,3 +1753,99 @@ def test_a_value_written_before_this_release_keeps_its_owner_and_protection_and_
         f"the owner {legacy.id} and the protection an earlier import wrote; the tag's name, which the "
         f"import does not write, must keep its lineage. Read back {observed}."
     )
+
+
+# --- The permission set for the default branch -------------------------------------------------
+
+
+@dataclass(slots=True)
+class DefaultBranchWrites:
+    """The admin client bound to `main`, and the saved plans whose nodes the fixture deletes from `main`."""
+
+    admin: InfrahubClientSync
+    plans: list[SavedPlan] = field(default_factory=list)
+
+
+@pytest.fixture
+def default_branch(lineage_branch: LineageBranch) -> Iterator[DefaultBranchWrites]:
+    """The throwaway schema on `main`, for a test that writes there; its nodes are deleted after the test.
+
+    Skipped unless `INFRAHUB_SYNC_LINEAGE_WRITE_DEFAULT_BRANCH=1`, because the schema stays on
+    `main` after the run: set it only for a disposable Infrahub.
+    """
+    if os.environ.get(WRITE_DEFAULT_BRANCH_VARIABLE) != "1":
+        pytest.skip(f"{WRITE_DEFAULT_BRANCH_VARIABLE}=1 is needed to write to the default branch")
+    response = requests.post(
+        f"{lineage_branch.address}/api/schema/load?branch={DEFAULT_BRANCH}",
+        headers={"X-INFRAHUB-KEY": lineage_branch.admin_token, "Content-Type": "application/json"},
+        json={"schemas": [_SCHEMA]},
+        timeout=120,
+    )
+    response.raise_for_status()
+    admin = _make_client(lineage_branch.address, lineage_branch.admin_token, branch=DEFAULT_BRANCH)
+    _await_schema_kinds(admin, DEFAULT_BRANCH, (TAG_KIND, DEVICE_KIND))
+    writes = DefaultBranchWrites(admin=admin)
+    try:
+        yield writes
+    finally:
+        devices = [plan.device_name for plan in writes.plans]
+        tags = [name for plan in writes.plans for name in plan.tag_names]
+        for kind, names in ((DEVICE_KIND, devices), (TAG_KIND, tags)):
+            for node in admin.filters(kind=kind, name__values=names, branch=DEFAULT_BRANCH) if names else []:
+                node.delete()
+
+
+def test_the_default_branch_permission_set_plans_and_applies_on_main(
+    default_branch: DefaultBranchWrites,
+    lineage_branch: LineageBranch,
+    account_factory: AccountFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The documented set for `main`, and the cause recorded once `edit_default_branch` is removed.
+
+    The account holds `view`, `create` and `update` with the decision `allow_default` on both
+    kinds, and the global permission `edit_default_branch`. A plan and an apply on `main` pass,
+    and every value and edge they create has the import account as source. Without
+    `edit_default_branch`, the plan's reads still pass, and the apply's first write is refused:
+    the run records a missing permission, never a refused token, and nothing is written.
+    """
+    account = account_factory(DEFAULT_BRANCH_IMPORT_PERMISSIONS)
+
+    def adapter() -> InfrahubAdapter:
+        return import_adapter(lineage_branch, account, monkeypatch, branch=DEFAULT_BRANCH)
+
+    planning = adapter()
+    plan_reads(planning)
+    plan = save_plan(tmp_path, planning)
+    default_branch.plans.append(plan)
+    apply_saved_plan(plan, adapter())
+
+    written = _written_lineage(default_branch.admin, plan, DEFAULT_BRANCH)
+    _assert_written_with(
+        written, source=account.id, account=account, what=f"the import account {account.name!r} ({account.id})"
+    )
+
+    account_factory.remove_permission(account, EDIT_DEFAULT_BRANCH)
+    planning = adapter()
+    plan_reads(planning)
+    refused = save_plan(tmp_path, planning)
+    default_branch.plans.append(refused)
+    with pytest.raises(OperationApplyFailedError) as raised:
+        apply_saved_plan(refused, adapter())
+
+    message = str(raised.value)
+    classification = classify_infrahub_error(raised.value.__cause__) if raised.value.__cause__ else None
+    assert classification is not None, f"The refusal's cause must be classified; the run said: {message}"
+    assert classification.problem == "missing_permission", f"Classified as {classification}; the run said: {message}"
+    # Infrahub 1.10.6 names no permission here; the cause quotes its message instead.
+    assert classification.server_message == "You are not allowed to change data in the default branch", (
+        f"Classified as {classification}"
+    )
+    assert "a missing permission" in message, f"The run must record a missing permission; it said: {message}"
+    assert "authentication failure" not in message, f"A 403 must not read as a refused token; it said: {message}"
+    admin = default_branch.admin
+    held = _existing_ids(admin, TAG_KIND, refused.tag_names, DEFAULT_BRANCH) + _existing_ids(
+        admin, DEVICE_KIND, [refused.device_name], DEFAULT_BRANCH
+    )
+    assert held == [], f"The refused apply must write nothing on `main`; it holds {held}."
