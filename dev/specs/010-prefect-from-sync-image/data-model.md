@@ -32,7 +32,7 @@ Rules:
 | `object-store` | Silo | core, no port | core, loopback port for `dev.deps` | Runs as `65532:65532`; health check `silo healthcheck ready`. |
 | `prefect-server` | Sync image | core, no port, UI off | core, `127.0.0.1:4230`, UI on | uvicorn factory `infrahub_sync.service.prefect_server:create_prefect_app`. |
 | `sync-bootstrap` | Sync image | core | profile `sync` | Creates the bucket over the S3 API, the work pool and the deployment. |
-| `sync-api` | Sync image | core, the only published port | profile `sync`, `127.0.0.1:8030` | |
+| `sync-api` | Sync image | core, the only published port, `127.0.0.1:8001:8000` | profile `sync`, `127.0.0.1:8001:8000` | Product-owner decision 2026-10-23: the Sync API defaults to host port 8001; 8000 is for Infrahub. |
 | `sync-worker` | Sync image | core | profile `sync` | Attached to the Infrahub network. |
 | `cli` | Sync image | core | not present | No Prefect credential (FR-003). |
 | Infrahub services | Infrahub images | not present | profile `infrahub`, from the included file | Dropped when `--infrahub-network` is set. |

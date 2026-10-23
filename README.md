@@ -83,13 +83,13 @@ checkout. After a code change, run `uv run invoke build && uv run invoke start`.
 
 | | |
 |---|---|
-| **Sync API** | `http://127.0.0.1:8030` — bearer token `infrahub-sync-dev-token` |
+| **Sync API** | `http://127.0.0.1:8001` — bearer token `infrahub-sync-dev-token` |
 | **Prefect UI** | `http://127.0.0.1:4230` |
 | **PostgreSQL** | `127.0.0.1:5440` |
 
 ```bash
-curl -sf http://127.0.0.1:8030/version
-curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8030/status
+curl -sf http://127.0.0.1:8001/version
+curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8001/status
 ```
 
 The stack starts with no source and no destination. To continue to a first sync from a

@@ -23,6 +23,7 @@ profiles are included. The entities are described in [data-model.md](../data-mod
 | Check | Requirement |
 |-------|-------------|
 | `sync-api` is the only service with `ports` | FR-006, SC-003 |
+| `sync-api.ports` is `127.0.0.1:8001:8000` by default. Product-owner decision 2026-10-23: the Sync API defaults to host port 8001; 8000 is for Infrahub. | FR-006a |
 | `prefect-server.environment.PREFECT_UI_ENABLED == "false"` | FR-006 |
 | `prefect-server.environment.PREFECT_SERVER_UI_API_URL` is set and points at `127.0.0.1` by default | FR-006 |
 | `prefect-server` is `read_only: true` with the Sync tmpfs scratch mounts | R2 |
@@ -49,6 +50,7 @@ profiles are included. The entities are described in [data-model.md](../data-mod
 | `docker compose config --profiles` lists `infrahub` and `sync` | FR-015 |
 | Without profiles: `postgres`, `object-store-init`, `object-store`, `prefect-server` only | FR-015 |
 | `prefect-server.ports` is `127.0.0.1:4230:4200`; UI on | FR-015 |
+| `sync-api.ports` is `127.0.0.1:8001:8000` (`SYNC_API_PORT`) | FR-006a |
 | Every published port has `host_ip: 127.0.0.1` | existing loopback test |
 | Every Sync-image service mounts `infrahub_sync/` and `opsmill_prefect_extras/` read-only | FR-019 |
 | `development/docker-compose.dev.yml`, `development/docker-compose.preview.yml` and `development/preview.env` do not exist | FR-015 |

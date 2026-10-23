@@ -32,7 +32,7 @@ in before the first start, as described in
 docker login registry.opsmill.io
 ```
 
-Port 8000 on `127.0.0.1` must be available. Docker needs registry
+Port 8001 on `127.0.0.1` must be available. Docker needs registry
 access to pull the service images, and enough space for the images and the
 persistent deployment data.
 
@@ -87,7 +87,7 @@ including the image version, is listed in
 
 ```sh
 docker compose up -d --wait --wait-timeout 420
-curl -s http://127.0.0.1:8000/status
+curl -s http://127.0.0.1:8001/status
 ```
 
 `up -d --wait` pulls the images and returns once every service is healthy. In the
@@ -101,7 +101,7 @@ destination.
 ## Identify your installed version
 
 ```sh
-curl --fail --silent --show-error http://127.0.0.1:8000/version
+curl --fail --silent --show-error http://127.0.0.1:8001/version
 ```
 
 The response shows `server_version`. If you changed the API port, use that port

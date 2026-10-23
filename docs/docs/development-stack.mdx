@@ -70,17 +70,19 @@ prints the addresses:
 
 | Service | Default address | Set by |
 | --- | --- | --- |
-| Sync API | `http://127.0.0.1:8030`, bearer token `infrahub-sync-dev-token` | `SYNC_API_PORT` |
+| Sync API | `http://127.0.0.1:8001`, bearer token `infrahub-sync-dev-token` | `SYNC_API_PORT` |
 | Prefect UI and API | `http://127.0.0.1:4230` | `PREFECT_PORT` |
 | Infrahub | `http://127.0.0.1:8000`, login `admin` / `infrahub` | `INFRAHUB_PORT`, `INFRAHUB_BIND_ADDRESS` |
 
 The Infrahub host port comes from `INFRAHUB_PORT` and defaults to 8000. If another program
 already uses port 8000, export another port before you start the stack, for example
 `export INFRAHUB_PORT=8090`. Every task reads the port from the resolved Compose file, so
-`dev.smoke` and `dev.seed` use the same value. The Sync API of the
-[Compose deployment](./compose-deployment.mdx) also defaults to host port 8000: to run that
-deployment and this stack at the same time, move one of them, with `INFRAHUB_PORT` here or
-`INFRAHUB_SYNC_API_PORT` in the deployment's `.env`.
+`dev.smoke` and `dev.seed` use the same value.
+
+The Sync API of this stack and of the [Compose deployment](./compose-deployment.mdx) both
+default to host port 8001, which leaves port 8000 to Infrahub. To run that deployment and this
+stack at the same time, export another `SYNC_API_PORT` here or set `INFRAHUB_SYNC_API_PORT` in
+the deployment's `.env`.
 
 Inside the stack, the worker reaches Infrahub at `http://infrahub-server:8000`. A package that
 the containerized worker runs names that address, not the host address. `dev.start` gives the
@@ -95,8 +97,8 @@ read NetBox. [Run a first sync](#run-a-first-sync) uses this connection.
 Check the service:
 
 ```bash
-curl -sf http://127.0.0.1:8030/version
-curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8030/status
+curl -sf http://127.0.0.1:8001/version
+curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8001/status
 ```
 
 The `status` response reports `"service": "ready"` when the worker is running. The service
@@ -171,7 +173,7 @@ uv run invoke dev.api       # terminal 2
 uv run invoke dev.worker    # terminal 3
 ```
 
-`dev.api` listens on `127.0.0.1` at the Sync API port, 8030 by default. Both processes take the
+`dev.api` listens on `127.0.0.1` at the Sync API port, 8001 by default. Both processes take the
 settings that the `sync-api` and `sync-worker` containers would get, with the addresses of
 PostgreSQL, the object store and the Prefect server moved to their loopback ports. No task
 starts a background process or writes a process ID file. After a code change, stop the process
@@ -231,7 +233,7 @@ resolved Compose file, so they print and use the values you set.
 
 | Variable | Default | What it changes |
 | --- | --- | --- |
-| `SYNC_API_PORT` | `8030` | The Sync API's host port |
+| `SYNC_API_PORT` | `8001` | The Sync API's host port |
 | `PREFECT_PORT` | `4230` | The Prefect server's host port |
 | `INFRAHUB_PORT` | `8000` | The stack's Infrahub host port |
 | `INFRAHUB_BIND_ADDRESS` | `127.0.0.1` | The address the stack's Infrahub is published on |
@@ -327,7 +329,7 @@ apply.
 
     ```bash
     uv run invoke netbox.demo-package --dev-stack
-    export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8030
+    export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
     export INFRAHUB_SYNC_API_TOKEN=infrahub-sync-dev-token
     uv run infrahub-sync configs register .netbox/from-netbox.local.yml \
       --reason "register local NetBox import"

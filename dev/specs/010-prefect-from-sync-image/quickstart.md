@@ -29,7 +29,7 @@ Expected:
 - Every service is healthy.
 - `prefect-server`, `sync-api` and `sync-worker` show the same Sync image.
 - `object-store` shows `pgsty/silo`; no line shows `prefecthq/prefect`.
-- Only `sync-api` shows a published port.
+- Only `sync-api` shows a published port, `127.0.0.1:8001->8000/tcp`. Product-owner decision 2026-10-23: the Sync API defaults to host port 8001; 8000 is for Infrahub.
 
 Then register, plan and apply a configuration with the CLI, as in
 [`running-a-sync.mdx`](../../../docs/docs/running-a-sync.mdx).

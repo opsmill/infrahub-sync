@@ -331,6 +331,9 @@ image, and complete a plan and an apply.
 - **FR-006**: By default, the root file MUST NOT publish the Prefect port, MUST set
   `PREFECT_UI_ENABLED=false`, and MUST always set `PREFECT_SERVER_UI_API_URL` to the loopback
   address. Test: `docker compose config` assertions.
+- **FR-006a**: The root file and the development stack MUST publish the Sync API on host port
+  8001 by default; inside the container it listens on 8000. Product-owner decision 2026-10-23: the Sync API defaults to host port 8001; 8000 is for Infrahub. Test: `docker compose
+  config` assertions.
 - **FR-007**: The operator documentation MUST include an override snippet that turns the Prefect
   UI on, points its static files at a scratch directory, and publishes the port on `127.0.0.1`
   only. It MUST explain how to merge the snippet into an existing `docker-compose.override.yml`.

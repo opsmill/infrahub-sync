@@ -235,7 +235,7 @@ Recreate services whose environment changed, then check readiness:
 
 ```sh
 docker compose up -d --wait
-curl -s http://127.0.0.1:8000/status
+curl -s http://127.0.0.1:8001/status
 ```
 
 Continue only when the `/status` response shows `worker.state` as `ready`.

@@ -24,14 +24,14 @@ The CLI reads the Sync API URL and the bearer token from two environment variabl
 them before the first command. For the local development stack, these are:
 
 ```bash
-export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8030
+export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
 export INFRAHUB_SYNC_API_TOKEN=infrahub-sync-dev-token
 ```
 
 The token has no command-line option, so it does not appear in shell history or in
 process arguments. `--api-url` overrides the URL for one command. For a
 [Compose deployment](./compose-deployment.mdx) with the default port, the URL is
-`http://127.0.0.1:8000`, and the token is the `INFRAHUB_SYNC_API_TOKEN` value in its `.env`.
+`http://127.0.0.1:8001`, and the token is the `INFRAHUB_SYNC_API_TOKEN` value in its `.env`.
 
 The same commands also run from the `cli` service of a
 [Compose deployment](./compose-deployment.mdx#use-it), as

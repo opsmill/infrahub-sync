@@ -36,8 +36,9 @@ flow, and for the configuration and reviewed-run procedure that follows it.
 - A registry login. Until the 3.0.0 release, the registry project is open to
   invited testers only, so run `docker login registry.opsmill.io` before the
   first start. See [Install Infrahub Sync](./installation.mdx#run-the-container-image).
-- Port 8000 free on `127.0.0.1`, or another port set in `.env`. The Sync API is
-  the only port the deployment publishes.
+- Port 8001 free on `127.0.0.1`, or another port set in `.env`. The Sync API is
+  the only port the deployment publishes. Its default leaves port 8000 to
+  Infrahub, so both can run on one machine.
 
 ## Get the file
 
@@ -125,7 +126,7 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_DATABASE_URL` | composed | The product database connection string, as a whole. |
 | `INFRAHUB_SYNC_PREFECT_DATABASE_URL` | composed | The Prefect database connection string, as a whole. |
 | `INFRAHUB_SYNC_BIND_ADDRESS` | `127.0.0.1` | The address the published Sync API port binds to. |
-| `INFRAHUB_SYNC_API_PORT` | `8000` | The published Sync API port. |
+| `INFRAHUB_SYNC_API_PORT` | `8001` | The published Sync API port. |
 | `INFRAHUB_SYNC_PREFECT_PORT` | `4200` | The host port of the Prefect UI. The file does not publish the Prefect port, so this setting has no effect without the override snippet in [Open the Prefect UI](#open-the-prefect-ui). |
 | `INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE` | `postgres` | The PostgreSQL administrator role. |
 | `INFRAHUB_SYNC_PRODUCT_DATABASE`, `INFRAHUB_SYNC_PRODUCT_ROLE` | `infrahub_sync` | The product database and its owner role. |
@@ -325,7 +326,7 @@ package is valid is answered by `configs validate`, and whether its destination
 answers is answered by the first run against it.
 
 The deployment publishes one port, the Sync API, and binds it to loopback by
-default: `http://127.0.0.1:8000`. It serves no Prefect UI, and the Prefect API,
+default: `http://127.0.0.1:8001`. It serves no Prefect UI, and the Prefect API,
 PostgreSQL and the object store publish no port. To view the Prefect UI during a
 support session, see [Open the Prefect UI](#open-the-prefect-ui).
 
@@ -473,7 +474,7 @@ of its commands has a plain `docker compose` equivalent.
 | `init` | Write `.env` by hand, or generate it as shown in [An example `.env`](#an-example-env). There is no instance identity: the Compose project name, which defaults to the directory name, plays that role. |
 | `preflight` | `docker compose version --short`, expecting 2.24 or later, then `docker compose config --quiet`, which names the first missing credential. `up` reports a pull failure or a port in use. |
 | `start` | `docker compose up -d --wait`, then check the worker as in [Status](#status). |
-| `status` | `docker compose ps`, then `curl -s http://127.0.0.1:8000/status` and read `worker.state`. |
+| `status` | `docker compose ps`, then `curl -s http://127.0.0.1:8001/status` and read `worker.state`. |
 | `logs` | `docker compose logs --no-color --tail 200 [service]` |
 | `stop` | `docker compose stop` |
 | `restart` | `docker compose restart sync-api sync-worker`, then check the worker. It does not pick up a changed `.env`. |
@@ -730,7 +731,7 @@ authorize a command, or prove what a write reached.
 The same deployment answers directly. `/status` needs no credential:
 
 ```bash
-export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8000
+export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
 curl -sS "$INFRAHUB_SYNC_API_URL/status"
 ```
 
@@ -758,7 +759,7 @@ From Python:
 ```python
 from infrahub_sync.client import SyncClient
 
-with SyncClient("http://127.0.0.1:8000", "<the principal token>") as client:
+with SyncClient("http://127.0.0.1:8001", "<the principal token>") as client:
     print(client.get_status().worker.state)
 ```
 
@@ -795,7 +796,7 @@ rm -f "$CURL_CONFIG"
 
 ```bash
 docker compose ps
-curl -s http://127.0.0.1:8000/status
+curl -s http://127.0.0.1:8001/status
 ```
 
 `docker compose ps` shows each container and the health of `postgres`,

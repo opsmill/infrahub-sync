@@ -191,7 +191,7 @@ name comes from the project name `infrahub` you gave `docker compose -p` in
 3. Point the CLI at the Sync API and check the service:
 
 ```bash
-export INFRAHUB_SYNC_API_URL="http://127.0.0.1:8030"
+export INFRAHUB_SYNC_API_URL="http://127.0.0.1:8001"
 export INFRAHUB_SYNC_API_TOKEN="infrahub-sync-dev-token"
 curl -sf -H "Authorization: Bearer ${INFRAHUB_SYNC_API_TOKEN}" "${INFRAHUB_SYNC_API_URL}/status"
 ```

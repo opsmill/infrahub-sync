@@ -10,7 +10,8 @@ Every Sync stack (root `docker-compose.yml`, the development stack, and a new py
 runs the Prefect server as a `prefect-server` service that uses the Sync image and starts a
 factory module with uvicorn, as Infrahub does for its task manager
 (`infrahub/docker-compose.yml:283-297`). The root file turns the Prefect UI off and publishes
-only the Sync API port; a documented override file opens the UI on the loopback address. Every
+only the Sync API port, host port 8001 by default (FR-006a; Product-owner decision 2026-10-23: the Sync API defaults to host port 8001; 8000 is for Infrahub.); a documented override
+file opens the UI on the loopback address. Every
 stack runs the bundled object store from `pgsty/silo` pinned by tag and digest. The two
 development Compose files and `development/preview.env` become one file with `sync` and
 `infrahub` profiles, the `dev` namespace gains two modes (`dev.start`, `dev.deps`), and every
