@@ -1,0 +1,21 @@
+dev/specs/010-prefect-from-sync-image/plan.md
+  s_8d92f288a8f661::t_189228ec89e803 192-193
+dev/specs/010-prefect-from-sync-image/spec.md
+  s_8d92f288a8f661::t_dbb3d71c3252e5 101,104,534
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "08334b2dd141136af1e413114702fc3ec7367430",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
