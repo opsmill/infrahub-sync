@@ -94,7 +94,7 @@ def test_the_sync_api_publishes_on_loopback() -> None:
     api = _services(("sync",))["sync-api"]
 
     assert [(port["host_ip"], port["published"], port["target"]) for port in api["ports"]] == [
-        ("127.0.0.1", "8030", 8000)
+        ("127.0.0.1", "8001", 8000)
     ]
 
 

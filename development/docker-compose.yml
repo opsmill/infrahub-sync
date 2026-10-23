@@ -237,7 +237,7 @@ services:
         ${BEARER_TOKENS:-{"dev": {"token": "infrahub-sync-dev-token", "administrator": true}}}
       INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
     ports:
-      - "127.0.0.1:${SYNC_API_PORT:-8030}:8000"
+      - "127.0.0.1:${SYNC_API_PORT:-8001}:8000"
     volumes: *sync-source
     healthcheck:
       test:
@@ -274,10 +274,8 @@ services:
   # The Infrahub services come from `docker-compose.infrahub.yml`, under the
   # `infrahub` profile. Only their host publications change here: Infrahub
   # keeps its usual host port 8000, which no other service of this stack uses
-  # (the Sync API is on 8030), and the ports the development stack does not
-  # need are not published. The root deployment's Sync API also defaults to host
-  # port 8000, so running both at once needs INFRAHUB_PORT or
-  # INFRAHUB_SYNC_API_PORT moved.
+  # (the Sync API is on 8001), and the ports the development stack does not
+  # need are not published.
   infrahub-server:
     # Loopback unless INFRAHUB_BIND_ADDRESS names another address. A worker that
     # runs in a container on Linux and is not on this stack's network reaches the

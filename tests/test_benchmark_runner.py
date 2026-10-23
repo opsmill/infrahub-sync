@@ -41,7 +41,7 @@ from tasks import bench, dev
 # What `docker compose config` resolves for a clean checkout: the development file's defaults.
 DEV_SETTINGS = dev.DevSettings(
     project="infrahub-sync-dev",
-    sync_api=dev.Publication("127.0.0.1", "8030"),
+    sync_api=dev.Publication("127.0.0.1", "8001"),
     prefect=dev.Publication("127.0.0.1", "4230"),
     infrahub=dev.Publication("127.0.0.1", "8000"),
     infrahub_admin_token="06438eb2-8019-4776-878c-0941b1f1d1ec",  # noqa: S106 -- the development default

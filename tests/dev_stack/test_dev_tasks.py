@@ -26,7 +26,7 @@ def _resolved(*, project: str = "infrahub-sync-dev", infrahub: bool = True) -> d
     """What `docker compose config --format json` prints, trimmed to the fields the tasks read."""
     services: dict[str, Any] = {
         "sync-api": {
-            "ports": [{"mode": "ingress", "host_ip": "127.0.0.1", "target": 8000, "published": "8030"}],
+            "ports": [{"mode": "ingress", "host_ip": "127.0.0.1", "target": 8000, "published": "8001"}],
             "environment": {
                 "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": '{"dev": {"token": "infrahub-sync-dev-token"}}',
                 "INFRAHUB_SYNC_SERVICE_WORK_POOL": "infrahub-sync",
@@ -110,11 +110,11 @@ def test_dev_settings_reads_the_resolved_development_file(context: Context, fake
         "docker compose --profile sync --profile infrahub -f development/docker-compose.yml config --format json"
     ]
     assert settings.project == "infrahub-sync-dev"
-    assert settings.sync_api == dev.Publication("127.0.0.1", "8030")
+    assert settings.sync_api == dev.Publication("127.0.0.1", "8001")
     assert settings.prefect == dev.Publication("127.0.0.1", "4230")
     assert settings.infrahub == dev.Publication("0.0.0.0", "8091")  # noqa: S104
     assert settings.infrahub_admin_token == ADMIN_TOKEN
-    assert settings.sync_api_url == "http://127.0.0.1:8030"
+    assert settings.sync_api_url == "http://127.0.0.1:8001"
     assert settings.prefect_url == "http://127.0.0.1:4230"
     # Loopback answers a wildcard publication.
     assert settings.infrahub_url == "http://127.0.0.1:8091"

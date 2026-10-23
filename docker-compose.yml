@@ -246,7 +246,7 @@ services:
     read_only: true
     tmpfs: *sync-scratch
     ports:
-      - "${INFRAHUB_SYNC_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_SYNC_API_PORT:-8000}:8000"
+      - "${INFRAHUB_SYNC_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_SYNC_API_PORT:-8001}:8000"
     healthcheck:
       test:
         - "CMD"

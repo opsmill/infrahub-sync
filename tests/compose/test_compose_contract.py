@@ -368,6 +368,16 @@ def test_every_published_address_is_loopback(model: dict[str, Any]) -> None:
     assert external == [], f"{external} publish to an address other than loopback"
 
 
+def test_the_api_publishes_on_host_port_8001_by_default(model: dict[str, Any]) -> None:
+    """Host port 8000 is Infrahub's, so the Sync API takes 8001 and both run on one machine.
+
+    Inside the container the API still listens on 8000; only the host side moves.
+    """
+    ports = [(str(entry.get("published")), entry.get("target")) for entry in published(service(model, "sync-api"))]
+
+    assert ports == [("8001", 8000)]
+
+
 def test_prefect_telemetry_is_off(model: dict[str, Any]) -> None:
     """An optional call home is not something a deployment should have to discover."""
     assert service(model, "prefect-server")["environment"]["PREFECT_SERVER_ANALYTICS_ENABLED"] == "false"

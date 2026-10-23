@@ -47,7 +47,7 @@ def _resolved(*, infrahub: bool) -> dict[str, Any]:
         "object-store": {"ports": _port(9000, "9010")},
         "prefect-server": {"image": "infrahub-sync:s010-deps", "ports": _port(4200, "4230")},
         "sync-api": {
-            "ports": _port(8000, "8030"),
+            "ports": _port(8000, "8001"),
             "environment": {
                 **SYNC_ENV,
                 "INFRAHUB_SYNC_SERVICE_HOST": "0.0.0.0",  # noqa: S104 -- the container's value
@@ -161,7 +161,7 @@ def test_dev_deps_starts_core_and_infrahub_then_bootstraps_and_returns(
     # The image it checks is the one the resolved file names.
     assert next(c for c in fake.commands if c.startswith("docker image inspect")).endswith(" infrahub-sync:s010-deps")
     output = capsys.readouterr().out
-    for url in ("http://127.0.0.1:8030", "http://127.0.0.1:4230", "http://127.0.0.1:8000", "http://127.0.0.1:9010"):
+    for url in ("http://127.0.0.1:8001", "http://127.0.0.1:4230", "http://127.0.0.1:8000", "http://127.0.0.1:9010"):
         assert url in output
     assert "127.0.0.1:5440" in output
 
@@ -201,7 +201,7 @@ def test_dev_api_runs_in_the_foreground_against_the_loopback_publications(
 
     command, kwargs = fake.calls[-1]
     assert command == (
-        f"{sys.executable} -m uvicorn --factory infrahub_sync.service.serve:build_app --host 127.0.0.1 --port 8030"
+        f"{sys.executable} -m uvicorn --factory infrahub_sync.service.serve:build_app --host 127.0.0.1 --port 8001"
     )
     assert kwargs["pty"] is True
     assert not kwargs.get("asynchronous")
@@ -278,7 +278,7 @@ def test_dev_smoke_names_dev_api_when_status_does_not_answer(
     with pytest.raises(dev.DevStackError, match=r"dev\.api"):
         _body(dev.dev_smoke)(context)
 
-    assert http.urls == ["http://127.0.0.1:8030/status"]
+    assert http.urls == ["http://127.0.0.1:8001/status"]
     assert dev.SMOKE_COMMAND not in fake.commands
     assert smoke == []
 
@@ -292,7 +292,7 @@ def test_dev_smoke_names_dev_worker_when_status_reports_no_available_worker(
     with pytest.raises(dev.DevStackError, match=r"dev\.worker"):
         _body(dev.dev_smoke)(context)
 
-    assert http.urls == ["http://127.0.0.1:8030/status"]
+    assert http.urls == ["http://127.0.0.1:8001/status"]
     assert dev.SMOKE_COMMAND not in fake.commands
     assert smoke == []
 
@@ -303,7 +303,7 @@ def test_dev_smoke_with_both_host_processes_runs_the_suite_for_a_host_worker(
     _body(dev.dev_smoke)(context)
 
     # Only the Sync API's /status; never the Prefect API on 4230.
-    assert http.urls == ["http://127.0.0.1:8030/status"]
+    assert http.urls == ["http://127.0.0.1:8001/status"]
     assert not any(":4230" in command for command in fake.commands)
     assert smoke == ["http://127.0.0.1:8000"]
     command, kwargs = fake.calls[-1]
