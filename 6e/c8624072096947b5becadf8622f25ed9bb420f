@@ -1,0 +1,30 @@
+tests/test_unit_tier.py
+  s_8d92f288a8f661::t_cadc099d6b0b21 5
+  s_8d92f288a8f661::t_bbe1df2ac919bf 12
+  s_8d92f288a8f661::t_207c68334969d9 52-67
+tests/compose/test_testcontainers_fixture.py
+  s_8d92f288a8f661::t_a713c7cb431901 52
+  s_8d92f288a8f661::t_9c5ddb9fc38322 34-36
+  s_8d92f288a8f661::t_b040a7ee1cf9a5 37
+tests/conftest.py
+  s_8d92f288a8f661::t_15b685b036d23b 24
+  s_8d92f288a8f661::t_dab6867d29f1d5 54-56,59,62-63,65-67,72
+  s_8d92f288a8f661::t_415e8c77fb9191 26
+  s_8d92f288a8f661::t_b2040700db4bc5 57-58,60-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6ec8624072096947b5becadf8622f25ed9bb420f",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
