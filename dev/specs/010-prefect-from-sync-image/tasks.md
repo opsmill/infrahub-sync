@@ -215,8 +215,8 @@ data, used by the CI end-to-end tier.
 - [X] T065 [P] Rewrite `docs/docs/development-stack.mdx` for both modes, `--infrahub-network`, `dev.restart`, and the stale-image rebuild, so an engineer with a fresh checkout reaches `dev.smoke` from it alone (FR-027, SC-006); fold or delete `docs/docs/development/guides/preview-stack.md` and update `docs/sidebars.ts` and `tests/test_development_stack_docs.py`. (PR 1: `preview-stack.md` and its sidebar entry stay, with a note that the development stack replaces it; PR 2 deletes them with the preview stack)
 - [ ] T066 [P] Replace `check-310` with `tests.check-310` in `docs/docs/development/guidelines/testing-tiers.md` (lines 38, 539), and update `docs/docs/development/knowledge/repository-tour.md` for the new modules and the removed files. (repository-tour part done in PR 1; check-310 rename moves to PR 2 with T036)
 - [X] T067 [P] Amend `dev/adr/0019-prefect-is-an-internal-component-of-sync.md` with D-3: the Prefect API will later be reachable only through the Sync API (one process or a proxy, not decided); keeping the Prefect database password out of `sync-api` is defence in depth.
-- [ ] T068 Run `uv run invoke format`, `uv run invoke lint`, `uv run invoke tests.tests-unit`, `uv run ty check .`, and the CLI sanity commands from `AGENTS.md`; fix every finding.
-- [ ] T069 Run every section of [quickstart.md](quickstart.md) once more on a clean machine state and record any difference in this file.
+- [X] T068 Run `uv run invoke format`, `uv run invoke lint`, `uv run invoke tests.tests-unit`, `uv run ty check .`, and the CLI sanity commands from `AGENTS.md`; fix every finding.
+- [X] T069 Run every section of [quickstart.md](quickstart.md) once more on a clean machine state and record any difference in this file.
 
 ---
 
@@ -282,3 +282,82 @@ PR 1:
 
 PR 2: task renames and deletions, `preview` removal, and the callers (`AGENTS.md`,
 workflows, documentation search test).
+
+## Quickstart rerun (T069)
+
+Run on 2026-10-23 between 00:01 and 00:35 UTC, on a macOS 26.6.2 arm64 host with Docker
+Engine 29.8.2 and Docker Compose 5.5.0. Other stacks were running on the same Docker engine,
+so the run used its own project names, image tag and host ports. Before the run, the engine
+held no `s010` container, volume, network or image. The image `infrahub-sync:s010-qs` was
+built from the checkout with `dev.build --no-cache`. Every container, volume, network and
+image the run created was removed afterwards.
+
+### Commands changed for the shared machine
+
+- Dev stack, every `dev` task: `COMPOSE_PROJECT_NAME=s010-qs-dev`,
+  `SYNC_IMAGE=infrahub-sync:s010-qs`, `SYNC_API_PORT=8031`, `PREFECT_PORT=4231`,
+  `INFRAHUB_PORT=8091`, `STORAGE_POSTGRES_PORT=5441` and `MINIO_PORT=9031`. Port 8080 and the
+  default object store port 9010 were already in use. `COMPOSE_PROJECT_NAME` replaces the
+  file's `name: infrahub-sync-dev`, and the tasks print and use the new project name.
+- Root file: a copy of `docker-compose.yml` and a `.env` in an empty directory, started with
+  `docker compose -p s010-qs-root`. The `.env` followed the example in
+  `compose-deployment.mdx`, with random values, plus `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync`,
+  `VERSION=s010-qs`, `INFRAHUB_SYNC_API_PORT=8033` and `INFRAHUB_SYNC_PREFECT_PORT=4233`.
+- US5: `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=s010-qs uv run pytest -m compose
+  tests/compose/test_testcontainers_fixture.py -rA`, in place of the whole `tests/compose`
+  directory with `VERSION=dev`.
+
+### Results by section
+
+- US1, root deployment: passed. `docker compose up -d --wait --wait-timeout 420` exited 0.
+  `prefect-server`, `sync-api` and `sync-worker` ran `infrahub-sync:s010-qs`, `object-store`
+  ran `pgsty/silo`, no service ran `prefecthq/prefect`, and only `sync-api` published a port.
+  With the CLI on the host (`uv run infrahub-sync`), a package that copies one `BuiltinTag`
+  from a source branch to `main` was registered, validated, planned (one create) and applied.
+  The containerized CLI, `docker compose run --rm --no-deps -T cli runs show`, read the
+  applied run. Differences:
+  - `sync-worker` has no health check, so `docker compose ps` shows it as `Up`, not
+    `healthy`. "Every service is healthy" holds only for the services that have a health
+    check. `db-bootstrap`, `object-store-init` and `sync-bootstrap` exit with code 0 after
+    they run.
+  - The root deployment has no Infrahub of its own. The run used the dev stack's Infrahub,
+    reached through a separate Docker network, `s010-qs-link`, that held only the dev stack's
+    `infrahub-server` and the root deployment's `sync-worker`. A first attempt connected the
+    worker to the dev stack's own network. That network also has a `prefect-server`, so the
+    worker polled the dev stack's Prefect server and the plan run ended `abandoned`. Infrahub's
+    own Compose file has no service named `prefect-server`, `postgres` or `object-store`, so
+    connecting the worker to `infrahub_default` does not cause this.
+- US2, everything in containers: passed. `dev.start` exited 0 and printed the addresses for
+  the ports set above. `dev.smoke` passed: `23 passed, 70 deselected in 205.96s`. After a
+  temporary line was added to `infrahub_sync/service/serve.py`, `dev.restart` recreated
+  `sync-bootstrap`, `sync-api` and `sync-worker`, `dev.logs --name sync-api` showed the line,
+  and the image ID did not change. The stale-image check passed: after a change to `uv.lock`,
+  `dev.start` printed `infrahub-sync:s010-qs is missing or was built from other build inputs;
+  building it`, and the build-inputs label changed. Differences:
+  - `serve.py` has no log message to edit. The check added a `print` call to `main()` and
+    removed it afterwards.
+  - The `uv.lock` change was one added blank line, and the command was `uv run --frozen invoke
+    dev.start`, so that `uv` did not rewrite the lock file before the task ran.
+  - A NetBox from another checkout was running, and `dev.start` and `dev.restart` connected the
+    worker to its network, `infrahub-sync-netbox_default`. The development stack page said so
+    only in the first-sync steps. The section on running everything in containers now says it
+    too.
+- US3, Sync API and worker on the host: passed. After `dev.stop`, `dev.deps` exited 0, printed
+  the PostgreSQL and object store addresses and ran `sync-bootstrap` as a one-off container.
+  `dev.api` and `dev.worker` ran as background processes in place of two terminals.
+  `dev.smoke` passed: `23 passed, 70 deselected in 192.98s`. After `dev.worker` was stopped and
+  `/status` reported `live_workers: 0`, `dev.smoke` failed with `The Sync API reports no
+  available worker (state no-live-worker); start it with uv run invoke dev.worker`.
+  Difference: invoke prints a Python traceback before that message, because `DevStackError`
+  is a `RuntimeError` and not an invoke `Exit`. This was not changed here.
+- US4, Prefect UI: passed. With the snippet saved as `docker-compose.override.yml`,
+  `docker compose up -d` published `127.0.0.1:4233`. `GET /` returned the Prefect UI
+  (`<title>Prefect Server</title>`), `/ui-settings` reported `"auth":"BASIC"` and
+  `"api_url":"http://127.0.0.1:4233/api"`, and the API returned 401 without the credential and
+  200 with it. After the file was removed and `docker compose up -d` ran again, the port
+  refused connections.
+- US5, end-to-end test class: passed. `6 passed, 15 warnings in 201.37s`; the testcontainers
+  projects were removed when the run ended. Docker could not be stopped on the shared engine,
+  so the unit tier ran with `DOCKER_HOST` pointing at a socket that does not exist:
+  `uv run invoke tests.tests-unit` passed (`5832 passed, 4 skipped, 212 deselected,
+  1 xfailed`), with the `infrahub-testcontainers` plugin loaded.
