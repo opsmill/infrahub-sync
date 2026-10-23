@@ -72,12 +72,15 @@ prints the addresses:
 | --- | --- | --- |
 | Sync API | `http://127.0.0.1:8030`, bearer token `infrahub-sync-dev-token` | `SYNC_API_PORT` |
 | Prefect UI and API | `http://127.0.0.1:4230` | `PREFECT_PORT` |
-| Infrahub | `http://127.0.0.1:8080`, login `admin` / `infrahub` | `INFRAHUB_PORT`, `INFRAHUB_BIND_ADDRESS` |
+| Infrahub | `http://127.0.0.1:8000`, login `admin` / `infrahub` | `INFRAHUB_PORT`, `INFRAHUB_BIND_ADDRESS` |
 
-The Infrahub host port comes from `INFRAHUB_PORT` and defaults to 8080. If another program
-already uses port 8080, export another port before you start the stack, for example
+The Infrahub host port comes from `INFRAHUB_PORT` and defaults to 8000. If another program
+already uses port 8000, export another port before you start the stack, for example
 `export INFRAHUB_PORT=8090`. Every task reads the port from the resolved Compose file, so
-`dev.smoke` and `dev.seed` use the same value.
+`dev.smoke` and `dev.seed` use the same value. The Sync API of the
+[Compose deployment](./compose-deployment.mdx) also defaults to host port 8000: to run that
+deployment and this stack at the same time, move one of them, with `INFRAHUB_PORT` here or
+`INFRAHUB_SYNC_API_PORT` in the deployment's `.env`.
 
 Inside the stack, the worker reaches Infrahub at `http://infrahub-server:8000`. A package that
 the containerized worker runs names that address, not the host address. `dev.start` gives the
@@ -184,7 +187,7 @@ When no `sync-api` container runs, `dev.smoke` first reads the Sync API's `GET /
 If the Sync API does not answer, it fails and tells you to start `dev.api`. If the Sync API
 reports no available worker, it fails and tells you to start `dev.worker`. In this mode the
 worker runs on the host, so the smoke package names Infrahub by its host address,
-`http://127.0.0.1:8080` with the default `INFRAHUB_PORT`.
+`http://127.0.0.1:8000` with the default `INFRAHUB_PORT`.
 
 ## Use an Infrahub that already runs
 
@@ -230,7 +233,7 @@ resolved Compose file, so they print and use the values you set.
 | --- | --- | --- |
 | `SYNC_API_PORT` | `8030` | The Sync API's host port |
 | `PREFECT_PORT` | `4230` | The Prefect server's host port |
-| `INFRAHUB_PORT` | `8080` | The stack's Infrahub host port |
+| `INFRAHUB_PORT` | `8000` | The stack's Infrahub host port |
 | `INFRAHUB_BIND_ADDRESS` | `127.0.0.1` | The address the stack's Infrahub is published on |
 | `STORAGE_POSTGRES_PORT` | `5440` | PostgreSQL's host port |
 | `MINIO_PORT` | `9010` | The object store's host port |

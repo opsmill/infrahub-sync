@@ -58,7 +58,7 @@ def _resolved(*, infrahub: bool) -> dict[str, Any]:
     }
     if infrahub:
         services["infrahub-server"] = {
-            "ports": _port(8000, "8080"),
+            "ports": _port(8000, "8000"),
             "environment": {"INFRAHUB_INITIAL_ADMIN_TOKEN": ADMIN_TOKEN},
         }
     return {"name": "infrahub-sync-dev", "services": services}
@@ -161,7 +161,7 @@ def test_dev_deps_starts_core_and_infrahub_then_bootstraps_and_returns(
     # The image it checks is the one the resolved file names.
     assert next(c for c in fake.commands if c.startswith("docker image inspect")).endswith(" infrahub-sync:s010-deps")
     output = capsys.readouterr().out
-    for url in ("http://127.0.0.1:8030", "http://127.0.0.1:4230", "http://127.0.0.1:8080", "http://127.0.0.1:9010"):
+    for url in ("http://127.0.0.1:8030", "http://127.0.0.1:4230", "http://127.0.0.1:8000", "http://127.0.0.1:9010"):
         assert url in output
     assert "127.0.0.1:5440" in output
 
@@ -305,7 +305,7 @@ def test_dev_smoke_with_both_host_processes_runs_the_suite_for_a_host_worker(
     # Only the Sync API's /status; never the Prefect API on 4230.
     assert http.urls == ["http://127.0.0.1:8030/status"]
     assert not any(":4230" in command for command in fake.commands)
-    assert smoke == ["http://127.0.0.1:8080"]
+    assert smoke == ["http://127.0.0.1:8000"]
     command, kwargs = fake.calls[-1]
     assert command == dev.SMOKE_COMMAND
     assert kwargs["env"] == {dev.SMOKE_STACK_VARIABLE: dev.DEPS_SMOKE_STACK}

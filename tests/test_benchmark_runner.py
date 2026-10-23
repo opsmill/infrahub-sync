@@ -43,7 +43,7 @@ DEV_SETTINGS = dev.DevSettings(
     project="infrahub-sync-dev",
     sync_api=dev.Publication("127.0.0.1", "8030"),
     prefect=dev.Publication("127.0.0.1", "4230"),
-    infrahub=dev.Publication("127.0.0.1", "8080"),
+    infrahub=dev.Publication("127.0.0.1", "8000"),
     infrahub_admin_token="06438eb2-8019-4776-878c-0941b1f1d1ec",  # noqa: S106 -- the development default
     worker_infrahub_url="http://infrahub-server:8000",
     infrahub_network="",
@@ -860,7 +860,7 @@ def test_destination_identity_checks_server_and_records_image(monkeypatch, versi
     stack = bench.CellStack()
     assert stack.destination_env["INFRAHUB_DOCKER_IMAGE"] == bench.INFRAHUB_IMAGE
     assert stack.destination_env["VERSION"] == "1.11.3"
-    assert stack.infrahub_url == "http://127.0.0.1:8080"
+    assert stack.infrahub_url == "http://127.0.0.1:8000"
     image = SimpleNamespace(id="sha256:image", attrs={"RepoDigests": [bench.INFRAHUB_IMAGE + "@sha256:digest"]})
     filters = []
     engine = SimpleNamespace(

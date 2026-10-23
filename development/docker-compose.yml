@@ -36,7 +36,7 @@
 #
 # Destination: with the `infrahub` profile the worker shares a network with
 # Infrahub and reaches it at http://infrahub-server:8000; the host reaches it at
-# http://127.0.0.1:${INFRAHUB_PORT:-8080}. To use an Infrahub started from Infrahub's own Compose
+# http://127.0.0.1:${INFRAHUB_PORT:-8000}. To use an Infrahub started from Infrahub's own Compose
 # file (https://infrahub.opsmill.io) with `docker compose -p infrahub` instead,
 # leave the profile off: `uv run invoke start` connects sync-worker to
 # Infrahub's network, `infrahub_default`. Set
@@ -272,15 +272,18 @@ services:
       - "host.docker.internal:host-gateway"
 
   # The Infrahub services come from `docker-compose.infrahub.yml`, under the
-  # `infrahub` profile. Only their host publications change here: Infrahub's
-  # port avoids 8000, which a separate local Infrahub may hold, and the ports
-  # the development stack does not need are not published.
+  # `infrahub` profile. Only their host publications change here: Infrahub
+  # keeps its usual host port 8000, which no other service of this stack uses
+  # (the Sync API is on 8030), and the ports the development stack does not
+  # need are not published. The root deployment's Sync API also defaults to host
+  # port 8000, so running both at once needs INFRAHUB_PORT or
+  # INFRAHUB_SYNC_API_PORT moved.
   infrahub-server:
     # Loopback unless INFRAHUB_BIND_ADDRESS names another address. A worker that
     # runs in a container on Linux and is not on this stack's network reaches the
     # port through the Docker bridge gateway, never through loopback.
     ports: !override
-      - "${INFRAHUB_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_PORT:-8080}:8000"
+      - "${INFRAHUB_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_PORT:-8000}:8000"
 
   message-queue:
     ports: !reset []

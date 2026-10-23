@@ -21,6 +21,8 @@ from typing import Any
 
 import pytest
 
+from tasks import dev
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = REPO_ROOT / "development" / "docker-compose.yml"
 CORE_SERVICES = {"postgres", "object-store-init", "object-store", "prefect-server"}
@@ -94,6 +96,20 @@ def test_the_sync_api_publishes_on_loopback() -> None:
     assert [(port["host_ip"], port["published"], port["target"]) for port in api["ports"]] == [
         ("127.0.0.1", "8030", 8000)
     ]
+
+
+def test_the_included_infrahub_publishes_its_usual_port_on_loopback() -> None:
+    server = _services(("infrahub",))["infrahub-server"]
+
+    assert [(port["host_ip"], port["published"], port["target"]) for port in server["ports"]] == [
+        ("127.0.0.1", "8000", 8000)
+    ]
+
+
+def test_the_development_settings_name_the_included_infrahub_on_port_8000() -> None:
+    resolved = json.loads(_compose("--profile", "sync", "--profile", "infrahub", "config", "--format", "json"))
+
+    assert dev.parse_dev_settings(resolved).infrahub_url == "http://127.0.0.1:8000"
 
 
 def _sync_image_services() -> list[str]:
