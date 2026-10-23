@@ -1,0 +1,23 @@
+docs/docs/development/guides/netbox-benchmark-runner.md
+  s_8d92f288a8f661::t_e870acc078c84d 67-75
+tasks/bench.py
+  s_8d92f288a8f661::t_bc781fac254d53 69-71,75-98,123,135,473-481,490,540
+tests/test_benchmark_runner.py
+  s_8d92f288a8f661::t_50a51cbf03f374 6,53-56,407,618-685,912,1059,1242,1486
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "518249e893106297a88bffeeecddeacd7e361382",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
