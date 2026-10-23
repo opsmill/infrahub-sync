@@ -492,35 +492,45 @@ def named_nodes(lineage_branch: LineageBranch) -> Iterator[Callable[..., NamedNo
             named.node.delete()
 
 
+@dataclass(frozen=True, slots=True)
+class LineageSettings:
+    """The destination settings a package gives for lineage; `None` leaves that setting out.
+
+    `source` and `owner` become the settings `source: {kind, name}` and `owner: {kind, name}`
+    with the node's kind and the name the package gives; `protect` becomes `protect: <protect>`.
+    """
+
+    source: NamedNode | None = None
+    owner: NamedNode | None = None
+    protect: bool | None = None
+
+
 def import_adapter(
     lineage: LineageBranch,
     account: ImportAccount,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    source: NamedNode | None = None,
-    owner: NamedNode | None = None,
-    protect: bool | None = None,
+    settings: LineageSettings | None = None,
     branch: str | None = None,
 ) -> InfrahubAdapter:
     """The Infrahub destination adapter built the way a run builds it, with the account's token.
 
     A direct run takes the token from `INFRAHUB_API_TOKEN` before the settings, so the
     environment variable is set to the account's token for the construction only. The
-    construction reads the server version and the schema with that token. `source` and `owner`
-    add the settings `source: {kind, name}` and `owner: {kind, name}` with the node's kind and
-    the name the package gives; `protect` adds the setting `protect: <protect>`. The run uses
-    the module's branch unless `branch` names another.
+    construction reads the server version and the schema with that token. `settings` adds the
+    lineage settings it gives. The run uses the module's branch unless `branch` names another.
     """
-    settings: dict[str, Any] = {"url": lineage.address}
-    for setting, named in (("source", source), ("owner", owner)):
+    lineage_settings = settings or LineageSettings()
+    destination: dict[str, Any] = {"url": lineage.address}
+    for setting, named in (("source", lineage_settings.source), ("owner", lineage_settings.owner)):
         if named is not None:
-            settings[setting] = {"kind": named.kind, "name": named.name}
-    if protect is not None:
-        settings["protect"] = protect
+            destination[setting] = {"kind": named.kind, "name": named.name}
+    if lineage_settings.protect is not None:
+        destination["protect"] = lineage_settings.protect
     config = SyncConfig(
         name="lineage-integration",
         source=SyncAdapter(name="netbox"),
-        destination=SyncAdapter(name="infrahub", settings=settings),
+        destination=SyncAdapter(name="infrahub", settings=destination),
     )
     with monkeypatch.context() as patched:
         patched.setenv("INFRAHUB_ADDRESS", lineage.address)
@@ -528,6 +538,24 @@ def import_adapter(
         return InfrahubAdapter(
             target="destination", adapter=config.destination, config=config, branch=branch or lineage.branch
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ImportRun:
+    """The module's branch and the test's environment patch, which every adapter a test builds needs."""
+
+    lineage: LineageBranch
+    monkeypatch: pytest.MonkeyPatch
+
+    def adapter(self, account: ImportAccount, settings: LineageSettings | None = None) -> InfrahubAdapter:
+        """The Infrahub destination adapter for `account` on the module's branch, as `import_adapter` builds it."""
+        return import_adapter(self.lineage, account, self.monkeypatch, settings=settings)
+
+
+@pytest.fixture
+def import_run(lineage_branch: LineageBranch, monkeypatch: pytest.MonkeyPatch) -> ImportRun:
+    """The `ImportRun` of this test: the module's branch and this test's `monkeypatch`."""
+    return ImportRun(lineage=lineage_branch, monkeypatch=monkeypatch)
 
 
 def plan_reads(adapter: InfrahubAdapter) -> None:
@@ -758,12 +786,12 @@ def test_a_named_group_source_is_the_source_of_every_value_and_edge_the_import_w
     account = account_factory(OWNER_IMPORT_PERMISSIONS)
     team = named_nodes()
 
-    planning = import_adapter(lineage_branch, account, monkeypatch, source=team)
+    planning = import_adapter(lineage_branch, account, monkeypatch, settings=LineageSettings(source=team))
     plan_reads(planning)
     assert planning.lineage_record is not None
     assert (planning.lineage_record.source.kind, planning.lineage_record.source.name) == (GROUP_KIND, team.name)
     plan = save_plan(tmp_path, planning)
-    apply_saved_plan(plan, import_adapter(lineage_branch, account, monkeypatch, source=team))
+    apply_saved_plan(plan, import_adapter(lineage_branch, account, monkeypatch, settings=LineageSettings(source=team)))
 
     written = _written_lineage(lineage_branch.admin, plan, lineage_branch.branch)
     _assert_written_with(written, source=team.id, account=account, what=f"the group {team.name!r} ({team.id})")
@@ -798,14 +826,17 @@ def test_a_named_account_source_needs_view_on_core_account_and_nothing_more(
     named_account = named_nodes(ACCOUNT_KIND)
 
     _assert_lookup_refused_for_kind(
-        import_adapter(lineage_branch, account, monkeypatch, source=named_account), ACCOUNT_VIEW
+        import_adapter(lineage_branch, account, monkeypatch, settings=LineageSettings(source=named_account)),
+        ACCOUNT_VIEW,
     )
 
     account_factory.add_permission(account, ACCOUNT_VIEW)
-    planning = import_adapter(lineage_branch, account, monkeypatch, source=named_account)
+    planning = import_adapter(lineage_branch, account, monkeypatch, settings=LineageSettings(source=named_account))
     plan_reads(planning)
     plan = save_plan(tmp_path, planning)
-    apply_saved_plan(plan, import_adapter(lineage_branch, account, monkeypatch, source=named_account))
+    apply_saved_plan(
+        plan, import_adapter(lineage_branch, account, monkeypatch, settings=LineageSettings(source=named_account))
+    )
 
     written = _written_lineage(lineage_branch.admin, plan, lineage_branch.branch)
     _assert_written_with(
@@ -819,10 +850,9 @@ def test_a_named_account_source_needs_view_on_core_account_and_nothing_more(
 @pytest.mark.parametrize("kind", REPOSITORY_KINDS)
 def test_a_named_repository_source_needs_view_on_its_kind_and_nothing_more(
     kind: str,
-    lineage_branch: LineageBranch,
+    import_run: ImportRun,
     account_factory: AccountFactory,
     named_nodes: Callable[..., NamedNode],
-    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     """`source` naming a repository: refused without `view` on its kind, written with only that permission.
@@ -832,19 +862,18 @@ def test_a_named_repository_source_needs_view_on_its_kind_and_nothing_more(
     """
     account = account_factory(BRANCH_IMPORT_PERMISSIONS)
     repository = named_nodes(kind)
+    repository_settings = LineageSettings(source=repository)
     repository_view = ObjectPermission(namespace="Core", name=kind.removeprefix("Core"), action="view")
 
-    _assert_lookup_refused_for_kind(
-        import_adapter(lineage_branch, account, monkeypatch, source=repository), repository_view
-    )
+    _assert_lookup_refused_for_kind(import_run.adapter(account, repository_settings), repository_view)
 
     account_factory.add_permission(account, repository_view)
-    planning = import_adapter(lineage_branch, account, monkeypatch, source=repository)
+    planning = import_run.adapter(account, repository_settings)
     plan_reads(planning)
     plan = save_plan(tmp_path, planning)
-    apply_saved_plan(plan, import_adapter(lineage_branch, account, monkeypatch, source=repository))
+    apply_saved_plan(plan, import_run.adapter(account, repository_settings))
 
-    written = _written_lineage(lineage_branch.admin, plan, lineage_branch.branch)
+    written = _written_lineage(import_run.lineage.admin, plan, import_run.lineage.branch)
     _assert_written_with(
         written, source=repository.id, account=account, what=f"the {kind} {repository.name!r} ({repository.id})"
     )
@@ -971,13 +1000,15 @@ def test_owner_is_set_on_created_values_and_on_added_edges_only(
     by_hand = named_nodes()
     admin, branch = lineage_branch.admin, lineage_branch.branch
 
-    planning = import_adapter(lineage_branch, account, monkeypatch, owner=team)
+    planning = import_adapter(lineage_branch, account, monkeypatch, settings=LineageSettings(owner=team))
     plan_reads(planning)
     created = save_plan(tmp_path, planning, device_tags=1)
     assert planning.lineage_record is not None
     assert planning.lineage_record.owner is not None
     assert (planning.lineage_record.owner.kind, planning.lineage_record.owner.name) == (GROUP_KIND, team.name)
-    apply_saved_plan(created, import_adapter(lineage_branch, account, monkeypatch, owner=team))
+    apply_saved_plan(
+        created, import_adapter(lineage_branch, account, monkeypatch, settings=LineageSettings(owner=team))
+    )
 
     tags = {name: _read_back(admin, TAG_KIND, name, branch) for name in created.tag_names}
     device = _read_back(admin, DEVICE_KIND, created.device_name, branch)
@@ -1002,11 +1033,13 @@ def test_owner_is_set_on_created_values_and_on_added_edges_only(
 
     _set_owner_by_hand(lineage_branch, device=device, tag_id=first_tag_id, owner=by_hand)
 
-    planning = import_adapter(lineage_branch, account, monkeypatch, owner=team)
+    planning = import_adapter(lineage_branch, account, monkeypatch, settings=LineageSettings(owner=team))
     plan_reads(planning)
     assert device.id is not None
     updated = save_device_update_plan(tmp_path, planning, created, device_id=device.id, serial="serial-updated")
-    apply_saved_plan(updated, import_adapter(lineage_branch, account, monkeypatch, owner=team))
+    apply_saved_plan(
+        updated, import_adapter(lineage_branch, account, monkeypatch, settings=LineageSettings(owner=team))
+    )
 
     device = _read_back(admin, DEVICE_KIND, created.device_name, branch)
     assert _attribute(device, "serial").value == "serial-updated", (
@@ -1034,10 +1067,9 @@ def test_owner_is_set_on_created_values_and_on_added_edges_only(
 @pytest.mark.parametrize("setting", ["source", "owner"])
 def test_a_missing_named_node_stops_the_plan_before_the_source_is_read_and_the_apply_before_any_write(
     setting: str,
-    lineage_branch: LineageBranch,
+    import_run: ImportRun,
     account_factory: AccountFactory,
     named_nodes: Callable[..., NamedNode],
-    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     """A `source` or `owner` naming a group that does not exist: the same cause in plan and in apply.
@@ -1049,14 +1081,10 @@ def test_a_missing_named_node_stops_the_plan_before_the_source_is_read_and_the_a
     account = account_factory(OWNER_IMPORT_PERMISSIONS)
     team = named_nodes()
 
+    named_settings = LineageSettings(source=team) if setting == "source" else LineageSettings(owner=team)
+
     def adapter() -> InfrahubAdapter:
-        return import_adapter(
-            lineage_branch,
-            account,
-            monkeypatch,
-            source=team if setting == "source" else None,
-            owner=team if setting == "owner" else None,
-        )
+        return import_run.adapter(account, named_settings)
 
     expected_cause = f"The setting `{setting}` names `{GROUP_KIND}` `{team.name}`, which does not exist."
 
@@ -1077,7 +1105,7 @@ def test_a_missing_named_node_stops_the_plan_before_the_source_is_read_and_the_a
         apply_saved_plan(plan, adapter())
     assert str(apply_stop.value) == str(plan_stop.value), "The apply must record the cause the plan records."
 
-    admin, branch = lineage_branch.admin, lineage_branch.branch
+    admin, branch = import_run.lineage.admin, import_run.lineage.branch
     written = _existing_ids(admin, TAG_KIND, plan.tag_names, branch) + _existing_ids(
         admin, DEVICE_KIND, [plan.device_name], branch
     )
@@ -1102,7 +1130,7 @@ def test_a_missing_permission_on_the_owner_kind_is_recorded_as_a_missing_permiss
     team = named_nodes()
     account_factory.remove_permission(account, GROUP_VIEW)
 
-    planning = import_adapter(lineage_branch, account, monkeypatch, owner=team)
+    planning = import_adapter(lineage_branch, account, monkeypatch, settings=LineageSettings(owner=team))
     with pytest.raises(AuthenticationError) as raised:
         planning.resolve_lineage()
 
@@ -1611,12 +1639,14 @@ def test_protect_on_protects_written_values_and_protect_off_keeps_earlier_flags(
     account = account_factory(BRANCH_IMPORT_PERMISSIONS)
     admin, branch = lineage_branch.admin, lineage_branch.branch
 
-    planning = import_adapter(lineage_branch, account, monkeypatch, protect=True)
+    planning = import_adapter(lineage_branch, account, monkeypatch, settings=LineageSettings(protect=True))
     plan_reads(planning)
     assert planning.lineage_record is not None
     assert planning.lineage_record.protect is True, "The plan must record `protect: true`."
     created = save_plan(tmp_path, planning, device_tags=1)
-    apply_saved_plan(created, import_adapter(lineage_branch, account, monkeypatch, protect=True))
+    apply_saved_plan(
+        created, import_adapter(lineage_branch, account, monkeypatch, settings=LineageSettings(protect=True))
+    )
 
     tags = {name: _read_back(admin, TAG_KIND, name, branch) for name in created.tag_names}
     first_tag_id, second_tag_id = (tags[name].id for name in created.tag_names)
@@ -1630,14 +1660,16 @@ def test_protect_on_protects_written_values_and_protect_off_keeps_earlier_flags(
         f"device.tags -> {first_tag_id}": protected,
     }, "With `protect: true` and no owner, every value the apply creates must be protected."
 
-    planning = import_adapter(lineage_branch, account, monkeypatch, protect=False)
+    planning = import_adapter(lineage_branch, account, monkeypatch, settings=LineageSettings(protect=False))
     plan_reads(planning)
     assert planning.lineage_record is not None
     assert planning.lineage_record.protect is False, "The plan must record `protect: false`."
     device_id = _read_back(admin, DEVICE_KIND, created.device_name, branch).id
     assert device_id is not None
     updated = save_device_update_plan(tmp_path, planning, created, device_id=device_id, serial="serial-updated")
-    apply_saved_plan(updated, import_adapter(lineage_branch, account, monkeypatch, protect=False))
+    apply_saved_plan(
+        updated, import_adapter(lineage_branch, account, monkeypatch, settings=LineageSettings(protect=False))
+    )
 
     device = _read_back(admin, DEVICE_KIND, created.device_name, branch)
     assert _attribute(device, "serial").value == "serial-updated", "The second apply must update the serial."
