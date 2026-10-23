@@ -1,0 +1,23 @@
+infrahub_sync/testcontainers/helpers.py
+  s_8d92f288a8f661::t_6c75c568b18e17 14-17,30,124-125,141-146,151-161,190
+tests/compose/test_testcontainers_fixture.py
+  s_8d92f288a8f661::t_7e57c5f0ccef34 10-12,49-52,218-220,228,241-247
+tests/testcontainers/test_image_selection.py
+  s_8d92f288a8f661::t_f443ed40126879 17,30,40-46,48,50-72,173,181-217
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cf3cf1a7a3a4491db997f7fe7938eb1e01c355e0",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
