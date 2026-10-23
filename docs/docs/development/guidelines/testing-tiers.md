@@ -608,8 +608,9 @@ publishes the Sync API on a free loopback port; export a port number to choose t
 yourself. The test values are not real credentials.
 
 The Infrahub version comes from `infrahub-testcontainers`: by default it is the version of
-the installed `infrahub-testcontainers` package. Set `INFRAHUB_TESTING_IMAGE_VER` to run
-another Infrahub version.
+the installed `infrahub-testcontainers` package. The `testcontainers` extra requires
+`infrahub-testcontainers` 1.11.9 or later, and `uv.lock` pins 1.11.9, so the fixture runs
+Infrahub 1.11.9. Set `INFRAHUB_TESTING_IMAGE_VER` to run another Infrahub version.
 
 ### `check-310`
 

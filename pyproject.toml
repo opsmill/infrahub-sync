@@ -143,7 +143,7 @@ slurpit = [
 # that pin must equal the `prefect` pin above, which `tests/test_release_pin.py`
 # checks in `uv.lock`. Move both pins together.
 testcontainers = [
-    "infrahub-testcontainers>=1.11.8,<2; python_version >= '3.11'",
+    "infrahub-testcontainers>=1.11.9,<2; python_version >= '3.11'",
     "testcontainers>=4.8,<4.9; python_version >= '3.11'",
 ]
 dev = [
@@ -166,7 +166,7 @@ dev = [
     "types-python-slugify>=8.0.2.20240310",
     "towncrier>=24.8,<27",
     "rumdl>=0.1.68",
-    "infrahub-testcontainers>=1.11.8,<2; python_version >= '3.11'",
+    "infrahub-testcontainers>=1.11.9,<2; python_version >= '3.11'",
     "testcontainers>=4.8,<4.9; python_version >= '3.11'",
 ]
 

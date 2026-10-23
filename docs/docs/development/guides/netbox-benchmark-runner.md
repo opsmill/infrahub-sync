@@ -7,7 +7,7 @@ title: "Run a NetBox benchmark cell"
 > Part of: Develop > Guides | Related: [NetBox benchmark tiers](netbox-benchmark-tiers.md)
 
 The manual benchmark compares v2 and v3 against the same local NetBox tier and a fresh
-Infrahub 1.11.3 destination. It runs outside CI. Tier L contains 87,815 mapped source
+Infrahub 1.11.9 destination. It runs outside CI. Tier L contains 87,815 mapped source
 objects; seeding and benchmark runs can take hours. Each repetition starts a shared
 six-hour budget when its stack manager is created. Stack lifecycle commands, including
 the NetBox restore, schema loading, the baseline sync, the change script, and the measured
@@ -60,7 +60,7 @@ project or Compose file. Unset them before you run a cell.
 One host lock covers the shared Docker projects across checkouts, including cleanup.
 Starting another cell while that lock is held fails before any database reset.
 The runner creates an isolated destination stack from the preview Compose files, pinned to
-Infrahub 1.11.3. It uses the preview connection settings and local NetBox settings,
+Infrahub 1.11.9. It uses the preview connection settings and local NetBox settings,
 including personal connection overrides. The runner enforces the OpsMill image repository
 and version, ignoring preview image overrides. Keep the preview stack stopped so its ports are available.
 
@@ -125,7 +125,7 @@ Each measured repetition appends one JSON object to the git-ignored
   uncommitted changes. `harness_commit` records the current checkout for both lines,
   separately from the installed release commit. `mapping_sha256` hashes the canonical
   mapping entries, including uncommitted edits. `infrahub_version` is read from the running server and
-  checked against 1.11.3. `infrahub_image_id` records its immutable Docker image ID;
+  checked against 1.11.9. `infrahub_image_id` records its immutable Docker image ID;
   `infrahub_image_digest` records the OpsMill repository digest when available.
   The Infrahub identity fields remain null if setup fails before verification.
 - `status` is `ok`, `failed`, or `timed_out`. `wall_seconds` is valid only for `ok`.

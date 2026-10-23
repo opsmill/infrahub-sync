@@ -60,7 +60,7 @@ from . import dev, netbox
 ROOT = netbox.REPO_ROOT
 STATE = netbox.STATE_DIR / "bench"
 RESULTS = netbox.STATE_DIR / "benchmarks" / "results.jsonl"
-INFRAHUB_VERSION = "1.11.3"
+INFRAHUB_VERSION = "1.11.9"
 INFRAHUB_IMAGE = "registry.opsmill.io/opsmill/infrahub"
 # Fixed outside any checkout: every runner mutates the same Docker projects.
 # The pinned destination's Compose project, apart from the development stack's own.

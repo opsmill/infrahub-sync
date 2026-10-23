@@ -144,7 +144,7 @@ def test_preview_ignores_unrelated_shell_version(monkeypatch: pytest.MonkeyPatch
 
     values = preview.load_preview_env()
 
-    assert values["VERSION"] == "1.10.6"
+    assert values["VERSION"] == "1.11.9"
 
 
 def test_preview_routes_prefect_ui_to_the_published_host_port() -> None:

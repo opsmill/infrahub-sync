@@ -1,0 +1,1 @@
+The development stack, the preview stack, the compose test fixture and the NetBox benchmark run Infrahub 1.11.9, pinned by digest. The included Infrahub file follows the upstream file for 1.11.9, which moves Neo4j to 2026.05.0. The `testcontainers` extra requires `infrahub-testcontainers` 1.11.9 or later.

@@ -337,7 +337,7 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0913, PLR091
 
         @staticmethod
         def destination_identity() -> tuple[str, str, str]:
-            return "1.11.3", "sha256:image", "image@sha256:digest"
+            return "1.11.9", "sha256:image", "image@sha256:digest"
 
         @staticmethod
         def start_sync() -> None:
@@ -852,14 +852,14 @@ def test_report_before_any_results(monkeypatch, tmp_path, capsys) -> None:
     assert "Valid benchmark medians" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("version", ["1.11.3", "1.10.6"])
+@pytest.mark.parametrize("version", ["1.11.9", "1.10.6"])
 def test_destination_identity_checks_server_and_records_image(monkeypatch, version, docker_sdk) -> None:
     from infrahub_sdk import InfrahubClientSync
 
     monkeypatch.setenv("INFRAHUB_DOCKER_IMAGE", "local/unverified-infrahub")
     stack = bench.CellStack()
     assert stack.destination_env["INFRAHUB_DOCKER_IMAGE"] == bench.INFRAHUB_IMAGE
-    assert stack.destination_env["VERSION"] == "1.11.3"
+    assert stack.destination_env["VERSION"] == "1.11.9"
     assert stack.infrahub_url == "http://127.0.0.1:8000"
     image = SimpleNamespace(id="sha256:image", attrs={"RepoDigests": [bench.INFRAHUB_IMAGE + "@sha256:digest"]})
     filters = []
@@ -869,7 +869,7 @@ def test_destination_identity_checks_server_and_records_image(monkeypatch, versi
     )
     monkeypatch.setattr(docker_sdk, "from_env", lambda **_kwargs: engine)
     monkeypatch.setattr(InfrahubClientSync, "get_version", lambda _self: version)
-    if version == "1.11.3":
+    if version == "1.11.9":
         assert stack.destination_identity() == (version, "sha256:image", bench.INFRAHUB_IMAGE + "@sha256:digest")
         assert "com.docker.compose.project=infrahub-sync-benchmark" in filters[0]["filters"]["label"]
     else:
