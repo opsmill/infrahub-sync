@@ -25,6 +25,7 @@
 | 7b | US5 end-to-end and CI | T058–T060 | 3 ✅ | 22b37656, 7ca13256, 12136bfc | The fixtures worked on their first live run. The package syncs a tag from a branch to `main`. Infrahub 1.11.9. |
 | 8a | Polish: documentation | T065, T066, T067 and four fixes | 2 ✅, 1 ⚠️ | d10413a1, b76a42b1, a68d6599, 0bfa9ec1, b493ddac, a348a998, 301a6137 | `invoke lint` ran `ruff check --diff`, so it skipped violations Ruff cannot fix. It now runs `ruff check .`, which is a behaviour change. `compose()` takes a `ComposeTarget`. The Prefect UI API address is always loopback. The httpx note on the Slurp'it page is removed. |
 | 8b | Polish: final checks | T068, T069 | 2 ✅ | 6ec86240, 9ec376b5, 396551c3 | Two type-check findings fixed. All five quickstart sections pass. The deviations found are recorded in tasks.md. |
+| 9 | Product-owner fixes (2026-10-22) | not in tasks.md | 3 ✅ | cf3cf1a7, 518249e8, 059f30ae | The test project's `.env` is single-quoted, and a value Compose cannot read single-quoted is refused. New `bench.run --infrahub-url` and `INFRAHUB_SYNC_DEV_INFRAHUB_HOST_URL`; research.md has no U1 section, so the name is this chunk's choice. The included Infrahub defaults to host port 8000. |
 
 ## Tasks not completed
 
@@ -59,23 +60,26 @@ All runs were on macOS arm64 with Docker 29.8.2 (OrbStack), unless the row says 
 | test_compose_contract.py::test_the_prefect_ui_api_address_stays_loopback_with_another_bind_address | unit | `uv run pytest tests/compose/test_compose_contract.py -k prefect_ui -v` | 2026-10-22T23:27:59Z | Compose CLI | `5 passed, 73 deselected in 0.40s` |
 | tests/test_unit_tier.py::test_patch_cpu_freq_replaces_the_module_function | unit | `uv run pytest tests/test_unit_tier.py -rA` | 2026-10-22T23:55:49Z | Python 3.11 | `13 passed` |
 | Full unit tier, Python 3.11 profile | unit | `uv run invoke tests.tests-unit` | 2026-10-23T00:22:44Z | n/a | `5832 passed, 4 skipped, 212 deselected, 1 xfailed` |
+| tests/testcontainers/test_image_selection.py `.env` quoting tests (7 new), tests/test_benchmark_runner.py host URL tests (5 new), tests/dev_stack/test_profiles.py port tests (2 new), updated dev_stack and benchmark tests | unit | `uv run pytest tests/testcontainers tests/test_benchmark_runner.py tests/dev_stack -m "not integration and not preview and not docker and not compose" -q` | 2026-10-23T15:11:33Z | Compose v5.5.0 CLI | `294 passed, 2 warnings in 16.15s` |
+| tests/compose/test_testcontainers_fixture.py (7), including `TestSettingsReachTheProject::test_an_exported_value_with_a_dollar_sign_reaches_the_worker_unchanged` | e2e (compose) | `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=s010-c9 uv run pytest -m compose tests/compose/test_testcontainers_fixture.py -rA` | 2026-10-23T15:13:42Z | arm64 image `infrahub-sync:s010-c9` built from the checkout | `7 passed, 15 warnings in 201.62s (0:03:21)` |
+| Full unit tier after chunk 9 | unit | `uv run invoke tests.tests-unit` | 2026-10-23T15:09:41Z | Python 3.11 | `5846 passed, 4 skipped, 213 deselected, 1 xfailed, 6 warnings` |
 | Full unit tier, Python 3.10 profile | unit | same command in a 3.10 venv (dev and prefect extras) | 2026-10-22T23:55:59Z | Python 3.10.21 | `4846 passed, 82 skipped, 183 deselected, 1 xfailed` |
 
 The one remaining xfail is the preview-file case in `tests/compose/test_image_pins.py`. It passes once PR 2 deletes the preview file (T039).
 
 ## Review findings
 
-The review (`speckit-review-run` over `13bf22cb..HEAD`) found nothing critical or high. Nothing was fixed inline; every finding is deferred.
+The review (`speckit-review-run` over `13bf22cb..HEAD`) found nothing critical or high. Nothing was fixed inline. Chunk 9 fixed the two medium findings; the low findings are deferred.
 
 | Severity | File | Summary | Handling |
 |---|---|---|---|
-| medium | `infrahub_sync/testcontainers/helpers.py:170` | The generated `.env` holds values without quotes, so Compose changes an exported value that contains `$`. | Deferred. Fix before spec 013 relies on passing values through `os.environ`. |
-| medium | `tasks/bench.py:107` | The benchmark runner follows `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` from the shell and then targets an Infrahub the host cannot reach. | Deferred |
+| medium | `infrahub_sync/testcontainers/helpers.py:170` | The generated `.env` holds values without quotes, so Compose changes an exported value that contains `$`. | Fixed in cf3cf1a7 |
+| medium | `tasks/bench.py:107` | The benchmark runner follows `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` from the shell and then targets an Infrahub the host cannot reach. | Fixed in 518249e8 |
 | low | `infrahub_sync/testcontainers/helpers.py:244-248` | When log collection fails during a failed start, `stop()` does not run. | Deferred |
 | low | `tasks/dev.py:414` | `_print_urls` prints the default bearer token even when `BEARER_TOKENS` is overridden. | Deferred |
 | low | `pyproject.toml` | The `cpu_freq` patch applies to every test run. Report the crash upstream and mark the patch as temporary. | Deferred |
 | low | `pyproject.toml` | No comment explains the `testcontainers>=4.8,<4.9` range. | Deferred |
-| low | `docker-compose.yml:104,125` | `object-store-init` needs `/bin/sh` in the Silo image. The live compose tier checks it, and it passed locally. | Deferred. Needs a maintainer to approve the Silo image. |
+| low | `docker-compose.yml:104,125` | `object-store-init` needs `/bin/sh` in the Silo image. The live compose tier checks it, and it passed locally. | Deferred. The product owner confirmed the Silo image (decision D-5). |
 
 ## Autonomous decisions
 
@@ -84,8 +88,10 @@ The review (`speckit-review-run` over `13bf22cb..HEAD`) found nothing critical o
 - In PR 1, T065 keeps `preview-stack.md` and adds a note that the development stack replaces it. T066 leaves the `check-310` rename to PR 2.
 - T001 counts as passed under Rosetta emulation. A native amd64 run is still to do in CI.
 - The amd64 first-start times are not measured. R11 holds the CI commands.
-- The medium review findings were deferred under the high-severity-only rule.
-- Merge note: branch `012-v2-configuration-conversion` (65d20c55) changes the preview Infrahub host port from 8080 to 8000. In this branch the included Infrahub keeps `${INFRAHUB_PORT:-8080}`, and the tasks read the port from the resolved Compose settings. Check this when merging, and settle the default port in one place.
+- The medium review findings were deferred under the high-severity-only rule, then fixed in chunk 9 on product-owner instruction.
+- The included Infrahub now defaults to `${INFRAHUB_PORT:-8000}`, matching branch `012-v2-configuration-conversion`, so the ports agree.
+- The benchmark runner's host Infrahub URL comes from `--infrahub-url`, else `INFRAHUB_SYNC_DEV_INFRAHUB_HOST_URL`. Research U1 names no variable (research.md has no U1 section), so chunk 9 chose this name. Either one also replaces the published port when no Infrahub network is selected.
+- In a test project's `.env`, a value is single-quoted with `'` written as `\'`. Compose cannot read a single-quoted value that ends with a backslash or holds a backslash before `'`, so such a value is refused, naming the variable but not the value.
 - `invoke lint` now runs `ruff check .`, the same command as CI. This makes the gate stricter.
 
 ## Measured first-start times (FR-008, arm64 laptop)
@@ -99,7 +105,5 @@ In both cold runs the Sync image was built locally from the checkout and kept, s
 
 ## Suggested next steps
 
-1. Fix the two medium review findings, starting with the `.env` quoting that spec 013 needs.
-2. Run T001 and the R11 measurements on a native amd64 runner.
-3. Get maintainer approval for the Silo image (AGPLv3, community build).
-4. Review the branch and open PR 1. After it merges, start PR 2 with T026, T028, T036, T037, T039, T061–T064 and the `check-310` part of T066.
+1. Run T001 and the R11 measurements on a native amd64 runner.
+2. Review the branch and open PR 1. After it merges, start PR 2 with T026, T028, T036, T037, T039, T061–T064 and the `check-310` part of T066.
