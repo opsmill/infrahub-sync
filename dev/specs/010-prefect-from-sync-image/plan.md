@@ -189,8 +189,8 @@ Steps 1–5 add the new `dev.*` tasks next to the existing names; the old top-le
 - The Silo images were run on arm64 only; amd64 was pulled and inspected but not run.
 - Whether the benchmark runner works today is not known: it points at a `compose.yaml` that
   does not exist (R6). The plan points it at the new development file either way.
-- Record that D-5 reverses the 2026-10-15 product decision, and update Jira card INFP-692.
-  This is a product task outside the repository.
+- Update Jira card INFP-692, which still lists "temporary MinIO build" as a blocker. This is a
+  product task outside the repository.
 - Spec 013 checked its table of 010 deliveries against commit `e4660c15`. It should be checked
   again against the current 010 artifacts, in particular the `infrahub_sync_compose_files` hook
   and the `os.environ` rule of the fixture.

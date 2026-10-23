@@ -98,10 +98,10 @@ These are final product-owner decisions. This specification does not reopen them
   through a proxy (not decided yet). Keeping the Prefect database password out of `sync-api` is
   an extra layer of protection, not a principle.
 - **D-4**: Two features, in order: this one, then the INFP-692 blockers on top of it.
-- **D-5** (revised 2026-10-21): every Compose file runs the bundled object store from
+- **D-5** (2026-10-21): every Compose file runs the bundled object store from
   [`pgsty/silo`](https://hub.docker.com/r/pgsty/silo), pinned by dated release tag and digest,
   instead of `cgr.dev/chainguard/minio:latest-dev`. The image is not mirrored into
-  `registry.opsmill.io`. This reverses a product decision of 2026-10-15 that rejected Silo.
+  `registry.opsmill.io`.
   According to its [Docker Hub page](https://hub.docker.com/r/pgsty/silo) and the
   [Pigsty MinIO FAQ](https://pigsty.io/docs/minio/faq/), Silo keeps MinIO's S3 API, environment
   variables and on-disk format, ships amd64 and arm64 images, and is licensed under AGPLv3.
@@ -531,8 +531,7 @@ These facts are not known yet and are checked during planning:
 - For Silo: the latest release date and the release frequency; whether both platforms pull
   without authentication; the user and UID the image runs as (the root file runs the object store
   as `65532:65532`); which tools the image contains for health checks.
-- Product: record that D-5 reverses the 2026-10-15 decision, and update Jira card INFP-692, which
-  still lists "temporary MinIO build" as a blocker.
+- Product: update Jira card INFP-692, which still lists "temporary MinIO build" as a blocker.
 
 ## Out of Scope
 
