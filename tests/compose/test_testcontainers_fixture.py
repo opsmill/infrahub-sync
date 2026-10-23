@@ -7,8 +7,9 @@ Two classes, each with its own Infrahub and its own Sync project:
   Prefect server runs the same Prefect version as the worker, because both run from the
   Sync image.
 - `TestSettingsReachTheProject` checks the two ways a test changes the Sync project: an
-  extra Compose file returned by the `infrahub_sync_compose_files` hook, and a variable
-  exported in `os.environ` before the class starts.
+  extra Compose file returned by the `infrahub_sync_compose_files` hook, and variables
+  exported in `os.environ` before the class starts, one of them holding `$`, which Compose
+  must not interpolate.
 
 Both run the image the suite names with `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION`, and
 refuse to run when the engine does not hold it, as every other case in this suite does.
@@ -45,6 +46,10 @@ pytestmark = pytest.mark.compose
 OVERRIDE_FILE = Path(__file__).resolve().parent / "testcontainers-override.yml"
 OVERRIDE_VARIABLE = "INFRAHUB_SYNC_TESTCONTAINERS_OVERRIDE"
 OVERRIDE_VALUE = "set-by-the-override-file"
+# A variable the root file passes to `sync-worker`, exported with a value Compose would
+# change if the project's `.env` held it unquoted. Not a real credential.
+LITERAL_VARIABLE = "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"
+LITERAL_VALUE = "dummy-$token $$double ${NAME} it's"
 
 # `sync-worker` joins the Infrahub project's network and reaches the server by its
 # service name; the host reaches the same server at the port Docker published.
@@ -210,7 +215,9 @@ class TestSettingsReachTheProject(sync_testcontainers.TestInfrahubSyncDocker):
     @pytest.fixture(scope="class", autouse=True)
     @classmethod
     def exported_api_port(cls, sync_image: str) -> Iterator[int]:  # noqa: ARG003  # pylint: disable=unused-argument
-        """Export `INFRAHUB_SYNC_API_PORT` before the class starts, and restore it afterwards.
+        """Export `INFRAHUB_SYNC_API_PORT` and `LITERAL_VARIABLE` before the class starts.
+
+        Both are restored afterwards.
 
         Autouse, so it runs before the class's other fixtures write the project's `.env`.
         `sync_image` refuses the class when the engine does not hold the image the suite names.
@@ -218,6 +225,7 @@ class TestSettingsReachTheProject(sync_testcontainers.TestInfrahubSyncDocker):
         port = free_loopback_port()
         with pytest.MonkeyPatch.context() as patch:
             patch.setenv("INFRAHUB_SYNC_API_PORT", str(port))
+            patch.setenv(LITERAL_VARIABLE, LITERAL_VALUE)
             yield port
 
     @pytest.fixture(scope="class")
@@ -229,6 +237,13 @@ class TestSettingsReachTheProject(sync_testcontainers.TestInfrahubSyncDocker):
     def test_the_override_file_sets_its_variable_on_the_worker(infrahub_sync_app: InfrahubSyncDockerCompose) -> None:
         value = run_in(infrahub_sync_app, "sync-worker", ["printenv", OVERRIDE_VARIABLE])
         assert value == OVERRIDE_VALUE
+
+    @staticmethod
+    def test_an_exported_value_with_a_dollar_sign_reaches_the_worker_unchanged(
+        infrahub_sync_app: InfrahubSyncDockerCompose,
+    ) -> None:
+        value = run_in(infrahub_sync_app, "sync-worker", ["printenv", LITERAL_VARIABLE])
+        assert value == LITERAL_VALUE
 
     @staticmethod
     def test_the_exported_port_is_the_published_sync_api_port(

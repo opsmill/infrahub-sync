@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess  # noqa: S404 -- runs `docker compose config`, which needs no daemon
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -26,6 +27,7 @@ from infrahub_sync.testcontainers.helpers import (
     InfrahubSyncDockerCompose,
     compose_variables,
     default_image,
+    env_file_line,
     split_image,
 )
 
@@ -35,9 +37,39 @@ EXTRA_FILE = Path(__file__).resolve().parent / "extra.override.yml"
 REQUIRED_VARIABLE = re.compile(r"\$\{(?P<name>[A-Z_][A-Z0-9_]*):\?")
 
 
+# A value Compose would change if `.env` held it unquoted: `$NAME`, `$$` and `${NAME}` are
+# interpolated, and the space and `#` end an unquoted value. Not a real credential.
+LITERAL_VALUE = "dummy-$token $$double ${NAME} it's #kept"
+# A variable the root file passes to `sync-worker` and that no test default sets.
+LITERAL_VARIABLE = "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"
+
+
 def _env_file(directory: Path) -> dict[str, str]:
+    """Read the generated `.env` back, undoing the single quotes `env_file_line` adds."""
     lines = (directory / ".env").read_text(encoding="utf-8").splitlines()
-    return dict(line.split("=", 1) for line in lines)
+    pairs = (line.split("=", 1) for line in lines)
+    return {name: quoted.removeprefix("'").removesuffix("'").replace("\\'", "'") for name, quoted in pairs}
+
+
+def _resolved_services(compose: InfrahubSyncDockerCompose) -> dict[str, Any]:
+    """Return the services `docker compose config` resolves, run with no exported variable.
+
+    Only what the CLI needs reaches it, so a value exported in the caller's shell cannot
+    reach Compose and the project resolves from its `.env` alone.
+    """
+    if shutil.which("docker") is None:
+        pytest.skip("the docker CLI is not installed; resolving a Compose file needs the CLI, not a daemon")
+    environment = {name: os.environ[name] for name in ("PATH", "HOME", "DOCKER_CONFIG") if name in os.environ}
+    result = subprocess.run(  # noqa: S603 -- fixed argv, no shell
+        [*compose.compose_command_property, "config", "--format", "json"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+        timeout=60,
+    )
+    assert result.returncode == 0, "docker compose config refused the generated project"
+    return json.loads(result.stdout)["services"]
 
 
 def _compose_files(compose: InfrahubSyncDockerCompose) -> list[str]:
@@ -136,27 +168,51 @@ def test_the_project_has_its_own_name_and_env_file(tmp_path: Path) -> None:
 
 def test_compose_resolves_the_project_with_the_test_defaults(tmp_path: Path) -> None:
     """Every required variable is set, so Compose accepts the project before any container starts."""
-    if shutil.which("docker") is None:
-        pytest.skip("the docker CLI is not installed; resolving a Compose file needs the CLI, not a daemon")
     compose = InfrahubSyncDockerCompose.create(directory=tmp_path, image="infrahub-sync:s010-ci", environ={})
-    # Only what the CLI needs to run: a value exported in the caller's shell must not reach Compose.
-    environment = {name: os.environ[name] for name in ("PATH", "HOME", "DOCKER_CONFIG") if name in os.environ}
 
-    result = subprocess.run(  # noqa: S603 -- fixed argv, no shell
-        [*compose.compose_command_property, "config", "--format", "json"],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=environment,
-        timeout=60,
-    )
+    services = _resolved_services(compose)
 
-    assert result.returncode == 0, "docker compose config refused the generated project"
-    services = json.loads(result.stdout)["services"]
     assert services["sync-worker"]["image"] == "infrahub-sync:s010-ci"
     (published,) = services["sync-api"]["ports"]
     assert published["host_ip"] == "127.0.0.1"
     assert str(published.get("published", "")) in {"", "0"}
+
+
+def test_compose_takes_an_exported_value_literally(tmp_path: Path) -> None:
+    compose = InfrahubSyncDockerCompose.create(
+        directory=tmp_path, image="infrahub-sync:s010-ci", environ={LITERAL_VARIABLE: LITERAL_VALUE}
+    )
+
+    services = _resolved_services(compose)
+
+    # `docker compose config` writes each `$` of a resolved value as `$$`, so its output
+    # stays valid Compose; doubling the expected value compares the value Compose resolved.
+    assert services["sync-worker"]["environment"][LITERAL_VARIABLE] == LITERAL_VALUE.replace("$", "$$")
+
+
+@pytest.mark.parametrize(
+    ("value", "line"),
+    [
+        ("plain", "NAME='plain'\n"),
+        ("a $b ${C} $$d", "NAME='a $b ${C} $$d'\n"),
+        ("it's", "NAME='it\\'s'\n"),
+        ("back\\slash", "NAME='back\\slash'\n"),
+    ],
+)
+def test_a_value_is_written_single_quoted(value: str, line: str) -> None:
+    assert env_file_line("NAME", value) == line
+
+
+@pytest.mark.parametrize("value", ["ends-with\\", "backslash\\'quote"])
+def test_a_value_single_quotes_cannot_carry_is_refused(
+    value: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("INFRAHUB_SYNC_S3_BUCKET", value)
+
+    with pytest.raises(ValueError, match="INFRAHUB_SYNC_S3_BUCKET") as refused:
+        InfrahubSyncDockerCompose.create(directory=tmp_path, image="infrahub-sync:s010-ci")
+
+    assert value not in str(refused.value)
 
 
 class TestTheDefaultFileList(TestInfrahubSyncDocker):

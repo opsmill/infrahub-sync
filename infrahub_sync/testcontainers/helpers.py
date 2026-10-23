@@ -11,6 +11,10 @@ Each variable the root file reads is written to the Sync project's `.env` as
 `os.environ.get(name, test_default)`, the way `InfrahubDockerCompose.create_env_file` does:
 a test or CI job sets a value by exporting it before the class starts. A variable with no
 test default and no exported value is left out, so the root file's own default applies.
+
+`InfrahubDockerCompose` does not pass its variables to the `docker compose` command, so
+Compose reads them from `.env` only. Each value is written single-quoted, the `.env` form
+Compose takes literally: a `$` in an exported password or token is not interpolated.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ import shutil
 import subprocess  # noqa: S404 -- only `docker compose` runs, through testcontainers
 import uuid
 import warnings
+from itertools import starmap
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -116,7 +121,8 @@ def environment_values(
     left out, so the root file's own default applies.
 
     Raises:
-        ValueError: when a value holds a line break, which a `.env` line cannot carry.
+        ValueError: when a value holds a line break, or a backslash that ends it or comes
+            before a single quote, which a single-quoted `.env` value cannot carry.
     """
     environ = os.environ if environ is None else environ
     repository, tag = split_image(image)
@@ -132,8 +138,25 @@ def environment_values(
         if "\n" in value or "\r" in value:
             msg = f"the value of {name} holds a line break, which a .env file cannot carry"
             raise ValueError(msg)
+        if value.endswith("\\") or "\\'" in value:
+            msg = (
+                f"the value of {name} ends with a backslash or holds a backslash before a single quote,"
+                " which a single-quoted .env value cannot carry"
+            )
+            raise ValueError(msg)
         values[name] = value
     return values
+
+
+def env_file_line(name: str, value: str) -> str:
+    """Return the `.env` line that sets `name` to `value`, which Compose reads unchanged.
+
+    The value is single-quoted, so Compose does not interpolate `$NAME`, `${NAME}` or `$$`
+    and keeps spaces and `#`. Inside single quotes Compose reads `\\'` as `'` and every
+    other backslash as itself; `environment_values` refuses the values this cannot carry.
+    """
+    escaped = value.replace("'", "\\'")
+    return f"{name}='{escaped}'\n"
 
 
 class InfrahubSyncDockerCompose(InfrahubDockerCompose):
@@ -164,7 +187,7 @@ class InfrahubSyncDockerCompose(InfrahubDockerCompose):
 
         values = environment_values(image, compose_variables(compose_file), environ)
         env_file = directory / ".env"
-        env_file.write_text("".join(f"{name}={value}\n" for name, value in values.items()), encoding="utf-8")
+        env_file.write_text("".join(starmap(env_file_line, values.items())), encoding="utf-8")
 
         compose = cls(
             context=directory,
