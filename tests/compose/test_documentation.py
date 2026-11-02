@@ -303,7 +303,7 @@ def test_the_page_runs_the_whole_operator_sequence_in_order_through_the_cli() ->
     assert missing == [], missing
 
 
-def test_every_documented_cli_invocation_uses_the_cli_service() -> None:
+def test_no_documented_shell_line_calls_the_removed_wrapper() -> None:
     """No shell line on the page still calls the removed wrapper."""
     assert [line for line in shell_lines(page()) if "infrahub-sync-compose" in line] == []
 

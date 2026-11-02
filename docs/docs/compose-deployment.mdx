@@ -469,6 +469,13 @@ export INFRAHUB_SYNC_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_API_TOKEN=//p' .env)"
 infrahub-sync configs list
 ```
 
+If `.env` sets `INFRAHUB_SYNC_API_PORT` or `INFRAHUB_SYNC_BIND_ADDRESS`, use those
+values in the URL instead of `127.0.0.1:8000`.
+
+The exported `INFRAHUB_SYNC_API_TOKEN` also overrides the value in `.env` for every
+`docker compose` command you run from this shell, including the `cli` service. After
+you change the token in `.env`, export it again, or open a new shell.
+
 See [Connect the CLI to the Sync API](running-a-sync#connect-the-cli-to-the-sync-api).
 The commands on this page use the CLI this way.
 
