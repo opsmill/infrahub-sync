@@ -1,0 +1,103 @@
+dev/specs/019-import-lineage/checklists/requirements.md
+  s_8d92f288a8f661::t_84a910e95bf22c 1-46
+dev/specs/019-import-lineage/spec.md
+  s_8d92f288a8f661::t_d474b6d46ac71a 1-185,187-310
+  s_8d92f288a8f661::t_c670cdc27d1500 186
+  s_8d92f288a8f661::t_aacc885346c532 33
+  s_8d92f288a8f661::t_7dd3796653d503 33
+infrahub_sync/adapters/infrahub.py
+  s_8d92f288a8f661::t_4d52478f41f957 721,743
+  s_8d92f288a8f661::t_b6ba78339319e7 721
+  s_8d92f288a8f661::t_e24f0ec084c184 743
+  s_8d92f288a8f661::t_81cd41905a834a 717
+tests/cli/test_client_commands.py
+  s_8d92f288a8f661::t_ba5632b867a76f 1054-1055,1072,1074-1075,1080,1081,1086,1088,1091,1092,1098-1099
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "472bf9e2fcff5f2e876a19e98c2a0bdeb465a1dd",
+  "prompts": {},
+  "sessions": {
+    "s_0d76309737bca3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a33bfbf8b23464547",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_0f873a5a19bd17": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a10368411bece3b87",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_1b4fe4f1bfdd10": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a22da8578e010ccf2",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_21afcad786780f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ac43bbe9901501210",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_336070b1e09462": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aabba2b8f8f5f781d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_4318d7584daead": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a6af4376d216f287a",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_660ba8032ef88e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a5ef368306632fa21",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_8327309d287049": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a91f1a15fea17ab67",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_ff46239dca98ad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a2da010e23f83b026",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
