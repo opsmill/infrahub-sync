@@ -75,12 +75,137 @@ Run the NetBox benchmark (`docs/docs/development/guides/netbox-benchmark-runner.
 without metadata reads, on the default branch and on another branch, and record the destination
 read time for about 10,000 nodes in the plan's notes. The result is information only.
 
-The measurement was made on 2026-10-22 with a direct SDK read, not with the runner; the result is
-in research.md R-2.
+The measurement was made on 2026-10-22 on Infrahub 1.10.6, and again on 2026-11-02 on Infrahub
+1.11.9 with the NetBox kinds of the T057 run as well, each time with a direct SDK read, not with
+the runner; the results are in research.md R-2.
 
-## Quickstart results, for the pull request description
+## Quickstart results with NetBox as the source, on Infrahub 1.11.9
 
-Run on 2026-10-23 from 00:00 to 00:09 UTC (task T057), with the code of commit `99b579eb`.
+Run on 2026-11-02 from 15:28 to 15:44 UTC (task T057), with the code of commit `5e885918`.
+
+### What ran with NetBox
+
+- Three Compose projects created for this run, each with its own host ports:
+  - `lineage014-nb2-netbox`: the local NetBox from `development/netbox/docker-compose.netbox.yml`,
+    loaded with the pinned `demo` dataset by `invoke netbox.seed --dataset demo`.
+  - `lineage014-nb2-infrahub`: `development/docker-compose.infrahub.yml` with `VERSION=1.11.9`
+    (server version read back: 1.11.9) and anonymous access off, with the schema snapshot
+    `tests/data/nightly_schema` loaded.
+  - `lineage014-nb2-sync`: the development stack, `development/docker-compose.dev.yml`, with the
+    Sync image built from this worktree under its own tag `infrahub-sync:lineage014-nb2`. The
+    worker joined the NetBox and the Infrahub networks.
+- The package was the shipped `examples/netbox_to_infrahub` package, written for these networks by
+  `invoke netbox.demo-package --dev-stack`, with the lineage settings of each scenario added to
+  `destination.settings`. The 21 mapped kinds were unchanged.
+- Every step ran through the CLI (`configs register`, `configs version`, `diff`, `sync`, `apply`,
+  `runs plan --detail`, `runs results`), the Sync API and the worker. Each scenario wrote to a
+  destination branch created for it. No import wrote to `main`.
+- The import account was named `netbox`. The second account, `operator`, held the global
+  `super_admin` permission. Values were read back with an admin GraphQL query: `source`, `owner`
+  and `is_protected` of each mapped attribute and each relationship edge, and
+  `node_metadata.created_by` of each node of the 21 mapped kinds.
+- Source values were changed through the NetBox API: the description of `dmi01-akron-sw01` and
+  `dmi01-albany-rtr01`, and the tags `alpha` on `dmi01-albany-sw01` and `bravo` on
+  `dmi01-albany-pdu01`.
+
+### Permission set of the import account for the NetBox mapping
+
+The account started with the set of research R-7 for a branch other than the default branch,
+applied to the package: `create`, `update` and `view` on each of the 21 kinds it writes, `view`
+on the peer kind of each mapped relationship, and `view` on `CoreAccountGroup`, all with the
+decision `allow_other`. The first `sync` failed with a missing permission, reported as
+`cause: a missing permission: the import account needs one of the permissions
+object:Ipam:VLANGroup:view:allow_other, object:Ipam:VLANGroupScope:view:allow_other,
+object:Location:Site:view:allow_other (AuthenticationError, HTTP 403)`.
+
+- The plan's destination read selects the SDK's default fields as well as the mapped ones, and
+  those include every cardinality-one relationship of the kind. So the read needs `view` on the
+  peer kind of each cardinality-one relationship of each mapped kind, mapped or not.
+- When a peer kind is a generic, the read also needs `view` on the kinds that use the generic.
+  For example, the peer `DcimGenericDevice` needed `view` on `DcimDevice`,
+  `ComputePhysicalServer` and `VirtualizationVirtualMachine`, and the peer `IpamGenericVLAN`
+  needed `view` on `IpamVLAN`, `IpamCVLAN` and `IpamSVLAN`.
+- Infrahub's refusal lists every permission of the refused check, including permissions the
+  account already holds. The CLI's cause line calls them "one of the permissions".
+- The run passed after `view` was added on 13 more kinds, 40 `view` permissions in all, and 82
+  permissions in all. Eight of the 13 were added ahead of a refusal, from the cardinality-one
+  rule, so each of these eight is not proven to be needed. The added kinds: `BuiltinIPPrefix`,
+  `ComputePhysicalServer`, `DcimCable`, `DcimConnector`, `InterfaceHasSubInterface`,
+  `InterfaceLayer3`, `IpamCVLAN`, `IpamPrefixScope`, `IpamSVLAN`, `IpamVLANGroupScope`,
+  `LocationGeneric`, `TemplateDcimDevice` and `VirtualizationVirtualMachine`.
+
+### Scenario 1 with NetBox: an account used only by this import
+
+- Passed. `sync` into `t057-s1` completed: 1,687 creates and one delete of the built-in
+  `default` IP namespace, which apply does not run. The branch then held 1,688 nodes of the
+  mapped kinds.
+- Passed for the values. Every written attribute (5,261) and every relationship edge (1,947) had
+  source `netbox`, no owner and no protection. The two attributes without a source belong to the
+  built-in `default` IP namespace, which the import did not write.
+- Not met for `created_by` on IPAM kinds. 1,413 created nodes had `created_by` `netbox`. The 274
+  nodes of `IpamPrefix` (90), `IpamIPAddress` (180) and `IpamAggregate` (4) had `created_by` and
+  `updated_by` `__system__` ("[Infrahub System]"), while their attributes had source `netbox`.
+  The sources do not say why Infrahub records these IPAM nodes as created by the system.
+- Passed. After a `diff` made with the `netbox` token, the worker was recreated with the
+  `operator` token, and `apply` printed `apply failed: ImportAccountMismatchError`, a `cause:`
+  line naming the import account `netbox` and the import account `operator` with their ids,
+  "Nothing was written to the destination.", and the `hint:` line. The three devices the plan
+  would update kept their values.
+
+### Scenario 2 with NetBox: owner and a missing owner
+
+- Steps 1 to 3 passed on `t057-s2`. The `diff` summary printed "The owner setting applies only to
+  values this run creates." After `sync`, every written attribute (5,261) and edge (1,948) had
+  owner `network-team`.
+- Step 4 passed on `t057-s1`, whose values were created without an owner. A `sync` with the owner
+  setting changed two descriptions and added the `alpha` edge: the updated attributes kept no
+  owner, and the added edge had owner `network-team`.
+- Step 5 passed on `t057-s5`, a branch created after the group was renamed on `main`: `diff`
+  printed `plan failed: NamedLineageNodeNotFoundError`, "cause: The setting `owner` names
+  `CoreAccountGroup` `network-team`, which does not exist." and a `hint:` line. The worker log
+  shows no read of NetBox for that run.
+- Step 5 failed on `t057-s2`, a branch created before the rename: the plan completed. Step 6
+  failed for the same reason on `t057-s6`: the branch was planned while the group had its name,
+  the group was renamed, and `apply` wrote all 1,687 creates with the renamed group as owner.
+  This is the Infrahub filter behaviour on a branch created before a rename of a branch-agnostic
+  attribute (research R-7), seen again on 1.11.9 with real NetBox kinds. It was not worked around.
+- Step 7 passed: `configs register` and `configs version` with `owner: network-team` were refused
+  with HTTP 422, code `configs-validation`, and the CLI exited with status 1. The CLI printed no
+  finding text.
+
+### Scenario 3 with NetBox: who last changed a value
+
+- Passed. `operator` changed the description of `dmi01-akron-rtr01` on `t057-s1`. `runs plan
+  --detail` then showed, for the update that puts the NetBox value back,
+  `description (attribute): updated_by=Operator, updated_at=2026-11-02T15:34:48…`, and for the
+  update of `dmi01-akron-sw01`, whose description changed in NetBox,
+  `description (attribute): updated_by=Netbox, updated_at=2026-11-02T15:31:47…`.
+- Passed. The update that adds the first `tags` edge of `dmi01-albany-sw01` showed
+  `tags (relationship): updated_by=not recorded, updated_at=not recorded`.
+
+### Scenario 4 with NetBox: protection
+
+- Passed. With `protect: true` and no owner, on `t057-s4`, every written attribute (5,261) and
+  edge (1,948) was protected. Attributes the source holds as null were not written and were not
+  protected.
+- Passed. With `protect: false`, after a changed description and an added `bravo` edge: the
+  changed attribute stayed protected, and the added edge had `is_protected` null.
+
+### Scenario 5 with NetBox: missing permission
+
+- Passed. With `view` on `CoreAccountGroup` removed and the owner setting kept, `diff` on
+  `t057-s7` printed `plan failed: AuthenticationError` and "cause: a missing permission: the
+  import account needs the permission `object:Core:AccountGroup:view:allow_other`
+  (AuthenticationError, HTTP 403)". `runs results` held `infrahub_error` with
+  `problem: missing_permission`, `http_status: 403` and that permission, at stage `plan`.
+- The same classification reported the missing `view` permissions of the first scenario 1 runs,
+  at stage `sync`, with `error_type: ValueError` and `cause_type: AuthenticationError`.
+- None of the tokens of the run appeared in the CLI output, the Sync API log or the worker log.
+
+## Quickstart results with an Infrahub source, on Infrahub 1.10.6
+
+Run on 2026-10-23 from 00:00 to 00:09 UTC (task T057, first run), with the code of commit
+`99b579eb`.
 
 ### What ran
 

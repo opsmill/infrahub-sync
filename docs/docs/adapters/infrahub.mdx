@@ -288,10 +288,12 @@ The import account needs these Infrahub permissions. They were measured on Infra
 | Permission | Default branch | Any other branch | Used for |
 |------------|----------------|------------------|----------|
 | Global `edit_default_branch` | Required | Not required | Every create and update |
-| Object `view` on each mapped destination kind, and on the peer kind of each mapped relationship | Required, decision `allow_default` | Required, decision `allow_other` | The plan's read of the destination, the lookup of each related node, and apply's read of a node's current relationship peers |
+| Object `view` on each mapped destination kind, on the peer kind of each mapped relationship, and on the peer kind of every cardinality-one relationship of a mapped kind | Required, decision `allow_default` | Required, decision `allow_other` | The plan's read of the destination, the lookup of each related node, and apply's read of a node's current relationship peers |
 | Object `create` on each kind the import writes | Required, decision `allow_default` | Required, decision `allow_other` | Every create and update, because the import writes both as an upsert |
 | Object `update` on each kind the import writes | Required, decision `allow_default` | Required, decision `allow_other` | Every create and update, for the same reason |
 | Object `view` on the kind of a named `source` or `owner` | Required, decision `allow_default` | Required, decision `allow_other` | The lookup of the named node, only when the package names one |
+
+The plan's read of a kind also returns every cardinality-one relationship of that kind, including the ones the package does not map. So the import account needs `view` on those peer kinds too. When a peer kind is a generic, it also needs `view` on each kind that uses the generic. For example, with the `examples/netbox_to_infrahub` package and the schema library, the peer `DcimGenericDevice` needs `view` on `DcimDevice`, `ComputePhysicalServer` and `VirtualizationVirtualMachine`. When a permission is missing, the run names the permissions Infrahub asked for, so you can add them one refusal at a time.
 
 The import reads only the name of a named node, so it needs `view` on that kind only:
 

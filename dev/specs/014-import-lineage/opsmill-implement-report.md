@@ -1,6 +1,6 @@
 # Implementation report: lineage of the data an import writes
 
-- Status: INCOMPLETE. Two tasks are partial (T004 and T057). No local-pass evidence is missing.
+- Status: INCOMPLETE. One task is partial (T004). T057 was completed on 2026-11-02. No local-pass evidence is missing.
 - Spec directory: `dev/specs/014-import-lineage`
 - Base commit: `896795ed`
 - Head commit before this report: `57f2811a`
@@ -27,13 +27,36 @@
 | 7a. Polish: guards, docs, changelog | T049-T054 (6) | 6 done | `91b39b6f` | The page does not say that a value last changed before the upgrade shows "not recorded", because nothing confirms it. |
 | 7b. Polish: checks, benchmark, quickstart | T055-T057 (3) | 2 done, 1 partial | `99b579eb`, `c34bb799`, `7c45ed98` | The quickstart run found two gaps, fixed in review (findings A and B). It also raised the branch question in the product-owner section. |
 | Review fixes | n/a | done | `0783d3c7`, `57f2811a` | See review findings. |
+| Rerun of T004 and T057 on Infrahub 1.11.9 (2026-11-02) | T004, T057 | T057 done, T004 still partial | see the commit that records this rerun | The R-7 permission set is not enough for real kinds: the plan's read also needs `view` on the peers of every cardinality-one relationship and on the kinds that use a generic peer. Infrahub records the 274 IPAM nodes as created by `__system__`. |
 
-Totals: 57 tasks, 55 done, 2 partial, 0 blocked.
+Totals: 57 tasks, 56 done, 1 partial, 0 blocked.
 
 ## Tasks not completed
 
-- T004, partial. `tasks/bench.py` pins Infrahub 1.11.3, needs a NetBox dump that does not exist, has no branch option and reports the time of the whole sync. The read time was measured instead with a direct SDK read of 10,014 throwaway nodes on 1.10.6. Real NetBox kinds were not measured. T056 used the same method, so the two sets of numbers can be compared. The result is information only and does not block the merge.
-- T057, partial. Every quickstart scenario ran through the CLI, the Sync API and the worker, on a copy of the development stack that this run created, against Infrahub 1.10.6. The source was the Infrahub adapter reading a branch, not NetBox. The results are in the quickstart.md section "Quickstart results, for the pull request description".
+- T004, partial. The read time with and without metadata was measured on Infrahub 1.10.6 (2026-10-22) and again on 1.11.9 (2026-11-02), on `main` and on another branch, with a direct SDK read of the plan's destination read shape, not with `tasks/bench.py`. On 1.11.9 the 21 kinds of the NetBox mapping (1,688 nodes from the `demo` dataset) were measured as well as the 10,014-node T004 shape. In this branch, `tasks/bench.py` pins Infrahub 1.11.3, has no option for the Infrahub address or to turn the metadata read off, uses the fixed Compose projects `infrahub-sync-dev` and `infrahub-sync-benchmark`, and reports the time of the whole sync. The 1.11.9 pin and the `--infrahub-url` option exist on branch `010-prefect-from-sync-image` only. The result is information only and does not block the merge (research R-2).
+
+## Rerun of T004 and T057 on Infrahub 1.11.9 (2026-11-02)
+
+- Stacks, each created for this run and removed after it with its volumes and networks:
+  - `lineage014-nb2-netbox`: the local NetBox with the pinned `demo` dataset, host port 18482.
+  - `lineage014-nb2-infrahub`: Infrahub 1.11.9, anonymous access off, host port 18419, with the schema snapshot `tests/data/nightly_schema` loaded.
+  - `lineage014-nb2-sync`: the development stack built from commit `5e885918` under the image tag `infrahub-sync:lineage014-nb2`, Sync API on host port 18401. The image tag was removed after the run.
+- T057: every quickstart scenario ran through the CLI, the Sync API and the worker, with NetBox as the source. The results for the pull request description are in quickstart.md, "Quickstart results with NetBox as the source, on Infrahub 1.11.9". Scenarios 1, 3, 4 and 5 passed, except `created_by` on IPAM kinds. Scenario 2 passed except steps 5 and 6 on a branch created before the owner rename, the Infrahub behaviour already recorded in research R-7.
+- Expected results not met:
+  - Scenario 1: 274 nodes of `IpamPrefix`, `IpamIPAddress` and `IpamAggregate` have `created_by` `__system__`, although their attributes have source `netbox`. The sources do not say why.
+  - Scenario 2, steps 5 and 6, on a branch created before the rename: the plan completed, and apply wrote every create with the renamed group as owner. This was not worked around.
+- New finding for the import account's permissions: the R-7 set was refused for the NetBox mapping. The plan's read also needs `view` on the peer kind of every cardinality-one relationship of each mapped kind, and on each kind that uses a generic peer. The run passed with 82 permissions. research.md R-7 records the finding, and `docs/docs/adapters/infrahub.mdx` now names these peer kinds.
+- T004 results on 1.11.9 (median of three reads, research R-2):
+
+  | Data | Branch | Without metadata (s) | With metadata (s) |
+  |------|--------|----------------------|-------------------|
+  | 21 NetBox kinds, 1,688 nodes | `main` | 5.42, 5.36 | 15.15, 15.11 |
+  | 21 NetBox kinds, 1,688 nodes | other branch | 5.55, 5.55 | 15.46, 15.32 |
+  | T004 shape, 10,014 nodes | `main` | 21.29, 21.04 | 29.08, 30.13 |
+  | T004 shape, 10,014 nodes | other branch | 20.32, 20.25 | 53.48, 53.44 |
+
+  On 1.10.6 the T004 shape gave 21.86 and 21.10 s without metadata (T004), and 22.56, 22.43, 31.60, 33.35 s on `main` and 24.31, 24.97, 59.83, 62.18 s on the other branch (T056, without and with).
+- No token appeared in the CLI output, the Sync API log or the worker log. The local NetBox task printed its development token in its own banner, as it is designed to.
 
 ## Local-pass evidence
 
@@ -91,7 +114,7 @@ All runs were local on macOS arm64 with Python 3.11.8 and infrahub-sdk 1.23.2. E
 
 - Chunks: phases with more than about 6 tasks were split into 2 to 4 chunks, each with its tests next to their implementation. Integration tasks (T019, T030, T043) were separate chunks.
 - Logging: AGENTS.md and the constitution ask for `structlog`, but no module in `infrahub_sync/` uses it. The new code follows the adapter's stdlib `logging` with `extra=`.
-- T004 and T057 are accepted as partial, for the reasons above.
+- T004 is accepted as partial, for the reasons above. T057 was first accepted as partial on 2026-10-23 and completed on 2026-11-02 with NetBox as the source.
 - The product owner's psutil workaround was passed to every chunk. No chunk reported needing it.
 - `docs.generate` rewrites `docs/docs/reference/cli.mdx` and drops a hand-written paragraph about `INFRAHUB_SYNC_API_TOKEN`. That drift existed before this branch, so the change was reverted each time and not committed.
 - Medium and low review findings were deferred where they are refactors with no change in behaviour.
@@ -110,7 +133,8 @@ All runs were local on macOS arm64 with Python 3.11.8 and infrahub-sdk 1.23.2. E
 ## Suggested next steps
 
 1. Decide whether to file the draft upstream issue at `/private/tmp/claude-503/-Users-bkohler-automation-opsmill-infrahub-sync/98127f2a-4ebb-4d16-a202-bb38be574daa/scratchpad/draft-infrahub-issue-branch-agnostic-rename.md`.
-2. Open a pull request with the label `changes/minor`. Use the quickstart.md section "Quickstart results, for the pull request description".
-3. Address the deferred medium review findings, starting with the split of `potenda/__init__.py`.
-4. Follow-up work: make an update send only the fields the plan changes, so unchanged values keep their source.
-5. Follow-up work: move the package to `structlog`, or amend the constitution's logging line to match the code.
+2. Open a pull request with the label `changes/minor`. Use the quickstart.md section "Quickstart results with NetBox as the source, on Infrahub 1.11.9".
+3. Decide whether the measurement of T004 must use `tasks/bench.py` once the runner changes of branch `010-prefect-from-sync-image` are merged, or whether the direct read of research R-2 is enough. The runner would still need a way to turn the metadata read off.
+4. Address the deferred medium review findings, starting with the split of `potenda/__init__.py`.
+5. Follow-up work: make an update send only the fields the plan changes, so unchanged values keep their source.
+6. Follow-up work: move the package to `structlog`, or amend the constitution's logging line to match the code.

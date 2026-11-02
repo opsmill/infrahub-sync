@@ -306,8 +306,76 @@ alternate twice on each branch.
   the added time grows with the number of nodes and attributes the plan reads, and is larger on
   a branch other than the default branch.
 - The result is information only and does not block the merge (plan.md, "Items left open").
-- The read times above were measured on 1.10.6 only. They were not measured again on 1.11.9, so
-  the read time on 1.11.9 is not known.
+- The read times above were measured on 1.10.6. The measurement on 1.11.9 follows.
+
+**Destination read time with and without metadata on Infrahub 1.11.9 (task T004 rerun, 2026-11-02)**
+
+Measured on Infrahub 1.11.9 (`registry.opsmill.io/opsmill/infrahub:1.11.9`, server version read
+back as 1.11.9), in the Compose project `lineage014-nb2-infrahub` created for this run, with
+anonymous access off, on the same kind of host as above (macOS arm64, 18 CPUs, Docker Desktop),
+SDK 1.23.2, from 15:46 to 16:11 UTC. The method is the method of T004 and T056: each read uses a
+new client, so the node store is fresh; each row is a first read, then three reads and their
+median; the blocks alternate without and with metadata twice on each branch. The reads used the
+admin token.
+
+Two data shapes were read:
+
+- NetBox kinds: the 21 kinds the `examples/netbox_to_infrahub` package maps, 1,688 nodes, read
+  as the adapter's `model_loader` reads them: one `client.all(kind=…, include=<identifiers and
+  mapped fields>, populate_store=True)` for each kind, with `include_metadata=True` added for the
+  "with metadata" rows. The data was the pinned NetBox `demo` dataset, imported by T057 into a
+  branch and merged into `main`. The other branch, `lineage-bench`, was created after the merge
+  and holds no change of its own.
+- The T004 shape: 10,014 `TestLinDevice` nodes, each with a `serial` and two `tags` out of 20,
+  read with `include=["name", "serial", "tags"]`, created on `main`. The other branch,
+  `lineage-bench-syn`, was created after them and holds no change of its own.
+
+| Data | Branch | Metadata | Nodes read | First read (s) | Next three reads (s) | Median of the three (s) |
+|------|--------|----------|------------|----------------|----------------------|-------------------------|
+| NetBox kinds | `main` (default) | without | 1,688 | 10.33 | 5.52, 5.42, 5.42 | 5.42 |
+| NetBox kinds | `main` (default) | with | 1,688 | 17.71 | 14.80, 15.15, 15.60 | 15.15 |
+| NetBox kinds | `main` (default) | without | 1,688 | 5.08 | 5.79, 5.21, 5.36 | 5.36 |
+| NetBox kinds | `main` (default) | with | 1,688 | 15.01 | 15.13, 14.86, 15.11 | 15.11 |
+| NetBox kinds | `lineage-bench` (other branch) | without | 1,688 | 6.63 | 5.55, 5.57, 5.15 | 5.55 |
+| NetBox kinds | `lineage-bench` (other branch) | with | 1,688 | 15.66 | 15.84, 15.29, 15.46 | 15.46 |
+| NetBox kinds | `lineage-bench` (other branch) | without | 1,688 | 5.91 | 5.51, 5.55, 5.57 | 5.55 |
+| NetBox kinds | `lineage-bench` (other branch) | with | 1,688 | 15.49 | 15.31, 15.44, 15.32 | 15.32 |
+| T004 shape | `main` (default) | without | 10,014 | 21.87 | 21.46, 21.11, 21.29 | 21.29 |
+| T004 shape | `main` (default) | with | 10,014 | 29.10 | 33.19, 29.08, 27.99 | 29.08 |
+| T004 shape | `main` (default) | without | 10,014 | 21.68 | 21.04, 20.79, 21.14 | 21.04 |
+| T004 shape | `main` (default) | with | 10,014 | 33.10 | 30.13, 30.91, 28.67 | 30.13 |
+| T004 shape | `lineage-bench-syn` (other branch) | without | 10,014 | 20.72 | 20.32, 20.79, 20.07 | 20.32 |
+| T004 shape | `lineage-bench-syn` (other branch) | with | 10,014 | 54.85 | 53.34, 53.48, 53.60 | 53.48 |
+| T004 shape | `lineage-bench-syn` (other branch) | without | 10,014 | 20.48 | 20.25, 19.93, 20.32 | 20.25 |
+| T004 shape | `lineage-bench-syn` (other branch) | with | 10,014 | 53.57 | 53.58, 53.41, 53.44 | 53.44 |
+
+- NetBox kinds: the read with metadata took about 2.8 times as long as the read without, on both
+  branches: medians of 15.11 to 15.46 s against 5.36 to 5.55 s, about 10 s more for 1,688 nodes.
+  These kinds select more attributes and relationships for each node than the T004 shape, so the
+  added time for each node is larger.
+- NetBox kinds: unlike the T004 shape, the other branch was not slower than `main`. The sources do
+  not say why. One difference is that this data was created on a branch and merged, while the
+  T004 shape was created on `main`.
+- T004 shape: on `main`, the read with metadata took about 1.4 times as long as the read without
+  (29.08 s and 30.13 s against 21.29 s and 21.04 s). On the other branch, it took about 2.6 times
+  as long (53.48 s and 53.44 s against 20.32 s and 20.25 s), about 33 s more for 10,014 nodes.
+- Against 1.10.6 (T004 and T056 above), the T004 shape gives close times on 1.11.9: without
+  metadata, 20.3 to 21.3 s against 21.1 to 25.0 s; with metadata on `main`, 29.1 to 30.1 s
+  against 31.6 to 33.4 s; with metadata on the other branch, 53.4 to 53.5 s against 59.8 to
+  62.2 s.
+- Every read with metadata returned `updated_by` on the first included field of the first node;
+  no read without metadata did.
+- Not measured, and why: the NetBox benchmark runner (`tasks/bench.py`) was not used.
+  - In this branch it pins Infrahub 1.11.3 (`tasks/bench.py:63`), has no option for the Infrahub
+    address, and has no option to turn the metadata read off. The plan reads metadata whenever
+    the server is Infrahub 1.7.0 or later (`metadata_read_supported`,
+    `infrahub_sync/adapters/infrahub.py:821`).
+  - It uses the fixed Compose projects `infrahub-sync-dev` and `infrahub-sync-benchmark` and a
+    lock for the whole host, while this run had to use its own project names.
+  - It reports the time of the whole sync, not the destination read alone, and it needs a seeded
+    and dumped NetBox tier, which this checkout does not have.
+  - The read above is the read the runner's sync would make for the same kinds, but its time
+    excludes the source read, the comparison and the writes.
 
 **Alternatives considered**
 
@@ -698,4 +766,30 @@ on 1.10.6:
 
 This was checked at the lookup level: `client.get(kind=…, name__value=…)`, the call the import's
 lookup makes (`infrahub_sync/adapters/infrahub.py:1091`), with the SDK's default fields. A plan
-through the Sync service on a branch created before a rename was not run again on 1.11.9.
+through the Sync service on a branch created before a rename was not run again on 1.11.9 at that
+time. It ran on 2026-11-02 with NetBox as the source (quickstart.md, "Scenario 2 with NetBox"):
+the plan completed, and an apply after a second rename wrote every create with the renamed group
+as owner.
+
+**Permission set for the NetBox mapping, through the Sync service, on Infrahub 1.11.9 (task T057, 2026-11-02)**
+
+The `examples/netbox_to_infrahub` package, with the schema snapshot `tests/data/nightly_schema`,
+ran through the Sync service on a branch other than the default branch. The import account
+started with the table above applied to the package's 21 kinds. Details are in quickstart.md,
+"Permission set of the import account for the NetBox mapping".
+
+- The table above is not enough for real kinds. The plan's destination read,
+  `client.all(kind=…, include=[…])`, also selects the SDK's default fields, which include every
+  cardinality-one relationship of the kind. The read was refused until the account had `view` on
+  the peer kind of each cardinality-one relationship of each mapped kind, mapped or not.
+- When that peer kind is a generic, the read also needs `view` on the kinds that use it:
+  `DcimGenericDevice` needed `DcimDevice`, `ComputePhysicalServer` and
+  `VirtualizationVirtualMachine`; `IpamGenericVLAN` needed `IpamVLAN`, `IpamCVLAN` and `IpamSVLAN`.
+- The throwaway kinds of T005 have no cardinality-one relationship, so the probe could not show
+  this.
+- The run passed with 82 permissions: `create` and `update` on the 21 written kinds, and `view`
+  on 40 kinds, including `CoreAccountGroup`. Eight of those `view` permissions were added before
+  a refusal named them, so each of those eight is not proven to be needed. No permission was
+  removed one at a time afterwards, so the set is not proven to be the smallest.
+- `docs/docs/adapters/infrahub.mdx`, "Permissions of the import account", now names the peer kinds
+  of cardinality-one relationships and the kinds that use a generic peer.
