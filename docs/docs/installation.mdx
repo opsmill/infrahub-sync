@@ -8,7 +8,8 @@ command-line client to send requests to the Sync API.
 
 **Moving from V2?** [Move from V2 to V3](./v2-to-v3.mdx) compares the two lines and states
 what to prepare first. A switch starts a fresh deployment; there is no in-place state
-migration. The public [PyPI package](https://pypi.org/project/infrahub-sync/) is V2.
+migration. The [PyPI package](https://pypi.org/project/infrahub-sync/) holds both lines:
+versions 2.x are V2, and versions 3.0.0 and later are V3.
 
 ## Two ways to run V3
 
@@ -38,6 +39,31 @@ only, so run `docker login registry.opsmill.io` before you pull.
   pulling, and checking the image's signature and bills of materials.
 - [Compose deployment](./compose-deployment.mdx) runs the full service from that
   image: the Sync API, the worker, Prefect, PostgreSQL, and object storage.
+
+## Install the CLI {#install-the-cli}
+
+You run the `infrahub-sync` CLI on any machine that can reach the Sync API, such as your
+workstation, a CI runner, or the Docker host. The CLI is published on
+[PyPI](https://pypi.org/project/infrahub-sync/) and needs Python 3.10 to 3.13. Install a
+3.x version, because the 2.x versions are V2:
+
+```bash
+uv tool install "infrahub-sync>=3,<4"
+```
+
+To install it with pip instead, use a virtual environment:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install "infrahub-sync>=3,<4"
+```
+
+To use the same version as the image your deployment runs, pin that version, for example
+`infrahub-sync==3.0.0`.
+
+Run `infrahub-sync configs --help` to confirm that you installed V3. V2 has no `configs`
+command. Then [connect the CLI to the Sync API](./running-a-sync.mdx#connect-the-cli-to-the-sync-api).
 
 ## Next step
 
