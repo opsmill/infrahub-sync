@@ -1,0 +1,38 @@
+docs/docs/adapters/infrahub.mdx
+  s_8d92f288a8f661::t_a9cf5a7228bf1a 291
+  s_8d92f288a8f661::t_f3220101929474 296-297
+dev/specs/014-import-lineage/research.md
+  s_8d92f288a8f661::t_7f23f94a4b39bc 769-795
+  s_8d92f288a8f661::t_eba58873389e8c 309-378
+dev/specs/014-import-lineage/tasks.md
+  s_8d92f288a8f661::t_4b1f082690a7a6 35
+  s_8d92f288a8f661::t_0b6173fa11e0b7 178
+dev/specs/014-import-lineage/quickstart.md
+  s_8d92f288a8f661::t_74ecffc3165485 82-144,146-204
+  s_8d92f288a8f661::t_c24436b8c024be 78-80
+  s_8d92f288a8f661::t_74ef31f6820caa 145
+  s_8d92f288a8f661::t_4f2c6c31b9b973 205-208
+  s_8d92f288a8f661::t_08449839ebfcda 81
+dev/specs/014-import-lineage/opsmill-implement-report.md
+  s_8d92f288a8f661::t_8d34ad7752715e 136-137
+  s_8d92f288a8f661::t_7916e4e2c463fb 30,32,36-59
+  s_8d92f288a8f661::t_e6d464f6fb3d8f 117
+  s_8d92f288a8f661::t_435099de03e1f0 3
+  s_8d92f288a8f661::t_c064c14590be22 138-140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6924cf8079c6449ea28de9c00b927e1c3eb7254c",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
