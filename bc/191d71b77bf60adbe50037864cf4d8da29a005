@@ -1,0 +1,30 @@
+infrahub_sync/product_store/store.py
+  s_9c7f8713d8e8dc::t_357ca8c096f105 235-238
+  s_9c7f8713d8e8dc::t_e5ab88fd8d12b4 641-659,662-663,665,671-673,687-688,698-699,710
+tests/compose/test_documentation.py
+  s_9c7f8713d8e8dc::t_b24f639f637dd2 306
+docs/docs/operations/compose-troubleshooting.mdx
+  s_9c7f8713d8e8dc::t_856197bc5ff107 55-56
+docs/docs/compose-deployment.mdx
+  s_9c7f8713d8e8dc::t_dbf4865dcf16cd 472-478
+infrahub_sync/product_store/models.py
+  s_9c7f8713d8e8dc::t_650046f8a6a659 305,402
+infrahub_sync/client/models.py
+  s_9c7f8713d8e8dc::t_939f1f4682c1fb 101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bc191d71b77bf60adbe50037864cf4d8da29a005",
+  "prompts": {},
+  "sessions": {
+    "s_9c7f8713d8e8dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7b4ab04-36d6-4644-a214-69334e6a0d27",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
