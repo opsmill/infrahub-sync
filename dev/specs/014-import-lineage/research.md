@@ -367,7 +367,12 @@ Two data shapes were read:
   no read without metadata did.
 - Not measured, and why: the NetBox benchmark runner (`tasks/bench.py`) was not used.
   - In this branch it pins Infrahub 1.11.3 (`tasks/bench.py:63`), has no option for the Infrahub
-    address, and has no option to turn the metadata read off. The plan reads metadata whenever
+    address, and has no option to turn the metadata read off. The 1.11.9 pin and the
+    `--infrahub-url` option exist only on branch `010-prefect-from-sync-image`, and were not
+    copied into this branch.
+  - The read was timed with the method of the 1.10.6 numbers above (T004 and T056), so the two
+    sets compare. The metadata read was turned on and off with the SDK's `include_metadata`
+    argument in the measuring script; no switch was added to the product. The plan reads metadata whenever
     the server is Infrahub 1.7.0 or later (`metadata_read_supported`,
     `infrahub_sync/adapters/infrahub.py:821`).
   - It uses the fixed Compose projects `infrahub-sync-dev` and `infrahub-sync-benchmark` and a
