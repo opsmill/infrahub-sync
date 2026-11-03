@@ -126,13 +126,13 @@ All runs were local on macOS arm64 with Python 3.11.8 and infrahub-sdk 1.23.2. E
    - Recorded in `spec.md` (FR-011, and Clarifications, session 2026-10-23), `plan.md` ("Items left open") and `docs/docs/adapters/infrahub.mdx` ("Name a source or an owner").
    - A reproduction on 2026-10-23 on Infrahub 1.10.6 confirmed the quickstart finding. After a rename on `main`, a filter by the earlier name on a branch created before the rename still matches the group, which reports its new name. On a branch created after the rename, and on `main`, the filter matches nothing. A deletion on `main` applies to every branch. The two earlier runs differ because the review-fix run used a branch created after the rename.
    - The same reproduction on Infrahub 1.11.9, on 2026-10-23 at 18:28 UTC, gave the same results: the stale match by the earlier name still reproduces. The draft issue now names both versions.
-   - A draft upstream bug report is at `/private/tmp/claude-503/-Users-bkohler-automation-opsmill-infrahub-sync/98127f2a-4ebb-4d16-a202-bb38be574daa/scratchpad/draft-infrahub-issue-branch-agnostic-rename.md`. It is not filed.
+   - A draft upstream bug report exists outside the repository. It is not filed.
 2. Update payloads: an update should send only the fields the plan changes. Not implemented in this feature. Recorded as an open follow-up item in `plan.md` ("Items left open").
 3. Logging: keep the standard `logging` module. Moving to `structlog`, or amending the constitution's logging line to match the code, is recorded as an open follow-up item in `plan.md` ("Items left open"). The constitution is not changed.
 
 ## Suggested next steps
 
-1. Decide whether to file the draft upstream issue at `/private/tmp/claude-503/-Users-bkohler-automation-opsmill-infrahub-sync/98127f2a-4ebb-4d16-a202-bb38be574daa/scratchpad/draft-infrahub-issue-branch-agnostic-rename.md`.
+1. Decide whether to file the draft upstream issue about the branch-agnostic rename.
 2. Open a pull request with the label `changes/minor`. Use the quickstart.md section "Quickstart results with NetBox as the source, on Infrahub 1.11.9".
 3. Decide whether the measurement of T004 must use `tasks/bench.py` once the runner changes of branch `010-prefect-from-sync-image` are merged, or whether the direct read of research R-2 is enough. The runner would still need a way to turn the metadata read off.
 4. Address the deferred medium review findings, starting with the split of `potenda/__init__.py`.
