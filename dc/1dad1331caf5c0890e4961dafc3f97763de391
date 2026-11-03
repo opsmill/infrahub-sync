@@ -1,0 +1,60 @@
+tests/service/test_tls_bundle.py
+  s_8d92f288a8f661::t_88fdf0272bcf7d 216-240
+infrahub_sync/service/bootstrap.py
+  s_8d92f288a8f661::t_9c468e314e3c06 40,54-59,90-93,118-119
+infrahub_sync/service/store_check.py
+  s_8d92f288a8f661::t_d1fc6d328080d0 45-46,179-184,205
+  s_8d92f288a8f661::t_1d9088fca07ae8 206-207
+docker-compose.yml
+  s_8d92f288a8f661::t_d8cd4429e12de9 496-497
+  s_8d92f288a8f661::t_a2e59bdf16a629 217,475-482,493-495,498-501,525-526,528-529
+tests/service/test_compose_bootstrap.py
+  s_8d92f288a8f661::t_4e0d0e5cc8611c 198-216,219
+docs/docs/compose-deployment.mdx
+  s_8d92f288a8f661::t_ef55a818fb7a57 542,553-554
+tests/compose/test_external_store.py
+  s_8d92f288a8f661::t_89548712baaf8b 404-405,407-463
+  s_8d92f288a8f661::t_d82f4322a2bcc8 406
+.github/workflows/ci-docker-image.yml
+  s_8d92f288a8f661::t_ef55a818fb7a57 385-386
+tests/compose/test_compose_contract.py
+  s_8d92f288a8f661::t_03f131c8fc713a 821-823,825-830
+  s_8d92f288a8f661::t_c4683a77b34412 842-843
+  s_8d92f288a8f661::t_d82f4322a2bcc8 674
+  s_8d92f288a8f661::t_51f757fbf14523 800,806-820,824,831-841,844-846
+  s_8d92f288a8f661::t_1c8ba6279a8d0e 847-848
+tests/service/test_worker_credentials.py
+  s_8d92f288a8f661::t_d82f4322a2bcc8 143-144
+  s_8d92f288a8f661::t_0b40cf67c0d9f4 145-159
+tests/service/test_store_check.py
+  s_8d92f288a8f661::t_7380401f2223ad 16,19,115-118,222-265
+  s_8d92f288a8f661::t_dbc7080fa48a6b 266-267
+infrahub_sync/testcontainers/docker-compose.yml
+  s_8d92f288a8f661::t_a2e59bdf16a629 217,475-482,493-495,498-501,525-526,528-529
+  s_8d92f288a8f661::t_d8cd4429e12de9 496-497
+dev/specs/013-compose-own-infrastructure/contracts/startup-messages.md
+  s_8d92f288a8f661::t_ef55a818fb7a57 14-15,31,58-59
+docs/docs/operations/compose-troubleshooting.mdx
+  s_8d92f288a8f661::t_ef55a818fb7a57 34-35,41,44-45
+.github/workflows/ci-compose-lifecycle.yml
+  s_8d92f288a8f661::t_ef55a818fb7a57 79
+infrahub_sync/service/worker_env.py
+  s_8d92f288a8f661::t_87dcc02b8a6811 11-12
+  s_8d92f288a8f661::t_4a5b2bfbc9a99a 17,19,26,50-54,72-100,113,116,139-140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dc1dad1331caf5c0890e4961dafc3f97763de391",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
