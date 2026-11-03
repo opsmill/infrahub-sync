@@ -88,3 +88,41 @@ def test_first_request_carries_select_and_top_page_size() -> None:
     params = router.requests_for("/users")[0].url.params
     assert params["$select"].split(",") == ["id", "displayName", "userPrincipalName"]
     assert params["$top"] == "25"
+
+
+@pytest.mark.parametrize(
+    ("resource", "query_filter"),
+    [
+        ("users", "accountEnabled eq true"),
+        ("groups", "securityEnabled eq true and NOT groupTypes/any(c:c eq 'Unified')"),
+    ],
+)
+def test_filter_sent_unchanged_without_consistency_level_or_count(resource: str, query_filter: str) -> None:
+    router = GraphRouter()
+    router.add_records(f"/{resource}", sample_records(resource, 1))
+
+    list_collection(router, Collection(name="filtered", resource=resource, filter=query_filter))
+
+    request = router.requests_for(f"/{resource}")[0]
+    assert request.url.params["$filter"] == query_filter
+    assert "$count" not in request.url.params
+    assert "ConsistencyLevel" not in request.headers
+
+
+def test_advanced_query_sends_count_and_consistency_level_on_every_page() -> None:
+    query_filter = "securityEnabled eq true and NOT groupTypes/any(c:c eq 'Unified')"
+    records = sample_records("groups", 3)
+    router = GraphRouter()
+    router.add_pages("/groups", [records[:1], records[1:2], records[2:]])
+
+    result = list_collection(
+        router, Collection(name="security_groups", resource="groups", filter=query_filter, advanced_query=True)
+    )
+
+    assert result == records
+    requests = router.requests_for("/groups")
+    assert len(requests) == 3
+    for request in requests:
+        assert request.url.params["$count"] == "true"
+        assert request.url.params["$filter"] == query_filter
+        assert request.headers["ConsistencyLevel"] == "eventual"

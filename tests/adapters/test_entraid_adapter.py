@@ -14,6 +14,7 @@ from tests.adapters.entraid_fakes import (
     GraphRouter,
     IdentityEmployee,
     IdentityGroup,
+    IdentityServiceAccount,
     graph_id,
     group_record,
     make_adapter,
@@ -35,6 +36,8 @@ GROUP_FIELDS = [
 ]
 USERS_ENTRY = {"name": "IdentityEmployee", "mapping": "users", "identifiers": ["entra_id"], "fields": EMPLOYEE_FIELDS}
 GROUPS_ENTRY = {"name": "IdentityGroup", "mapping": "groups", "identifiers": ["entra_id"], "fields": GROUP_FIELDS}
+ACCOUNTS_COLLECTION = {"resource": "users", "filter": "accountEnabled eq true"}
+ACCOUNTS_SETTINGS = {"collections": {"accounts": ACCOUNTS_COLLECTION}}
 
 ModelT = TypeVar("ModelT", bound=EntraidModel)
 
@@ -182,3 +185,111 @@ def test_cursor_tier_is_none() -> None:
     adapter = make_adapter(make_config([USERS_ENTRY]), GraphRouter())
 
     assert adapter.cursor_tier_for("IdentityEmployee") is CursorTier.NONE
+
+
+def accounts_entry(name: str, upn_regex: str | None = None, **extra: object) -> dict[str, object]:
+    """A `schema_mapping` entry of `name` that reads the `accounts` collection, optionally filtered on the UPN."""
+    entry: dict[str, object] = {
+        "name": name,
+        "mapping": "accounts",
+        "identifiers": ["entra_id"],
+        "fields": [{"name": "entra_id", "mapping": "id"}, {"name": "name", "mapping": "userPrincipalName"}],
+        **extra,
+    }
+    if upn_regex is not None:
+        entry["filters"] = [{"field": "userPrincipalName", "operation": "regex", "value": upn_regex}]
+    return entry
+
+
+def test_shared_collection_splits_records_between_kinds_with_one_read() -> None:
+    router = GraphRouter()
+    router.add_pages(
+        "/users",
+        [
+            [user_record(1, "alice@example.com"), user_record(2, "svc-backup@example.com")],
+            [user_record(3, "bob@example.com"), user_record(4, "svc-monitoring@example.com")],
+        ],
+    )
+    config = make_config(
+        [
+            accounts_entry("IdentityEmployee", "^(?!svc-)"),
+            accounts_entry("IdentityServiceAccount", "^svc-"),
+        ],
+        settings=ACCOUNTS_SETTINGS,
+    )
+    adapter = make_adapter(config, router)
+
+    adapter.load()
+
+    assert set(loaded(adapter, IdentityEmployee)) == {graph_id(1), graph_id(3)}
+    assert set(loaded(adapter, IdentityServiceAccount)) == {graph_id(2), graph_id(4)}
+    requests = router.requests_for("/users")
+    assert len(requests) == 2
+    assert ["$skiptoken" in request.url.params for request in requests] == [False, True]
+    assert requests[0].url.params["$filter"] == "accountEnabled eq true"
+
+
+def test_shared_collection_transform_does_not_leak_into_other_kind() -> None:
+    router = GraphRouter()
+    router.add_records("/users", [user_record(1, "Alice@Example.com")])
+    lower_upn = {"field": "userPrincipalName", "expression": "{{ userPrincipalName | lower }}"}
+    config = make_config(
+        [
+            accounts_entry("IdentityEmployee", transforms=[lower_upn]),
+            accounts_entry("IdentityServiceAccount"),
+        ],
+        settings=ACCOUNTS_SETTINGS,
+        order=["IdentityEmployee", "IdentityServiceAccount"],
+    )
+    adapter = make_adapter(config, router)
+
+    adapter.load()
+
+    assert loaded(adapter, IdentityEmployee)[graph_id(1)].name == "alice@example.com"
+    assert loaded(adapter, IdentityServiceAccount)[graph_id(1)].name == "Alice@Example.com"
+    assert len(router.requests_for("/users")) == 1
+
+
+def test_unknown_collection_is_refused_at_construction_listing_valid_names() -> None:
+    router = GraphRouter()
+    contractors = {**accounts_entry("IdentityServiceAccount"), "mapping": "contractors"}
+    config = make_config([accounts_entry("IdentityEmployee"), contractors], settings=ACCOUNTS_SETTINGS)
+
+    with pytest.raises(EntraidConfigError) as excinfo:
+        make_adapter(config, router)
+
+    message = str(excinfo.value)
+    assert "contractors" in message
+    assert "IdentityServiceAccount" in message
+    assert "Valid names: accounts, users, groups" in message
+    assert router.requests == []
+
+
+@pytest.mark.parametrize("reserved", ["users", "groups"])
+def test_collection_with_resource_name_is_refused(reserved: str) -> None:
+    router = GraphRouter()
+    settings = {"collections": {reserved: {"resource": reserved, "filter": "displayName eq 'example'"}}}
+    entry = {**USERS_ENTRY, "mapping": reserved}
+
+    with pytest.raises(EntraidConfigError, match="reserved"):
+        make_adapter(make_config([entry], settings=settings), router)
+
+    assert router.requests == []
+
+
+def test_collection_not_named_by_any_entry_is_not_read() -> None:
+    router = GraphRouter()
+    router.add_records("/users", [user_record(1, "alice@example.com")])
+    settings = {
+        "collections": {
+            "accounts": ACCOUNTS_COLLECTION,
+            "security_groups": {"resource": "groups", "filter": "securityEnabled eq true", "advanced_query": True},
+        }
+    }
+    adapter = make_adapter(make_config([accounts_entry("IdentityEmployee")], settings=settings), router)
+
+    adapter.load()
+
+    assert list(adapter.request_plan) == ["accounts"]
+    assert router.paths() == ["/users"]
+    assert set(loaded(adapter, IdentityEmployee)) == {graph_id(1)}
