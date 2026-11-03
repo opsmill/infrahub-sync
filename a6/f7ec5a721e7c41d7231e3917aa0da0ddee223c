@@ -1,0 +1,21 @@
+tests/adapters/test_infrahub_lineage.py
+  s_8d92f288a8f661::t_cf1c51fe4eb5f3 331-334,356-357
+tests/service/test_flow_and_prefect.py
+  s_8d92f288a8f661::t_cf1c51fe4eb5f3 1385-1386
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a6f7ec5a721e7c41d7231e3917aa0da0ddee223c",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
