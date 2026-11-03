@@ -91,7 +91,7 @@ creation in `sync-bootstrap`, which already uses the S3 API.
   `org.opencontainers.image.licenses=AGPL-3.0-or-later`.
 - **Release cadence**: 12 GitHub releases from 2025-12-15 to 2026-10-18, with gaps from 2 days to
   2 months (about one a month). Dated Docker Hub tags since the repository was created on
-  2026-08-06: 2026-08-06, 2026-09-03, 2026-09-16, 2026-10-15 and 2026-10-18
+  2026-08-06: five, the first on 2026-08-06 and the last on 2026-10-18
   ([Docker Hub tags](https://hub.docker.com/r/pgsty/silo/tags)). The latest,
   `RELEASE.2026-10-18T00-00-00Z`, was pushed on 2026-10-18. Whether releases before 2026-08-06
   were published under another repository is not known.
