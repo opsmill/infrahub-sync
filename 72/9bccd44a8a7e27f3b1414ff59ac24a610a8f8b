@@ -1,0 +1,82 @@
+tests/compose/fixtures/private-ca/nginx.conf
+  s_8d92f288a8f661::t_c3c373caf58f8a 1-24
+docker-compose.yml
+  s_8d92f288a8f661::t_6a5ce67f6c9cfa 31-35,40-58
+  s_8d92f288a8f661::t_2185d2d25b0940 310,324,370
+tests/compose/conftest.py
+  s_8d92f288a8f661::t_814f3c83725b9c 144-146,151
+tests/compose/fixtures/private-ca/docker-compose.override.yml
+  s_8d92f288a8f661::t_ca3a453c840831 1-167
+tests/compose/fixtures/private-ca/adapter_probe.py
+  s_8d92f288a8f661::t_5d899d5f7fbddf 107-108,121
+  s_8d92f288a8f661::t_415895ecd7d645 2-52,59-71,73-103,109,116-120,122-150,152-157,159-174
+  s_8d92f288a8f661::t_d4e2137bbfeace 1
+  s_8d92f288a8f661::t_355c461837b270 104-106,110-115
+  s_8d92f288a8f661::t_3ba364f947f0fc 53-58,72,151,158
+tests/compose/test_adapter_ca_proxy.py
+  s_8d92f288a8f661::t_3ba364f947f0fc 192-194
+  s_8d92f288a8f661::t_57e02a353b2680 209-210
+  s_8d92f288a8f661::t_25ff43c36fe740 1-131,137-139,150-191,195-208
+  s_8d92f288a8f661::t_592442f9e3db6a 132-136,140-149
+docs/docs/custom-certificates.mdx
+  s_8d92f288a8f661::t_d97a8035f85e12 143,145
+  s_8d92f288a8f661::t_0103b81636f157 20,22,24-25,27,29,31,33-142,144
+tests/configuration/test_adapter_network_support.py
+  s_8d92f288a8f661::t_e91e1e647432ee 12
+tests/compose/private_ca.py
+  s_8d92f288a8f661::t_6aa0ca316a6273 47-48
+  s_8d92f288a8f661::t_37730236d4b72e 102-103,112,115-116
+  s_8d92f288a8f661::t_6c4bb0a82e53d2 14
+  s_8d92f288a8f661::t_22a173c21c5059 1-13,15-46,49-101,104-109,111,113-114,117-129
+  s_8d92f288a8f661::t_3ba364f947f0fc 110
+infrahub_sync/testcontainers/docker-compose.yml
+  s_8d92f288a8f661::t_2185d2d25b0940 31-35,40-58,310,324,370
+tests/compose/test_documentation.py
+  s_8d92f288a8f661::t_52d52a9ddd56d1 23,475-482,486-520
+  s_8d92f288a8f661::t_3ba364f947f0fc 483-485
+tests/compose/fixtures/private-ca/generate_certificates.py
+  s_8d92f288a8f661::t_d9524b23e5c6c7 2-189,191-193
+  s_8d92f288a8f661::t_d4e2137bbfeace 1
+  s_8d92f288a8f661::t_3ba364f947f0fc 190
+tests/compose/fixtures/private-ca/squid.conf
+  s_8d92f288a8f661::t_98ba1eac7faa95 1-11
+tests/compose/fixtures/private-ca/adapters.Dockerfile
+  s_8d92f288a8f661::t_2c9ce3549809e0 1-17
+tests/compose/fixtures/private-ca/fake_endpoints.py
+  s_8d92f288a8f661::t_d4e2137bbfeace 1,26,63,66,101-102,115,124-125
+  s_8d92f288a8f661::t_de6389142deea1 2-25,27-61,64,68-100,103-114,116-123,126-130
+  s_8d92f288a8f661::t_2c39a1ded4fcb3 65,67
+  s_8d92f288a8f661::t_3ba364f947f0fc 62
+tests/compose/test_compose_contract.py
+  s_8d92f288a8f661::t_674fa53e06dcd2 1464-1535
+docs/docs/readme.mdx
+  s_8d92f288a8f661::t_6090ed1d657fb3 104-106
+docs/docs/compose-deployment.mdx
+  s_8d92f288a8f661::t_2ab4c6b45df73f 578-617
+  s_8d92f288a8f661::t_e77afb01c98315 147-150
+infrahub_sync/configuration/capabilities.py
+  s_8d92f288a8f661::t_3ba364f947f0fc 622
+  s_8d92f288a8f661::t_735377da0ff9c3 588-621,623-626
+dev/specs/013-compose-own-infrastructure/tasks.md
+  s_8d92f288a8f661::t_5aaa32f5d15957 262,269,275,280,293,297-298,307
+tests/compose/test_private_ca_proxy.py
+  s_8d92f288a8f661::t_a59c407f266c40 1-66,68-217,220,225-324
+  s_8d92f288a8f661::t_f1636cc2ed0f7d 218-219,221-224
+  s_8d92f288a8f661::t_3ba364f947f0fc 67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "729bccd44a8a7e27f3b1414ff59ac24a610a8f8b",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

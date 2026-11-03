@@ -1,0 +1,19 @@
+dev/specs/013-compose-own-infrastructure/opsmill-implement-report.md
+  s_8d92f288a8f661::t_df3c83f91e6415 1-176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a61b20f29a033cae4dbff8e473aca9338830cc03",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
