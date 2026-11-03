@@ -1,0 +1,69 @@
+dev/specs/013-compose-own-infrastructure/tasks.md
+  s_8d92f288a8f661::t_9047ef991cb682 188,196,204,209,216,220-222,226
+tests/compose/test_worker_env.py
+  s_8d92f288a8f661::t_3a915f7c145789 1-50,52-183,185-299
+  s_8d92f288a8f661::t_165cdc796e19c3 184
+  s_8d92f288a8f661::t_8b8701648a1c7e 51
+infrahub_sync/plugin_loader.py
+  s_8d92f288a8f661::t_af3360df6e7388 743-771
+infrahub_sync/testcontainers/docker-compose.yml
+  s_8d92f288a8f661::t_369b52d67b93ac 287-304
+tests/compose/test_testcontainers_fixture.py
+  s_8d92f288a8f661::t_aad680018a7bdb 50-52
+tests/service/test_worker_credentials.py
+  s_8d92f288a8f661::t_728df3f98635e1 1-26,28-57,59,61-247,250-259
+  s_8d92f288a8f661::t_b9da37bc4e5666 58,60
+  s_8d92f288a8f661::t_8b8701648a1c7e 27,248-249
+tests/compose/test_compose_contract.py
+  s_8d92f288a8f661::t_c9e0c9a8933982 1065-1067,1071-1074,1076-1078,1080-1081,1083,1085-1090,1092-1094,1096-1106,1108-1126,1128-1145,1147-1148,1150,1152-1157,1160-1163,1165-1166,1168,1170-1171
+  s_8d92f288a8f661::t_d2f53a56ea9d49 272,277-278,283
+  s_8d92f288a8f661::t_f781d0df12e56a 93-97,99-115
+  s_8d92f288a8f661::t_d8a99d26dea5fc 204,209-210,212,214
+  s_8d92f288a8f661::t_88a6aab5d36f2c 914,916
+  s_8d92f288a8f661::t_cdfc7292216bcb 116
+docker-compose.yml
+  s_8d92f288a8f661::t_369b52d67b93ac 287-304
+tests/compose/fake-sources-override.yml
+  s_8d92f288a8f661::t_def525a0aabb05 1-39
+tests/testcontainers/test_image_selection.py
+  s_8d92f288a8f661::t_aad680018a7bdb 43-44
+infrahub_sync/configuration/credential_names.py
+  s_8d92f288a8f661::t_d087e341179e63 152-153
+  s_8d92f288a8f661::t_2cde8c72bc78ba 3-4,16-17
+  s_8d92f288a8f661::t_55c1192f1e96f4 1-2,5-15,18-27,30-151,154-168,173-176
+  s_8d92f288a8f661::t_86afafab83a4ab 169-172
+  s_8d92f288a8f661::t_406d2414b5569b 28-29
+tests/compose/test_source_credentials.py
+  s_8d92f288a8f661::t_c503f3e4e03418 425-428,518-520,536-543,560-563,574-575,598
+infrahub_sync/service/worker.py
+  s_8d92f288a8f661::t_c2a92a10d3774c 26,471-474,479
+docs/docs/compose-deployment.mdx
+  s_8d92f288a8f661::t_9c2d9657644b3f 230,283-285,297-423
+  s_8d92f288a8f661::t_4acef091849bbf 123,158,160-162,208-210,227-229,246-247,287-288
+  s_8d92f288a8f661::t_aa51b6e55249e3 424
+dev/specs/013-compose-own-infrastructure/contracts/startup-messages.md
+  s_8d92f288a8f661::t_ab482f1e98d2c3 54,57
+tests/configuration/test_credential_names.py
+  s_8d92f288a8f661::t_165cdc796e19c3 130,207
+  s_8d92f288a8f661::t_e85a9bce71090f 98-103
+  s_8d92f288a8f661::t_0d75cc7839bf09 1-97,104-129,131-206,208-219
+infrahub_sync/service/worker_env.py
+  s_8d92f288a8f661::t_995db4056cf36d 1-134,137-139
+  s_8d92f288a8f661::t_61a38117b99bcf 135-136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4c83c3ecf2ae4b3c4f2145c058cbad3ecdd2e606",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
