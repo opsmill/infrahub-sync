@@ -1,7 +1,8 @@
-"""Tests of `EntraidAdapter` against a mocked Microsoft Graph: loading, `$select` and read-only behavior."""
+"""Tests of `EntraidAdapter` against a mocked Microsoft Graph: loading, `$select`, membership and read-only behavior."""
 
 from __future__ import annotations
 
+import logging
 from typing import TypeVar
 
 import pytest
@@ -19,6 +20,7 @@ from tests.adapters.entraid_fakes import (
     group_record,
     make_adapter,
     make_config,
+    member_record,
     set_entraid_env,
     user_record,
 )
@@ -293,3 +295,159 @@ def test_collection_not_named_by_any_entry_is_not_read() -> None:
     assert list(adapter.request_plan) == ["accounts"]
     assert router.paths() == ["/users"]
     assert set(loaded(adapter, IdentityEmployee)) == {graph_id(1)}
+
+
+ENTRAID_LOGGER = "infrahub_sync.adapters.entraid"
+GROUP_ODATA_TYPE = "#microsoft.graph.group"
+DEVICE_ODATA_TYPE = "#microsoft.graph.device"
+MEMBERS_FIELD = {"name": "members", "mapping": "members", "reference": "IdentityEmployee"}
+GROUPS_WITH_MEMBERS_ENTRY = {**GROUPS_ENTRY, "fields": [*GROUP_FIELDS, MEMBERS_FIELD]}
+
+
+def entraid_records(caplog: pytest.LogCaptureFixture, level: int) -> list[logging.LogRecord]:
+    """The records of the adapter's logger at exactly `level`."""
+    return [record for record in caplog.records if record.name == ENTRAID_LOGGER and record.levelno == level]
+
+
+def member_paths(router: GraphRouter) -> list[str]:
+    """The paths of the member requests, in order."""
+    return [path for path in router.paths() if path.endswith(("/members", "/transitiveMembers"))]
+
+
+@pytest.mark.parametrize("membership", ["direct", "transitive"])
+def test_membership_mode_reads_its_endpoint_and_keeps_only_users(membership: str) -> None:
+    transitive = membership == "transitive"
+    router = GraphRouter()
+    router.add_records("/users", [user_record(1, "alice@example.com"), user_record(2, "bob@example.com")])
+    router.add_records("/groups", [group_record(11, "network-engineers"), group_record(12, "network-admins")])
+    router.add_members(
+        graph_id(11),
+        [
+            member_record(graph_id(2)),
+            member_record(graph_id(12), GROUP_ODATA_TYPE),
+            member_record(graph_id(31), DEVICE_ODATA_TYPE),
+            member_record(graph_id(1)),
+        ],
+        transitive=transitive,
+    )
+    router.add_members(graph_id(12), [member_record(graph_id(1))], transitive=transitive)
+    config = make_config([USERS_ENTRY, GROUPS_WITH_MEMBERS_ENTRY], settings={"membership": membership})
+    adapter = make_adapter(config, router)
+
+    adapter.load()
+
+    expected_paths = [router.members_path(graph_id(number), transitive=transitive) for number in (11, 12)]
+    assert sorted(member_paths(router)) == expected_paths
+    assert all(router.requests_for(path)[0].url.params["$select"] == "id" for path in expected_paths)
+    groups = loaded(adapter, IdentityGroup)
+    assert groups[graph_id(11)].members == [graph_id(1), graph_id(2)]
+    assert groups[graph_id(12)].members == [graph_id(1)]
+
+
+def test_user_reached_twice_appears_once() -> None:
+    router = GraphRouter()
+    router.add_records("/users", [user_record(1, "alice@example.com"), user_record(2, "bob@example.com")])
+    router.add_records("/groups", [group_record(11, "network-engineers")])
+    # Transitive members list a user once per nested group that contains it; the pages split the duplicates.
+    router.add_pages(
+        router.members_path(graph_id(11), transitive=True),
+        [
+            [member_record(graph_id(1)), member_record(graph_id(2))],
+            [member_record(graph_id(1))],
+        ],
+    )
+    config = make_config([USERS_ENTRY, GROUPS_WITH_MEMBERS_ENTRY], settings={"membership": "transitive"})
+    adapter = make_adapter(config, router)
+
+    adapter.load()
+
+    assert loaded(adapter, IdentityGroup)[graph_id(11)].members == [graph_id(1), graph_id(2)]
+
+
+def test_members_not_loaded_are_dropped_with_one_warning(caplog: pytest.LogCaptureFixture) -> None:
+    router = GraphRouter()
+    router.add_records(
+        "/users",
+        [
+            user_record(1, "alice@example.com"),
+            user_record(2, "svc-backup@example.com"),
+            user_record(3, "ext-contractor@example.com"),
+        ],
+    )
+    router.add_records("/groups", [group_record(11, "network-engineers"), group_record(12, "contractors")])
+    # User 2 loads into another users kind; user 3 matches neither kind's filter, so no kind loads it.
+    router.add_members(
+        graph_id(11), [member_record(graph_id(1)), member_record(graph_id(2)), member_record(graph_id(3))]
+    )
+    router.add_members(graph_id(12), [member_record(graph_id(3))])
+    config = make_config(
+        [
+            accounts_entry("IdentityEmployee", "^(?!svc-|ext-)"),
+            accounts_entry("IdentityServiceAccount", "^svc-"),
+            GROUPS_WITH_MEMBERS_ENTRY,
+        ],
+        settings=ACCOUNTS_SETTINGS,
+    )
+    adapter = make_adapter(config, router)
+    caplog.set_level(logging.WARNING, logger=ENTRAID_LOGGER)
+
+    adapter.load()
+
+    groups = loaded(adapter, IdentityGroup)
+    assert groups[graph_id(11)].members == [graph_id(1)]
+    assert groups[graph_id(12)].members == []
+    assert set(loaded(adapter, IdentityServiceAccount)) == {graph_id(2)}
+    warnings = entraid_records(caplog, logging.WARNING)
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "IdentityGroup" in message
+    assert "members" in message
+    assert "dropped=3" in message
+
+
+def test_no_member_requests_when_no_entry_maps_members() -> None:
+    router = GraphRouter()
+    router.add_records("/users", [user_record(1, "alice@example.com")])
+    router.add_records("/groups", [group_record(11, "network-engineers")])
+    router.add_members(graph_id(11), [member_record(graph_id(1))])
+    adapter = make_adapter(make_config([USERS_ENTRY, GROUPS_ENTRY]), router)
+
+    adapter.load()
+
+    assert not adapter.request_plan["groups"].needs_members
+    assert member_paths(router) == []
+    assert sorted(router.paths()) == ["/groups", "/users"]
+
+
+def test_summary_log_counts_member_requests(caplog: pytest.LogCaptureFixture) -> None:
+    router = GraphRouter()
+    router.add_records("/users", [user_record(1, "alice@example.com")])
+    router.add_records("/groups", [group_record(11, "network-engineers"), group_record(12, "network-admins")])
+    router.add_pages(router.members_path(graph_id(11)), [[member_record(graph_id(1))], []])
+    router.add_members(graph_id(12), [member_record(graph_id(1))])
+    adapter = make_adapter(make_config([USERS_ENTRY, GROUPS_WITH_MEMBERS_ENTRY]), router)
+    caplog.set_level(logging.INFO, logger=ENTRAID_LOGGER)
+
+    adapter.load()
+
+    summaries = [
+        record.getMessage()
+        for record in entraid_records(caplog, logging.INFO)
+        if "graph reads finished" in record.getMessage()
+    ]
+    assert len(summaries) == 1
+    assert "member_requests=3" in summaries[0]
+    assert "requests=5" in summaries[0]
+
+
+def test_members_mapping_without_reference_is_refused_naming_the_field() -> None:
+    router = GraphRouter()
+    member_users = {"name": "member_users", "mapping": "members"}
+    entry = {**GROUPS_ENTRY, "fields": [*GROUP_FIELDS, member_users]}
+
+    with pytest.raises(EntraidConfigError, match="reference") as excinfo:
+        make_adapter(make_config([USERS_ENTRY, entry]), router)
+
+    assert "'member_users'" in str(excinfo.value)
+    assert "IdentityGroup" in str(excinfo.value)
+    assert router.requests == []

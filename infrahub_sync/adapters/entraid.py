@@ -469,11 +469,7 @@ class EntraidGraphClient:
         info = builder.to_get_request_information(
             _request_configuration(builder, select=["id"], top=self.settings.page_size)
         )
-        sent_before = self.requests
-        try:
-            members = await self._read_pages(builder, info, eventual=False)
-        finally:
-            self.member_requests += self.requests - sent_before
+        members = await self._read_pages(builder, info, eventual=False, member=True)
         return sorted(
             {
                 str(member["id"])
@@ -482,13 +478,15 @@ class EntraidGraphClient:
             }
         )
 
-    async def _read_pages(self, builder: Any, info: RequestInformation, *, eventual: bool) -> list[dict[str, Any]]:
+    async def _read_pages(
+        self, builder: Any, info: RequestInformation, *, eventual: bool, member: bool = False
+    ) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         while True:
             if eventual:
                 # `@odata.nextLink` keeps the query string but not this header; advanced queries need it on every page.
                 info.headers.try_add("ConsistencyLevel", "eventual")
-            page = await self._send(info)
+            page = await self._send(info, member=member)
             values = page.get("value") or []
             if not isinstance(values, list):
                 path = _request_path(info)
@@ -500,8 +498,11 @@ class EntraidGraphClient:
                 return items
             info = builder.with_url(next_link).to_get_request_information()
 
-    async def _send(self, info: RequestInformation) -> dict[str, Any]:
+    async def _send(self, info: RequestInformation, *, member: bool = False) -> dict[str, Any]:
         """Send one GET request and return the JSON body, retrying HTTP 429 and 503 up to `max_retries` times.
+
+        `member` marks a request that reads group members: each attempt also counts in `member_requests`. The
+        counters are incremented per attempt, so they stay exact while member reads run concurrently.
 
         The path for messages is read after the send attempt: the request adapter adds the base URL to the
         request information while it sends it.
@@ -509,6 +510,8 @@ class EntraidGraphClient:
         attempt = 0
         while True:
             self.requests += 1
+            if member:
+                self.member_requests += 1
             try:
                 body = await self._adapter.send_primitive_async(info, "bytes", ERROR_MAPPING)
             except APIError as exc:
@@ -710,6 +713,19 @@ def _maps_members(entry: SchemaMappingModel, collection: Collection) -> bool:
     )
 
 
+def _check_members_reference(entry: SchemaMappingModel, collection: Collection) -> None:
+    """Refuse a groups field that maps `members` without a `reference`: member IDs only make sense as references."""
+    if collection.resource != GROUPS:
+        return
+    for field_map in entry.fields:
+        if field_map.mapping == MEMBERS_KEY and not field_map.reference:
+            msg = (
+                f"schema_mapping '{entry.name}', field '{field_map.name}': 'mapping: {MEMBERS_KEY}' holds the IDs "
+                "of the group's user members and needs a 'reference' to the kind that loads those users."
+            )
+            raise EntraidConfigError(msg)
+
+
 def _peer_ids(value: Any, index: Mapping[str, str]) -> tuple[list[str], int]:
     """Resolve Graph IDs to the unique IDs of loaded objects: sorted unique IDs found, and the count not found."""
     if value is None:
@@ -765,7 +781,9 @@ class EntraidAdapter(DiffSyncMixin, Adapter):
         self._entries: list[tuple[SchemaMappingModel, Collection]] = []
         for entry in config.schema_mapping:
             if entry.mapping:
-                self._entries.append((entry, self._resolve_entry_collection(entry.name, entry.mapping)))
+                collection = self._resolve_entry_collection(entry.name, entry.mapping)
+                _check_members_reference(entry, collection)
+                self._entries.append((entry, collection))
         self.request_plan = build_request_plan(self.settings, self._entries)
         self._records_by_collection: dict[str, list[dict[str, Any]]] | None = None
 
@@ -800,13 +818,17 @@ class EntraidAdapter(DiffSyncMixin, Adapter):
         async with EntraidGraphClient(self.settings, transport=self._transport, credential=self._credential) as graph:
             for name, plan in self.request_plan.items():
                 requests_before, retries_before = graph.requests, graph.retries
+                member_requests_before = graph.member_requests
                 records[name] = await graph.list_collection(plan.collection, plan.select)
+                if plan.needs_members:
+                    await self._add_members(graph, records[name])
                 log.info(
                     "collection read",
                     collection=name,
                     resource=plan.collection.resource,
                     records=len(records[name]),
                     requests=graph.requests - requests_before,
+                    member_requests=graph.member_requests - member_requests_before,
                     retries=graph.retries - retries_before,
                 )
             log.info(
@@ -817,6 +839,25 @@ class EntraidAdapter(DiffSyncMixin, Adapter):
                 retries=graph.retries,
             )
         return records
+
+    async def _add_members(self, graph: EntraidGraphClient, groups: list[dict[str, Any]]) -> None:
+        """Store the sorted user member IDs of every group under `members`.
+
+        At most `MEMBER_CONCURRENCY` groups are read at once. `membership: transitive` reads the members of nested
+        groups too. Groups without an `id` are left alone; the conversion to a model refuses them later with a clear
+        message.
+        """
+        transitive = self.settings.membership == MEMBERSHIP_TRANSITIVE
+        semaphore = asyncio.Semaphore(MEMBER_CONCURRENCY)
+        with_id = [group for group in groups if group.get("id")]
+
+        async def read(group: dict[str, Any]) -> list[str]:
+            async with semaphore:
+                return await graph.user_member_ids(str(group["id"]), transitive=transitive)
+
+        member_ids = await asyncio.gather(*(read(group) for group in with_id))
+        for group, ids in zip(with_id, member_ids, strict=True):
+            group[MEMBERS_KEY] = ids
 
     def _records(self) -> dict[str, list[dict[str, Any]]]:
         """The records of every planned collection, read from Graph on the first call of the run."""
