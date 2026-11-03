@@ -101,11 +101,11 @@ requests through an `httpx.MockTransport`.
 ## R9. Authentication
 
 - **Decision**: Use the async credentials from `azure.identity.aio`:
-  - `client_secret`: `ClientSecretCredential(tenant_id, client_id, client_secret)`. Tenant and client ID come from
-    `ENTRAID_TENANT_ID` / `ENTRAID_CLIENT_ID`, else from the `tenant_id` / `client_id` settings. The secret comes only
-    from `ENTRAID_CLIENT_SECRET`. A `client_secret` key in settings is refused. Missing values fail when the adapter
-    starts, with a message that names the environment variables.
-  - `default`: `DefaultAzureCredential()`.
+    - `client_secret`: `ClientSecretCredential(tenant_id, client_id, client_secret)`. Tenant and client ID come from
+      `ENTRAID_TENANT_ID` / `ENTRAID_CLIENT_ID`, else from the `tenant_id` / `client_id` settings. The secret comes only
+      from `ENTRAID_CLIENT_SECRET`. A `client_secret` key in settings is refused. Missing values fail when the adapter
+      starts, with a message that names the environment variables.
+    - `default`: `DefaultAzureCredential()`.
   The credential goes to `AzureIdentityAuthenticationProvider(credential, scopes=[<graph origin>/.default],
   allowed_hosts=[<graph host>])`. The scope is derived from `graph_url`, so national clouds work. `auth` defaults to
   `client_secret`. The credential is closed when the client closes.
@@ -156,10 +156,10 @@ requests through an `httpx.MockTransport`.
 ## R13. Example data model
 
 - **Decision**: Kinds `IdentityEmployee`, `IdentityServiceAccount` and `IdentityGroup` (namespace `Identity`).
-  - Collection `accounts` (`users`, filter `accountEnabled eq true`) feeds `IdentityEmployee`
-    (mapping filter: `userPrincipalName` regex `^(?!svc-)`) and `IdentityServiceAccount` (regex `^svc-`).
-  - Collection `security_groups` (`groups`, filter `securityEnabled eq true and NOT groupTypes/any(c:c eq 'Unified')`,
-    `advanced_query: true`). Graph accepts `NOT` only as an advanced query, so the example shows why the flag exists.
-  - `IdentityGroup.members` references `IdentityEmployee`; service-account members are dropped and counted.
-  - A transform builds `IdentityEmployee.name` in lower case from `userPrincipalName`.
+    - Collection `accounts` (`users`, filter `accountEnabled eq true`) feeds `IdentityEmployee`
+      (mapping filter: `userPrincipalName` regex `^(?!svc-)`) and `IdentityServiceAccount` (regex `^svc-`).
+    - Collection `security_groups` (`groups`, filter `securityEnabled eq true and NOT groupTypes/any(c:c eq 'Unified')`,
+      `advanced_query: true`). Graph accepts `NOT` only as an advanced query, so the example shows why the flag exists.
+    - `IdentityGroup.members` references `IdentityEmployee`; service-account members are dropped and counted.
+    - A transform builds `IdentityEmployee.name` in lower case from `userPrincipalName`.
 - **Rationale**: Meets FR-027 with three kinds and two collections, and uses only `example.com` data.

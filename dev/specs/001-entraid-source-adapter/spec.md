@@ -173,7 +173,7 @@ settings, verify the retries and the error messages.
 
 ### Functional Requirements
 
-**Adapter shape**
+#### Adapter shape
 
 - **FR-001**: The repository MUST provide a source adapter named `entraid` in `infrahub_sync/adapters/entraid.py`,
   with an adapter class `EntraidAdapter(DiffSyncMixin, Adapter)` and a model base class
@@ -186,7 +186,7 @@ settings, verify the retries and the error messages.
   delete operations MUST refuse to run.
 - **FR-004**: The adapter MUST NOT use incremental extraction: `cursor_tier_for` stays `CursorTier.NONE`.
 
-**Reading Microsoft Graph**
+#### Reading Microsoft Graph
 
 - **FR-005**: The adapter MUST read Graph through the Microsoft Graph SDK for Python and `azure-identity`. They
   MUST NOT be added to `pyproject.toml` or `uv.lock`; the documentation MUST give the install command.
@@ -199,7 +199,7 @@ settings, verify the retries and the error messages.
 - **FR-009**: The adapter MUST support a `page_size` setting between 1 and 999, sent as the page size of list
   requests, with a default of 999.
 
-**Collections**
+#### Collections
 
 - **FR-010**: A `collections` setting MUST map a collection name to a resource (`users` or `groups`), an optional
   OData `filter` string, and an `advanced_query` flag (default false).
@@ -212,7 +212,7 @@ settings, verify the retries and the error messages.
 - **FR-014**: A `schema_mapping` entry that names an unknown collection MUST make the adapter fail when it starts,
   before any Graph request, with a message that lists the valid names.
 
-**Group membership**
+#### Group membership
 
 - **FR-015**: Groups MUST be able to expose their user members as a relationship to synced users, through a field
   mapping with a `reference` to the users kind.
@@ -222,7 +222,7 @@ settings, verify the retries and the error messages.
   warning with the number of dropped references.
 - **FR-018**: The adapter MUST read group members only when a `schema_mapping` entry maps them.
 
-**Authentication**
+#### Authentication
 
 - **FR-019**: An `auth` setting MUST select `client_secret` or `default`.
 - **FR-020**: With `client_secret`, the tenant ID and client ID MUST come from `ENTRAID_TENANT_ID` and
@@ -233,7 +233,7 @@ settings, verify the retries and the error messages.
 - **FR-022**: A `graph_url` setting MUST default to `https://graph.microsoft.com/v1.0`.
 - **FR-023**: Tokens and secrets MUST NOT appear in logs, error messages or object representations.
 
-**Errors**
+#### Errors
 
 - **FR-024**: HTTP 401 and 403 responses MUST raise a specific exception whose message names the Graph application
   permissions the adapter needs: `User.Read.All`, `Group.Read.All` or `GroupMember.Read.All`.
@@ -241,7 +241,7 @@ settings, verify the retries and the error messages.
 - **FR-030**: A failure to get a token from the credential MUST raise a specific exception whose message names the
   `auth` mode and the environment variables or login to check, and never contains the secret.
 
-**Tests, example, documentation**
+#### Tests, example, documentation
 
 - **FR-026**: Unit tests in `tests/adapters/test_entraid_*.py`, skipped with `pytest.importorskip("msgraph")` when
   the SDK is missing, MUST use mocked HTTP and no live tenant, and MUST cover: paging, `$select`, `$filter` with
