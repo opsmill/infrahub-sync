@@ -393,9 +393,9 @@ support session, add the override snippet below for the time you need it, then
 remove it. The snippet makes three changes to the `prefect-server` service:
 
 - It turns the Prefect UI on.
-- It points the UI's static files at `/tmp/infrahub-sync/prefect-ui`. The
+- It points the static files of the UI at `/tmp/infrahub-sync/prefect-ui`. The
   container's root filesystem is read-only, and this directory is on the
-  container's tmpfs.
+  container's in-memory `tmpfs` mount.
 - It publishes the Prefect port on `127.0.0.1` only, at
   `INFRAHUB_SYNC_PREFECT_PORT` (default `4200`).
 
@@ -421,7 +421,7 @@ remove it. The snippet makes three changes to the `prefect-server` service:
    `INFRAHUB_SYNC_PREFECT_AUTH_STRING`, which is the Prefect API credential. Read
    it from `.env` in a text editor or with
    `sed -n 's/^INFRAHUB_SYNC_PREFECT_AUTH_STRING=//p' .env`; never `source` the
-   file. Every Prefect API call, the UI's included, is refused without it.
+   file. Every Prefect API call, including the calls from the UI, is refused without it.
 
 The Prefect API answers on the same port, so anyone on the host who holds the
 credential can change the deployment the worker runs while the snippet is in

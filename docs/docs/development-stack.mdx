@@ -185,7 +185,7 @@ In the first terminal, run the smoke suite:
 uv run invoke dev.smoke
 ```
 
-When no `sync-api` container runs, `dev.smoke` first reads the Sync API's `GET /status` route.
+When no `sync-api` container runs, `dev.smoke` first reads the `GET /status` route of the Sync API.
 If the Sync API does not answer, it fails and tells you to start `dev.api`. If the Sync API
 reports no available worker, it fails and tells you to start `dev.worker`. In this mode the
 worker runs on the host, so the smoke package names Infrahub by its host address,
@@ -233,7 +233,7 @@ resolved Compose file, so they print and use the values you set.
 
 | Variable | Default | What it changes |
 | --- | --- | --- |
-| `SYNC_API_PORT` | `8001` | The Sync API's host port |
+| `SYNC_API_PORT` | `8001` | The host port of the Sync API |
 | `PREFECT_PORT` | `4230` | The Prefect server's host port |
 | `INFRAHUB_PORT` | `8000` | The stack's Infrahub host port |
 | `INFRAHUB_BIND_ADDRESS` | `127.0.0.1` | The address the stack's Infrahub is published on |
@@ -410,7 +410,7 @@ Use the addresses the worker container can reach, as in step 6.
 | `dev.api` | Runs the Sync API on the host, in the foreground. |
 | `dev.worker` | Runs the Sync worker on the host, in the foreground. |
 | `dev.seed` | Loads the smoke dataset into the stack's Infrahub. |
-| `dev.smoke` | Loads the smoke dataset, then runs the smoke suite. In host mode, it first checks `dev.api` and `dev.worker` through the Sync API's `GET /status`. |
+| `dev.smoke` | Loads the smoke dataset, then runs the smoke suite. In host mode, it first checks `dev.api` and `dev.worker` through the `GET /status` route of the Sync API. |
 | `dev.status` | Shows the containers, their health and the addresses. |
 | `dev.logs [-n SERVICE] [-l LINES]` | Shows the last lines of one service's logs, `sync-api` and 50 lines by default. |
 | `dev.stop` | Stops the containers and keeps the data volumes. |
