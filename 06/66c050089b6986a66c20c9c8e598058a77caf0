@@ -1,0 +1,27 @@
+changelog/+compose-credential-variables.changed.md
+  s_8d92f288a8f661::t_328bd383e599a2 1
+pyproject.toml
+  s_8d92f288a8f661::t_b0f5c79eda260a 112-115
+dev/specs/013-compose-own-infrastructure/tasks.md
+  s_8d92f288a8f661::t_30c38f17b6abe6 50,58-59
+changelog/+compose-own-infrastructure.added.md
+  s_8d92f288a8f661::t_9b1cb9ede8dacb 1
+uv.lock
+  s_8d92f288a8f661::t_5ae1105fadcbea 1396,1441
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0666c050089b6986a66c20c9c8e598058a77caf0",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
