@@ -1,0 +1,27 @@
+dev/specs/013-compose-own-infrastructure/opsmill-implement-report.md
+  s_8d92f288a8f661::t_f19fb4e02989aa 182-183
+  s_8d92f288a8f661::t_e3e5123683b52f 5,7-8
+  s_8d92f288a8f661::t_c230a960fc2306 6,18-28,94,130
+  s_8d92f288a8f661::t_a43b29c012b608 171
+  s_8d92f288a8f661::t_d79e9bb39ff9a4 119-126
+  s_8d92f288a8f661::t_dd9c7259da14d9 157-165
+  s_8d92f288a8f661::t_2d06afb06a4bbd 29-31
+  s_8d92f288a8f661::t_053444c72540cb 145-151,153
+  s_8d92f288a8f661::t_6ec39dfcfcfa34 45,187-190
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "da8e5aae1304338cf480faec1373c88bfca8180d",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
