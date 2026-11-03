@@ -1,0 +1,640 @@
+"""Source-only adapter that reads users and groups from Microsoft Entra ID through Microsoft Graph.
+
+The adapter builds every request with the `msgraph-sdk` request builders and reads the raw JSON
+body, so records keep the Graph property names (`displayName`, `userPrincipalName`) that the
+`schema_mapping` entries name. It sends `GET` requests only.
+
+`msgraph-sdk` and `azure-identity` are optional dependencies:
+`pip install msgraph-sdk azure-identity`.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+import json
+import logging
+import os
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote, urlsplit
+
+import httpx
+import structlog
+from azure.core.exceptions import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+    ClientAuthenticationError,
+)
+from azure.identity.aio import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+    ClientSecretCredential,
+    DefaultAzureCredential,
+)
+from diffsync import Adapter, DiffSyncModel
+from kiota_abstractions.api_error import APIError  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+from kiota_abstractions.base_request_configuration import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+    RequestConfiguration,
+)
+from kiota_authentication_azure.azure_identity_authentication_provider import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+    AzureIdentityAuthenticationProvider,
+)
+from kiota_http.middleware.options import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+    RetryHandlerOption,
+)
+from msgraph import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+    GraphRequestAdapter,
+    GraphServiceClient,
+)
+from msgraph.generated.models.o_data_errors.o_data_error import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+    ODataError,
+)
+from msgraph.graph_request_adapter import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+    options as sdk_default_options,
+)
+from msgraph_core import GraphClientFactory  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+
+from infrahub_sync import DiffSyncModelMixin
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from kiota_abstractions.request_information import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+        RequestInformation,
+    )
+    from typing_extensions import Self
+
+logger = logging.getLogger(__name__)
+# structlog over the package's standard logger: the CLI's level and handler apply, and caplog sees the records.
+log = structlog.wrap_logger(
+    logger,
+    wrapper_class=structlog.stdlib.BoundLogger,
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.processors.KeyValueRenderer(key_order=["event"]),
+    ],
+)
+
+USERS = "users"
+GROUPS = "groups"
+RESOURCES = (USERS, GROUPS)
+# A collection cannot use these names: they already mean an unfiltered read of the resource.
+RESERVED_COLLECTION_NAMES = frozenset(RESOURCES)
+MEMBERS_KEY = "members"
+USER_ODATA_TYPE = "#microsoft.graph.user"
+REQUIRED_PERMISSIONS = ("User.Read.All", "Group.Read.All", "GroupMember.Read.All")
+
+DEFAULT_GRAPH_URL = "https://graph.microsoft.com/v1.0"
+DEFAULT_PAGE_SIZE = 999
+MAX_PAGE_SIZE = 999
+DEFAULT_TIMEOUT_SECONDS = 60.0
+DEFAULT_MAX_RETRIES = 5
+MAX_RETRIES_LIMIT = 10
+FALLBACK_RETRY_SECONDS = 5.0
+MAX_RETRY_WAIT_SECONDS = 120.0
+MEMBER_CONCURRENCY = 4
+RETRY_STATUSES = frozenset({429, 503})
+PERMISSION_STATUSES = frozenset({401, 403})
+
+AUTH_CLIENT_SECRET = "client_secret"
+AUTH_DEFAULT = "default"
+AUTH_MODES = (AUTH_CLIENT_SECRET, AUTH_DEFAULT)
+MEMBERSHIP_DIRECT = "direct"
+MEMBERSHIP_TRANSITIVE = "transitive"
+MEMBERSHIP_MODES = (MEMBERSHIP_DIRECT, MEMBERSHIP_TRANSITIVE)
+
+ENV_TENANT_ID = "ENTRAID_TENANT_ID"
+ENV_CLIENT_ID = "ENTRAID_CLIENT_ID"
+ENV_CLIENT_SECRET = "ENTRAID_CLIENT_SECRET"
+
+ALLOWED_SETTINGS = (
+    "auth",
+    "tenant_id",
+    "client_id",
+    "graph_url",
+    "page_size",
+    "timeout",
+    "max_retries",
+    "membership",
+    "select",
+    "collections",
+)
+COLLECTION_KEYS = ("resource", "filter", "advanced_query")
+ERROR_MAPPING = {"XXX": ODataError}
+
+# Retry waits go through this module attribute so that tests can replace it.
+_sleep = asyncio.sleep
+
+
+class EntraidConfigError(ValueError):
+    """The adapter settings or the schema mapping contain a missing or invalid value."""
+
+
+class EntraidGraphError(RuntimeError):
+    """A Microsoft Graph request failed.
+
+    `status` is the HTTP status (None when no response arrived), `code` the Graph error code and
+    `path` the request path and query. None of them contains a header or a token.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        code: str | None = None,
+        path: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.code = code
+        self.path = path
+
+
+class EntraidPermissionError(EntraidGraphError):
+    """Microsoft Graph answered HTTP 401 or 403: the application lacks a Graph permission."""
+
+
+class EntraidAuthenticationError(EntraidGraphError):
+    """The Azure credential could not get an access token for Microsoft Graph."""
+
+
+@dataclass(frozen=True)
+class Collection:
+    """A named read of one Graph resource, optionally filtered with an OData `$filter`."""
+
+    name: str
+    resource: str
+    filter: str | None = None
+    advanced_query: bool = False
+
+
+@dataclass(frozen=True)
+class EntraidSettings:
+    """Validated settings of the `entraid` source, built with `from_settings`."""
+
+    auth: str = AUTH_CLIENT_SECRET
+    tenant_id: str | None = None
+    client_id: str | None = None
+    client_secret: str | None = field(default=None, repr=False)
+    graph_url: str = DEFAULT_GRAPH_URL
+    page_size: int = DEFAULT_PAGE_SIZE
+    timeout: float = DEFAULT_TIMEOUT_SECONDS
+    max_retries: int = DEFAULT_MAX_RETRIES
+    membership: str = MEMBERSHIP_DIRECT
+    select: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    collections: dict[str, Collection] = field(default_factory=dict)
+
+    @classmethod
+    def from_settings(
+        cls,
+        raw: Mapping[str, Any] | None,
+        environ: Mapping[str, str] | None = None,
+    ) -> EntraidSettings:
+        """Validate the `source.settings` block and read the credentials from the environment.
+
+        `ENTRAID_TENANT_ID` and `ENTRAID_CLIENT_ID` win over the `tenant_id` and `client_id`
+        settings. The client secret comes only from `ENTRAID_CLIENT_SECRET`.
+        """
+        if raw is None:
+            raw = {}
+        if not isinstance(raw, Mapping):
+            msg = f"The entraid settings must be a mapping, got {type(raw).__name__}."
+            raise EntraidConfigError(msg)
+        env: Mapping[str, str] = os.environ if environ is None else environ
+
+        if AUTH_CLIENT_SECRET in raw:
+            msg = (
+                "Setting 'client_secret' is not accepted in the configuration file. "
+                f"Set the environment variable {ENV_CLIENT_SECRET} instead."
+            )
+            raise EntraidConfigError(msg)
+        unknown = sorted(str(key) for key in raw if key not in ALLOWED_SETTINGS)
+        if unknown:
+            msg = f"Unknown entraid setting(s): {', '.join(unknown)}. Allowed settings: {', '.join(ALLOWED_SETTINGS)}."
+            raise EntraidConfigError(msg)
+
+        auth = _choice(raw, "auth", AUTH_MODES, AUTH_CLIENT_SECRET)
+        tenant_id = env.get(ENV_TENANT_ID) or _optional_str(raw, "tenant_id")
+        client_id = env.get(ENV_CLIENT_ID) or _optional_str(raw, "client_id")
+        client_secret = env.get(ENV_CLIENT_SECRET) or None
+        if auth == AUTH_CLIENT_SECRET:
+            missing = [
+                name
+                for name, value in (
+                    (ENV_TENANT_ID, tenant_id),
+                    (ENV_CLIENT_ID, client_id),
+                    (ENV_CLIENT_SECRET, client_secret),
+                )
+                if not value
+            ]
+            if missing:
+                msg = (
+                    f"auth 'client_secret' is missing values. Set the environment variable(s): {', '.join(missing)}. "
+                    "The tenant and client IDs can also come from the 'tenant_id' and 'client_id' settings."
+                )
+                raise EntraidConfigError(msg)
+
+        return cls(
+            auth=auth,
+            tenant_id=tenant_id,
+            client_id=client_id,
+            client_secret=client_secret,
+            graph_url=_graph_url(raw),
+            page_size=_int_in_range(raw, "page_size", DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE),
+            timeout=_timeout(raw),
+            max_retries=_int_in_range(raw, "max_retries", DEFAULT_MAX_RETRIES, 0, MAX_RETRIES_LIMIT),
+            membership=_choice(raw, "membership", MEMBERSHIP_MODES, MEMBERSHIP_DIRECT),
+            select=_select(raw.get("select")),
+            collections=_collections(raw.get("collections")),
+        )
+
+    @property
+    def token_scope(self) -> str:
+        """The OAuth scope of the Graph instance in `graph_url`, for example `https://graph.microsoft.com/.default`."""
+        parts = urlsplit(self.graph_url)
+        return f"{parts.scheme}://{parts.netloc}/.default"
+
+    @property
+    def graph_host(self) -> str:
+        """The host name of `graph_url`, the only host that receives the access token."""
+        return urlsplit(self.graph_url).hostname or ""
+
+    def resolve_collection(self, name: str) -> Collection:
+        """Return the collection called `name`; `users` and `groups` are unfiltered reads."""
+        if name in self.collections:
+            return self.collections[name]
+        if name in RESOURCES:
+            return Collection(name=name, resource=name)
+        valid = [*sorted(self.collections), *RESOURCES]
+        msg = f"Unknown Entra ID collection '{name}'. Valid names: {', '.join(valid)}."
+        raise EntraidConfigError(msg)
+
+
+def _choice(raw: Mapping[str, Any], key: str, allowed: Sequence[str], default: str) -> str:
+    value = raw.get(key, default)
+    if value not in allowed:
+        msg = f"Setting '{key}' must be one of {', '.join(allowed)}, got {value!r}."
+        raise EntraidConfigError(msg)
+    return value
+
+
+def _optional_str(raw: Mapping[str, Any], key: str) -> str | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        msg = f"Setting '{key}' must be a string, got {value!r}."
+        raise EntraidConfigError(msg)
+    return value or None
+
+
+def _int_in_range(raw: Mapping[str, Any], key: str, default: int, low: int, high: int) -> int:
+    value = raw.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        msg = f"Setting '{key}' must be an integer from {low} to {high}, got {value!r}."
+        raise EntraidConfigError(msg)
+    return value
+
+
+def _timeout(raw: Mapping[str, Any]) -> float:
+    value = raw.get("timeout", DEFAULT_TIMEOUT_SECONDS)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        msg = f"Setting 'timeout' must be a number of seconds greater than 0, got {value!r}."
+        raise EntraidConfigError(msg)
+    return float(value)
+
+
+def _graph_url(raw: Mapping[str, Any]) -> str:
+    value = raw.get("graph_url", DEFAULT_GRAPH_URL)
+    if not isinstance(value, str) or not value.lower().startswith("https://") or not urlsplit(value).hostname:
+        msg = (
+            f"Setting 'graph_url' must be an https:// URL, got {value!r}. "
+            "The Azure authentication provider sends tokens over HTTPS only."
+        )
+        raise EntraidConfigError(msg)
+    return value.rstrip("/")
+
+
+def _str_tuple(value: Any, key: str) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, (list, tuple)) and all(isinstance(item, str) for item in value):
+        return tuple(value)
+    msg = f"Setting '{key}' must be a string or a list of strings, got {value!r}."
+    raise EntraidConfigError(msg)
+
+
+def _select(value: Any) -> dict[str, tuple[str, ...]]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        msg = f"Setting 'select' must be a mapping of {' or '.join(RESOURCES)} to property names, got {value!r}."
+        raise EntraidConfigError(msg)
+    select: dict[str, tuple[str, ...]] = {}
+    for resource, names in value.items():
+        if resource not in RESOURCES:
+            msg = f"Setting 'select' has key {resource!r}; allowed keys: {', '.join(RESOURCES)}."
+            raise EntraidConfigError(msg)
+        select[resource] = _str_tuple(names, f"select.{resource}")
+    return select
+
+
+def _collections(value: Any) -> dict[str, Collection]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        msg = f"Setting 'collections' must be a mapping of collection names to definitions, got {value!r}."
+        raise EntraidConfigError(msg)
+    return {name: _collection(name, body) for name, body in value.items()}
+
+
+def _collection(name: Any, body: Any) -> Collection:
+    if not isinstance(name, str) or not name:
+        msg = f"Setting 'collections' has an invalid collection name {name!r}; names must be non-empty strings."
+        raise EntraidConfigError(msg)
+    where = f"collections.{name}"
+    if name in RESERVED_COLLECTION_NAMES:
+        msg = (
+            f"Setting '{where}': the name '{name}' is reserved for the unfiltered read of the resource. "
+            "Choose another collection name."
+        )
+        raise EntraidConfigError(msg)
+    if not isinstance(body, Mapping):
+        msg = f"Setting '{where}' must be a mapping with the keys {', '.join(COLLECTION_KEYS)}, got {body!r}."
+        raise EntraidConfigError(msg)
+    unknown = sorted(str(key) for key in body if key not in COLLECTION_KEYS)
+    if unknown:
+        msg = f"Setting '{where}' has unknown key(s): {', '.join(unknown)}. Allowed keys: {', '.join(COLLECTION_KEYS)}."
+        raise EntraidConfigError(msg)
+    resource = body.get("resource")
+    if resource not in RESOURCES:
+        msg = f"Setting '{where}.resource' must be one of {', '.join(RESOURCES)}, got {resource!r}."
+        raise EntraidConfigError(msg)
+    query_filter = body.get("filter")
+    if query_filter is not None and not isinstance(query_filter, str):
+        msg = f"Setting '{where}.filter' must be a string (an OData $filter expression), got {query_filter!r}."
+        raise EntraidConfigError(msg)
+    advanced_query = body.get("advanced_query", False)
+    if not isinstance(advanced_query, bool):
+        msg = f"Setting '{where}.advanced_query' must be true or false, got {advanced_query!r}."
+        raise EntraidConfigError(msg)
+    return Collection(name=name, resource=resource, filter=query_filter or None, advanced_query=advanced_query)
+
+
+def build_credential(settings: EntraidSettings) -> Any:
+    """Return the async Azure credential for the `auth` mode. Constructing it does not contact Azure."""
+    if settings.auth == AUTH_CLIENT_SECRET:
+        if not (settings.tenant_id and settings.client_id and settings.client_secret):
+            msg = f"auth 'client_secret' needs {ENV_TENANT_ID}, {ENV_CLIENT_ID} and {ENV_CLIENT_SECRET}."
+            raise EntraidConfigError(msg)
+        return ClientSecretCredential(settings.tenant_id, settings.client_id, settings.client_secret)
+    return DefaultAzureCredential()
+
+
+class EntraidGraphClient:
+    """Read-only access to the Microsoft Graph endpoints the adapter needs.
+
+    Use it as an async context manager: leaving it closes the HTTP client and the credential.
+    `requests` counts every request sent (retries included), `retries` the waits after HTTP 429
+    or 503, and `member_requests` the requests sent to read group members.
+    """
+
+    def __init__(
+        self,
+        settings: EntraidSettings,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        credential: Any | None = None,
+    ) -> None:
+        self.settings = settings
+        self.requests = 0
+        self.retries = 0
+        self.member_requests = 0
+        self._credential = credential if credential is not None else build_credential(settings)
+        middleware_options: dict[str, Any] = {
+            **sdk_default_options,
+            # The adapter runs its own bounded retry loop in `_send`; the SDK retry handler is off.
+            RetryHandlerOption.get_key(): RetryHandlerOption(should_retry=False),
+        }
+        self._http: httpx.AsyncClient = GraphClientFactory.create_with_default_middleware(
+            client=httpx.AsyncClient(transport=transport, timeout=settings.timeout),
+            options=middleware_options,
+        )
+        auth_provider = AzureIdentityAuthenticationProvider(
+            self._credential,
+            scopes=[settings.token_scope],
+            allowed_hosts=[settings.graph_host],
+        )
+        self._adapter = GraphRequestAdapter(auth_provider, client=self._http)
+        self._adapter.base_url = settings.graph_url
+        self.sdk = GraphServiceClient(request_adapter=self._adapter)
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        try:
+            await self._http.aclose()
+        finally:
+            close = getattr(self._credential, "close", None)
+            if close is not None:
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+
+    async def list_collection(self, collection: Collection, select: Sequence[str]) -> list[dict[str, Any]]:
+        """Return every record of a collection, following `@odata.nextLink` until the last page."""
+        builder = self.sdk.users if collection.resource == USERS else self.sdk.groups
+        info = builder.to_get_request_information(
+            _request_configuration(
+                builder,
+                select=list(select),
+                top=self.settings.page_size,
+                filter=collection.filter or None,
+                count=True if collection.advanced_query else None,
+            )
+        )
+        return await self._read_pages(builder, info, eventual=collection.advanced_query)
+
+    async def user_member_ids(self, group_id: str, *, transitive: bool) -> list[str]:
+        """Return the sorted, unique IDs of the users that are direct or transitive members of a group."""
+        group = self.sdk.groups.by_group_id(group_id)
+        builder = group.transitive_members if transitive else group.members
+        info = builder.to_get_request_information(
+            _request_configuration(builder, select=["id"], top=self.settings.page_size)
+        )
+        sent_before = self.requests
+        try:
+            members = await self._read_pages(builder, info, eventual=False)
+        finally:
+            self.member_requests += self.requests - sent_before
+        return sorted(
+            {
+                str(member["id"])
+                for member in members
+                if member.get("@odata.type") == USER_ODATA_TYPE and member.get("id") is not None
+            }
+        )
+
+    async def _read_pages(self, builder: Any, info: RequestInformation, *, eventual: bool) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        while True:
+            if eventual:
+                # `@odata.nextLink` keeps the query string but not this header; advanced queries need it on every page.
+                info.headers.try_add("ConsistencyLevel", "eventual")
+            page = await self._send(info)
+            values = page.get("value") or []
+            if not isinstance(values, list):
+                path = _request_path(info)
+                msg = f"Microsoft Graph returned a page without a 'value' list for {path}."
+                raise EntraidGraphError(msg, path=path)
+            items.extend(values)
+            next_link = page.get("@odata.nextLink")
+            if not next_link:
+                return items
+            info = builder.with_url(next_link).to_get_request_information()
+
+    async def _send(self, info: RequestInformation) -> dict[str, Any]:
+        """Send one GET request and return the JSON body, retrying HTTP 429 and 503 up to `max_retries` times.
+
+        The path for messages is read after the send attempt: the request adapter adds the base URL to the
+        request information while it sends it.
+        """
+        attempt = 0
+        while True:
+            self.requests += 1
+            try:
+                body = await self._adapter.send_primitive_async(info, "bytes", ERROR_MAPPING)
+            except APIError as exc:
+                path = _request_path(info)
+                status = exc.response_status_code
+                if status in RETRY_STATUSES and attempt < self.settings.max_retries:
+                    attempt += 1
+                    self.retries += 1
+                    wait = _retry_wait(exc.response_headers)
+                    log.warning(
+                        "graph request throttled, waiting before retry",
+                        status=status,
+                        path=path,
+                        wait_seconds=wait,
+                        retry=attempt,
+                        max_retries=self.settings.max_retries,
+                    )
+                    await _sleep(wait)
+                    continue
+                raise self._api_error(exc, path, retried=attempt) from exc
+            except httpx.TimeoutException as exc:
+                path = _request_path(info)
+                msg = (
+                    f"Microsoft Graph request {path} timed out after {self.settings.timeout:g} seconds "
+                    "(setting 'timeout')."
+                )
+                raise EntraidGraphError(msg, path=path) from exc
+            except httpx.TransportError as exc:
+                path = _request_path(info)
+                msg = f"Microsoft Graph request {path} failed before a response arrived: {type(exc).__name__}."
+                raise EntraidGraphError(msg, path=path) from exc
+            except ClientAuthenticationError as exc:
+                raise self._authentication_error(exc, _request_path(info)) from exc
+            return _parse_body(body, _request_path(info))
+
+    def _api_error(self, exc: APIError, path: str, *, retried: int) -> EntraidGraphError:
+        status = exc.response_status_code
+        error = exc.error if isinstance(exc, ODataError) else None
+        code = getattr(error, "code", None)
+        detail = getattr(error, "message", None) or exc.message
+        graph_says = f" ({code}: {detail})" if code or detail else ""
+        if status in PERMISSION_STATUSES:
+            msg = (
+                f"Microsoft Graph refused {path} with HTTP {status}{graph_says}. The application needs the "
+                f"Microsoft Graph application permissions {', '.join(REQUIRED_PERMISSIONS)} with admin consent."
+            )
+            return EntraidPermissionError(msg, status=status, code=code, path=path)
+        if status in RETRY_STATUSES:
+            msg = (
+                f"Microsoft Graph returned HTTP {status} for {path} after {retried} retries{graph_says}. "
+                "Run the sync again later, or raise the setting 'max_retries'."
+            )
+        else:
+            msg = f"Microsoft Graph returned HTTP {status} for {path}{graph_says}."
+        return EntraidGraphError(msg, status=status, code=code, path=path)
+
+    def _authentication_error(self, exc: ClientAuthenticationError, path: str) -> EntraidAuthenticationError:
+        if self.settings.auth == AUTH_CLIENT_SECRET:
+            check = f"Check the environment variables {ENV_TENANT_ID}, {ENV_CLIENT_ID} and {ENV_CLIENT_SECRET}."
+        else:
+            check = (
+                "Check that an Azure CLI login (az login), a managed identity or a workload identity "
+                "is available to DefaultAzureCredential."
+            )
+        msg = (
+            f"Could not get an access token for Microsoft Graph (auth '{self.settings.auth}') "
+            f"while requesting {path}. {check} Details: {exc.message}"
+        )
+        return EntraidAuthenticationError(msg, path=path)
+
+
+def _request_configuration(builder: Any, **query: Any) -> RequestConfiguration:
+    """Request configuration with the builder's own query parameter class.
+
+    Kiota nests a `<Builder>GetQueryParameters` class in every request builder class.
+    """
+    name = f"{type(builder).__name__}GetQueryParameters"
+    params_cls = getattr(type(builder), name, None)
+    if params_cls is None:
+        msg = f"{type(builder).__name__} has no {name} class; the msgraph-sdk version is not supported."
+        raise TypeError(msg)
+    return RequestConfiguration(query_parameters=params_cls(**query))
+
+
+def _request_path(info: RequestInformation) -> str:
+    """Path and query of a request, for messages. URLs carry no credentials; headers are never included."""
+    parts = urlsplit(info.url)
+    path = unquote(parts.path)
+    return f"{path}?{unquote(parts.query)}" if parts.query else path
+
+
+def _retry_wait(headers: Mapping[str, str] | None) -> float:
+    """Seconds to wait before a retry: `Retry-After`, else the fallback, capped."""
+    wait = FALLBACK_RETRY_SECONDS
+    for key, value in (headers or {}).items():
+        if key.lower() == "retry-after":
+            try:
+                wait = max(0.0, float(value))
+            except ValueError:
+                wait = FALLBACK_RETRY_SECONDS
+            break
+    return min(wait, MAX_RETRY_WAIT_SECONDS)
+
+
+def _parse_body(body: bytes | None, path: str) -> dict[str, Any]:
+    if not body:
+        return {}
+    try:
+        page = json.loads(body)
+    except ValueError as exc:
+        msg = f"Microsoft Graph returned a body that is not JSON for {path}."
+        raise EntraidGraphError(msg, path=path) from exc
+    if not isinstance(page, dict):
+        msg = f"Microsoft Graph returned a JSON {type(page).__name__} instead of an object for {path}."
+        raise EntraidGraphError(msg, path=path)
+    return page
+
+
+class EntraidModel(DiffSyncModelMixin, DiffSyncModel):
+    """Base class of the models generated for the `entraid` source.
+
+    The adapter is read-only, so creating, updating or deleting through it is refused.
+    """
+
+    @classmethod
+    def create(cls, adapter: Adapter, ids: dict[Any, Any], attrs: dict[Any, Any]) -> EntraidModel | None:
+        msg = "The Entra ID adapter is read-only: it cannot create objects in Microsoft Entra ID."
+        raise NotImplementedError(msg)
+
+    def update(self, attrs: dict[Any, Any]) -> EntraidModel | None:
+        msg = "The Entra ID adapter is read-only: it cannot update objects in Microsoft Entra ID."
+        raise NotImplementedError(msg)
+
+    def delete(self) -> EntraidModel | None:
+        msg = "The Entra ID adapter is read-only: it cannot delete objects in Microsoft Entra ID."
+        raise NotImplementedError(msg)
