@@ -15,9 +15,11 @@ import inspect
 import json
 import logging
 import os
+from collections import Counter
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import unquote, urlsplit
 
 import httpx
@@ -52,15 +54,18 @@ from msgraph.graph_request_adapter import (  # ty: ignore[unresolved-import]  # 
 )
 from msgraph_core import GraphClientFactory  # ty: ignore[unresolved-import]  # pylint: disable=import-error
 
-from infrahub_sync import DiffSyncModelMixin
+from infrahub_sync import DiffSyncMixin, DiffSyncModelMixin
+from infrahub_sync.adapters.utils import get_value
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Coroutine, Sequence
 
     from kiota_abstractions.request_information import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
         RequestInformation,
     )
     from typing_extensions import Self
+
+    from infrahub_sync import SchemaMappingModel, SyncAdapter, SyncConfig
 
 logger = logging.getLogger(__name__)
 # structlog over the package's standard logger: the CLI's level and handler apply, and caplog sees the records.
@@ -122,6 +127,8 @@ ERROR_MAPPING = {"XXX": ODataError}
 
 # Retry waits go through this module attribute so that tests can replace it.
 _sleep = asyncio.sleep
+
+T = TypeVar("T")
 
 
 class EntraidConfigError(ValueError):
@@ -638,3 +645,269 @@ class EntraidModel(DiffSyncModelMixin, DiffSyncModel):
     def delete(self) -> EntraidModel | None:
         msg = "The Entra ID adapter is read-only: it cannot delete objects in Microsoft Entra ID."
         raise NotImplementedError(msg)
+
+
+@dataclass(frozen=True)
+class CollectionPlan:
+    """What one run reads for a collection.
+
+    `select` is the `$select` list: `id`, the Graph properties that the `schema_mapping` entries read, then the
+    extra properties of `settings.select`. `needs_members` is true when a groups entry maps `members` to a reference.
+    """
+
+    collection: Collection
+    select: tuple[str, ...]
+    needs_members: bool = False
+
+
+def build_request_plan(
+    settings: EntraidSettings,
+    entries: Sequence[tuple[SchemaMappingModel, Collection]],
+) -> dict[str, CollectionPlan]:
+    """Return one `CollectionPlan` per collection that at least one `schema_mapping` entry reads.
+
+    Entries that read the same collection share one read, so its `select` is the union of their properties, in
+    the order the entries name them, without duplicates.
+    """
+    collections: dict[str, Collection] = {}
+    selects: dict[str, list[str]] = {}
+    members: dict[str, bool] = {}
+    for entry, collection in entries:
+        collections[collection.name] = collection
+        _append_new(selects.setdefault(collection.name, ["id"]), _entry_properties(entry, collection))
+        members[collection.name] = members.get(collection.name, False) or _maps_members(entry, collection)
+    plan: dict[str, CollectionPlan] = {}
+    for name, collection in collections.items():
+        _append_new(selects[name], settings.select.get(collection.resource, ()))
+        plan[name] = CollectionPlan(collection=collection, select=tuple(selects[name]), needs_members=members[name])
+    return plan
+
+
+def _append_new(names: list[str], new: Sequence[str]) -> None:
+    for name in new:
+        if name not in names:
+            names.append(name)
+
+
+def _entry_properties(entry: SchemaMappingModel, collection: Collection) -> list[str]:
+    """Top-level Graph properties that one entry reads through plain field mappings and filters.
+
+    Keys produced by the entry's transforms are not Graph properties, and neither is `members` on groups: the
+    adapter adds it to the group records.
+    """
+    skip = {transform.field for transform in entry.transforms or []}
+    if collection.resource == GROUPS:
+        skip.add(MEMBERS_KEY)
+    paths = [field_map.mapping for field_map in entry.fields if field_map.mapping and not field_map.reference]
+    paths += [filter_map.field for filter_map in entry.filters or []]
+    tops = [path.split(".", 1)[0] for path in paths]
+    return [top for top in tops if top not in skip]
+
+
+def _maps_members(entry: SchemaMappingModel, collection: Collection) -> bool:
+    return collection.resource == GROUPS and any(
+        field_map.mapping == MEMBERS_KEY and field_map.reference for field_map in entry.fields
+    )
+
+
+def _peer_ids(value: Any, index: Mapping[str, str]) -> tuple[list[str], int]:
+    """Resolve Graph IDs to the unique IDs of loaded objects: sorted unique IDs found, and the count not found."""
+    if value is None:
+        graph_ids: list[Any] = []
+    elif isinstance(value, (list, tuple, set)):
+        graph_ids = list(value)
+    else:
+        graph_ids = [value]
+    found: set[str] = set()
+    missing = 0
+    for graph_id in graph_ids:
+        unique_id = index.get(str(graph_id))
+        if unique_id is None:
+            missing += 1
+        else:
+            found.add(unique_id)
+    return sorted(found), missing
+
+
+class EntraidAdapter(DiffSyncMixin, Adapter):
+    """Load users and groups from Microsoft Entra ID. Source only: it sends GET requests to Graph and never writes.
+
+    Each `schema_mapping` entry names a collection in `mapping` (`users`, `groups` or a name defined in
+    `settings.collections`). On the first `model_loader` call, the adapter reads every planned collection once and
+    keeps the records for the rest of the run.
+    """
+
+    type = "Entraid"
+
+    def __init__(
+        self,
+        target: str,
+        adapter: SyncAdapter,
+        config: SyncConfig,
+        *args: Any,
+        transport: httpx.AsyncBaseTransport | None = None,
+        credential: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        if target != "source":
+            msg = (
+                f"The Entra ID adapter can only be the source of a sync, but it is configured as the {target}. "
+                "Move 'entraid' to the 'source' block of the configuration."
+            )
+            raise EntraidConfigError(msg)
+        super().__init__(*args, **kwargs)
+        self.target = target
+        self.config = config
+        self.settings = EntraidSettings.from_settings(adapter.settings)
+        # `transport` and `credential` let tests replace Microsoft Graph and Azure; both are None in a real run.
+        self._transport = transport
+        self._credential = credential
+        self._entries: list[tuple[SchemaMappingModel, Collection]] = []
+        for entry in config.schema_mapping:
+            if entry.mapping:
+                self._entries.append((entry, self._resolve_entry_collection(entry.name, entry.mapping)))
+        self.request_plan = build_request_plan(self.settings, self._entries)
+        self._records_by_collection: dict[str, list[dict[str, Any]]] | None = None
+
+    def _resolve_entry_collection(self, entry_name: str, collection_name: str) -> Collection:
+        try:
+            return self.settings.resolve_collection(collection_name)
+        except EntraidConfigError as exc:
+            msg = f"schema_mapping '{entry_name}': {exc}"
+            raise EntraidConfigError(msg) from exc
+
+    @staticmethod
+    def _run(coro: Coroutine[Any, Any, T]) -> T:
+        """Run a coroutine to completion from synchronous code.
+
+        `asyncio.run` cannot start while an event loop runs in this thread (for example when the sync is started
+        from a notebook or an async application), so the coroutine then runs in a new loop in a worker thread.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+
+        def run_in_new_loop() -> T:
+            return asyncio.run(coro)
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(run_in_new_loop).result()
+
+    async def _read_all(self) -> dict[str, list[dict[str, Any]]]:
+        """Read every planned collection with one Graph client and return the records by collection name."""
+        records: dict[str, list[dict[str, Any]]] = {}
+        async with EntraidGraphClient(self.settings, transport=self._transport, credential=self._credential) as graph:
+            for name, plan in self.request_plan.items():
+                requests_before, retries_before = graph.requests, graph.retries
+                records[name] = await graph.list_collection(plan.collection, plan.select)
+                log.info(
+                    "collection read",
+                    collection=name,
+                    resource=plan.collection.resource,
+                    records=len(records[name]),
+                    requests=graph.requests - requests_before,
+                    retries=graph.retries - retries_before,
+                )
+            log.info(
+                "graph reads finished",
+                collections=len(records),
+                member_requests=graph.member_requests,
+                requests=graph.requests,
+                retries=graph.retries,
+            )
+        return records
+
+    def _records(self) -> dict[str, list[dict[str, Any]]]:
+        """The records of every planned collection, read from Graph on the first call of the run."""
+        if self._records_by_collection is None:
+            self._records_by_collection = self._run(self._read_all())
+        return self._records_by_collection
+
+    def model_loader(self, model_name: str, model: type[EntraidModel]) -> None:
+        """Load the objects of one kind from the records of the collection its `schema_mapping` entry reads."""
+        for entry, collection in self._entries:
+            if entry.name != model_name:
+                continue
+            source = self._records()[collection.name]
+            # `transform_records` writes into the record dicts. Copies keep entries that share a collection apart.
+            records = model.filter_records(records=[dict(record) for record in source], schema_mapping=entry)
+            records = model.transform_records(records=records, schema_mapping=entry)
+            peers = self._peer_indexes(entry)
+            dropped: Counter[str] = Counter()
+            for record in records:
+                self.add(model(**self.record_to_diffsync(record, entry, model, peers=peers, dropped=dropped)))
+            log.info("kind loaded", kind=model_name, collection=collection.name, loaded=len(records), read=len(source))
+            for field_name, count in sorted(dropped.items()):
+                log.warning(
+                    "references to objects that are not loaded were dropped",
+                    kind=model_name,
+                    field=field_name,
+                    dropped=count,
+                )
+
+    def _peer_indexes(self, entry: SchemaMappingModel) -> dict[str, dict[str, str]]:
+        """Graph ID to unique ID of the loaded objects of every kind that the entry references.
+
+        Built once per `model_loader` call, so resolving references does not scan the store for every record.
+        """
+        indexes: dict[str, dict[str, str]] = {}
+        for field_map in entry.fields:
+            reference = field_map.reference
+            if not field_map.mapping or not reference or reference in indexes:
+                continue
+            index: dict[str, str] = {}
+            for obj in self.store.get_all(model=reference):
+                local_id = getattr(obj, "local_id", None)
+                if local_id is not None:
+                    index[str(local_id)] = obj.get_unique_id()
+            indexes[reference] = index
+        return indexes
+
+    def record_to_diffsync(
+        self,
+        record: dict[str, Any],
+        mapping: SchemaMappingModel,
+        model: type[EntraidModel],
+        *,
+        peers: Mapping[str, Mapping[str, str]] | None = None,
+        dropped: Counter[str] | None = None,
+    ) -> dict[str, Any]:
+        """Turn one Graph record into the fields of a DiffSync model.
+
+        `peers` maps each referenced kind to its Graph ID index (built from the store when not given). References
+        to objects that are not loaded are left out and counted per field in `dropped`.
+        """
+        local_id = record.get("id")
+        if not local_id:
+            msg = (
+                f"schema_mapping '{mapping.name}': a Microsoft Graph record has no 'id'. "
+                "Check that no transform of this entry sets 'id'."
+            )
+            raise EntraidConfigError(msg)
+        data: dict[str, Any] = {"local_id": str(local_id)}
+        if peers is None:
+            peers = self._peer_indexes(mapping)
+        for field_map in mapping.fields:
+            if field_map.static is not None:
+                data[field_map.name] = field_map.static
+            elif field_map.mapping and field_map.reference:
+                found, missing = _peer_ids(get_value(record, field_map.mapping), peers.get(field_map.reference, {}))
+                if missing and dropped is not None:
+                    dropped[field_map.name] += missing
+                if model.is_list(name=field_map.name):
+                    data[field_map.name] = found
+                elif found:
+                    data[field_map.name] = found[0]
+            elif field_map.mapping:
+                value = get_value(record, field_map.mapping)
+                if isinstance(value, list) and not model.is_list(name=field_map.name):
+                    msg = (
+                        f"schema_mapping '{mapping.name}', field '{field_map.name}': the Graph property "
+                        f"'{field_map.mapping}' is a list, but the attribute holds one value. "
+                        "Turn the list into one value with a transform of this entry and map the transformed key."
+                    )
+                    raise EntraidConfigError(msg)
+                if value is not None:
+                    data[field_map.name] = value
+        return data
