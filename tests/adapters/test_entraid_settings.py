@@ -219,6 +219,48 @@ def test_built_credential_is_closed_when_graph_client_exits(
     assert recorders[auth].built[0].closed is True
 
 
+@pytest.mark.parametrize(
+    ("raw", "setting"),
+    [
+        pytest.param({"page_size": 0}, "'page_size'", id="page-size-zero"),
+        pytest.param({"page_size": 1000}, "'page_size'", id="page-size-above-maximum"),
+        pytest.param({"page_size": "abc"}, "'page_size'", id="page-size-not-integer"),
+        pytest.param({"membership": "nested"}, "'membership'", id="membership-nested"),
+        pytest.param({"auth": "token"}, "'auth'", id="auth-token"),
+        pytest.param({"graph_url": "http://graph.example.com/v1.0"}, "'graph_url'", id="graph-url-http"),
+        pytest.param({"timeout": 0}, "'timeout'", id="timeout-zero"),
+        pytest.param({"max_retries": 11}, "'max_retries'", id="max-retries-above-maximum"),
+        pytest.param({"scope": "users"}, "setting(s): scope", id="unknown-top-level-key"),
+        pytest.param(
+            {"collections": {"accounts": {"filter": "accountEnabled eq true"}}},
+            "'collections.accounts.resource'",
+            id="collection-without-resource",
+        ),
+        pytest.param(
+            {"collections": {"accounts": {"resource": "devices"}}},
+            "'collections.accounts.resource'",
+            id="collection-resource-devices",
+        ),
+        pytest.param(
+            {"collections": {"accounts": {"resource": "users", "top": 10}}},
+            "'collections.accounts' has unknown key(s): top",
+            id="collection-unknown-key",
+        ),
+        pytest.param(
+            {"collections": {"accounts": {"resource": "users", "advanced_query": "yes"}}},
+            "'collections.accounts.advanced_query'",
+            id="advanced-query-not-boolean",
+        ),
+        pytest.param({"select": {"devices": ["id"]}}, "'select' has key 'devices'", id="select-key-devices"),
+    ],
+)
+def test_invalid_setting_raises_config_error_naming_the_setting(raw: Mapping[str, Any], setting: str) -> None:
+    with pytest.raises(EntraidConfigError) as excinfo:
+        make_settings(raw, FULL_ENV)
+
+    assert setting in str(excinfo.value)
+
+
 def test_given_credential_is_closed_when_graph_client_exits_on_error() -> None:
     credential = FakeCredential()
 

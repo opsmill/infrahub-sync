@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("msgraph")
 
-from infrahub_sync.adapters.entraid import EntraidAdapter, EntraidConfigError, EntraidModel
+from infrahub_sync.adapters.entraid import EntraidAdapter, EntraidConfigError, EntraidModel, EntraidPermissionError
 from infrahub_sync.cache.cursors import CursorTier
 from tests.adapters.entraid_fakes import (
     GraphRouter,
@@ -451,3 +451,25 @@ def test_members_mapping_without_reference_is_refused_naming_the_field() -> None
     assert "'member_users'" in str(excinfo.value)
     assert "IdentityGroup" in str(excinfo.value)
     assert router.requests == []
+
+
+@pytest.mark.parametrize(
+    "refused_path",
+    [
+        pytest.param("/users", id="users-read"),
+        pytest.param(GraphRouter.members_path(graph_id(11)), id="member-read"),
+    ],
+)
+def test_permission_refusal_during_load_raises_permission_error(refused_path: str) -> None:
+    router = GraphRouter()
+    router.add_records("/users", [user_record(1, "alice@example.com")])
+    router.add_records("/groups", [group_record(11, "network-engineers")])
+    router.add_error(refused_path, 403, code="Authorization_RequestDenied")
+    adapter = make_adapter(make_config([USERS_ENTRY, GROUPS_WITH_MEMBERS_ENTRY]), router)
+
+    with pytest.raises(EntraidPermissionError) as excinfo:
+        adapter.load()
+
+    assert excinfo.value.status == 403
+    assert refused_path in str(excinfo.value)
+    assert "GroupMember.Read.All" in str(excinfo.value)
