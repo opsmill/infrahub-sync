@@ -1382,7 +1382,8 @@ def _plan_load_failure(tmp_path: Path, *, resolve: Exception | None = None, load
     destination = MagicMock()
     destination.top_level = []
     if resolve is not None:
-        destination.resolve_lineage.side_effect = resolve
+        # Assigned so the `runtime_checkable` protocol check finds it on Python 3.12 and later.
+        destination.resolve_lineage = MagicMock(side_effect=resolve)
     if load is not None:
         destination.load.side_effect = load
     engine = Potenda(
