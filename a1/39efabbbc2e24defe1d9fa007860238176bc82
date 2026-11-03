@@ -1,0 +1,38 @@
+dev/specs/013-compose-own-infrastructure/tasks.md
+  s_8d92f288a8f661::t_e8571a6e6dacad 431-433
+dev/specs/013-compose-own-infrastructure/plan.md
+  s_8d92f288a8f661::t_0862b3422db3b3 26-28
+docs/docs/compose-deployment.mdx
+  s_8d92f288a8f661::t_0862b3422db3b3 358-359
+tests/compose/test_external_store.py
+  s_8d92f288a8f661::t_0862b3422db3b3 6
+docs/docs/development-stack.mdx
+  s_8d92f288a8f661::t_153c4a2bbb3894 47-52
+dev/adr/0026-the-worker-reads-worker-env-itself.md
+  s_8d92f288a8f661::t_07246a4db2ec5f 62-63
+  s_8d92f288a8f661::t_b5e7664a8b0124 1-61,64-78
+dev/specs/013-compose-own-infrastructure/quickstart.md
+  s_8d92f288a8f661::t_0862b3422db3b3 19-21
+infrahub_sync/service/bootstrap.py
+  s_8d92f288a8f661::t_0862b3422db3b3 83-84
+dev/adr/README.md
+  s_8d92f288a8f661::t_3a5fb6d9cd015f 55-57
+docs/docs/operations/compose-troubleshooting.mdx
+  s_8d92f288a8f661::t_24e42b089ad4fa 32-54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a139efabbbc2e24defe1d9fa007860238176bc82",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
