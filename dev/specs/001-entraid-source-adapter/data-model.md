@@ -74,6 +74,9 @@ Errors:
 | `EntraidConfigError` | `ValueError` | invalid setting, unknown collection, a `client_secret` key in settings, use as a destination, a list value mapped to a single attribute, a record without `id` |
 | `EntraidGraphError` | `RuntimeError` | a request failed: retries for 429/503 exhausted, timeout, or another HTTP error. Carries `status`, `code`, `path` |
 | `EntraidPermissionError` | `EntraidGraphError` | HTTP 401 or 403. Message names `User.Read.All`, `Group.Read.All` or `GroupMember.Read.All` |
+| `EntraidAuthenticationError` | `EntraidGraphError` | the credential raised `azure.core.exceptions.ClientAuthenticationError` (includes `CredentialUnavailableError`). Message names the `auth` mode and the environment variables or login to check |
+
+Start-up validation also refuses a groups field with `mapping: members` and no `reference`.
 
 No message or `repr` contains a token or the client secret.
 

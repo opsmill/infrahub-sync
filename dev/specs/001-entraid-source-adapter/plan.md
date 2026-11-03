@@ -142,8 +142,37 @@ model_loader(kind)
 | 401, 403 | `EntraidPermissionError` |
 | other `APIError` | `EntraidGraphError` with status and Graph error code |
 | `httpx.TimeoutException` | `EntraidGraphError` naming the path and timeout |
+| `azure.core.exceptions.ClientAuthenticationError` (token acquisition) | `EntraidAuthenticationError` naming the `auth` mode and what to check |
 
 Error messages carry the URL path and query (no credentials are in URLs), never headers.
+
+### Design notes from the critique
+
+- **Start-up validation**: a groups entry field with `mapping: members` and no `reference` fails with
+  `EntraidConfigError` (critique E1).
+- **Event loop**: `_run(coro)` uses `asyncio.run` when no loop runs in the current thread, and otherwise runs
+  `asyncio.run(coro)` in a one-thread `ThreadPoolExecutor` (critique E2).
+- **Retry wait seam**: the retry loop awaits a module-level `_sleep` (bound to `asyncio.sleep`), which tests replace
+  with a recorder (critique E6).
+- **Test imports**: each `test_entraid_*.py` calls `pytest.importorskip("msgraph")` before importing
+  `entraid_fakes` or the adapter (critique E7).
+- **Summary log line**: after all reads, one INFO line with collections read, member requests, total requests and
+  retries (critique E5).
+- **`ty` and optional imports**: the brief's `# ty: ignore[unresolved-import]` keeps CI (no SDK) clean but yields
+  `unused-ignore-comment` warnings (exit code 0) where the SDK is installed. No comment form is clean in both
+  environments (probed). Follow the brief, group SDK imports into as few statements as possible, and report the
+  warnings (critique E8).
+
+### Documentation page content
+
+`docs/docs/adapters/entraid.mdx` covers: what the adapter reads and its non-goals (devices, delta reads, writing);
+install command `pip install msgraph-sdk azure-identity` and the tested versions (`msgraph-sdk` 1.65.0,
+`azure-identity` 1.27.0); app registration and the Graph application permissions with admin consent; environment
+variables; settings reference; collections and advanced queries with their eventual consistency; schema mapping
+conventions (`members`, nested properties, `select` for transform inputs); membership modes and the dropped-reference
+warning, including members that belong to another users kind; load order; an example configuration; common errors
+(missing SDK, token acquisition, 401/403, throttling with per-request `max_retries`, timeout, unknown collection,
+advanced filter sent without `advanced_query`).
 
 ## Risks
 

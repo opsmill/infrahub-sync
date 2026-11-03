@@ -66,6 +66,9 @@ source:
 | Missing tenant, client ID or secret | `EntraidConfigError` | the missing environment variable names |
 | Unknown collection in `schema_mapping` | `EntraidConfigError` | the entry name and the valid names |
 | HTTP 401 / 403 | `EntraidPermissionError` | `User.Read.All`, `Group.Read.All`, `GroupMember.Read.All` |
+| Credential cannot get a token | `EntraidAuthenticationError` | the `auth` mode and the variables or login to check |
+| Groups field `mapping: members` without `reference` | `EntraidConfigError` | the entry and field name |
+| SDK not installed | `ModuleNotFoundError` (Python) | documented with `pip install msgraph-sdk azure-identity` |
 | HTTP 429 / 503 after `max_retries` | `EntraidGraphError` | status and request path |
 | Timeout | `EntraidGraphError` | request path and timeout |
 | List property mapped to a single attribute | `EntraidConfigError` | the field and "transform" |
@@ -73,5 +76,5 @@ source:
 ## Logging
 
 Logger `infrahub_sync.adapters.entraid`, through `structlog`. INFO: per collection read (records, requests,
-retries); per kind loaded (loaded, read). WARNING: once per kind with dropped member references (count); each retry
+retries); one summary after all reads (collections, member requests, total requests, retries); per kind loaded (loaded, read). WARNING: once per kind with dropped member references (count); each retry
 wait. Never tokens, secrets or authorization headers.

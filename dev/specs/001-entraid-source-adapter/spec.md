@@ -164,6 +164,10 @@ settings, verify the retries and the error messages.
   transform.
 - A collection is named `users` or `groups`: the adapter refuses it, because those names are reserved for the
   unfiltered resources.
+- The credential cannot get a token (wrong tenant, wrong or expired client secret, no Azure CLI login or managed
+  identity in `default` mode): the adapter fails with one message that names the `auth` mode and what to check,
+  without the secret.
+- A groups field maps `members` without a `reference`: the adapter fails when it starts and names the field.
 
 ## Requirements *(mandatory)*
 
@@ -234,6 +238,8 @@ settings, verify the retries and the error messages.
 - **FR-024**: HTTP 401 and 403 responses MUST raise a specific exception whose message names the Graph application
   permissions the adapter needs: `User.Read.All`, `Group.Read.All` or `GroupMember.Read.All`.
 - **FR-025**: Invalid settings MUST fail when the adapter starts, with a message that names the setting.
+- **FR-030**: A failure to get a token from the credential MUST raise a specific exception whose message names the
+  `auth` mode and the environment variables or login to check, and never contains the secret.
 
 **Tests, example, documentation**
 
@@ -270,8 +276,8 @@ settings, verify the retries and the error messages.
 - **SC-002**: For a configuration with N collections, a run sends exactly one list-request series per collection
   that a `schema_mapping` entry reads, whatever the number of entries that read it.
 - **SC-003**: 100% of the test cases named in FR-026 pass with no network access and no Azure tenant.
-- **SC-004**: Every failure named in this spec (permission, throttling exhausted, timeout, invalid setting,
-  unknown collection, destination use) produces one message that names the cause, and no message contains a token
+- **SC-004**: Every failure named in this spec (permission, token acquisition, throttling exhausted, timeout,
+  invalid setting, unknown collection, destination use) produces one message that names the cause, and no message contains a token
   or a secret.
 - **SC-005**: The full unit test suite passes, and the new and changed files add no ruff, ty, pylint or rumdl
   findings compared with the `main` baseline.

@@ -134,6 +134,12 @@ requests through an `httpx.MockTransport`.
 - **Rationale**: In an environment without the packages (for example CI after `uv sync`, which removes packages not
   in `uv.lock`), `ty` and `pylint` would otherwise report the imports. Tests skip with
   `pytest.importorskip("msgraph")`.
+- **Probe result**: with the SDK installed, `ty` reports `unused-ignore-comment` (a warning, exit code 0) on each
+  such line. `# ty: ignore[unresolved-import, unused-ignore-comment]` silences it where the SDK is installed but is
+  itself reported as unused where the SDK is missing; `# type: ignore` variants behave the same way. The brief's form
+  is kept, because a missing SDK in CI would otherwise be an error, not a warning.
+- **Why not `GenericrestapiAdapter`**: Graph needs Azure token acquisition, the `ConsistencyLevel` header on every
+  page, `@odata.nextLink` paging and `Retry-After` handling, and the brief requires the SDK.
 - **Caution for implementers**: `uv sync` removes `msgraph-sdk` and `azure-identity` from `.venv`. Reinstall them
   with `uv pip install msgraph-sdk azure-identity` after any `uv sync`.
 
