@@ -1,0 +1,63 @@
+tests/compose/test_external_store.py
+  s_8d92f288a8f661::t_7a11cd0c169763 81-100
+  s_8d92f288a8f661::t_2980118486166c 463
+  s_8d92f288a8f661::t_0b4cc241f0b9d7 6-8,11,24-25
+  s_8d92f288a8f661::t_6da7e362de8887 238-257
+  s_8d92f288a8f661::t_0d323cef8be48b 449-462,464-480
+  s_8d92f288a8f661::t_b8cd916755b4b6 237
+tests/service/test_compose_bootstrap.py
+  s_8d92f288a8f661::t_00b27c3e5e8904 62-63,73,78,82,85-89,151-155,159,162-163,166,171,176,178,187,190-191,197,206,215,224,505
+  s_8d92f288a8f661::t_9409e25b95978f 494
+dev/specs/013-compose-own-infrastructure/data-model.md
+  s_8d92f288a8f661::t_66c6790097cbec 43-47,60,68-70
+  s_8d92f288a8f661::t_fa06236f722d37 71
+tests/compose/external-store-override.yml
+  s_8d92f288a8f661::t_c8bbf500ae17cf 9-11,13-17,63-64,80-81,83
+tests/service/test_store_check.py
+  s_8d92f288a8f661::t_0e473a3b3c18dd 56,166,180,288,334
+  s_8d92f288a8f661::t_2980118486166c 57-59
+dev/specs/013-compose-own-infrastructure/contracts/compose-settings.md
+  s_8d92f288a8f661::t_66c6790097cbec 44-47
+dev/specs/013-compose-own-infrastructure/tasks.md
+  s_8d92f288a8f661::t_e40ace4a4b4b86 118,143
+dev/specs/013-compose-own-infrastructure/contracts/startup-messages.md
+  s_8d92f288a8f661::t_66c6790097cbec 11
+tests/compose/test_compose_contract.py
+  s_8d92f288a8f661::t_4b236d2ae6847d 863-866,868-870,875-878,881
+  s_8d92f288a8f661::t_d3a77cb99abcc8 873-874,880
+docker-compose.yml
+  s_8d92f288a8f661::t_ccd9545148997b 471-474,521-522
+infrahub_sync/service/store_check.py
+  s_8d92f288a8f661::t_4d9ffa9b64d8cb 6-8,56,75,81,91-99,125,131
+dev/specs/013-compose-own-infrastructure/quickstart.md
+  s_8d92f288a8f661::t_4b162fd83e896e 20-21
+dev/specs/013-compose-own-infrastructure/research.md
+  s_8d92f288a8f661::t_4b162fd83e896e 293-295,372-374,378-379,386-387,391-409,411-412
+infrahub_sync/testcontainers/docker-compose.yml
+  s_8d92f288a8f661::t_ccd9545148997b 471-474,521-522
+infrahub_sync/service/bootstrap.py
+  s_8d92f288a8f661::t_4d9ffa9b64d8cb 40,89-93,97,99
+docs/docs/compose-deployment.mdx
+  s_8d92f288a8f661::t_155b0a48105ad8 358-359,362-375,387-391,438-439
+dev/specs/013-compose-own-infrastructure/plan.md
+  s_8d92f288a8f661::t_4b162fd83e896e 28,194
+  s_8d92f288a8f661::t_66c6790097cbec 26-27
+docs/docs/operations/compose-troubleshooting.mdx
+  s_8d92f288a8f661::t_66c6790097cbec 48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d1cc6373d7ce3696490e25ad32c5e3f84367df4f",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
