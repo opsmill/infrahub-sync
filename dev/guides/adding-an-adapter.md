@@ -9,7 +9,7 @@ This is the canonical procedure; `AGENTS.md` links here.
 
 Add an adapter when you need to read from, or write to, a system that has no connector yet.
 The built-ins live in `infrahub_sync/adapters/` (`netbox`, `nautobot`, `infrahub`, `aci`,
-`prometheus`, `peeringmanager`, `ipfabricsync`, `slurpitsync`, `genericrestapi`).
+`prometheus`, `peeringmanager`, `ipfabricsync`, `slurpitsync`, `genericrestapi`, `entraid`).
 
 Before writing one, check whether you can avoid it:
 

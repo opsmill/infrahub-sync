@@ -36,6 +36,7 @@ const sidebars: SidebarsConfig = {
         'adapters/choosing-an-adapter',
         'adapters/aci',
         'adapters/device42',
+        'adapters/entraid',
         'adapters/genericrestapi',
         'adapters/infrahub',
         'adapters/ipfabric',

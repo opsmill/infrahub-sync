@@ -155,3 +155,5 @@ Yaml
 yamllint
 ty
 formatters
+Entra
+OData

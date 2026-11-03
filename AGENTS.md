@@ -69,7 +69,7 @@ infrahub-sync/
 └─ .github/workflows/            # CI
 ```
 
-Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`, `aci`, `prometheus`, `peeringmanager`, `ipfabricsync`, `slurpitsync`, `genericrestapi`.
+Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`, `aci`, `prometheus`, `peeringmanager`, `ipfabricsync`, `slurpitsync`, `genericrestapi`, `entraid`.
 
 ## CLI Commands
 
