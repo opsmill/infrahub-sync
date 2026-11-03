@@ -185,6 +185,8 @@ def test_the_published_plan_review_carries_the_recorded_lineage(
     """The service fills `PlanResource.lineage` from the manifest, so `runs plan` reads `lineage.owner`."""
     pytest.importorskip("prefect")
     pytest.importorskip("opsmill_prefect_extras")
+    pytest.importorskip("fastapi")
+    pytest.importorskip("psycopg")
     from infrahub_sync.service import flow as service_flow
 
     lineage = LINEAGE.model_copy(update={"owner": owner})
@@ -201,6 +203,8 @@ def test_the_published_plan_review_carries_the_recorded_lineage(
 def test_the_published_plan_review_has_no_lineage_when_the_plan_records_none(tmp_path: Path) -> None:
     pytest.importorskip("prefect")
     pytest.importorskip("opsmill_prefect_extras")
+    pytest.importorskip("fastapi")
+    pytest.importorskip("psycopg")
     from infrahub_sync.service import flow as service_flow
 
     _written_manifest(tmp_path, None)
