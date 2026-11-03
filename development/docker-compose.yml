@@ -52,8 +52,14 @@
 
 name: infrahub-sync-dev
 
+# The Infrahub services come from `docker-compose.infrahub.yml`, under the
+# `infrahub` profile, and `docker-compose.infrahub-ports.yml` changes only their
+# host publications. Compose refuses a service that this file defines again
+# after an include, so the changes are an override file of the include itself.
 include:
-  - docker-compose.infrahub.yml
+  - path:
+      - docker-compose.infrahub.yml
+      - docker-compose.infrahub-ports.yml
 
 x-sync-build: &sync-build
   context: ..
@@ -270,24 +276,6 @@ services:
     # on this machine that has no Compose network to join, and it costs nothing when unused.
     extra_hosts:
       - "host.docker.internal:host-gateway"
-
-  # The Infrahub services come from `docker-compose.infrahub.yml`, under the
-  # `infrahub` profile. Only their host publications change here: Infrahub
-  # keeps its usual host port 8000, which no other service of this stack uses
-  # (the Sync API is on 8001), and the ports the development stack does not
-  # need are not published.
-  infrahub-server:
-    # Loopback unless INFRAHUB_BIND_ADDRESS names another address. A worker that
-    # runs in a container on Linux and is not on this stack's network reaches the
-    # port through the Docker bridge gateway, never through loopback.
-    ports: !override
-      - "${INFRAHUB_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_PORT:-8000}:8000"
-
-  message-queue:
-    ports: !reset []
-
-  database:
-    ports: !reset []
 
 configs:
   # Read once, when Postgres initializes an empty data directory. Adding a database

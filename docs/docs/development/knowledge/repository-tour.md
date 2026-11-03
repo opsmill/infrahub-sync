@@ -219,7 +219,8 @@ records the upstream commit and the local additions.
 
 - [`development/`][src-development] holds the local stacks. `docker-compose.yml` is the
   development stack the `dev` tasks run, formerly `docker-compose.dev.yml`; it includes the
-  Infrahub services from `docker-compose.infrahub.yml`. `docker-compose.preview.yml`, the shipped
+  Infrahub services from `docker-compose.infrahub.yml`, with `docker-compose.infrahub-ports.yml`
+  as the override file of that include, which changes only their host ports. `docker-compose.preview.yml`, the shipped
   `preview.env` defaults and `preview.local.env`, which Git ignores, belong to the preview stack,
   whose runtime state lives under `.preview/`.
   [Local development stack](../../development-stack.mdx) and
