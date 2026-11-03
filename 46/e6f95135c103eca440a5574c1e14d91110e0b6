@@ -1,0 +1,44 @@
+infrahub_sync/service/flow.py
+  s_8d92f288a8f661::t_4c611eb77766e7 114
+  s_8d92f288a8f661::t_c698992bddf3b2 118,946
+  s_8d92f288a8f661::t_41cea26a58e5c0 38,117,120-124,947,949
+dev/specs/013-compose-own-infrastructure/tasks.md
+  s_8d92f288a8f661::t_7a81e7a2df9f3b 382,409
+tests/service/test_boundary_classification.py
+  s_8d92f288a8f661::t_35b9a5f9a0c0a8 1,5,12-20,242-259,261-262,265,270-272,274-302,304
+dev/specs/013-compose-own-infrastructure/spec.md
+  s_8d92f288a8f661::t_8c590c0c32cf56 448-449
+  s_8d92f288a8f661::t_689be393db81b9 71-78,89-91,445-447
+  s_8d92f288a8f661::t_a166e24271424d 450-453
+dev/specs/013-compose-own-infrastructure/contracts/lifecycle-tier.md
+  s_8d92f288a8f661::t_689be393db81b9 53-60
+dev/specs/013-compose-own-infrastructure/plan.md
+  s_8d92f288a8f661::t_689be393db81b9 197
+tests/service/stage_failures.py
+  s_8d92f288a8f661::t_0fd24bc058541a 46
+  s_8d92f288a8f661::t_95f626f88d40f5 1,3-7,21,40,48,60-61
+dev/specs/013-compose-own-infrastructure/research.md
+  s_8d92f288a8f661::t_689be393db81b9 255
+changelog/+prefect-failure-classification.changed.md
+  s_8d92f288a8f661::t_b4fc1b71ba80ab 1
+docs/docs/development/guidelines/secret-redaction.md
+  s_8d92f288a8f661::t_b4fc1b71ba80ab 61-69
+dev/specs/013-compose-own-infrastructure/contracts/startup-messages.md
+  s_8d92f288a8f661::t_689be393db81b9 71,74-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "46e6f95135c103eca440a5574c1e14d91110e0b6",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
