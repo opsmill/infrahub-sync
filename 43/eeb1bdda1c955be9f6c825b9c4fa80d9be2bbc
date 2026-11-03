@@ -1,0 +1,36 @@
+infrahub_sync/service/startup.py
+  s_8d92f288a8f661::t_f2590ab8164a25 1-43
+tests/compose/test_compose_contract.py
+  s_8d92f288a8f661::t_305906e834e1a4 1099-1108,1112-1156,1160-1193
+  s_8d92f288a8f661::t_6fc8cc9543b9a9 1109-1111,1157-1159
+  s_8d92f288a8f661::t_947de04fe53982 25,41
+.github/workflows/ci-compose-lifecycle.yml
+  s_8d92f288a8f661::t_2e162f6db45044 1-61
+dev/specs/013-compose-own-infrastructure/tasks.md
+  s_8d92f288a8f661::t_75ee6b7d345edf 68-69,74-76
+tests/compose/fixtures/compose-floor/no-proxy.yml
+  s_8d92f288a8f661::t_80bb5fbcbfc3a3 1-11
+tests/compose/test_compose_floor.py
+  s_8d92f288a8f661::t_40f8d475baee33 1-163,167-185
+  s_8d92f288a8f661::t_95aabbdf3093fa 164-166
+tests/service/test_startup.py
+  s_8d92f288a8f661::t_56c4d15ab04476 1-43
+tests/compose/fixtures/compose-floor/replicas.yml
+  s_8d92f288a8f661::t_939cf19a12519d 1-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "43eeb1bdda1c955be9f6c825b9c4fa80d9be2bbc",
+  "prompts": {},
+  "sessions": {
+    "s_8d92f288a8f661": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "98127f2a-4ebb-4d16-a202-bb38be574daa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
