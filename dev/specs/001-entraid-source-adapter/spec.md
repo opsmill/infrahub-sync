@@ -281,8 +281,8 @@ settings, verify the retries and the error messages.
 - The Infrahub schema used by the operator already has kinds for users and groups and a relationship from group
   to user. The example ships such a schema reference only through its `schema_mapping`; creating the Infrahub
   schema stays with the operator.
-- The `order` in the sync configuration loads the users kinds before the groups kinds, so that membership
-  references can be resolved. The documentation states this.
+- Infrahub Sync computes the load order from `reference` fields, so a groups kind that references a users kind
+  loads after it. An explicit `order` must also list the users kinds first; the documentation states this.
 - A group's member relationship references one users kind. Members loaded into another users kind (for example
   service accounts) are counted as dropped for that relationship.
 - Extra settings that the brief implies but does not name are kept small: `select` (extra properties per
