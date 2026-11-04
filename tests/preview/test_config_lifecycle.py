@@ -224,12 +224,13 @@ def test_the_python_client_drives_the_registry_and_both_public_resources(  # noq
         assert created.created is True
         assert created.version.registry_version == 2
 
-        listed = client.list_configs()
+        listed = tuple(client.iter_configs())
         assert config_id in {summary.config_id for summary in listed}
         shown = client.get_config(config_id)
         assert shown.config_id == config_id
         versions = client.list_config_versions(config_id)
-        assert [entry.registry_version for entry in versions] == [2, 1]
+        assert [entry.registry_version for entry in versions.items] == [2, 1]
+        assert versions.next_cursor is None
         fetched = client.get_config_version(config_id, 1)
         assert fetched == registered.version
 
