@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from diffsync import Adapter, DiffSyncModel
 from diffsync.exceptions import ObjectNotFound
@@ -100,6 +100,10 @@ if TYPE_CHECKING:
     from infrahub_sdk.store import NodeStoreSync
 
     from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
+
+    # The attributes and the relationships (with each peer's schema) the configuration maps for
+    # one node kind, as `InfrahubAdapter._mapped_fields` returns them.
+    MappedFields: TypeAlias = tuple[list[str], list[tuple[RelationshipSchemaAPI, MainSchemaTypesAPI]]]
 
 
 def _node_has_complete_attributes(node: InfrahubNodeSync, node_schema: MainSchemaTypesAPI) -> bool:
@@ -822,12 +826,16 @@ def _import_account_from_profile(response: Mapping[str, Any]) -> ImportAccount:
 METADATA_MIN_VERSION = (1, 7, 0)
 
 
-def metadata_read_supported(version: str) -> bool:
+def metadata_read_supported(version: str | None) -> bool:
     """Whether a server of this version records `updated_by` and `updated_at`: 1.7.0 or later.
 
     A version that cannot be parsed counts as older, so no read asks for fields the server may
-    not have. Only the release numbers are compared, so a pre-release of 1.7.0 counts as 1.7.0.
+    not have. That includes no version at all: `get_version()` returns `None` when the server
+    answers `version: null`. Only the release numbers are compared, so a pre-release of 1.7.0
+    counts as 1.7.0.
     """
+    if not isinstance(version, str):
+        return False
     try:
         release = Version(version).release
     except InvalidVersion:
@@ -975,9 +983,6 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             if target == "destination"
             else InfrahubLineageSettings()
         )
-        self.lineage = None
-        self.metadata_read = False
-        self.last_changes = {}
 
         # We will keep a copy of the schema
         self.schema: MutableMapping[str, MainSchemaTypesAPI] = self.client.schema.all(branch=infrahub_branch)
@@ -1024,9 +1029,11 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         at `Potenda.load_both_sides`); this call resets `metadata_read` to false.
         """
         settings = self.lineage_settings
-        recorded = None if saved_plan is None else require_recorded_import_account(saved_plan)
-        import_account = self._read_import_account()
-        if saved_plan is not None and recorded is not None:
+        if saved_plan is None:
+            import_account = self._read_import_account()
+        else:
+            recorded = require_recorded_import_account(saved_plan)
+            import_account = self._read_import_account()
             refuse_other_import_account(saved_plan=saved_plan, recorded=recorded, live=import_account)
         if settings.source is None:
             source = ResolvedLineageNode(kind="CoreAccount", name=import_account.name, id=import_account.id)
@@ -1059,11 +1066,6 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         The order is stated at `Potenda.load_both_sides`.
         `metadata_read` is true from Infrahub 1.7.0, the first version that records
         `updated_by` and `updated_at`. Only a plan calls this; an apply loads nothing.
-        """
-        self.metadata_read = self._read_metadata_support()
-
-    def _read_metadata_support(self) -> bool:
-        """Read the server version once and return whether the destination reads ask for metadata.
 
         A server that refuses the version query is treated like one whose version cannot be
         parsed: the plan continues and every last change shows as not recorded.
@@ -1087,7 +1089,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 type(exc).__name__ if classification is None else classification.describe(),
                 extra={"infrahub_version": None, "metadata_read": False},
             )
-            return False
+            self.metadata_read = False
+            return
         supported = metadata_read_supported(version)
         logger.info(
             "Infrahub server version %s: this plan %s updated_by and updated_at",
@@ -1095,7 +1098,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             "reads" if supported else "does not read",
             extra={"infrahub_version": version, "metadata_read": supported},
         )
-        return supported
+        self.metadata_read = supported
 
     def _read_import_account(self) -> ImportAccount:
         """Return the account behind the token, read with one `AccountProfile` query.
@@ -1189,10 +1192,11 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             include_metadata=self.metadata_read,
             **filter_kwargs,
         )
+        mapped: dict[str, MappedFields] = {}
         for node in nodes:
-            payload = self.infrahub_node_to_diffsync(node=node)
+            payload = self.infrahub_node_to_diffsync(node=node, mapped=mapped)
             if self.metadata_read:
-                self._record_last_changes(node)
+                self._record_last_changes(node, mapped=mapped)
             yield payload
 
     def list_existing_ids(self, model_name: str) -> Iterator[str]:
@@ -1241,10 +1245,12 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             )
 
             # Transform the list of InfrahubNodeSync into a list of (node, dict) tuples
-            node_dict_pairs = [(node, self.infrahub_node_to_diffsync(node=node)) for node in nodes]
+            # The mapped fields of each kind are computed once for this read, not once per node.
+            mapped: dict[str, MappedFields] = {}
+            node_dict_pairs = [(node, self.infrahub_node_to_diffsync(node=node, mapped=mapped)) for node in nodes]
             if self.metadata_read:
                 for node in nodes:
-                    self._record_last_changes(node)
+                    self._record_last_changes(node, mapped=mapped)
             total = len(node_dict_pairs)
 
             # Extract the list of dicts for filtering and transforming
@@ -1433,20 +1439,19 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             return
         self.client.store.set(key=unique_id, node=sdk_peer)
 
-    def infrahub_node_to_diffsync(self, node: InfrahubNodeSync) -> dict[str, Any]:
+    def infrahub_node_to_diffsync(
+        self, node: InfrahubNodeSync, *, mapped: dict[str, MappedFields] | None = None
+    ) -> dict[str, Any]:
         """
         Convert an Infrahub node into a dictionary suitable for creating a DiffSyncModel.
 
-        Handles attribute conversion and relationship resolution.
+        Handles attribute conversion and relationship resolution. `mapped` is the per-read
+        memo `_mapped_fields` fills; without it the mapped fields are computed for this node.
         """
         data: dict[str, Any] = {"local_id": str(node.id)}
-        node_kind = node.get_kind()
-        # Schema comes from the adapter's loaded mapping; the SDK schema manager is not
-        # consulted because a node built with an explicit schema is absent from its cache
-        # and a lookup there could fetch.
-        node_schema = self.schema[node_kind]
+        attr_names, relationships = self._mapped_fields(node.get_kind(), mapped)
 
-        for attr_name in self._mapped_attribute_names(node_kind, node_schema):
+        for attr_name in attr_names:
             attr = getattr(node, attr_name)
             val = attr.value
             # IP types come back from the Infrahub SDK as ipaddress
@@ -1464,7 +1469,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             else:
                 data[attr_name] = val
 
-        for rel_schema, peer_schema in self._mapped_relationships(node_kind, node_schema):
+        for rel_schema, peer_schema in relationships:
             if rel_schema.cardinality == "one":
                 rel: RelatedNodeSync = getattr(node, rel_schema.name)
                 if not rel.id:
@@ -1514,6 +1519,25 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         return data
 
+    def _mapped_fields(self, node_kind: str, mapped: dict[str, MappedFields] | None) -> MappedFields:
+        """The mapped attributes and relationships of `node_kind`, taken from `mapped` when it has them.
+
+        The schema comes from the adapter's loaded mapping; the SDK schema manager is not
+        consulted because a node built with an explicit schema is absent from its cache and a
+        lookup there could fetch. `mapped` is a memo one read passes to every node it converts,
+        keyed by node kind; it is filled the first time a kind is seen.
+        """
+        if mapped is not None and node_kind in mapped:
+            return mapped[node_kind]
+        node_schema = self.schema[node_kind]
+        fields = (
+            list(self._mapped_attribute_names(node_kind, node_schema)),
+            list(self._mapped_relationships(node_kind, node_schema)),
+        )
+        if mapped is not None:
+            mapped[node_kind] = fields
+        return fields
+
     def _mapped_attribute_names(self, node_kind: str, node_schema: MainSchemaTypesAPI) -> Iterator[str]:
         """The attributes of `node_kind` the configuration maps."""
         for attr_name in node_schema.attribute_names:
@@ -1531,7 +1555,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             if peer_schema is not None:
                 yield rel_schema, peer_schema
 
-    def _record_last_changes(self, node: InfrahubNodeSync) -> None:
+    def _record_last_changes(self, node: InfrahubNodeSync, *, mapped: dict[str, MappedFields] | None = None) -> None:
         """Keep the `updated_by` and `updated_at` of each mapped field of a node read with metadata.
 
         The fields are those `infrahub_node_to_diffsync` converts: mapped attributes, and mapped
@@ -1542,14 +1566,13 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """
         last_changes = self.last_changes
         node_id = str(node.id)
-        node_kind = node.get_kind()
-        node_schema = self.schema[node_kind]
-        for attr_name in self._mapped_attribute_names(node_kind, node_schema):
+        attr_names, relationships = self._mapped_fields(node.get_kind(), mapped)
+        for attr_name in attr_names:
             attr = getattr(node, attr_name)
             last_changes[node_id, attr_name] = LastChange(
                 updated_by=_recorded_account(attr.updated_by), updated_at=attr.updated_at
             )
-        for rel_schema, _ in self._mapped_relationships(node_kind, node_schema):
+        for rel_schema, _ in relationships:
             if rel_schema.cardinality == "one":
                 change = _edge_last_change(getattr(node, rel_schema.name))
             elif rel_schema.cardinality == "many":

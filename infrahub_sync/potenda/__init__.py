@@ -28,6 +28,8 @@ from infrahub_sync.plan.errors import (
 from infrahub_sync.plan.models import ACTIONS, DESTINATION_ID_FORMAT_VERSION, ApplyRecord
 from infrahub_sync.plan.write_surface import (
     PlannedWriteDestination,
+    destination_last_changes,
+    destination_lineage_record,
     resolve_destination_lineage,
     resolve_destination_metadata_read,
 )
@@ -535,7 +537,7 @@ class Potenda:
         A lineage refusal, or a version read error that propagates (an HTTP 401 or a transport
         error), stops the plan before the source system is read. A version query that Infrahub
         refuses with a GraphQL error or a missing permission does not stop the plan: the plan
-        continues without reading metadata (see `InfrahubAdapter._read_metadata_support`).
+        continues without reading metadata (see `InfrahubAdapter.resolve_metadata_read`).
         """
         resolve_destination_lineage(self.destination)
         resolve_destination_metadata_read(self.destination)
@@ -663,7 +665,6 @@ class Potenda:
             warn_missing_convergence_key,
         )
         from infrahub_sync.plan.models import SourceSnapshotRecord
-        from infrahub_sync.plan.write_surface import destination_last_changes, destination_lineage_record
         from infrahub_sync.plan.writer import write_plan_artifact as write_artifact
 
         resolve_tier = partial(tier_of, tiers=self.tiers, top_level=self.top_level)
@@ -880,7 +881,8 @@ class Potenda:
         # Everything the gate can see is already reported; what remains for the parser is
         # per-record validity — an unrecognized `action` above all — which is still refused
         # before the first destination write.
-        loaded = parse_plan_artifact(raw, run_id=run_id)
+        # `last_changes.jsonl` is display-only: the gate above checked it, and apply never reads it.
+        loaded = parse_plan_artifact(raw, run_id=run_id, parse_last_changes=False)
 
         # Readable and reviewable, but not applyable. Refused after the artifact has been
         # read, before `ownership.before_operation` and therefore before the first dispatch,

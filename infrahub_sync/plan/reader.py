@@ -610,13 +610,17 @@ def require_plan_directory(run_dir: Path) -> Path:
     return plan_dir
 
 
-def parse_plan_artifact(raw: RawPlanArtifact, *, run_id: str) -> LoadedPlan:
+def parse_plan_artifact(raw: RawPlanArtifact, *, run_id: str, parse_last_changes: bool = True) -> LoadedPlan:
     """Validate an already-read artifact into a `LoadedPlan` — the same bytes, uninterrupted.
 
     The parsing half of `load_plan_artifact`, split out so a caller that verified a
     `RawPlanArtifact` can parse and apply **that object** rather than re-reading the disk —
     a second read is what let files replaced between verification and apply execute
     unverified (DBR-006, DBA-004).
+
+    With `parse_last_changes=False`, `last_changes.jsonl` is neither checked nor parsed and
+    `last_changes` is `None`. An apply passes it: apply never reads the file, and
+    `verify_plan` has already checked it against the manifest.
 
     Raises:
         PlanArtifactTornError: the artifact is incomplete or inconsistent — a missing or
@@ -633,7 +637,9 @@ def parse_plan_artifact(raw: RawPlanArtifact, *, run_id: str) -> LoadedPlan:
     """
     manifest, mapping = _parse_manifest(raw, run_id)
     operations, operations_bytes = _parse_operations(raw, manifest, run_id)
-    last_changes, last_changes_problem = _parse_last_changes(raw, manifest, operations, run_id)
+    last_changes, last_changes_problem = (
+        _parse_last_changes(raw, manifest, operations, run_id) if parse_last_changes else (None, None)
+    )
     return LoadedPlan(
         manifest=manifest,
         operations=operations,

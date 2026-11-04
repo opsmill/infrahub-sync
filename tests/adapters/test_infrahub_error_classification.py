@@ -211,6 +211,29 @@ def test_a_quoted_server_message_drops_control_characters_and_is_capped() -> Non
     assert len(classification.server_message) <= 300
 
 
+def test_a_quoted_server_message_drops_format_characters() -> None:
+    """A bidi override or a zero-width space is not printable, so it is not quoted either."""
+    exc = _raised(403, _denied("Denied\u202eby\u200bpolicy"))
+
+    classification = classify_infrahub_error(exc)
+
+    assert classification is not None
+    assert classification.server_message == "Denied by policy"
+    assert classification.describe().isprintable()
+
+
+def test_a_403_without_server_messages_quotes_nothing() -> None:
+    """The SDK's own default text for a 403 with no error is not reported as what Infrahub said."""
+    exc = _raised(403, {"errors": []})
+
+    classification = classify_infrahub_error(exc)
+
+    assert classification is not None
+    assert classification.problem == "missing_permission"
+    assert classification.server_message is None
+    assert "Infrahub said" not in classification.describe()
+
+
 def _wrapped(cause: BaseException, message: str) -> ValueError:
     """A `ValueError` raised `from` `cause`, as `Potenda` wraps a load failure."""
     wrapper = ValueError(message)

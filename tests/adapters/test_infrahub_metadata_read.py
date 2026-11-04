@@ -318,9 +318,10 @@ def _person_changed_rows() -> dict[str, list[dict[str, Any]]]:
         ("1.6", False),
         ("", False),
         ("not-a-version", False),
+        (None, False),
     ],
 )
-def test_metadata_is_read_from_infrahub_1_7_0(version: str, *, supported: bool) -> None:
+def test_metadata_is_read_from_infrahub_1_7_0(version: str | None, *, supported: bool) -> None:
     assert metadata_read_supported(version) is supported
 
 

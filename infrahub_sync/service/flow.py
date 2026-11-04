@@ -270,7 +270,7 @@ def _verify_registered_apply(
             elif format_failure.next_action.endswith(UNSUPPORTED_FORMAT_NEXT_ACTION):
                 recovery_action = "compatible_version"
         raise RegisteredPlanVerificationError(message, recovery_action, guidance=guidance)
-    manifest = parse_plan_artifact(artifact, run_id=run_id).manifest
+    manifest = parse_plan_artifact(artifact, run_id=run_id, parse_last_changes=False).manifest
     if manifest.configuration_binding != binding:
         raise ValueError(_REGISTERED_PLAN_BINDING_MISMATCH)
     if manifest.plan_checksum != expected_checksum:
@@ -721,7 +721,7 @@ def _failure_evidence(
     *,
     outcome: str,
     record: ApplyRecord | None,
-    secrets: Sequence[str] = (),
+    secrets: Sequence[str],
 ) -> dict[str, Any]:
     """Describe one failure, with whatever is known about what it wrote.
 

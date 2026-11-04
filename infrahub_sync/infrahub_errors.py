@@ -38,7 +38,6 @@ _ONE_OF_PERMISSIONS = re.compile(r"^You do not have one of the following permiss
 # A permission as Infrahub renders it, for example `global:edit_default_branch:allow_all` or
 # `object:*:Core:Account:view:allow_all`. Anything else is quoted as a server message instead.
 _PERMISSION = re.compile(r"^[A-Za-z0-9_:*.\-]{1,200}$")
-_CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 _MAX_QUOTED_MESSAGE = 300
 
 
@@ -128,11 +127,18 @@ def classify_infrahub_error_chain(exc: BaseException) -> InfrahubErrorClassifica
 
 
 def _classify_authentication_error(exc: AuthenticationError) -> InfrahubErrorClassification:
-    """A 403 cause is a missing permission; a 401 cause, or no HTTP cause, is a refused token."""
+    """A 403 cause is a missing permission; a 401 cause, or no HTTP cause, is a refused token.
+
+    The 403's messages are read from the response itself, not from `exc.message`: when the
+    response names no error, the SDK fills `message` with its own default text, which is not
+    something Infrahub said.
+    """
     cause = exc.__cause__
-    status = cause.response.status_code if isinstance(cause, httpx.HTTPStatusError) else None
+    if not isinstance(cause, httpx.HTTPStatusError):
+        return InfrahubErrorClassification(problem="refused_token", error_type=type(exc).__name__)
+    status = cause.response.status_code
     if status == MISSING_PERMISSION_STATUS:
-        return _missing_permission([exc.message or ""], error_type=type(exc).__name__, http_status=status)
+        return _forbidden_response(cause.response, error_type=type(exc).__name__)
     return InfrahubErrorClassification(problem="refused_token", error_type=type(exc).__name__, http_status=status)
 
 
@@ -142,8 +148,15 @@ def _classify_status_error(exc: httpx.HTTPStatusError) -> InfrahubErrorClassific
     if status == REFUSED_TOKEN_STATUS:
         return InfrahubErrorClassification(problem="refused_token", error_type=type(exc).__name__, http_status=status)
     if status == MISSING_PERMISSION_STATUS:
-        return _missing_permission(_response_messages(exc.response), error_type=type(exc).__name__, http_status=status)
+        return _forbidden_response(exc.response, error_type=type(exc).__name__)
     return None
+
+
+def _forbidden_response(response: httpx.Response, *, error_type: str) -> InfrahubErrorClassification:
+    """Classify an HTTP 403 response as a missing permission, reading the messages from its body."""
+    return _missing_permission(
+        _response_messages(response), error_type=error_type, http_status=MISSING_PERMISSION_STATUS
+    )
 
 
 def _classify_graphql_error(exc: GraphQLError) -> InfrahubErrorClassification | None:
@@ -177,15 +190,12 @@ def _missing_permission(
     """Build a missing-permission classification, quoting the permission text when it has the expected form."""
     text = " | ".join(message.strip() for message in messages if message.strip())
     permissions = _permissions_named(text)
-    if permissions:
-        return InfrahubErrorClassification(
-            problem="missing_permission", error_type=error_type, http_status=http_status, permissions=permissions
-        )
     return InfrahubErrorClassification(
         problem="missing_permission",
         error_type=error_type,
         http_status=http_status,
-        server_message=quotable_text(text) or None,
+        permissions=permissions,
+        server_message=None if permissions else (quotable_text(text) or None),
     )
 
 
@@ -205,11 +215,13 @@ def _permissions_named(text: str) -> tuple[str, ...]:
 
 
 def quotable_text(text: str, *, limit: int = _MAX_QUOTED_MESSAGE) -> str:
-    """Return text fit to quote: no control characters, single spaces, at most `limit` characters.
+    """Return text fit to quote: printable characters only, single spaces, at most `limit` characters.
 
-    Text longer than `limit` is cut and ends with "…".
+    Every character `str.isprintable()` refuses becomes a space: control characters, and also
+    format characters such as a bidi override or a zero-width space, which a C0/C1 range does
+    not cover. Text longer than `limit` is cut and ends with "…".
     """
-    cleaned = " ".join(_CONTROL_CHARACTERS.sub(" ", text).split())
+    cleaned = " ".join("".join(character if character.isprintable() else " " for character in text).split())
     if len(cleaned) > limit:
         cleaned = cleaned[: limit - 1] + "…"
     return cleaned
