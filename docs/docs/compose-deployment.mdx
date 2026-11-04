@@ -470,8 +470,13 @@ export INFRAHUB_SYNC_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_API_TOKEN=//p' .env)"
 infrahub-sync configs list
 ```
 
-If `.env` sets `INFRAHUB_SYNC_API_PORT` or `INFRAHUB_SYNC_BIND_ADDRESS`, use those
-values in the URL instead of `127.0.0.1:8000`.
+If `.env` sets `INFRAHUB_SYNC_API_PORT`, use that port in the URL instead of `8000`.
+`INFRAHUB_SYNC_BIND_ADDRESS` sets which network interfaces of the Docker host accept
+connections; it is not an address to put in the URL. To run the CLI from another
+machine, use the Docker host's hostname or IP address that this machine can reach, for
+example `http://sync.example.invalid:8000`. This works only when
+`INFRAHUB_SYNC_BIND_ADDRESS` includes that interface: the default, `127.0.0.1`, accepts
+connections from the Docker host itself only.
 
 The exported `INFRAHUB_SYNC_API_TOKEN` also overrides the value in `.env` for every
 `docker compose` command you run from this shell, including the `cli` service. After
