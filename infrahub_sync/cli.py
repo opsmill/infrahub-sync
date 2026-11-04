@@ -1,16 +1,20 @@
 """Command-line client for the Sync HTTP API."""
 
+# One module keeps every command on the one Typer app and its shared client boundary.
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 import json
 import logging
 import os
+import sys
 import unicodedata
 from contextlib import contextmanager
 from enum import Enum
 from math import isfinite
 from pathlib import Path  # noqa: TC003 - Typer resolves command annotations at runtime.
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import uuid4
 
 import typer
@@ -20,6 +24,7 @@ from pydantic import ValidationError
 from infrahub_sync.client import (
     APIError,
     ApplyRunRequest,
+    CancelRunRequest,
     ClientInputError,
     CompatibilityError,
     ConfigMutationRequest,
@@ -36,18 +41,24 @@ from infrahub_sync.client import (
     SyncClientError,
     TransportError,
     ValidationReportResource,
+    VerifyRunRequest,
 )
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Callable, Iterable, Iterator, Mapping
 
     from infrahub_sync.client.models import (
+        ArtifactReferenceResource,
         ConfigurationSummaryResource,
         ConfigurationVersionResource,
         ConfigurationVersionSummaryResource,
         PlanOperationResource,
+        PublicRunResource,
+        RunReference,
     )
+
+_Resource = TypeVar("_Resource")
 
 DEFAULT_WAIT_TIMEOUT = 30 * 60.0
 DEFAULT_POLL_INTERVAL = 2.0
@@ -55,6 +66,12 @@ VERBOSITY_MAP = {"quiet": logging.WARNING, "default": logging.INFO, "verbose": l
 _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
 _KIND_ARG = "kind"
+_VERSION_ARG = "version"
+_MAX_PAGE_LIMIT = 200
+_DIFF_DEPRECATION = "warning: 'diff' is deprecated, use 'plan'"
+_LIMIT_HELP = f"Items per page, 1-{_MAX_PAGE_LIMIT}. The server default applies when omitted."
+_ALL_HELP = "Read every page instead of only the first."
+_CONFIG_HELP = "Configuration ID or name. The ID is tried first, then the name."
 # Characters a terminal acts on or a reader cannot see: every code point in the Unicode
 # categories Cc (C0 and C1 controls, DEL), Cf (bidirectional overrides and isolates,
 # zero-width characters, direction marks, soft hyphen, tag characters), Zl and Zp (line
@@ -278,12 +295,74 @@ def _echo_idempotency_key(key: str) -> None:
     _echo_fields((("idempotency_key", key),))
 
 
+def _stdin_is_interactive() -> bool:
+    """Report whether a person can answer a confirmation prompt on standard input."""
+    return sys.stdin.isatty()
+
+
+def _is_not_found(error: SyncClientError) -> bool:
+    return isinstance(error, APIError) and error.status == 404
+
+
+def _resolve_config(client: SyncClient, value: str) -> ConfigurationSummaryResource:
+    """Resolve a configuration ID or name, trying the ID first.
+
+    A value that is both one configuration's ID and another's name resolves to the ID.
+    """
+    try:
+        return client.get_config(value)
+    except ClientInputError:
+        # The value cannot be an identifier, so it can only be a name.
+        pass
+    except APIError as error:
+        if not _is_not_found(error):
+            raise
+    matches = list(client.iter_configs(name=value))
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        typer.echo(_display(f"error: name '{value}' matches several configurations:"), err=True)
+        for match in matches:
+            typer.echo(_display(match.config_id), err=True)
+    else:
+        typer.echo(_display(f"error: no configuration has the id or name '{value}'"), err=True)
+    raise typer.Exit(2)
+
+
+def _config_id(ctx: typer.Context, value: str) -> str:
+    return _resolve_config(_client(ctx), value).config_id
+
+
+def _echo_more(noun: str, next_cursor: str | None) -> None:
+    # On stderr, so the rows on stdout stay the complete answer to read or parse.
+    if next_cursor is not None:
+        typer.echo(f"more {noun}: rerun with --all, or --limit up to {_MAX_PAGE_LIMIT}", err=True)
+
+
+def _echo_blocks(resources: Iterable[_Resource], echo: Callable[[_Resource], None]) -> None:
+    for index, resource in enumerate(resources):
+        if index:
+            typer.echo("")
+        echo(resource)
+
+
 def _echo_config_summary(resource: ConfigurationSummaryResource) -> None:
     _echo_fields(
         (
             ("config_id", resource.config_id),
+            ("name", resource.name),
+            ("latest_version", resource.latest_version),
             ("created_at", resource.created_at.isoformat()),
         )
+    )
+
+
+def _run_reference(reference: RunReference | None) -> str | None:
+    if reference is None:
+        return None
+    return (
+        f"{reference.run_id} phase={reference.phase} outcome={reference.outcome or '-'} "
+        f"started_at={reference.started_at.isoformat()}"
     )
 
 
@@ -294,6 +373,8 @@ def _echo_config_version_summary(resource: ConfigurationVersionSummaryResource) 
             ("registry_version", resource.registry_version),
             ("package_checksum", resource.package_checksum),
             ("created_at", resource.created_at.isoformat()),
+            ("latest_run", _run_reference(resource.latest_run)),
+            ("latest_applied_run", _run_reference(resource.latest_applied_run)),
         )
     )
 
@@ -367,7 +448,7 @@ def configs_register(
 @configs_app.command("version")
 def configs_version(
     ctx: typer.Context,
-    config_id: str = typer.Argument(...),
+    config: str = typer.Argument(..., metavar="CONFIG", help=_CONFIG_HELP),
     package: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
     reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the mutation."),
     idempotency_key: str | None = typer.Option(
@@ -384,54 +465,73 @@ def configs_version(
             "ConfigMutationRequest",
             _request(ConfigMutationRequest, package=_package(package), reason=reason),
         )
+        config_id = _config_id(ctx, config)
         _echo_registered_version(_client(ctx).create_config_version(config_id, request, key))
 
 
 @configs_app.command("list")
-def configs_list(ctx: typer.Context) -> None:
-    """List registered configurations."""
+def configs_list(
+    ctx: typer.Context,
+    name: str | None = typer.Option(None, "--name", help="Only configurations with this exact name."),
+    limit: int | None = typer.Option(None, "--limit", min=1, max=_MAX_PAGE_LIMIT, help=_LIMIT_HELP),
+    all_pages: bool = typer.Option(False, "--all", help=_ALL_HELP),  # noqa: FBT003
+) -> None:
+    """List registered configurations, newest first."""
     with _client_errors():
-        for index, resource in enumerate(_client(ctx).list_configs()):
-            if index:
-                typer.echo("")
-            _echo_config_summary(resource)
+        client = _client(ctx)
+        if all_pages:
+            _echo_blocks(client.iter_configs(name=name, limit=limit), _echo_config_summary)
+            return
+        page = client.list_configs(name=name, limit=limit)
+        _echo_blocks(page.items, _echo_config_summary)
+        _echo_more("configurations", page.next_cursor)
 
 
 @configs_app.command("show")
 def configs_show(
     ctx: typer.Context,
-    config_id: str = typer.Argument(...),
+    config: str = typer.Argument(..., metavar="CONFIG", help=_CONFIG_HELP),
     version: int | None = typer.Option(None, "--version", help="Show one immutable registry version."),
 ) -> None:
     """Show a configuration or one of its versions."""
     with _client_errors():
-        client = _client(ctx)
+        resource = _resolve_config(_client(ctx), config)
         if version is None:
-            _echo_config_summary(client.get_config(config_id))
+            _echo_config_summary(resource)
         else:
-            _echo_config_version(client.get_config_version(config_id, version))
+            _echo_config_version(_client(ctx).get_config_version(resource.config_id, version))
 
 
 @configs_app.command("versions")
-def configs_versions(ctx: typer.Context, config_id: str = typer.Argument(...)) -> None:
-    """List immutable versions of a registered configuration."""
+def configs_versions(
+    ctx: typer.Context,
+    config: str = typer.Argument(..., metavar="CONFIG", help=_CONFIG_HELP),
+    limit: int | None = typer.Option(None, "--limit", min=1, max=_MAX_PAGE_LIMIT, help=_LIMIT_HELP),
+    all_pages: bool = typer.Option(False, "--all", help=_ALL_HELP),  # noqa: FBT003
+) -> None:
+    """List a configuration's versions, newest first, with each version's latest run and latest applied run."""
     with _client_errors():
-        for index, resource in enumerate(_client(ctx).list_config_versions(config_id)):
-            if index:
-                typer.echo("")
-            _echo_config_version_summary(resource)
+        client = _client(ctx)
+        config_id = _config_id(ctx, config)
+        if all_pages:
+            _echo_blocks(client.iter_config_versions(config_id, limit=limit), _echo_config_version_summary)
+            return
+        page = client.list_config_versions(config_id, limit=limit)
+        _echo_blocks(page.items, _echo_config_version_summary)
+        _echo_more("versions", page.next_cursor)
 
 
 @configs_app.command("validate")
 def configs_validate(
     ctx: typer.Context,
-    config_id: str = typer.Argument(...),
+    config: str = typer.Argument(..., metavar="CONFIG", help=_CONFIG_HELP),
     version: int = typer.Argument(...),
     offset: int = typer.Option(0, "--offset", help="Finding offset."),
     limit: int = typer.Option(256, "--limit", help="Maximum findings to return."),
 ) -> None:
     """Validate a registered configuration version."""
     with _client_errors():
+        config_id = _config_id(ctx, config)
         _echo_validation(_client(ctx).validate_config(config_id, version, offset=offset, limit=limit))
 
 
@@ -597,7 +697,7 @@ def _admit_run(
     ctx: typer.Context,
     *,
     operation: str,
-    config_id: str,
+    config: str,
     version: int,
     branch: str | None,
     reason: str | None,
@@ -609,6 +709,7 @@ def _admit_run(
     _positive_duration(wait_timeout, "wait_timeout")
     _positive_duration(poll_interval, "poll_interval")
     client = _client(ctx)
+    config_id = _config_id(ctx, config)
     key = _idempotency_key(idempotency_key)
     _echo_idempotency_key(key)
     request = _operation_request(
@@ -629,11 +730,11 @@ def _admit_run(
     )
 
 
-@app.command("diff")
-def diff_cmd(
+@app.command("plan")
+def plan_cmd(
     ctx: typer.Context,
     *,
-    config_id: str = typer.Option(..., "--config-id", help="Registered configuration identity."),
+    config: str = typer.Option(..., "--config", "--config-id", help=_CONFIG_HELP),
     version: int = typer.Option(..., "--version", help="Registered configuration version."),
     reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the plan."),
     branch: str | None = typer.Option(None, "--branch", help="Destination branch admitted by the Sync API."),
@@ -647,7 +748,7 @@ def diff_cmd(
         client, completed = _admit_run(
             ctx,
             operation="plan",
-            config_id=config_id,
+            config=config,
             version=version,
             branch=branch,
             reason=reason,
@@ -660,11 +761,39 @@ def diff_cmd(
             _echo_plan(client.get_plan(completed.run.run_id))
 
 
+@app.command("diff", hidden=True)
+def diff_cmd(
+    ctx: typer.Context,
+    *,
+    config: str = typer.Option(..., "--config", "--config-id", help=_CONFIG_HELP),
+    version: int = typer.Option(..., "--version", help="Registered configuration version."),
+    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the plan."),
+    branch: str | None = typer.Option(None, "--branch", help="Destination branch admitted by the Sync API."),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
+    wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for this run's execution."),  # noqa: FBT003
+    wait_timeout: float = typer.Option(DEFAULT_WAIT_TIMEOUT, "--wait-timeout", help="Bounded wait in seconds."),
+    poll_interval: float = typer.Option(DEFAULT_POLL_INTERVAL, "--poll-interval", help="Poll interval in seconds."),
+) -> None:
+    """Deprecated alias of `plan`, removed in 3.0."""
+    typer.echo(_DIFF_DEPRECATION, err=True)
+    plan_cmd(
+        ctx,
+        config=config,
+        version=version,
+        reason=reason,
+        branch=branch,
+        idempotency_key=idempotency_key,
+        wait=wait,
+        wait_timeout=wait_timeout,
+        poll_interval=poll_interval,
+    )
+
+
 @app.command("sync")
 def sync_cmd(
     ctx: typer.Context,
     *,
-    config_id: str = typer.Option(..., "--config-id", help="Registered configuration identity."),
+    config: str = typer.Option(..., "--config", "--config-id", help=_CONFIG_HELP),
     version: int = typer.Option(..., "--version", help="Registered configuration version."),
     reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the synchronization."),
     branch: str | None = typer.Option(None, "--branch", help="Destination branch admitted by the Sync API."),
@@ -678,7 +807,7 @@ def sync_cmd(
         client, completed = _admit_run(
             ctx,
             operation="sync",
-            config_id=config_id,
+            config=config,
             version=version,
             branch=branch,
             reason=reason,
@@ -754,11 +883,11 @@ def apply_cmd(
                         recovery_action = failure.get("recovery_action")
                         if recovery_action == "rebuild":
                             typer.echo(
-                                "hint: re-run diff for this sync, review the new plan, then apply that run", err=True
+                                "hint: re-run plan for this sync, review the new plan, then apply that run", err=True
                             )
                         elif recovery_action == "compatible_version":
                             typer.echo(
-                                "hint: re-run diff with this version and review the new plan, "
+                                "hint: re-run plan with this version and review the new plan, "
                                 "or apply the reviewed plan with the version that wrote it",
                                 err=True,
                             )
@@ -766,6 +895,132 @@ def apply_cmd(
         if wait:
             _echo_run(completed)
             _echo_completed_destination_branch(client, completed.run.run_id)
+
+
+@app.command("verify")
+def verify_cmd(
+    ctx: typer.Context,
+    *,
+    run_id: str = typer.Argument(..., help="Service-issued run ID whose saved plan is verified."),
+    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the verification."),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
+    wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for this run's verification."),  # noqa: FBT003
+    wait_timeout: float = typer.Option(DEFAULT_WAIT_TIMEOUT, "--wait-timeout", help="Bounded wait in seconds."),
+    poll_interval: float = typer.Option(DEFAULT_POLL_INTERVAL, "--poll-interval", help="Poll interval in seconds."),
+) -> None:
+    """Start verification of the saved plan of the named run."""
+    with _client_errors():
+        _positive_duration(wait_timeout, "wait_timeout")
+        _positive_duration(poll_interval, "poll_interval")
+        client = _client(ctx)
+        key = _idempotency_key(idempotency_key)
+        _echo_idempotency_key(key)
+        request = cast("VerifyRunRequest", _request(VerifyRunRequest, reason=reason))
+        accepted = client.verify(run_id, request, key)
+        _echo_run(accepted)
+        completed = _wait(client, accepted, wait=wait, wait_timeout=wait_timeout, poll_interval=poll_interval)
+        if wait:
+            _echo_run(completed)
+
+
+@app.command("whoami")
+def whoami_cmd(ctx: typer.Context) -> None:
+    """Show the actor the API token authenticates as and whether it is an administrator."""
+    with _client_errors():
+        principal = _client(ctx).me()
+        _echo_fields((("actor", principal.actor), ("administrator", principal.administrator)))
+
+
+def _run_row(run: PublicRunResource) -> str:
+    configuration = f"{run.config_id}@{run.registry_version}" if run.config_id is not None else "-"
+    columns = (
+        run.run_id,
+        configuration,
+        run.destination_branch or "-",
+        run.phase,
+        run.outcome or "-",
+        run.actor or "-",
+        run.started_at.isoformat(),
+    )
+    return _display("  ".join(columns))
+
+
+@runs_app.command("list")
+def runs_list(
+    ctx: typer.Context,
+    config: str | None = typer.Option(None, "--config", "--config-id", help=_CONFIG_HELP),
+    version: int | None = typer.Option(None, "--version", min=1, help="Only runs of this version; needs --config."),
+    limit: int | None = typer.Option(None, "--limit", min=1, max=_MAX_PAGE_LIMIT, help=_LIMIT_HELP),
+    all_pages: bool = typer.Option(False, "--all", help=_ALL_HELP),  # noqa: FBT003
+) -> None:
+    """List runs, newest first: run, configuration@version, branch, phase, outcome, actor, start time."""
+    with _client_errors():
+        if version is not None and config is None:
+            raise ClientInputError(_VERSION_ARG)
+        client = _client(ctx)
+        config_id = _config_id(ctx, config) if config is not None else None
+        if all_pages:
+            for run in client.iter_runs(config_id=config_id, registry_version=version, limit=limit):
+                typer.echo(_run_row(run))
+            return
+        page = client.list_runs(config_id=config_id, registry_version=version, limit=limit)
+        for run in page.items:
+            typer.echo(_run_row(run))
+        _echo_more("runs", page.next_cursor)
+
+
+def _echo_artifact(artifact: ArtifactReferenceResource) -> None:
+    _echo_fields(
+        (
+            ("artifact_id", artifact.artifact_id),
+            ("kind", artifact.kind),
+            ("media_type", artifact.media_type),
+            ("size", artifact.size),
+            ("digest", artifact.digest),
+            ("created_at", artifact.created_at.isoformat()),
+            ("expires_at", artifact.expires_at.isoformat() if artifact.expires_at is not None else None),
+        )
+    )
+
+
+@runs_app.command("artifacts")
+def runs_artifacts(
+    ctx: typer.Context,
+    run_id: str = typer.Argument(..., help="Service-issued run ID."),
+) -> None:
+    """List the artifacts one run recorded."""
+    with _client_errors():
+        _echo_blocks(_client(ctx).list_artifacts(run_id).artifacts, _echo_artifact)
+
+
+@runs_app.command("cancel")
+def runs_cancel(
+    ctx: typer.Context,
+    run_id: str = typer.Argument(..., help="Service-issued run ID."),
+    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the cancellation."),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
+    yes: bool = typer.Option(False, "--yes", help="Cancel without asking for confirmation."),  # noqa: FBT003
+) -> None:
+    """Request cancellation of a run. Cancelling a write can leave its outcome ambiguous."""
+    with _client_errors():
+        if not yes:
+            if not _stdin_is_interactive():
+                typer.echo(
+                    "error: runs cancel needs --yes when standard input is not interactive, "
+                    "because cancelling a write can leave an ambiguous outcome",
+                    err=True,
+                )
+                raise typer.Exit(2)
+            if not typer.confirm(
+                f"Cancel run {_display(run_id)}? Cancelling a write can leave an ambiguous outcome.", default=False
+            ):
+                typer.echo("not cancelled", err=True)
+                raise typer.Exit(1)
+        client = _client(ctx)
+        key = _idempotency_key(idempotency_key)
+        _echo_idempotency_key(key)
+        request = cast("CancelRunRequest", _request(CancelRunRequest, reason=reason))
+        _echo_run(client.cancel_run(run_id, request, key))
 
 
 @runs_app.command("show")
