@@ -78,8 +78,11 @@ credential references and the connection-free capability declaration in full.
 deployment (`worker.py`, `deploy.py`, `orchestration.py`, `flow.py`), liveness and checkpoint
 policy (`liveness.py`, `checkpoints.py`), per-stage scratch directories (`scratch.py`), the
 write guard (`apply_guard.py`) and artifact storage (`storage.py`). `prefect_server.py` holds
-`create_prefect_app`, the application factory every stack passes to uvicorn to run the Prefect
-server from the Sync image, so no separate Prefect image is needed.
+`create_prefect_app`, the application factory that the root `docker-compose.yml`, the
+development stack's `development/docker-compose.yml` and the copy that
+`infrahub_sync.testcontainers` ships (`infrahub_sync/testcontainers/docker-compose.yml`) pass to uvicorn. These stacks run the Prefect server from the Sync image, so they need no
+separate Prefect image. The preview stack still runs the upstream `prefecthq/prefect` image
+with `prefect server start`.
 
 Two facts about it are often missed:
 

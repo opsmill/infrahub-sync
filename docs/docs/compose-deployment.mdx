@@ -76,8 +76,8 @@ The object store runs
 is a maintained build of the MinIO server. It is licensed under the AGPLv3, and
 its source is at [github.com/pgsty/silo](https://github.com/pgsty/silo). The
 deployment does not publish the object store port and does not start its
-browser console: only the Sync services reach it, on the deployment's own
-network.
+browser console. The Sync services use it over the deployment's own network,
+and its port is not published on the host.
 
 Run every `docker compose` command on this page from the directory that holds
 `docker-compose.yml` and `.env`. Compose finds both files there without `-f` or

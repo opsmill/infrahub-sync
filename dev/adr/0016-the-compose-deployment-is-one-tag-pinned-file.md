@@ -30,6 +30,8 @@ no wrapper, no mounted scripts and no secret files.
   supply them in a `.env` beside the file.
 - **Development stack.** The development stack moves to `development/docker-compose.dev.yml`,
   because Compose prefers `compose.yaml` over `docker-compose.yml` in the same directory.
+    - Later change: the development stack was then moved to `development/docker-compose.yml`.
+      That name works because `development/` holds no `compose.yaml`.
 
 ## Consequences
 
