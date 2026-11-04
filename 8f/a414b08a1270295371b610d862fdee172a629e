@@ -1,0 +1,36 @@
+docs/docs/operations/compose-troubleshooting.mdx
+  s_5ff3d60bfb497b::t_0639fa53b47e36 48-50,56-57
+docs/docs/readme.mdx
+  s_5ff3d60bfb497b::t_170fd271109e7f 13
+  s_5ff3d60bfb497b::t_2d5d73dc9dd7f3 11,14
+  s_5ff3d60bfb497b::t_a14dabe4040397 82
+docs/docs/compose-deployment.mdx
+  s_5ff3d60bfb497b::t_4c17266711ae4b 479-481
+README.md
+  s_5ff3d60bfb497b::t_35f50b6cb40eea 23-24
+  s_5ff3d60bfb497b::t_80c259afe94e5d 25
+docs/docs/running-a-sync.mdx
+  s_5ff3d60bfb497b::t_c359cc2b84ae0e 20
+docs/docs/installation.mdx
+  s_5ff3d60bfb497b::t_0c0d3d43e255d6 47
+  s_5ff3d60bfb497b::t_860eace72dac9b 53-54
+  s_5ff3d60bfb497b::t_0f659eeee40905 55
+changelog/+v3-cli-install-docs.fixed.md
+  s_5ff3d60bfb497b::t_2b385e9fa29efc 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8fa414b08a1270295371b610d862fdee172a629e",
+  "prompts": {},
+  "sessions": {
+    "s_5ff3d60bfb497b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4f0b441-46e5-4f6d-90b8-68208a4f492b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
