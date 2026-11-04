@@ -1,0 +1,25 @@
+docs/docs/development-stack.mdx
+  s_5af47e422ac3fa::t_6005c32189a86a 265-273
+changelog/+dev-infrahub-bind-token.security.md
+  s_5af47e422ac3fa::t_6127032f2bfceb 1
+tests/dev_stack/test_dev_tasks.py
+  s_5af47e422ac3fa::t_268832e5237912 209
+tasks/dev.py
+  s_5af47e422ac3fa::t_f3af967957ba54 275-278
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1a1db7c212b25e659f54b7dfc7c8f6467ad6c0a1",
+  "prompts": {},
+  "sessions": {
+    "s_5af47e422ac3fa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a22d1ed-b182-4832-b120-0eb989b94fab",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
