@@ -117,8 +117,10 @@ def environment_values(
     """Return the `.env` values for `variables`: the environment's value, else the test default.
 
     The image variables come from `image`, the `infrahub_sync_image` fixture's value, which
-    already honours the environment. A variable with neither a value nor a test default is
-    left out, so the root file's own default applies.
+    already honours the environment. A variable with a test default gets that default when it
+    is unset or exported empty, as the image variables do. A variable without a test default
+    keeps an exported empty value, which can be intentional, and is left out when it is
+    unset, so the root file's own default applies.
 
     Raises:
         ValueError: when a value holds a line break, or a backslash that ends it or comes
@@ -132,7 +134,9 @@ def environment_values(
         if name in {IMAGE_REPOSITORY_VARIABLE, IMAGE_TAG_VARIABLE}:
             value: str | None = defaults[name]
         else:
-            value = environ.get(name, defaults.get(name))
+            value = environ.get(name)
+            if not value:
+                value = defaults.get(name, value)
         if value is None:
             continue
         if "\n" in value or "\r" in value:

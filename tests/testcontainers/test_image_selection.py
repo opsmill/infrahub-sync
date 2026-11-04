@@ -28,6 +28,7 @@ from infrahub_sync.testcontainers.helpers import (
     compose_variables,
     default_image,
     env_file_line,
+    environment_values,
     split_image,
 )
 
@@ -140,6 +141,22 @@ def test_an_unset_variable_gets_its_test_default(tmp_path: Path, monkeypatch: py
     assert env["INFRAHUB_SYNC_API_PORT"] == TEST_DEFAULTS["INFRAHUB_SYNC_API_PORT"] == "0"
     # No test default: the root file's own `${INFRAHUB_SYNC_S3_BUCKET:-infrahub-sync}` applies.
     assert "INFRAHUB_SYNC_S3_BUCKET" not in env
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        # A test default replaces an empty export, as the image variables already do.
+        ("INFRAHUB_SYNC_API_PORT", TEST_DEFAULTS["INFRAHUB_SYNC_API_PORT"]),
+        ("INFRAHUB_SYNC_PRODUCT_PASSWORD", TEST_DEFAULTS["INFRAHUB_SYNC_PRODUCT_PASSWORD"]),
+        # No test default: an empty export can be intentional, so it is kept.
+        ("INFRAHUB_SYNC_S3_BUCKET", ""),
+    ],
+)
+def test_an_empty_export_falls_back_only_to_a_test_default(name: str, expected: str) -> None:
+    values = environment_values("infrahub-sync:s010-ci", [name], {name: ""})
+
+    assert values == {name: expected}
 
 
 def test_every_required_variable_of_the_root_file_has_a_test_default() -> None:
