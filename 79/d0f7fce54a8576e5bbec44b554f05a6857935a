@@ -1,0 +1,48 @@
+tests/service/test_paging.py
+  s_f718d35766c589::t_2330bc110dc804 1-119
+dev/specs/015-run-discovery-api/tasks.md
+  s_f718d35766c589::t_4234718c3d6ef7 27-33
+infrahub_sync/product_store/store.py
+  s_f718d35766c589::t_ac210554970b7d 142,144-147,153-168,306,308-309,588-589,613-617,622-623,626,633,637-655,874-876,883,3244
+infrahub_sync/service/app.py
+  s_f718d35766c589::t_246f0e351081fa 37,136-140
+  s_f718d35766c589::t_d2f243059e549f 141
+infrahub_sync/service/config_routes.py
+  s_f718d35766c589::t_246f0e351081fa 33,59-60
+  s_f718d35766c589::t_f8a21820a7aaf4 58
+tests/product_store/test_contract.py
+  s_f718d35766c589::t_15dbf7011666fa 4640-4641,4643-4644,4734-4736
+  s_f718d35766c589::t_6f44d3edbe30b8 4282-4433
+infrahub_sync/client/models.py
+  s_f718d35766c589::t_05ab76e92e9603 193-195
+infrahub_sync/product_store/models.py
+  s_f718d35766c589::t_646938db04ee0e 188-190
+tests/service/test_config_routes.py
+  s_f718d35766c589::t_ff7b4f24bfa659 26-30
+  s_f718d35766c589::t_36441557141593 32
+  s_f718d35766c589::t_29c40b953e3397 1285-1288,1290-1297,1299-1314
+  s_f718d35766c589::t_6a7fc9ffaf1dac 1289,1298
+tests/product_store/test_postgresql_isolation.py
+  s_f718d35766c589::t_18e06a1c48adbc 168-248
+infrahub_sync/service/paging.py
+  s_f718d35766c589::t_ff7b4f24bfa659 22-25
+  s_f718d35766c589::t_6e036e41e824b4 110-113
+  s_f718d35766c589::t_5695e90fc4ccc7 1-21,26-108,114-116,118
+  s_f718d35766c589::t_006781454ecb87 109,117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "79d0f7fce54a8576e5bbec44b554f05a6857935a",
+  "prompts": {},
+  "sessions": {
+    "s_f718d35766c589": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3abfa013-58d0-4a35-aa91-617e78043d5c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
