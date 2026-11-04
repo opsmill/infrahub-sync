@@ -48,7 +48,7 @@ byte-identical; secrets never appear in responses, tags or logs.
 | Principle (`docs/docs/development/constitution.md`) | Status |
 | --- | --- |
 | Non-applying commands stay safe; `sync`/`apply` need explicit approval | Pass. `plan`, `verify`, `runs *`, `whoami`, `configs *` reads do not write to a destination. `runs cancel` is an existing API mutation that already requires the run's actor or an administrator. The constitution line naming `diff` is updated to `plan` (wording only). |
-| New mutating behavior behind explicit flags | Pass. No new destination mutation. |
+| New mutating behavior behind explicit flags | Pass. No new destination mutation. The new `runs cancel` CLI command requires `--yes` or an interactive confirmation (critique E3). |
 | Idempotency and safety | Pass. Migration steps are `IF NOT EXISTS` and catalog-checked; reads are idempotent. |
 | Typed, Ruff/Pylint/ty clean, specific exceptions | Planned in every task. |
 | Tests atomic and single-purpose | Planned: one behavior per test, parametrized edge cases. |

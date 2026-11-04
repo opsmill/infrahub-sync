@@ -250,7 +250,9 @@ CLI:
 
 - **FR-015**: The CLI MUST provide `plan`, `verify`, `apply` and `sync` as top-level commands,
   and `list`, `show`, `plan`, `results`, `artifacts` and `cancel` in the `runs` group, and
-  `whoami`. Each command MUST use the same verb as the API action it calls.
+  `whoami`. Each command MUST use the same verb as the API action it calls. `runs cancel`
+  MUST require an explicit confirmation flag, or an interactive confirmation, before it sends
+  the request.
 - **FR-016**: `infrahub-sync diff` MUST keep working as a hidden alias of `plan` and MUST print
   a warning that names `plan`, until 3.0.
 - **FR-017**: The CLI MUST accept a configuration name wherever it accepts a configuration

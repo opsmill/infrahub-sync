@@ -30,7 +30,8 @@ All paths are relative to the repository root on `015-run-discovery-api` (based 
   pair. The cursor is an opaque, URL-safe base64 JSON value holding the last
   `(started_at, run_id)` and a digest of the filters it was issued for. A cursor whose digest
   does not match the request's filters, or that does not decode, is refused with `422`.
-  `started_at` is normalized to UTC before storage comparison, so text order equals time order.
+  The store converts `started_at` to UTC when it inserts a run, so text order equals time
+  order even when an injected service clock is not UTC (critique E1).
 - **Rationale**: keyset paging meets FR-004. Runs created after the first page are newer than
   every cursor, so they never appear in later pages, and no existing run is skipped. Offset
   paging would shift rows when new runs arrive.
@@ -125,9 +126,11 @@ All paths are relative to the repository root on `015-run-discovery-api` (based 
   tags (`opsmill_prefect_extras/executors.py:589-617`) and the vendored copy must stay
   byte-identical to upstream (`opsmill_prefect_extras/VENDORED.md`). Prefect's
   `update_flow_run(..., tags=...)` replaces the tag list instead of merging.
-- **Decision**: extend `_title` (`orchestration.py:184-205`) to call
-  `update_flow_run(flow_run_id, name=..., tags=[*deployment_tags, *run_tags])` and widen the
-  `_NamingClient` protocol. Run tags: `run:<run_id>`, `stage:<stage>`, and for registered
+- **Decision**: extend `_title` (`orchestration.py:184-205`) to read the flow run's current
+  tags (`read_flow_run`) and call
+  `update_flow_run(flow_run_id, name=..., tags=sorted(current_tags | run_tags))`, and widen
+  the `_NamingClient` protocol. Taking the union keeps the deployment's tags and any tag an
+  operator added in Prefect (critique E2). Run tags: `run:<run_id>`, `stage:<stage>`, and for registered
   runs `config:<config_id>` and `config-version:<config_id>@<registry_version>`. A failure is
   logged and swallowed exactly like the title today (FR-012).
 - **Rationale**: no change to vendored code; one API call already exists at that point.

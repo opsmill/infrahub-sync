@@ -11,7 +11,8 @@ Only changes are listed. Existing fields are unchanged unless named.
 | New index `product_runs_started` | `(started_at, run_id)`. Serves the unfiltered run list. |
 | New index `product_runs_binding_started` | `(config_id, registry_version, started_at, run_id)`. Serves filtered lists and the latest-run lookups. |
 
-`started_at` values are compared as UTC ISO 8601 text; new writes are normalized to UTC.
+`started_at` values are compared as UTC ISO 8601 text; the store converts each inserted run's
+`started_at` to UTC.
 
 ### `configuration_versions` (existing)
 
@@ -95,7 +96,7 @@ with `422 invalid-cursor`.
 
 | Tag | Present when |
 | --- | --- |
-| `infrahub-sync`, `service` | Always (carried over from the deployment, because Prefect replaces the tag list on update). |
+| Existing tags (`infrahub-sync`, `service`, and any tag added in Prefect) | Always. Sync writes the union of the flow run's current tags and the run tags, because Prefect replaces the tag list on update. |
 | `run:<run_id>` | Always. |
 | `stage:<plan\|verify\|apply\|sync>` | Always. |
 | `config:<config_id>` | Registered runs. |

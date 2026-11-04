@@ -14,7 +14,7 @@
 | `infrahub-sync runs plan RUN_ID` | `GET /runs/{id}/plan` | Unchanged |
 | `infrahub-sync runs results RUN_ID` | `GET /runs/{id}/results` | Unchanged |
 | `infrahub-sync runs artifacts RUN_ID` | `GET /runs/{id}/artifacts` | New |
-| `infrahub-sync runs cancel RUN_ID [--reason R]` | `POST /runs/{id}/cancel` | New |
+| `infrahub-sync runs cancel RUN_ID [--reason R] [--yes]` | `POST /runs/{id}/cancel` | New. Without `--yes`, prompts for confirmation when interactive and refuses (exit 2) when not, because cancelling a write can leave an `ambiguous` outcome. |
 | `infrahub-sync whoami` | `GET /me` | New |
 | `infrahub-sync configs list [--name N] [--limit L] [--all]` | `GET /configs` | Adds name column, filter, paging |
 | `infrahub-sync configs versions CONFIG [--limit L] [--all]` | `GET /configs/{id}/versions` | Adds latest run and latest applied run columns, paging |
@@ -30,6 +30,9 @@ Applies to every `CONFIG` argument or `--config` option:
 3. One match: use its `config_id`. Several: exit 2 with
    `error: name 'X' matches several configurations:` followed by one `config_id` per line.
    None: exit 2 with `error: no configuration has the id or name 'X'`.
+
+The identifier is tried before the name, so a value that is both a `config_id` and another
+configuration's name resolves to the identifier. The CLI reference states this order.
 
 ## Output
 
