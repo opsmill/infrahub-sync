@@ -5194,6 +5194,23 @@ def test_a_present_reason_must_not_be_empty() -> None:
         _receipt(reason="")
 
 
+@pytest.mark.parametrize(
+    "build",
+    [_receipt, lambda: _audit_event("audit-missing", reason="operator request")],
+    ids=["mutation-receipt", "audit-event"],
+)
+def test_a_missing_reason_is_refused(build: Callable[[], BaseModel]) -> None:
+    """A receipt or audit event must state its reason, even when that reason is null."""
+    model = build()
+    payload = model.model_dump()
+    del payload["reason"]
+
+    with pytest.raises(ValidationError) as caught:
+        type(model).model_validate(payload)
+
+    assert [(error["type"], error["loc"]) for error in caught.value.errors()] == [("missing", ("reason",))]
+
+
 _LEGACY_AUDIT_EVENTS_DDL = (
     "CREATE TABLE audit_events ("
     "event_id TEXT PRIMARY KEY, run_id TEXT, actor TEXT NOT NULL, operation TEXT NOT NULL, "
