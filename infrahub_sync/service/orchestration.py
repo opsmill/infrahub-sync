@@ -155,10 +155,37 @@ class ServiceOrchestration(Protocol):
     async def cancel(self, flow_run_id: str) -> CancellationResult: ...
 
 
-class _NamingClient(Protocol):
-    """The Prefect client method that titles an accepted flow run."""
+def run_tags(parameters: dict[str, object]) -> frozenset[str]:
+    """Return the Prefect tags that identify one run, its stage and its configuration version.
 
-    async def update_flow_run(self, flow_run_id: UUID, *, name: str) -> httpx.Response: ...
+    Built only from identifiers the run resource already publishes: never the actor, the
+    branch, the work pool or a secret. A legacy run has no registry version and gets no
+    configuration tags.
+    """
+    tags: set[str] = set()
+    run_id = parameters.get("run_id")
+    if isinstance(run_id, str) and run_id:
+        tags.add(f"run:{run_id}")
+    stage = parameters.get("stage")
+    if isinstance(stage, str) and stage:
+        tags.add(f"stage:{stage}")
+    config_id = parameters.get("config_id")
+    registry_version = parameters.get("registry_version")
+    registered = isinstance(registry_version, int) and not isinstance(registry_version, bool)
+    if isinstance(config_id, str) and config_id and registered:
+        tags.add(f"config:{config_id}")
+        tags.add(f"config-version:{config_id}@{registry_version}")
+    return frozenset(tags)
+
+
+class _NamingClient(Protocol):
+    """The Prefect client methods that title and tag an accepted flow run."""
+
+    async def read_flow_run(self, flow_run_id: UUID) -> Any: ...
+
+    async def update_flow_run(
+        self, flow_run_id: UUID, *, name: str, tags: list[str] | None = None
+    ) -> httpx.Response: ...
 
 
 class _PoolClient(Protocol):
@@ -182,26 +209,51 @@ class PrefectOrchestration:
         return Submission(flow_run_id=handle.id, state=await handle.status())
 
     async def _title(self, flow_run_id: str, parameters: dict[str, object]) -> None:
-        """Give the accepted flow run its title before a worker starts it.
+        """Give the accepted flow run its title and run tags before a worker starts it.
 
-        The vendored executor creates the flow run under a name Prefect generates. The
-        flow sets the same title again when it starts; setting it here as well means a
-        run waiting for a worker is listed under its title too. A failure leaves the
+        The vendored executor creates the flow run under a name Prefect generates and
+        with only the deployment's tags. The flow sets the same title again when it
+        starts; setting it here as well means a run waiting for a worker is listed under
+        its title too. Prefect replaces the tag list on update, so the run tags are
+        written together with the flow run's current tags (the deployment's and any an
+        operator added). If the current tags cannot be read, the deployment's tags stand
+        in for them, so the run is still titled and filterable. A failure leaves the
         generated name, never an unsubmitted run: Prefect has accepted the run and it
         will execute.
         """
         name = run_name(parameters.get("stage"), parameters.get("configuration_name"))
         client = cast("_NamingClient", self._client)
+        current_tags = await self._current_tags(client, flow_run_id)
+        tags = sorted(current_tags | run_tags(parameters))
         try:
-            await client.update_flow_run(UUID(flow_run_id), name=name)
+            await client.update_flow_run(UUID(flow_run_id), name=name, tags=tags)
         except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             response = getattr(error, "response", None)
             logger.warning(
-                "flow run %s was accepted but not titled (%s, status=%s); it still runs",
+                "flow run %s was accepted but not titled or tagged (%s, status=%s); it still runs",
                 flow_run_id,
                 type(error).__name__,
                 getattr(response, "status_code", None),
             )
+
+    @staticmethod
+    async def _current_tags(client: _NamingClient, flow_run_id: str) -> frozenset[str]:
+        """Return the flow run's current tags, or the deployment's tags if Prefect cannot say."""
+        try:
+            flow_run = await client.read_flow_run(UUID(flow_run_id))
+            tags = flow_run.tags
+            if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
+                raise TypeError  # noqa: TRY301 - handled below like any other unreadable answer.
+            return frozenset(cast("list[str]", tags))
+        except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            response = getattr(error, "response", None)
+            logger.warning(
+                "flow run %s: current tags not read (%s, status=%s); keeping the deployment tags",
+                flow_run_id,
+                type(error).__name__,
+                getattr(response, "status_code", None),
+            )
+            return frozenset(SERVICE_DEFINITION.tags)
 
     async def observe(self, flow_run_id: str) -> Observation:
         try:

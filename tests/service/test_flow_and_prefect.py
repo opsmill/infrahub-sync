@@ -872,6 +872,7 @@ class _RemoteFlowRun:
     def __init__(self, run_id: UUID) -> None:
         self.id = run_id
         self.state = Pending()
+        self.tags = list(SERVICE_DEFINITION.tags)
 
 
 class _RemoteClient:
@@ -882,9 +883,11 @@ class _RemoteClient:
         self.parameters: list[dict[str, Any]] = []
         self.names: list[str] = []
 
-    async def update_flow_run(self, flow_run_id: UUID, *, name: str):
+    async def update_flow_run(self, flow_run_id: UUID, *, name: str, tags: list[str] | None = None):
         assert flow_run_id == self.flow_run.id
         self.names.append(name)
+        if tags is not None:
+            self.flow_run.tags = tags
 
     async def read_deployment_by_name(self, name: str):
         assert name == SERVICE_DEFINITION.key

@@ -33,15 +33,28 @@ class _Executor:
         return _Handle()
 
 
-class _Client:
-    def __init__(self, failure: Exception | None = None) -> None:
-        self.failure = failure
-        self.names: list[tuple[UUID, str]] = []
+OPERATOR_TAG = "team:network"
+EXISTING_TAGS = ["infrahub-sync", "service", OPERATOR_TAG]
 
-    async def update_flow_run(self, flow_run_id: UUID, *, name: str) -> None:
+
+class _Client:
+    def __init__(self, failure: Exception | None = None, read_failure: Exception | None = None) -> None:
+        self.failure = failure
+        self.read_failure = read_failure
+        self.names: list[tuple[UUID, str]] = []
+        self.tags: list[tuple[UUID, list[str] | None]] = []
+
+    async def read_flow_run(self, flow_run_id: UUID) -> SimpleNamespace:
+        if self.read_failure is not None:
+            raise self.read_failure
+        assert flow_run_id == FLOW_RUN_ID
+        return SimpleNamespace(tags=list(EXISTING_TAGS))
+
+    async def update_flow_run(self, flow_run_id: UUID, *, name: str, tags: list[str] | None = None) -> None:
         if self.failure is not None:
             raise self.failure
         self.names.append((flow_run_id, name))
+        self.tags.append((flow_run_id, tags))
 
 
 @pytest.mark.parametrize(
@@ -101,6 +114,120 @@ async def test_a_title_failure_never_fails_the_accepted_submission(
     assert submission.flow_run_id == str(FLOW_RUN_ID)
     assert submission.state == "scheduled"
     assert type(failure).__name__ in caplog.text
+    assert "still runs" in caplog.text
+
+
+REGISTERED_PARAMETERS: dict[str, object] = {
+    "run_id": "run-42",
+    "stage": "apply",
+    "config_id": "cfg-7",
+    "registry_version": 3,
+    "configuration_name": "netbox",
+    "branch": "feature-branch",
+    "actor": "alice",
+    "work_pool": "sync-pool",
+}
+
+
+async def test_submit_tags_the_run_with_its_run_stage_and_configuration_version() -> None:
+    """Prefect replaces the tag list, so the existing tags are written back with the run tags."""
+    client = _Client()
+    gateway = PrefectOrchestration(cast("Any", client), cast("Any", _Executor()))
+
+    await gateway.submit(dict(REGISTERED_PARAMETERS), idempotency_key="key-1")
+
+    assert client.tags == [
+        (
+            FLOW_RUN_ID,
+            sorted(
+                {
+                    "infrahub-sync",
+                    "service",
+                    OPERATOR_TAG,
+                    "run:run-42",
+                    "stage:apply",
+                    "config:cfg-7",
+                    "config-version:cfg-7@3",
+                }
+            ),
+        )
+    ]
+    assert client.names == [(FLOW_RUN_ID, "Apply sync plan of netbox")], "the name and tags go in one update"
+
+
+async def test_a_legacy_run_gets_no_configuration_tags() -> None:
+    client = _Client()
+    gateway = PrefectOrchestration(cast("Any", client), cast("Any", _Executor()))
+
+    await gateway.submit(
+        {"run_id": "run-1", "stage": "plan", "config_id": "legacy-config", "registry_version": None},
+        idempotency_key="key-1",
+    )
+
+    (_, tags) = client.tags[0]
+    assert tags == sorted({*EXISTING_TAGS, "run:run-1", "stage:plan"})
+    assert not any(tag.startswith("config") for tag in tags or [])
+
+
+async def test_no_tag_carries_the_actor_the_branch_or_the_work_pool() -> None:
+    client = _Client()
+    gateway = PrefectOrchestration(cast("Any", client), cast("Any", _Executor()))
+
+    await gateway.submit(dict(REGISTERED_PARAMETERS), idempotency_key="key-1")
+
+    (_, tags) = client.tags[0]
+    for forbidden in ("alice", "feature-branch", "sync-pool"):
+        assert not any(forbidden in tag for tag in tags or []), forbidden
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [httpx.ConnectError("refused"), RuntimeError("client closed"), ValueError("unexpected answer")],
+    ids=["connect", "runtime", "value"],
+)
+async def test_a_tag_read_failure_still_names_and_tags_the_run_from_the_deployment_tags(
+    failure: Exception, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Without the current tags, Sync falls back to the deployment's tags, so the run is still filterable."""
+    caplog.set_level(logging.WARNING)
+    client = _Client(read_failure=failure)
+    gateway = PrefectOrchestration(cast("Any", client), cast("Any", _Executor()))
+
+    submission = await gateway.submit(dict(REGISTERED_PARAMETERS), idempotency_key="key-1")
+
+    assert submission.flow_run_id == str(FLOW_RUN_ID)
+    assert submission.state == "scheduled"
+    assert client.names == [(FLOW_RUN_ID, "Apply sync plan of netbox")]
+    assert client.tags == [
+        (
+            FLOW_RUN_ID,
+            sorted(
+                {
+                    "infrahub-sync",
+                    "service",
+                    "run:run-42",
+                    "stage:apply",
+                    "config:cfg-7",
+                    "config-version:cfg-7@3",
+                }
+            ),
+        )
+    ]
+    assert type(failure).__name__ in caplog.text
+    assert "current tags" in caplog.text
+
+
+async def test_a_tag_update_failure_never_fails_the_accepted_submission(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.WARNING)
+    client = _Client(failure=httpx.ConnectError("refused"))
+    gateway = PrefectOrchestration(cast("Any", client), cast("Any", _Executor()))
+
+    submission = await gateway.submit(dict(REGISTERED_PARAMETERS), idempotency_key="key-1")
+
+    assert submission.flow_run_id == str(FLOW_RUN_ID)
+    assert submission.state == "scheduled"
+    assert client.tags == []
+    assert "ConnectError" in caplog.text
     assert "still runs" in caplog.text
 
 

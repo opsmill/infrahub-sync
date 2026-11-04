@@ -86,8 +86,8 @@ latest run and latest applied run; actor and reason recorded at registration.
 
 **Independent test**: spec US3 scenarios 1–3 against a fake Prefect client.
 
-- [ ] T024 [P] [US3] Tests in `tests/service/test_run_titles.py`: after submission the fake client received `update_flow_run` with the union of its existing tags (`infrahub-sync`, `service`, an operator tag) and `run:<id>`, `stage:<stage>`, `config:<id>`, `config-version:<id>@<v>`; a legacy run gets no `config*` tags; no tag contains the actor, branch or work pool; a failing `read_flow_run` or `update_flow_run` leaves the submission successful and logs a warning
-- [ ] T025 [US3] Implement tags in `infrahub_sync/service/orchestration.py`: widen `_NamingClient` with `read_flow_run` and the `tags` argument of `update_flow_run`; build run tags from the submission parameters (`run_id`, `stage`, `config_id`, `registry_version`); in `_title`, read current tags, write `sorted(current | run_tags)` together with the name, inside the existing best-effort `try` block
+- [X] T024 [P] [US3] Tests in `tests/service/test_run_titles.py`: after submission the fake client received `update_flow_run` with the union of its existing tags (`infrahub-sync`, `service`, an operator tag) and `run:<id>`, `stage:<stage>`, `config:<id>`, `config-version:<id>@<v>`; a legacy run gets no `config*` tags; no tag contains the actor, branch or work pool; a failing `read_flow_run` or `update_flow_run` leaves the submission successful and logs a warning
+- [X] T025 [US3] Implement tags in `infrahub_sync/service/orchestration.py`: widen `_NamingClient` with `read_flow_run` and the `tags` argument of `update_flow_run`; build run tags from the submission parameters (`run_id`, `stage`, `config_id`, `registry_version`); in `_title`, read current tags, write `sorted(current | run_tags)` together with the name, inside the existing best-effort `try` block
 
 **Checkpoint**: SC-002 can be checked in the Prefect UI.
 
