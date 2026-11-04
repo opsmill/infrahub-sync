@@ -190,6 +190,9 @@ _RUN_DISCOVERY_INDEXES = {
     "product_runs_started": "(started_at, run_id)",
     "product_runs_config_started": "(config_id, started_at, run_id)",
     "product_runs_binding_started": "(config_id, registry_version, started_at, run_id)",
+    "product_runs_binding_applied": "(config_id, registry_version, finished_at, run_id) WHERE (phase = 'applied'::text)",
+    "configurations_name": "(name)",
+    "configurations_created": "(created_at, config_id)",
 }
 
 

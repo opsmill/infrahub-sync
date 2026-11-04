@@ -4330,6 +4330,9 @@ _RUN_DISCOVERY_INDEXES = {
     "product_runs_started": ["started_at", "run_id"],
     "product_runs_config_started": ["config_id", "started_at", "run_id"],
     "product_runs_binding_started": ["config_id", "registry_version", "started_at", "run_id"],
+    "product_runs_binding_applied": ["config_id", "registry_version", "finished_at", "run_id"],
+    "configurations_name": ["name"],
+    "configurations_created": ["created_at", "config_id"],
 }
 # The configuration tables as they were before the run-discovery columns existed.
 _LEGACY_CONFIGURATION_TABLES = (
@@ -4363,6 +4366,8 @@ def test_fresh_sqlite_database_gains_the_run_discovery_columns_and_indexes(tmp_p
         assert columns <= set(_sqlite_columns(database, table)), table
     for index, columns in _RUN_DISCOVERY_INDEXES.items():
         assert _sqlite_index_columns(database, index) == columns
+    definitions = {name: sql for kind, name, sql in _sqlite_schema(database) if kind == "index"}
+    assert str(definitions["product_runs_binding_applied"]).endswith("WHERE phase = 'applied'")
 
 
 def test_second_start_up_leaves_the_run_discovery_schema_unchanged(tmp_path: Path) -> None:
@@ -4462,8 +4467,10 @@ def test_postgresql_start_up_adds_the_run_discovery_schema_once() -> None:
         assert columns <= database.columns.get(table, set()), table
     index_statements = [statement for statement in database.statements if statement.startswith("CREATE INDEX")]
     for index, columns in _RUN_DISCOVERY_INDEXES.items():
-        expected = f"CREATE INDEX IF NOT EXISTS {index} ON product_runs ({', '.join(columns)})"
-        assert expected in index_statements
+        prefix = f"CREATE INDEX IF NOT EXISTS {index} ON "
+        issued = [statement for statement in index_statements if statement.startswith(prefix)]
+        assert len(issued) == 1, index
+        assert f"({', '.join(columns)})" in issued[0], issued[0]
 
     already_issued = len(database.statements)
     PostgreSQLRunStore(database.connect)

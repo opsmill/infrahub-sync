@@ -59,6 +59,31 @@ All paths are relative to the repository root on `015-run-discovery-api` (based 
   - nullable columns `registered_by` and `registration_reason` on `configuration_versions`
     (R5);
   - a nullable `name` column on `configurations` (R6).
+- **Decision** (follow-up, 2026-11-04): add three more indexes in the same idempotent step:
+  - `CREATE INDEX IF NOT EXISTS product_runs_binding_applied ON product_runs (config_id,
+    registry_version, finished_at, run_id) WHERE phase = 'applied'`, a partial index for the
+    most recently applied run of each version (R7). The version-list query reads applied runs
+    through it instead of reading every run of the version and filtering on `phase`;
+  - `CREATE INDEX IF NOT EXISTS configurations_name ON configurations (name)` for
+    `GET /configs?name=` (R6);
+  - `CREATE INDEX IF NOT EXISTS configurations_created ON configurations (created_at,
+    config_id)` for the paged configuration list's `(created_at DESC, config_id DESC)` order
+    (R8). Both engines scan an ascending index backwards for a descending order, the same form
+    as the `product_runs_*` indexes.
+- **Alternative considered**: rewrite the applied branch as one `ORDER BY ... LIMIT 1`
+  subquery per version that seeks `product_runs_binding_started`. Rejected: SQLite allows no
+  `LIMIT` inside a compound member without a wrapping subquery, so the query would grow by one
+  wrapped subquery per version on the page. The partial index keeps the query and its results
+  unchanged; SQLite and PostgreSQL both support partial indexes.
+- **Check** (SQLite 3.45.1, `EXPLAIN QUERY PLAN`, 200 runs and 301 configurations after
+  `ANALYZE`): the latest branch searches `product_runs_binding_started (config_id=? AND
+  registry_version=?)`, the applied branch searches `product_runs_binding_applied (config_id=?
+  AND registry_version=?)`, the configuration list scans `configurations_created`, and the name
+  filter searches `configurations_name (name=?)`. On PostgreSQL 16.15 (`EXPLAIN`, 20,000 runs
+  and 2,000 configurations after `ANALYZE`): the latest branch uses a bitmap index scan on
+  `product_runs_binding_started`, the applied branch an index scan on
+  `product_runs_binding_applied`, the configuration list an index scan backward on
+  `configurations_created`, and the name filter an index scan on `configurations_name`.
 - **Rationale**: matches the existing migration mechanism; every step is safe to re-run and
   safe under the concurrent first start-up already documented in the API reference.
 - **Governance gate**: database schema change. Called out in `plan.md`.
@@ -103,7 +128,7 @@ All paths are relative to the repository root on `015-run-discovery-api` (based 
   is NULL from their latest version's package (idempotent). Filter `GET /configs?name=` by
   exact match.
 - **Rationale**: avoids dialect-specific JSON extraction in list queries and keeps the filter
-  indexable.
+  indexable. The `configurations_name` index (R3) serves the filter.
 
 ## R7. Latest run and latest applied run per version
 

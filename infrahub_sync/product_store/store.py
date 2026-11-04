@@ -168,14 +168,21 @@ _ADDED_NULLABLE_COLUMNS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     ("configurations", (("name", "TEXT"),)),
 )
 # Indexes for listing runs newest first: unfiltered, filtered by configuration, and filtered
-# by configuration and version. Created after the column migration because the configuration
-# indexes name binding columns a pre-existing table only gains there. ``IF NOT EXISTS`` makes
-# each re-run a no-op.
+# by configuration and version; for each version's most recently applied run, a partial index
+# over applied runs only, in the order ``_SELECT_LATEST_VERSION_RUNS`` ranks them; and for the
+# configuration list, its name filter and its ``(created_at, config_id)`` order. Created after
+# the column migration because these indexes name columns a pre-existing table only gains
+# there. ``IF NOT EXISTS`` makes each re-run a no-op. SQLite and PostgreSQL both scan an
+# ascending index backwards for a descending order, and both support partial indexes.
 _RUN_LISTING_INDEXES: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS product_runs_started ON product_runs (started_at, run_id)",
     "CREATE INDEX IF NOT EXISTS product_runs_config_started ON product_runs (config_id, started_at, run_id)",
     "CREATE INDEX IF NOT EXISTS product_runs_binding_started "
     "ON product_runs (config_id, registry_version, started_at, run_id)",
+    "CREATE INDEX IF NOT EXISTS product_runs_binding_applied "
+    "ON product_runs (config_id, registry_version, finished_at, run_id) WHERE phase = 'applied'",
+    "CREATE INDEX IF NOT EXISTS configurations_name ON configurations (name)",
+    "CREATE INDEX IF NOT EXISTS configurations_created ON configurations (created_at, config_id)",
 )
 _PREFECT_EXECUTION_LIVENESS_COLUMNS: tuple[tuple[str, str], ...] = (
     ("submitted_at", "TEXT"),

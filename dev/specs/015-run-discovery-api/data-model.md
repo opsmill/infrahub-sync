@@ -10,7 +10,9 @@ Only changes are listed. Existing fields are unchanged unless named.
 | --- | --- |
 | New column `destination_branch` | Text, nullable. Effective branch the run writes to, set at creation. `NULL` for runs created before this change. |
 | New index `product_runs_started` | `(started_at, run_id)`. Serves the unfiltered run list. |
+| New index `product_runs_config_started` | `(config_id, started_at, run_id)`. Serves the run list filtered by configuration. |
 | New index `product_runs_binding_started` | `(config_id, registry_version, started_at, run_id)`. Serves filtered lists and the latest-run lookups. |
+| New partial index `product_runs_binding_applied` | `(config_id, registry_version, finished_at, run_id) WHERE phase = 'applied'`. Serves the most-recently-applied-run lookup. |
 
 `started_at` values are compared as UTC ISO 8601 text; the store converts each inserted run's
 `started_at` to UTC.
@@ -30,6 +32,9 @@ are never updated.
 | Column | Type | Rule |
 | --- | --- | --- |
 | `name` (new) | text, nullable | `configuration.name` of the latest version's package. Updated in the transaction that registers a version. Filled at start-up for rows where it is `NULL`. Not unique. |
+
+Indexes added at start-up: `configurations_name` on `(name)` for the name filter, and
+`configurations_created` on `(created_at, config_id)` for the newest-first configuration list.
 
 ## Public resources (`infrahub_sync/client/models.py`)
 
