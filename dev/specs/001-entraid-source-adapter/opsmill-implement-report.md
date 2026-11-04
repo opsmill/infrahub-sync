@@ -225,3 +225,27 @@ high severity, or reported by two agents, were fixed in commit `34409049`. That 
 5. Review the deferred findings in section 5.
 6. Run `/speckit.opsmill.extract` to capture knowledge, guidelines and ADRs from this spec, then open a pull request
    with the `changes/minor` label.
+
+## 8. Resumed run on 2026-11-04
+
+A second run was started because the first run was thought to have stopped before it finished. It had not: the
+report above was already committed with status DONE.
+
+- **Base commit**: `456a4353`. **Status**: DONE.
+- State found:
+    - All 26 tasks in `tasks.md` were ticked; no chunk was dispatched.
+    - The only uncommitted file was the empty, untracked `_ty_probe.py`.
+- `_ty_probe.py` was committed in `456a4353`, as the resume instructions required, so the working tree was clean. Its
+  removal with `git rm` was denied by the permission mode, so the empty file is still on the branch.
+- Review: the diff of this run is the empty `_ty_probe.py` only, so `speckit-review-run` was not run again. The
+  review in section 5 covers the full change.
+- Checks run at 2026-11-04T00:12:50Z:
+    - `uv run pytest -q`: `315 passed, 3 skipped`. This is the same result as section 4.
+    - `uv run ruff check .`: `All checks passed!`
+    - `uv run ruff format --check .`: `79 files already formatted`.
+    - `uv run ty check .`: 14 warnings and no errors. 11 are the `unused-ignore-comment` warnings in `entraid.py`
+      described in section 6. The other 3 are in `tests/adapters/test_nautobot_incremental.py`, which this branch does
+      not change.
+    - pylint and rumdl were not run again. No file they check changed after the first run's lint pass.
+- No test was added or changed in this run.
+- Change to next step 1: delete `_ty_probe.py` with a new commit, because it is now tracked.
