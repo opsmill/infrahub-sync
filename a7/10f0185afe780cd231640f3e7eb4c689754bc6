@@ -1,0 +1,21 @@
+dev/specs/015-run-discovery-api/contracts/cli.md
+  s_f718d35766c589::t_64b4d2e8caafce 9
+  s_f718d35766c589::t_1c9eb94a962c4d 17
+  s_f718d35766c589::t_4a67b073d16949 24-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a710f0185afe780cd231640f3e7eb4c689754bc6",
+  "prompts": {},
+  "sessions": {
+    "s_f718d35766c589": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3abfa013-58d0-4a35-aa91-617e78043d5c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
