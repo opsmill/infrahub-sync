@@ -34,6 +34,7 @@ from .models import (
     VerifyRunRequest,
     VersionResource,
 )
+from .paging import InvalidCursorError
 from .service import RunService, ServiceAPIError
 
 logger = logging.getLogger(__name__)
@@ -131,6 +132,12 @@ def create_app(
             )
         )
         return JSONResponse(status_code=exc.status, content=envelope.model_dump(mode="json"))
+
+    @application.exception_handler(InvalidCursorError)
+    async def invalid_cursor(_request: Request, exc: InvalidCursorError) -> JSONResponse:  # noqa: RUF029
+        """Refuse a paging cursor that does not decode or was issued for other filters."""
+        envelope = ErrorEnvelope(error=ErrorDetail(code="invalid-cursor", message=exc.message, status=422))
+        return JSONResponse(status_code=422, content=envelope.model_dump(mode="json"))
 
     @application.exception_handler(RequestValidationError)
     async def validation_error(_request: Request, _exc: RequestValidationError) -> JSONResponse:  # noqa: RUF029

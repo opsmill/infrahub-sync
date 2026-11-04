@@ -139,17 +139,32 @@ _UPDATE_LATEST_EXECUTION_CANCELLED = (
 )
 
 # Nullable run-to-configuration binding columns on ``product_runs``. Added by an
-# introspection-guarded ALTER (see ``_migrate_product_runs_columns``) rather than baked into
+# introspection-guarded ALTER (see ``_migrate_added_columns``) rather than baked into
 # the ``product_runs`` definition above, so a pre-existing deployment's table is migrated the
-# same way a brand-new one is initialized. Deliberately inert so far: no ``ProductRun`` field
-# reads or writes them, and nothing allocates a run into a registered configuration yet — only
-# the invariant that a row's three binding columns are either all NULL (unregistered) or all
-# NOT NULL (registered), so that a future writer inherits an already-enforced constraint
-# rather than introducing one.
+# same way a brand-new one is initialized. ``ProductRun.config_id``, ``registry_version`` and
+# ``package_checksum`` read and write them; a row's three binding columns are either all NULL
+# (unregistered run) or all NOT NULL (registered run), enforced by a CHECK constraint on
+# PostgreSQL and a pair of triggers on SQLite.
 _CONFIGURATION_BINDING_COLUMNS: tuple[tuple[str, str], ...] = (
     ("config_id", "TEXT"),
     ("registry_version", "INTEGER"),
     ("package_checksum", "TEXT"),
+)
+# Every nullable column the start-up migration adds to a pre-existing table, per table. Each is
+# added only when the catalog does not list it, so a second start-up issues no ALTER. Runs
+# created before ``destination_branch`` existed keep NULL; nothing backfills it.
+_ADDED_NULLABLE_COLUMNS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    ("product_runs", (*_CONFIGURATION_BINDING_COLUMNS, ("destination_branch", "TEXT"))),
+    ("configuration_versions", (("registered_by", "TEXT"), ("registration_reason", "TEXT"))),
+    ("configurations", (("name", "TEXT"),)),
+)
+# Indexes for listing runs newest first, unfiltered and filtered by configuration binding.
+# Created after the column migration because ``product_runs_binding_started`` names binding
+# columns a pre-existing table only gains there. ``IF NOT EXISTS`` makes each re-run a no-op.
+_RUN_LISTING_INDEXES: tuple[str, ...] = (
+    "CREATE INDEX IF NOT EXISTS product_runs_started ON product_runs (started_at, run_id)",
+    "CREATE INDEX IF NOT EXISTS product_runs_binding_started "
+    "ON product_runs (config_id, registry_version, started_at, run_id)",
 )
 _PREFECT_EXECUTION_LIVENESS_COLUMNS: tuple[tuple[str, str], ...] = (
     ("submitted_at", "TEXT"),
@@ -288,10 +303,10 @@ _SELECT_NEXT_CONFIGURATION_VERSION = (
 
 _INSERT_PRODUCT_RUN = """INSERT INTO product_runs (run_id, operation, configuration_reference, config_id,
 registry_version, package_checksum, actor, audit_links, started_at, finished_at, phase, outcome, summary, results,
-reconciliation_required) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+reconciliation_required, destination_branch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _SELECT_PRODUCT_RUN = """SELECT run_id, operation, configuration_reference, actor, audit_links, started_at,
-finished_at, phase, outcome, summary, results, config_id, registry_version, package_checksum, reconciliation_required
-FROM product_runs WHERE run_id = ?"""
+finished_at, phase, outcome, summary, results, config_id, registry_version, package_checksum, reconciliation_required,
+destination_branch FROM product_runs WHERE run_id = ?"""
 _SELECT_RUN_ARTIFACT_REFERENCES = """SELECT run_id, artifact_id, kind, media_type, digest, size, object_key,
 manifest_key, created_at, expires_at, published, visibility FROM artifact_refs
 WHERE run_id = ? AND published = 1 AND visibility = 'public' ORDER BY artifact_id"""
@@ -570,7 +585,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             cursor.execute(statement)
-                    self._migrate_product_runs_columns(cursor)
+                    self._migrate_added_columns(cursor)
+                    self._ensure_run_listing_indexes(cursor)
                     self._migrate_prefect_execution_columns(cursor)
                     self._migrate_mutation_receipts(cursor)
                     self._migrate_audit_events(cursor)
@@ -594,31 +610,49 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 connection.close()
 
     def _read_product_run_columns(self, cursor: _Cursor) -> frozenset[str]:
-        """Return the existing columns on ``product_runs`` for this store's own dialect.
+        """Return the existing columns on ``product_runs`` for this store's own dialect."""
+        return self._read_table_columns(cursor, "product_runs")
+
+    def _read_table_columns(self, cursor: _Cursor, table: str) -> frozenset[str]:
+        """Return the existing columns on ``table`` for this store's own dialect.
 
         The statement is selected from ``self._dialect``, never discovered by running a
         statement to see whether it fails: on PostgreSQL, a probe-driven failure would abort
         the surrounding transaction and force a ``rollback()`` that discards every other
-        uncommitted ``CREATE TABLE`` this same call still needs to commit.
+        uncommitted ``CREATE TABLE`` this same call still needs to commit. ``table`` is always
+        one of this module's own table names, never caller input.
         """
         if self._dialect == "sqlite":
-            cursor.execute("PRAGMA table_info(product_runs)")
+            cursor.execute(f"PRAGMA table_info({table})")
             return frozenset(str(row[1]) for row in cursor.fetchall())
         cursor.execute(
             self._sql(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name = ? AND table_schema = current_schema()"
             ),
-            ("product_runs",),
+            (table,),
         )
         return frozenset(str(row[0]) for row in cursor.fetchall())
 
-    def _migrate_product_runs_columns(self, cursor: _Cursor) -> None:
-        """Additively bring a pre-existing ``product_runs`` table up to the current column set."""
-        existing = self._read_product_run_columns(cursor)
-        for column, sql_type in _CONFIGURATION_BINDING_COLUMNS:
-            if column not in existing:
-                cursor.execute(f"ALTER TABLE product_runs ADD COLUMN {column} {sql_type}")
+    def _migrate_added_columns(self, cursor: _Cursor) -> None:
+        """Additively bring pre-existing tables up to the current nullable column set.
+
+        Covers ``product_runs`` (configuration binding and ``destination_branch``),
+        ``configuration_versions`` (``registered_by``, ``registration_reason``) and
+        ``configurations`` (``name``). Every column is nullable, so no existing row needs a
+        value, and a column the catalog already lists is skipped.
+        """
+        for table, columns in _ADDED_NULLABLE_COLUMNS:
+            existing = self._read_table_columns(cursor, table)
+            for column, sql_type in columns:
+                if column not in existing:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}")
+
+    @staticmethod
+    def _ensure_run_listing_indexes(cursor: _Cursor) -> None:
+        """Create the run-listing indexes once the binding columns are guaranteed to exist."""
+        for statement in _RUN_LISTING_INDEXES:
+            cursor.execute(statement)
 
     def _migrate_prefect_execution_columns(self, cursor: _Cursor) -> None:
         """Add liveness columns without fabricating timestamps for legacy links."""
@@ -837,13 +871,16 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 run.package_checksum,
                 run.actor,
                 _json(run.audit_links),
-                run.started_at.isoformat(),
+                # Stored as UTC so that text order equals time order when runs are listed,
+                # even when an injected service clock is not UTC.
+                run.started_at.astimezone(timezone.utc).isoformat(),
                 _iso(run.finished_at),
                 run.phase,
                 run.outcome,
                 _json(run.summary),
                 _json(run.results),
                 run.reconciliation_required,
+                run.destination_branch,
             ),
         )
 
@@ -3204,6 +3241,7 @@ def _run_from_rows(
             "package_checksum": row[13],
             # SQLite stores a BOOLEAN column as 0/1; PostgreSQL returns a bool.
             "reconciliation_required": bool(row[14]),
+            "destination_branch": row[15],
             "artifact_refs": [_reference_from_row(item).model_dump() for item in references],
             "prefect_executions": [
                 {

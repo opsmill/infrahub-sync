@@ -190,6 +190,9 @@ class PublicRunResource(_ResourceModel):
     # Exposed directly rather than through ``results``: an operator deciding whether a run
     # needs reconciling must not have to parse failure evidence to find out.
     reconciliation_required: bool = False
+    # The effective Infrahub branch the run writes to; ``None`` for runs created before
+    # the store recorded it.
+    destination_branch: str | None = None
     artifact_refs: tuple[ArtifactReferenceResource, ...] = ()
     prefect_executions: tuple[PublicExecutionLink, ...] = ()
 

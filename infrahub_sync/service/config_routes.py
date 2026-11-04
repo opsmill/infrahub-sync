@@ -30,6 +30,7 @@ from infrahub_sync.product_store import (
 
 from .auth import Principal
 from .models import ConfigMutationRequest
+from .paging import InvalidCursorError
 from .service import ServiceAPIError
 
 _CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
@@ -54,7 +55,9 @@ def _provider_error_boundary(operation: Any) -> Any:
     def guarded(*args: Any, **kwargs: Any) -> Any:
         try:
             return operation(*args, **kwargs)
-        except (ConfigurationAPIError, ServiceAPIError):
+        except (ConfigurationAPIError, ServiceAPIError, InvalidCursorError):
+            # A refused paging cursor is a client error, not a provider failure: the
+            # application's handler answers it with ``422 invalid-cursor``.
             raise
         except ProductStoreProviderError:
             raise ConfigurationAPIError(503, "storage") from None

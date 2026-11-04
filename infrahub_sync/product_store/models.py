@@ -185,6 +185,9 @@ class ProductRun(BaseModel):
     # execution ended without proving what reached the destination, so an operator must
     # inspect it and plan again. Nothing sets it back to false.
     reconciliation_required: bool = False
+    # The effective Infrahub branch the run writes to, recorded when the run is created.
+    # ``None`` for runs created before the store recorded it.
+    destination_branch: str | None = None
     artifact_refs: tuple[ArtifactReference, ...] = ()
     prefect_executions: tuple[PrefectExecutionLink, ...] = ()
 

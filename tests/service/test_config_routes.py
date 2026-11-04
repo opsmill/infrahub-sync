@@ -23,8 +23,13 @@ from infrahub_sync.product_store.configs import ValidationReport
 from infrahub_sync.service import serve
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
-from infrahub_sync.service.config_routes import ConfigurationAPIError, ConfigurationRoutes
+from infrahub_sync.service.config_routes import (
+    ConfigurationAPIError,
+    ConfigurationRoutes,
+    _provider_error_boundary,
+)
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, Submission
+from infrahub_sync.service.paging import InvalidCursorError
 from infrahub_sync.service.serve import build_app
 from infrahub_sync.service.service import RunService, ServiceAPIError
 from tests.configuration.validation_packages import package, package_data
@@ -1277,3 +1282,33 @@ def test_configuration_mutation_without_a_reason_replays_by_reason(
     assert receipt.reason is None
     accepted = [event for event in projection.audit_events() if event.outcome == "accepted"]
     assert [event.reason for event in accepted] == [None]
+
+
+def test_invalid_cursor_is_answered_with_422_in_the_error_envelope(tmp_path: Path) -> None:
+    """A refused cursor raised by any route, including a configuration route, is a 422."""
+    resolver = EnvironmentPrincipalResolver(())
+    projection = local_product_projection(tmp_path)
+    application = create_app(
+        RunService(projection, _Orchestration()),
+        resolver,
+        ConfigurationRoutes(product_projection=projection),
+    )
+
+    @_provider_error_boundary
+    def refuse_cursor() -> None:
+        raise InvalidCursorError
+
+    application.get("/probe-invalid-cursor")(refuse_cursor)
+
+    response = TestClient(application).get("/probe-invalid-cursor")
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "error": {
+            "code": "invalid-cursor",
+            "message": "the cursor is not valid for this request",
+            "status": 422,
+            "run_id": None,
+            "mutation_id": None,
+        }
+    }

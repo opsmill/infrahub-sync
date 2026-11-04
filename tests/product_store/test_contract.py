@@ -4279,6 +4279,158 @@ def test_existing_run_lifecycle_is_unaffected_by_the_new_binding_columns(provide
     assert set(_CONFIGURATION_BINDING_COLUMN_NAMES) <= set(ProductRun.model_fields)
 
 
+# Columns and indexes the run-discovery start-up migration adds, per table.
+_RUN_DISCOVERY_COLUMNS = {
+    "product_runs": frozenset({"destination_branch"}),
+    "configuration_versions": frozenset({"registered_by", "registration_reason"}),
+    "configurations": frozenset({"name"}),
+}
+_RUN_DISCOVERY_INDEXES = {
+    "product_runs_started": ["started_at", "run_id"],
+    "product_runs_binding_started": ["config_id", "registry_version", "started_at", "run_id"],
+}
+# The configuration tables as they were before the run-discovery columns existed.
+_LEGACY_CONFIGURATION_TABLES = (
+    "CREATE TABLE configurations (config_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)",
+    "CREATE TABLE configuration_versions (config_id TEXT NOT NULL, registry_version INTEGER NOT NULL, "
+    "package_checksum TEXT NOT NULL, declared_content TEXT NOT NULL, created_at TEXT NOT NULL, "
+    "PRIMARY KEY (config_id, registry_version), FOREIGN KEY (config_id) REFERENCES configurations(config_id))",
+)
+
+
+def _sqlite_columns(database: Path, table: str) -> list[str]:
+    with sqlite3.connect(database) as connection:
+        return [str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")]
+
+
+def _sqlite_index_columns(database: Path, index: str) -> list[str]:
+    with sqlite3.connect(database) as connection:
+        return [str(row[2]) for row in connection.execute(f"PRAGMA index_info({index})")]
+
+
+def _sqlite_schema(database: Path) -> list[tuple[str, str, str | None]]:
+    with sqlite3.connect(database) as connection:
+        return list(connection.execute("SELECT type, name, sql FROM sqlite_master ORDER BY type, name"))
+
+
+def test_fresh_sqlite_database_gains_the_run_discovery_columns_and_indexes(tmp_path: Path) -> None:
+    database = tmp_path / "records.sqlite3"
+    SQLiteRunStore(database)
+
+    for table, columns in _RUN_DISCOVERY_COLUMNS.items():
+        assert columns <= set(_sqlite_columns(database, table)), table
+    for index, columns in _RUN_DISCOVERY_INDEXES.items():
+        assert _sqlite_index_columns(database, index) == columns
+
+
+def test_second_start_up_leaves_the_run_discovery_schema_unchanged(tmp_path: Path) -> None:
+    database = tmp_path / "records.sqlite3"
+    SQLiteRunStore(database)
+    first = _sqlite_schema(database)
+
+    SQLiteRunStore(database)
+
+    assert _sqlite_schema(database) == first
+    for table, columns in _RUN_DISCOVERY_COLUMNS.items():
+        present = _sqlite_columns(database, table)
+        for column in columns:
+            assert present.count(column) == 1, (table, column)
+
+
+def test_preexisting_database_without_run_discovery_columns_is_upgraded(tmp_path: Path) -> None:
+    database = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(_LEGACY_PRODUCT_RUNS_TABLE)
+        for statement in _LEGACY_CONFIGURATION_TABLES:
+            connection.execute(statement)
+        connection.execute(
+            "INSERT INTO product_runs (run_id, operation, configuration_reference, actor, audit_links, "
+            "started_at, finished_at, phase, outcome, summary, results) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "legacy-run-001",
+                "plan",
+                "sha256:legacy",
+                None,
+                "[]",
+                datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat(),
+                None,
+                "planning",
+                None,
+                "{}",
+                "{}",
+            ),
+        )
+
+    store = SQLiteRunStore(database)
+
+    for table, columns in _RUN_DISCOVERY_COLUMNS.items():
+        assert columns <= set(_sqlite_columns(database, table)), table
+    for index, columns in _RUN_DISCOVERY_INDEXES.items():
+        assert _sqlite_index_columns(database, index) == columns
+    loaded = store.lookup("legacy-run-001").value
+    assert loaded is not None
+    assert loaded.destination_branch is None
+
+
+def test_run_destination_branch_round_trips(provider: ProductProjection) -> None:
+    expected = _run().model_copy(update={"destination_branch": "feature-x"})
+    provider.create_run(expected)
+
+    loaded = provider.lookup_run(expected.run_id).value
+
+    assert loaded is not None
+    assert loaded.destination_branch == "feature-x"
+
+
+def test_postgresql_start_up_adds_the_run_discovery_schema_once() -> None:
+    database = _FakePostgreSQLDatabase(
+        tables=_PARENT_TABLES,
+        columns={"product_runs": _PARENT_PRODUCT_RUNS_COLUMNS},
+    )
+
+    PostgreSQLRunStore(database.connect)
+
+    for table, columns in _RUN_DISCOVERY_COLUMNS.items():
+        assert columns <= database.columns.get(table, set()), table
+    index_statements = [statement for statement in database.statements if statement.startswith("CREATE INDEX")]
+    for index, columns in _RUN_DISCOVERY_INDEXES.items():
+        expected = f"CREATE INDEX IF NOT EXISTS {index} ON product_runs ({', '.join(columns)})"
+        assert expected in index_statements
+
+    already_issued = len(database.statements)
+    PostgreSQLRunStore(database.connect)
+
+    second_start_up = database.statements[already_issued:]
+    assert not [statement for statement in second_start_up if " ADD COLUMN " in statement]
+
+
+@pytest.mark.parametrize("dialect", ["sqlite", "postgresql-emulated"])
+def test_non_utc_started_at_is_stored_and_ordered_as_its_utc_instant(tmp_path: Path, dialect: str) -> None:
+    database = tmp_path / "records.sqlite3"
+    store = SQLiteRunStore(database) if dialect == "sqlite" else PostgreSQLRunStore(_connect(database))
+    # 01:00 at UTC+02:00 is 23:00 UTC the previous day: earlier than 23:30 UTC, although its
+    # local-time text sorts after it.
+    plus_two = timezone(timedelta(hours=2))
+    earlier = _run("run-earlier").model_copy(update={"started_at": datetime(2026, 1, 1, 1, tzinfo=plus_two)})
+    later = _run("run-later").model_copy(update={"started_at": datetime(2025, 12, 31, 23, 30, tzinfo=timezone.utc)})
+    store.create(earlier)
+    store.create(later)
+
+    with sqlite3.connect(database) as connection:
+        stored = dict(connection.execute("SELECT run_id, started_at FROM product_runs"))
+        newest_first = [
+            row[0]
+            for row in connection.execute("SELECT run_id FROM product_runs ORDER BY started_at DESC, run_id DESC")
+        ]
+
+    assert stored["run-earlier"] == "2025-12-31T23:00:00+00:00"
+    assert newest_first == ["run-later", "run-earlier"]
+    loaded = store.lookup("run-earlier").value
+    assert loaded is not None
+    assert loaded.started_at == earlier.started_at
+    assert loaded.started_at.utcoffset() == timedelta(0)
+
+
 class _FakePostgreSQLDatabase:
     """In-memory PostgreSQL catalog modelling the four semantics a literal SQLite file
     cannot: transactional DDL, transaction abort on error, ``ADD CONSTRAINT`` raising
@@ -4485,7 +4637,11 @@ def test_postgresql_repeated_initialization_skips_completed_mutation_receipt_nul
 
     def connect() -> MagicMock:
         connection = MagicMock()
+        # One catalog read per table, in migration order: product_runs, configuration_versions,
+        # configurations, prefect_executions, then the two nullability reads.
         connection.cursor.return_value.fetchall.side_effect = [
+            (),
+            (),
             (),
             (),
             (
@@ -4575,7 +4731,9 @@ def test_postgresql_initialization_refuses_a_malformed_column_catalog_row(
     would ever repair.
     """
     connection = MagicMock()
-    connection.cursor.return_value.fetchall.side_effect = [(), (), catalog_rows]
+    # Empty catalogs for product_runs, configuration_versions, configurations and
+    # prefect_executions, then the mutation_receipts nullability read under test.
+    connection.cursor.return_value.fetchall.side_effect = [(), (), (), (), catalog_rows]
     connection.cursor.return_value.fetchone.return_value = (1,)
 
     with pytest.raises(product_store.ProductStoreProviderError):
