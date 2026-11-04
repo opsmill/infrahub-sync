@@ -24,12 +24,11 @@ import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, TypeGuard
 
+from infrahub_sync.client.models import DEFAULT_LIMIT, MAX_LIMIT, MIN_LIMIT
+from infrahub_sync.product_store.models import MAX_REGISTRY_VERSION
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
-
-DEFAULT_LIMIT = 50
-MIN_LIMIT = 1
-MAX_LIMIT = 200
 
 # A filter value is a scalar query parameter, or ``None`` when the filter is not given.
 FilterValue = str | int | None
@@ -44,9 +43,6 @@ _MAX_CURSOR_LENGTH = 2048
 # holds one object and at most one list; the bound refuses deeply nested JSON before
 # ``json.loads`` can exhaust the recursion limit.
 _MAX_CURSOR_BRACKETS = 4
-# Largest sort-key integer: SQLite and PostgreSQL store ``registry_version`` as a signed
-# 64-bit integer.
-_MAX_SORT_KEY_INTEGER = 2**63 - 1
 _URL_SAFE_BASE64 = re.compile(r"^[A-Za-z0-9_-]+$")
 _CURSOR_KEYS = frozenset({"k", "f"})
 
@@ -118,6 +114,11 @@ def validate_limit(value: int | None) -> int:
     return value
 
 
+def timestamp_cursor(when: datetime, identifier: str, filters: Mapping[str, FilterValue]) -> str:
+    """Return the cursor for the row after ``(when, identifier)``; the inverse of ``timestamp_key``."""
+    return encode_cursor((when.astimezone(timezone.utc).isoformat(), identifier), filters)
+
+
 def timestamp_key(key: SortKey) -> tuple[datetime, str]:
     """Return the ``(timestamp, identifier)`` key a run or configuration cursor holds.
 
@@ -149,7 +150,7 @@ def version_key(key: SortKey) -> int:
     Raises:
         InvalidCursorError: the key is not an integer from 1 to 2**63 - 1.
     """
-    if not isinstance(key, int) or not 1 <= key <= _MAX_SORT_KEY_INTEGER:
+    if not isinstance(key, int) or not 1 <= key <= MAX_REGISTRY_VERSION:
         raise InvalidCursorError
     return key
 

@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves this annotation at runtime.
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+# The largest registry version the store can allocate: the signed 64-bit integer limit.
+MAX_REGISTRY_VERSION = 2**63 - 1
 _INVALID_SERVICE_WORKER_ID = "service worker identity is invalid"
 _LEGAL_EXECUTION_VERDICTS = {
     ("completed", "succeeded"),
@@ -171,7 +173,7 @@ class ProductRun(BaseModel):
     operation: Operation
     configuration_reference: str = Field(min_length=1)
     config_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
-    registry_version: int | None = Field(default=None, ge=1, le=2**63 - 1)
+    registry_version: int | None = Field(default=None, ge=1, le=MAX_REGISTRY_VERSION)
     package_checksum: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     actor: str | None = None
     audit_links: tuple[str, ...] = ()
@@ -379,14 +381,21 @@ class ConfigurationSummary(BaseModel):
         return value
 
 
-class ConfigurationPage(BaseModel):
-    """One page of configurations, newest first."""
+PageItemT = TypeVar("PageItemT")
+
+
+class StorePage(BaseModel, Generic[PageItemT]):
+    """One page of a store listing, in the listing's order."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    items: tuple[ConfigurationSummary, ...]
-    # Whether more configurations match after the last item; the store reads one row past the page.
+    items: tuple[PageItemT, ...]
+    # Whether more items match after the last item; the store reads one row past the page.
     has_more: bool
+
+
+# One page of configurations, newest first.
+ConfigurationPage: TypeAlias = StorePage[ConfigurationSummary]
 
 
 class RunReference(BaseModel):
@@ -433,13 +442,8 @@ class ConfigurationVersionSummary(BaseModel):
         return value
 
 
-class ConfigurationVersionPage(BaseModel):
-    """One page of a configuration's versions, newest version first."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    items: tuple[ConfigurationVersionSummary, ...]
-    has_more: bool
+# One page of a configuration's versions, newest version first.
+ConfigurationVersionPage: TypeAlias = StorePage[ConfigurationVersionSummary]
 
 
 class ConfigurationVersion(BaseModel):
@@ -468,7 +472,7 @@ class RunFilters(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     config_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
-    registry_version: int | None = Field(default=None, ge=1, le=2**63 - 1)
+    registry_version: int | None = Field(default=None, ge=1, le=MAX_REGISTRY_VERSION)
 
     @model_validator(mode="after")
     def _require_configuration_for_version(self) -> RunFilters:
@@ -478,14 +482,8 @@ class RunFilters(BaseModel):
         return self
 
 
-class RunPage(BaseModel):
-    """One page of runs, newest first, without artifact references or execution links."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    items: tuple[ProductRun, ...]
-    # Whether more runs match after the last item; the store reads one row past the page to know.
-    has_more: bool
+# One page of runs, newest first, without artifact references or execution links.
+RunPage: TypeAlias = StorePage[ProductRun]
 
 
 class AuditEvent(BaseModel):

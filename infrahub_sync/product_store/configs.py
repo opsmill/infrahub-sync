@@ -53,6 +53,7 @@ from infrahub_sync.configuration.schema_validation import (
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.configuration.validation import _CODE_UNSUPPORTED_SYNC_STORE, _location_digest
 from infrahub_sync.execution import REDACTED, json_string_forms, redact, redaction_order
+from infrahub_sync.product_store.models import MAX_REGISTRY_VERSION
 from infrahub_sync.product_store.store import (
     ConfigurationNotFoundError,
     ConfigurationVersionAllocationError,
@@ -650,15 +651,10 @@ def _require_argument_type(value: object, *, name: str, expected: type) -> None:
         raise ConfigsRequestError(msg)
 
 
-# The registry's whole allocatable range. Versions are allocated from 1 and stored as
-# SQLite INTEGER — a signed 64-bit value — so no stored version can ever exceed this.
-_MAX_REGISTRY_VERSION = 2**63 - 1
-
-
 def _require_registry_version(value: object) -> None:
     """Refuse a registry_version outside the domain the registry can ever allocate.
 
-    Exactly ``int`` — no subclass — and within ``1..=_MAX_REGISTRY_VERSION``, as the
+    Exactly ``int`` — no subclass — and within ``1..=MAX_REGISTRY_VERSION``, as the
     caller's own input rather than the store's answer, so every integer is classified
     before SQLite sees it. ``bool`` is an ``int`` subclass, so an ``isinstance`` guard lets
     ``registry_version=True`` reach SQLite, compare equal to 1, and silently resolve version
@@ -671,8 +667,8 @@ def _require_registry_version(value: object) -> None:
         # Fixed message: reading the class's __name__ executes a hostile metaclass.
         msg = "registry_version must be int"
         raise ConfigsRequestError(msg)
-    if not 1 <= value <= _MAX_REGISTRY_VERSION:
-        msg = f"registry_version must be in the registry's allocatable range 1..{_MAX_REGISTRY_VERSION}, not {value}"
+    if not 1 <= value <= MAX_REGISTRY_VERSION:
+        msg = f"registry_version must be in the registry's allocatable range 1..{MAX_REGISTRY_VERSION}, not {value}"
         raise ConfigsRequestError(msg)
 
 

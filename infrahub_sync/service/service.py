@@ -29,6 +29,7 @@ from infrahub_sync.product_store import (
     ProductRun,
     RunFilters,
 )
+from infrahub_sync.product_store.configs import CONFIGURATION_NOT_FOUND_REASON, CONFIGURATION_VERSION_NOT_FOUND_REASON
 
 from .liveness import CancellationSelectionUnavailableError, select_cancellable_execution
 from .models import (
@@ -50,7 +51,7 @@ from .models import (
     public_run_resource,
 )
 from .orchestration import Observation, PoolStatus, ServiceOrchestration, normalized_pool_status
-from .paging import FilterValue, decode_cursor, encode_cursor, timestamp_key, validate_limit
+from .paging import FilterValue, decode_cursor, timestamp_cursor, timestamp_key, validate_limit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -121,6 +122,18 @@ class ServiceAPIError(Exception):
         self.mutation_id = mutation_id
         self.message = redact(message, secrets)
         super().__init__(self.message)
+
+
+def page_size_or_refuse(limit: int | None, *, secrets: tuple[str, ...] = ()) -> int:
+    """Return the requested page size, refusing one outside the shared paging bounds.
+
+    Raises:
+        ServiceAPIError: ``422 request-invalid`` for a limit outside 1-200.
+    """
+    try:
+        return validate_limit(limit)
+    except ValueError as exc:
+        raise ServiceAPIError(422, "request-invalid", str(exc), secrets=secrets) from None
 
 
 class RunService:
@@ -623,10 +636,7 @@ class RunService:
         """
         if registry_version is not None and config_id is None:
             raise self._error(422, "request-invalid", "registry_version requires config_id")
-        try:
-            page_size = validate_limit(limit)
-        except ValueError as exc:
-            raise self._error(422, "request-invalid", str(exc)) from None
+        page_size = page_size_or_refuse(limit, secrets=self._secrets)
         if config_id is not None:
             self._require_configuration_filter(config_id, registry_version)
         filters: dict[str, FilterValue] = {
@@ -638,22 +648,20 @@ class RunService:
         page = self._projection.list_runs(
             RunFilters(config_id=config_id, registry_version=registry_version), after=after, limit=page_size
         )
-        next_cursor = None
-        if page.has_more:
-            last = page.items[-1]
-            next_cursor = encode_cursor((last.started_at.astimezone(timezone.utc).isoformat(), last.run_id), filters)
+        last = page.items[-1] if page.has_more else None
+        next_cursor = None if last is None else timestamp_cursor(last.started_at, last.run_id, filters)
         return public_run_page(page.items, next_cursor)
 
     def _require_configuration_filter(self, config_id: str, registry_version: int | None) -> None:
         """Refuse a run-list filter naming a configuration or version that was never registered."""
         if not self._projection.lookup_configuration(config_id).available:
-            raise self._error(404, "configuration-not-found", "the requested configuration does not exist")
+            raise self._error(404, CONFIGURATION_NOT_FOUND_REASON, "the requested configuration does not exist")
         if (
             registry_version is not None
             and not self._projection.lookup_configuration_version(config_id, registry_version).available
         ):
             raise self._error(
-                404, "configuration-version-not-found", "the requested configuration version does not exist"
+                404, CONFIGURATION_VERSION_NOT_FOUND_REASON, "the requested configuration version does not exist"
             )
 
     def get_plan(self, run_id: str) -> PlanResource:

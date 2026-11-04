@@ -228,32 +228,22 @@ class PrefectOrchestration:
         try:
             await client.update_flow_run(UUID(flow_run_id), name=name, tags=tags)
         except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-            response = getattr(error, "response", None)
-            logger.warning(
-                "flow run %s was accepted but not titled or tagged (%s, status=%s); it still runs",
-                flow_run_id,
-                type(error).__name__,
-                getattr(response, "status_code", None),
-            )
+            _log_prefect_failure(_NOT_TITLED, flow_run_id, error)
 
     @staticmethod
     async def _current_tags(client: _NamingClient, flow_run_id: str) -> frozenset[str]:
         """Return the flow run's current tags, or the deployment's tags if Prefect cannot say."""
+        failure: Exception
         try:
-            flow_run = await client.read_flow_run(UUID(flow_run_id))
-            tags = flow_run.tags
-            if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
-                raise TypeError  # noqa: TRY301 - handled below like any other unreadable answer.
-            return frozenset(cast("list[str]", tags))
+            tags = (await client.read_flow_run(UUID(flow_run_id))).tags
+            if isinstance(tags, list) and all(isinstance(tag, str) for tag in tags):
+                return frozenset(cast("list[str]", tags))
+            # An answer without a list of strings is unreadable like any failed read.
+            failure = TypeError()
         except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-            response = getattr(error, "response", None)
-            logger.warning(
-                "flow run %s: current tags not read (%s, status=%s); keeping the deployment tags",
-                flow_run_id,
-                type(error).__name__,
-                getattr(response, "status_code", None),
-            )
-            return frozenset(SERVICE_DEFINITION.tags)
+            failure = error
+        _log_prefect_failure(_TAGS_NOT_READ, flow_run_id, failure)
+        return frozenset(SERVICE_DEFINITION.tags)
 
     async def observe(self, flow_run_id: str) -> Observation:
         try:
@@ -290,6 +280,16 @@ class PrefectOrchestration:
         if not _cancellation_acknowledged(result, requested_state):
             return CancellationResult(acknowledged=False, reason="prefect-cancellation-unavailable")
         return CancellationResult(acknowledged=True)
+
+
+_NOT_TITLED = "flow run %s was accepted but not titled or tagged (%s, status=%s); it still runs"
+_TAGS_NOT_READ = "flow run %s: current tags not read (%s, status=%s); keeping the deployment tags"
+
+
+def _log_prefect_failure(message: str, flow_run_id: str, error: Exception) -> None:
+    """Log a Prefect call that failed after Prefect accepted the run, with its HTTP status if any."""
+    response = getattr(error, "response", None)
+    logger.warning(message, flow_run_id, type(error).__name__, getattr(response, "status_code", None))
 
 
 def _pinned_list(value: object) -> list[Any]:

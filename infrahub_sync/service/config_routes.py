@@ -30,6 +30,7 @@ from infrahub_sync.product_store import (
     ProductStoreProviderError,
     configs,
 )
+from infrahub_sync.product_store.models import MAX_REGISTRY_VERSION
 
 from .auth import Principal
 from .models import ConfigMutationRequest
@@ -39,15 +40,15 @@ from .paging import (
     FilterValue,
     decode_cursor,
     encode_cursor,
+    timestamp_cursor,
     timestamp_key,
-    validate_limit,
     version_key,
 )
-from .service import ServiceAPIError
+from .service import ServiceAPIError, page_size_or_refuse
 
 _CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
-MAX_REGISTRY_VERSION = 2**63 - 1
-_MAX_PAGE_LIMIT = 256
+# Most findings one validation-report page returns, and the default page size.
+_MAX_VALIDATION_FINDINGS_PAGE = 256
 
 
 class ConfigurationAPIError(Exception):
@@ -90,14 +91,6 @@ def parse_bounded_integer(value: str, *, minimum: int, maximum: int) -> int:
 def parse_page_limit(value: str | None) -> int | None:
     """Parse a list's ``limit`` query value without FastAPI's coercions (``1.0``, ``true``)."""
     return None if value is None else parse_bounded_integer(value, minimum=MIN_LIMIT, maximum=MAX_LIMIT)
-
-
-def _page_size(limit: int | None) -> int:
-    """Return the requested page size, refusing one outside the shared paging bounds."""
-    try:
-        return validate_limit(limit)
-    except ValueError as exc:
-        raise ServiceAPIError(422, "request-invalid", str(exc)) from None
 
 
 class ConfigurationRoutes:
@@ -173,15 +166,13 @@ class ConfigurationRoutes:
             ServiceAPIError: ``422 request-invalid`` for a limit outside 1-200.
             InvalidCursorError: ``cursor`` does not decode or was issued for another name.
         """
-        page_size = _page_size(limit)
+        page_size = page_size_or_refuse(limit)
         filters: dict[str, FilterValue] = {"list": "configs", "name": name}
         after = None if cursor is None else timestamp_key(decode_cursor(cursor, filters))
         page = self._call(self._service.list_configs, name=name, after=after, limit=page_size)
         items = tuple(ConfigurationSummaryResource.model_validate(item, from_attributes=True) for item in page.items)
-        next_cursor = None
-        if page.has_more:
-            last = items[-1]
-            next_cursor = encode_cursor((last.created_at.astimezone(timezone.utc).isoformat(), last.config_id), filters)
+        last = items[-1] if page.has_more else None
+        next_cursor = None if last is None else timestamp_cursor(last.created_at, last.config_id, filters)
         return ConfigurationPage(items=items, next_cursor=next_cursor)
 
     def get_config(self, config_id: str) -> ConfigurationSummaryResource:
@@ -201,7 +192,7 @@ class ConfigurationRoutes:
                 configuration.
             ConfigurationAPIError: ``404`` for an unknown configuration.
         """
-        page_size = _page_size(limit)
+        page_size = page_size_or_refuse(limit)
         filters: dict[str, FilterValue] = {"list": "versions", "config_id": config_id}
         after = None if cursor is None else version_key(decode_cursor(cursor, filters))
         page = self._call(self._service.list_versions, config_id=config_id, after=after, limit=page_size)
@@ -218,7 +209,7 @@ class ConfigurationRoutes:
         return ConfigurationVersionResource.model_validate(result, from_attributes=True)
 
     def validate(
-        self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = _MAX_PAGE_LIMIT
+        self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = _MAX_VALIDATION_FINDINGS_PAGE
     ) -> ValidationReportResource:
         """Validate a version and return the requested ordered findings page.
 
@@ -444,13 +435,13 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         registry_version: Annotated[str, registry_version_parameter],
         _principal: Annotated[Principal, Depends(authenticate)],
         offset: Annotated[str, page_offset] = "0",
-        limit: Annotated[str, page_limit] = str(_MAX_PAGE_LIMIT),
+        limit: Annotated[str, page_limit] = str(_MAX_VALIDATION_FINDINGS_PAGE),
     ) -> Any:
         return routes.validate(
             config_id,
             parse_bounded_integer(registry_version, minimum=1, maximum=MAX_REGISTRY_VERSION),
             offset=parse_bounded_integer(offset, minimum=0, maximum=MAX_REGISTRY_VERSION),
-            limit=parse_bounded_integer(limit, minimum=1, maximum=_MAX_PAGE_LIMIT),
+            limit=parse_bounded_integer(limit, minimum=1, maximum=_MAX_VALIDATION_FINDINGS_PAGE),
         )
 
     return router

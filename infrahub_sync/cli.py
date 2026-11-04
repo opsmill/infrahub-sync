@@ -15,7 +15,7 @@ from enum import Enum
 from functools import wraps
 from math import isfinite
 from pathlib import Path  # noqa: TC003 - Typer resolves command annotations at runtime.
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 from uuid import uuid4
 
 import typer
@@ -44,10 +44,11 @@ from infrahub_sync.client import (
     ValidationReportResource,
     VerifyRunRequest,
 )
+from infrahub_sync.client.models import MAX_LIMIT
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Mapping
+    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
     from infrahub_sync.client.models import (
         ArtifactReferenceResource,
@@ -60,6 +61,18 @@ if TYPE_CHECKING:
     )
 
 _Resource = TypeVar("_Resource")
+_ItemT_co = TypeVar("_ItemT_co", covariant=True)
+
+
+class _ListPage(Protocol[_ItemT_co]):
+    """One page a list endpoint returns: its items and the cursor of the next page."""
+
+    @property
+    def items(self) -> Sequence[_ItemT_co]: ...
+
+    @property
+    def next_cursor(self) -> str | None: ...
+
 
 DEFAULT_WAIT_TIMEOUT = 30 * 60.0
 DEFAULT_POLL_INTERVAL = 2.0
@@ -68,9 +81,8 @@ _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
 _KIND_ARG = "kind"
 _VERSION_ARG = "version"
-_MAX_PAGE_LIMIT = 200
 _DIFF_DEPRECATION = "warning: 'diff' is deprecated, use 'plan'"
-_LIMIT_HELP = f"Items per page, 1-{_MAX_PAGE_LIMIT}. The server default applies when omitted."
+_LIMIT_HELP = f"Items per page, 1-{MAX_LIMIT}. The server default applies when omitted."
 _ALL_HELP = "Read every page instead of only the first."
 _CONFIG_HELP = "Configuration ID or name. The ID is tried first, then the name."
 # Characters a terminal acts on or a reader cannot see: every code point in the Unicode
@@ -337,7 +349,29 @@ def _config_id(ctx: typer.Context, value: str) -> str:
 def _echo_more(noun: str, next_cursor: str | None) -> None:
     # On stderr, so the rows on stdout stay the complete answer to read or parse.
     if next_cursor is not None:
-        typer.echo(f"more {noun}: rerun with --all, or --limit up to {_MAX_PAGE_LIMIT}", err=True)
+        typer.echo(f"more {noun}: rerun with --all, or --limit up to {MAX_LIMIT}", err=True)
+
+
+def _echo_list(
+    noun: str,
+    *,
+    all_pages: bool,
+    every_item: Callable[[], Iterable[_Resource]],
+    first_page: Callable[[], _ListPage[_Resource]],
+    write: Callable[[Iterable[_Resource]], None],
+) -> None:
+    """Write every item with ``--all``, else the first page and a note when more follow."""
+    if all_pages:
+        write(every_item())
+        return
+    page = first_page()
+    write(page.items)
+    _echo_more(noun, page.next_cursor)
+
+
+def _echo_rows(resources: Iterable[_Resource], row: Callable[[_Resource], str]) -> None:
+    for resource in resources:
+        typer.echo(row(resource))
 
 
 def _echo_blocks(resources: Iterable[_Resource], echo: Callable[[_Resource], None]) -> None:
@@ -474,18 +508,19 @@ def configs_version(
 def configs_list(
     ctx: typer.Context,
     name: str | None = typer.Option(None, "--name", help="Only configurations with this exact name."),
-    limit: int | None = typer.Option(None, "--limit", min=1, max=_MAX_PAGE_LIMIT, help=_LIMIT_HELP),
+    limit: int | None = typer.Option(None, "--limit", min=1, max=MAX_LIMIT, help=_LIMIT_HELP),
     all_pages: bool = typer.Option(False, "--all", help=_ALL_HELP),  # noqa: FBT003
 ) -> None:
     """List registered configurations, newest first."""
     with _client_errors():
         client = _client(ctx)
-        if all_pages:
-            _echo_blocks(client.iter_configs(name=name, limit=limit), _echo_config_summary)
-            return
-        page = client.list_configs(name=name, limit=limit)
-        _echo_blocks(page.items, _echo_config_summary)
-        _echo_more("configurations", page.next_cursor)
+        _echo_list(
+            "configurations",
+            all_pages=all_pages,
+            every_item=lambda: client.iter_configs(name=name, limit=limit),
+            first_page=lambda: client.list_configs(name=name, limit=limit),
+            write=lambda items: _echo_blocks(items, _echo_config_summary),
+        )
 
 
 @configs_app.command("show")
@@ -507,19 +542,20 @@ def configs_show(
 def configs_versions(
     ctx: typer.Context,
     config: str = typer.Argument(..., metavar="CONFIG", help=_CONFIG_HELP),
-    limit: int | None = typer.Option(None, "--limit", min=1, max=_MAX_PAGE_LIMIT, help=_LIMIT_HELP),
+    limit: int | None = typer.Option(None, "--limit", min=1, max=MAX_LIMIT, help=_LIMIT_HELP),
     all_pages: bool = typer.Option(False, "--all", help=_ALL_HELP),  # noqa: FBT003
 ) -> None:
     """List a configuration's versions, newest first, with each version's latest run and latest applied run."""
     with _client_errors():
         client = _client(ctx)
         config_id = _config_id(ctx, config)
-        if all_pages:
-            _echo_blocks(client.iter_config_versions(config_id, limit=limit), _echo_config_version_summary)
-            return
-        page = client.list_config_versions(config_id, limit=limit)
-        _echo_blocks(page.items, _echo_config_version_summary)
-        _echo_more("versions", page.next_cursor)
+        _echo_list(
+            "versions",
+            all_pages=all_pages,
+            every_item=lambda: client.iter_config_versions(config_id, limit=limit),
+            first_page=lambda: client.list_config_versions(config_id, limit=limit),
+            write=lambda items: _echo_blocks(items, _echo_config_version_summary),
+        )
 
 
 @configs_app.command("validate")
@@ -694,6 +730,30 @@ def _echo_completed_destination_branch(client: SyncClient, run_id: str) -> None:
     _echo_fields((("destination_branch", plan.destination_branch),))
 
 
+def _waiting_client(ctx: typer.Context, *, wait_timeout: float, poll_interval: float) -> SyncClient:
+    """Refuse a wait duration that is not positive before any I/O, then return the client."""
+    _positive_duration(wait_timeout, "wait_timeout")
+    _positive_duration(poll_interval, "poll_interval")
+    return _client(ctx)
+
+
+def _submit_and_wait(
+    client: SyncClient,
+    submit: Callable[[str], RunResource],
+    *,
+    idempotency_key: str | None,
+    wait: bool,
+    wait_timeout: float,
+    poll_interval: float,
+) -> RunResource:
+    """Print the retry key, submit the run with it, print the accepted run and wait for it."""
+    key = _idempotency_key(idempotency_key)
+    _echo_idempotency_key(key)
+    accepted = submit(key)
+    _echo_run(accepted)
+    return _wait(client, accepted, wait=wait, wait_timeout=wait_timeout, poll_interval=poll_interval)
+
+
 def _admit_run(
     ctx: typer.Context,
     *,
@@ -707,24 +767,23 @@ def _admit_run(
     wait_timeout: float,
     poll_interval: float,
 ) -> tuple[SyncClient, RunResource]:
-    _positive_duration(wait_timeout, "wait_timeout")
-    _positive_duration(poll_interval, "poll_interval")
-    client = _client(ctx)
+    client = _waiting_client(ctx, wait_timeout=wait_timeout, poll_interval=poll_interval)
     config_id = _config_id(ctx, config)
-    key = _idempotency_key(idempotency_key)
-    _echo_idempotency_key(key)
-    request = _operation_request(
-        operation=operation,
-        config_id=config_id,
-        version=version,
-        branch=branch,
-        reason=reason,
-    )
-    accepted = client.plan(request, key) if operation == "plan" else client.sync(request, key)
-    _echo_run(accepted)
-    return client, _wait(
+
+    def submit(key: str) -> RunResource:
+        request = _operation_request(
+            operation=operation,
+            config_id=config_id,
+            version=version,
+            branch=branch,
+            reason=reason,
+        )
+        return client.plan(request, key) if operation == "plan" else client.sync(request, key)
+
+    return client, _submit_and_wait(
         client,
-        accepted,
+        submit,
+        idempotency_key=idempotency_key,
         wait=wait,
         wait_timeout=wait_timeout,
         poll_interval=poll_interval,
@@ -821,27 +880,27 @@ def apply_cmd(
 ) -> None:
     """Apply a service-owned plan after binding its reviewed checksum."""
     with _client_errors():
-        _positive_duration(wait_timeout, "wait_timeout")
-        _positive_duration(poll_interval, "poll_interval")
-        client = _client(ctx)
-        key = _idempotency_key(idempotency_key)
-        _echo_idempotency_key(key)
-        request = cast(
-            "ApplyRunRequest",
-            _request(
-                ApplyRunRequest,
-                expected_checksum=expected_checksum,
-                confirm_writes=True,
-                branch=branch,
-                reason=reason,
-            ),
-        )
-        accepted = client.apply(run_id, request, key)
-        _echo_run(accepted)
+        client = _waiting_client(ctx, wait_timeout=wait_timeout, poll_interval=poll_interval)
+
+        def submit(key: str) -> RunResource:
+            request = cast(
+                "ApplyRunRequest",
+                _request(
+                    ApplyRunRequest,
+                    expected_checksum=expected_checksum,
+                    confirm_writes=True,
+                    branch=branch,
+                    reason=reason,
+                ),
+            )
+            return client.apply(run_id, request, key)
+
         try:
-            completed = _wait(
+            # Only the wait raises RunTerminalError; submitting the apply cannot.
+            completed = _submit_and_wait(
                 client,
-                accepted,
+                submit,
+                idempotency_key=idempotency_key,
                 wait=wait,
                 wait_timeout=wait_timeout,
                 poll_interval=poll_interval,
@@ -895,15 +954,15 @@ def verify_cmd(
 ) -> None:
     """Start verification of the saved plan of the named run."""
     with _client_errors():
-        _positive_duration(wait_timeout, "wait_timeout")
-        _positive_duration(poll_interval, "poll_interval")
-        client = _client(ctx)
-        key = _idempotency_key(idempotency_key)
-        _echo_idempotency_key(key)
-        request = cast("VerifyRunRequest", _request(VerifyRunRequest, reason=reason))
-        accepted = client.verify(run_id, request, key)
-        _echo_run(accepted)
-        completed = _wait(client, accepted, wait=wait, wait_timeout=wait_timeout, poll_interval=poll_interval)
+        client = _waiting_client(ctx, wait_timeout=wait_timeout, poll_interval=poll_interval)
+        completed = _submit_and_wait(
+            client,
+            lambda key: client.verify(run_id, cast("VerifyRunRequest", _request(VerifyRunRequest, reason=reason)), key),
+            idempotency_key=idempotency_key,
+            wait=wait,
+            wait_timeout=wait_timeout,
+            poll_interval=poll_interval,
+        )
         if wait:
             _echo_run(completed)
 
@@ -935,7 +994,7 @@ def runs_list(
     ctx: typer.Context,
     config: str | None = typer.Option(None, "--config", "--config-id", help=_CONFIG_HELP),
     version: int | None = typer.Option(None, "--version", min=1, help="Only runs of this version; needs --config."),
-    limit: int | None = typer.Option(None, "--limit", min=1, max=_MAX_PAGE_LIMIT, help=_LIMIT_HELP),
+    limit: int | None = typer.Option(None, "--limit", min=1, max=MAX_LIMIT, help=_LIMIT_HELP),
     all_pages: bool = typer.Option(False, "--all", help=_ALL_HELP),  # noqa: FBT003
 ) -> None:
     """List runs, newest first: run, configuration@version, branch, phase, outcome, actor, start time."""
@@ -944,14 +1003,13 @@ def runs_list(
             raise ClientInputError(_VERSION_ARG)
         client = _client(ctx)
         config_id = _config_id(ctx, config) if config is not None else None
-        if all_pages:
-            for run in client.iter_runs(config_id=config_id, registry_version=version, limit=limit):
-                typer.echo(_run_row(run))
-            return
-        page = client.list_runs(config_id=config_id, registry_version=version, limit=limit)
-        for run in page.items:
-            typer.echo(_run_row(run))
-        _echo_more("runs", page.next_cursor)
+        _echo_list(
+            "runs",
+            all_pages=all_pages,
+            every_item=lambda: client.iter_runs(config_id=config_id, registry_version=version, limit=limit),
+            first_page=lambda: client.list_runs(config_id=config_id, registry_version=version, limit=limit),
+            write=lambda runs: _echo_rows(runs, _run_row),
+        )
 
 
 def _echo_artifact(artifact: ArtifactReferenceResource) -> None:

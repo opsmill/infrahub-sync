@@ -12,6 +12,12 @@ Operation = Literal["plan", "verify", "apply", "sync"]
 TerminalState = Literal["completed", "failed", "cancelled", "abandoned", "interrupted"]
 TerminalOutcome = Literal["succeeded", "failed", "cancelled", "abandoned", "ambiguous"]
 
+# Page sizes of the run, configuration and version lists: the default when a request gives
+# none, and the accepted range.
+DEFAULT_LIMIT = 50
+MIN_LIMIT = 1
+MAX_LIMIT = 200
+
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 _LEGAL_EXECUTION_VERDICTS = {
     ("completed", "succeeded"),

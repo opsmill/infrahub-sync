@@ -3916,7 +3916,7 @@ def test_insert_configuration_version_row_rejects_a_checksum_content_mismatch(tm
     try:
         cursor = connection.cursor()
         with pytest.raises(AssertionError, match="does not digest"):
-            store._insert_configuration_version_row(cursor, mismatched)
+            store._insert_configuration_version_row(cursor, mismatched, name=None)
     finally:
         connection.close()
 

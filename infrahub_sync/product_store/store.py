@@ -2247,7 +2247,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             try:
                 cursor.execute(self._sql(_INSERT_CONFIGURATION), (config_id, version.created_at.isoformat()))
                 self._insert_configuration_version_row(
-                    cursor, version, registered_by=registered_by, registration_reason=registration_reason
+                    cursor,
+                    version,
+                    name=package.configuration.name or None,
+                    registered_by=registered_by,
+                    registration_reason=registration_reason,
                 )
                 connection.commit()
             except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -2269,13 +2273,15 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         cursor: _Cursor,
         version: ConfigurationVersion,
         *,
+        name: str | None,
         registered_by: str | None = None,
         registration_reason: str | None = None,
     ) -> None:
-        """Insert one version and make its package's name the configuration's name.
+        """Insert one version and make ``name``, its package's name, the configuration's name.
 
         Runs inside the transaction that allocates the version, which is always the newest
-        one, so the configuration's name is always its latest version's name.
+        one, so the configuration's name is always its latest version's name. ``name`` is
+        ``None`` when the package declares an empty name.
         """
         _require_checksum_digests_content(version.package_checksum, version.declared_content)
         cursor.execute(
@@ -2292,7 +2298,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         )
         cursor.execute(
             self._sql(_UPDATE_CONFIGURATION_NAME),
-            (_declared_configuration_name(version.declared_content), version.config_id),
+            (name, version.config_id),
         )
 
     def add_configuration_version(
@@ -2326,7 +2332,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         created_at=datetime.now(timezone.utc),
                     )
                     self._insert_configuration_version_row(
-                        cursor, version, registered_by=registered_by, registration_reason=registration_reason
+                        cursor,
+                        version,
+                        name=package.configuration.name or None,
+                        registered_by=registered_by,
+                        registration_reason=registration_reason,
                     )
                     connection.commit()
                 except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -2431,37 +2441,51 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         last key of the previous page. ``name`` keeps only configurations whose current name
         is exactly ``name``. The query reads one row past the page to detect a further page.
         """
-        if limit < 1:
-            msg = "limit must be a positive integer"
-            raise ValueError(msg)
         conditions: list[str] = []
         parameters: list[object] = []
         if name is not None:
             conditions.append(_CONFIGURATION_LIST_NAME)
             parameters.append(name)
         if after is not None:
-            created_at = after[0].astimezone(timezone.utc).isoformat()
             conditions.append(_CONFIGURATION_LIST_AFTER)
-            parameters.extend((created_at, created_at, after[1]))
-        statement = _SELECT_CONFIGURATION_LIST
-        if conditions:
-            statement += " WHERE " + " AND ".join(conditions)
-        statement += _CONFIGURATION_LIST_ORDER
-        parameters.append(limit + 1)
+            parameters.extend(_keyset_parameters(after))
+        statement = _filtered(_SELECT_CONFIGURATION_LIST, conditions) + _CONFIGURATION_LIST_ORDER
+        rows, has_more = self._read_page(statement, parameters, limit)
+        return ConfigurationPage(items=tuple(_configuration_summary_from_row(row) for row in rows), has_more=has_more)
+
+    def _read_page(
+        self,
+        statement: str,
+        parameters: Sequence[object],
+        limit: int,
+        follow_up: Callable[[_Cursor, Sequence[Sequence[Any]]], None] | None = None,
+    ) -> tuple[Sequence[Sequence[Any]], bool]:
+        """Read up to ``limit`` rows of ``statement`` and whether more rows follow them.
+
+        ``statement`` ends with a ``LIMIT ?`` placeholder that this method binds to
+        ``limit + 1``, so one row past the page tells whether a further page exists.
+        ``follow_up`` runs on the same cursor with the page's rows when the page is not empty.
+
+        Raises:
+            ValueError: ``limit`` is less than 1.
+        """
+        if limit < 1:
+            msg = "limit must be a positive integer"
+            raise ValueError(msg)
         connection = self._connect()
         try:
             cursor = connection.cursor()
             try:
-                cursor.execute(self._sql(statement), tuple(parameters))
+                cursor.execute(self._sql(statement), (*parameters, limit + 1))
                 rows = cursor.fetchall()
+                page = rows[:limit]
+                if follow_up is not None and page:
+                    follow_up(cursor, page)
             finally:
                 cursor.close()
         finally:
             connection.close()
-        return ConfigurationPage(
-            items=tuple(_configuration_summary_from_row(row) for row in rows[:limit]),
-            has_more=len(rows) > limit,
-        )
+        return page, len(rows) > limit
 
     def list_configuration_version_page(
         self, config_id: str, *, after: int | None = None, limit: int = 50
@@ -2471,53 +2495,29 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         ``after`` is the last ``registry_version`` of the previous page. A second query, one
         per page, reads each listed version's newest run and newest applied run.
         """
-        if limit < 1:
-            msg = "limit must be a positive integer"
-            raise ValueError(msg)
         statement = _SELECT_CONFIGURATION_VERSION_LIST
         parameters: list[object] = [config_id]
         if after is not None:
             statement += _CONFIGURATION_VERSION_LIST_AFTER
             parameters.append(after)
         statement += _CONFIGURATION_VERSION_LIST_ORDER
-        parameters.append(limit + 1)
         latest: dict[tuple[int, str], RunReference] = {}
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql(statement), tuple(parameters))
-                rows = cursor.fetchall()
-                versions = tuple(int(row[1]) for row in rows[:limit])
-                if versions:
-                    placeholders = ", ".join("?" for _ in versions)
-                    cursor.execute(
-                        self._sql(_SELECT_LATEST_VERSION_RUNS.format(placeholders)),
-                        (config_id, *versions, config_id, *versions),
-                    )
-                    for registry_version, kind, run_id, phase, outcome, started_at in cursor.fetchall():
-                        latest[int(registry_version), str(kind)] = RunReference(
-                            run_id=run_id, phase=phase, outcome=outcome, started_at=started_at
-                        )
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
-        return ConfigurationVersionPage(
-            items=tuple(
-                ConfigurationVersionSummary(
-                    config_id=row[0],
-                    registry_version=row[1],
-                    package_checksum=row[2],
-                    created_at=row[3],
-                    registered_by=row[4],
-                    registration_reason=row[5],
-                    latest_run=latest.get((int(row[1]), "latest")),
-                    latest_applied_run=latest.get((int(row[1]), "applied")),
+
+        def read_latest_runs(cursor: _Cursor, page: Sequence[Sequence[Any]]) -> None:
+            versions = tuple(int(row[1]) for row in page)
+            placeholders = ", ".join("?" for _ in versions)
+            cursor.execute(
+                self._sql(_SELECT_LATEST_VERSION_RUNS.format(placeholders)),
+                (config_id, *versions, config_id, *versions),
+            )
+            for registry_version, kind, run_id, phase, outcome, started_at in cursor.fetchall():
+                latest[int(registry_version), str(kind)] = RunReference(
+                    run_id=run_id, phase=phase, outcome=outcome, started_at=started_at
                 )
-                for row in rows[:limit]
-            ),
-            has_more=len(rows) > limit,
+
+        rows, has_more = self._read_page(statement, parameters, limit, read_latest_runs)
+        return ConfigurationVersionPage(
+            items=tuple(_configuration_version_summary_from_row(row, latest) for row in rows), has_more=has_more
         )
 
     def list_runs(self, filters: RunFilters, *, after: tuple[datetime, str] | None = None, limit: int = 50) -> RunPage:
@@ -2528,9 +2528,6 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         reads one row past the page to detect a further page, and one more reads the page's
         audit links. Artifact references and execution links are not loaded.
         """
-        if limit < 1:
-            msg = "limit must be a positive integer"
-            raise ValueError(msg)
         conditions: list[str] = []
         parameters: list[object] = []
         if filters.config_id is not None:
@@ -2540,38 +2537,20 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             conditions.append(_RUN_LIST_VERSION)
             parameters.append(filters.registry_version)
         if after is not None:
-            started_at = after[0].astimezone(timezone.utc).isoformat()
             conditions.append(_RUN_LIST_AFTER)
-            parameters.extend((started_at, started_at, after[1]))
-        statement = _SELECT_PRODUCT_RUN_LIST
-        if conditions:
-            statement += " WHERE " + " AND ".join(conditions)
-        statement += _RUN_LIST_ORDER
-        parameters.append(limit + 1)
-        connection = self._connect()
-        try:
-            cursor = connection.cursor()
-            try:
-                cursor.execute(self._sql(statement), tuple(parameters))
-                rows = cursor.fetchall()
-                page = rows[:limit]
-                audit_links: dict[str, list[Sequence[Any]]] = {row[0]: [] for row in page}
-                if page:
-                    placeholders = ", ".join("?" for _ in page)
-                    cursor.execute(
-                        self._sql(_SELECT_AUDIT_LINKS_FOR_RUNS.format(placeholders)),
-                        tuple(audit_links),
-                    )
-                    for run_id, event_id in cursor.fetchall():
-                        audit_links[run_id].append((event_id,))
-            finally:
-                cursor.close()
-        finally:
-            connection.close()
-        return RunPage(
-            items=tuple(_run_from_rows(row, (), (), audit_links[row[0]]) for row in page),
-            has_more=len(rows) > limit,
-        )
+            parameters.extend(_keyset_parameters(after))
+        statement = _filtered(_SELECT_PRODUCT_RUN_LIST, conditions) + _RUN_LIST_ORDER
+        audit_links: dict[str, list[Sequence[Any]]] = {}
+
+        def read_audit_links(cursor: _Cursor, page: Sequence[Sequence[Any]]) -> None:
+            audit_links.update({row[0]: [] for row in page})
+            placeholders = ", ".join("?" for _ in page)
+            cursor.execute(self._sql(_SELECT_AUDIT_LINKS_FOR_RUNS.format(placeholders)), tuple(audit_links))
+            for run_id, event_id in cursor.fetchall():
+                audit_links[run_id].append((event_id,))
+
+        rows, has_more = self._read_page(statement, parameters, limit, read_audit_links)
+        return RunPage(items=tuple(_run_from_rows(row, (), (), audit_links[row[0]]) for row in rows), has_more=has_more)
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None:
         connection = self._connect()
@@ -3720,6 +3699,37 @@ def _redacted_registration(
 
 def _configuration_summary_from_row(row: Sequence[Any]) -> ConfigurationSummary:
     return ConfigurationSummary(config_id=row[0], created_at=row[1], name=row[2], latest_version=row[3])
+
+
+def _configuration_version_summary_from_row(
+    row: Sequence[Any], latest: Mapping[tuple[int, str], RunReference]
+) -> ConfigurationVersionSummary:
+    """Build one version summary; ``latest`` maps ``(registry_version, kind)`` to that run."""
+    return ConfigurationVersionSummary(
+        config_id=row[0],
+        registry_version=row[1],
+        package_checksum=row[2],
+        created_at=row[3],
+        registered_by=row[4],
+        registration_reason=row[5],
+        latest_run=latest.get((int(row[1]), "latest")),
+        latest_applied_run=latest.get((int(row[1]), "applied")),
+    )
+
+
+def _keyset_parameters(after: tuple[datetime, str]) -> tuple[str, str, str]:
+    """Return the bound values of a ``(timestamp, identifier)`` descending keyset clause.
+
+    The clause compares the UTC ISO timestamp twice (strictly older, or equal with a
+    smaller identifier), so the timestamp is bound twice before the identifier.
+    """
+    when = after[0].astimezone(timezone.utc).isoformat()
+    return when, when, after[1]
+
+
+def _filtered(statement: str, conditions: Sequence[str]) -> str:
+    """Return ``statement`` with ``conditions`` joined into one ``WHERE`` clause, if any."""
+    return statement + " WHERE " + " AND ".join(conditions) if conditions else statement
 
 
 def _declared_configuration_name(declared_content: Any) -> str | None:

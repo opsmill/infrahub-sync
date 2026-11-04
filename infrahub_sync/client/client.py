@@ -243,7 +243,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
     def iter_configs(self, name: str | None = None, limit: int | None = None) -> Iterator[ConfigurationSummaryResource]:
         """Yield every configuration, newest first, reading pages until ``next_cursor`` is null."""
 
-        return self._iterate(_LIST_CONFIGS, lambda cursor: self.list_configs(name=name, limit=limit, cursor=cursor))
+        return self._iterate(_LIST_CONFIGS, self.list_configs, name=name, limit=limit)
 
     def get_config(self, config_id: str) -> ConfigurationSummaryResource:
         """Return one registered configuration summary."""
@@ -279,10 +279,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
     ) -> Iterator[ConfigurationVersionSummaryResource]:
         """Yield every version summary of one configuration, newest version first."""
 
-        return self._iterate(
-            _LIST_CONFIG_VERSIONS,
-            lambda cursor: self.list_config_versions(config_id, limit=limit, cursor=cursor),
-        )
+        return self._iterate(_LIST_CONFIG_VERSIONS, self.list_config_versions, config_id=config_id, limit=limit)
 
     def get_config_version(self, config_id: str, registry_version: int) -> ConfigurationVersionResource:
         """Return one immutable registered configuration version."""
@@ -369,10 +366,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         """Yield every run that matches the filters, newest first, reading pages until ``next_cursor`` is null."""
 
         return self._iterate(
-            _LIST_RUNS,
-            lambda cursor: self.list_runs(
-                config_id=config_id, registry_version=registry_version, limit=limit, cursor=cursor
-            ),
+            _LIST_RUNS, self.list_runs, config_id=config_id, registry_version=registry_version, limit=limit
         )
 
     def me(self) -> PrincipalResource:
@@ -571,11 +565,12 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         return params
 
     @staticmethod
-    def _iterate(operation: str, read_page: Callable[[str | None], _Page[_Item]]) -> Iterator[_Item]:
+    def _iterate(operation: str, read_page: Callable[..., _Page[_Item]], **arguments: Any) -> Iterator[_Item]:
+        """Yield every item of ``read_page(**arguments, cursor=...)``, following ``next_cursor``."""
         cursor: str | None = None
         seen: set[str] = set()
         while True:
-            page = read_page(cursor)
+            page = read_page(**arguments, cursor=cursor)
             yield from page.items
             cursor = page.next_cursor
             if cursor is None:
