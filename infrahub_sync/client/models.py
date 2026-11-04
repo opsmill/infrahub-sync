@@ -315,6 +315,18 @@ class RunResource(_ResourceModel):
     orchestration: tuple[OrchestrationSummary, ...]
 
 
+class RunPage(_ResourceModel):
+    """One page of the run list, newest first.
+
+    Items carry the public run fields with empty ``artifact_refs`` and
+    ``prefect_executions``; ``GET /runs/{run_id}`` returns them. ``next_cursor`` is ``None``
+    on the last page.
+    """
+
+    items: tuple[PublicRunResource, ...]
+    next_cursor: str | None = None
+
+
 class PlanSummaryResource(_ResourceModel):
     """Validated saved-plan counts and delete-review disclosures."""
 

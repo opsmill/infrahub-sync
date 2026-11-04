@@ -43,6 +43,8 @@ from infrahub_sync.product_store.models import (
     MutationReceipt,
     PrefectExecutionLink,
     ProductRun,
+    RunFilters,
+    RunPage,
 )
 
 _SCHEMA = """
@@ -304,9 +306,21 @@ _SELECT_NEXT_CONFIGURATION_VERSION = (
 _INSERT_PRODUCT_RUN = """INSERT INTO product_runs (run_id, operation, configuration_reference, config_id,
 registry_version, package_checksum, actor, audit_links, started_at, finished_at, phase, outcome, summary, results,
 reconciliation_required, destination_branch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
-_SELECT_PRODUCT_RUN = """SELECT run_id, operation, configuration_reference, actor, audit_links, started_at,
+_PRODUCT_RUN_COLUMNS = """run_id, operation, configuration_reference, actor, audit_links, started_at,
 finished_at, phase, outcome, summary, results, config_id, registry_version, package_checksum, reconciliation_required,
-destination_branch FROM product_runs WHERE run_id = ?"""
+destination_branch"""
+_SELECT_PRODUCT_RUN = "SELECT " + _PRODUCT_RUN_COLUMNS + " FROM product_runs WHERE run_id = ?"  # noqa: S608 - module constants only.
+# The run list is assembled from these fixed fragments only; every value is a bound parameter.
+# The keyset predicate is the row comparison ``(started_at, run_id) < (?, ?)`` written out as an
+# OR, which SQLite and PostgreSQL both evaluate identically over the UTC text timestamps.
+_SELECT_PRODUCT_RUN_LIST = "SELECT " + _PRODUCT_RUN_COLUMNS + " FROM product_runs"  # noqa: S608 - module constants only.
+_RUN_LIST_CONFIGURATION = "config_id = ?"
+_RUN_LIST_VERSION = "registry_version = ?"
+_RUN_LIST_AFTER = "(started_at < ? OR (started_at = ? AND run_id < ?))"
+_RUN_LIST_ORDER = " ORDER BY started_at DESC, run_id DESC LIMIT ?"
+_SELECT_AUDIT_LINKS_FOR_RUNS = (
+    "SELECT run_id, event_id FROM audit_events WHERE run_id IN ({}) ORDER BY created_at, event_id"
+)
 _SELECT_RUN_ARTIFACT_REFERENCES = """SELECT run_id, artifact_id, kind, media_type, digest, size, object_key,
 manifest_key, created_at, expires_at, published, visibility FROM artifact_refs
 WHERE run_id = ? AND published = 1 AND visibility = 'public' ORDER BY artifact_id"""
@@ -538,6 +552,10 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def list_configurations(self) -> tuple[ConfigurationSummary, ...]: ...
 
     def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]: ...
+
+    def list_runs(
+        self, filters: RunFilters, *, after: tuple[datetime, str] | None = None, limit: int = 50
+    ) -> RunPage: ...
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
 
@@ -2294,6 +2312,59 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             connection.close()
         return tuple(_configuration_version_from_row(row) for row in rows)
 
+    def list_runs(self, filters: RunFilters, *, after: tuple[datetime, str] | None = None, limit: int = 50) -> RunPage:
+        """Return up to ``limit`` runs matching ``filters``, newest first, after the ``after`` key.
+
+        Runs are ordered by ``(started_at, run_id)`` descending; ``after`` is the last key of
+        the previous page, so a run created since then is newer and never appears. One query
+        reads one row past the page to detect a further page, and one more reads the page's
+        audit links. Artifact references and execution links are not loaded.
+        """
+        if limit < 1:
+            msg = "limit must be a positive integer"
+            raise ValueError(msg)
+        conditions: list[str] = []
+        parameters: list[object] = []
+        if filters.config_id is not None:
+            conditions.append(_RUN_LIST_CONFIGURATION)
+            parameters.append(filters.config_id)
+        if filters.registry_version is not None:
+            conditions.append(_RUN_LIST_VERSION)
+            parameters.append(filters.registry_version)
+        if after is not None:
+            started_at = after[0].astimezone(timezone.utc).isoformat()
+            conditions.append(_RUN_LIST_AFTER)
+            parameters.extend((started_at, started_at, after[1]))
+        statement = _SELECT_PRODUCT_RUN_LIST
+        if conditions:
+            statement += " WHERE " + " AND ".join(conditions)
+        statement += _RUN_LIST_ORDER
+        parameters.append(limit + 1)
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(statement), tuple(parameters))
+                rows = cursor.fetchall()
+                page = rows[:limit]
+                audit_links: dict[str, list[Sequence[Any]]] = {row[0]: [] for row in page}
+                if page:
+                    placeholders = ", ".join("?" for _ in page)
+                    cursor.execute(
+                        self._sql(_SELECT_AUDIT_LINKS_FOR_RUNS.format(placeholders)),
+                        tuple(audit_links),
+                    )
+                    for run_id, event_id in cursor.fetchall():
+                        audit_links[run_id].append((event_id,))
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return RunPage(
+            items=tuple(_run_from_rows(row, (), (), audit_links[row[0]]) for row in page),
+            has_more=len(rows) > limit,
+        )
+
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None:
         connection = self._connect()
         try:
@@ -2967,6 +3038,10 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
     def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]:
         """Return every registered version of one configuration, oldest first."""
         return self._records.list_configuration_versions(config_id)
+
+    def list_runs(self, filters: RunFilters, *, after: tuple[datetime, str] | None = None, limit: int = 50) -> RunPage:
+        """Return one page of runs, newest first, without artifact references or execution links."""
+        return self._records.list_runs(filters, after=after, limit=limit)
 
     def record_results(
         self,

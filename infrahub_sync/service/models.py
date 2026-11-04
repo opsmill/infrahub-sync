@@ -33,6 +33,7 @@ from infrahub_sync.client.models import (
     PublicExecutionLink,
     PublicRunResource,
     ResultsResource,
+    RunPage,
     RunResource,
     ServiceStatusResource,
     VerifyRunRequest,
@@ -41,6 +42,8 @@ from infrahub_sync.client.models import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from infrahub_sync.product_store import PrefectExecutionLink, ProductRun
 
 __all__ = [
@@ -60,6 +63,7 @@ __all__ = [
     "PublicExecutionLink",
     "PublicRunResource",
     "ResultsResource",
+    "RunPage",
     "RunResource",
     "ServiceStatusResource",
     "VerifyRunRequest",
@@ -67,6 +71,7 @@ __all__ = [
     "WorkerStatusResource",
     "bounded_emitted_model",
     "public_execution_link",
+    "public_run_page",
     "public_run_resource",
 ]
 
@@ -128,6 +133,7 @@ def bounded_emitted_model(model: type[BaseModel]) -> type[BaseModel]:
 EmittedRunResource = cast("type[PublicRunResource]", bounded_emitted_model(PublicRunResource))
 EmittedPlanResource = cast("type[PlanResource]", bounded_emitted_model(PlanResource))
 EmittedArtifactListResource = cast("type[ArtifactListResource]", bounded_emitted_model(ArtifactListResource))
+EmittedRunPage = cast("type[RunPage]", bounded_emitted_model(RunPage))
 
 # What the server builds out of data it did not write literally, and therefore what the
 # boundedness check in the test suite walks.
@@ -135,6 +141,7 @@ EMITTED_RESOURCES: tuple[type[BaseModel], ...] = (
     EmittedRunResource,
     EmittedPlanResource,
     EmittedArtifactListResource,
+    EmittedRunPage,
 )
 # The run resource declares its executions as bounded, so the projection has to build them
 # that way; a parent-class instance is not one of these.
@@ -170,5 +177,19 @@ def public_run_resource(run: ProductRun) -> PublicRunResource:
         {
             **run.model_dump(exclude={"prefect_executions"}),
             "prefect_executions": tuple(public_execution_link(link) for link in run.prefect_executions),
+        }
+    )
+
+
+def public_run_page(runs: Iterable[ProductRun], next_cursor: str | None) -> RunPage:
+    """Project one page of store runs into the bounded public run list.
+
+    Each run goes through `public_run_resource` first, so a list item is exactly the
+    resource `GET /runs/{run_id}` would build from the same record.
+    """
+    return EmittedRunPage.model_validate(
+        {
+            "items": [public_run_resource(run).model_dump(mode="json") for run in runs],
+            "next_cursor": next_cursor,
         }
     )

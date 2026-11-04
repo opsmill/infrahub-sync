@@ -393,6 +393,32 @@ class ConfigurationVersion(BaseModel):
         return value
 
 
+class RunFilters(BaseModel):
+    """The configuration binding a run list is restricted to; no filter lists every run."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    config_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
+    registry_version: int | None = Field(default=None, ge=1, le=2**63 - 1)
+
+    @model_validator(mode="after")
+    def _require_configuration_for_version(self) -> RunFilters:
+        if self.registry_version is not None and self.config_id is None:
+            msg = "registry_version requires config_id"
+            raise ValueError(msg)
+        return self
+
+
+class RunPage(BaseModel):
+    """One page of runs, newest first, without artifact references or execution links."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    items: tuple[ProductRun, ...]
+    # Whether more runs match after the last item; the store reads one row past the page to know.
+    has_more: bool
+
+
 class AuditEvent(BaseModel):
     """Secret-safe durable evidence for one Sync API decision."""
 

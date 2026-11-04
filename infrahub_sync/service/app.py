@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, Request, Response
+from fastapi import Depends, FastAPI, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -29,6 +29,7 @@ from .models import (
     ErrorEnvelope,
     PlanResource,
     ResultsResource,
+    RunPage,
     RunResource,
     ServiceStatusResource,
     VerifyRunRequest,
@@ -186,6 +187,18 @@ def create_app(
     ) -> JSONResponse:
         status, content = await service.create_run(body, principal, key)
         return JSONResponse(status_code=status, content=content)
+
+    # Declared before ``/runs/{run_id}`` so that the run list is never read as a run ID.
+    @application.get("/runs", responses=ERROR_RESPONSES)
+    def list_runs(
+        _principal: Annotated[Principal, Depends(authenticate)],
+        config_id: Annotated[str | None, Query()] = None,
+        registry_version: Annotated[int | None, Query(ge=1)] = None,
+        limit: Annotated[int | None, Query()] = None,
+        cursor: Annotated[str | None, Query()] = None,
+    ) -> RunPage:
+        """Return one page of runs, newest first, optionally for one configuration or version."""
+        return service.list_runs(config_id=config_id, registry_version=registry_version, cursor=cursor, limit=limit)
 
     @application.get("/runs/{run_id}", responses=ERROR_RESPONSES)
     async def get_run(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> RunResource:

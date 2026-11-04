@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
+from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.configuration.validation import credential_namespace_finding
 from infrahub_sync.execution import collect_secret_values, redact, sanitize_exception_chain
@@ -26,6 +27,7 @@ from infrahub_sync.product_store import (
     PrefectExecutionLink,
     ProductProjection,
     ProductRun,
+    RunFilters,
 )
 
 from .liveness import CancellationSelectionUnavailableError, select_cancellable_execution
@@ -39,20 +41,43 @@ from .models import (
     OrchestrationSummary,
     PlanResource,
     ResultsResource,
+    RunPage,
     RunResource,
     ServiceStatusResource,
     VerifyRunRequest,
     WorkerStatusResource,
+    public_run_page,
     public_run_resource,
 )
 from .orchestration import Observation, PoolStatus, ServiceOrchestration, normalized_pool_status
+from .paging import FilterValue, InvalidCursorError, SortKey, decode_cursor, encode_cursor, validate_limit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from infrahub_sync.configuration import ConfigurationPackage
+
     from .auth import Principal
 
 PLAN_ARTIFACT_ID = "plan-review"
+
+
+def _run_list_key(key: SortKey) -> tuple[datetime, str]:
+    """Return the ``(started_at, run_id)`` key a run-list cursor holds.
+
+    Raises:
+        InvalidCursorError: the key is not a timezone-aware ISO 8601 start time and a run ID.
+    """
+    if not isinstance(key, tuple) or len(key) != 2 or not all(isinstance(part, str) for part in key):
+        raise InvalidCursorError
+    started_at, run_id = key
+    try:
+        parsed = datetime.fromisoformat(str(started_at))
+    except ValueError:
+        raise InvalidCursorError from None
+    if parsed.utcoffset() is None or not run_id:
+        raise InvalidCursorError
+    return parsed, str(run_id)
 
 
 def _reservation_outcome(receipt: MutationReceipt) -> str:
@@ -162,7 +187,11 @@ class RunService:
             self._require_matching_receipt(existing, receipt)
             if existing.state == "accepted":
                 return await self._resume_or_replay(existing, {}, principal, request.reason)
-        sync_name, package_checksum = self._registered_configuration(request.config_id, request.registry_version)
+        package, package_checksum = self._registered_configuration(request.config_id, request.registry_version)
+        sync_name = package.configuration.name
+        # The worker resolves the branch it plans and writes against through the same function,
+        # so the stored branch is the saved plan's destination branch.
+        destination_branch = effective_destination_branch(package.configuration.destination.settings, request.branch)
         if request.operation == "sync" and not request.confirm_writes:
             self._audit(
                 None,
@@ -184,6 +213,7 @@ class RunService:
             started_at=now,
             phase="accepted",
             summary={"sync_name": sync_name},
+            destination_branch=destination_branch,
         )
         reserved, _ = self._projection.reserve_mutation(
             receipt,
@@ -216,7 +246,7 @@ class RunService:
 
     def _registered_configuration(
         self, config_id: str, registry_version: int, *, expected_checksum: str | None = None
-    ) -> tuple[str, str]:
+    ) -> tuple[ConfigurationPackage, str]:
         """Read the immutable registered package before allocating any run-side state."""
         stored = self._projection.lookup_configuration_version(config_id, registry_version).value
         if stored is None:
@@ -243,7 +273,7 @@ class RunService:
                     f"{finding.message}; register a new version with prefixed identifiers "
                     "and recreate saved plans against it",
                 )
-        return package.configuration.name, stored.package_checksum
+        return package, stored.package_checksum
 
     async def verify_run(
         self, run_id: str, request: VerifyRunRequest, principal: Principal, idempotency_key: str
@@ -592,6 +622,53 @@ class RunService:
         """Return lifecycle-safe pool state without exposing provider identifiers."""
         snapshot = await self._orchestration.pool_status(work_pool_name, datetime.now(timezone.utc))
         return _service_status(snapshot)
+
+    def list_runs(
+        self,
+        *,
+        config_id: str | None = None,
+        registry_version: int | None = None,
+        cursor: str | None = None,
+        limit: int | None = None,
+    ) -> RunPage:
+        """Return one page of runs, newest first, optionally for one configuration or version.
+
+        Raises:
+            ServiceAPIError: ``422 request-invalid`` for a version without a configuration or a
+                limit outside 1-200; ``404 configuration-not-found`` or
+                ``404 configuration-version-not-found`` for an unknown filter value.
+            InvalidCursorError: ``cursor`` does not decode or was issued for other filters.
+        """
+        if registry_version is not None and config_id is None:
+            raise self._error(422, "request-invalid", "registry_version requires config_id")
+        try:
+            page_size = validate_limit(limit)
+        except ValueError as exc:
+            raise self._error(422, "request-invalid", str(exc)) from None
+        if config_id is not None:
+            self._require_configuration_filter(config_id, registry_version)
+        filters: dict[str, FilterValue] = {"config_id": config_id, "registry_version": registry_version}
+        after = None if cursor is None else _run_list_key(decode_cursor(cursor, filters))
+        page = self._projection.list_runs(
+            RunFilters(config_id=config_id, registry_version=registry_version), after=after, limit=page_size
+        )
+        next_cursor = None
+        if page.has_more:
+            last = page.items[-1]
+            next_cursor = encode_cursor((last.started_at.astimezone(timezone.utc).isoformat(), last.run_id), filters)
+        return public_run_page(page.items, next_cursor)
+
+    def _require_configuration_filter(self, config_id: str, registry_version: int | None) -> None:
+        """Refuse a run-list filter naming a configuration or version that was never registered."""
+        if not self._projection.lookup_configuration(config_id).available:
+            raise self._error(404, "configuration-not-found", "the requested configuration does not exist")
+        if (
+            registry_version is not None
+            and not self._projection.lookup_configuration_version(config_id, registry_version).available
+        ):
+            raise self._error(
+                404, "configuration-version-not-found", "the requested configuration version does not exist"
+            )
 
     def get_plan(self, run_id: str) -> PlanResource:
         """Return the retained review document."""

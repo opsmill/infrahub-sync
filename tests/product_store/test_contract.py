@@ -43,6 +43,7 @@ from infrahub_sync.product_store import (
     PrefectExecutionLink,
     ProductProjection,
     ProductRun,
+    RunFilters,
     RunNotFoundError,
     WriteAdmissionConflictError,
     local_product_projection,
@@ -83,7 +84,9 @@ EXPECTED_PUBLIC_NAMES = {
     "ProductProjection",
     "ProductStoreProviderError",
     "ProductRun",
+    "RunFilters",
     "RunNotFoundError",
+    "RunPage",
     "S3Client",
     "WriteAdmissionConflictError",
     "local_product_projection",
@@ -705,23 +708,37 @@ def provider(request, tmp_path: Path) -> ProductProjection:
     )
 
 
-@pytest.fixture(params=("local", "postgresql-emulated", pytest.param("postgresql", marks=pytest.mark.integration)))
+_PROFILES_WITH_POSTGRESQL = ("local", "postgresql-emulated", pytest.param("postgresql", marks=pytest.mark.integration))
+
+
+@pytest.fixture(params=_PROFILES_WITH_POSTGRESQL)
 def redaction_provider(request, tmp_path: Path) -> Iterator[ProductProjection]:
     """The ``provider`` profiles plus a real PostgreSQL server, for the redaction boundary.
 
     The ``postgresql`` parameter needs ``PRODUCT_STORE_TEST_POSTGRESQL_DSN`` and runs each case
     in its own generated schema, dropped afterwards.
     """
-    if request.param == "local":
+    yield from _projection_profile(request.param, tmp_path, "the redaction contract's PostgreSQL parameter")
+
+
+@pytest.fixture(params=_PROFILES_WITH_POSTGRESQL)
+def listing_provider(request, tmp_path: Path) -> Iterator[ProductProjection]:
+    """The ``provider`` profiles plus a real PostgreSQL server, for the run list's SQL."""
+    yield from _projection_profile(request.param, tmp_path, "the run list's PostgreSQL parameter")
+
+
+def _projection_profile(profile: str, tmp_path: Path, purpose: str) -> Iterator[ProductProjection]:
+    """Yield one projection profile; a real PostgreSQL case runs in its own dropped schema."""
+    if profile == "local":
         yield ProductProjection(SQLiteRunStore(tmp_path / "local.sqlite3"), FileArtifactStore(tmp_path / "objects"))
         return
-    if request.param == "postgresql-emulated":
+    if profile == "postgresql-emulated":
         yield ProductProjection(
             PostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3")),
             S3ArtifactStore(_FakeS3(), bucket="product-artifacts", prefix="contract"),
         )
         return
-    schema = isolated_schema(dsn_or_skip("the redaction contract's PostgreSQL parameter"))
+    schema = isolated_schema(dsn_or_skip(purpose))
     schema.create()
     # pylint: disable-next=import-outside-toplevel,import-error
     import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
@@ -5492,3 +5509,127 @@ def test_sqlite_migration_writes_the_schema_table_only_while_a_reason_column_is_
     assert first == ["PRAGMA writable_schema = ON", "PRAGMA writable_schema = OFF"] * 2
     assert statements != []
     assert schema_writes() == []
+
+
+# The run list (US1): one store query over the binding columns, newest first, keyset paged.
+_LIST_T0 = datetime(2026, 11, 4, 9, tzinfo=timezone.utc)
+
+
+def _listed_run(
+    run_id: str, minutes: int, *, config_id: str | None = None, registry_version: int | None = None
+) -> ProductRun:
+    binding: dict[str, object] = {}
+    if config_id is not None:
+        binding = {
+            "configuration_reference": f"{config_id}@{registry_version}",
+            "config_id": config_id,
+            "registry_version": registry_version,
+            "package_checksum": "a" * 64,
+        }
+    return ProductRun.model_validate(
+        {
+            **_run(run_id).model_dump(),
+            "started_at": _LIST_T0 + timedelta(minutes=minutes),
+            **binding,
+        }
+    )
+
+
+def _seed_run_list(projection: ProductProjection) -> None:
+    for run in (
+        _listed_run("run-legacy", 0),
+        _listed_run("run-c1-a", 1, config_id="config-c", registry_version=1),
+        _listed_run("run-c1-b", 2, config_id="config-c", registry_version=1),
+        _listed_run("run-c2-a", 3, config_id="config-c", registry_version=2),
+        _listed_run("run-d1-a", 4, config_id="config-d", registry_version=1),
+    ):
+        projection.create_run(run)
+
+
+def _listed_ids(
+    projection: ProductProjection, filters: RunFilters, *, after: tuple[datetime, str] | None = None
+) -> list[str]:
+    return [run.run_id for run in projection.list_runs(filters, after=after).items]
+
+
+def test_run_list_is_newest_first_with_run_id_breaking_equal_start_times(
+    listing_provider: ProductProjection,
+) -> None:
+    for run_id, minutes in (("run-a", 0), ("run-b", 5), ("run-c", 5), ("run-d", 10)):
+        listing_provider.create_run(_listed_run(run_id, minutes))
+
+    assert _listed_ids(listing_provider, RunFilters()) == ["run-d", "run-c", "run-b", "run-a"]
+
+
+@pytest.mark.parametrize(
+    ("filters", "expected"),
+    [
+        (RunFilters(), ["run-d1-a", "run-c2-a", "run-c1-b", "run-c1-a", "run-legacy"]),
+        (RunFilters(config_id="config-c"), ["run-c2-a", "run-c1-b", "run-c1-a"]),
+        (RunFilters(config_id="config-c", registry_version=1), ["run-c1-b", "run-c1-a"]),
+        (RunFilters(config_id="config-unknown"), []),
+    ],
+    ids=["unfiltered-includes-legacy", "configuration", "configuration-version", "no-match"],
+)
+def test_run_list_filters_by_configuration_and_version(
+    listing_provider: ProductProjection, filters: RunFilters, expected: list[str]
+) -> None:
+    _seed_run_list(listing_provider)
+
+    assert _listed_ids(listing_provider, filters) == expected
+
+
+def test_run_filters_refuse_a_version_without_a_configuration() -> None:
+    with pytest.raises(ValidationError, match="registry_version requires config_id"):
+        RunFilters(registry_version=1)
+
+
+def test_run_list_after_key_excludes_the_key_and_every_newer_row(listing_provider: ProductProjection) -> None:
+    for run_id, minutes in (("run-a", 0), ("run-b", 5), ("run-c", 5), ("run-d", 10)):
+        listing_provider.create_run(_listed_run(run_id, minutes))
+    # The same instant as run-c's start, written at another offset: the store compares instants.
+    after = ((_LIST_T0 + timedelta(minutes=5)).astimezone(timezone(timedelta(hours=1))), "run-c")
+
+    assert _listed_ids(listing_provider, RunFilters(), after=after) == ["run-b", "run-a"]
+    _seed_run_list(listing_provider)
+    filtered = RunFilters(config_id="config-c", registry_version=1)
+    assert _listed_ids(listing_provider, filtered, after=(_LIST_T0 + timedelta(minutes=2), "run-c1-b")) == ["run-c1-a"]
+
+
+@pytest.mark.parametrize(("limit", "expected_more"), [(2, True), (4, True), (5, False), (6, False)])
+def test_run_list_respects_the_limit_and_reports_a_further_page(
+    listing_provider: ProductProjection, *, limit: int, expected_more: bool
+) -> None:
+    _seed_run_list(listing_provider)
+
+    page = listing_provider.list_runs(RunFilters(), limit=limit)
+
+    assert len(page.items) == min(limit, 5)
+    assert page.has_more is expected_more
+
+
+def test_run_list_items_omit_artifacts_and_executions_but_keep_every_other_field(
+    listing_provider: ProductProjection,
+) -> None:
+    listing_provider.create_run(_listed_run("run-001", 0, config_id="config-c", registry_version=1))
+    link = PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1)
+    _append_execution(listing_provider, "run-001", link)
+    listing_provider.record_audit(
+        AuditEvent(
+            event_id="audit-001",
+            run_id="run-001",
+            actor="operator@example.com",
+            operation="plan",
+            reason="review",
+            outcome="accepted",
+            created_at=_LIST_T0,
+        )
+    )
+    detail = listing_provider.lookup_run("run-001").value
+    assert detail is not None
+    assert detail.prefect_executions
+
+    (listed,) = listing_provider.list_runs(RunFilters()).items
+
+    assert listed == detail.model_copy(update={"artifact_refs": (), "prefect_executions": ()})
+    assert "audit-001" in listed.audit_links

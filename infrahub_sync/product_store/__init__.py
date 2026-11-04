@@ -14,6 +14,8 @@ from infrahub_sync.product_store.models import (
     MutationReceipt,
     PrefectExecutionLink,
     ProductRun,
+    RunFilters,
+    RunPage,
 )
 from infrahub_sync.product_store.store import (
     ArtifactUnavailableError,
@@ -57,7 +59,9 @@ __all__ = (
     "ProductProjection",
     "ProductRun",
     "ProductStoreProviderError",
+    "RunFilters",
     "RunNotFoundError",
+    "RunPage",
     "S3Client",
     "WriteAdmissionConflictError",
     "local_product_projection",
