@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from infrahub_sync.plan.writer import LAST_CHANGES_FILE_NAME, MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME
+from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME
 from infrahub_sync.product_store.bundle import (
     BUNDLE_MEDIA_TYPE,
     FINAL_CHECKPOINT_ARTIFACT_ID,
@@ -47,7 +47,6 @@ __all__ = [
 _BUNDLE_KIND = "run-bundle"
 _PLAN_MANIFEST_MEMBER = f"{PLAN_DIR_NAME}/{MANIFEST_FILE_NAME}"
 _PLAN_OPERATIONS_MEMBER = f"{PLAN_DIR_NAME}/{OPERATIONS_FILE_NAME}"
-_PLAN_LAST_CHANGES_MEMBER = f"{PLAN_DIR_NAME}/{LAST_CHANGES_FILE_NAME}"
 # The applied sidecar lives at the run directory's root, and a bundle member path is two
 # segments, so the checkpoint states which container it belongs to.
 FINAL_RUN_FILE_MEMBER = "final/run.json"
@@ -65,6 +64,18 @@ class CheckpointUnavailableError(RuntimeError):
         super().__init__(f"internal checkpoint {artifact_id!r} is unusable: {reason}")
         self.artifact_id = artifact_id
         self.reason = reason
+
+
+def _declared_members(manifest: PlanManifest) -> list[str]:
+    """The run-relative paths of the files the manifest declares beside itself and the operations.
+
+    The last-change file first, when the manifest records one, then each source snapshot.
+    Every path is the one the manifest records, so the checkpoint carries the files the
+    plan checksum covers and no path rebuilt from a constant.
+    """
+    members = [] if manifest.last_changes is None else [f"{PLAN_DIR_NAME}/{manifest.last_changes.path}"]
+    members.extend(record.path for record in manifest.source_snapshot)
+    return members
 
 
 def publish_plan_checkpoint(
@@ -86,10 +97,8 @@ def publish_plan_checkpoint(
         _PLAN_MANIFEST_MEMBER: (run_directory / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes(),
         _PLAN_OPERATIONS_MEMBER: (run_directory / PLAN_DIR_NAME / OPERATIONS_FILE_NAME).read_bytes(),
     }
-    if manifest.last_changes is not None:
-        members[_PLAN_LAST_CHANGES_MEMBER] = (run_directory / PLAN_DIR_NAME / LAST_CHANGES_FILE_NAME).read_bytes()
-    for record in manifest.source_snapshot:
-        members[record.path] = (run_directory / record.path).read_bytes()
+    for member in _declared_members(manifest):
+        members[member] = (run_directory / member).read_bytes()
     return projection.publish_artifact(
         run_id,
         artifact_id=PLAN_CHECKPOINT_ARTIFACT_ID,
