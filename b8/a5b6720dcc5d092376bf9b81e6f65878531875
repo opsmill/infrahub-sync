@@ -1,0 +1,21 @@
+tasks/dev.py
+  s_5af47e422ac3fa::t_d259815d852269 480-498,500
+tests/dev_stack/test_dev_tasks.py
+  s_5af47e422ac3fa::t_d4fe9241733fa2 191-204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b8a5b6720dcc5d092376bf9b81e6f65878531875",
+  "prompts": {},
+  "sessions": {
+    "s_5af47e422ac3fa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a22d1ed-b182-4832-b120-0eb989b94fab",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
