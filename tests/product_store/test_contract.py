@@ -67,9 +67,12 @@ EXPECTED_PUBLIC_NAMES = {
     "BaselineWriteback",
     "ConfigurationBaseline",
     "ConfigurationNotFoundError",
+    "ConfigurationPage",
     "ConfigurationSummary",
     "ConfigurationVersion",
     "ConfigurationVersionAllocationError",
+    "ConfigurationVersionPage",
+    "ConfigurationVersionSummary",
     "DBAPIConnection",
     "DuplicateArtifactError",
     "DuplicateConfigurationError",
@@ -87,6 +90,7 @@ EXPECTED_PUBLIC_NAMES = {
     "RunFilters",
     "RunNotFoundError",
     "RunPage",
+    "RunReference",
     "S3Client",
     "WriteAdmissionConflictError",
     "local_product_projection",
@@ -318,7 +322,7 @@ class _AlwaysConflictingConfigurationVersionStore(SQLiteRunStore):
     """Forces every configuration-version insert to lose the race, deterministically
     exhausting ``_CONFIGURATION_VERSION_ATTEMPTS`` without needing real concurrency."""
 
-    def _insert_configuration_version_row(self, cursor, version):  # noqa: ARG002, PLR6301
+    def _insert_configuration_version_row(self, cursor, version, **_registration: object):  # noqa: ARG002, PLR6301
         error = _FakeSQLiteIntegrityError("synthetic version race")
         error.sqlite_errorcode = 2067
         raise error
@@ -333,9 +337,9 @@ class _RoundCountingSQLiteStore(SQLiteRunStore):
         self.version_insert_rounds = local()
         super().__init__(database)
 
-    def _insert_configuration_version_row(self, cursor, version) -> None:
+    def _insert_configuration_version_row(self, cursor, version, **registration: str | None) -> None:
         self.version_insert_rounds.count = getattr(self.version_insert_rounds, "count", 0) + 1
-        super()._insert_configuration_version_row(cursor, version)
+        super()._insert_configuration_version_row(cursor, version, **registration)
 
 
 class _RoundCountingPostgreSQLRunStore(PostgreSQLRunStore):
@@ -345,9 +349,9 @@ class _RoundCountingPostgreSQLRunStore(PostgreSQLRunStore):
         self.version_insert_rounds = local()
         super().__init__(connect)
 
-    def _insert_configuration_version_row(self, cursor, version) -> None:
+    def _insert_configuration_version_row(self, cursor, version, **registration: str | None) -> None:
         self.version_insert_rounds.count = getattr(self.version_insert_rounds, "count", 0) + 1
-        super()._insert_configuration_version_row(cursor, version)
+        super()._insert_configuration_version_row(cursor, version, **registration)
 
 
 class _DeleteBeforeFinishSQLiteStore(SQLiteRunStore):
@@ -3831,6 +3835,8 @@ _ALLOWED_STORE_CONFIGURATION_METHODS = frozenset(
         "lookup_configuration_version",
         "list_configurations",
         "list_configuration_versions",
+        "list_configuration_page",
+        "list_configuration_version_page",
         "lookup_configuration_baseline",
     }
 )
@@ -3842,6 +3848,8 @@ _ALLOWED_PROJECTION_CONFIGURATION_METHODS = frozenset(
         "lookup_configuration_version",
         "list_configurations",
         "list_configuration_versions",
+        "list_configuration_page",
+        "list_configuration_version_page",
         "lookup_configuration_baseline",
     }
 )
@@ -3962,9 +3970,24 @@ def test_list_configurations_orders_by_created_at_then_config_id_on_sqlite_and_e
     listed = provider.list_configurations()
 
     assert listed == (
-        ConfigurationSummary(config_id="config-z", created_at=datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)),
-        ConfigurationSummary(config_id="config-a", created_at=datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
-        ConfigurationSummary(config_id="config-b", created_at=datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
+        ConfigurationSummary(
+            config_id="config-z",
+            created_at=datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc),
+            name=_configuration_package().configuration.name,
+            latest_version=1,
+        ),
+        ConfigurationSummary(
+            config_id="config-a",
+            created_at=datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc),
+            name=_configuration_package().configuration.name,
+            latest_version=1,
+        ),
+        ConfigurationSummary(
+            config_id="config-b",
+            created_at=datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc),
+            name=_configuration_package().configuration.name,
+            latest_version=1,
+        ),
     )
     assert provider.list_configurations() == listed
 
@@ -4534,7 +4557,7 @@ class _FakePostgreSQLCursor:
             raise
         return self
 
-    def _dispatch(self, operation: str, parameters: Sequence[Any]) -> tuple[tuple[Any, ...], ...]:  # noqa: PLR0911
+    def _dispatch(self, operation: str, parameters: Sequence[Any]) -> tuple[tuple[Any, ...], ...]:  # noqa: PLR0911, PLR0912
         connection = self._connection
         database = connection.database
         if match := _FAKE_CREATE_TABLE.match(operation):
@@ -4558,6 +4581,9 @@ class _FakePostgreSQLCursor:
             connection.pending_columns.setdefault(table, set()).add(column)
             return ()
         if operation.startswith("UPDATE mutation_receipts SET resource_kind"):
+            return ()
+        if operation.startswith("SELECT configurations.config_id, versions.declared_content"):
+            # The configuration-name fill reads stored packages; this catalog holds no rows.
             return ()
         if match := _FAKE_ALTER_DROP_NOT_NULL.match(operation):
             table, column = match.groups()
@@ -4655,8 +4681,10 @@ def test_postgresql_repeated_initialization_skips_completed_mutation_receipt_nul
     def connect() -> MagicMock:
         connection = MagicMock()
         # One catalog read per table, in migration order: product_runs, configuration_versions,
-        # configurations, prefect_executions, then the two nullability reads.
+        # configurations; the configuration-name fill's package read; prefect_executions; then
+        # the two nullability reads.
         connection.cursor.return_value.fetchall.side_effect = [
+            (),
             (),
             (),
             (),
@@ -4748,9 +4776,10 @@ def test_postgresql_initialization_refuses_a_malformed_column_catalog_row(
     would ever repair.
     """
     connection = MagicMock()
-    # Empty catalogs for product_runs, configuration_versions, configurations and
-    # prefect_executions, then the mutation_receipts nullability read under test.
-    connection.cursor.return_value.fetchall.side_effect = [(), (), (), (), catalog_rows]
+    # Empty catalogs for product_runs, configuration_versions and configurations, no package
+    # for the configuration-name fill, an empty prefect_executions catalog, then the
+    # mutation_receipts nullability read under test.
+    connection.cursor.return_value.fetchall.side_effect = [(), (), (), (), (), catalog_rows]
     connection.cursor.return_value.fetchone.return_value = (1,)
 
     with pytest.raises(product_store.ProductStoreProviderError):
@@ -5633,3 +5662,92 @@ def test_run_list_items_omit_artifacts_and_executions_but_keep_every_other_field
 
     assert listed == detail.model_copy(update={"artifact_refs": (), "prefect_executions": ()})
     assert "audit-001" in listed.audit_links
+
+
+# The configuration and version lists (US2): keyset paged, with each version's latest runs.
+
+
+def _phased_run(run_id: str, minutes: int, config_id: str, registry_version: int, phase: str) -> ProductRun:
+    return _listed_run(run_id, minutes, config_id=config_id, registry_version=registry_version).model_copy(
+        update={"phase": phase}
+    )
+
+
+def test_version_page_reads_each_versions_latest_run_and_latest_applied_run(
+    listing_provider: ProductProjection,
+) -> None:
+    first = listing_provider.create_configuration(_configuration_package(), registered_by="admin", secrets=())
+    config_id = first.config_id
+    for url in ("https://second.netbox.test", "https://third.netbox.test"):
+        listing_provider.add_configuration_version(config_id, _configuration_package(url=url))
+    other = listing_provider.create_configuration(_configuration_package())
+    for run in (
+        # Version 1: applied, then planned again later; equal start times break on run_id.
+        _phased_run("run-v1-plan", 0, config_id, 1, "planned"),
+        _phased_run("run-v1-apply-a", 1, config_id, 1, "applied"),
+        _phased_run("run-v1-apply-b", 1, config_id, 1, "applied"),
+        _phased_run("run-v1-replan", 2, config_id, 1, "planned"),
+        # Version 2: planned only. Version 3: never run.
+        _phased_run("run-v2-plan", 3, config_id, 2, "planned"),
+        # Another configuration's newer runs must not leak into this one's versions.
+        _phased_run("run-other-apply", 9, other.config_id, 1, "applied"),
+    ):
+        listing_provider.create_run(run)
+
+    page = listing_provider.list_configuration_version_page(config_id)
+
+    assert page.has_more is False
+    assert [
+        (
+            item.registry_version,
+            item.registered_by,
+            None if item.latest_run is None else (item.latest_run.run_id, item.latest_run.phase),
+            None if item.latest_applied_run is None else item.latest_applied_run.run_id,
+        )
+        for item in page.items
+    ] == [
+        (3, None, None, None),
+        (2, None, ("run-v2-plan", "planned"), None),
+        (1, "admin", ("run-v1-replan", "planned"), "run-v1-apply-b"),
+    ]
+    assert page.items[2].latest_run is not None
+    assert page.items[2].latest_run.started_at == _LIST_T0 + timedelta(minutes=2)
+
+
+def test_version_page_respects_the_limit_and_continues_after_a_version(listing_provider: ProductProjection) -> None:
+    config_id = listing_provider.create_configuration(_configuration_package()).config_id
+    for url in ("https://second.netbox.test", "https://third.netbox.test"):
+        listing_provider.add_configuration_version(config_id, _configuration_package(url=url))
+
+    first = listing_provider.list_configuration_version_page(config_id, limit=2)
+    rest = listing_provider.list_configuration_version_page(config_id, after=2, limit=2)
+
+    assert ([item.registry_version for item in first.items], first.has_more) == ([3, 2], True)
+    assert ([item.registry_version for item in rest.items], rest.has_more) == ([1], False)
+
+
+def test_configuration_page_is_newest_first_filters_by_name_and_continues_after_a_key(
+    listing_provider: ProductProjection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registrations = (
+        ("config-a", datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)),
+        ("config-c", datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
+        ("config-b", datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
+    )
+    ids = iter([config_id for config_id, _ in registrations])
+    clock = iter([created_at for _, created_at in registrations])
+    monkeypatch.setattr(product_store_store, "_generate_config_id", lambda: next(ids))
+    monkeypatch.setattr(product_store_store, "datetime", SimpleNamespace(now=lambda tz: next(clock)))  # noqa: ARG005
+    for _ in registrations:
+        listing_provider.create_configuration(_configuration_package())
+    monkeypatch.undo()
+
+    first = listing_provider.list_configuration_page(limit=2)
+    last = first.items[-1]
+    rest = listing_provider.list_configuration_page(after=(last.created_at, last.config_id), limit=2)
+
+    assert ([item.config_id for item in first.items], first.has_more) == (["config-c", "config-b"], True)
+    assert ([item.config_id for item in rest.items], rest.has_more) == (["config-a"], False)
+    assert {(item.name, item.latest_version) for item in first.items} == {("from-netbox", 1)}
+    assert len(listing_provider.list_configuration_page(name="from-netbox").items) == 3
+    assert listing_provider.list_configuration_page(name="another-name").items == ()

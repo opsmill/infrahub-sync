@@ -270,7 +270,7 @@ def _register_out_of_order(projection: ProductProjection, monkeypatch: pytest.Mo
         configs_service.register(package=package_data(), projection=projection)
 
 
-def test_list_configs_returns_every_configuration_in_created_at_then_config_id_order(
+def test_list_configs_returns_every_configuration_newest_first_with_a_config_id_tiebreak(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Every registered configuration exactly once, in the one declared deterministic order."""
@@ -279,17 +279,18 @@ def test_list_configs_returns_every_configuration_in_created_at_then_config_id_o
 
     listed = configs_service.list_configs(projection=projection)
 
-    assert [(summary.config_id, summary.created_at) for summary in listed] == [
-        ("config-z", datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)),
-        ("config-a", datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
+    assert [(summary.config_id, summary.created_at) for summary in listed.items] == [
         ("config-b", datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
+        ("config-a", datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
+        ("config-z", datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)),
     ]
+    assert listed.has_more is False
     # Order determinism: a re-read of the same store returns the identical sequence.
     assert configs_service.list_configs(projection=projection) == listed
 
 
 def test_get_config_and_list_versions_return_one_configurations_own_records(tmp_path: Path) -> None:
-    """The summary and the full ascending version lineage, scoped to the requested ID.
+    """The summary and the version lineage, newest first, scoped to the requested ID.
 
     A second, unrelated configuration is registered into the same store so an unscoped read
     would be caught leaking its rows.
@@ -314,10 +315,13 @@ def test_get_config_and_list_versions_return_one_configurations_own_records(tmp_
         projection=projection,
     )
 
-    assert summary == registered.configuration
-    assert versions == (registered.version, added.version)
-    assert [version.registry_version for version in versions] == [1, 2]
-    assert unrelated.version.config_id not in {version.config_id for version in versions}
+    # The registration response was read before version 2 existed; only ``latest_version`` moved.
+    assert summary == registered.configuration.model_copy(update={"latest_version": 2})
+    assert [(version.registry_version, version.package_checksum) for version in versions.items] == [
+        (2, added.version.package_checksum),
+        (1, registered.version.package_checksum),
+    ]
+    assert unrelated.version.config_id not in {version.config_id for version in versions.items}
 
 
 def test_get_version_on_a_missing_configuration_names_the_configuration_as_absent(tmp_path: Path) -> None:
@@ -1264,7 +1268,7 @@ def test_create_version_refuses_a_prebuilt_package_instance(tmp_path: Path, inst
         )
 
     versions = configs_service.list_versions(config_id=registered.configuration.config_id, projection=projection)
-    assert [version.registry_version for version in versions] == [1]
+    assert [version.registry_version for version in versions.items] == [1]
 
 
 def test_a_hostile_declared_content_override_cannot_reach_the_store(tmp_path: Path) -> None:
@@ -1697,3 +1701,98 @@ def test_exact_provider_errors_are_storage_but_unmarked_errors_are_internal(
         operation(_ProviderFailureProjection(ProductStoreProviderError(sqlstate="08006")))
     with pytest.raises(configs_service.ConfigsInternalError):
         operation(_ProviderFailureProjection(RuntimeError("unmarked product-store defect")))
+
+
+# Discoverable configurations (US2): who registered each version, and the configuration's name.
+
+
+def _renamed_package_data(name: str) -> dict[str, Any]:
+    data = package_data()
+    data["configuration"]["name"] = name
+    return data
+
+
+def test_registration_records_the_registering_actor_and_reason_on_each_version(tmp_path: Path) -> None:
+    projection = _store(tmp_path)
+
+    registered = configs_service.register(
+        package=package_data(), projection=projection, actor="admin@example.com", reason="first import"
+    )
+    config_id = registered.configuration.config_id
+    configs_service.create_version(
+        config_id=config_id, package=_renamed_package_data("renamed"), projection=projection, actor="operator"
+    )
+
+    page = configs_service.list_versions(config_id=config_id, projection=projection)
+
+    assert [(item.registry_version, item.registered_by, item.registration_reason) for item in page.items] == [
+        (2, "operator", None),
+        (1, "admin@example.com", "first import"),
+    ]
+
+
+def test_configuration_name_follows_the_latest_registered_version(tmp_path: Path) -> None:
+    projection = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), projection=projection)
+    config_id = registered.configuration.config_id
+
+    assert (registered.configuration.name, registered.configuration.latest_version) == ("from-netbox", 1)
+
+    configs_service.create_version(config_id=config_id, package=_renamed_package_data("renamed"), projection=projection)
+    # Submitting version 1's package again returns version 1 and creates nothing, so the
+    # latest version, and therefore the name, does not change.
+    replayed = configs_service.create_version(config_id=config_id, package=package_data(), projection=projection)
+
+    summary = configs_service.get_config(config_id=config_id, projection=projection)
+    assert replayed.created is False
+    assert (summary.name, summary.latest_version) == ("renamed", 2)
+
+
+def test_start_up_fills_a_missing_name_from_the_latest_version_and_leaves_an_unnamed_package_null(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "product-cache"
+    root.mkdir()
+    projection = local_product_projection(root)
+    registered = configs_service.register(package=package_data(), projection=projection)
+    config_id = registered.configuration.config_id
+    connection = sqlite3.connect(root / "product-records.sqlite3")
+    try:
+        # A configuration registered before names were stored, and one whose package has no name.
+        connection.execute("UPDATE configurations SET name = NULL WHERE config_id = ?", (config_id,))
+        connection.execute(
+            "INSERT INTO configurations (config_id, created_at) VALUES (?, ?)",
+            ("config-unnamed", "2026-11-04T09:00:00+00:00"),
+        )
+        connection.execute(
+            "INSERT INTO configuration_versions (config_id, registry_version, package_checksum, declared_content, "
+            "created_at) VALUES (?, ?, ?, ?, ?)",
+            ("config-unnamed", 1, "b" * 64, json.dumps({"format_version": 1}), "2026-11-04T09:00:00+00:00"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    # Two start-ups: the second finds nothing left to fill and changes nothing.
+    for _start in range(2):
+        restarted = local_product_projection(root)
+        named = restarted.lookup_configuration(config_id).value
+        unnamed = restarted.lookup_configuration("config-unnamed").value
+        assert named is not None
+        assert unnamed is not None
+        assert named.name == "from-netbox"
+        assert unnamed.name is None
+
+
+def test_two_configurations_may_share_a_name_and_the_name_filter_returns_both(tmp_path: Path) -> None:
+    projection = _store(tmp_path)
+    first = configs_service.register(package=package_data(), projection=projection)
+    second = configs_service.register(package=package_data(), projection=projection)
+    configs_service.register(package=_renamed_package_data("other"), projection=projection)
+
+    page = configs_service.list_configs(projection=projection, name="from-netbox")
+
+    assert first.configuration.config_id != second.configuration.config_id
+    assert {item.config_id for item in page.items} == {first.configuration.config_id, second.configuration.config_id}
+    assert all(item.name == "from-netbox" for item in page.items)
+    assert page.has_more is False

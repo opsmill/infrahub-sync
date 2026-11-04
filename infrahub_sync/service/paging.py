@@ -19,6 +19,7 @@ import binascii
 import hashlib
 import json
 import re
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeGuard
 
 if TYPE_CHECKING:
@@ -101,6 +102,36 @@ def validate_limit(value: int | None) -> int:
         msg = f"limit must be an integer from {MIN_LIMIT} to {MAX_LIMIT}"
         raise ValueError(msg)
     return value
+
+
+def timestamp_key(key: SortKey) -> tuple[datetime, str]:
+    """Return the ``(timestamp, identifier)`` key a run or configuration cursor holds.
+
+    Raises:
+        InvalidCursorError: the key is not a timezone-aware ISO 8601 timestamp and a
+            non-empty identifier.
+    """
+    if not isinstance(key, tuple) or len(key) != 2 or not all(isinstance(part, str) for part in key):
+        raise InvalidCursorError
+    timestamp, identifier = key
+    try:
+        parsed = datetime.fromisoformat(str(timestamp))
+    except ValueError:
+        raise InvalidCursorError from None
+    if parsed.utcoffset() is None or not identifier:
+        raise InvalidCursorError
+    return parsed, str(identifier)
+
+
+def version_key(key: SortKey) -> int:
+    """Return the ``registry_version`` a version-list cursor holds.
+
+    Raises:
+        InvalidCursorError: the key is not a positive integer.
+    """
+    if not isinstance(key, int) or key < 1:
+        raise InvalidCursorError
+    return key
 
 
 def _sort_key(value: object) -> SortKey:

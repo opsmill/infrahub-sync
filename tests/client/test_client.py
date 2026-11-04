@@ -141,7 +141,7 @@ def test_compatibility_precedes_auth_and_is_cached() -> None:
         requests.append(request)
         if request.url.path == "/version":
             return httpx.Response(200, json=_version(future="readable"))
-        return httpx.Response(200, json=[])
+        return httpx.Response(200, json={"items": [], "next_cursor": None})
 
     client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
     assert client.list_configs() == ()
@@ -206,9 +206,9 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
         ),
         ("POST", "/configs"): (201, {"configuration": config, "version": version}),
         ("POST", "/configs/cfg/versions"): (200, {"version": version, "created": False}),
-        ("GET", "/configs"): (200, [config]),
+        ("GET", "/configs"): (200, {"items": [config], "next_cursor": None}),
         ("GET", "/configs/cfg"): (200, config),
-        ("GET", "/configs/cfg/versions"): (200, [version]),
+        ("GET", "/configs/cfg/versions"): (200, {"items": [version], "next_cursor": None}),
         ("GET", "/configs/cfg/versions/1"): (200, version),
         ("POST", "/configs/cfg/versions/1/validate?offset=2&limit=3"): (
             200,

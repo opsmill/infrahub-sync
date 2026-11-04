@@ -50,7 +50,7 @@ from .models import (
     public_run_resource,
 )
 from .orchestration import Observation, PoolStatus, ServiceOrchestration, normalized_pool_status
-from .paging import FilterValue, InvalidCursorError, SortKey, decode_cursor, encode_cursor, validate_limit
+from .paging import FilterValue, decode_cursor, encode_cursor, timestamp_key, validate_limit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -60,24 +60,6 @@ if TYPE_CHECKING:
     from .auth import Principal
 
 PLAN_ARTIFACT_ID = "plan-review"
-
-
-def _run_list_key(key: SortKey) -> tuple[datetime, str]:
-    """Return the ``(started_at, run_id)`` key a run-list cursor holds.
-
-    Raises:
-        InvalidCursorError: the key is not a timezone-aware ISO 8601 start time and a run ID.
-    """
-    if not isinstance(key, tuple) or len(key) != 2 or not all(isinstance(part, str) for part in key):
-        raise InvalidCursorError
-    started_at, run_id = key
-    try:
-        parsed = datetime.fromisoformat(str(started_at))
-    except ValueError:
-        raise InvalidCursorError from None
-    if parsed.utcoffset() is None or not run_id:
-        raise InvalidCursorError
-    return parsed, str(run_id)
 
 
 def _reservation_outcome(receipt: MutationReceipt) -> str:
@@ -648,7 +630,7 @@ class RunService:
         if config_id is not None:
             self._require_configuration_filter(config_id, registry_version)
         filters: dict[str, FilterValue] = {"config_id": config_id, "registry_version": registry_version}
-        after = None if cursor is None else _run_list_key(decode_cursor(cursor, filters))
+        after = None if cursor is None else timestamp_key(decode_cursor(cursor, filters))
         page = self._projection.list_runs(
             RunFilters(config_id=config_id, registry_version=registry_version), after=after, limit=page_size
         )

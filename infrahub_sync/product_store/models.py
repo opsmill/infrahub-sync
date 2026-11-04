@@ -363,6 +363,12 @@ class ConfigurationSummary(BaseModel):
 
     config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
     created_at: datetime
+    # ``configuration.name`` of the latest version's package. Not unique; ``None`` when that
+    # package declares no name.
+    name: str | None = None
+    # The highest registered ``registry_version``. ``None`` only for a summary built without
+    # reading the versions.
+    latest_version: int | None = Field(default=None, ge=1)
 
     @field_validator("created_at")
     @classmethod
@@ -371,6 +377,69 @@ class ConfigurationSummary(BaseModel):
             msg = "configuration timestamps must include a timezone"
             raise ValueError(msg)
         return value
+
+
+class ConfigurationPage(BaseModel):
+    """One page of configurations, newest first."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    items: tuple[ConfigurationSummary, ...]
+    # Whether more configurations match after the last item; the store reads one row past the page.
+    has_more: bool
+
+
+class RunReference(BaseModel):
+    """The identity and state of one run, as a configuration version's latest run shows it."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    phase: str = Field(min_length=1)
+    outcome: str | None = None
+    started_at: datetime
+
+    @field_validator("started_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            msg = "run timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
+
+
+class ConfigurationVersionSummary(BaseModel):
+    """One configuration version without its package, with its latest run and latest applied run."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    registry_version: int = Field(ge=1)
+    package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    created_at: datetime
+    # The actor and reason of the registration request; ``None`` for versions registered
+    # before the store recorded them.
+    registered_by: str | None = None
+    registration_reason: str | None = None
+    latest_run: RunReference | None = None
+    latest_applied_run: RunReference | None = None
+
+    @field_validator("created_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            msg = "configuration-version timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
+
+
+class ConfigurationVersionPage(BaseModel):
+    """One page of a configuration's versions, newest version first."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    items: tuple[ConfigurationVersionSummary, ...]
+    has_more: bool
 
 
 class ConfigurationVersion(BaseModel):

@@ -33,6 +33,7 @@ from .models import (
     ConfigMutationRequest,
     ConfigurationSummaryResource,
     ConfigurationVersionResource,
+    ConfigurationVersionSummaryResource,
     CreateRunRequest,
     ErrorEnvelope,
     OrchestrationSummary,
@@ -195,7 +196,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         )
 
     def list_configs(self) -> tuple[ConfigurationSummaryResource, ...]:
-        """Return the complete ordered configuration list."""
+        """Return the first page of configurations, newest first."""
 
         return self._request_list("list_configs", "/configs", ConfigurationSummaryResource, config_route=True)
 
@@ -212,12 +213,15 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             config_route=True,
         )
 
-    def list_config_versions(self, config_id: str) -> tuple[ConfigurationVersionResource, ...]:
-        """Return the complete ordered version list for a configuration."""
+    def list_config_versions(self, config_id: str) -> tuple[ConfigurationVersionSummaryResource, ...]:
+        """Return the first page of a configuration's version summaries, newest version first."""
 
         config_id = self._identifier(config_id, "config_id")
         return self._request_list(
-            "list_config_versions", f"/configs/{config_id}/versions", ConfigurationVersionResource, config_route=True
+            "list_config_versions",
+            f"/configs/{config_id}/versions",
+            ConfigurationVersionSummaryResource,
+            config_route=True,
         )
 
     def get_config_version(self, config_id: str, registry_version: int) -> ConfigurationVersionResource:
@@ -470,10 +474,12 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         if response.status_code != 200:
             self._raise_response_error(response, operation, config_route=config_route)
         payload = self._json(response, operation)
-        if not isinstance(payload, list):
+        # A list answers with a page envelope; only its items are read here.
+        items = payload.get("items") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
             raise ProtocolError(operation, response.status_code)
         try:
-            return tuple(model.model_validate(item) for item in payload)
+            return tuple(model.model_validate(item) for item in items)
         except (ValidationError, TypeError, ValueError):
             raise ProtocolError(operation, response.status_code) from None
 

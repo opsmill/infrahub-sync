@@ -395,6 +395,11 @@ class ConfigurationSummaryResource(_ResourceModel):
 
     config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
     created_at: datetime
+    # ``configuration.name`` of the latest version's package; names are not unique.
+    name: str | None = None
+    # The highest registered version. The server always sends it; ``None`` only when reading
+    # a server that predates the field.
+    latest_version: int | None = Field(default=None, ge=1)
 
     @field_validator("created_at")
     @classmethod
@@ -402,6 +407,60 @@ class ConfigurationSummaryResource(_ResourceModel):
         checked = _timezone(value, "configuration timestamps must include a timezone")
         assert checked is not None
         return checked
+
+
+class ConfigurationPage(_ResourceModel):
+    """One page of the configuration list, newest first; ``next_cursor`` is ``None`` on the last page."""
+
+    items: tuple[ConfigurationSummaryResource, ...]
+    next_cursor: str | None = None
+
+
+class RunReference(_ResourceModel):
+    """The identity and state of one run, as a configuration version's latest run shows it."""
+
+    run_id: str
+    phase: str
+    outcome: str | None = None
+    started_at: datetime
+
+    @field_validator("started_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, "run timestamps must include a timezone")
+        assert checked is not None
+        return checked
+
+
+class ConfigurationVersionSummaryResource(_ResourceModel):
+    """One configuration version without its package, with its latest run and latest applied run.
+
+    ``GET /configs/{config_id}/versions/{registry_version}`` returns the full version.
+    """
+
+    config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    registry_version: int = Field(ge=1)
+    package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    created_at: datetime
+    # ``None`` for versions registered before the server recorded who registered them and why.
+    registered_by: str | None = None
+    registration_reason: str | None = None
+    latest_run: RunReference | None = None
+    latest_applied_run: RunReference | None = None
+
+    @field_validator("created_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, "configuration-version timestamps must include a timezone")
+        assert checked is not None
+        return checked
+
+
+class ConfigurationVersionPage(_ResourceModel):
+    """One page of a configuration's versions, newest version first."""
+
+    items: tuple[ConfigurationVersionSummaryResource, ...]
+    next_cursor: str | None = None
 
 
 class ConfigurationVersionResource(_ResourceModel):

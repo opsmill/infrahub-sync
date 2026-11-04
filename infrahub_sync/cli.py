@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from infrahub_sync.client.models import (
         ConfigurationSummaryResource,
         ConfigurationVersionResource,
+        ConfigurationVersionSummaryResource,
         PlanOperationResource,
     )
 
@@ -286,6 +287,17 @@ def _echo_config_summary(resource: ConfigurationSummaryResource) -> None:
     )
 
 
+def _echo_config_version_summary(resource: ConfigurationVersionSummaryResource) -> None:
+    _echo_fields(
+        (
+            ("config_id", resource.config_id),
+            ("registry_version", resource.registry_version),
+            ("package_checksum", resource.package_checksum),
+            ("created_at", resource.created_at.isoformat()),
+        )
+    )
+
+
 def _echo_config_version(resource: ConfigurationVersionResource) -> None:
     _echo_fields(
         (
@@ -407,7 +419,7 @@ def configs_versions(ctx: typer.Context, config_id: str = typer.Argument(...)) -
         for index, resource in enumerate(_client(ctx).list_config_versions(config_id)):
             if index:
                 typer.echo("")
-            _echo_config_version(resource)
+            _echo_config_version_summary(resource)
 
 
 @configs_app.command("validate")

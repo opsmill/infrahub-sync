@@ -229,7 +229,7 @@ def test_the_python_client_drives_the_registry_and_both_public_resources(  # noq
         shown = client.get_config(config_id)
         assert shown.config_id == config_id
         versions = client.list_config_versions(config_id)
-        assert [entry.registry_version for entry in versions] == [1, 2]
+        assert [entry.registry_version for entry in versions] == [2, 1]
         fetched = client.get_config_version(config_id, 1)
         assert fetched == registered.version
 
@@ -299,10 +299,10 @@ def test_raw_http_drives_the_registry_and_records_the_transcript(
         assert revised.status_code == 201, revised.text
         assert revised.json()["version"]["registry_version"] == 2
 
-        assert config_id in {entry["config_id"] for entry in client.get("/configs").json()}
+        assert config_id in {entry["config_id"] for entry in client.get("/configs").json()["items"]}
         assert client.get(f"/configs/{config_id}").json()["config_id"] == config_id
-        versions = client.get(f"/configs/{config_id}/versions").json()
-        assert [entry["registry_version"] for entry in versions] == [1, 2]
+        versions = client.get(f"/configs/{config_id}/versions").json()["items"]
+        assert [entry["registry_version"] for entry in versions] == [2, 1]
         assert client.get(f"/configs/{config_id}/versions/1").json() == registered.json()["version"]
 
         validated = client.post(f"/configs/{config_id}/versions/1/validate")
