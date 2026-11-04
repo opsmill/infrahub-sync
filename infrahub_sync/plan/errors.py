@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from infrahub_sync.client.models import SCHEMA_CHANGED_NEXT_ACTION
+
 if TYPE_CHECKING:
     from infrahub_sync.plan.models import ApplyRecord
 
@@ -399,7 +401,7 @@ class PlanSchemaChangedError(PlanArtifactError):
     """
 
     # The text the CLI prints as the failed apply's `hint:`.
-    next_action = "create and review a new plan before applying again"
+    next_action = SCHEMA_CHANGED_NEXT_ACTION
 
 
 class ReviewedPayloadFieldMissingError(PlanArtifactError):

@@ -16,6 +16,24 @@ TerminalOutcome = Literal["succeeded", "failed", "cancelled", "abandoned", "ambi
 # longest the CLI prints of each.
 MAX_FAILURE_CAUSE_TEXT = 1000
 
+# The fixed next actions the service records and the CLI prints as `hint:`. Defined here because
+# the CLI and the service both import this module, and the CLI uses them for a record an older
+# Sync API wrote without a `next_action`. Fixed text, so a record never quotes the manifest
+# values a damaged or hand-edited artifact may hold.
+SCHEMA_CHANGED_NEXT_ACTION = "create and review a new plan before applying again"
+
+# The recovery signal a refused registered plan carries.
+RecoveryAction = Literal["rebuild", "compatible_version"]
+
+# The next action for each recovery signal.
+RECOVERY_NEXT_ACTIONS: dict[RecoveryAction, str] = {
+    "rebuild": "re-run diff for this sync, review the new plan, then apply that run",
+    "compatible_version": (
+        "re-run diff with this version and review the new plan, "
+        "or apply the reviewed plan with the version that wrote it"
+    ),
+}
+
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 _LEGAL_EXECUTION_VERDICTS = {
     ("completed", "succeeded"),

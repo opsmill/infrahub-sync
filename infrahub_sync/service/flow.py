@@ -21,6 +21,7 @@ from prefect.client.schemas.objects import WorkerStatus
 from prefect.exceptions import MissingContextError, ObjectNotFound
 from prefect.runtime import flow_run as current_flow_run
 
+from infrahub_sync.client.models import RECOVERY_NEXT_ACTIONS, RecoveryAction
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
 from infrahub_sync.configuration.runtime import resolve_runtime_instance
 from infrahub_sync.configuration.storage import (
@@ -45,7 +46,7 @@ from infrahub_sync.orchestration.flow import (
     RunLoggerBridge,
 )
 from infrahub_sync.plan.config_version import resolve_config_version
-from infrahub_sync.plan.errors import PlanSchemaChangedError
+from infrahub_sync.plan.errors import PlanSchemaChangedError, PlanVerificationError
 from infrahub_sync.plan.models import ApplyRecord, PlanManifest
 from infrahub_sync.plan.ownership import ProvenWriteOwnership, WriteDispatchTracker
 from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
@@ -62,7 +63,7 @@ from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, RuntimeModel
 
 from .apply_guard import ApplyGuard, hold_apply_guard
 from .checkpoints import publish_final_checkpoint, publish_plan_checkpoint, rehydrate_plan_checkpoint
-from .failure_cause import RecoveryAction, RegisteredPlanVerificationError, operator_cause
+from .failure_cause import operator_cause
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME, run_name
@@ -100,6 +101,24 @@ _NO_CONFIGURATION_DIRECTORY = ""
 # The stages the managed write scope covers. A read stage has nothing to be uncertain
 # about, so it keeps its own deliberate handling where the two differ.
 _WRITE_STAGES = ("apply", "sync")
+
+
+class RegisteredPlanVerificationError(PlanVerificationError, ValueError):
+    """A managed plan refusal with a fixed, safe recovery signal for the CLI.
+
+    `next_action` is the fixed text for `recovery_action`. Without a recovery signal it is
+    `guidance`: each failed check's name and its fixed next action, the text the message is
+    built from, which echoes no manifest value.
+    """
+
+    def __init__(self, message: str, recovery_action: RecoveryAction | None, *, guidance: str) -> None:
+        super().__init__(
+            message, next_action=guidance if recovery_action is None else RECOVERY_NEXT_ACTIONS[recovery_action]
+        )
+        self.recovery_action = recovery_action
+        # The message already carries the guidance, so the exception's text stays the message
+        # alone rather than the base class's message followed by its next action.
+        self.args = (message,)
 
 
 def _raise_writeback_refused() -> None:

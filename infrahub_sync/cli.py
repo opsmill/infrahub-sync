@@ -37,7 +37,11 @@ from infrahub_sync.client import (
     TransportError,
     ValidationReportResource,
 )
-from infrahub_sync.client.models import MAX_FAILURE_CAUSE_TEXT
+from infrahub_sync.client.models import (
+    MAX_FAILURE_CAUSE_TEXT,
+    RECOVERY_NEXT_ACTIONS,
+    SCHEMA_CHANGED_NEXT_ACTION,
+)
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 
 if TYPE_CHECKING:
@@ -48,6 +52,7 @@ if TYPE_CHECKING:
         ConfigurationVersionResource,
         PlanLastChangeResource,
         PlanOperationResource,
+        RecoveryAction,
     )
 
 DEFAULT_WAIT_TIMEOUT = 30 * 60.0
@@ -646,18 +651,15 @@ def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
         return
     # A record written before the service recorded every next action (an older Sync API)
     # carries only the error type and, for a refused registered plan, its recovery signal.
+    hint: str | None = None
     if error_type == "PlanSchemaChangedError":
-        typer.echo("hint: create and review a new plan before applying again", err=True)
+        hint = SCHEMA_CHANGED_NEXT_ACTION
     elif error_type == "RegisteredPlanVerificationError":
         recovery_action = failure.get("recovery_action")
-        if recovery_action == "rebuild":
-            typer.echo("hint: re-run diff for this sync, review the new plan, then apply that run", err=True)
-        elif recovery_action == "compatible_version":
-            typer.echo(
-                "hint: re-run diff with this version and review the new plan, "
-                "or apply the reviewed plan with the version that wrote it",
-                err=True,
-            )
+        if isinstance(recovery_action, str):
+            hint = RECOVERY_NEXT_ACTIONS.get(cast("RecoveryAction", recovery_action))
+    if hint is not None:
+        typer.echo(f"hint: {hint}", err=True)
 
 
 def _admit_run(

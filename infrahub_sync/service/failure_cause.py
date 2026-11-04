@@ -10,7 +10,7 @@ server message `InfrahubErrorClassification.describe` quotes.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from infrahub_sync.client.models import MAX_FAILURE_CAUSE_TEXT
 from infrahub_sync.execution import redact
@@ -19,38 +19,6 @@ from infrahub_sync.plan.errors import LINEAGE_REFUSALS, PlanArtifactError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-RecoveryAction = Literal["rebuild", "compatible_version"]
-
-# The next action for each recovery signal a refused registered plan carries. Fixed text, so the
-# record never quotes the manifest values a damaged or hand-edited artifact may hold.
-_RECOVERY_NEXT_ACTIONS: dict[RecoveryAction, str] = {
-    "rebuild": "re-run diff for this sync, review the new plan, then apply that run",
-    "compatible_version": (
-        "re-run diff with this version and review the new plan, "
-        "or apply the reviewed plan with the version that wrote it"
-    ),
-}
-
-
-class RegisteredPlanVerificationError(ValueError):
-    """A managed plan refusal with a fixed, safe recovery signal for the CLI.
-
-    `next_action` is the fixed text for `recovery_action`. Without a recovery signal it is
-    `guidance`: each failed check's name and its fixed next action, the text the message is
-    built from, which echoes no manifest value.
-    """
-
-    def __init__(self, message: str, recovery_action: RecoveryAction | None, *, guidance: str) -> None:
-        super().__init__(message)
-        self.recovery_action = recovery_action
-        self.next_action = guidance if recovery_action is None else _RECOVERY_NEXT_ACTIONS[recovery_action]
-
-
-# The errors whose `next_action` this repository writes, beside the lineage refusals that
-# `operator_cause` returns for first. Only their next action is recorded: whether a message is
-# safe to quote is decided by `LINEAGE_REFUSALS` alone.
-_HINTED_ERRORS = (PlanArtifactError, RegisteredPlanVerificationError)
 
 
 def _recordable(text: str, secrets: Sequence[str]) -> str:
@@ -69,7 +37,7 @@ def operator_cause(exc: BaseException, secrets: Sequence[str]) -> dict[str, Any]
       `next_action`. This repository writes those messages, and they
       name settings, kinds, node names, account names and ids only.
     - Otherwise, the first link that carries a non-empty `next_action` this repository writes
-      (a `PlanArtifactError` or a `RegisteredPlanVerificationError`) records that
+      (a `PlanArtifactError`) records that
       `next_action`, and never its message.
 
     The search for a next action follows only the explicit `raise ... from` links, never an
@@ -94,7 +62,7 @@ def operator_cause(exc: BaseException, secrets: Sequence[str]) -> dict[str, Any]
             }
     recorded: dict[str, Any] = {}
     next_action = next(
-        (link.next_action for link in links if isinstance(link, _HINTED_ERRORS) and link.next_action), ""
+        (link.next_action for link in links if isinstance(link, PlanArtifactError) and link.next_action), ""
     )
     if next_action:
         recorded["next_action"] = _recordable(next_action, secrets)
