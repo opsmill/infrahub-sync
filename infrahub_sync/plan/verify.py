@@ -61,9 +61,9 @@ if TYPE_CHECKING:
 # operator knows what was and was not looked at (AD053).
 GATED_CHECKS: tuple[VerificationCheck, ...] = ("run_binding", "plan_checksum", "source_snapshot", "config_version")
 
-RE_PLAN_NEXT_ACTION = "Re-run `diff` for this sync to rebuild the plan artifact, then apply that run."
+RE_PLAN_NEXT_ACTION = "Re-run `plan` for this sync to rebuild the plan artifact, then apply that run."
 UNSUPPORTED_FORMAT_NEXT_ACTION = (
-    "Re-run `diff` with this version of infrahub-sync to rebuild the artifact, "
+    "Re-run `plan` with this version of infrahub-sync to rebuild the artifact, "
     "or apply it with the version that wrote it."
 )
 
@@ -172,7 +172,7 @@ def _run_binding_failures(run_id: str, mapping: dict[str, Any]) -> list[Verifica
             found=repr(recorded),
             next_action=(
                 "The plan artifact in this run directory was written by a different run, so it is "
-                "not this run's plan. Apply the run that produced it, or re-run `diff` for this sync."
+                "not this run's plan. Apply the run that produced it, or re-run `plan` for this sync."
             ),
         )
     ]
@@ -397,7 +397,7 @@ def _write_surface_failures(run_id: str, write_surface_missing_on: str | None) -
             found=f"adapter {write_surface_missing_on!r} does not implement it",
             next_action=(
                 f"The destination adapter {write_surface_missing_on!r} cannot apply a saved plan. "
-                f"Use `infrahub-sync diff` to review changes without writing, or choose a destination "
+                f"Use `infrahub-sync plan` to review changes without writing, or choose a destination "
                 f"whose adapter implements the planned-write surface before running `sync` or `apply`."
             ),
         )
@@ -450,7 +450,7 @@ def destination_binding_failure(
         expected=f"url {recorded_binding.url!r}, branch {recorded_binding.branch!r}",
         found=f"url {live.url!r}, branch {live.branch!r}",
         next_action=(
-            "Re-run `diff` against this destination to rebuild the plan artifact, or pass "
+            "Re-run `plan` against this destination to rebuild the plan artifact, or pass "
             "`--allow-destination-change` to deliberately apply it across environments."
         ),
     )

@@ -83,20 +83,20 @@ class PlanFormatV1Error(PlanArtifactError):
     often. The remedy is the same for all three, which is why they are one class.
     """
 
-    next_action = "Re-run `diff` for this sync to rebuild the plan artifact in the current format."
+    next_action = "Re-run `plan` for this sync to rebuild the plan artifact in the current format."
 
 
 class PlanArtifactTornError(PlanArtifactError):
     """The artifact is present but incomplete, inconsistent, or unreadable as a record set."""
 
-    next_action = "Re-run `diff` for this sync to rebuild the plan artifact; the partial one cannot be repaired."
+    next_action = "Re-run `plan` for this sync to rebuild the plan artifact; the partial one cannot be repaired."
 
 
 class PlanFormatVersionError(PlanArtifactError):
     """The manifest declares a `format_version` this version of the tool does not support."""
 
     next_action = (
-        "Re-run `diff` for this sync to rebuild the plan artifact with this version of "
+        "Re-run `plan` for this sync to rebuild the plan artifact with this version of "
         "infrahub-sync, or apply it with the version that wrote it."
     )
 
@@ -113,7 +113,7 @@ class PlanFormatApplyUnsupportedError(PlanArtifactError):
     """
 
     next_action = (
-        "Re-run `diff` for this sync to produce a plan in the current format, then review and apply "
+        "Re-run `plan` for this sync to produce a plan in the current format, then review and apply "
         "that plan. The destination was not touched."
     )
 
@@ -127,7 +127,7 @@ class MissingDestinationIdError(PlanArtifactError):
     """
 
     next_action = (
-        "Re-run `diff` with a full destination extract so the destination objects carry their ids, and "
+        "Re-run `plan` with a full destination extract so the destination objects carry their ids, and "
         "check that the destination load populates `local_id` for this kind."
     )
 
@@ -158,7 +158,9 @@ class UnknownRunIdentifierError(PlanArtifactError):
 
     next_action = "Re-run naming one of the run identifiers listed above."
 
-    NO_RUNS_NEXT_ACTION = "Run `infrahub-sync diff --name {sync_name}` for this sync to produce a plan first."
+    NO_RUNS_NEXT_ACTION = (
+        "Run `infrahub-sync plan --config {sync_name} --version VERSION` for this sync to produce a plan first."
+    )
 
     @classmethod
     def no_runs(cls, message: str, *, sync_name: str) -> UnknownRunIdentifierError:
@@ -181,9 +183,9 @@ class PlanGenerationExistsError(PlanArtifactError):
     """
 
     next_action = (
-        "Re-run `diff` without `--run-id` so the new plan is written under a fresh run id. To use the "
+        "Re-run `plan` so the new plan is written under a fresh run id. To use the "
         "existing plan instead, review it with `runs plan <run-id>` or apply it with "
-        "`apply --run-id <run-id>`."
+        "`apply <run-id>`."
     )
 
 
@@ -225,7 +227,7 @@ class UnsupportedOperationActionError(PlanArtifactError):
     """An operation record's `action` falls outside the closed action vocabulary."""
 
     next_action = (
-        "Re-run `diff` for this sync to rebuild the plan artifact with this version of infrahub-sync, "
+        "Re-run `plan` for this sync to rebuild the plan artifact with this version of infrahub-sync, "
         "which is the only version that can be relied on to interpret it."
     )
 
@@ -340,7 +342,7 @@ class DestinationIdentityCollisionError(PlanArtifactError):
 
     next_action = (
         "Correct the schema mapping so each source object projects onto its own destination identity — "
-        "usually by mapping the attribute that distinguishes them — then re-run `diff`."
+        "usually by mapping the attribute that distinguishes them — then re-run `plan`."
     )
 
 
@@ -363,7 +365,7 @@ class StaleDestinationIdError(PlanArtifactError):
     wrote = False
 
     next_action = (
-        "Re-run `diff` for this sync to record the destination's current ids, then review and apply the "
+        "Re-run `plan` for this sync to record the destination's current ids, then review and apply the "
         "new plan. This operation wrote nothing; any operation applied before it stays written."
     )
 
@@ -377,7 +379,7 @@ class NullRelationshipValueError(PlanArtifactError):
 
     next_action = (
         "Correct the mapping so the mandatory relationship resolves to a peer identity, then re-run "
-        "`diff` and apply the new plan."
+        "`plan` and apply the new plan."
     )
 
 
@@ -428,7 +430,7 @@ class OperationApplyFailedError(PlanArtifactError):
     next_action = (
         "Nothing was rolled back: the operations applied before this one stay written, and this one "
         "may have written part of its own change. Resolve the underlying error at the destination, "
-        "then re-run `diff` and apply the new plan — re-applying an operation that already succeeded, "
+        "then re-run `plan` and apply the new plan — re-applying an operation that already succeeded, "
         "in whole or in part, converges rather than duplicating."
     )
 
@@ -439,7 +441,7 @@ class OperationApplyFailedError(PlanArtifactError):
     UNIQUENESS_NEXT_ACTION = (
         "Nothing was rolled back: the operations applied before this one stay written. The destination "
         "already holds an object this one conflicts with, so re-applying the same plan is refused the "
-        "same way — reconcile that object, or re-run `diff` to derive a plan against the destination as "
+        "same way — reconcile that object, or re-run `plan` to derive a plan against the destination as "
         "it now is, and apply that."
     )
 
@@ -449,7 +451,7 @@ class OperationApplyFailedError(PlanArtifactError):
     NOT_WRITTEN_NEXT_ACTION = (
         "Nothing was rolled back and this operation wrote nothing: the operations applied before it "
         "stay written, and the destination is otherwise as it was. Resolve the underlying error, then "
-        "re-run `diff` and apply the new plan."
+        "re-run `plan` and apply the new plan."
     )
 
     def __init__(self, message: str, *, apply_record: ApplyRecord, next_action: str | None = None) -> None:
@@ -480,7 +482,7 @@ class ApplyRecordInvariantError(PlanArtifactError):
     next_action = (
         "Do not re-apply this run before checking the destination: the apply reported a set of "
         "operations that does not match the plan it read. Report the run identifier and this message, "
-        "then re-run `diff` to rebuild the plan."
+        "then re-run `plan` to rebuild the plan."
     )
 
     def __init__(self, message: str, *, apply_record: ApplyRecord, next_action: str | None = None) -> None:

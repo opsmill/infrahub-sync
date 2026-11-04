@@ -130,7 +130,7 @@ def source_snapshot_records(run_dir: Path) -> list[dict[str, Any]]:
             )
             raise PlanArtifactUnreadableError(
                 msg,
-                next_action="Re-run `diff` for this sync to rebuild the snapshot and its plan artifact.",
+                next_action="Re-run `plan` for this sync to rebuild the snapshot and its plan artifact.",
             ) from exc
         except OSError as exc:
             # `glob` listed the path, so the file was there: this is removed-between-listing-

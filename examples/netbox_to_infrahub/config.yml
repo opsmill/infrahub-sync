@@ -12,7 +12,7 @@
 #      order, so a kind is written after the kinds it references. There is no
 #      separate serial or parallel execution mode.
 #
-#   2. Service-owned saved plans. `diff` submits a plan run to the Sync API.
+#   2. Service-owned saved plans. `plan` submits a plan run to the Sync API.
 #      Review the returned run with `runs plan`; `apply` binds the service run
 #      to the checksum printed by that review and never reads a local artifact.
 #
@@ -20,7 +20,7 @@
 # bearer token as documented in the tutorial:
 #   uv run infrahub-sync configs register examples/netbox_to_infrahub/package.yml \
 #     --reason "register NetBox import"
-#   uv run infrahub-sync diff --config-id <config-id> --version <version> \
+#   uv run infrahub-sync plan --config-id <config-id> --version <version> \
 #     --reason "review NetBox import"
 #   uv run infrahub-sync runs plan <run-id> --detail
 #   uv run infrahub-sync apply <run-id> --expected-checksum <checksum> \

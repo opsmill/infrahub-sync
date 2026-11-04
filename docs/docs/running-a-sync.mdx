@@ -42,8 +42,21 @@ see [Registering a package](./compose-deployment.mdx#registering-a-package).
 Before its first authenticated request, the CLI checks that the service is compatible. It
 refuses an incompatible service before it sends the token.
 
+To check the token before you start, run:
+
+```bash
+infrahub-sync whoami
+```
+
+It prints the `actor` that the token authenticates as and whether that actor is an
+`administrator`. Only an administrator can register packages. A token the service does not
+accept fails with an authentication error.
+
 In the commands below, replace `CONFIG_ID`, `RUN_ID`, and `CHECKSUM` with the values that
-the previous command printed, and `BRANCH` with the destination branch.
+the previous command printed, and `BRANCH` with the destination branch. Wherever a command
+takes `CONFIG_ID`, you can give the configuration's name instead. The CLI tries the value as
+an identifier first, then as a name. When several configurations share the name, the command
+exits with status 2 and lists their identifiers; use one of them.
 
 ## Register the package
 
@@ -82,12 +95,12 @@ To inspect what is registered, use `configs list`, `configs show CONFIG_ID`, and
 ## Create a plan
 
 ```bash
-infrahub-sync diff --config-id CONFIG_ID --version 1 \
+infrahub-sync plan --config-id CONFIG_ID --version 1 \
   --branch BRANCH --reason "review inventory import"
 ```
 
-`diff` asks the service to create a plan. The worker reads the source and the destination
-and saves the plan. It writes nothing to the destination. By default, `diff` waits for the
+`plan` asks the service to create a plan. The worker reads the source and the destination
+and saves the plan. It writes nothing to the destination. By default, `plan` waits for the
 plan, then prints the `run_id`, the `plan_checksum`, and the operation counts by action and
 by kind.
 
@@ -113,9 +126,18 @@ contain. Apply never executes a delete. The detailed output marks each delete as
 destination side was not read in full, the plan contains no deletes and the review says so.
 See [Deletes in a plan](./reference/cache-layout#deletes-in-a-plan).
 
+To check the saved plan against the current destination without writing, run:
+
+```bash
+infrahub-sync verify RUN_ID --reason "check plan before apply"
+```
+
+`verify` acts on the plan that the run already saved; it does not compute a new plan. Apply
+runs the same checks again before its first write, so this step is optional.
+
 ## Apply the reviewed plan
 
-Pass the checksum that the review printed, and the same `--branch` that you gave `diff`:
+Pass the checksum that the review printed, and the same `--branch` that you gave `plan`:
 
 ```bash
 infrahub-sync apply RUN_ID --expected-checksum CHECKSUM \
@@ -140,14 +162,60 @@ therefore hold a value the destination schema does not offer, such as a NetBox d
 there. Translate such values with a transform in the package; see the
 [Schema mapping reference](./reference/schema-mapping.mdx).
 
+## Find runs
+
+`runs list` prints one line per run, newest first: the `run_id`, the configuration and
+version as `CONFIG_ID@VERSION`, the destination branch, the phase, the outcome, the actor, and
+the start time. A run created before the service recorded its branch shows `-` for the
+branch.
+
+```bash
+infrahub-sync runs list
+infrahub-sync runs list --config CONFIG_ID --version 2
+```
+
+`--config` limits the list to one configuration, and `--version` to one of its versions.
+`--version` requires `--config`. The CLI prints one page of up to 50 runs. When more runs
+exist, it prints `more runs: rerun with --all, or --limit up to 200` on standard error.
+`--limit` sets the page size, from 1 to 200, and `--all` reads every page. `configs list`
+takes the same `--limit` and `--all` options. To list only the configurations with one exact
+name, run `infrahub-sync configs list --name NAME`.
+
+To find the latest run of each version of a configuration, run:
+
+```bash
+infrahub-sync configs versions CONFIG_ID
+```
+
+For each version, newest first, it prints the `latest_run` and the `latest_applied_run`, each
+with its `run_id`, phase, outcome, and start time.
+
+`runs artifacts RUN_ID` lists the files that the service kept for a run.
+`runs cancel RUN_ID` cancels a run that has not finished. It asks for confirmation, or
+refuses when it cannot ask; `--yes` skips the question. Cancelling a run that is writing can
+leave an `ambiguous` outcome, because the worker may already have changed the destination.
+
+### Find a run's flow runs in Prefect
+
+Each stage of a run (`plan`, `verify`, `apply`, or `sync`) runs as one Prefect flow run. The
+service tags each flow run so you can filter them in the Prefect UI or API:
+
+- `run:RUN_ID` selects every stage of one run.
+- `config:CONFIG_ID` selects every run of one configuration.
+- `config-version:CONFIG_ID@VERSION` selects every run of one configuration version.
+- `stage:STAGE` selects one kind of stage, such as `stage:apply`.
+
+The `config:` and `config-version:` tags are set only on runs of a registered configuration.
+
 ## Find why a run failed
 
-`diff`, `sync`, and `apply` print the final phase and outcome of a failed run, such as
+`plan`, `verify`, `sync`, and `apply` print the final phase and outcome of a failed run, such as
 `phase: plan-failed`. When an `apply` command fails and the run recorded the class of the
 apply error, it also prints `apply failed: <ErrorClass>`. The error message itself is
 recorded on the run's Prefect flow run:
 
-1. Run `runs show RUN_ID`. The output includes `flow_run_id`.
+1. Run `runs show RUN_ID`. The output includes `flow_run_id`. You can also filter flow runs
+   in the Prefect UI by the tag `run:RUN_ID`.
 2. Open `<prefect-ui>/runs/flow-run/FLOW_RUN_ID` in a browser. The state message of the failed
    flow run contains the error. The Prefect UI is at `http://127.0.0.1:4200` on a Compose
    deployment with the default port, and at `http://127.0.0.1:4230` on the
@@ -169,7 +237,7 @@ that failed:
   and `outcome: ambiguous`, and the failed operation may have written part of its change.
 
 Remove the cause first, in the source data or in the package. Then create a new plan for the
-same branch with `diff`, review it, and apply it. The new plan compares the source with what
+same branch with `plan`, review it, and apply it. The new plan compares the source with what
 the destination now holds, so it contains only what is still missing or different.
 
 ## Change a registered package
@@ -196,13 +264,13 @@ infrahub-sync sync --config-id CONFIG_ID --version 1 --branch BRANCH \
 
 The worker saves the plan before the first write, so you can read it afterwards with
 `runs plan`. `sync` does not apply a plan that you reviewed earlier; it creates a new one. To
-approve the exact operations before they are written, use `diff`, `runs plan`, and `apply`.
+approve the exact operations before they are written, use `plan`, `runs plan`, and `apply`.
 
 ## Reference
 
 ### Waiting for a run
 
-`diff`, `sync`, and `apply` wait for the run by default. They poll the service every
+`plan`, `verify`, `sync`, and `apply` wait for the run by default. They poll the service every
 2 seconds for at most 30 minutes. `--poll-interval` and `--wait-timeout` change these
 values, in seconds. A large apply needs a longer wait, and how long it takes depends on the
 destination. For example, applies of the NetBox demo package took 11 minutes for about 1,700
@@ -228,14 +296,15 @@ and the retry key. Check the run later with `runs show RUN_ID` or `runs plan RUN
 
 ### Audit reasons
 
-`configs register`, `configs version`, `diff`, `sync`, and `apply` accept `--reason`. The
+`configs register`, `configs version`, `plan`, `verify`, `sync`, `apply`, and `runs cancel`
+accept `--reason`. The
 reason is optional. When you give one, the service records it in the audit history of the
 request. When you omit it, the service records the request without a reason.
 
 ### Retry keys
 
-`configs register`, `configs version`, `diff`, `sync`, and `apply` accept
-`--idempotency-key`. If you omit it, the CLI generates a key and prints it. If the connection
+`configs register`, `configs version`, `plan`, `verify`, `sync`, `apply`, and `runs cancel`
+accept `--idempotency-key`. If you omit it, the CLI generates a key and prints it. If the connection
 fails before you see a response, run the same command again with that key. The service then
 returns the original response instead of starting a second operation. See
 [Retry keys](./configuration-package.mdx#retry-keys).

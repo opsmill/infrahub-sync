@@ -24,6 +24,60 @@ def _generate_infrahubsync_documentation(context: Context) -> None:
     exec_cmd += " --output docs/docs/reference/cli.mdx"
     with context.cd(ESCAPED_REPO_PATH):
         context.run(exec_cmd)
+    _drop_hidden_commands(DOCUMENTATION_DIRECTORY / "docs" / "reference" / "cli.mdx")
+
+
+def _hidden_command_paths() -> set[str]:
+    """Return the space-separated paths of the CLI commands registered as hidden."""
+    # Imported here so `invoke --list` does not load the CLI.
+    import typer  # noqa: PLC0415
+
+    from infrahub_sync.cli import app  # noqa: PLC0415
+
+    hidden: set[str] = set()
+
+    # Typer may build its commands on a click copy of its own, so groups are recognized by
+    # their `commands` mapping rather than by `isinstance(..., click.Group)`.
+    def walk(command: object, path: tuple[str, ...]) -> None:
+        if getattr(command, "hidden", False):
+            hidden.add(" ".join(path))
+        for name, child in getattr(command, "commands", {}).items():
+            walk(child, (*path, name))
+
+    walk(typer.main.get_command(app), ())
+    hidden.discard("")
+    return hidden
+
+
+def _drop_hidden_commands(path: Path) -> None:
+    """Remove hidden commands, such as the deprecated `diff` alias, from the generated reference.
+
+    `typer utils docs` documents hidden commands too, so the reference would teach a command
+    that `--help` does not show.
+    """
+    hidden = _hidden_command_paths()
+    if not hidden:
+        return
+    kept: list[str] = []
+    section = ""  # Command path of the current heading, "" for the root command.
+    skip_level: int | None = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        marker, _, rest = line.partition(" ")
+        level = len(marker) if marker and set(marker) == {"#"} else None
+        if level is not None:
+            if skip_level is not None and level <= skip_level:
+                skip_level = None
+            section = rest.strip().strip("`").removeprefix("infrahub-sync").strip()
+            if section in hidden:
+                skip_level = level
+        if skip_level is not None:
+            continue
+        # A "**Commands**:" entry reads "* `name`: summary"; drop the entry of a hidden subcommand.
+        name = line.removeprefix("* `").partition("`:")[0] if line.startswith("* `") and "`:" in line else None
+        if name is not None and f"{section} {name}".strip() in hidden:
+            continue
+        kept.append(line)
+    path.write_text("\n".join(kept) + "\n", encoding="utf-8")
 
 
 @task

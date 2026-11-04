@@ -183,7 +183,7 @@ def test_a_different_url_is_a_destination_binding_failure(tmp_path: Path) -> Non
     assert RECORDED_URL in str(failure.expected)
     assert LIVE_URL in str(failure.found)
     assert "--allow-destination-change" in failure.next_action
-    assert "Re-run `diff`" in failure.next_action
+    assert "Re-run `plan`" in failure.next_action
 
 
 def test_a_different_branch_alone_is_a_destination_binding_failure(tmp_path: Path) -> None:

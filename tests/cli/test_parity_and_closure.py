@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
@@ -18,11 +19,26 @@ _RETIRED_OPTION = (
     r"--(?:directory|config-file|adapter-path|product-cache-location|from-plan|concurrent-load|full-extract|parallel|"
     r"allow-rowcount-drop|continue-on-error|show-progress|allow-destination-change|run-id)"
 )
-_CLI_INVOCATION = r"(?<![\w.-])(?:uv\s+run\s+)?infrahub-sync\s+(?=(?:configs|runs|diff|sync|apply|generate|list)\b)"
+_CLI_INVOCATION = (
+    r"(?<![\w.-])(?:uv\s+run\s+)?infrahub-sync\s+"
+    r"(?=(?:configs|runs|plan|verify|whoami|diff|sync|apply|generate|list)\b)"
+)
+# `configs list --name` filters configurations by name and is a current option. Every other
+# command lost `--name` when configurations moved to the registry, so only that one
+# invocation is exempt from the removed-option rule.
+_CONFIGS_LIST = r"configs\s+list(?![\w-])"
+# `diff` is a hidden, deprecated alias of `plan`; live docs teach `plan`.
 REMOVED_COMMAND = re.compile(
-    rf"{_CLI_INVOCATION}(?:generate|list)(?![\w-])"
+    rf"{_CLI_INVOCATION}(?:generate|list|diff)(?![\w-])"
     rf"|(?<![\w-]){_RETIRED_OPTION}(?![\w-])"
-    rf"|{_CLI_INVOCATION}(?:(?!infrahub-sync|```|\n\s*\n)[\s\S])*?(?<![\w-])--(?:name|diff)(?![\w-])"
+    rf"|{_CLI_INVOCATION}(?!{_CONFIGS_LIST})(?:(?!infrahub-sync|```|\n\s*\n)[\s\S])*?(?<![\w-])--(?:name|diff)(?![\w-])"
+)
+_VALID_NAME_OPTION = re.compile(
+    # A `configs list ... --name` invocation on one line, or the `configs list` section of the
+    # generated CLI reference, which lists `--name` as an option bullet.
+    rf"{_CONFIGS_LIST}[^\n]*?(?<![\w-])--name(?![\w-])"
+    r"|^#+ `infrahub-sync configs list`\n(?:(?!#)[^\n]*\n)*",
+    re.MULTILINE,
 )
 
 # One row for every CLI consumer in envelope section 12. The HTTP details stay owned by
@@ -171,7 +187,8 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
         path for path in (ROOT / "docs/docs").rglob("*.mdx") if "release-notes" not in path.relative_to(ROOT).parts
     )
     files.extend((ROOT / "examples").rglob("*.md"))
-    text = "\n".join(path.read_text(encoding="utf-8") for path in files)
+    # Remove the one valid `--name` usage (`configs list --name`) before the token check.
+    text = _VALID_NAME_OPTION.sub("", "\n".join(path.read_text(encoding="utf-8") for path in files))
     removed_options = (
         "--name",
         "--config-file",
@@ -194,9 +211,30 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
     source_files = []
     for pattern in ("*.yaml", "*.yml", "*.json", "*.py"):
         source_files.extend((ROOT / "examples").rglob(pattern))
-    source_text = "\n".join(path.read_text(encoding="utf-8") for path in source_files)
+    source_text = _VALID_NAME_OPTION.sub("", "\n".join(path.read_text(encoding="utf-8") for path in source_files))
 
     assert not [token for token in removed_options if token in source_text]
+
+
+@pytest.mark.parametrize(
+    ("snippet", "command_rejected", "name_token_remains"),
+    [
+        ("uv run infrahub-sync configs list --name from-netbox", False, False),
+        ("infrahub-sync configs list --limit 20 --name from-netbox", False, False),
+        ("### `infrahub-sync configs list`\n\n* `--name <str>`: Only these.\n", False, False),
+        ("infrahub-sync plan --config from-netbox --version 1", False, False),
+        ("infrahub-sync sync --name from-netbox", True, True),
+        ("infrahub-sync plan --name from-netbox", True, True),
+        ("infrahub-sync configs show --name from-netbox", True, True),
+        ("### `infrahub-sync configs show`\n\n* `--name <str>`: Removed.\n", False, True),
+        ("infrahub-sync diff --config from-netbox --version 1", True, False),
+    ],
+)
+def test_removed_command_rule_exempts_only_configs_list_name(
+    snippet: str, *, command_rejected: bool, name_token_remains: bool
+) -> None:
+    assert (REMOVED_COMMAND.search(snippet) is not None) is command_rejected
+    assert ("--name" in _VALID_NAME_OPTION.sub("", snippet)) is name_token_remains
 
 
 def test_active_sources_do_not_teach_removed_commands() -> None:

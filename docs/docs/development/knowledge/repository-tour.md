@@ -36,7 +36,7 @@ behavior.
   `client.py` holds the synchronous client, `models.py` its typed request and response shapes,
   and `errors.py` its error taxonomy.
 
-The command surface is `configs`, `runs`, `diff`, `sync` and `apply`. See the
+The command surface is `configs`, `runs`, `plan`, `sync` and `apply`. See the
 [CLI reference](../../reference/cli.mdx) for every option.
 
 To trace a registered run from a CLI command to execution, follow these modules:

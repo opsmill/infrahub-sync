@@ -20,7 +20,7 @@ from the route you are changing:
 
 | Route | Failure handling and obligation |
 | --- | --- |
-| Registered CLI `diff`, `sync`, `apply` | The CLI calls `SyncClient` over HTTP. The client replaces transport failures with fixed errors and suppresses their causes. It constructs API errors from classification fields rather than returning the response's message text. Preserve those choices when adding client errors. |
+| Registered CLI `plan`, `sync`, `apply` | The CLI calls `SyncClient` over HTTP. The client replaces transport failures with fixed errors and suppresses their causes. It constructs API errors from classification fields rather than returning the response's message text. Preserve those choices when adding client errors. |
 | Sync HTTP API | `service/app.py` formats error responses and handles unhandled request failures. `RunService` redacts provider observation text before returning run resources. Keep response and observation handling safe independently of worker exception handling. |
 | Registered service worker | `service_sync_run` calls `execute_run` for its stages. Its failure path records available evidence, then raises a sanitized exception to Prefect. Extend this worker boundary when adding stage failures. |
 | Direct Python and direct Prefect | `execute_run` preserves lifecycle exceptions; callers must sanitize them before exposing them remotely. The direct Prefect flow calls `run_remote_request`, which resolves a local configuration and wraps execution failures. This integration executes plans only. |

@@ -49,7 +49,7 @@ def require_infrahub_create_schema(*, destination: Any, operations: Sequence[Pla
         f"Infrahub creates of kind(s) {', '.join(missing)} cannot be checked because their destination schema "
         "is unavailable. The whole plan was refused before any destination write."
     )
-    raise UnkeyedCreateRefusedError(msg, next_action="Load the destination schema, then re-run `diff`.")
+    raise UnkeyedCreateRefusedError(msg, next_action="Load the destination schema, then re-run `plan`.")
 
 
 def _identity_paths(identity: Mapping[str, Any], prefix: str = "") -> set[str]:

@@ -51,12 +51,12 @@ CLI_CALLS = (
     "configs show CONFIG_ID",
     "configs versions CONFIG_ID",
     "configs validate CONFIG_ID 1",
-    "diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'review initial sync'",
+    "plan --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'review initial sync'",
     "runs plan RUN_ID --detail",
     "apply RUN_ID --expected-checksum CHECKSUM --branch BRANCH_NAME --reason 'apply reviewed initial sync'",
     "runs show RUN_ID",
     "runs results RUN_ID",
-    "diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'verify unchanged source'",
+    "plan --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'verify unchanged source'",
     "configs version CONFIG_ID edited-package.yml --reason 'register edited configuration'",
 )
 

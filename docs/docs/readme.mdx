@@ -54,7 +54,7 @@ page links the documentation as of that candidate.
 
 1. `infrahub-sync configs register <package>` registers the package. Later commands use
    the returned configuration ID and version.
-2. `infrahub-sync diff --config-id <id> --version <version> --reason <reason>` asks the
+2. `infrahub-sync plan --config-id <id> --version <version> --reason <reason>` asks the
    worker to read both systems and save a plan. The destination is not changed. The
    client waits for the plan by default and prints its summary and checksum.
 3. `infrahub-sync runs plan <run-id> --detail` shows the saved plan again, for example
@@ -132,7 +132,7 @@ No. Map one model at a time and run each configuration when you choose. The exis
 system keeps running.
 
 **Does Infrahub Sync schedule runs?**
-Not in V3 today: there is no built-in schedule. Start each `diff` or `sync` run with the
+Not in V3 today: there is no built-in schedule. Start each `plan` or `sync` run with the
 client, for example from cron, a CI job, or another scheduler you already use.
 
 **What happens if a sync run fails partway through?**
