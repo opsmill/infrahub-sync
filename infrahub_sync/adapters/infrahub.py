@@ -6,6 +6,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from diffsync import Adapter, DiffSyncModel
@@ -834,36 +835,37 @@ def metadata_read_supported(version: str) -> bool:
     return (*release, 0, 0, 0)[:3] >= METADATA_MIN_VERSION
 
 
-# The accounts a load has already validated, keyed by (account id, display label).
-RecordedAccounts = dict[tuple[str, str | None], RecordedAccountRecord]
-
-
-def _recorded_account(prop: NodeProperty | None, accounts: RecordedAccounts) -> RecordedAccountRecord | None:
-    """The `updated_by` account of one value, validated once per account and load.
+@lru_cache(maxsize=1024)
+def _account_record(account_id: str, display_label: str | None) -> RecordedAccountRecord:
+    """The validated record of one account, built once and shared, since the record is frozen.
 
     A plan reads metadata for every mapped field of every node, and nearly all of those fields
-    name one of a few accounts, so each account is validated once and its frozen record shared.
+    name one of a few accounts, so each account is validated once rather than once per value.
     """
+    return RecordedAccountRecord(id=account_id, display_label=display_label)
+
+
+def _recorded_account(prop: NodeProperty | None) -> RecordedAccountRecord | None:
+    """The `updated_by` account of one value, or `None` when the value names none."""
     if prop is None or not prop.id:
         return None
-    key = (prop.id, prop.display_label)
-    record = accounts.get(key)
-    if record is None:
-        record = accounts[key] = RecordedAccountRecord(id=prop.id, display_label=prop.display_label)
-    return record
+    return _account_record(prop.id, prop.display_label)
 
 
-def _edge_last_change(edge: RelatedNodeSync, accounts: RecordedAccounts) -> LastChange:
+def _edge_last_change(edge: RelatedNodeSync) -> LastChange:
     """The `relationship_metadata` of one edge, read with `include_metadata=True`."""
     metadata = edge.get_relationship_metadata()
     if metadata is None:
         return NOT_RECORDED
-    return LastChange(updated_by=_recorded_account(metadata.updated_by, accounts), updated_at=metadata.updated_at)
+    return LastChange(updated_by=_recorded_account(metadata.updated_by), updated_at=metadata.updated_at)
 
 
 # The fractional seconds of an ISO 8601 time. Python 3.10's `datetime.fromisoformat` reads only
 # exactly 3 or 6 digits, and a timestamp can carry any number of them, up to nanoseconds.
 _FRACTIONAL_SECONDS = re.compile(r"(?<=:\d\d)\.(\d+)")
+
+# The key of a missing or unparsable `updated_at`: before every recorded change.
+_EARLIEST = (datetime.min.replace(tzinfo=timezone.utc), 0)
 
 
 def _change_time(change: LastChange) -> tuple[datetime, int]:
@@ -874,20 +876,18 @@ def _change_time(change: LastChange) -> tuple[datetime, int]:
     fraction is cut to microseconds for the `datetime` and its next 3 digits are kept apart. Two
     edges changed within one microsecond then still compare by their full precision.
     """
-    earliest = (datetime.min.replace(tzinfo=timezone.utc), 0)
     if change.updated_at is None:
-        return earliest
+        return _EARLIEST
     text = change.updated_at.replace("Z", "+00:00")
     match = _FRACTIONAL_SECONDS.search(text)
-    digits = match.group(1) if match is not None else ""
+    fraction = (match.group(1) if match is not None else "").ljust(9, "0")
     if match is not None:
-        text = text[: match.start()] + "." + digits[:6].ljust(6, "0") + text[match.end() :]
+        text = text[: match.start()] + "." + fraction[:6] + text[match.end() :]
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
-        return earliest
-    nanoseconds = int(digits[6:9].ljust(3, "0"))
-    return (parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc), nanoseconds)
+        return _EARLIEST
+    return (parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc), int(fraction[6:9]))
 
 
 def _latest_change(changes: Iterable[LastChange]) -> LastChange:
@@ -913,16 +913,11 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     # Whether this plan's destination reads ask for `updated_by` and `updated_at`: set by
     # `resolve_metadata_read` from the server version, false until then and during an apply.
     metadata_read: bool = False
-    # Whether `resolve_metadata_read` still has to read the server version: set by a plan's
-    # `resolve_lineage`, cleared by the read, and false for an apply.
-    _metadata_read_pending: bool = False
     # What those reads returned, keyed by (destination node id, field name). Kept here and not
     # in the DiffSync models, so a value a person changed is compared by its value only and two
     # plans over the same values give the same operations. Set by `__init__` and reset by
     # `resolve_lineage`; read and written through `last_changes`.
     _last_changes: dict[tuple[str, str], LastChange] | None = None
-    # The `updated_by` accounts those reads named, each validated once; reset with `last_changes`.
-    _recorded_accounts: RecordedAccounts | None = None
     # Cache state: absent means hydration has not been attempted; None means
     # one attempt was exhausted; a string is the resolved DiffSync identity.
     _peer_unique_ids: dict[tuple[str, str], str | None]
@@ -1006,7 +1001,6 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     @last_changes.setter
     def last_changes(self, value: dict[tuple[str, str], LastChange]) -> None:
         self._last_changes = value
-        self._recorded_accounts = None
 
     def resolve_lineage(self, *, saved_plan: PlanManifest | None = None) -> ResolvedLineage:
         """Resolve the import account, the source and the owner this run writes, and keep them.
@@ -1026,10 +1020,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         otherwise the apply is refused before any named node is read and before any write
         (FR-012). A plan passes no manifest.
 
-        The server version is not read here: a plan reads it in `resolve_metadata_read`, which
-        the engine calls right after this, before either side is loaded. This call keeps
-        `metadata_read` false until then. An apply loads nothing, so it reads no version and
-        keeps `metadata_read` false.
+        The server version is read by `resolve_metadata_read`, not here (the order is stated
+        at `Potenda.load_both_sides`); this call resets `metadata_read` to false.
         """
         settings = self.lineage_settings
         recorded = None if saved_plan is None else require_recorded_import_account(saved_plan)
@@ -1058,23 +1050,16 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             "none" if owner is None else f"{owner.kind} {owner.name}",
         )
         self.metadata_read = False
-        self._metadata_read_pending = saved_plan is None
         self.last_changes = {}
         return self.lineage
 
     def resolve_metadata_read(self) -> None:
         """Read the server version once for a plan, before the destination load reads anything.
 
-        The engine calls this after `resolve_lineage` and before either side is loaded, so a
-        failed read stops the plan before the source system is read, and the read comes before
-        the cursors and the reads that depend on `metadata_read`.
+        The order is stated at `Potenda.load_both_sides`.
         `metadata_read` is true from Infrahub 1.7.0, the first version that records
-        `updated_by` and `updated_at`. After an apply's `resolve_lineage`, or a second call,
-        it reads nothing and leaves `metadata_read` as it is.
+        `updated_by` and `updated_at`. Only a plan calls this; an apply loads nothing.
         """
-        if not self._metadata_read_pending:
-            return
-        self._metadata_read_pending = False
         self.metadata_read = self._read_metadata_support()
 
     def _read_metadata_support(self) -> bool:
@@ -1177,8 +1162,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         load takes unchanged nodes from the previous snapshot, which holds no `updated_by` or
         `updated_at`, so a plan would show "not recorded" for values Infrahub holds (FR-007).
         With no cursor tier, the engine loads each kind in full through `model_loader`, whose
-        one read carries the metadata. The engine calls `resolve_metadata_read` before it asks
-        for the destination's cursor tiers, so the answer reflects the server version.
+        one read carries the metadata. `resolve_metadata_read` runs first (see
+        `Potenda.load_both_sides`), so the answer reflects the server version.
         """
         if self.metadata_read:
             return CursorTier.NONE
@@ -1555,26 +1540,24 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         relationship's from its most recently changed edge. A field Infrahub returned nothing
         for is kept as `NOT_RECORDED`. Nothing here reaches the DiffSync models.
         """
-        if self._recorded_accounts is None:
-            self._recorded_accounts = {}
-        accounts = self._recorded_accounts
+        last_changes = self.last_changes
         node_id = str(node.id)
         node_kind = node.get_kind()
         node_schema = self.schema[node_kind]
         for attr_name in self._mapped_attribute_names(node_kind, node_schema):
             attr = getattr(node, attr_name)
-            self.last_changes[node_id, attr_name] = LastChange(
-                updated_by=_recorded_account(attr.updated_by, accounts), updated_at=attr.updated_at
+            last_changes[node_id, attr_name] = LastChange(
+                updated_by=_recorded_account(attr.updated_by), updated_at=attr.updated_at
             )
         for rel_schema, _ in self._mapped_relationships(node_kind, node_schema):
             if rel_schema.cardinality == "one":
-                change = _edge_last_change(getattr(node, rel_schema.name), accounts)
+                change = _edge_last_change(getattr(node, rel_schema.name))
             elif rel_schema.cardinality == "many":
                 rel_manager: RelationshipManagerSync = getattr(node, rel_schema.name)
-                change = _latest_change(_edge_last_change(peer, accounts) for peer in rel_manager.peers)
+                change = _latest_change(_edge_last_change(peer) for peer in rel_manager.peers)
             else:
                 continue
-            self.last_changes[node_id, rel_schema.name] = change
+            last_changes[node_id, rel_schema.name] = change
 
     def new_peer_resolver(self) -> PeerResolver:
         """Build the peer resolver for one apply (FR-014, AD086).
