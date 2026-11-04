@@ -496,7 +496,7 @@ def configs_version(
         "--idempotency-key",
         help=(
             "Retry key. A new key is generated and printed when omitted. Retry with the printed "
-            "config_id: the name follows the newest version, so it can change."
+            "configuration ID: the name follows the newest version, so it can change."
         ),
     ),
 ) -> None:
@@ -1011,7 +1011,9 @@ def _run_row(run: PublicRunResource) -> str:
 def runs_list(
     ctx: typer.Context,
     config: str | None = typer.Option(None, "--config", "--config-id", help=_CONFIG_HELP),
-    version: int | None = typer.Option(None, "--version", min=1, help="Only runs of this version; needs --config."),
+    version: int | None = typer.Option(
+        None, "--version", min=1, help="Only runs of this version; requires a configuration ID or name."
+    ),
     limit: int | None = typer.Option(None, "--limit", min=1, max=MAX_LIMIT, help=_LIMIT_HELP),
     all_pages: bool = typer.Option(False, "--all", help=_ALL_HELP),  # noqa: FBT003
 ) -> None:

@@ -200,7 +200,7 @@ $ infrahub-sync configs version [OPTIONS] {CONFIG} {package}
 **Options**:
 
 * `--reason <str>`: Optional audit reason for the mutation.
-* `--idempotency-key <str>`: Retry key. A new key is generated and printed when omitted. Retry with the printed config_id: the name follows the newest version, so it can change.
+* `--idempotency-key <str>`: Retry key. A new key is generated and printed when omitted. Retry with the printed configuration ID: the name follows the newest version, so it can change.
 * `--help`: Show this message and exit.
 
 ### `infrahub-sync configs list`
@@ -316,7 +316,7 @@ $ infrahub-sync runs list [OPTIONS]
 **Options**:
 
 * `--config, --config-id <str>`: Configuration ID or name. The ID is tried first, then the name.
-* `--version <int range>`: Only runs of this version; needs --config.  [x&gt;=1]
+* `--version <int range>`: Only runs of this version; requires a configuration ID or name.  [x&gt;=1]
 * `--limit <int range>`: Items per page, 1-200. The server default applies when omitted.  [1&lt;=x&lt;=200]
 * `--all`: Read every page instead of only the first.
 * `--help`: Show this message and exit.
