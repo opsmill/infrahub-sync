@@ -1,0 +1,37 @@
+docs/docs/development/guides/netbox-benchmark-runner.md
+  s_5af47e422ac3fa::t_8096de345fb152 67-76
+tests/test_benchmark_runner.py
+  s_5af47e422ac3fa::t_bd236c7af1ba2f 40,44-54
+  s_5af47e422ac3fa::t_6f65b4b3373010 64-79
+  s_5af47e422ac3fa::t_2b2ba0e7c308ba 696
+  s_5af47e422ac3fa::t_b32d151ea1b2c4 631-633,637-640,642-647,651-652,654-655,658-667,670-673,676-678,680-686,690-694
+  s_5af47e422ac3fa::t_d2479f36896954 55-56,695
+tasks/bench.py
+  s_5af47e422ac3fa::t_3bb15479eb2ed2 16
+  s_5af47e422ac3fa::t_19b1b6a3412437 503
+  s_5af47e422ac3fa::t_410f30888b5043 504
+  s_5af47e422ac3fa::t_d4ec82f2393c62 185-190
+  s_5af47e422ac3fa::t_5eb8610b713f0c 164-166
+  s_5af47e422ac3fa::t_420fb26737ee6e 70-71,73,77-78,80-84,87,89-100,102-104,107-124
+tasks/dev.py
+  s_5af47e422ac3fa::t_4ab0715288087f 224-230
+  s_5af47e422ac3fa::t_054355bf0f040f 240
+  s_5af47e422ac3fa::t_f854e9435f098a 270-281,283
+  s_5af47e422ac3fa::t_28d4d35a6f5b11 293
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2b2f21d3b3f86fa53eb09eec3f7c5039081c4601",
+  "prompts": {},
+  "sessions": {
+    "s_5af47e422ac3fa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a22d1ed-b182-4832-b120-0eb989b94fab",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
