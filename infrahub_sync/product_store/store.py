@@ -232,8 +232,8 @@ END
 _SQLITE_UNIQUE_CONSTRAINT_CODES = frozenset({1555, 2067})
 _POSTGRESQL_SCHEMA_CONFLICT_CODES = frozenset({"23505", "42P07", "42710"})
 _POSTGRESQL_DUPLICATE_COLUMN_CODE = "42701"
-# ``_column_nullability`` is the one catalog read that needs nullability, and it projects
-# exactly (column_name, is_nullable). The other two read column names alone. PostgreSQL
+# On PostgreSQL, ``_column_nullability`` is the one catalog read that needs nullability, and
+# it projects exactly (column_name, is_nullable). The other two read column names alone. PostgreSQL
 # declares ``information_schema.columns.is_nullable`` over the ``yes_or_no`` domain, so these
 # two strings are the whole set of readable answers.
 _CATALOG_NULLABILITY_ROW_WIDTH = 2

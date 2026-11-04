@@ -5218,6 +5218,17 @@ _LEGACY_AUDIT_EVENTS_DDL = (
 )
 
 
+def _create_legacy_reason_tables(database: Path) -> None:
+    """Create the legacy receipt and audit tables, whose reason columns are NOT NULL."""
+    legacy = sqlite3.connect(database)
+    try:
+        legacy.execute(_LEGACY_RECEIPT_AND_EXECUTION_DDL[0])
+        legacy.execute(_LEGACY_AUDIT_EVENTS_DDL)
+        legacy.commit()
+    finally:
+        legacy.close()
+
+
 def _sqlite_table_sql_and_reason_notnull(database: Path) -> dict[str, tuple[str, int]]:
     connection = sqlite3.connect(database)
     try:
@@ -5241,10 +5252,9 @@ def test_sqlite_migration_makes_legacy_reason_columns_nullable_and_is_idempotent
     """
     database = tmp_path / "legacy.sqlite3"
     legacy_receipt = _receipt()
+    _create_legacy_reason_tables(database)
     legacy = sqlite3.connect(database)
     try:
-        legacy.execute(_LEGACY_RECEIPT_AND_EXECUTION_DDL[0])
-        legacy.execute(_LEGACY_AUDIT_EVENTS_DDL)
         legacy_values = product_store_store._receipt_values(legacy_receipt)
         legacy.execute(
             "INSERT INTO mutation_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -5295,3 +5305,32 @@ def test_sqlite_migration_makes_legacy_reason_columns_nullable_and_is_idempotent
         ("audit-legacy", "legacy reason"),
         ("audit-no-reason", None),
     ]
+
+
+def test_sqlite_migration_writes_the_schema_table_only_while_a_reason_column_is_not_null(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first construction rewrites the legacy declarations; a later one leaves them alone."""
+    database = tmp_path / "legacy.sqlite3"
+    _create_legacy_reason_tables(database)
+
+    statements: list[str] = []
+    connect = sqlite3.connect
+
+    def traced(path: Path) -> sqlite3.Connection:
+        connection = connect(path)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    def schema_writes() -> list[str]:
+        return [statement for statement in statements if "writable_schema" in statement]
+
+    monkeypatch.setattr(sqlite3, "connect", traced)
+    SQLiteRunStore(database)
+    first = schema_writes()
+    statements.clear()
+    SQLiteRunStore(database)
+
+    assert first == ["PRAGMA writable_schema = ON", "PRAGMA writable_schema = OFF"] * 2
+    assert statements != []
+    assert schema_writes() == []
