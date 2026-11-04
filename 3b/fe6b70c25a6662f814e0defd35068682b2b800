@@ -1,0 +1,76 @@
+tests/service/test_config_routes.py
+  s_f718d35766c589::t_8a8172b17a0664 1452-1483
+infrahub_sync/service/paging.py
+  s_f718d35766c589::t_35e04adfe20287 24
+  s_f718d35766c589::t_48609a2c4897f8 9-11
+  s_f718d35766c589::t_16017b0cbd209b 92-96,142
+  s_f718d35766c589::t_d55d9103ab474a 43-49
+  s_f718d35766c589::t_3a2508aa0fd1dc 98
+  s_f718d35766c589::t_8f7999732eab0a 137,140,143
+  s_f718d35766c589::t_cb9fe5840fe441 138-139,141,150,152
+infrahub_sync/service/app.py
+  s_f718d35766c589::t_fa9e7dfc255d9c 205-206,210-217
+  s_f718d35766c589::t_0bbc8bfab8ff72 19-26
+infrahub_sync/cli.py
+  s_f718d35766c589::t_e9cebefac42190 777
+tests/plan/test_destination_binding.py
+  s_f718d35766c589::t_8a6dc0ff0aadf7 185-186,283-284
+tasks/docs.py
+  s_f718d35766c589::t_a47ec94892d670 27-51
+tests/product_store/test_postgresql_isolation.py
+  s_f718d35766c589::t_e02edae8beb007 191
+infrahub_sync/service/config_routes.py
+  s_f718d35766c589::t_9308abc2dc0c62 208
+  s_f718d35766c589::t_32438e7074206b 180
+  s_f718d35766c589::t_1fce5d8c8e4923 50,83,93,95,416,432,441,454-456
+tests/service/test_http_api.py
+  s_f718d35766c589::t_9699cc006a1261 2300-2337
+  s_f718d35766c589::t_ab5941181bcf20 2194-2198,2209-2213
+infrahub_sync/product_store/store.py
+  s_f718d35766c589::t_5dad52d507b179 8
+  s_f718d35766c589::t_963729a89adc37 741-743,750
+  s_f718d35766c589::t_b409b06af3bd20 55-56
+  s_f718d35766c589::t_69695e69352016 751
+  s_f718d35766c589::t_7752e83caf36a3 170-173,176
+tests/service/test_paging.py
+  s_f718d35766c589::t_9f00035fd2a532 114-115
+  s_f718d35766c589::t_e942e098bae9ee 7,14,18,20
+  s_f718d35766c589::t_a71846aa060680 111-113,116-164
+infrahub_sync/service/service.py
+  s_f718d35766c589::t_2bb15b741930cb 632-636
+tests/product_store/test_contract.py
+  s_f718d35766c589::t_2e3f008ad899e7 7
+  s_f718d35766c589::t_a38fe0ee6b3d84 4417-4442
+  s_f718d35766c589::t_fe06c8b51884bf 4331
+infrahub_sync/plan/verify.py
+  s_f718d35766c589::t_69695e69352016 453
+  s_f718d35766c589::t_070c86c85c6b22 422-424
+infrahub_sync/service/models.py
+  s_f718d35766c589::t_f0af3a6ee0092a 189-191
+docs/docs/reference/cli.mdx
+  s_77064a8f1f9fb7::t_efc72bd36debca 5-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3bfe6b70c25a6662f814e0defd35068682b2b800",
+  "prompts": {},
+  "sessions": {
+    "s_77064a8f1f9fb7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "939dc8cb-70c7-4beb-974f-c09fa514e652",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_f718d35766c589": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3abfa013-58d0-4a35-aa91-617e78043d5c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
