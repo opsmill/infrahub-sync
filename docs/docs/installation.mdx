@@ -44,15 +44,15 @@ only, so run `docker login registry.opsmill.io` before you pull.
 
 You run the `infrahub-sync` CLI on any machine that can reach the Sync API, such as your
 workstation, a CI runner, or the Docker host. The CLI is published on
-[PyPI](https://pypi.org/project/infrahub-sync/) and needs Python 3.10 to 3.13. Install a
-3.x version, because the 2.x versions are V2.
+[PyPI](https://pypi.org/project/infrahub-sync/) and needs Python 3.10 to 3.13.
 
 The commands below install from PyPI once version 3.0.0 is published there. Until
 then, PyPI has no 3.x version, so run the CLI through the Compose deployment's `cli`
 service instead. From the directory that holds `.env`, run
 `docker compose run --rm --no-deps -T cli <command>`, for example
-`docker compose run --rm --no-deps -T cli configs list`. See
-[Use it](./compose-deployment.mdx#use-it) in the Compose deployment guide.
+`docker compose run --rm --no-deps -T cli configs list`. A command that reads a package
+file needs that file mounted into the container; see
+[Registering a package](./compose-deployment.mdx#registering-a-package).
 
 To install the CLI with uv:
 

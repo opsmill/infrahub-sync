@@ -8,10 +8,10 @@ REST/JSON API. Describe the source, the destination, and the field mapping in on
 JSON configuration package. Then use the `infrahub-sync` client to register the package,
 plan the changes, review the plan, and apply it.
 
-These pages describe V3, built from the `feature/v3-develop` branch. V2 is the version on
+These pages describe V3, built from the `feature/v3-develop` branch. V2 is the 2.x line on
 [PyPI](https://pypi.org/project/infrahub-sync/); select it from the version menu to read
-its documentation. Each V3 candidate's release page links the documentation as of that
-candidate.
+its documentation. Each V3 candidate's release
+page links the documentation as of that candidate.
 
 ## Get started
 
@@ -79,7 +79,7 @@ records that it wrote nothing. See [Run a sync](./running-a-sync.mdx) for recove
 
 | Client | Use it for | Runtime requirements |
 |---|---|---|
-| CLI | Configuration and run operations through the Sync API | Included in the Compose image; a source checkout also installs it |
+| CLI | Configuration and run operations through the Sync API | Installed from PyPI from version 3.0.0 (see [Install the CLI](./installation.mdx#install-the-cli)); also included in the Compose image and installed by a source checkout |
 | Python client | Typed access to every Sync API resource | A compatible V3 Python package and Sync API access |
 | Direct Prefect deployment | Starting and observing one read-only plan through Prefect's API | `prefect` extra and a Prefect server |
 | Sync HTTP API | Authenticated remote runs, durable records and artifacts, reviewed apply, idempotency, and cancellation | `service` extra, Prefect, a work pool, a worker, and shared durable storage |

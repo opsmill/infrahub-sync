@@ -45,15 +45,16 @@ deployment starts empty.
 ## Command-line client failures
 
 The `infrahub-sync` CLI calls the Sync API with `INFRAHUB_SYNC_API_TOKEN`. On your
-machine, the CLI reads it from your environment. The deployment's `cli` service, run as
-`docker compose run --rm --no-deps -T cli ...`, reads it from `.env`.
+machine, the CLI reads it from your environment only, never from `.env`. The deployment's
+`cli` service, run as `docker compose run --rm --no-deps -T cli ...`, reads it from `.env`,
+unless your shell exports `INFRAHUB_SYNC_API_TOKEN`: Compose then uses the exported value.
 
 - **Every call fails to authenticate.** `INFRAHUB_SYNC_API_TOKEN` is empty, or differs
   from the principal's token in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. An `operator.env`
   carried over from an earlier alpha may lack the `INFRAHUB_SYNC_API_TOKEN` line entirely.
   Add it to `.env`, with the token already inside `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`.
-  A value exported in your shell overrides `.env`, for the CLI on your machine and for the
-  `cli` service. After you change the token in `.env`, export it again, or open a new shell.
+  After you change the token in `.env`, export it again, or open a new shell, so that
+  neither the CLI on your machine nor the `cli` service presents the old exported value.
 - **The `cli` service cannot read a mounted package.** The image runs as UID 10001, so the file
   must be readable by other users. Run `chmod 0644` on it, and mount it read-only as in
   [Registering a package](../compose-deployment#registering-a-package).
