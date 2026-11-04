@@ -43,7 +43,7 @@ database files private.
 Remove the local development Sync stack before a benchmark:
 
 ```bash
-uv run invoke destroy
+uv run invoke dev.destroy
 ```
 
 This command removes the development containers and their volumes. Any development
@@ -54,15 +54,18 @@ this checkout and uses the existing start tasks for its API and worker. v3 requi
 `INFRAHUB_SYNC_API_TOKEN` in your environment, matching the local stack's API principal.
 v2 uses its isolated release environment and does not require the Sync API or its token.
 Sync lifecycle commands explicitly select `infrahub-sync-dev` and this checkout's
-`compose.yaml`. The runner refuses to start a cell, before any Docker command or database
+`development/docker-compose.yml`. The runner refuses to start a cell, before any Docker command or database
 reset, when `COMPOSE_PROJECT_NAME` or `COMPOSE_FILE` in your environment names a different
 project or Compose file. Unset them before you run a cell.
 One host lock covers the shared Docker projects across checkouts, including cleanup.
 Starting another cell while that lock is held fails before any database reset.
-The runner creates an isolated destination stack from the preview Compose files, pinned to
-Infrahub 1.11.9. It uses the preview connection settings and local NetBox settings,
-including personal connection overrides. The runner enforces the OpsMill image repository
-and version, ignoring preview image overrides. Keep the preview stack stopped so its ports are available.
+The runner creates an isolated destination stack from the Infrahub services of
+`development/docker-compose.yml` (its `infrahub` profile) under the `infrahub-sync-benchmark`
+project, pinned to Infrahub 1.11.9. It uses the local NetBox settings, including personal
+connection overrides. The runner enforces the OpsMill image repository and version, ignoring
+`VERSION`, `INFRAHUB_DOCKER_IMAGE` and `INFRAHUB_DOCKER_IMAGE_DIGEST` from your shell. The
+destination publishes Infrahub on host port 8000 by default, so stop any other Infrahub that
+holds that port, or set `INFRAHUB_PORT`.
 
 The runner reads the destination's host address and initial admin token from the
 destination's own resolved Compose configuration, the development file's `infrahub`

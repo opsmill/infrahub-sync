@@ -567,7 +567,7 @@ From the directory that holds `.env`, point it at this deployment, then run a
 command:
 
 ```bash
-export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8000
+export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
 export INFRAHUB_SYNC_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_API_TOKEN=//p' .env)"
 infrahub-sync configs list
 ```

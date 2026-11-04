@@ -6,8 +6,14 @@ Every stack starts the Prefect server with::
 
 so the server runs the Prefect version the Sync image installs, and no separate
 Prefect image is needed. The factory adds nothing to Prefect's own application:
-every Prefect server setting (database, UI, authentication, telemetry) is read
-from the environment exactly as the `prefect server start` command reads it.
+every setting that application reads (database, UI, authentication, telemetry) comes
+from the environment, as it does under `prefect server start`.
+
+The listener is uvicorn's, not Prefect's CLI: the address and port come from the
+command line above, and the settings `prefect server start` turns into uvicorn
+options (`PREFECT_SERVER_API_HOST`, `PREFECT_SERVER_API_PORT`,
+`PREFECT_SERVER_API_KEEPALIVE_TIMEOUT`, `PREFECT_SERVER_LOGGING_LEVEL` and the
+websocket ping settings) have no effect here.
 """
 
 from __future__ import annotations

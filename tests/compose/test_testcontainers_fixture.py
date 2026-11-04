@@ -18,6 +18,7 @@ refuse to run when the engine does not hold it, as every other case in this suit
 from __future__ import annotations
 
 import json
+import os
 import socket
 import subprocess  # noqa: S404 -- `docker compose port`, through the project's own command
 import uuid
@@ -54,7 +55,11 @@ LITERAL_VALUE = "dummy-$token $$double ${NAME} it's"
 # `sync-worker` joins the Infrahub project's network and reaches the server by its
 # service name; the host reaches the same server at the port Docker published.
 INFRAHUB_INTERNAL_URL = "http://infrahub-server:8000"
-INFRAHUB_TOKEN: str = TESTCONTAINERS.PROJECT_ENV_VARIABLES["INFRAHUB_TESTING_INITIAL_ADMIN_TOKEN"]
+# The token the Infrahub project starts with: an exported value, as `create_env_file` reads it.
+INFRAHUB_TOKEN: str = (
+    os.environ.get("INFRAHUB_TESTING_INITIAL_ADMIN_TOKEN")
+    or TESTCONTAINERS.PROJECT_ENV_VARIABLES["INFRAHUB_TESTING_INITIAL_ADMIN_TOKEN"]
+)
 SOURCE_BRANCH = "testcontainers-source"
 TAG_KIND = "BuiltinTag"
 

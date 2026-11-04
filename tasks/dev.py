@@ -472,8 +472,11 @@ def _attach_worker(context: Context, settings: DevSettings) -> None:
 
 
 def _print_urls(settings: DevSettings, *, host_worker: bool = False) -> None:
+    # The default principal's token is a public development value; a token set through
+    # BEARER_TOKENS is the developer's own, so it is named by its variable, never printed.
+    bearer = API_TOKEN if API_TOKEN in settings.bearer_tokens else "from BEARER_TOKENS"
     print(f" - [{NAMESPACE}] Project     {settings.project}")
-    print(f" - [{NAMESPACE}] Sync API    {settings.sync_api_url}  (bearer {API_TOKEN})")
+    print(f" - [{NAMESPACE}] Sync API    {settings.sync_api_url}  (bearer {bearer})")
     print(f" - [{NAMESPACE}] Prefect UI  {settings.prefect_url}")
     if settings.infrahub is not None and host_worker:
         print(f" - [{NAMESPACE}] Infrahub    {settings.infrahub_url}  (also for a package the host worker runs)")
@@ -604,7 +607,8 @@ def check_host_processes(settings: DevSettings) -> None:
     except (httpx.HTTPError, ValueError):
         msg = f"The Sync API does not answer at {status_url}; start it with `uv run invoke dev.api`"
         raise DevStackError(msg) from None
-    state = str(((body or {}).get("worker") or {}).get("state", ""))
+    worker = body.get("worker") if isinstance(body, dict) else None
+    state = str(worker.get("state", "")) if isinstance(worker, dict) else ""
     if state not in AVAILABLE_WORKER_STATES:
         msg = (
             f"The Sync API reports no available worker (state {state or 'missing'}); "

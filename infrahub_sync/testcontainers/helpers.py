@@ -69,10 +69,15 @@ TEST_DEFAULTS: dict[str, str] = {
         {"test": {"token": TEST_API_TOKEN, "administrator": True}}, separators=(",", ":")
     ),
     "INFRAHUB_SYNC_API_TOKEN": TEST_API_TOKEN,
-    # The Infrahub test deployment's administrator token, so a run can write to it.
+    # The Infrahub test deployment's administrator token, so a run can write to it. An
+    # exported `INFRAHUB_TESTING_INITIAL_ADMIN_TOKEN` replaces it in `environment_values`.
     "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": PROJECT_ENV_VARIABLES["INFRAHUB_TESTING_INITIAL_ADMIN_TOKEN"],
     "INFRAHUB_SYNC_API_PORT": "0",
 }
+# The variable `InfrahubDockerCompose.create_env_file` reads the Infrahub administrator token
+# from, and the Sync variable that carries the same token to the worker.
+INFRAHUB_ADMIN_TOKEN_VARIABLE = "INFRAHUB_TESTING_INITIAL_ADMIN_TOKEN"
+INFRAHUB_CREDENTIAL_VARIABLE = "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
 
 # `${NAME`, but not the escaped `$${NAME` Compose passes through to a container.
 _VARIABLE_REFERENCE = re.compile(r"(?<!\$)\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)")
@@ -128,7 +133,15 @@ def environment_values(
     """
     environ = os.environ if environ is None else environ
     repository, tag = split_image(image)
-    defaults = {**TEST_DEFAULTS, IMAGE_REPOSITORY_VARIABLE: repository, IMAGE_TAG_VARIABLE: tag}
+    # The Infrahub project takes its administrator token from the same environment, so the
+    # worker's credential follows an exported token instead of keeping the package default.
+    infrahub_token = environ.get(INFRAHUB_ADMIN_TOKEN_VARIABLE) or TEST_DEFAULTS[INFRAHUB_CREDENTIAL_VARIABLE]
+    defaults = {
+        **TEST_DEFAULTS,
+        INFRAHUB_CREDENTIAL_VARIABLE: infrahub_token,
+        IMAGE_REPOSITORY_VARIABLE: repository,
+        IMAGE_TAG_VARIABLE: tag,
+    }
     values: dict[str, str] = {}
     for name in variables:
         if name in {IMAGE_REPOSITORY_VARIABLE, IMAGE_TAG_VARIABLE}:
@@ -268,17 +281,22 @@ class TestInfrahubSyncDocker(TestInfrahubDocker):
         except (subprocess.CalledProcessError, ContainerIsNotRunning) as exc:
             # Unlike the parent class, stop the project here: a class whose setup failed
             # never reaches the teardown below, and its containers would stay behind.
-            stdout, stderr = infrahub_sync_compose.get_logs()
-            infrahub_sync_compose.stop()
+            # `get_logs` raises when `docker compose logs` fails, so the stop is in `finally`.
+            try:
+                stdout, stderr = infrahub_sync_compose.get_logs()
+            finally:
+                infrahub_sync_compose.stop()
             msg = f"Failed to start the Sync Compose project:\nStdout:\n{stdout}\nStderr:\n{stderr}"
             raise RuntimeError(msg) from exc
 
         yield infrahub_sync_compose
 
-        if request.session.testsfailed - tests_failed_before_class > 0:
-            stdout, stderr = infrahub_sync_compose.get_logs(*LOGGED_SERVICES)
-            warnings.warn(f"Sync container logs:\nStdout:\n{stdout}\nStderr:\n{stderr}", stacklevel=2)
-        infrahub_sync_compose.stop()
+        try:
+            if request.session.testsfailed - tests_failed_before_class > 0:
+                stdout, stderr = infrahub_sync_compose.get_logs(*LOGGED_SERVICES)
+                warnings.warn(f"Sync container logs:\nStdout:\n{stdout}\nStderr:\n{stderr}", stacklevel=2)
+        finally:
+            infrahub_sync_compose.stop()
 
     @pytest.fixture(scope="class")
     @classmethod

@@ -94,7 +94,7 @@ def infrahub_host_url(publication: dev.Publication, option: str = "") -> str:
         port = parts.port or _DEFAULT_PORTS.get(parts.scheme)
     except ValueError:
         port = None
-    if not parts.hostname or port is None:
+    if parts.scheme not in _DEFAULT_PORTS or not parts.hostname or port is None:
         msg = f"--infrahub-url or {INFRAHUB_HOST_URL_VARIABLE} needs an http(s) URL with a host name"
         raise BenchmarkError(msg)
     if str(port) != publication.port:
