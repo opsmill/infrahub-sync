@@ -1,0 +1,23 @@
+changelog/+infrahub-sdk-1-18-floor.changed.md
+  s_77064a8f1f9fb7::t_57c42a28755a2f 1
+pyproject.toml
+  s_77064a8f1f9fb7::t_57c42a28755a2f 18,88
+uv.lock
+  s_77064a8f1f9fb7::t_7f957e0885166f 1264-1265
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a29ad70da9b68cbe2fb13653cbfce822251989c7",
+  "prompts": {},
+  "sessions": {
+    "s_77064a8f1f9fb7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "939dc8cb-70c7-4beb-974f-c09fa514e652",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
