@@ -64,14 +64,16 @@ Infrahub 1.11.9. It uses the preview connection settings and local NetBox settin
 including personal connection overrides. The runner enforces the OpsMill image repository
 and version, ignoring preview image overrides. Keep the preview stack stopped so its ports are available.
 
-The runner reaches the destination Infrahub from the host at the port the development
-Compose file publishes for `infrahub-server` (`INFRAHUB_PORT`, default `8000`). When
-`INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` is set, the development settings hold only the
-address on that Docker network, such as `http://infrahub-server:8000`, which the host
-cannot reach. Pass `--infrahub-url` or set `INFRAHUB_SYNC_DEV_INFRAHUB_HOST_URL` to the
-address the host reaches Infrahub at. Without either, the runner stops before it restores
-NetBox or starts Infrahub, and names the variable. `--infrahub-url` takes precedence over
-the variable, and either one replaces the published port.
+The runner reads the destination's host address and initial admin token from the
+destination's own resolved Compose configuration, the development file's `infrahub`
+profile under the `infrahub-sync-benchmark` project. The address is the port that
+configuration publishes for `infrahub-server` (`INFRAHUB_PORT`, default `8000`).
+`INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`
+do not change the destination. When the host reaches Docker at another address, pass
+`--infrahub-url` or set `INFRAHUB_SYNC_DEV_INFRAHUB_HOST_URL`; `--infrahub-url` takes
+precedence over the variable. Either one changes only the host name. A URL that names
+another port fails before the runner restores NetBox or starts Infrahub, because the
+destination still publishes on `INFRAHUB_PORT`. To use another port, set `INFRAHUB_PORT`.
 
 ```bash
 uv run invoke bench.run --line v3 --tier S --scenario cold --repetitions 3

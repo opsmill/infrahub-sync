@@ -221,6 +221,13 @@ def _environment(services: Mapping[str, Any], name: str) -> dict[str, str]:
     return {key: str(value) for key, value in environment.items() if value is not None}
 
 
+def infrahub_server(services: Mapping[str, Any]) -> tuple[Publication, str]:
+    """Return the host publication of `infrahub-server`'s port 8000 and its initial admin token."""
+    publication = _publication(services, "infrahub-server", 8000)
+    token = str((services["infrahub-server"].get("environment") or {}).get("INFRAHUB_INITIAL_ADMIN_TOKEN", ""))
+    return publication, token
+
+
 def parse_dev_settings(resolved: Mapping[str, Any], *, infrahub_network: str = "") -> DevSettings:
     """Build the settings from the output of `docker compose config --format json`."""
     services = resolved.get("services") or {}
@@ -230,8 +237,7 @@ def parse_dev_settings(resolved: Mapping[str, Any], *, infrahub_network: str = "
         token = os.environ.get(INFRAHUB_CREDENTIAL_VARIABLE, "")
         worker_url = os.environ.get(INFRAHUB_URL_VARIABLE) or WORKER_INFRAHUB_URL
     else:
-        infrahub = _publication(services, "infrahub-server", 8000)
-        token = str((services["infrahub-server"].get("environment") or {}).get("INFRAHUB_INITIAL_ADMIN_TOKEN", ""))
+        infrahub, token = infrahub_server(services)
         worker_url = WORKER_INFRAHUB_URL
     return DevSettings(
         project=str(resolved.get("name") or DEV_STACK_PROJECT),
@@ -259,12 +265,22 @@ def dev_settings(context: Context | None = None, *, infrahub_network: str = "") 
     only, and the Infrahub URL comes from `INFRAHUB_SYNC_DEV_INFRAHUB_URL`, default
     `http://infrahub-server:8000`.
     """
-    runner = context or Context()
     network = selected_infrahub_network(infrahub_network)
     profiles = ("sync",) if network else ALL_PROFILES
-    command = f"{_compose_command('', profiles)} config --format json"
+    resolved = resolved_compose(context, ComposeTarget(profiles=profiles))
+    return parse_dev_settings(resolved, infrahub_network=network)
+
+
+def resolved_compose(context: Context | None = None, target: ComposeTarget | None = None) -> dict[str, Any]:
+    """Return `docker compose config --format json` for the development file, as one target resolves it."""
+    runner = context or Context()
+    target = target or ComposeTarget()
+    command = f"{_compose_command(target.project, target.profiles)} config --format json"
+    options: dict[str, Any] = {"hide": True, "warn": True, "pty": False}
+    if target.env:
+        options["env"] = dict(target.env)
     with runner.cd(ESCAPED_REPO_PATH):
-        result = runner.run(command, hide=True, warn=True, pty=False)
+        result = runner.run(command, **options)
     if result is None or not result.ok:
         detail = (result.stderr or "").strip() if result is not None else "no result"
         msg = f"`{command}` failed: {detail}"
@@ -274,7 +290,7 @@ def dev_settings(context: Context | None = None, *, infrahub_network: str = "") 
     except json.JSONDecodeError as exc:
         msg = f"`{command}` printed no JSON: {exc}"
         raise DevStackError(msg) from None
-    return parse_dev_settings(resolved, infrahub_network=network)
+    return resolved
 
 
 def build_inputs_hash(root: Path = REPO_BASE) -> str:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import dataclasses
 import json
 import os
 import shlex
@@ -38,22 +37,21 @@ from development.bench.runtime import BenchmarkError, docker_memory_mib, measure
 from development.netbox.datasets.change_netbox import expected_text, plan_changes
 from tasks import bench, dev
 
-# What `docker compose config` resolves for a clean checkout: the development file's defaults.
-DEV_SETTINGS = dev.DevSettings(
-    project="infrahub-sync-dev",
-    sync_api=dev.Publication("127.0.0.1", "8001"),
-    prefect=dev.Publication("127.0.0.1", "4230"),
-    infrahub=dev.Publication("127.0.0.1", "8000"),
-    infrahub_admin_token="06438eb2-8019-4776-878c-0941b1f1d1ec",  # noqa: S106 -- the development default
-    worker_infrahub_url="http://infrahub-server:8000",
-    infrahub_network="",
-    bearer_tokens='{"dev": {"token": "infrahub-sync-dev-token", "administrator": true}}',
-    work_pool="infrahub-sync",
-)
-# The same settings with `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` set: no host publication of
-# Infrahub, only its address on that network.
-NETWORK_DEV_SETTINGS = dataclasses.replace(DEV_SETTINGS, infrahub=None, infrahub_network="infrahub_default")
+DESTINATION_TOKEN = "06438eb2-8019-4776-878c-0941b1f1d1ec"  # noqa: S105 -- the development default
 HOST_URL = "http://127.0.0.1:18000"
+
+
+def destination_configuration(port: str = "8000") -> dict[str, Any]:
+    """What `docker compose config` resolves for the destination's `infrahub` profile."""
+    return {
+        "name": bench.DESTINATION_PROJECT,
+        "services": {
+            "infrahub-server": {
+                "ports": [{"target": 8000, "published": port, "host_ip": "127.0.0.1"}],
+                "environment": {"INFRAHUB_INITIAL_ADMIN_TOKEN": DESTINATION_TOKEN},
+            }
+        },
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -63,9 +61,22 @@ def isolated_runner_lock(monkeypatch, tmp_path) -> None:
 
 
 @pytest.fixture(autouse=True)
-def development_settings(monkeypatch) -> None:
-    """Answer `dev.dev_settings()` without running `docker compose config`."""
-    monkeypatch.setattr(bench.dev, "dev_settings", lambda *_args, **_kwargs: DEV_SETTINGS)
+def resolved_destination(monkeypatch) -> list[dev.ComposeTarget]:
+    """Answer the destination's `docker compose config` without Docker; record each target."""
+    targets: list[dev.ComposeTarget] = []
+
+    def resolved(_context: Context, target: dev.ComposeTarget) -> dict[str, Any]:
+        targets.append(target)
+        return destination_configuration()
+
+    def development_settings(*_args: object, **_kwargs: object) -> NoReturn:
+        msg = "the benchmark destination must not come from the development settings"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(bench.dev, "resolved_compose", resolved)
+    monkeypatch.setattr(bench.dev, "dev_settings", development_settings)
+    monkeypatch.delenv(bench.INFRAHUB_HOST_URL_VARIABLE, raising=False)
+    return targets
 
 
 @pytest.fixture
@@ -617,42 +628,70 @@ def test_v2_flags_are_only_sent_to_the_isolated_release(tmp_path, variant) -> No
 
 @pytest.fixture
 def infrahub_network_selected(monkeypatch) -> pytest.MonkeyPatch:
-    """Answer `dev.dev_settings()` as Compose resolves it with an Infrahub network selected."""
-    monkeypatch.setattr(bench.dev, "dev_settings", lambda *_args, **_kwargs: NETWORK_DEV_SETTINGS)
-    monkeypatch.delenv(bench.INFRAHUB_HOST_URL_VARIABLE, raising=False)
+    """Select an Infrahub network, whose credential belongs to an Infrahub the benchmark does not start."""
+    monkeypatch.setenv(dev.INFRAHUB_NETWORK_VARIABLE, "infrahub_default")
+    monkeypatch.setenv(dev.INFRAHUB_CREDENTIAL_VARIABLE, "external-infrahub-credential")
     return monkeypatch
 
 
-def test_the_benchmark_uses_the_published_infrahub_port_by_default(monkeypatch) -> None:
-    monkeypatch.delenv(bench.INFRAHUB_HOST_URL_VARIABLE, raising=False)
+def test_the_benchmark_reads_the_destination_from_its_own_compose_configuration(
+    resolved_destination: list[dev.ComposeTarget],
+) -> None:
+    stack = bench.CellStack()
 
-    assert DEV_SETTINGS.infrahub is not None
-    assert bench.CellStack().infrahub_url == DEV_SETTINGS.infrahub.url
+    assert stack.infrahub_url == "http://127.0.0.1:8000"
+    assert stack.infrahub_token == DESTINATION_TOKEN
+    assert [(target.project, tuple(target.profiles)) for target in resolved_destination] == [
+        (bench.DESTINATION_PROJECT, ("infrahub",))
+    ]
+    assert resolved_destination[0].env == stack.destination_env
 
 
 @pytest.mark.usefixtures("infrahub_network_selected")
-def test_an_infrahub_network_without_a_host_url_is_refused() -> None:
-    with pytest.raises(BenchmarkError, match=bench.INFRAHUB_HOST_URL_VARIABLE) as refused:
-        bench.CellStack()
-
-    assert "--infrahub-url" in str(refused.value)
-
-
-def test_an_infrahub_network_takes_the_host_url_from_the_variable(
-    infrahub_network_selected: pytest.MonkeyPatch,
-) -> None:
-    infrahub_network_selected.setenv(bench.INFRAHUB_HOST_URL_VARIABLE, HOST_URL + "/")
-
+def test_an_infrahub_network_does_not_change_the_destination() -> None:
     stack = bench.CellStack()
 
-    assert stack.infrahub_url == HOST_URL
-    assert stack.infrahub_url != NETWORK_DEV_SETTINGS.worker_infrahub_url
+    assert stack.infrahub_url == "http://127.0.0.1:8000"
+    assert stack.infrahub_token == DESTINATION_TOKEN
 
 
-def test_the_option_wins_over_the_host_url_variable(infrahub_network_selected: pytest.MonkeyPatch) -> None:
-    infrahub_network_selected.setenv(bench.INFRAHUB_HOST_URL_VARIABLE, "http://127.0.0.1:19000")
+def test_the_host_url_variable_changes_only_the_host(monkeypatch) -> None:
+    monkeypatch.setenv(bench.INFRAHUB_HOST_URL_VARIABLE, "http://172.17.0.1:8000/")
 
+    assert bench.CellStack().infrahub_url == "http://172.17.0.1:8000"
+
+
+def test_the_option_wins_over_the_host_url_variable(monkeypatch) -> None:
+    monkeypatch.setenv(bench.INFRAHUB_HOST_URL_VARIABLE, "http://127.0.0.1:19000")
+
+    assert bench.CellStack(infrahub_url="http://localhost:8000").infrahub_url == "http://localhost:8000"
+
+
+@pytest.mark.parametrize("url", [HOST_URL, "http://127.0.0.1", "127.0.0.1:8000", "http://127.0.0.1:port"])
+def test_a_url_off_the_published_port_is_refused(url: str) -> None:
+    with pytest.raises(BenchmarkError, match=bench.INFRAHUB_HOST_URL_VARIABLE):
+        bench.CellStack(infrahub_url=url)
+
+
+def test_a_mismatched_port_names_the_published_port() -> None:
+    with pytest.raises(BenchmarkError, match="host port 8000") as refused:
+        bench.CellStack(infrahub_url=HOST_URL)
+
+    assert "18000" in str(refused.value)
+
+
+def test_the_host_url_follows_the_destination_publication(monkeypatch) -> None:
+    monkeypatch.setattr(bench.dev, "resolved_compose", lambda *_args: destination_configuration("18000"))
+
+    assert bench.CellStack().infrahub_url == HOST_URL
     assert bench.CellStack(infrahub_url=HOST_URL).infrahub_url == HOST_URL
+
+
+def test_a_destination_without_an_infrahub_publication_is_refused(monkeypatch) -> None:
+    monkeypatch.setattr(bench.dev, "resolved_compose", lambda *_args: {"services": {}})
+
+    with pytest.raises(BenchmarkError, match="infrahub-server publication"):
+        bench.CellStack()
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="benchmark cells require Python 3.11 to 3.13")

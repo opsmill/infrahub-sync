@@ -13,6 +13,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import structlog
@@ -66,34 +67,61 @@ INFRAHUB_IMAGE = "registry.opsmill.io/opsmill/infrahub"
 # The pinned destination's Compose project, apart from the development stack's own.
 DESTINATION_PROJECT = "infrahub-sync-benchmark"
 RUNNER_LOCK = Path("/tmp/infrahub-sync-benchmark-infrahub-sync-dev-netbox.lock")  # noqa: S108 -- machine-wide lock
-# The Infrahub address the host uses, for when the development settings hold only the
-# in-network address (`INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` set). `--infrahub-url` wins.
+# Another address the host reaches the destination's published port at, such as a Docker
+# host on another address. `--infrahub-url` wins. The port must stay the published one.
 INFRAHUB_HOST_URL_VARIABLE = "INFRAHUB_SYNC_DEV_INFRAHUB_HOST_URL"
+_DEFAULT_PORTS = {"http": 80, "https": 443}
 log = structlog.get_logger()
 
 
-def infrahub_host_url(settings: dev.DevSettings, option: str = "") -> str:
-    """Return the Infrahub URL the benchmark uses from the host.
+def infrahub_host_url(publication: dev.Publication, option: str = "") -> str:
+    """Return the URL the host reaches the benchmark destination's Infrahub at.
 
-    `--infrahub-url`, else `INFRAHUB_SYNC_DEV_INFRAHUB_HOST_URL`, else the host port the
-    development file publishes for `infrahub-server`. With an Infrahub network selected,
-    the development settings hold only the address on that network, which the host cannot
-    reach, so one of the two must be set.
+    `publication` is the host port the destination's own Compose configuration publishes
+    for `infrahub-server` (`INFRAHUB_PORT`, default 8000). `--infrahub-url`, else
+    `INFRAHUB_SYNC_DEV_INFRAHUB_HOST_URL`, replaces only the host name: Compose publishes
+    the destination on that port whatever the URL says, so a URL naming another port would
+    reach another Infrahub, or none.
 
     Raises:
-        BenchmarkError: when an Infrahub network is selected and neither is set.
+        BenchmarkError: when the chosen URL has no host name or names another port.
     """
-    chosen = option or os.environ.get(INFRAHUB_HOST_URL_VARIABLE, "")
-    if chosen:
-        return chosen.rstrip("/")
-    if settings.infrahub is None:
+    chosen = (option or os.environ.get(INFRAHUB_HOST_URL_VARIABLE, "")).rstrip("/")
+    if not chosen:
+        return publication.url
+    parts = urlsplit(chosen)
+    try:
+        port = parts.port or _DEFAULT_PORTS.get(parts.scheme)
+    except ValueError:
+        port = None
+    if not parts.hostname or port is None:
+        msg = f"--infrahub-url or {INFRAHUB_HOST_URL_VARIABLE} needs an http(s) URL with a host name"
+        raise BenchmarkError(msg)
+    if str(port) != publication.port:
         msg = (
-            f"{dev.INFRAHUB_NETWORK_VARIABLE} is set, so the development settings hold only the Infrahub"
-            f" address on that network ({settings.worker_infrahub_url}), which the host cannot reach;"
-            f" set {INFRAHUB_HOST_URL_VARIABLE} or pass --infrahub-url with the address the host reaches"
+            f"--infrahub-url or {INFRAHUB_HOST_URL_VARIABLE} names port {port}, but the benchmark destination"
+            f" publishes infrahub-server on host port {publication.port}; use port {publication.port},"
+            " or set INFRAHUB_PORT to publish the destination on another port"
         )
         raise BenchmarkError(msg)
-    return settings.infrahub.url
+    return chosen
+
+
+def destination_infrahub(context: Context, target: dev.ComposeTarget) -> tuple[dev.Publication, str]:
+    """Return the destination's `infrahub-server` host publication and initial admin token.
+
+    Both come from the destination's own resolved Compose configuration, never from the
+    development settings, which follow the Infrahub network selection.
+
+    Raises:
+        BenchmarkError: when Compose cannot resolve the destination or it publishes no Infrahub port.
+    """
+    try:
+        resolved = dev.resolved_compose(context, target)
+        return dev.infrahub_server(resolved.get("services") or {})
+    except (dev.DevStackError, KeyError):
+        msg = "cannot resolve the benchmark destination's infrahub-server publication from its Compose configuration"
+        raise BenchmarkError(msg) from None
 
 
 def cell_options(  # noqa: PLR0913, PLR0917 -- cell coordinates
@@ -131,12 +159,11 @@ class CellStack:
             "INFRAHUB_DOCKER_IMAGE": INFRAHUB_IMAGE,
             "INFRAHUB_DOCKER_IMAGE_DIGEST": "",
         }
-        settings = dev.dev_settings()
-        self.infrahub_url = infrahub_host_url(settings, infrahub_url)
-        self.infrahub_token = settings.infrahub_admin_token
-        self.worker = ""
         self.deadline = time.monotonic() + LIMIT_SECONDS
         self.context.deadline = self.deadline
+        publication, self.infrahub_token = destination_infrahub(self.context, self.destination_target)
+        self.infrahub_url = infrahub_host_url(publication, infrahub_url)
+        self.worker = ""
         self.started_sync = False
         self.started_netbox = False
         self.started_destination = False
@@ -155,13 +182,12 @@ class CellStack:
 
     def compose(self, arguments: str) -> None:
         """Run the development file's `infrahub` profile as the isolated pinned destination."""
-        dev.compose(
-            self.context,
-            arguments,
-            target=dev.ComposeTarget(
-                project=self.destination_project, profiles=("infrahub",), env=self.destination_env
-            ),
-        )
+        dev.compose(self.context, arguments, target=self.destination_target)
+
+    @property
+    def destination_target(self) -> dev.ComposeTarget:
+        """The pinned destination: the development file's `infrahub` profile under its own project."""
+        return dev.ComposeTarget(project=self.destination_project, profiles=("infrahub",), env=self.destination_env)
 
     def reset(self, tier: str) -> None:
         """Restore NetBox and recreate an empty pinned destination before each repetition."""
@@ -474,8 +500,8 @@ def v3_sync(stack: CellStack, registered: tuple[str, int], record: ResultRecord,
     name="run",
     help={
         "infrahub-url": (
-            f"The Infrahub URL the host uses; default {INFRAHUB_HOST_URL_VARIABLE}, else the port the"
-            " development file publishes. Required when an Infrahub network is selected"
+            f"The benchmark destination's URL from the host; default {INFRAHUB_HOST_URL_VARIABLE}, else"
+            " the address the destination publishes. Changes only the host; the port must match"
         )
     },
 )
