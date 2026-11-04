@@ -398,10 +398,8 @@ class PlanSchemaChangedError(PlanArtifactError):
     and never reaches this class.
     """
 
-    next_action = (
-        "Create a new plan for this configuration and review it: the recorded operations were "
-        "derived from schema semantics the destination no longer declares."
-    )
+    # The text the CLI prints as the failed apply's `hint:`.
+    next_action = "create and review a new plan before applying again"
 
 
 class ReviewedPayloadFieldMissingError(PlanArtifactError):

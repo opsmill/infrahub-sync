@@ -618,9 +618,10 @@ def _echo_completed_destination_branch(client: SyncClient, run_id: str) -> None:
 def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
     """Print what the service recorded about a failed stage, before the run-terminal error.
 
-    `<stage> failed: <error type>`, then `cause:` and `hint:` when the run recorded an operator
-    cause (a missing permission, a refused token or a lineage refusal) and its next action. The
-    record is the API's, and the API stores only text written for the operator. Each value is
+    `<stage> failed: <error type>`, then `cause:` when the run recorded an operator cause (a
+    missing permission, a refused token or a lineage refusal), and `hint:` when it recorded a
+    next action. The record is the API's, and the API stores only text written for the
+    operator. Each value is
     still capped and printed through `_display`, so recorded text cannot reach the terminal as
     an escape sequence.
     """
@@ -642,18 +643,6 @@ def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
     next_action = failure.get("next_action")
     if isinstance(next_action, str) and next_action:
         typer.echo(f"hint: {_display(next_action[:MAX_FAILURE_CAUSE_TEXT])}", err=True)
-    elif error_type == "PlanSchemaChangedError":
-        typer.echo("hint: create and review a new plan before applying again", err=True)
-    elif error_type == "RegisteredPlanVerificationError":
-        recovery_action = failure.get("recovery_action")
-        if recovery_action == "rebuild":
-            typer.echo("hint: re-run diff for this sync, review the new plan, then apply that run", err=True)
-        elif recovery_action == "compatible_version":
-            typer.echo(
-                "hint: re-run diff with this version and review the new plan, "
-                "or apply the reviewed plan with the version that wrote it",
-                err=True,
-            )
 
 
 def _admit_run(

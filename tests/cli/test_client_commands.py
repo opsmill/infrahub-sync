@@ -418,27 +418,42 @@ def test_apply_sends_only_reviewed_checksum_and_shipped_fields(client: MagicMock
     assert key == "retry-apply"
 
 
+REBUILD_HINT = "re-run diff for this sync, review the new plan, then apply that run"
+COMPATIBLE_VERSION_HINT = (
+    "re-run diff with this version and review the new plan, or apply the reviewed plan with the version that wrote it"
+)
+
+
 @pytest.mark.parametrize(
-    ("error_type", "recovery_action", "expected_hint"),
+    ("error_type", "recorded", "expected_hint"),
     [
-        ("PlanSchemaChangedError", None, "hint: create and review a new plan before applying again"),
-        ("RegisteredPlanVerificationError", "rebuild", "hint: re-run diff for this sync"),
+        (
+            "PlanSchemaChangedError",
+            {"next_action": "create and review a new plan before applying again"},
+            "hint: create and review a new plan before applying again",
+        ),
         (
             "RegisteredPlanVerificationError",
-            "compatible_version",
-            "or apply the reviewed plan with the version that wrote it",
+            {"recovery_action": "rebuild", "next_action": REBUILD_HINT},
+            f"hint: {REBUILD_HINT}",
         ),
-        ("RegisteredPlanVerificationError", "private-token-canary", None),
-        ("OperationApplyFailedError", "rebuild", None),
+        (
+            "RegisteredPlanVerificationError",
+            {"recovery_action": "compatible_version", "next_action": COMPATIBLE_VERSION_HINT},
+            f"hint: {COMPATIBLE_VERSION_HINT}",
+        ),
+        ("RegisteredPlanVerificationError", {"recovery_action": "private-token-canary"}, None),
+        ("PlanSchemaChangedError", {}, None),
+        ("OperationApplyFailedError", {"recovery_action": "rebuild"}, None),
     ],
 )
-def test_failed_apply_renders_only_recognized_recovery_hints(
+def test_failed_apply_renders_only_the_recorded_next_action_as_a_hint(
     client: MagicMock,
     error_type: str,
-    recovery_action: str | None,
+    recorded: dict[str, str],
     expected_hint: str | None,
 ) -> None:
-    """Show a recovery hint only for recognized failed-apply evidence."""
+    """Print the recorded next action as the hint, and no hint from the class name alone."""
     client.wait_for_run.side_effect = RunTerminalError(
         "service-run-1",
         terminal_state="failed",
@@ -453,7 +468,7 @@ def test_failed_apply_renders_only_recognized_recovery_hints(
                 "stage": "apply",
                 "outcome": "failed",
                 "error_type": error_type,
-                "recovery_action": recovery_action,
+                **recorded,
             }
         },
     )

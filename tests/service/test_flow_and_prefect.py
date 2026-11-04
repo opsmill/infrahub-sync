@@ -37,6 +37,7 @@ from infrahub_sync.orchestration.flow import infrahub_sync_run
 from infrahub_sync.plan.errors import (
     OperationApplyFailedError,
     PeerNotFoundError,
+    PlanSchemaChangedError,
     StaleDestinationIdError,
     UnaccountedIdentityComponentError,
     UnkeyedCreateRefusedError,
@@ -558,9 +559,10 @@ def test_service_apply_failure_retains_partial_write_evidence(
     monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
     monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
 
+    failure = OperationApplyFailedError("destination rejected operation", apply_record=partial)
+
     def fail_apply(*_args: object, **_kwargs: object) -> NoReturn:
-        msg = "destination rejected operation"
-        raise OperationApplyFailedError(msg, apply_record=partial)
+        raise failure
 
     monkeypatch.setattr(service_flow, "execute_run", fail_apply)
 
@@ -586,6 +588,8 @@ def test_service_apply_failure_retains_partial_write_evidence(
         "outcome": "ambiguous",
         "error_type": "OperationApplyFailedError",
         "cause_type": None,
+        # The class's own next action, never the destination's message.
+        "next_action": failure.next_action,
         **partial.as_summary_keys(),
     }
     assert stored.prefect_executions[0].terminal_state == "interrupted"
@@ -1546,4 +1550,43 @@ def test_an_unclassified_failure_records_no_cause_text(monkeypatch: pytest.Monke
     evidence = stored.results["plan_failure"]
     assert "cause" not in evidence
     assert "next_action" not in evidence
+    assert LINEAGE_TOKEN not in stored.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_next_action"),
+    [
+        pytest.param(
+            PlanSchemaChangedError(f"schema changed {LINEAGE_TOKEN}"),
+            "create and review a new plan before applying again",
+            id="schema-changed",
+        ),
+        pytest.param(
+            service_flow.RegisteredPlanVerificationError(f"refused {LINEAGE_TOKEN}", "rebuild"),
+            "re-run diff for this sync, review the new plan, then apply that run",
+            id="registered-rebuild",
+        ),
+        pytest.param(
+            service_flow.RegisteredPlanVerificationError(f"refused {LINEAGE_TOKEN}", "compatible_version"),
+            "re-run diff with this version and review the new plan, "
+            "or apply the reviewed plan with the version that wrote it",
+            id="registered-compatible-version",
+        ),
+        pytest.param(
+            service_flow.RegisteredPlanVerificationError(f"refused {LINEAGE_TOKEN}", None),
+            None,
+            id="registered-no-signal",
+        ),
+    ],
+)
+@pytest.mark.usefixtures("_claimed_worker_execution")
+def test_an_apply_records_the_next_action_its_error_declares_and_not_its_message(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: Exception, expected_next_action: str | None
+) -> None:
+    """The recorded next action is the text the CLI prints as the hint; the message stays out."""
+    stored = _record_apply_failure(monkeypatch, tmp_path, "run-apply-next-action", failure)
+
+    evidence = stored.results["apply_failure"]
+    assert evidence.get("next_action") == expected_next_action
+    assert "cause" not in evidence
     assert LINEAGE_TOKEN not in stored.model_dump_json()

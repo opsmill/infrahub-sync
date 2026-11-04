@@ -62,7 +62,7 @@ from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, RuntimeModel
 
 from .apply_guard import ApplyGuard, hold_apply_guard
 from .checkpoints import publish_final_checkpoint, publish_plan_checkpoint, rehydrate_plan_checkpoint
-from .failure_cause import operator_cause
+from .failure_cause import RecoveryAction, RegisteredPlanVerificationError, operator_cause
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME, run_name
@@ -100,14 +100,6 @@ _NO_CONFIGURATION_DIRECTORY = ""
 # The stages the managed write scope covers. A read stage has nothing to be uncertain
 # about, so it keeps its own deliberate handling where the two differ.
 _WRITE_STAGES = ("apply", "sync")
-
-
-class RegisteredPlanVerificationError(ValueError):
-    """A managed plan refusal with a fixed, safe recovery signal for the CLI."""
-
-    def __init__(self, message: str, recovery_action: Literal["rebuild", "compatible_version"] | None) -> None:
-        super().__init__(message)
-        self.recovery_action = recovery_action
 
 
 def _raise_writeback_refused() -> None:
@@ -249,7 +241,7 @@ def _verify_registered_apply(
         guidance = "; ".join(f"{failure.check}: {failure.next_action}" for failure in failures)
         message = f"{_REGISTERED_PLAN_VERIFICATION_FAILED}: {guidance}"
         format_failure = next((failure for failure in failures if failure.check == "format_version"), None)
-        recovery_action: Literal["rebuild", "compatible_version"] | None = None
+        recovery_action: RecoveryAction | None = None
         if format_failure is not None:
             if format_failure.next_action.endswith(RE_PLAN_NEXT_ACTION):
                 recovery_action = "rebuild"
