@@ -17,7 +17,8 @@ Run after every phase: `uv run invoke format`, `uv run invoke lint`,
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm the development profile installs and the unit tier passes on the branch base before any change: `uv sync --extra dev --extra prefect --extra service`, then `uv run invoke tests.tests-unit` (record the baseline result in the task note)
+- [X] T001 Confirm the development profile installs and the unit tier passes on the branch base before any change: `uv sync --extra dev --extra prefect --extra service`, then `uv run invoke tests.tests-unit` (record the baseline result in the task note)
+  - Baseline (commit 6b6d1886, Python 3.11.8): `uv sync` installed without errors. Unit tier: 5714 passed, 4 skipped, 203 deselected, 0 failed, 4 warnings, in 152 s. No failures existed before this feature's changes.
 
 ## Phase 2: Foundational (blocks all user stories)
 
