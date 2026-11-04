@@ -1,0 +1,150 @@
+README.md
+  s_f718d35766c589::t_52129cdfc9a0ae 48,136
+examples/netbox_to_infrahub/package.yml
+  s_f718d35766c589::t_f7486a0a5adf5b 24
+  s_f718d35766c589::t_789f9109cc3daf 16
+changelog/+run-discovery.added.md
+  s_f718d35766c589::t_4ed31c6a17484a 1
+tests/plan/test_destination_binding.py
+  s_f718d35766c589::t_c36eee7eddd90b 186
+infrahub_sync/potenda/__init__.py
+  s_f718d35766c589::t_9a78b32b65850c 198,635
+docs/docs/development/guidelines/testing-tiers.md
+  s_f718d35766c589::t_52129cdfc9a0ae 312,382,387
+tests/adapters/test_infrahub_planned_write.py
+  s_f718d35766c589::t_05bdba1678c69f 1538,1705
+  s_f718d35766c589::t_c36eee7eddd90b 1563
+docs/docs/development/guidelines/secret-redaction.md
+  s_f718d35766c589::t_52129cdfc9a0ae 23
+infrahub_sync/plan/errors.py
+  s_f718d35766c589::t_9a78b32b65850c 86,92,99,116,130,186,188,230,345,368,382,433,444,454,485
+  s_f718d35766c589::t_cdf534ce75bdc0 161-163
+docs/docs/using-netbox-or-nautobot-with-infrahub.mdx
+  s_f718d35766c589::t_52129cdfc9a0ae 78
+AGENTS.md
+  s_f718d35766c589::t_1f58b916ebd8e6 9,207
+  s_f718d35766c589::t_064664901b1032 104-108,111
+changelog/+run-discovery.changed.md
+  s_f718d35766c589::t_ca1bd8365dd9a6 1
+docs/docs/development/constitution.md
+  s_f718d35766c589::t_647d70543c9b86 25
+  s_f718d35766c589::t_136324cfc63ad8 20
+tests/test_nightly_e2e.py
+  s_f718d35766c589::t_96c89ff8e5e561 125,133-134,138,144,170
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_f718d35766c589::t_52129cdfc9a0ae 244,274,284,319,357,418,496
+docs/docs/migrating-from-netbox-or-nautobot.mdx
+  s_f718d35766c589::t_52129cdfc9a0ae 79,125,127,135,145,148,169,174,196
+infrahub_sync/plan/checksum.py
+  s_f718d35766c589::t_9a78b32b65850c 133
+docs/docs/development/guides/adding-an-adapter.md
+  s_f718d35766c589::t_52129cdfc9a0ae 158,180,427,431,460,556,561
+docs/docs/development/knowledge/execution-surface.md
+  s_f718d35766c589::t_52129cdfc9a0ae 24
+tests/plan/test_plan_format_3.py
+  s_f718d35766c589::t_05bdba1678c69f 93,247
+changelog/+run-discovery.removed.md
+  s_f718d35766c589::t_674fd3380f5609 1
+tests/plan/test_verify.py
+  s_f718d35766c589::t_05bdba1678c69f 507
+  s_f718d35766c589::t_c36eee7eddd90b 561
+docs/docs/development-stack.mdx
+  s_f718d35766c589::t_52129cdfc9a0ae 184,207
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_f718d35766c589::t_52129cdfc9a0ae 301
+tests/cache/test_apply_plan.py
+  s_f718d35766c589::t_96c89ff8e5e561 165
+tests/plan/test_reader.py
+  s_f718d35766c589::t_05bdba1678c69f 92
+  s_f718d35766c589::t_c36eee7eddd90b 461,537
+docs/docs/development/knowledge/schema-mapping.md
+  s_f718d35766c589::t_52129cdfc9a0ae 118
+tasks/docs.py
+  s_f718d35766c589::t_7f4337f13777f6 62,65-72,75-77
+  s_f718d35766c589::t_e807d6fae4ce22 27-31,33-38,43,46-61,63-64,73-74,78-80
+  s_f718d35766c589::t_69ee01e9548aad 32,39-42,44-45
+tests/cli/test_parity_and_closure.py
+  s_f718d35766c589::t_18d195b6f88291 8
+  s_f718d35766c589::t_22d0bb0c08d8a8 22-30,32,34
+  s_f718d35766c589::t_d335e8d7ebbf93 190-191
+  s_f718d35766c589::t_60cfe1ab7d605e 36-41
+  s_f718d35766c589::t_f8c2f5920d1437 214
+  s_f718d35766c589::t_4c9bd235dc2d7c 35,219,221,231-232,238-239
+  s_f718d35766c589::t_76e25d55a6ec66 220,222-230,233-237
+tests/compose/test_documentation.py
+  s_f718d35766c589::t_96c89ff8e5e561 54,59
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_f718d35766c589::t_52129cdfc9a0ae 108,345
+docs/docs/compose-deployment.mdx
+  s_f718d35766c589::t_52129cdfc9a0ae 456,571,576,596,603,606
+docs/docs/reference/sync-http-api.mdx
+  s_f718d35766c589::t_14c0ab5e088e0c 566
+  s_f718d35766c589::t_66e7b45803970c 569
+  s_f718d35766c589::t_ce9e3a5b555cc6 16-29
+  s_f718d35766c589::t_41676100eb1934 370-371
+  s_f718d35766c589::t_a1a295e18f789f 305-369,372-396
+  s_f718d35766c589::t_53d3c5e843d855 288-292,294
+  s_f718d35766c589::t_84488cf6614f75 542
+examples/netbox_to_infrahub/README.md
+  s_f718d35766c589::t_52129cdfc9a0ae 29
+docs/docs/reference/cli.mdx
+  s_f718d35766c589::t_b7a4d76de2451b 23,26-27,31,38,43,65,100-136,155,157,187,192,203,213-215,225,230,239,244,249,253-254,264,269,294-296,301-356
+  s_f718d35766c589::t_864506bbed9e53 357
+docs/docs/running-a-sync.mdx
+  s_f718d35766c589::t_52129cdfc9a0ae 98,102-103,140,240,267
+  s_f718d35766c589::t_fe85257c862fe6 217-218
+  s_f718d35766c589::t_1df30fa0b5b755 306-307
+  s_f718d35766c589::t_8dd816e13debec 299-300
+  s_f718d35766c589::t_3987858e8caa0f 129-137
+  s_f718d35766c589::t_a339dd04126f07 45-54,56-59
+  s_f718d35766c589::t_15452b29d95a9c 181-182
+  s_f718d35766c589::t_ff3d32be914583 165-180,183-209,212
+  s_f718d35766c589::t_6a2ef6f7ce3f54 273
+docs/docs/contributing.mdx
+  s_f718d35766c589::t_52129cdfc9a0ae 349
+tests/plan/test_review.py
+  s_f718d35766c589::t_c36eee7eddd90b 463,489,688
+docs/docs/development/knowledge/repository-tour.md
+  s_f718d35766c589::t_52129cdfc9a0ae 39
+infrahub_sync/plan/verify.py
+  s_f718d35766c589::t_9a78b32b65850c 64,66,175,400,453
+.github/scripts/nightly_e2e.py
+  s_f718d35766c589::t_2647d562457144 173,189,192,197
+docs/docs/reference/prefect-remote-run.mdx
+  s_f718d35766c589::t_52129cdfc9a0ae 103
+tests/plan/test_checksum.py
+  s_f718d35766c589::t_c36eee7eddd90b 523,545
+docs/docs/reference/schema-mapping.mdx
+  s_f718d35766c589::t_52129cdfc9a0ae 252,255
+docs/docs/readme.mdx
+  s_f718d35766c589::t_52129cdfc9a0ae 57,135
+docs/docs/v2-to-v3.mdx
+  s_f718d35766c589::t_52129cdfc9a0ae 26
+examples/netbox_to_infrahub/config.yml
+  s_f718d35766c589::t_f7486a0a5adf5b 23
+  s_f718d35766c589::t_8b37e627e215e3 15
+dev/specs/015-run-discovery-api/tasks.md
+  s_f718d35766c589::t_ced18573d5eafb 126-131
+docs/docs/tutorials/netbox-to-existing-infrahub.mdx
+  s_f718d35766c589::t_52129cdfc9a0ae 302
+docs/docs/adapters/infrahub.mdx
+  s_f718d35766c589::t_52129cdfc9a0ae 109
+infrahub_sync/plan/keying.py
+  s_f718d35766c589::t_9a78b32b65850c 52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9bb18ea3d0b8548294c9bbe25ea79a6f2561a082",
+  "prompts": {},
+  "sessions": {
+    "s_f718d35766c589": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3abfa013-58d0-4a35-aa91-617e78043d5c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
