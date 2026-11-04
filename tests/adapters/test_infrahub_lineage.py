@@ -24,6 +24,7 @@ from infrahub_sync.adapters.infrahub import (
     require_lineage_settings,
 )
 from infrahub_sync.configuration.infrahub_lineage import InfrahubLineageSettings, NamedLineageNode
+from infrahub_sync.plan.write_surface import LineageResolvingDestination
 from infrahub_sync.potenda import Potenda
 
 IMPORT_ACCOUNT = {"id": "account-1", "name": {"value": "netbox-import"}}
@@ -89,6 +90,16 @@ def make_adapter(client: LineageClient, settings: InfrahubLineageSettings | None
     if settings is not None:
         adapter.lineage_settings = settings
     return adapter
+
+
+def test_the_adapter_is_a_lineage_resolving_destination_even_without_init() -> None:
+    """The engine's presence check finds every member, and the annotation lets ty check their types."""
+    adapter: LineageResolvingDestination = make_adapter(LineageClient())
+
+    assert isinstance(adapter, LineageResolvingDestination)
+    assert adapter.last_changes == {}
+    assert adapter.metadata_read is False
+    assert adapter.lineage_record is None
 
 
 def test_without_settings_the_import_account_is_the_source_and_there_is_no_owner() -> None:

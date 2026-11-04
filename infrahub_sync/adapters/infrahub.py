@@ -905,8 +905,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     _metadata_read_pending: bool = False
     # What those reads returned, keyed by (destination node id, field name). Kept here and not
     # in the DiffSync models, so a value a person changed is compared by its value only and two
-    # plans over the same values give the same operations. Set by `__init__` and reset by `resolve_lineage`.
-    last_changes: dict[tuple[str, str], LastChange]
+    # plans over the same values give the same operations. Set by `__init__` and reset by
+    # `resolve_lineage`; read and written through `last_changes`.
+    _last_changes: dict[tuple[str, str], LastChange] | None = None
     # Cache state: absent means hydration has not been attempted; None means
     # one attempt was exhausted; a string is the resolved DiffSync identity.
     _peer_unique_ids: dict[tuple[str, str], str | None]
@@ -975,6 +976,21 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     def lineage_record(self) -> PlanLineageRecord | None:
         """The lineage a plan records in its manifest, or `None` before `resolve_lineage` runs."""
         return None if self.lineage is None else self.lineage.plan_record()
+
+    @property
+    def last_changes(self) -> dict[tuple[str, str], LastChange]:
+        """Who last changed each value this plan read, keyed by (destination node id, field name).
+
+        A property, so every adapter has the member the engine's `LineageResolvingDestination`
+        check looks for, including one built without `__init__`; it starts empty.
+        """
+        if self._last_changes is None:
+            self._last_changes = {}
+        return self._last_changes
+
+    @last_changes.setter
+    def last_changes(self, value: dict[tuple[str, str], LastChange]) -> None:
+        self._last_changes = value
 
     def resolve_lineage(self, *, saved_plan: PlanManifest | None = None) -> ResolvedLineage:
         """Resolve the import account, the source and the owner this run writes, and keep them.

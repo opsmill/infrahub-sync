@@ -21,6 +21,7 @@ from infrahub_sync.plan.models import PlanLineageRecord
 
 if TYPE_CHECKING:
     from infrahub_sync.adapters.infrahub import PeerResolver
+    from infrahub_sync.plan.last_changes import LastChange
     from infrahub_sync.plan.models import PlanManifest, PlannedOperation
 
 
@@ -47,7 +48,25 @@ class PlannedWriteDestination(Protocol):
 
 @runtime_checkable
 class LineageResolvingDestination(Protocol):
-    """A destination that resolves the lineage it writes, before a plan reads and before an apply writes."""
+    """A destination that resolves the lineage it writes, before a plan reads and before an apply writes.
+
+    It also keeps what a plan records about that lineage and about the last change of each
+    value it read (FR-007). Only the Infrahub destination is one; every other destination
+    records no lineage and no last changes. Like `PlannedWriteDestination`, the `isinstance`
+    check is presence-only, so each value read through it is still checked before use.
+    """
+
+    @property
+    def lineage_record(self) -> PlanLineageRecord | None:
+        """The lineage a plan records in its manifest, or `None` before `resolve_lineage` runs."""
+
+    @property
+    def last_changes(self) -> Mapping[tuple[str, str], LastChange]:
+        """Who last changed each value this plan read, keyed by (destination node id, field name)."""
+
+    @property
+    def metadata_read(self) -> bool:
+        """Whether this plan's reads asked for `updated_by` and `updated_at`."""
 
     def resolve_lineage(self, *, saved_plan: PlanManifest | None = None) -> object:
         """Resolve and keep the lineage this run writes; raise to stop the run.
@@ -88,7 +107,9 @@ def destination_lineage_record(destination: object) -> PlanLineageRecord | None:
 
     `None` when the destination records no lineage, so the plan is written without the field.
     """
-    record = getattr(destination, "lineage_record", None)
+    if not isinstance(destination, LineageResolvingDestination):
+        return None
+    record = destination.lineage_record
     return record if isinstance(record, PlanLineageRecord) else None
 
 
@@ -98,7 +119,9 @@ def destination_last_changes(destination: object) -> LastChangeCollector | None:
     `None` when the destination keeps no last changes (it is not Infrahub), so the plan is
     written without `plan/last_changes.jsonl` and without the manifest's `last_changes` field.
     """
-    changes = getattr(destination, "last_changes", None)
+    if not isinstance(destination, LineageResolvingDestination):
+        return None
+    changes = destination.last_changes
     if not isinstance(changes, Mapping):
         return None
-    return LastChangeCollector(changes, metadata_read=getattr(destination, "metadata_read", False) is True)
+    return LastChangeCollector(changes, metadata_read=destination.metadata_read is True)

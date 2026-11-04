@@ -214,9 +214,25 @@ def test_derivation_without_a_collector_is_unchanged() -> None:
 # --- Which destinations record last changes ------------------------------------------------------
 
 
+class _LastChangeDestination:
+    """A destination with the members `LineageResolvingDestination` declares, and nothing to resolve."""
+
+    lineage_record = None
+
+    def __init__(self, changes: Mapping[tuple[str, str], LastChange], *, metadata_read: bool) -> None:
+        self.last_changes = changes
+        self.metadata_read = metadata_read
+
+    def resolve_lineage(self, *, saved_plan: object = None) -> None:
+        """Resolve nothing."""
+
+    def resolve_metadata_read(self) -> None:
+        """Read nothing."""
+
+
 def test_a_destination_that_keeps_last_changes_is_read_with_its_metadata_flag() -> None:
     changes = {("node-1", "description"): _change()}
-    found = destination_last_changes(SimpleNamespace(last_changes=changes, metadata_read=False))
+    found = destination_last_changes(_LastChangeDestination(changes, metadata_read=False))
 
     assert found is not None
     assert found.changes == changes
@@ -527,6 +543,10 @@ def test_a_plan_run_writes_the_last_changes_the_destination_read(
     destination = _keyed_destination(device_attrs={"model": "c9200", "tags": ["zeta", "alpha"]})
     destination.last_changes = {(DERIVED_DESTINATION_ID, "model"): _change()}  # ty: ignore[unresolved-attribute]
     destination.metadata_read = True  # ty: ignore[unresolved-attribute]
+    # The other members of `LineageResolvingDestination`, so the engine reads the map.
+    destination.lineage_record = None  # ty: ignore[unresolved-attribute]
+    destination.resolve_lineage = lambda **_kwargs: None  # ty: ignore[unresolved-attribute]
+    destination.resolve_metadata_read = lambda: None  # ty: ignore[unresolved-attribute]
     potenda = build_potenda(config=build_config(), source=qualified_source(), destination=destination, run_id=RUN_ID)
 
     run_plan(potenda)
