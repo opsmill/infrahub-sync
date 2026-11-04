@@ -32,6 +32,7 @@ from infrahub_sync.adapters.infrahub import (
     InfrahubModel,
     LastChange,
     RecordedAccount,
+    _latest_change,  # noqa: PLC2701 - the edge ordering under test is private.
     metadata_read_supported,
 )
 from infrahub_sync.cache.cursors import CursorState, CursorTier, capture_safe_cursors
@@ -451,6 +452,25 @@ def test_a_value_infrahub_returns_with_updated_by_is_recorded_for_it() -> None:
         for (node_id, _), change in changes.items()
         if node_id != "device-2"
     ), "no value Infrahub returned with `updated_by` is left without it"
+
+
+@pytest.mark.parametrize(
+    "latest_at",
+    [
+        pytest.param("2026-10-05T08:00:00.123456789Z", id="nanoseconds"),
+        pytest.param("2026-10-05T08:00:00.5Z", id="one-digit"),
+        pytest.param("2026-10-05T08:00:00.1234+00:00", id="four-digits"),
+    ],
+)
+def test_the_latest_edge_is_found_whatever_the_precision_of_its_time(latest_at: str) -> None:
+    """Every supported Python, 3.10 included, orders edge times whose fraction is not 3 or 6 digits."""
+    alice = RecordedAccount(id="account-alice", display_label="Alice")
+    bob = RecordedAccount(id="account-bob", display_label="Bob")
+    earlier = LastChange(updated_by=alice, updated_at="2026-10-01T08:00:00.000001+00:00")
+    latest = LastChange(updated_by=bob, updated_at=latest_at)
+
+    assert _latest_change([earlier, latest]) == latest
+    assert _latest_change([latest, earlier]) == latest
 
 
 def test_a_value_infrahub_holds_no_metadata_for_is_recorded_as_empty() -> None:

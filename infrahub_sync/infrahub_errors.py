@@ -19,10 +19,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import httpx
 from infrahub_sdk.exceptions import AuthenticationError, GraphQLError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 REFUSED_TOKEN_STATUS = 401
 MISSING_PERMISSION_STATUS = 403
@@ -92,20 +95,30 @@ def classify_infrahub_error(exc: BaseException) -> InfrahubErrorClassification |
     return None
 
 
-def classify_infrahub_error_chain(exc: BaseException) -> InfrahubErrorClassification | None:
-    """Classify the first error in `exc`'s cause chain that `classify_infrahub_error` classifies.
+def cause_chain(exc: BaseException) -> Iterator[BaseException]:
+    """Yield `exc`, then each error it was raised from, stopping at a cycle.
 
-    A plan wraps every load failure, the lineage resolution among them, in a `ValueError` raised
-    `from` the original, so the Infrahub error is a cause of the error the run fails with. The walk
-    follows `__cause__`, then `__context__` unless it is suppressed, and stops at a cycle.
+    The walk follows `__cause__`, then `__context__` unless it is suppressed.
     """
     seen: set[int] = set()
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if (classification := classify_infrahub_error(current)) is not None:
-            return classification
+        yield current
         current = current.__cause__ or (None if current.__suppress_context__ else current.__context__)
+
+
+def classify_infrahub_error_chain(exc: BaseException) -> InfrahubErrorClassification | None:
+    """Classify the first error in `exc`'s cause chain that `classify_infrahub_error` classifies.
+
+    A plan wraps each side's load failure in a `ValueError` raised `from` the original, so the
+    Infrahub error can be a cause of the error the run fails with. The lineage resolution that
+    starts a plan, and an apply, raise the original unwrapped. The walk covers both.
+    """
+    for link in cause_chain(exc):
+        classification = classify_infrahub_error(link)
+        if classification is not None:
+            return classification
     return None
 
 
@@ -167,7 +180,7 @@ def _missing_permission(
         problem="missing_permission",
         error_type=error_type,
         http_status=http_status,
-        server_message=_quotable(text) or None,
+        server_message=quotable_text(text) or None,
     )
 
 
@@ -186,9 +199,12 @@ def _permissions_named(text: str) -> tuple[str, ...]:
     return tuple(candidates)
 
 
-def _quotable(text: str) -> str:
-    """Return server text fit to quote: no control characters, single spaces, a capped length."""
+def quotable_text(text: str, *, limit: int = _MAX_QUOTED_MESSAGE) -> str:
+    """Return text fit to quote: no control characters, single spaces, at most `limit` characters.
+
+    Text longer than `limit` is cut and ends with "…".
+    """
     cleaned = " ".join(_CONTROL_CHARACTERS.sub(" ", text).split())
-    if len(cleaned) > _MAX_QUOTED_MESSAGE:
-        cleaned = cleaned[: _MAX_QUOTED_MESSAGE - 1] + "…"
+    if len(cleaned) > limit:
+        cleaned = cleaned[: limit - 1] + "…"
     return cleaned

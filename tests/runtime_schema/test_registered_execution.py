@@ -134,9 +134,12 @@ class _InfrahubClient:
         self.created: list[tuple[str, dict[str, Any]]] = []
 
     @staticmethod
-    def execute_graphql(*, query: str, operation_name: str | None = None) -> dict[str, Any]:
-        """The import account behind the token, as its `AccountProfile` query answers it."""
-        assert "AccountProfile" in query, f"unexpected GraphQL query {operation_name!r}"
+    def execute_graphql(*, query: str) -> dict[str, Any]:
+        """The import account behind the token, as its `AccountProfile` query answers it.
+
+        Only the arguments infrahub-sdk 1.18 accepts: `operation_name` arrived in 1.22.
+        """
+        assert "AccountProfile" in query, f"unexpected GraphQL query {query!r}"
         return {"AccountProfile": {"id": "import-account-id", "name": {"value": "import-account"}}}
 
     @staticmethod

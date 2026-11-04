@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 from infrahub_sdk.exceptions import NodeNotFoundError, SchemaNotFoundError
 
+from infrahub_sync import SyncAdapter, SyncConfig
 from infrahub_sync.adapters.infrahub import (
     IMPORT_ACCOUNT_QUERY,
     ImportAccount,
@@ -26,7 +27,7 @@ from infrahub_sync.configuration.capabilities import InfrahubLineageSettings, Na
 from infrahub_sync.potenda import Potenda
 
 IMPORT_ACCOUNT = {"id": "account-1", "name": {"value": "netbox-import"}}
-ACCOUNT_PROFILE_CALL = ("account_profile", {"operation_name": "IMPORT_ACCOUNT"})
+ACCOUNT_PROFILE_CALL = ("account_profile", {})
 # A plan reads the server version once, after the lineage is resolved.
 VERSION_CALL = ("version", {})
 ADAPTER_LOGGER = "infrahub_sync.adapters.infrahub"
@@ -63,9 +64,10 @@ class LineageClient:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.schema = LineageSchema()
 
-    def execute_graphql(self, *, query: str, operation_name: str | None = None) -> object:
+    def execute_graphql(self, *, query: str) -> object:
+        """Take only the arguments infrahub-sdk 1.18 accepts: `operation_name` arrived in 1.22."""
         assert query == IMPORT_ACCOUNT_QUERY, f"lineage resolution sends only the import account query, not {query!r}"
-        self.calls.append(("account_profile", {"operation_name": operation_name}))
+        self.calls.append(("account_profile", {}))
         return self.profile
 
     def get_version(self) -> str:
@@ -313,6 +315,35 @@ def test_refused_lineage_settings_stop_the_adapter_with_each_refusal_named() -> 
 
     assert "`owner`" in str(caught.value)
     assert "`protect`" in str(caught.value)
+
+
+class _SchemaOnlyClient:
+    """The client `InfrahubAdapter.__init__` builds: it reads the schema and nothing else."""
+
+    def __init__(self, **_kwargs: Any) -> None:  # noqa: ANN401
+        self.schema = SimpleNamespace(all=lambda **_: {})
+
+
+@pytest.mark.parametrize(
+    ("target", "refused"),
+    [pytest.param("destination", True, id="destination"), pytest.param("source", False, id="source")],
+)
+def test_only_a_destination_adapter_refuses_lineage_settings(
+    monkeypatch: pytest.MonkeyPatch, target: str, *, refused: bool
+) -> None:
+    """Registration checks `source`, `owner` and `protect` for the destination role only, so a source adapter keeps the defaults."""
+    monkeypatch.setattr("infrahub_sync.adapters.infrahub.InfrahubClientSync", _SchemaOnlyClient)
+    settings = {"url": "http://infrahub.invalid", "token": "test-token", "owner": "network-team", "protect": "yes"}
+    adapter = SyncAdapter(name="infrahub", settings=settings)
+    config = SyncConfig(name="lineage-roles", source=adapter, destination=adapter, schema_mapping=[])
+
+    if refused:
+        with pytest.raises(InfrahubLineageSettingsError):
+            InfrahubAdapter(target=target, adapter=adapter, config=config)
+    else:
+        assert (
+            InfrahubAdapter(target=target, adapter=adapter, config=config).lineage_settings == InfrahubLineageSettings()
+        )
 
 
 def _ordered_side(label: str, events: list[str]) -> MagicMock:

@@ -266,16 +266,14 @@ def test_real_sdk_node_round_trips_into_typed_diffsync_model(
 
     # Wire a real InfrahubAdapter against the lab. We don't need a real
     # source — the adapter loads from Infrahub itself, which is the side
-    # under test. ``__new__`` skips the source-node/owner setup that
-    # would otherwise require a CoreAccount lookup.
+    # under test. ``__new__`` skips the client and lineage-settings setup
+    # of ``__init__``; this test reads nodes only and writes nothing.
     adapter = InfrahubAdapter.__new__(InfrahubAdapter)
     adapter.config = cfg
     adapter.target = "dst"
     adapter.client = _make_infrahub_client(address, token)
     adapter.schema = adapter.client.schema.all(branch="main")
     adapter.store = type("S", (), {"get": lambda _self, **_k: None})()
-    adapter.source_node = None
-    adapter.owner_node = None
 
     nodes = adapter.client.filters(
         kind="TestAdapterProbe",

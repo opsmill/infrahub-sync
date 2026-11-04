@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -867,13 +868,25 @@ def _edge_last_change(edge: RelatedNodeSync) -> LastChange:
     return LastChange(updated_by=_recorded_account(metadata.updated_by), updated_at=metadata.updated_at)
 
 
+# The fractional seconds of an ISO 8601 time. Python 3.10's `datetime.fromisoformat` reads only
+# exactly 3 or 6 digits, and a timestamp can carry any number of them, up to nanoseconds.
+_FRACTIONAL_SECONDS = re.compile(r"(?<=:\d\d)\.(\d+)")
+
+
 def _change_time(change: LastChange) -> datetime:
-    """`updated_at` as a time to compare edges by; a missing or unparsable value sorts first."""
+    """`updated_at` as a time to compare edges by; a missing or unparsable value sorts first.
+
+    The fractional seconds are cut or padded to microseconds first, so every supported Python
+    reads the same timestamp the same way.
+    """
     earliest = datetime.min.replace(tzinfo=timezone.utc)
     if change.updated_at is None:
         return earliest
+    text = _FRACTIONAL_SECONDS.sub(
+        lambda fraction: "." + fraction.group(1)[:6].ljust(6, "0"), change.updated_at.replace("Z", "+00:00"), count=1
+    )
     try:
-        parsed = datetime.fromisoformat(change.updated_at.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(text)
     except ValueError:
         return earliest
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
@@ -954,8 +967,14 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         # Parsed here, resolved against the destination by `resolve_lineage` at the start of
         # each plan and each apply. Nothing is read from the destination for lineage now.
-        self.lineage_settings = require_lineage_settings(
-            {"source": settings.get("source"), "owner": settings.get("owner"), "protect": settings.get("protect")}
+        # Only a destination writes lineage, and registration checks these settings for the
+        # destination role alone, so an Infrahub source keeps the defaults and is not refused.
+        self.lineage_settings = (
+            require_lineage_settings(
+                {"source": settings.get("source"), "owner": settings.get("owner"), "protect": settings.get("protect")}
+            )
+            if target == "destination"
+            else InfrahubLineageSettings()
         )
         self.lineage = None
         self.metadata_read = False
@@ -1052,10 +1071,12 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         return supported
 
     def _read_import_account(self) -> ImportAccount:
-        """Return the account behind the token, read with one `AccountProfile` query."""
-        return _import_account_from_profile(
-            self.client.execute_graphql(query=IMPORT_ACCOUNT_QUERY, operation_name="IMPORT_ACCOUNT")
-        )
+        """Return the account behind the token, read with one `AccountProfile` query.
+
+        No `operation_name` is passed: `execute_graphql` takes it from infrahub-sdk 1.22 only,
+        and the project supports 1.18. The query names its one operation, so none is needed.
+        """
+        return _import_account_from_profile(self.client.execute_graphql(query=IMPORT_ACCOUNT_QUERY))
 
     def _resolve_named_lineage_node(self, setting: str, named: NamedLineageNode) -> ResolvedLineageNode:
         """Return the id of the node a `source` or `owner` setting names.
