@@ -25,6 +25,7 @@ from urllib.parse import unquote, urlsplit
 import httpx
 import structlog
 from azure.core.exceptions import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+    AzureError,
     ClientAuthenticationError,
 )
 from azure.identity.aio import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
@@ -97,7 +98,10 @@ FALLBACK_RETRY_SECONDS = 5.0
 MAX_RETRY_WAIT_SECONDS = 120.0
 MEMBER_CONCURRENCY = 4
 RETRY_STATUSES = frozenset({429, 503})
+# 401: Graph rejected the access token. 403: the token is valid but lacks a Graph permission.
 PERMISSION_STATUSES = frozenset({401, 403})
+# A page read as zero records would make the diff plan to delete every synced node, so such reads stop.
+NO_RECORDS_NOTE = "The read stops so that the sync does not treat the missing records as deleted."
 
 AUTH_CLIENT_SECRET = "client_secret"
 AUTH_DEFAULT = "default"
@@ -157,11 +161,11 @@ class EntraidGraphError(RuntimeError):
 
 
 class EntraidPermissionError(EntraidGraphError):
-    """Microsoft Graph answered HTTP 401 or 403: the application lacks a Graph permission."""
+    """Microsoft Graph answered HTTP 401 (it rejected the access token) or 403 (a Graph permission is missing)."""
 
 
 class EntraidAuthenticationError(EntraidGraphError):
-    """The Azure credential could not get an access token for Microsoft Graph."""
+    """The credential could not get an access token: the token endpoint refused the request or was not reached."""
 
 
 @dataclass(frozen=True)
@@ -181,7 +185,7 @@ class EntraidSettings:
     auth: str = AUTH_CLIENT_SECRET
     tenant_id: str | None = None
     client_id: str | None = None
-    client_secret: str | None = field(default=None, repr=False)
+    client_secret: str | None = field(default=None, repr=False, compare=False)
     graph_url: str = DEFAULT_GRAPH_URL
     page_size: int = DEFAULT_PAGE_SIZE
     timeout: float = DEFAULT_TIMEOUT_SECONDS
@@ -487,10 +491,10 @@ class EntraidGraphClient:
                 # `@odata.nextLink` keeps the query string but not this header; advanced queries need it on every page.
                 info.headers.try_add("ConsistencyLevel", "eventual")
             page = await self._send(info, member=member)
-            values = page.get("value") or []
+            values = page.get("value")
             if not isinstance(values, list):
                 path = _request_path(info)
-                msg = f"Microsoft Graph returned a page without a 'value' list for {path}."
+                msg = f"Microsoft Graph returned a page without a 'value' list for {path}. {NO_RECORDS_NOTE}"
                 raise EntraidGraphError(msg, path=path)
             items.extend(values)
             next_link = page.get("@odata.nextLink")
@@ -502,7 +506,8 @@ class EntraidGraphClient:
         """Send one GET request and return the JSON body, retrying HTTP 429 and 503 up to `max_retries` times.
 
         `member` marks a request that reads group members: each attempt also counts in `member_requests`. The
-        counters are incremented per attempt, so they stay exact while member reads run concurrently.
+        counters stay exact while member reads run concurrently because all reads run on one asyncio thread and
+        no `await` separates the read and the write of a counter.
 
         The path for messages is read after the send attempt: the request adapter adds the base URL to the
         request information while it sends it.
@@ -539,11 +544,12 @@ class EntraidGraphClient:
                     "(setting 'timeout')."
                 )
                 raise EntraidGraphError(msg, path=path) from exc
-            except httpx.TransportError as exc:
+            except httpx.RequestError as exc:
                 path = _request_path(info)
-                msg = f"Microsoft Graph request {path} failed before a response arrived: {type(exc).__name__}."
+                msg = f"Microsoft Graph request {path} failed: {type(exc).__name__}."
                 raise EntraidGraphError(msg, path=path) from exc
-            except ClientAuthenticationError as exc:
+            except AzureError as exc:
+                # Raised by the credential while it gets the token; Graph HTTP errors are `APIError`, handled above.
                 raise self._authentication_error(exc, _request_path(info)) from exc
             return _parse_body(body, _request_path(info))
 
@@ -554,10 +560,7 @@ class EntraidGraphClient:
         detail = getattr(error, "message", None) or exc.message
         graph_says = f" ({code}: {detail})" if code or detail else ""
         if status in PERMISSION_STATUSES:
-            msg = (
-                f"Microsoft Graph refused {path} with HTTP {status}{graph_says}. The application needs the "
-                f"Microsoft Graph application permissions {', '.join(REQUIRED_PERMISSIONS)} with admin consent."
-            )
+            msg = f"Microsoft Graph refused {path} with HTTP {status}{graph_says}. {self._permission_guidance()}"
             return EntraidPermissionError(msg, status=status, code=code, path=path)
         if status in RETRY_STATUSES:
             msg = (
@@ -568,13 +571,36 @@ class EntraidGraphClient:
             msg = f"Microsoft Graph returned HTTP {status} for {path}{graph_says}."
         return EntraidGraphError(msg, status=status, code=code, path=path)
 
-    def _authentication_error(self, exc: ClientAuthenticationError, path: str) -> EntraidAuthenticationError:
+    def _permission_guidance(self) -> str:
+        """What HTTP 401 and 403 mean, and which permissions the identity of the `auth` mode needs."""
+        user_read, group_read, group_member_read = REQUIRED_PERMISSIONS
+        permissions = f"{user_read} and {group_read} (or {group_member_read} instead of {group_read})"
+        if self.settings.auth == AUTH_CLIENT_SECRET:
+            needs = (
+                f"The application needs the Microsoft Graph application permissions {permissions}, with admin consent."
+            )
+        else:
+            needs = (
+                "The signed-in identity (user, managed identity or workload identity) needs read access to users "
+                f"and groups, for example {permissions}."
+            )
+        return (
+            "HTTP 401 means Graph rejected the access token: check the tenant, the credential, and that "
+            f"'graph_url' matches the token audience. HTTP 403 means a permission is missing. {needs}"
+        )
+
+    def _authentication_error(self, exc: AzureError, path: str) -> EntraidAuthenticationError:
         if self.settings.auth == AUTH_CLIENT_SECRET:
             check = f"Check the environment variables {ENV_TENANT_ID}, {ENV_CLIENT_ID} and {ENV_CLIENT_SECRET}."
         else:
             check = (
                 "Check that an Azure CLI login (az login), a managed identity or a workload identity "
                 "is available to DefaultAzureCredential."
+            )
+        if not isinstance(exc, ClientAuthenticationError):
+            check = (
+                f"The token endpoint could not be reached or refused the request ({type(exc).__name__}): check "
+                f"the network connection to the Microsoft sign-in service. {check}"
             )
         msg = (
             f"Could not get an access token for Microsoft Graph (auth '{self.settings.auth}') "
@@ -617,8 +643,10 @@ def _retry_wait(headers: Mapping[str, str] | None) -> float:
 
 
 def _parse_body(body: bytes | None, path: str) -> dict[str, Any]:
+    """The JSON object of a Graph response body. Every request reads a list, so an empty body is an error."""
     if not body:
-        return {}
+        msg = f"Microsoft Graph returned an empty body for {path}. {NO_RECORDS_NOTE}"
+        raise EntraidGraphError(msg, path=path)
     try:
         page = json.loads(body)
     except ValueError as exc:
@@ -844,8 +872,9 @@ class EntraidAdapter(DiffSyncMixin, Adapter):
         """Store the sorted user member IDs of every group under `members`.
 
         At most `MEMBER_CONCURRENCY` groups are read at once. `membership: transitive` reads the members of nested
-        groups too. Groups without an `id` are left alone; the conversion to a model refuses them later with a clear
-        message.
+        groups too. Groups without an `id` are left alone; the conversion to a model refuses them later with an
+        `EntraidConfigError` that names the entry. When one read fails, the other reads are cancelled and awaited
+        before the error propagates, so none of them still uses the Graph client after it closes.
         """
         transitive = self.settings.membership == MEMBERSHIP_TRANSITIVE
         semaphore = asyncio.Semaphore(MEMBER_CONCURRENCY)
@@ -855,7 +884,14 @@ class EntraidAdapter(DiffSyncMixin, Adapter):
             async with semaphore:
                 return await graph.user_member_ids(str(group["id"]), transitive=transitive)
 
-        member_ids = await asyncio.gather(*(read(group) for group in with_id))
+        tasks = [asyncio.create_task(read(group)) for group in with_id]
+        try:
+            member_ids = await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         for group, ids in zip(with_id, member_ids, strict=True):
             group[MEMBERS_KEY] = ids
 
@@ -911,13 +947,13 @@ class EntraidAdapter(DiffSyncMixin, Adapter):
         mapping: SchemaMappingModel,
         model: type[EntraidModel],
         *,
-        peers: Mapping[str, Mapping[str, str]] | None = None,
-        dropped: Counter[str] | None = None,
+        peers: Mapping[str, Mapping[str, str]],
+        dropped: Counter[str],
     ) -> dict[str, Any]:
         """Turn one Graph record into the fields of a DiffSync model.
 
-        `peers` maps each referenced kind to its Graph ID index (built from the store when not given). References
-        to objects that are not loaded are left out and counted per field in `dropped`.
+        `peers` maps each referenced kind to its Graph ID index, built by `_peer_indexes`. References to objects
+        that are not loaded are left out and counted per field in `dropped`.
         """
         local_id = record.get("id")
         if not local_id:
@@ -927,17 +963,23 @@ class EntraidAdapter(DiffSyncMixin, Adapter):
             )
             raise EntraidConfigError(msg)
         data: dict[str, Any] = {"local_id": str(local_id)}
-        if peers is None:
-            peers = self._peer_indexes(mapping)
         for field_map in mapping.fields:
             if field_map.static is not None:
                 data[field_map.name] = field_map.static
             elif field_map.mapping and field_map.reference:
                 found, missing = _peer_ids(get_value(record, field_map.mapping), peers.get(field_map.reference, {}))
-                if missing and dropped is not None:
+                if missing:
                     dropped[field_map.name] += missing
                 if model.is_list(name=field_map.name):
                     data[field_map.name] = found
+                elif len(found) > 1:
+                    msg = (
+                        f"schema_mapping '{mapping.name}', field '{field_map.name}': the Graph property "
+                        f"'{field_map.mapping}' resolves to {len(found)} loaded '{field_map.reference}' objects, "
+                        "but the relationship holds one peer. Map a property that holds one ID, or use a "
+                        "relationship that holds many peers."
+                    )
+                    raise EntraidConfigError(msg)
                 elif found:
                     data[field_map.name] = found[0]
             elif field_map.mapping:

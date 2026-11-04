@@ -65,13 +65,19 @@ source:
 | `client_secret` in settings | `EntraidConfigError` | `ENTRAID_CLIENT_SECRET` |
 | Missing tenant, client ID or secret | `EntraidConfigError` | the missing environment variable names |
 | Unknown collection in `schema_mapping` | `EntraidConfigError` | the entry name and the valid names |
-| HTTP 401 / 403 | `EntraidPermissionError` | `User.Read.All`, `Group.Read.All`, `GroupMember.Read.All` |
+| HTTP 401 / 403 | `EntraidPermissionError` | the status, what 401 (token rejected) and 403 (permission missing) mean, `User.Read.All`, `Group.Read.All`, `GroupMember.Read.All` |
 | Credential cannot get a token | `EntraidAuthenticationError` | the `auth` mode and the variables or login to check |
+| Token endpoint cannot be reached or refuses the request (`AzureError` other than `ClientAuthenticationError`) | `EntraidAuthenticationError` | the `auth` mode, "token endpoint could not be reached or refused the request", the exception type and the variables or login to check |
+| Graph response with an empty body, or a page without a `value` list (`{"value": []}` is a valid empty page) | `EntraidGraphError` | the request path |
+| Other request failure (`httpx.RequestError`, for example a decoding error or too many redirects) | `EntraidGraphError` | the request path and the exception type |
 | Groups field `mapping: members` without `reference` | `EntraidConfigError` | the entry and field name |
+| Reference field with a single peer resolves to several loaded objects | `EntraidConfigError` | the entry and field name and "holds one peer" |
 | SDK not installed | `ModuleNotFoundError` (Python) | documented with `pip install msgraph-sdk azure-identity` |
 | HTTP 429 / 503 after `max_retries` | `EntraidGraphError` | status and request path |
 | Timeout | `EntraidGraphError` | request path and timeout |
 | List property mapped to a single attribute | `EntraidConfigError` | the field and "transform" |
+
+Errors raised while the adapter is constructed reach the CLI prefixed with `Error initializing EntraidAdapter: `.
 
 ## Logging
 

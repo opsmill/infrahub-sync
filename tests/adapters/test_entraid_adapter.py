@@ -2,16 +2,28 @@
 
 from __future__ import annotations
 
+import asyncio
+import gc
 import logging
-from typing import TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
+import httpx
 import pytest
 
 pytest.importorskip("msgraph")
 
-from infrahub_sync.adapters.entraid import EntraidAdapter, EntraidConfigError, EntraidModel, EntraidPermissionError
+from infrahub_sync.adapters import entraid
+from infrahub_sync.adapters.entraid import (
+    EntraidAdapter,
+    EntraidAuthenticationError,
+    EntraidConfigError,
+    EntraidModel,
+    EntraidPermissionError,
+)
 from infrahub_sync.cache.cursors import CursorTier
 from tests.adapters.entraid_fakes import (
+    TEST_MODELS,
+    FakeCredential,
     GraphRouter,
     IdentityEmployee,
     IdentityGroup,
@@ -24,6 +36,9 @@ from tests.adapters.entraid_fakes import (
     set_entraid_env,
     user_record,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 EMPLOYEE_FIELDS = [
     {"name": "entra_id", "mapping": "id"},
@@ -189,13 +204,23 @@ def test_cursor_tier_is_none() -> None:
     assert adapter.cursor_tier_for("IdentityEmployee") is CursorTier.NONE
 
 
-def accounts_entry(name: str, upn_regex: str | None = None, **extra: object) -> dict[str, object]:
+def accounts_entry(
+    name: str,
+    upn_regex: str | None = None,
+    *,
+    extra_fields: Sequence[dict[str, str]] = (),
+    **extra: object,
+) -> dict[str, object]:
     """A `schema_mapping` entry of `name` that reads the `accounts` collection, optionally filtered on the UPN."""
     entry: dict[str, object] = {
         "name": name,
         "mapping": "accounts",
         "identifiers": ["entra_id"],
-        "fields": [{"name": "entra_id", "mapping": "id"}, {"name": "name", "mapping": "userPrincipalName"}],
+        "fields": [
+            {"name": "entra_id", "mapping": "id"},
+            {"name": "name", "mapping": "userPrincipalName"},
+            *extra_fields,
+        ],
         **extra,
     }
     if upn_regex is not None:
@@ -436,8 +461,9 @@ def test_summary_log_counts_member_requests(caplog: pytest.LogCaptureFixture) ->
         if "graph reads finished" in record.getMessage()
     ]
     assert len(summaries) == 1
-    assert "member_requests=3" in summaries[0]
-    assert "requests=5" in summaries[0]
+    fields = summaries[0].split()
+    assert "member_requests=3" in fields
+    assert "requests=5" in fields
 
 
 def test_members_mapping_without_reference_is_refused_naming_the_field() -> None:
@@ -473,3 +499,161 @@ def test_permission_refusal_during_load_raises_permission_error(refused_path: st
     assert excinfo.value.status == 403
     assert refused_path in str(excinfo.value)
     assert "GroupMember.Read.All" in str(excinfo.value)
+
+
+class GatedRouter(GraphRouter):
+    """A `GraphRouter` that holds the requests of `gated_path` until a retry wait has started."""
+
+    def __init__(self, gated_path: str) -> None:
+        super().__init__()
+        self.gated_path = gated_path
+        self._sleep_started: asyncio.Event | None = None
+
+    @property
+    def sleep_started(self) -> asyncio.Event:
+        # Created on first use, inside the event loop that runs the reads.
+        if self._sleep_started is None:
+            self._sleep_started = asyncio.Event()
+        return self._sleep_started
+
+    @property
+    def transport(self) -> httpx.MockTransport:
+        return httpx.MockTransport(self.handle_async)
+
+    async def handle_async(self, request: httpx.Request) -> httpx.Response:
+        if self.relative_path(request) == self.gated_path:
+            await self.sleep_started.wait()
+        return self.handle(request)
+
+
+def test_failing_member_read_cancels_the_other_reads_before_the_client_closes(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    credential = FakeCredential()
+    client_closed_when_cancelled: list[bool] = []
+    router = GatedRouter(gated_path=GraphRouter.members_path(graph_id(12)))
+
+    async def blocking_sleep(seconds: float) -> None:  # noqa: ARG001 - same signature as asyncio.sleep
+        router.sleep_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            client_closed_when_cancelled.append(credential.closed)
+            raise
+
+    monkeypatch.setattr(entraid, "_sleep", blocking_sleep)
+    router.add_records("/users", [user_record(1, "alice@example.com")])
+    router.add_records("/groups", [group_record(11, "network-engineers"), group_record(12, "network-admins")])
+    # Group 11 is throttled and waits; group 12 is refused once that wait has started.
+    router.add_error(router.members_path(graph_id(11)), 429, headers={"Retry-After": "1"})
+    router.add_error(router.members_path(graph_id(12)), 403, code="Authorization_RequestDenied")
+    adapter = make_adapter(make_config([USERS_ENTRY, GROUPS_WITH_MEMBERS_ENTRY]), router, credential=credential)
+    # asyncio logs "Task was destroyed but it is pending" and "Task exception was never retrieved" as errors.
+    caplog.set_level(logging.WARNING, logger="asyncio")
+
+    with pytest.raises(EntraidPermissionError) as excinfo:
+        adapter.load()
+    gc.collect()
+
+    assert router.members_path(graph_id(12)) in str(excinfo.value)
+    assert client_closed_when_cancelled == [False]
+    assert credential.closed is True
+    assert [record.getMessage() for record in caplog.records if record.name == "asyncio"] == []
+
+
+OWNER_FIELD = {"name": "owner", "mapping": "ownerIds", "reference": "IdentityEmployee"}
+
+
+class OwnedServiceAccount(EntraidModel):
+    _modelname = "IdentityServiceAccount"
+    _identifiers = ("entra_id",)
+    _attributes = ("name", "owner")
+    entra_id: str
+    name: str | None = None
+    owner: str | None = None
+
+    local_id: str | None = None
+    local_data: Any | None = None
+
+
+@pytest.mark.parametrize(("owner_numbers", "expected"), [([1], graph_id(1)), ([1, 2], None)])
+def test_single_peer_relationship_takes_one_peer_and_refuses_several(
+    owner_numbers: list[int], expected: str | None
+) -> None:
+    router = GraphRouter()
+    router.add_records(
+        "/users",
+        [
+            user_record(1, "alice@example.com"),
+            user_record(2, "bob@example.com"),
+            user_record(3, "svc-backup@example.com", ownerIds=[graph_id(number) for number in owner_numbers]),
+        ],
+    )
+    service_accounts = accounts_entry("IdentityServiceAccount", "^svc-", extra_fields=[OWNER_FIELD])
+    config = make_config(
+        [accounts_entry("IdentityEmployee", "^(?!svc-)"), service_accounts], settings=ACCOUNTS_SETTINGS
+    )
+    adapter = make_adapter(config, router, models={**TEST_MODELS, "IdentityServiceAccount": OwnedServiceAccount})
+
+    if expected is not None:
+        adapter.load()
+        assert loaded(adapter, OwnedServiceAccount)[graph_id(3)].owner == expected
+        return
+    with pytest.raises(EntraidConfigError) as excinfo:
+        adapter.load()
+    message = str(excinfo.value)
+    assert "schema_mapping 'IdentityServiceAccount', field 'owner'" in message
+    assert "'ownerIds'" in message
+    assert "holds one peer" in message
+
+
+async def test_load_from_inside_a_running_event_loop_loads_the_objects() -> None:  # noqa: RUF029 - needs a running loop
+    # `asyncio.run` refuses to start here, so `load()` reads Graph in a worker thread with its own loop.
+    assert asyncio.get_running_loop().is_running()
+    router = GraphRouter()
+    router.add_records("/users", [user_record(1, "alice@example.com")])
+    adapter = make_adapter(make_config([USERS_ENTRY]), router)
+
+    adapter.load()
+
+    assert set(loaded(adapter, IdentityEmployee)) == {graph_id(1)}
+
+
+def test_token_failure_during_load_raises_authentication_error_without_graph_requests() -> None:
+    router = GraphRouter()
+    router.add_records("/users", [user_record(1, "alice@example.com")])
+    credential = FakeCredential(fail=True)
+    adapter = make_adapter(make_config([USERS_ENTRY]), router, credential=credential)
+
+    with pytest.raises(EntraidAuthenticationError, match="auth 'client_secret'"):
+        adapter.load()
+
+    assert router.requests == []
+    assert credential.closed is True
+
+
+def test_entries_sharing_a_collection_send_one_request_selecting_both_properties() -> None:
+    router = GraphRouter()
+    router.add_records(
+        "/users",
+        [
+            user_record(1, "alice@example.com", jobTitle="Engineer"),
+            user_record(2, "svc-backup@example.com", mail="svc-backup@example.com"),
+        ],
+    )
+    employees = accounts_entry(
+        "IdentityEmployee", "^(?!svc-)", extra_fields=[{"name": "display_name", "mapping": "jobTitle"}]
+    )
+    service_accounts = accounts_entry(
+        "IdentityServiceAccount", "^svc-", extra_fields=[{"name": "email", "mapping": "mail"}]
+    )
+    adapter = make_adapter(make_config([employees, service_accounts], settings=ACCOUNTS_SETTINGS), router)
+
+    adapter.load()
+
+    requests = router.requests_for("/users")
+    assert len(requests) == 1
+    select = requests[0].url.params["$select"].split(",")
+    assert {"jobTitle", "mail"} <= set(select)
+    assert loaded(adapter, IdentityEmployee)[graph_id(1)].display_name == "Engineer"
+    assert loaded(adapter, IdentityServiceAccount)[graph_id(2)].email == "svc-backup@example.com"

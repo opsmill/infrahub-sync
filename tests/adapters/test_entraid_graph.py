@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+import httpx
 import pytest
 
 pytest.importorskip("msgraph")
+
+from azure.core.exceptions import AzureError, ServiceRequestError, ServiceResponseError
 
 from infrahub_sync.adapters import entraid
 from infrahub_sync.adapters.entraid import (
@@ -22,11 +26,13 @@ from infrahub_sync.adapters.entraid import (
     EntraidSettings,
 )
 from tests.adapters.entraid_fakes import (
+    CLIENT_SECRET,
     ENTRAID_ENV,
     TOKEN,
     FakeCredential,
     GraphRouter,
     SleepRecorder,
+    graph_id,
     group_record,
     user_record,
 )
@@ -35,6 +41,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
 USERS = Collection(name="users", resource="users")
+US_GRAPH_URL = "https://graph.microsoft.us/v1.0"
 
 
 @pytest.fixture
@@ -242,6 +249,12 @@ def test_timeout_raises_graph_error_naming_the_path(sleeps: SleepRecorder) -> No
     assert sleeps.waits == []
 
 
+AUTH_GUIDANCE = {
+    "client_secret": ["ENTRAID_TENANT_ID", "ENTRAID_CLIENT_ID", "ENTRAID_CLIENT_SECRET"],
+    "default": ["Azure CLI login (az login)", "DefaultAzureCredential"],
+}
+
+
 @pytest.mark.parametrize("auth", ["client_secret", "default"])
 def test_credential_failure_raises_authentication_error_naming_the_auth_mode(auth: str) -> None:
     router = GraphRouter()
@@ -249,8 +262,151 @@ def test_credential_failure_raises_authentication_error_naming_the_auth_mode(aut
     with pytest.raises(EntraidAuthenticationError) as excinfo:
         list_collection(router, USERS, settings={"auth": auth}, credential=FakeCredential(fail=True))
 
-    assert f"auth '{auth}'" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert f"auth '{auth}'" in message
+    for guidance in AUTH_GUIDANCE[auth]:
+        assert guidance in message
+    assert CLIENT_SECRET not in message
+    assert CLIENT_SECRET not in repr(excinfo.value)
     assert router.requests == []
+
+
+@pytest.mark.parametrize("error_cls", [ServiceRequestError, ServiceResponseError])
+@pytest.mark.parametrize("auth", ["client_secret", "default"])
+def test_unreachable_token_endpoint_raises_authentication_error(auth: str, error_cls: type[AzureError]) -> None:
+    router = GraphRouter()
+    credential = FakeCredential(error=error_cls("fake: connection refused by the token endpoint"))
+
+    with pytest.raises(EntraidAuthenticationError) as excinfo:
+        list_collection(router, USERS, settings={"auth": auth}, credential=credential)
+
+    message = str(excinfo.value)
+    assert f"auth '{auth}'" in message
+    assert "token endpoint could not be reached or refused the request" in message
+    assert error_cls.__name__ in message
+    for guidance in AUTH_GUIDANCE[auth]:
+        assert guidance in message
+    assert CLIENT_SECRET not in message
+    assert isinstance(excinfo.value.__cause__, error_cls)
+    assert router.requests == []
+
+
+@pytest.mark.parametrize("error_cls", [httpx.DecodingError, httpx.TooManyRedirects])
+def test_request_error_after_the_response_raises_graph_error_naming_the_path(
+    sleeps: SleepRecorder, error_cls: type[httpx.RequestError]
+) -> None:
+    router = GraphRouter()
+    router.add_request_error("/users", error_cls)
+
+    with pytest.raises(EntraidGraphError) as excinfo:
+        list_collection(router, USERS)
+
+    assert type(excinfo.value) is EntraidGraphError
+    assert excinfo.value.path is not None
+    assert excinfo.value.path.split("?", 1)[0].endswith("/users")
+    assert excinfo.value.path in str(excinfo.value)
+    assert error_cls.__name__ in str(excinfo.value)
+    assert sleeps.waits == []
+
+
+def read_members(router: GraphRouter, group_id: str) -> list[str]:
+    async def read() -> list[str]:
+        async with EntraidGraphClient(
+            make_settings(), transport=router.transport, credential=FakeCredential()
+        ) as graph:
+            return await graph.user_member_ids(group_id, transitive=False)
+
+    return asyncio.run(read())
+
+
+GROUP_ID = graph_id(11)
+MEMBERS_PATH = GraphRouter.members_path(GROUP_ID)
+
+
+def read_users(router: GraphRouter) -> list[Any]:
+    return list_collection(router, USERS)
+
+
+def read_group_members(router: GraphRouter) -> list[Any]:
+    return read_members(router, GROUP_ID)
+
+
+@pytest.mark.parametrize(
+    ("path", "read"),
+    [
+        pytest.param("/users", read_users, id="collection-read"),
+        pytest.param(MEMBERS_PATH, read_group_members, id="member-read"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        pytest.param(b"{}", "without a 'value' list", id="object-without-value"),
+        pytest.param(b'{"value": null}', "without a 'value' list", id="value-null"),
+        pytest.param(b"", "empty body", id="empty-body"),
+    ],
+)
+def test_page_without_value_list_raises_instead_of_reading_zero_records(
+    path: str, read: Callable[[GraphRouter], list[Any]], body: bytes, expected: str
+) -> None:
+    router = GraphRouter()
+    router.add_body(path, body)
+
+    with pytest.raises(EntraidGraphError) as excinfo:
+        read(router)
+
+    assert type(excinfo.value) is EntraidGraphError
+    assert expected in str(excinfo.value)
+    assert excinfo.value.path is not None
+    assert excinfo.value.path.split("?", 1)[0].endswith(path)
+    assert excinfo.value.path in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("path", "read"),
+    [
+        pytest.param("/users", read_users, id="collection-read"),
+        pytest.param(MEMBERS_PATH, read_group_members, id="member-read"),
+    ],
+)
+def test_page_with_empty_value_list_reads_zero_records(path: str, read: Callable[[GraphRouter], list[Any]]) -> None:
+    router = GraphRouter()
+    router.add_body(path, b'{"value": []}')
+
+    assert read(router) == []
+    assert len(router.requests_for(path)) == 1
+
+
+def test_graph_url_of_another_cloud_sets_the_token_scope_and_the_request_host() -> None:
+    router = GraphRouter(base_url=US_GRAPH_URL)
+    router.add_records("/users", sample_records("users", 1))
+    credential = FakeCredential()
+
+    list_collection(router, USERS, settings={"graph_url": US_GRAPH_URL}, credential=credential)
+
+    assert credential.scopes == [("https://graph.microsoft.us/.default",)]
+    request = router.requests_for("/users")[0]
+    assert request.url.host == "graph.microsoft.us"
+    assert request.headers["Authorization"] == f"Bearer {TOKEN}"
+
+
+def test_next_link_to_another_host_is_sent_without_the_token() -> None:
+    first, second = sample_records("users", 2)
+    other_next_link = "https://other.example.com/v1.0/users?$skiptoken=1"
+    router = GraphRouter()
+    router.add_body("/users", json.dumps({"value": [first], "@odata.nextLink": other_next_link}).encode())
+    router.add_body("/users", json.dumps({"value": [second]}).encode())
+    credential = FakeCredential()
+
+    result = list_collection(router, USERS, credential=credential)
+
+    assert result == [first, second]
+    graph_request, other_request = router.requests
+    assert graph_request.url.host == "graph.microsoft.com"
+    assert graph_request.headers["Authorization"] == f"Bearer {TOKEN}"
+    assert other_request.url.host == "other.example.com"
+    assert "Authorization" not in other_request.headers
+    assert len(credential.scopes) == 1
 
 
 def queue_throttling(router: GraphRouter) -> dict[str, Any]:

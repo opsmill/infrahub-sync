@@ -90,9 +90,10 @@ No message or `repr` contains a token or the client secret.
 - `model_loader(model_name, model)`: reads all collections once (R7), copies the records of the entry's collection,
   applies `filter_records` then `transform_records`, converts each record with `record_to_diffsync`, adds it, and logs
   the loaded and read counts. Logs one warning when member references were dropped.
-- `record_to_diffsync(record, mapping, model, peers)`: sets `local_id` to the Graph `id`; for each field: `static`
-  value; `mapping` + `reference` → peer unique IDs (list field: sorted list; single field: first sorted peer); plain
-  `mapping` → `get_value(record, mapping)`, a list value fails with a message asking for a transform.
+- `record_to_diffsync(record, mapping, model, *, peers, dropped)`: sets `local_id` to the Graph `id`; for each field:
+  `static` value; `mapping` + `reference` → peer unique IDs (list field: sorted list; single field: the one peer, or
+  `EntraidConfigError` naming the entry and field when several peers resolve); plain `mapping` →
+  `get_value(record, mapping)`, a list value fails with a message asking for a transform.
 - `cursor_tier_for` is not overridden (`CursorTier.NONE`).
 
 ## EntraidModel(DiffSyncModelMixin, DiffSyncModel)

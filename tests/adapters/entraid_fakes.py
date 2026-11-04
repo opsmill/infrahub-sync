@@ -21,7 +21,7 @@ from azure.core.credentials import AccessToken
 from azure.core.exceptions import ClientAuthenticationError
 
 from infrahub_sync.adapters import entraid
-from infrahub_sync.adapters.entraid import EntraidModel
+from infrahub_sync.adapters.entraid import EntraidAdapter, EntraidModel
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -74,16 +74,29 @@ def set_entraid_env(monkeypatch: pytest.MonkeyPatch, **overrides: str | None) ->
 
 
 class FakeCredential:
-    """Async token credential that returns a fake token, or raises `ClientAuthenticationError` when `fail` is set."""
+    """Async token credential that returns a fake token.
 
-    def __init__(self, *, fail: bool = False, message: str = "fake credential refused the request") -> None:
+    With `fail` set it raises `ClientAuthenticationError`; with `error` set it raises that exception instead, for
+    example an `azure.core.exceptions.ServiceRequestError` for a token endpoint that cannot be reached.
+    """
+
+    def __init__(
+        self,
+        *,
+        fail: bool = False,
+        message: str = "fake credential refused the request",
+        error: Exception | None = None,
+    ) -> None:
         self.fail = fail
         self.message = message
+        self.error = error
         self.scopes: list[tuple[str, ...]] = []
         self.closed = False
 
     async def get_token(self, *scopes: str, **kwargs: object) -> AccessToken:  # noqa: ARG002 - credential protocol
         self.scopes.append(scopes)
+        if self.error is not None:
+            raise self.error
         if self.fail:
             raise ClientAuthenticationError(message=self.message)
         return AccessToken(TOKEN, int(time.time()) + ONE_YEAR_SECONDS)
@@ -161,6 +174,23 @@ class GraphRouter:
         def respond(request: httpx.Request) -> httpx.Response:
             msg = "fake read timeout"
             raise httpx.ReadTimeout(msg, request=request)
+
+        self._queued.setdefault(path, []).append(respond)
+
+    def add_body(self, path: str, content: bytes, *, status: int = 200) -> None:
+        """Queue one response with this raw body for `path`, for example `b""` or `b"{}"`."""
+
+        def respond(request: httpx.Request) -> httpx.Response:  # noqa: ARG001 - same signature as the other queued items
+            return httpx.Response(status, headers={"Content-Type": "application/json"}, content=content)
+
+        self._queued.setdefault(path, []).append(respond)
+
+    def add_request_error(self, path: str, error_cls: type[httpx.RequestError]) -> None:
+        """Queue one `httpx.RequestError` subclass, for example `httpx.DecodingError`, for `path`."""
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            msg = f"fake {error_cls.__name__}"
+            raise error_cls(msg, request=request)
 
         self._queued.setdefault(path, []).append(respond)
 
@@ -267,21 +297,17 @@ def make_adapter(
     credential: FakeCredential | None = None,
     models: Mapping[str, type[EntraidModel]] | None = None,
     target: str = "source",
-) -> Any:  # noqa: ANN401 - returns an EntraidAdapter subclass; the class is added by a later task
+) -> EntraidAdapter:
     """Build a subclass of `EntraidAdapter` with the test models and construct it against `router`.
 
     `top_level` follows `config.compute_order()`, so kinds load in reference order.
     """
-    base = getattr(entraid, "EntraidAdapter", None)
-    if base is None:
-        msg = "infrahub_sync.adapters.entraid has no EntraidAdapter yet."
-        raise RuntimeError(msg)
     model_classes = dict(models or TEST_MODELS)
     names = [entry.name for entry in config.schema_mapping]
     top_level = [name for name in config.compute_order() if name in names]
     attributes: dict[str, Any] = {"top_level": top_level}
     attributes.update({name: model_classes[name] for name in top_level})
-    adapter_cls = type("FakeEntraidAdapter", (base,), attributes)
+    adapter_cls = type("FakeEntraidAdapter", (EntraidAdapter,), attributes)
     return adapter_cls(
         target=target,
         adapter=config.source,

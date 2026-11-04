@@ -36,7 +36,7 @@ With uv:
 uv pip install msgraph-sdk azure-identity
 ```
 
-The adapter is tested with `msgraph-sdk` 1.65.0 and `azure-identity` 1.27.0.
+The unit tests of the adapter ran with `msgraph-sdk` 1.65.0 and `azure-identity` 1.27.0, against a mocked Microsoft Graph.
 
 :::note
 In a development checkout of Infrahub Sync, `uv sync` removes both packages because they are not in `uv.lock`. Install them again after each `uv sync`.
@@ -50,11 +50,13 @@ The adapter reads the directory as an application, so the tenant needs an applic
 1. In the Microsoft Entra admin center, register an application.
 2. Under **API permissions**, add these Microsoft Graph permissions of type **Application** (not Delegated):
     - `User.Read.All`, to read users.
-    - `Group.Read.All`, to read groups and their members. `GroupMember.Read.All` also allows the adapter to read groups and their members, with access to fewer group properties.
+    - `Group.Read.All`, to read groups and their members. `GroupMember.Read.All` can replace `Group.Read.All`: it also allows the adapter to read groups and their members, with access to fewer group properties.
 3. Grant admin consent for the tenant. Application permissions have no effect until an administrator grants consent.
 4. For `auth: client_secret`, create a client secret under **Certificates & secrets**. Note the **Directory (tenant) ID** and the **Application (client) ID** shown on the overview page of the application.
 
-When Microsoft Graph refuses a request with HTTP 401 or 403, the error message lists `User.Read.All`, `Group.Read.All` and `GroupMember.Read.All`.
+With `auth: default`, the identity that signs in (a user, a managed identity or a workload identity) needs read access to users and groups instead.
+
+When Microsoft Graph refuses a request, the error message explains the status. HTTP 401 means that Graph rejected the access token: the tenant or the credential is wrong, or `graph_url` does not match the audience of the token. HTTP 403 means that the token is valid but a permission is missing. See [HTTP 401 or 403 from Microsoft Graph](#http-401-or-403-from-microsoft-graph).
 <!-- vale on -->
 
 ## Sync directions supported
@@ -100,7 +102,7 @@ source:
 The `auth` setting selects how the adapter gets an access token for Microsoft Graph:
 
 - `client_secret` (default): the adapter authenticates as the registered application with its tenant ID, client ID and client secret. Use it in CI pipelines and on servers.
-- `default`: the adapter uses `DefaultAzureCredential` from `azure-identity`. It tries, in turn, the `AZURE_*` environment variables, a workload identity, a managed identity and the Azure CLI login (`az login`), among others. Use it on a laptop after `az login`, or on an Azure host with a managed identity. The identity that signs in needs read access to users and groups.
+- `default`: the adapter uses `DefaultAzureCredential` from `azure-identity`. It tries, in turn, the `AZURE_*` environment variables, a workload identity, a managed identity and the Azure CLI login (`az login`), among others. Use it on a laptop after `az login`, or on an Azure host with a managed identity. The identity that signs in needs read access to users and groups. The `tenant_id` and `client_id` settings and the `ENTRAID_*` variables are ignored in this mode.
 
 The client secret is never read from the configuration file. A `client_secret` key in `settings` stops the sync with: `Setting 'client_secret' is not accepted in the configuration file. Set the environment variable ENTRAID_CLIENT_SECRET instead.`
 
@@ -124,9 +126,9 @@ auth 'client_secret' is missing values. Set the environment variable(s): ENTRAID
 | Setting | Type | Default | Allowed values | Description |
 | --- | --- | --- | --- | --- |
 | `auth` | string | `client_secret` | `client_secret`, `default` | How the adapter gets an access token. See [Authentication modes](#authentication-modes). |
-| `tenant_id` | string | none | Tenant ID | Directory (tenant) ID for `auth: client_secret`. `ENTRAID_TENANT_ID` overrides it. |
-| `client_id` | string | none | Client ID | Application (client) ID for `auth: client_secret`. `ENTRAID_CLIENT_ID` overrides it. |
-| `graph_url` | string | `https://graph.microsoft.com/v1.0` | An `https://` URL | Microsoft Graph endpoint and version. The token scope is derived from its scheme and host (`https://<host>/.default`), and the token is sent to that host only. |
+| `tenant_id` | string | none | Tenant ID | Directory (tenant) ID for `auth: client_secret`. `ENTRAID_TENANT_ID` overrides it. Ignored with `auth: default`. |
+| `client_id` | string | none | Client ID | Application (client) ID for `auth: client_secret`. `ENTRAID_CLIENT_ID` overrides it. Ignored with `auth: default`. |
+| `graph_url` | string | `https://graph.microsoft.com/v1.0` | An `https://` URL | Microsoft Graph endpoint and version. The token scope is derived from its scheme and host (`https://<host>/.default`), and the token is sent to that host only. A `graph_url` of a Microsoft cloud other than the public one is not tested: the credential still signs in through the default (public cloud) authority. |
 | `page_size` | integer | `999` | 1 to 999 | Records per page, sent as `$top` on every request. |
 | `timeout` | number | `60` | Greater than 0 | Seconds to wait for each request. A request that times out is not retried. |
 | `max_retries` | integer | `5` | 0 to 10 | Retries of one request after HTTP 429 or 503. Each request has its own count. |
@@ -174,9 +176,9 @@ The adapter follows the schema mapping rules of every adapter (see the [schema m
 
 ### Properties the adapter requests
 
-The adapter requests only the properties it needs, with `$select`. For each collection, the list contains `id`, the top-level property of every field mapping and every filter of the entries that read the collection, then the properties of `settings.select` for that resource.
+The adapter requests only the properties it needs, with `$select`. For each collection, the list contains `id`, the top-level property of every plain field mapping and every filter of the entries that read the collection, then the properties of `settings.select` for that resource. The list does not contain the properties of fields with a `reference`, nor `members`, which the adapter reads with separate requests.
 
-A property used only inside a transform expression is not in that list. Add it with `settings.select`, otherwise Graph does not return it and the transform reads an empty value:
+Add a property with `settings.select` when only a transform expression or a field with a `reference` reads it. Otherwise Graph does not return it, and the transform or the field reads an empty value:
 
 ```yaml
 source:
@@ -236,7 +238,7 @@ The adapter resolves each member ID to a node of the referenced kind loaded earl
 After loading a kind, the adapter logs one warning per field with dropped references, with the count:
 
 ```text
-WARNING infrahub_sync.adapters.entraid event='references to objects that are not loaded were dropped' kind='IdentityGroup' field='members' dropped=3
+WARNING | infrahub_sync.adapters.entraid | event='references to objects that are not loaded were dropped' kind='IdentityGroup' field='members' dropped=3
 ```
 
 To keep those members, reference a kind that loads them.
@@ -370,6 +372,8 @@ At the default log level, the adapter logs one line per collection read (records
 
 ## Common issues and troubleshooting
 
+The adapter checks the settings, the collection names of the `schema_mapping` entries, the `members` fields and the sync direction when it starts, before any request. The CLI shows the errors of these checks prefixed with `Error initializing EntraidAdapter: `, followed by the message shown on this page. Errors found later, while the adapter reads Microsoft Graph or loads the records, have no prefix.
+
 ### `ModuleNotFoundError` when the sync starts
 
 The optional packages are not installed. The missing module named in the message depends on which package is missing, for example:
@@ -393,17 +397,44 @@ Could not get an access token for Microsoft Graph (auth 'client_secret') while r
 - With `auth: client_secret`, check the tenant ID, the client ID, and that the client secret is the secret value (not its ID) and has not expired.
 - With `auth: default`, the message asks to check that an Azure CLI login (`az login`), a managed identity or a workload identity is available to `DefaultAzureCredential`.
 
+When the token endpoint cannot be reached, for example because of a proxy or a firewall, the message adds `The token endpoint could not be reached or refused the request (ServiceRequestError)` and asks to check the network connection to the Microsoft sign-in service.
+
 <!-- vale off -->
 ### HTTP 401 or 403 from Microsoft Graph
 <!-- vale on -->
 
-The application has a token but not the permissions to read the resource:
+The adapter got a token, but Microsoft Graph refused the request:
+
+- HTTP 401: Graph rejected the token. Check the tenant and the credential, and that `graph_url` matches the audience of the token.
+- HTTP 403: the token is valid, but a permission is missing.
 
 ```text
-Microsoft Graph refused /v1.0/groups/.../members?$select=id&$top=999 with HTTP 403 (<code>: <message>). The application needs the Microsoft Graph application permissions User.Read.All, Group.Read.All, GroupMember.Read.All with admin consent.
+Microsoft Graph refused /v1.0/groups/.../members?$select=id&$top=999 with HTTP 403 (<code>: <message>). HTTP 401 means Graph rejected the access token: check the tenant, the credential, and that 'graph_url' matches the token audience. HTTP 403 means a permission is missing. The application needs the Microsoft Graph application permissions User.Read.All and Group.Read.All (or GroupMember.Read.All instead of Group.Read.All), with admin consent.
 ```
 
+With `auth: default`, the last sentence says that the signed-in identity (user, managed identity or workload identity) needs read access to users and groups.
+
 Check that the permissions are of type Application, not Delegated, and that an administrator granted consent for the tenant. See [Application registration and Microsoft Graph permissions](#application-registration-and-microsoft-graph-permissions).
+
+<!-- vale off -->
+### Page without a `value` list
+<!-- vale on -->
+
+Microsoft Graph returns each page of a list as a JSON object with a `value` list. When a response has an empty body, or a JSON object without `value`, the adapter stops instead of reading zero records, so that the sync does not plan to delete the nodes it did not read:
+
+```text
+Microsoft Graph returned a page without a 'value' list for /v1.0/users?$select=id,...&$top=999. The read stops so that the sync does not treat the missing records as deleted.
+```
+
+A proxy between the adapter and Microsoft Graph can cause such responses. A page with an empty `value` list is valid and reads zero records.
+
+### Several peers for a relationship that holds one peer
+
+A field with a `reference` to a relationship that holds one peer reads a Graph property that resolves to more than one loaded node. The adapter stops and names the entry and the field:
+
+```text
+schema_mapping 'IdentityServiceAccount', field 'owner': the Graph property 'ownerIds' resolves to 2 loaded 'IdentityEmployee' objects, but the relationship holds one peer. Map a property that holds one ID, or use a relationship that holds many peers.
+```
 
 <!-- vale off -->
 ### Throttling: HTTP 429 or 503
@@ -412,7 +443,7 @@ Check that the permissions are of type Application, not Delegated, and that an a
 Microsoft Graph limits the request rate of each application and tenant. On HTTP 429 or 503, the adapter waits for the number of seconds in the `Retry-After` header (5 seconds when the header is missing, 120 seconds at most), then sends the same request again. It logs one warning per wait:
 
 ```text
-WARNING infrahub_sync.adapters.entraid event='graph request throttled, waiting before retry' status=429 path='/v1.0/groups/.../members?$select=id&$top=999' wait_seconds=2.0 retry=1 max_retries=5
+WARNING | infrahub_sync.adapters.entraid | event='graph request throttled, waiting before retry' status=429 path='/v1.0/groups/.../members?$select=id&$top=999' wait_seconds=2.0 retry=1 max_retries=5
 ```
 
 `max_retries` counts retries per request: each request starts with its own count, so a run can wait more times in total than `max_retries`. After the last retry of one request, the sync stops:
