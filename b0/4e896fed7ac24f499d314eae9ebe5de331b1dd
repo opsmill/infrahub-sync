@@ -1,0 +1,26 @@
+tasks/preview.py
+  s_5af47e422ac3fa::t_85117af23df165 563
+  s_5af47e422ac3fa::t_5a7461f86f542d 34-36
+tasks/smoke_dataset.py
+  s_5af47e422ac3fa::t_85117af23df165 63-70
+tests/preview/test_preview_configuration.py
+  s_5af47e422ac3fa::t_85117af23df165 13,458-460,476,490-492,507,532,565,587-589
+  s_5af47e422ac3fa::t_f22154e532f71b 288
+  s_5af47e422ac3fa::t_da88680ce6c2d5 309
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b04e896fed7ac24f499d314eae9ebe5de331b1dd",
+  "prompts": {},
+  "sessions": {
+    "s_5af47e422ac3fa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a22d1ed-b182-4832-b120-0eb989b94fab",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
