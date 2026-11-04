@@ -188,6 +188,20 @@ def test_a_publication_url_uses_its_bind_address(host_ip: str, url: str) -> None
     assert dev.Publication(host_ip, "8080").url == url
 
 
+@pytest.mark.parametrize(
+    ("bearer_tokens", "label"),
+    [
+        (json.dumps({"dev": {"token": dev.API_TOKEN}}), dev.API_TOKEN),
+        (json.dumps({"mine": {"token": f"{dev.API_TOKEN}-of-my-own"}}), "from BEARER_TOKENS"),
+        ("{not json", "from BEARER_TOKENS"),
+        (json.dumps([{"token": dev.API_TOKEN}]), "from BEARER_TOKENS"),
+    ],
+    ids=["exact-dev-token", "dev-token-as-substring", "invalid-json", "not-an-object"],
+)
+def test_the_urls_print_the_dev_bearer_token_only_on_an_exact_match(bearer_tokens: str, label: str) -> None:
+    assert dev.bearer_label(bearer_tokens) == label
+
+
 CUSTOM_TOKEN = "a-token-of-the-developer"  # noqa: S105 -- a test value
 LOOPBACK_ADDRESSES = ["127.0.0.1", "127.10.0.3", "::1", "[::1]", "localhost"]
 EXPOSED_ADDRESSES = ["", "0.0.0.0", "::", "172.17.0.1", "192.0.2.10", "fd00::1"]  # noqa: S104

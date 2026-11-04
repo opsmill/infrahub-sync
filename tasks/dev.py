@@ -477,10 +477,27 @@ def _attach_worker(context: Context, settings: DevSettings) -> None:
         )
 
 
+def bearer_label(bearer_tokens: str) -> str:
+    """Return what the URLs print for the Sync API's bearer token.
+
+    The default principal's token is a public development value, so it is printed when a
+    principal's token equals it exactly. A token set through BEARER_TOKENS is the
+    developer's own, and so is anything that is not a JSON object of principals: they are
+    named by the variable, never printed.
+    """
+    try:
+        principals = json.loads(bearer_tokens)
+    except ValueError:
+        principals = None
+    if isinstance(principals, dict) and any(
+        isinstance(principal, dict) and principal.get("token") == API_TOKEN for principal in principals.values()
+    ):
+        return API_TOKEN
+    return "from BEARER_TOKENS"
+
+
 def _print_urls(settings: DevSettings, *, host_worker: bool = False) -> None:
-    # The default principal's token is a public development value; a token set through
-    # BEARER_TOKENS is the developer's own, so it is named by its variable, never printed.
-    bearer = API_TOKEN if API_TOKEN in settings.bearer_tokens else "from BEARER_TOKENS"
+    bearer = bearer_label(settings.bearer_tokens)
     print(f" - [{NAMESPACE}] Project     {settings.project}")
     print(f" - [{NAMESPACE}] Sync API    {settings.sync_api_url}  (bearer {bearer})")
     print(f" - [{NAMESPACE}] Prefect UI  {settings.prefect_url}")
