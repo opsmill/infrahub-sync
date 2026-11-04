@@ -45,5 +45,8 @@ question about which JPD card owns the work is kept.
 
 ## Action
 
-Proceed. No remediation pass was needed. The branch deferral is the one change the product
-owner should confirm.
+Proceed. No remediation pass was needed.
+
+**Update 2026-11-04 (clarification)**: the product owner chose to store and show the branch.
+The first finding is resolved: the spec now has FR-006a, and the run list shows the
+destination branch as the brief asked.

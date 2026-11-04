@@ -36,8 +36,8 @@ configuration's name resolves to the identifier. The CLI reference states this o
 
 ## Output
 
-- `runs list` prints one row per run: `run_id`, `config_id@version` (or `-`), `phase`,
-  `outcome`, `actor`, `started_at`. When `next_cursor` is set and `--all` is not given, it
+- `runs list` prints one row per run: `run_id`, `config_id@version` (or `-`), branch (or `-`),
+  `phase`, `outcome`, `actor`, `started_at`. When `next_cursor` is set and `--all` is not given, it
   prints `more runs: rerun with --all, or --limit up to 200`.
 - `whoami` prints `actor: <actor>` and `administrator: <true|false>`.
 - `--json` (existing global behavior where supported) prints the API response unchanged.

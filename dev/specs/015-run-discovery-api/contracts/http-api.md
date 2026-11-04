@@ -27,6 +27,7 @@ Response `200`:
       "config_id": "cfg-netbox",
       "registry_version": 2,
       "package_checksum": "<64 hex>",
+      "destination_branch": "main",
       "actor": "automation@example.com",
       "started_at": "2026-11-04T09:30:12+00:00",
       "finished_at": "2026-11-04T09:31:40+00:00",
@@ -48,6 +49,8 @@ Response `200`:
 - `artifact_refs` and `prefect_executions` are always empty in list items; read
   `GET /runs/{run_id}` for them.
 - Without filters, legacy runs (no `config_id`) are included with null binding fields.
+- `destination_branch` is the branch the run writes to; it is `null` for runs created before
+  this change. `GET /runs/{run_id}` returns the same field.
 - `next_cursor` is `null` on the last page. No total count.
 
 ## `GET /me` (new)

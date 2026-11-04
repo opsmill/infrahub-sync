@@ -12,13 +12,21 @@ All paths are relative to the repository root on `015-run-discovery-api` (based 
   at `store.py:142-149` that says no `ProductRun` field reads them is stale.
 - **Finding**: the branch is not stored on the run. It exists in the Prefect parameters, the
   receipt fingerprint, and the saved plan's `destination_branch`.
-- **Decision**: filter on the existing columns. Do not add `branch` to the run list in this
-  feature; the spec's acceptance scenario that lists `branch` is narrowed in the contract to
-  the fields the run resource already publishes. Branch stays readable from the run's plan.
-- **Rationale**: adding a stored branch is a write-path change on run creation and a backfill
-  question for existing runs; it is not needed to find runs by configuration.
+- **Decision** (clarified 2026-11-04): filter on the existing binding columns, and add a
+  nullable `destination_branch` column to `product_runs`. `RunService.create_run` computes the
+  effective branch (the package's `configuration.destination.settings.branch` when declared,
+  else the request's `branch`, else `main`) and stores it with the run. `ProductRun` and
+  `PublicRunResource` gain `destination_branch: str | None`. Existing runs keep `NULL`; no
+  backfill from saved plans.
+- **Rationale**: the value is known at creation, the write is in the same insert, and listing
+  then needs no object-store read per row.
 - **Alternatives considered**: read `destination_branch` from each saved plan while listing
-  (one object-store read per row; rejected for cost); add a `branch` column now (deferred).
+  (one object-store read per row; rejected for cost); leave the branch out (rejected by the
+  product owner).
+- **Check during implementation**: the worker's own branch choice (`running-a-sync.mdx`,
+  "ignores `INFRAHUB_DEFAULT_BRANCH`") must match the stored value; add a test that the stored
+  branch equals the saved plan's `destination_branch` for a declared and an undeclared
+  package branch.
 
 ## R2. Ordering and cursor
 

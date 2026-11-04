@@ -8,6 +8,7 @@ Only changes are listed. Existing fields are unchanged unless named.
 
 | Change | Detail |
 | --- | --- |
+| New column `destination_branch` | Text, nullable. Effective branch the run writes to, set at creation. `NULL` for runs created before this change. |
 | New index `product_runs_started` | `(started_at, run_id)`. Serves the unfiltered run list. |
 | New index `product_runs_binding_started` | `(config_id, registry_version, started_at, run_id)`. Serves filtered lists and the latest-run lookups. |
 
@@ -31,6 +32,12 @@ are never updated.
 | `name` (new) | text, nullable | `configuration.name` of the latest version's package. Updated in the transaction that registers a version. Filled at start-up for rows where it is `NULL`. Not unique. |
 
 ## Public resources (`infrahub_sync/client/models.py`)
+
+### `PublicRunResource` (existing)
+
+| Field | Change |
+| --- | --- |
+| `destination_branch` | New, string or `null`. Shown in the list and in `GET /runs/{run_id}`. |
 
 ### `RunPage` (new)
 

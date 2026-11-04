@@ -44,6 +44,14 @@ Three further problems make the workflow hard to follow:
 - **Stage**: one execution step of a run: `plan`, `verify`, `apply` or `sync`. Each stage
   runs as one Prefect flow run.
 
+## Clarifications
+
+### Session 2026-11-04
+
+- Q: Should the run list show the destination branch? → A: Yes. Store the run's destination
+  branch when the run is created and show it in the list; runs created before this change
+  show an empty branch.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - List the runs of a configuration version (Priority: P1)
@@ -65,9 +73,8 @@ runs created.
 1. **Given** configuration C has two runs on version 1 (one applied, one only planned) and
    one run on version 2 (only planned), **When** the client lists runs filtered on C,
    **Then** it receives three runs, newest first, each showing its run identifier, version,
-   actor, start and finish times, phase, outcome and whether reconciliation is required.
-   The destination branch is not stored on the run today, so it stays readable from the
-   run's plan rather than the list (see Assumptions).
+   destination branch, actor, start and finish times, phase, outcome and whether
+   reconciliation is required.
 2. **Given** the same runs, **When** the client lists runs filtered on C and version 1,
    **Then** it receives the two runs of version 1.
 3. **Given** 120 runs match a filter, **When** the client reads the list without a page
@@ -216,6 +223,11 @@ Run list:
   not-found.
 - **FR-006**: The unfiltered run list MUST include runs that have no registered
   configuration.
+- **FR-006a**: The system MUST record each new run's destination branch when the run is
+  created, and the run (in the list and in the single-run read) MUST show it. The recorded
+  branch is the one the run writes to: the branch declared in the configuration package when
+  there is one, otherwise the requested branch, otherwise `main`. Runs created before this
+  change show an empty branch.
 
 Configurations and versions:
 
@@ -307,9 +319,8 @@ Documentation:
   update.
 - Any authenticated principal can already read any run by its identifier, so listing all runs
   to every principal exposes no new data.
-- A run does not store its destination branch; it exists in the saved plan
-  (`destination_branch`). Showing the branch in the run list would need a new stored field
-  and a decision for existing runs, so it is deferred.
+- Runs created before this change have no recorded branch. V3 is in private testing and
+  upgrades already require a reset, so these runs are not backfilled from their saved plans.
 - Versions registered before this change have no recorded registering actor or reason; the
   version list reports these as empty.
 
