@@ -28,6 +28,7 @@ from .models import (
     ErrorDetail,
     ErrorEnvelope,
     PlanResource,
+    PrincipalResource,
     ResultsResource,
     RunPage,
     RunResource,
@@ -84,10 +85,7 @@ def create_app(
         request: Request,
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_auth)],
     ) -> Principal:
-        if credentials is None:
-            service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
-            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
-        token = credentials.credentials.lstrip(" ")
+        token = credentials.credentials.lstrip(" ") if credentials is not None else ""
         if not token:
             service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
             raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
@@ -178,6 +176,11 @@ def create_app(
             )
         )
         return JSONResponse(status_code=503, content=envelope.model_dump(mode="json"))
+
+    @application.get("/me", responses=ERROR_RESPONSES)
+    def get_me(principal: Annotated[Principal, Depends(authenticate)]) -> PrincipalResource:
+        """Return the caller's actor name and administrator flag; performs no other action."""
+        return PrincipalResource(actor=principal.actor, administrator=principal.administrator)
 
     @application.post("/runs", status_code=202, response_model=RunResource, responses=ERROR_RESPONSES)
     async def create_run(

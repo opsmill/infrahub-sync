@@ -1804,6 +1804,7 @@ def test_confirmation_schema_errors_and_openapi_contract(
 
     paths = openapi["paths"]
     assert set(paths) == {
+        "/me",
         "/runs",
         "/runs/{run_id}",
         "/runs/{run_id}/plan",
@@ -2336,3 +2337,50 @@ def test_a_run_stored_without_a_branch_shows_null(
 
     assert listed["destination_branch"] is None
     assert detail["destination_branch"] is None
+
+
+# GET /me (US4): a token check that returns the caller's actor name and administrator flag.
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [
+        (OWNER_TOKEN, {"actor": "owner", "administrator": False}),
+        (ADMIN_TOKEN, {"actor": "admin", "administrator": True}),
+    ],
+    ids=["owner", "admin"],
+)
+def test_the_token_check_returns_exactly_the_actor_and_administrator_flag(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    token: str,
+    expected: dict[str, object],
+) -> None:
+    """Spec US4 scenario 1: the body names the actor and the flag, and nothing else."""
+    client, projection, orchestration = service_api
+
+    response = client.get("/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json() == expected
+    assert token not in response.text
+    assert projection.audit_events() == ()
+    assert orchestration.submissions == []
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"Authorization": "Bearer not-a-token"}, {"Authorization": "Basic not-a-bearer-token"}],
+    ids=["missing", "invalid", "not-bearer"],
+)
+def test_the_token_check_refuses_an_invalid_token_and_records_the_refusal(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    headers: dict[str, str],
+) -> None:
+    """Spec US4 scenario 2: the refusal is recorded like on other routes, with no success event."""
+    client, projection, _orchestration = service_api
+
+    response = client.get("/me", headers=headers)
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthenticated"
+    assert response.headers["WWW-Authenticate"] == "Bearer"
+    events = projection.audit_events()
+    assert [(event.actor, event.outcome) for event in events] == [("unauthenticated", "refused-authentication")]

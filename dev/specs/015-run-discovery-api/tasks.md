@@ -97,9 +97,9 @@ latest run and latest applied run; actor and reason recorded at registration.
 
 **Independent test**: spec US4 scenarios 1–2.
 
-- [ ] T026 [P] [US4] Route tests in `tests/service/test_http_api.py`: owner token returns `administrator: false`, admin token returns `true`, the body has exactly `actor` and `administrator`, an invalid token returns 401 and writes a `refused-authentication` audit event, and no success audit event is written
-- [ ] T027 [P] [US4] Add `PrincipalResource` to `infrahub_sync/client/models.py`
-- [ ] T028 [US4] Add `GET /me` to `infrahub_sync/service/app.py` returning `PrincipalResource` from the `authenticate` dependency
+- [X] T026 [P] [US4] Route tests in `tests/service/test_http_api.py`: owner token returns `administrator: false`, admin token returns `true`, the body has exactly `actor` and `administrator`, an invalid token returns 401 and writes a `refused-authentication` audit event, and no success audit event is written
+- [X] T027 [P] [US4] Add `PrincipalResource` to `infrahub_sync/client/models.py`
+- [X] T028 [US4] Add `GET /me` to `infrahub_sync/service/app.py` returning `PrincipalResource` from the `authenticate` dependency
 
 ## Phase 7: User Story 5 — Use the same verbs in the CLI and the API (P3)
 

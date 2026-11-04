@@ -308,6 +308,13 @@ class ServiceStatusResource(_ResourceModel):
     worker: WorkerStatusResource
 
 
+class PrincipalResource(_ResourceModel):
+    """Name the authenticated caller and whether it is an administrator."""
+
+    actor: str
+    administrator: bool
+
+
 class RunResource(_ResourceModel):
     """Combine a public run record with its orchestration history."""
 
