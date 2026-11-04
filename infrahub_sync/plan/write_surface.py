@@ -115,9 +115,7 @@ def resolve_destination_lineage(destination: object, *, saved_plan: PlanManifest
 def resolve_destination_metadata_read(destination: object) -> None:
     """Let the destination decide whether its reads ask for metadata; otherwise do nothing.
 
-    The engine calls this after the lineage is resolved and before either side of a plan is
-    loaded, so a failed version read stops the plan before the source system is read, and
-    `metadata_read` is set before the destination's cursors are captured.
+    The order of this call is stated at `Potenda.load_both_sides`.
     """
     if not isinstance(destination, MetadataReadingDestination):
         return

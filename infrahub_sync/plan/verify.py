@@ -53,7 +53,7 @@ from infrahub_sync.plan.reader import (
 from infrahub_sync.plan.writer import OPERATIONS_FILE_NAME, PLAN_DIR_NAME
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
     from infrahub_sync.plan.models import VerificationCheck
@@ -483,6 +483,15 @@ def destination_binding_failure(
             "`--allow-destination-change` to deliberately apply it across environments."
         ),
     )
+
+
+def failure_guidance(failures: Sequence[VerificationFailure]) -> str:
+    """Each failed check's name with its own next action, for the refusal's next action.
+
+    The text never echoes a failure's `expected` or `found`: they can quote manifest values,
+    which may contain credentials in a damaged or hand-edited artifact.
+    """
+    return "; ".join(f"{failure.check}: {failure.next_action}" for failure in failures)
 
 
 def verify_plan(

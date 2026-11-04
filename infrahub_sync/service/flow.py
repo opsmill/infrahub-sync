@@ -51,7 +51,12 @@ from infrahub_sync.plan.models import ApplyRecord, PlanManifest
 from infrahub_sync.plan.ownership import ProvenWriteOwnership, WriteDispatchTracker
 from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import SavedPlan, resolve_run_directory
-from infrahub_sync.plan.verify import RE_PLAN_NEXT_ACTION, UNSUPPORTED_FORMAT_NEXT_ACTION, verify_plan
+from infrahub_sync.plan.verify import (
+    RE_PLAN_NEXT_ACTION,
+    UNSUPPORTED_FORMAT_NEXT_ACTION,
+    failure_guidance,
+    verify_plan,
+)
 from infrahub_sync.product_store import (
     BaselineWriteback,
     ExecutionFinishWriteback,
@@ -255,9 +260,7 @@ def _verify_registered_apply(
     artifact = read_plan_artifact_bytes(resolve_run_directory(instance.name, run_id, base_directory=base_directory))
     failures = verify_plan(artifact=artifact, run_id=run_id, config_version=resolve_config_version(instance))
     if failures:
-        # The verifier's actions describe the artifact state without echoing manifest
-        # values, which may contain credentials in a damaged or hand-edited artifact.
-        guidance = "; ".join(f"{failure.check}: {failure.next_action}" for failure in failures)
+        guidance = failure_guidance(failures)
         message = f"{_REGISTERED_PLAN_VERIFICATION_FAILED}: {guidance}"
         format_failure = next((failure for failure in failures if failure.check == "format_version"), None)
         recovery_action: RecoveryAction | None = None

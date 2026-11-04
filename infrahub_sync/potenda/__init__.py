@@ -99,11 +99,11 @@ def _plan_refusal(failures: Sequence[VerificationFailure], *, run_id: str) -> Pl
         f"The plan artifact of run {run_id!r} cannot be applied: {len(failures)} pre-apply check(s) "
         f"failed and nothing was written to the destination.\n{detail}"
     )
+    from infrahub_sync.plan.verify import failure_guidance
+
     # The next action names each failed check with its own next action, so the hint the CLI
-    # prints says what to fix. `expected` and `found` are left out: they can quote manifest
-    # values from a damaged or hand-edited artifact.
-    next_action = "; ".join(f"{failure.check}: {failure.next_action}" for failure in failures)
-    return PlanVerificationError(msg, next_action=next_action)
+    # prints says what to fix.
+    return PlanVerificationError(msg, next_action=failure_guidance(failures))
 
 
 # The destination's uniqueness refusal, as measured: this exact message grammar, and
