@@ -26,7 +26,11 @@ from infrahub_sync.plan.errors import (
     SkippedDeleteOperation,
 )
 from infrahub_sync.plan.models import ACTIONS, DESTINATION_ID_FORMAT_VERSION, ApplyRecord
-from infrahub_sync.plan.write_surface import PlannedWriteDestination, resolve_destination_lineage
+from infrahub_sync.plan.write_surface import (
+    PlannedWriteDestination,
+    resolve_destination_lineage,
+    resolve_destination_metadata_read,
+)
 
 # Justified once here rather than per site. Nearly every `infrahub_sync`
 # import in this module is deliberately deferred into the function that needs it: the cache
@@ -503,7 +507,12 @@ class Potenda:
         self._load_side(side="A", adapter=self.source)
 
     def destination_load(self):
-        """Load the destination and write its snapshot."""
+        """Load the destination and write its snapshot.
+
+        The destination first decides whether its reads ask for metadata (a server version
+        read for Infrahub), before its cursors are captured and before its first read.
+        """
+        resolve_destination_metadata_read(self.destination)
         self._load_side(side="B", adapter=self.destination)
 
     def load_both_sides(self) -> None:
@@ -521,7 +530,8 @@ class Potenda:
 
         Exceptions from either side are surfaced: the first failure to
         complete is re-raised, just like the sequential path would do.
-        The destination's lineage is resolved first, before the source system is read.
+        The destination's lineage is resolved first, before the source system is read. The
+        destination's server version is read at the start of its own load, beside the source load.
         """
         resolve_destination_lineage(self.destination)
         if not self.concurrent_load:

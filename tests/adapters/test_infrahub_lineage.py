@@ -28,7 +28,7 @@ from infrahub_sync.potenda import Potenda
 
 IMPORT_ACCOUNT = {"id": "account-1", "name": {"value": "netbox-import"}}
 ACCOUNT_PROFILE_CALL = ("account_profile", {})
-# A plan reads the server version once, after the lineage is resolved.
+# A plan reads the server version once, when the destination load starts.
 VERSION_CALL = ("version", {})
 ADAPTER_LOGGER = "infrahub_sync.adapters.infrahub"
 
@@ -105,7 +105,7 @@ def test_without_settings_the_import_account_is_the_source_and_there_is_no_owner
         protect=False,
     )
     assert adapter.lineage is lineage
-    assert client.calls == [ACCOUNT_PROFILE_CALL, VERSION_CALL]
+    assert client.calls == [ACCOUNT_PROFILE_CALL], "the server version is read when the destination load starts"
 
 
 def test_no_account_is_looked_up_by_the_source_systems_name() -> None:
@@ -117,9 +117,7 @@ def test_no_account_is_looked_up_by_the_source_systems_name() -> None:
     lineage = adapter.resolve_lineage()
 
     assert lineage.source.id == "account-1", "the source is the import account, not the account named `netbox`"
-    assert [name for name, _ in client.calls] == ["account_profile", "version"], (
-        "no `CoreAccount` lookup by name is made"
-    )
+    assert [name for name, _ in client.calls] == ["account_profile"], "no `CoreAccount` lookup by name is made"
 
 
 def _loading_adapter(client: LineageClient, events: list[str]) -> InfrahubAdapter:
@@ -152,6 +150,27 @@ def test_a_plan_reads_the_import_account_once(tmp_path: Path, *, concurrent_load
     assert sorted(events) == ["destination.load", "source.load"]
 
 
+def test_a_plan_reads_the_server_version_when_the_destination_load_starts(tmp_path: Path) -> None:
+    """The version read is part of the destination load, after the source load starts, and decides its reads."""
+    events: list[str] = []
+    client = LineageClient()
+    client.get_version = lambda: events.append("version") or "1.11.9"  # ty: ignore[invalid-assignment]
+    destination = make_adapter(client)
+    destination.load = lambda: events.append(f"destination.load metadata_read={destination.metadata_read}")  # ty: ignore[invalid-assignment]
+    engine = Potenda(
+        source=_ordered_side("source", events),
+        destination=destination,
+        config=None,  # ty: ignore[invalid-argument-type]
+        top_level=[],
+        run_dir=tmp_path,
+        concurrent_load=False,
+    )
+
+    engine.load_both_sides()
+
+    assert events == ["source.load", "version", "destination.load metadata_read=True"]
+
+
 def test_named_source_and_owner_are_looked_up_by_kind_and_name() -> None:
     """Each named node is read with one `get(kind=..., name__value=...)` and its id is kept."""
     client = LineageClient(
@@ -174,7 +193,6 @@ def test_named_source_and_owner_are_looked_up_by_kind_and_name() -> None:
         ACCOUNT_PROFILE_CALL,
         name_only_lookup("CoreRepository", "inventory"),
         name_only_lookup("CoreAccountGroup", "network-team"),
-        VERSION_CALL,
     ]
 
 
@@ -189,7 +207,7 @@ def test_a_node_named_as_both_source_and_owner_is_read_once() -> None:
     expected = ResolvedLineageNode(kind="CoreRepository", name="inventory", id="repo-1")
     assert lineage.source == expected
     assert lineage.owner == expected
-    assert client.calls == [ACCOUNT_PROFILE_CALL, name_only_lookup("CoreRepository", "inventory"), VERSION_CALL]
+    assert client.calls == [ACCOUNT_PROFILE_CALL, name_only_lookup("CoreRepository", "inventory")]
 
 
 @pytest.mark.parametrize("kind", sorted(RELATIONSHIPS))
@@ -220,7 +238,7 @@ def test_a_named_account_is_looked_up_and_a_named_group_needs_no_account_read() 
     assert adapter.resolve_lineage().source == ResolvedLineageNode(
         kind="CoreAccount", name="netbox", id="account-netbox"
     )
-    assert client.calls == [ACCOUNT_PROFILE_CALL, name_only_lookup("CoreAccount", "netbox"), VERSION_CALL]
+    assert client.calls == [ACCOUNT_PROFILE_CALL, name_only_lookup("CoreAccount", "netbox")]
 
     client.calls.clear()
     adapter.lineage_settings = InfrahubLineageSettings(

@@ -898,8 +898,11 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     lineage_settings: InfrahubLineageSettings = InfrahubLineageSettings()
     lineage: ResolvedLineage | None = None
     # Whether this plan's destination reads ask for `updated_by` and `updated_at`: set by
-    # `resolve_lineage` from the server version, false until then and during an apply.
+    # `resolve_metadata_read` from the server version, false until then and during an apply.
     metadata_read: bool = False
+    # Whether `resolve_metadata_read` still has to read the server version: set by a plan's
+    # `resolve_lineage`, cleared by the read, and false for an apply.
+    _metadata_read_pending: bool = False
     # What those reads returned, keyed by (destination node id, field name). Kept here and not
     # in the DiffSync models, so a value a person changed is compared by its value only and two
     # plans over the same values give the same operations. Set by `__init__` and reset by `resolve_lineage`.
@@ -991,10 +994,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         otherwise the apply is refused before any named node is read and before any write
         (FR-012). A plan passes no manifest.
 
-        A plan also reads the server version once, after the lineage is resolved, and keeps
-        `metadata_read` true from Infrahub 1.7.0, the first version that records `updated_by`
-        and `updated_at`. An apply loads nothing, so it
-        reads no version and keeps `metadata_read` false.
+        The server version is not read here: a plan reads it in `resolve_metadata_read`, when
+        the destination load starts, so the read runs beside the source load. This call keeps
+        `metadata_read` false until then. An apply loads nothing, so it reads no version and
+        keeps `metadata_read` false.
         """
         settings = self.lineage_settings
         recorded = None if saved_plan is None else require_recorded_import_account(saved_plan)
@@ -1022,9 +1025,24 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             source.name,
             "none" if owner is None else f"{owner.kind} {owner.name}",
         )
-        self.metadata_read = False if saved_plan is not None else self._read_metadata_support()
+        self.metadata_read = False
+        self._metadata_read_pending = saved_plan is None
         self.last_changes = {}
         return self.lineage
+
+    def resolve_metadata_read(self) -> None:
+        """Read the server version once for a plan, before the destination load reads anything.
+
+        The engine calls this at the start of the destination load, so the read runs beside
+        the source load and before the cursors and the reads that depend on `metadata_read`.
+        `metadata_read` is true from Infrahub 1.7.0, the first version that records
+        `updated_by` and `updated_at`. After an apply's `resolve_lineage`, or a second call,
+        it reads nothing and leaves `metadata_read` as it is.
+        """
+        if not self._metadata_read_pending:
+            return
+        self._metadata_read_pending = False
+        self.metadata_read = self._read_metadata_support()
 
     def _read_metadata_support(self) -> bool:
         """Read the server version once and return whether the destination reads ask for metadata.
@@ -1126,7 +1144,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         load takes unchanged nodes from the previous snapshot, which holds no `updated_by` or
         `updated_at`, so a plan would show "not recorded" for values Infrahub holds (FR-007).
         With no cursor tier, the engine loads each kind in full through `model_loader`, whose
-        one read carries the metadata.
+        one read carries the metadata. The engine calls `resolve_metadata_read` before it asks
+        for the destination's cursor tiers, so the answer reflects the server version.
         """
         if self.metadata_read:
             return CursorTier.NONE

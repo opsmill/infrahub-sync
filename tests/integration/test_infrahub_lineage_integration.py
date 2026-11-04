@@ -559,8 +559,9 @@ def import_run(lineage_branch: LineageBranch, monkeypatch: pytest.MonkeyPatch) -
 
 
 def plan_reads(adapter: InfrahubAdapter) -> None:
-    """The reads a plan makes of the destination: lineage, then each kind with its fields."""
+    """The reads a plan makes of the destination: lineage, the server version, then each kind with its fields."""
     adapter.resolve_lineage()
+    adapter.resolve_metadata_read()
     adapter.client.all(kind=TAG_KIND, include=["name"], populate_store=True)
     adapter.client.all(kind=DEVICE_KIND, include=["name", "serial", TAGS_RELATIONSHIP], populate_store=True)
 

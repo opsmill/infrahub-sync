@@ -56,6 +56,9 @@ class LineageResolvingDestination(Protocol):
         lineage the plan recorded with the lineage it resolves now. A plan passes none.
         """
 
+    def resolve_metadata_read(self) -> None:
+        """Decide, at the start of a plan's destination load, whether its reads ask for metadata."""
+
 
 def resolve_destination_lineage(destination: object, *, saved_plan: PlanManifest | None = None) -> None:
     """Resolve the destination's lineage when the destination writes lineage; otherwise do nothing.
@@ -67,6 +70,17 @@ def resolve_destination_lineage(destination: object, *, saved_plan: PlanManifest
     if not isinstance(destination, LineageResolvingDestination):
         return
     destination.resolve_lineage(saved_plan=saved_plan)
+
+
+def resolve_destination_metadata_read(destination: object) -> None:
+    """Let the destination decide whether its reads ask for metadata; otherwise do nothing.
+
+    The engine calls this at the start of the destination load, after the lineage is
+    resolved and beside the source load, and before the destination's cursors are captured.
+    """
+    if not isinstance(destination, LineageResolvingDestination):
+        return
+    destination.resolve_metadata_read()
 
 
 def destination_lineage_record(destination: object) -> PlanLineageRecord | None:

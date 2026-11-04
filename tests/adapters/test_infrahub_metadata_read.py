@@ -291,6 +291,7 @@ def _plan(client: MetadataClient) -> Destination:
     """Resolve lineage and load the destination, as the start of a plan does."""
     destination = Destination(client)
     destination.resolve_lineage()
+    destination.resolve_metadata_read()
     for kind in LOAD_ORDER:
         destination.model_loader(model_name=kind, model=getattr(destination, kind))
     return destination
@@ -424,6 +425,7 @@ def test_an_apply_does_not_read_the_server_version() -> None:
     )
 
     destination.resolve_lineage(saved_plan=saved_plan)  # ty: ignore[invalid-argument-type]
+    destination.resolve_metadata_read()
 
     assert client.calls == [("account_profile", {})]
     assert destination.metadata_read is False
