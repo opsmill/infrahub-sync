@@ -20,7 +20,10 @@ command-line client sends requests to that service.
 - **OpsMill staff testing a V3 pre-release:** start at the internal
   [V3 start page](https://github.com/opsmill/infrahub-sync-process#readme).
 - **V3 CLI:** install it from [PyPI](https://pypi.org/project/infrahub-sync/) with
-  `pip install "infrahub-sync>=3,<4"`. See
+  `pip install "infrahub-sync>=3,<4"` once version 3.0.0 is published there. Until
+  then, run it through the Compose deployment's `cli` service:
+  `docker compose run --rm --no-deps -T cli <command>`, from the directory that holds
+  `.env`. See
   [Install the CLI](https://feature-v3-develop.infrahub-sync.pages.dev/installation#install-the-cli).
 - **V2** is the 2.x line on PyPI and on the `main` branch. Its documentation is at
   [docs.infrahub.app/sync](https://docs.infrahub.app/sync). To stay on V2, pin
