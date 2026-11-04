@@ -1,0 +1,19 @@
+Dockerfile
+  s_5ff3d60bfb497b::t_fc0f16d34d9dbb 24-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "593edad79ac284fc781e5b440b4b1ed6b4ea05c4",
+  "prompts": {},
+  "sessions": {
+    "s_5ff3d60bfb497b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4f0b441-46e5-4f6d-90b8-68208a4f492b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
