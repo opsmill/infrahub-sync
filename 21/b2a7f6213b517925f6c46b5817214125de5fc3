@@ -1,0 +1,37 @@
+dev/specs/015-run-discovery-api/spec.md
+  s_f718d35766c589::t_a40b503bd95798 322-323
+  s_f718d35766c589::t_4eeabc9d07bfe5 47-54
+  s_f718d35766c589::t_01bce174e74280 226-230
+  s_f718d35766c589::t_44bf7e0d9dfd32 76-77
+dev/specs/015-run-discovery-api/alignment-check.md
+  s_f718d35766c589::t_b3e5a019d30d9b 48-52
+dev/specs/015-run-discovery-api/data-model.md
+  s_f718d35766c589::t_97e5a7f5f6344a 11
+  s_f718d35766c589::t_dbb6a2321e091d 36-41
+dev/specs/015-run-discovery-api/research.md
+  s_f718d35766c589::t_aa06aaeff13535 15-22,24-29
+dev/specs/015-run-discovery-api/tasks.md
+  s_f718d35766c589::t_bdd59621028ce0 27
+  s_f718d35766c589::t_f3edea8c9865ce 55
+dev/specs/015-run-discovery-api/contracts/http-api.md
+  s_f718d35766c589::t_f82267d92cd72a 30
+  s_f718d35766c589::t_3fd9f4b249acca 52-53
+dev/specs/015-run-discovery-api/contracts/cli.md
+  s_f718d35766c589::t_f029aeaa9ddaf3 39-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "21b2a7f6213b517925f6c46b5817214125de5fc3",
+  "prompts": {},
+  "sessions": {
+    "s_f718d35766c589": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3abfa013-58d0-4a35-aa91-617e78043d5c",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
