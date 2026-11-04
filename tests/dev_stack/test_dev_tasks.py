@@ -206,6 +206,7 @@ def test_an_exposed_infrahub_is_refused_with_the_public_or_no_token(host_ip: str
         dev.require_private_infrahub(dev.Publication(host_ip, "8000"), token)
 
     assert "INFRAHUB_API_TOKEN" in str(refused.value)
+    assert "dev.destroy" in str(refused.value)
     assert ADMIN_TOKEN not in str(refused.value)
 
 

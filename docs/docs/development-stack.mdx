@@ -262,6 +262,15 @@ export INFRAHUB_INITIAL_ADMIN_TOKEN=<a token of your own>
 export INFRAHUB_API_TOKEN="$INFRAHUB_INITIAL_ADMIN_TOKEN"
 ```
 
+Infrahub applies `INFRAHUB_INITIAL_ADMIN_TOKEN` only when it first initialises its database. A
+stack that has already started with the public default keeps accepting that default after you
+export a new token, and the development tasks do not detect this. Before you start an existing
+stack on an address other than loopback with a new token, remove the stack and its data:
+
+```bash
+uv run invoke dev.destroy
+```
+
 Compose cannot make a variable required only when another one has a given value, so the
 development tasks check this before they start the containers. A plain `docker compose up`
 does not check it. The benchmark runner applies the same check to its Infrahub.

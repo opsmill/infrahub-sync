@@ -272,7 +272,10 @@ def require_private_infrahub(publication: Publication | None, token: str) -> Non
     msg = (
         f"{INFRAHUB_BIND_VARIABLE} publishes Infrahub on {where}, but its initial admin token is the public "
         f"development default; export {INFRAHUB_ADMIN_TOKEN_VARIABLE} with a token of your own and use the same "
-        f"value as INFRAHUB_API_TOKEN, or unset {INFRAHUB_BIND_VARIABLE} to publish Infrahub on 127.0.0.1 only"
+        f"value as INFRAHUB_API_TOKEN, or unset {INFRAHUB_BIND_VARIABLE} to publish Infrahub on 127.0.0.1 only. "
+        "Infrahub applies the token only when it first initialises its database, so a stack that has already "
+        "started keeps the public default: remove it with `uv run invoke dev.destroy` before you start it "
+        "with a new token"
     )
     raise DevStackError(msg)
 
