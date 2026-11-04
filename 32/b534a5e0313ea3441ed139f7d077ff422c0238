@@ -1,0 +1,41 @@
+tests/runtime_schema/test_registered_execution.py
+  s_9009b9ea516dcd::t_cfd13335425571 348,351
+  s_9009b9ea516dcd::t_d423c8760e7aa5 13-14
+  s_9009b9ea516dcd::t_9dedf91d1830f9 330-340,342-347,349-350,352-354,356-363
+  s_9009b9ea516dcd::t_577cf1f318e534 341,355
+tests/test_sync_config_order.py
+  s_9009b9ea516dcd::t_1ca04be395af0a 7-10
+  s_9009b9ea516dcd::t_0e8439a134d053 55-62,67-96
+  s_9009b9ea516dcd::t_40833e8fcd49b9 63-66
+infrahub_sync/utils.py
+  s_9009b9ea516dcd::t_5c8e08083c4ca1 413-415
+  s_9009b9ea516dcd::t_c58b438a1e8bef 412
+tests/test_potenda_tiers.py
+  s_9009b9ea516dcd::t_ae544bb88ecef8 6
+  s_9009b9ea516dcd::t_577cf1f318e534 34
+  s_9009b9ea516dcd::t_8af7a627852bf0 1
+  s_9009b9ea516dcd::t_3694e4b0a8b00b 33
+  s_9009b9ea516dcd::t_f7ecceac6673e3 42
+changelog/+single-tier-layout-log.fixed.md
+  s_9009b9ea516dcd::t_f55ce6a1bceab1 1
+infrahub_sync/__init__.py
+  s_9009b9ea516dcd::t_48fb12e1dbce17 198-200,205,209
+  s_9009b9ea516dcd::t_594d4a5d8ac3e9 182-183
+  s_9009b9ea516dcd::t_30ce7efced4145 189,196-197,207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "32b534a5e0313ea3441ed139f7d077ff422c0238",
+  "prompts": {},
+  "sessions": {
+    "s_9009b9ea516dcd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "85d4ba1c-948f-4ed7-80c1-6d46332a0af5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
