@@ -1,0 +1,42 @@
+tests/compose/test_testcontainers_fixture.py
+  s_5af47e422ac3fa::t_6984380454cb67 21
+  s_5af47e422ac3fa::t_494c034b2c4cdb 58-62
+docs/docs/compose-deployment.mdx
+  s_5af47e422ac3fa::t_9334cad97aa927 570
+tasks/dev.py
+  s_5af47e422ac3fa::t_b8589305740363 475-477,479
+  s_5af47e422ac3fa::t_dc98a41c0b6a01 610-611
+docs/docs/tutorials/netbox-to-existing-infrahub.mdx
+  s_5af47e422ac3fa::t_1b247608065385 251
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_5af47e422ac3fa::t_0dbd371c8e9f4f 250
+tasks/bench.py
+  s_5af47e422ac3fa::t_a14c242b7e9e33 97
+infrahub_sync/testcontainers/helpers.py
+  s_5af47e422ac3fa::t_e2e5a58d0caad7 79-80
+  s_5af47e422ac3fa::t_0123057ae99266 284-288,294-299
+  s_5af47e422ac3fa::t_b33d3409f94866 72-73,77-78
+  s_5af47e422ac3fa::t_e0eaf5474c7d1c 136-144
+docs/docs/development/guides/netbox-benchmark-runner.md
+  s_5af47e422ac3fa::t_ab47e8ff78a744 57
+  s_5af47e422ac3fa::t_110c80115a8093 46
+  s_5af47e422ac3fa::t_9681a9ecd55c82 62-68
+infrahub_sync/service/prefect_server.py
+  s_5af47e422ac3fa::t_d1b611dacbc5ea 9-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "66195f4fa5d7e7ddbe6636a1c6f765ea9421ae96",
+  "prompts": {},
+  "sessions": {
+    "s_5af47e422ac3fa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a22d1ed-b182-4832-b120-0eb989b94fab",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
