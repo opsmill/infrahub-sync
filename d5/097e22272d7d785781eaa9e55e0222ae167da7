@@ -1,0 +1,26 @@
+infrahub_sync/plan/reader.py
+  s_77064a8f1f9fb7::t_a52e53aa554dd9 551
+  s_77064a8f1f9fb7::t_11843db71bc7bf 502-510,536-550
+  s_77064a8f1f9fb7::t_e39107a114df98 612-613
+  s_77064a8f1f9fb7::t_8c98d0ad60f96c 484-488
+docs/docs/development/knowledge/plan-artifact.md
+  s_77064a8f1f9fb7::t_e39107a114df98 218-223
+tests/plan/test_last_changes.py
+  s_77064a8f1f9fb7::t_35f4cc127b1e34 47,326-377
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d5097e22272d7d785781eaa9e55e0222ae167da7",
+  "prompts": {},
+  "sessions": {
+    "s_77064a8f1f9fb7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "939dc8cb-70c7-4beb-974f-c09fa514e652",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
