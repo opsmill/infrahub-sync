@@ -220,7 +220,7 @@ The reader splits the file's checks in two:
   plan whose file is absent, or whose digest or record count differs from the manifest's record,
   because such a file was changed after the plan was written.
 - Content checks do not refuse it. A file that matches its digest but holds a bad record comes from
-  a writer bug, and apply does not read the file, so the plan stays reviewable and appliable. A bad
+  a writer bug, and apply does not read the file, so the plan can still be reviewed and applied. A bad
   record is a line that is not UTF-8 JSON, that fails `LastChangeRecord` validation, that names no
   update of the plan, whose field its update does not write (an `attribute` not in the update's
   `payload`, or a `relationship` not in its `relationships`), or that repeats a field of an update.
