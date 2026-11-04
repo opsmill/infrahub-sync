@@ -507,12 +507,7 @@ class Potenda:
         self._load_side(side="A", adapter=self.source)
 
     def destination_load(self):
-        """Load the destination and write its snapshot.
-
-        The destination first decides whether its reads ask for metadata (a server version
-        read for Infrahub), before its cursors are captured and before its first read.
-        """
-        resolve_destination_metadata_read(self.destination)
+        """Load the destination and write its snapshot."""
         self._load_side(side="B", adapter=self.destination)
 
     def load_both_sides(self) -> None:
@@ -530,10 +525,13 @@ class Potenda:
 
         Exceptions from either side are surfaced: the first failure to
         complete is re-raised, just like the sequential path would do.
-        The destination's lineage is resolved first, before the source system is read. The
-        destination's server version is read at the start of its own load, beside the source load.
+        The destination's lineage is resolved first, then the destination decides whether its
+        reads ask for metadata (a server version read for Infrahub). Both happen before either
+        side is loaded, so a failed lineage or version read stops the plan before the source
+        system is read, and `metadata_read` is set before the destination's cursors are captured.
         """
         resolve_destination_lineage(self.destination)
+        resolve_destination_metadata_read(self.destination)
         if not self.concurrent_load:
             self.source_load()
             self.destination_load()

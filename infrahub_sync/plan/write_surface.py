@@ -86,7 +86,7 @@ class MetadataReadingDestination(Protocol):
         """Whether this plan's reads asked for `updated_by` and `updated_at`."""
 
     def resolve_metadata_read(self) -> None:
-        """Decide, at the start of a plan's destination load, whether its reads ask for metadata."""
+        """Decide, before either side of a plan is loaded, whether the destination's reads ask for metadata."""
 
 
 def resolve_destination_lineage(destination: object, *, saved_plan: PlanManifest | None = None) -> None:
@@ -104,8 +104,9 @@ def resolve_destination_lineage(destination: object, *, saved_plan: PlanManifest
 def resolve_destination_metadata_read(destination: object) -> None:
     """Let the destination decide whether its reads ask for metadata; otherwise do nothing.
 
-    The engine calls this at the start of the destination load, after the lineage is
-    resolved and beside the source load, and before the destination's cursors are captured.
+    The engine calls this after the lineage is resolved and before either side of a plan is
+    loaded, so a failed version read stops the plan before the source system is read, and
+    `metadata_read` is set before the destination's cursors are captured.
     """
     if not isinstance(destination, MetadataReadingDestination):
         return

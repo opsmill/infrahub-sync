@@ -1010,8 +1010,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         otherwise the apply is refused before any named node is read and before any write
         (FR-012). A plan passes no manifest.
 
-        The server version is not read here: a plan reads it in `resolve_metadata_read`, when
-        the destination load starts, so the read runs beside the source load. This call keeps
+        The server version is not read here: a plan reads it in `resolve_metadata_read`, which
+        the engine calls right after this, before either side is loaded. This call keeps
         `metadata_read` false until then. An apply loads nothing, so it reads no version and
         keeps `metadata_read` false.
         """
@@ -1049,8 +1049,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     def resolve_metadata_read(self) -> None:
         """Read the server version once for a plan, before the destination load reads anything.
 
-        The engine calls this at the start of the destination load, so the read runs beside
-        the source load and before the cursors and the reads that depend on `metadata_read`.
+        The engine calls this after `resolve_lineage` and before either side is loaded, so a
+        failed read stops the plan before the source system is read, and the read comes before
+        the cursors and the reads that depend on `metadata_read`.
         `metadata_read` is true from Infrahub 1.7.0, the first version that records
         `updated_by` and `updated_at`. After an apply's `resolve_lineage`, or a second call,
         it reads nothing and leaves `metadata_read` as it is.

@@ -152,7 +152,7 @@ def test_without_settings_the_import_account_is_the_source_and_there_is_no_owner
         protect=False,
     )
     assert adapter.lineage is lineage
-    assert client.calls == [ACCOUNT_PROFILE_CALL], "the server version is read when the destination load starts"
+    assert client.calls == [ACCOUNT_PROFILE_CALL], "the server version is read after the lineage, not inside it"
 
 
 def test_no_account_is_looked_up_by_the_source_systems_name() -> None:
@@ -197,8 +197,9 @@ def test_a_plan_reads_the_import_account_once(tmp_path: Path, *, concurrent_load
     assert sorted(events) == ["destination.load", "source.load"]
 
 
-def test_a_plan_reads_the_server_version_when_the_destination_load_starts(tmp_path: Path) -> None:
-    """The version read is part of the destination load, after the source load starts, and decides its reads."""
+@pytest.mark.parametrize("concurrent_load", [True, False])
+def test_a_plan_reads_the_server_version_before_either_side_is_loaded(tmp_path: Path, *, concurrent_load: bool) -> None:
+    """The version read comes after the lineage and before the source load, and decides the destination's reads."""
     events: list[str] = []
     client = LineageClient()
     client.get_version = lambda: events.append("version") or "1.11.9"  # ty: ignore[invalid-assignment]
@@ -210,12 +211,45 @@ def test_a_plan_reads_the_server_version_when_the_destination_load_starts(tmp_pa
         config=None,  # ty: ignore[invalid-argument-type]
         top_level=[],
         run_dir=tmp_path,
-        concurrent_load=False,
+        concurrent_load=concurrent_load,
     )
 
     engine.load_both_sides()
 
-    assert events == ["source.load", "version", "destination.load metadata_read=True"]
+    assert events[0] == "version"
+    assert sorted(events[1:]) == ["destination.load metadata_read=True", "source.load"]
+
+
+class _VersionReadFailed(Exception):
+    """Stands in for a version read that stops the plan, such as an HTTP 401."""
+
+
+@pytest.mark.parametrize("concurrent_load", [True, False])
+def test_a_failed_version_read_stops_the_plan_before_the_source_is_read(
+    tmp_path: Path, *, concurrent_load: bool
+) -> None:
+    """A version read that raises is reported before the source load starts, so no source extract runs."""
+    events: list[str] = []
+    client = LineageClient()
+
+    def refuse_version() -> str:
+        raise _VersionReadFailed
+
+    client.get_version = refuse_version  # ty: ignore[invalid-assignment]
+    destination = _loading_adapter(client, events)
+    engine = Potenda(
+        source=_ordered_side("source", events),
+        destination=destination,
+        config=None,  # ty: ignore[invalid-argument-type]
+        top_level=[],
+        run_dir=tmp_path,
+        concurrent_load=concurrent_load,
+    )
+
+    with pytest.raises(_VersionReadFailed):
+        engine.load_both_sides()
+
+    assert events == [], "neither side is loaded"
 
 
 def test_named_source_and_owner_are_looked_up_by_kind_and_name() -> None:
