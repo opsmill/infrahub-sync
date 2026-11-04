@@ -1,0 +1,22 @@
+tests/service/test_flow_and_prefect.py
+  s_77064a8f1f9fb7::t_5e7972d7133197 1562-1563
+  s_77064a8f1f9fb7::t_58dae436e40762 1573-1575
+tests/adapters/test_infrahub_lineage.py
+  s_77064a8f1f9fb7::t_360f2248aa1102 226,239,252
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d63945df2d7de82b790e0cc2394129afe1cc7bef",
+  "prompts": {},
+  "sessions": {
+    "s_77064a8f1f9fb7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "939dc8cb-70c7-4beb-974f-c09fa514e652",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
