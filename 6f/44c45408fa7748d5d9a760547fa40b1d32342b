@@ -1,0 +1,25 @@
+tasks/preview.py
+  s_5af47e422ac3fa::t_20d5ddf5a74fcc 159-160
+tasks/dev.py
+  s_5af47e422ac3fa::t_71fe675b31372f 94-97
+tests/dev_stack/test_loopback_publication.py
+  s_5af47e422ac3fa::t_c9a9b239d21404 115
+tests/dev_stack/test_dev_tasks.py
+  s_5af47e422ac3fa::t_c9eda5c1e9c94b 185-191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6f44c45408fa7748d5d9a760547fa40b1d32342b",
+  "prompts": {},
+  "sessions": {
+    "s_5af47e422ac3fa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a22d1ed-b182-4832-b120-0eb989b94fab",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
