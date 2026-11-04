@@ -1,0 +1,40 @@
+infrahub_sync/service/orchestration.py
+  s_f718d35766c589::t_65338dedbcf25f 181-182,184-192,194-208,210-218,220-229,231-236
+  s_f718d35766c589::t_1160a66d59044f 209,219,230
+  s_f718d35766c589::t_828b3ac84f5d47 250-254,256,259,261-264,266-273
+  s_f718d35766c589::t_3bddc59653502d 8,28-29
+docs/docs/reference/sync-http-api.mdx
+  s_f718d35766c589::t_f1351ae8d20d0d 387-388
+dev/specs/015-run-discovery-api/plan.md
+  s_f718d35766c589::t_42c9ea384e634e 97
+tests/service/test_flow_and_prefect.py
+  s_f718d35766c589::t_773dfb291e3104 884,896-897,902-904
+  s_f718d35766c589::t_d590d3f26011f1 943-951
+tests/integration/test_service_prefect_idempotency.py
+  s_f718d35766c589::t_d85766dcced584 50-53,61-72
+  s_f718d35766c589::t_a805e9d1c947b5 73-74
+dev/specs/015-run-discovery-api/research.md
+  s_f718d35766c589::t_42c9ea384e634e 171-172
+  s_f718d35766c589::t_67dd23ec1e503e 182-200
+tests/service/test_run_titles.py
+  s_f718d35766c589::t_e6b606bbef7682 43-44
+  s_f718d35766c589::t_694204fa92dda7 30
+  s_f718d35766c589::t_1d8d62f83c170c 13,16-24,27-29,31-42,45-54,66,68-69,71-76,79-80,110,113,118-119,122,135,138-139,141-161,167,172,178,180,182,185-186,189-190
+  s_f718d35766c589::t_0d12afe55ab259 25-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d3cea1c352bdbefed4d663ae59c1646593319e94",
+  "prompts": {},
+  "sessions": {
+    "s_f718d35766c589": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3abfa013-58d0-4a35-aa91-617e78043d5c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
