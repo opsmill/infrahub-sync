@@ -4844,7 +4844,7 @@ def test_postgresql_dialect_reads_columns_via_information_schema_without_probing
     store._dialect = "postgresql"
     cursor = database.connect().cursor()
 
-    columns = store._read_product_run_columns(cursor)
+    columns = store._read_table_columns(cursor, "product_runs")
 
     assert columns == frozenset({"run_id", "operation"})
 

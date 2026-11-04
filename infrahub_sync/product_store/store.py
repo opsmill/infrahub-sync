@@ -695,10 +695,6 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             finally:
                 connection.close()
 
-    def _read_product_run_columns(self, cursor: _Cursor) -> frozenset[str]:
-        """Return the existing columns on ``product_runs`` for this store's own dialect."""
-        return self._read_table_columns(cursor, "product_runs")
-
     def _read_table_columns(self, cursor: _Cursor, table: str) -> frozenset[str]:
         """Return the existing columns on ``table`` for this store's own dialect.
 
@@ -762,18 +758,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
     def _migrate_prefect_execution_columns(self, cursor: _Cursor) -> None:
         """Add liveness columns without fabricating timestamps for legacy links."""
-        if self._dialect == "sqlite":
-            cursor.execute("PRAGMA table_info(prefect_executions)")
-            existing = frozenset(str(row[1]) for row in cursor.fetchall())
-        else:
-            cursor.execute(
-                self._sql(
-                    "SELECT column_name FROM information_schema.columns WHERE table_name = ? "
-                    "AND table_schema = current_schema()"
-                ),
-                ("prefect_executions",),
-            )
-            existing = frozenset(str(row[0]) for row in cursor.fetchall())
+        existing = self._read_table_columns(cursor, "prefect_executions")
         for column, sql_type in _PREFECT_EXECUTION_LIVENESS_COLUMNS:
             if column not in existing:
                 cursor.execute(f"ALTER TABLE prefect_executions ADD COLUMN {column} {sql_type}")
@@ -891,7 +876,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         from only one would let the other stay missing forever once construction is repeated,
         since a later construction would see the survivor and skip recreating the pair.
 
-        The PostgreSQL query is schema-qualified for the same reason ``_read_product_run_columns``
+        The PostgreSQL query is schema-qualified for the same reason ``_read_table_columns``
         is: without ``table_schema = current_schema()``, a same-named constraint in another schema
         would satisfy this check and leave the current schema's table unguarded.
         """

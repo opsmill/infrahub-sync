@@ -185,7 +185,7 @@ class PlanGenerationExistsError(PlanArtifactError):
     next_action = (
         "Re-run `plan` so the new plan is written under a fresh run id. To use the "
         "existing plan instead, review it with `runs plan <run-id>` or apply it with "
-        "`apply <run-id>`."
+        "`apply <run-id> --expected-checksum <checksum>`."
     )
 
 

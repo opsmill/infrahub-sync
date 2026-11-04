@@ -12,6 +12,7 @@ import sys
 import unicodedata
 from contextlib import contextmanager
 from enum import Enum
+from functools import wraps
 from math import isfinite
 from pathlib import Path  # noqa: TC003 - Typer resolves command annotations at runtime.
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -761,32 +762,16 @@ def plan_cmd(
             _echo_plan(client.get_plan(completed.run.run_id))
 
 
-@app.command("diff", hidden=True)
-def diff_cmd(
-    ctx: typer.Context,
-    *,
-    config: str = typer.Option(..., "--config", "--config-id", help=_CONFIG_HELP),
-    version: int = typer.Option(..., "--version", help="Registered configuration version."),
-    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the plan."),
-    branch: str | None = typer.Option(None, "--branch", help="Destination branch admitted by the Sync API."),
-    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
-    wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for this run's execution."),  # noqa: FBT003
-    wait_timeout: float = typer.Option(DEFAULT_WAIT_TIMEOUT, "--wait-timeout", help="Bounded wait in seconds."),
-    poll_interval: float = typer.Option(DEFAULT_POLL_INTERVAL, "--poll-interval", help="Poll interval in seconds."),
-) -> None:
-    """Deprecated alias of `plan`; it will be removed in a later release."""
+@app.command("diff", hidden=True, help="Deprecated alias of `plan`; it will be removed in a later release.")
+@wraps(plan_cmd)
+def diff_cmd(*args: Any, **kwargs: Any) -> None:
+    """Deprecated alias of `plan`; it will be removed in a later release.
+
+    `wraps` gives Typer the signature of `plan`, so the alias takes exactly the options
+    `plan` takes and cannot fall behind when `plan` gains one.
+    """
     typer.echo(_DIFF_DEPRECATION, err=True)
-    plan_cmd(
-        ctx,
-        config=config,
-        version=version,
-        reason=reason,
-        branch=branch,
-        idempotency_key=idempotency_key,
-        wait=wait,
-        wait_timeout=wait_timeout,
-        poll_interval=poll_interval,
-    )
+    plan_cmd(*args, **kwargs)
 
 
 @app.command("sync")

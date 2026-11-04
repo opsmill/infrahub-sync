@@ -37,7 +37,6 @@ from .paging import (
     MAX_LIMIT,
     MIN_LIMIT,
     FilterValue,
-    InvalidCursorError,
     decode_cursor,
     encode_cursor,
     timestamp_key,
@@ -68,9 +67,7 @@ def _provider_error_boundary(operation: Any) -> Any:
     def guarded(*args: Any, **kwargs: Any) -> Any:
         try:
             return operation(*args, **kwargs)
-        except (ConfigurationAPIError, ServiceAPIError, InvalidCursorError):
-            # A refused paging cursor is a client error, not a provider failure: the
-            # application's handler answers it with ``422 invalid-cursor``.
+        except (ConfigurationAPIError, ServiceAPIError):
             raise
         except ProductStoreProviderError:
             raise ConfigurationAPIError(503, "storage") from None
