@@ -481,6 +481,11 @@ def _parse_last_changes(
     `None` when the manifest has no `last_changes` field: the plan was made before the file
     existed, or its destination keeps no last changes. The digest is part of the checksummed
     manifest, so a file that does not match it was changed after the plan was written.
+
+    Each record must name an update of the plan and a field that update writes, with the
+    matching field type, and no field of an update may have two records. An update field
+    with no record is accepted: the payload holds every source attribute, not only the
+    changed ones, so the operations alone do not show which fields must have a record.
     """
     record = manifest.last_changes
     if record is None:
@@ -494,7 +499,15 @@ def _parse_last_changes(
             found=mismatch[1],
         )
     assert raw.last_changes_bytes is not None  # `last_changes_mismatch` refuses an absent file
-    updates = {operation.operation_id for operation in operations if operation.action == "update"}
+    # What each update writes, by field and field type: an attribute is a payload key, a
+    # relationship is a recorded reference. A record may name only a field its update writes.
+    updates: dict[str, set[tuple[str, str]]] = {
+        operation.operation_id: {(name, "attribute") for name in operation.payload or {}}
+        | {(reference.field, "relationship") for reference in operation.relationships or []}
+        for operation in operations
+        if operation.action == "update"
+    }
+    line_by_field: dict[tuple[str, str], int] = {}
     records: list[LastChangeRecord] = []
     for number, line in enumerate(operation_record_lines(raw.last_changes_bytes), start=1):
         try:
@@ -520,6 +533,22 @@ def _parse_last_changes(
                 expected="the operation id of an update in operations.jsonl",
                 found=f"operation {change.operation_id!r}",
             )
+        if (change.field, change.field_type) not in updates[change.operation_id]:
+            raise _torn(
+                run_id,
+                f"{LAST_CHANGES_FILE_NAME} line {number} names a field its update does not write",
+                expected="an attribute in the update's payload or a relationship it records",
+                found=f"{change.field_type} {change.field!r} of operation {change.operation_id!r}",
+            )
+        first_line = line_by_field.get((change.operation_id, change.field))
+        if first_line is not None:
+            raise _torn(
+                run_id,
+                f"{LAST_CHANGES_FILE_NAME} repeats field {change.field!r} of operation {change.operation_id!r}",
+                expected="at most one record for each field of an update",
+                found=f"field {change.field!r} on both line {first_line} and line {number}",
+            )
+        line_by_field[change.operation_id, change.field] = number
         records.append(change)
     return records
 
@@ -580,7 +609,8 @@ def parse_plan_artifact(raw: RawPlanArtifact, *, run_id: str) -> LoadedPlan:
             malformed manifest, an absent operations file, a line count disagreeing with
             `operations_count`, or an operations line that fails record validation for a
             reason other than its action (FR-010); or a `last_changes.jsonl` that does not
-            match the manifest's record of it (FR-007).
+            match the manifest's record of it, or holds a record for a field no update of
+            the plan writes, or two records for one field of an update (FR-007).
         PlanFormatVersionError: `format_version` is outside `SUPPORTED_FORMAT_VERSIONS`
             (FR-027).
         UnsupportedOperationActionError: an operation's `action` is outside `ACTIONS`,

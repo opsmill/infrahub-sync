@@ -215,7 +215,12 @@ then `field`, so the same plan inputs give the same bytes; zero records encode t
 A `null` is rendered as `not recorded`. For a cardinality-many relationship the record is the edge
 that changed most recently. The checksum covers the file through the manifest's `last_changes.sha256`.
 Review and the pre-apply check (`last_changes`) both refuse a plan whose file is absent, or whose
-digest or record count differs from the manifest's record.
+digest or record count differs from the manifest's record. Reading the plan, for review and for
+apply, also refuses a record that names no update of the plan, a record whose field its update does
+not write (an `attribute` not in the update's `payload`, or a `relationship` not in its
+`relationships`), and a second record for the same field of an update. An update field with no
+record is accepted: the payload holds every source attribute, not only the changed ones, so the
+operations do not show which fields must have a record.
 
 ### Determinism
 

@@ -44,7 +44,7 @@ from tests.test_potenda_plan_artifact import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
 
     from infrahub_sync.plan.models import PlannedOperation
@@ -321,6 +321,58 @@ def test_review_refuses_a_missing_file_the_manifest_names(tmp_path: Path) -> Non
 
     with pytest.raises(PlanArtifactTornError, match=r"last_changes\.jsonl"):
         read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, base_directory=tmp_path)
+
+
+def _first_record_with(**changes: str) -> Callable[[list[LastChangeRecord]], list[LastChangeRecord]]:
+    """Replace the first record's field or field type, keeping the others."""
+    return lambda records: [records[0].model_copy(update=changes), *records[1:]]
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        pytest.param(
+            lambda records: [*records, records[0]],
+            r"last_changes\.jsonl repeats field 'model' of operation",
+            id="duplicate-field",
+        ),
+        pytest.param(
+            _first_record_with(field="serial"),
+            r"last_changes\.jsonl line 1 names a field its update does not write",
+            id="field-not-in-the-update",
+        ),
+        pytest.param(
+            _first_record_with(field_type="relationship"),
+            r"last_changes\.jsonl line 1 names a field its update does not write",
+            id="attribute-recorded-as-a-relationship",
+        ),
+        pytest.param(
+            _first_record_with(field="tags", field_type="attribute"),
+            r"last_changes\.jsonl line 1 names a field its update does not write",
+            id="relationship-recorded-as-an-attribute",
+        ),
+    ],
+)
+def test_review_refuses_a_record_that_does_not_match_its_update(
+    tmp_path: Path, edit: Callable[[list[LastChangeRecord]], list[LastChangeRecord]], message: str
+) -> None:
+    operations, records = _update_operations()
+    ordered = sorted(records, key=lambda record: (record.operation_id, record.field))
+    _write(tmp_path, last_changes=edit(ordered), operations=operations)
+
+    with pytest.raises(PlanArtifactTornError, match=message):
+        read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, base_directory=tmp_path)
+
+
+def test_review_accepts_an_update_field_with_no_record(tmp_path: Path) -> None:
+    """The payload holds unchanged attributes too, so a field without a record is not a tear."""
+    operations, records = _update_operations()
+    kept = [record for record in records if record.field != "model"]
+    _write(tmp_path, last_changes=kept, operations=operations)
+
+    saved = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, base_directory=tmp_path)
+
+    assert saved.last_changes == sorted(kept, key=lambda record: (record.operation_id, record.field))
 
 
 def test_verification_refuses_a_file_whose_digest_does_not_match(tmp_path: Path) -> None:
