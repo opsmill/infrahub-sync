@@ -26,15 +26,15 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.cache.cursors import CursorState, CursorTier
-from infrahub_sync.configuration.capabilities import (
-    InfrahubLineageSettings,
-    NamedLineageNode,
-    parse_infrahub_lineage_settings,
-)
 from infrahub_sync.configuration.credentials import (
     is_registered_context,
     pin_infrahub_sdk_authority,
     select_runtime_credential,
+)
+from infrahub_sync.configuration.infrahub_lineage import (
+    InfrahubLineageSettings,
+    NamedLineageNode,
+    parse_infrahub_lineage_settings,
 )
 from infrahub_sync.generator import has_field
 from infrahub_sync.infrahub_errors import classify_infrahub_error

@@ -23,7 +23,7 @@ from infrahub_sync.adapters.infrahub import (
     ResolvedLineageNode,
     require_lineage_settings,
 )
-from infrahub_sync.configuration.capabilities import InfrahubLineageSettings, NamedLineageNode
+from infrahub_sync.configuration.infrahub_lineage import InfrahubLineageSettings, NamedLineageNode
 from infrahub_sync.potenda import Potenda
 
 IMPORT_ACCOUNT = {"id": "account-1", "name": {"value": "netbox-import"}}

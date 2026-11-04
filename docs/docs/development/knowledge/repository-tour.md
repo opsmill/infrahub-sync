@@ -62,6 +62,7 @@ destination-schema checks.
 |---|---|
 | `models.py` | The package envelope, its parser, and the finding type |
 | `capabilities.py` | `AdapterConfigurationCapabilities` and the closed `BUILTIN_ADAPTER_CAPABILITIES` registry |
+| `infrahub_lineage.py` | The parser and validator for an Infrahub destination's `source`, `owner` and `protect` settings |
 | `validation.py` | The finding-producing checks and their fixed execution order |
 | `credentials.py` | What a credential reference is, and how a provider resolves one |
 | `schema_validation.py` | The opt-in destination-schema checks |

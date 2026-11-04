@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from infrahub_sync.configuration.capabilities import (
+from infrahub_sync.configuration.infrahub_lineage import (
     LINEAGE_NODE_KINDS,
     InfrahubLineageSettings,
     NamedLineageNode,

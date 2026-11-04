@@ -51,7 +51,7 @@ from infrahub_sync.adapters.infrahub import (
     ResolvedLineageNode,
     clear_lineage_on_pool_edges,
 )
-from infrahub_sync.configuration.capabilities import InfrahubLineageSettings, NamedLineageNode
+from infrahub_sync.configuration.infrahub_lineage import InfrahubLineageSettings, NamedLineageNode
 from infrahub_sync.plan.derive import operations_from_diff
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,

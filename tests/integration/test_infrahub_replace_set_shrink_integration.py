@@ -42,7 +42,7 @@ import requests
 from infrahub_sdk.node.attribute import Attribute
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter
-from infrahub_sync.configuration.capabilities import InfrahubLineageSettings
+from infrahub_sync.configuration.infrahub_lineage import InfrahubLineageSettings
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlanAction, PlannedOperation, RelationshipReference
 

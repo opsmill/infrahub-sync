@@ -16,7 +16,7 @@ from infrahub_sdk.schema import NodeSchemaAPI
 from infrahub_sdk.schema.main import BranchSchema
 
 from infrahub_sync.adapters.infrahub import NamedLineageNodeNotFoundError
-from infrahub_sync.configuration.capabilities import InfrahubLineageSettings, NamedLineageNode
+from infrahub_sync.configuration.infrahub_lineage import InfrahubLineageSettings, NamedLineageNode
 from infrahub_sync.plan.errors import ImportAccountMismatchError, PlanLineageMissingError
 from infrahub_sync.plan.models import LineageAccountRecord, LineageNodeRecord, PlanLineageRecord
 from infrahub_sync.plan.write_surface import destination_lineage_record
