@@ -1,0 +1,51 @@
+Dockerfile
+  s_77064a8f1f9fb7::t_8abe7edc3af894 24-25
+README.md
+  s_77064a8f1f9fb7::t_7cc82a06d53c36 22-29
+changelog/+v3-cli-install-docs.fixed.md
+  s_77064a8f1f9fb7::t_a83908633c73d9 1
+docs/docs/compose-deployment.mdx
+  s_77064a8f1f9fb7::t_5ef8253791edb3 463,473-486
+docs/docs/installation.mdx
+  s_77064a8f1f9fb7::t_f369f1b4575c65 11-12,43-76
+docs/docs/operations/compose-troubleshooting.mdx
+  s_77064a8f1f9fb7::t_aa29cee528c2d2 48-50,56-57
+docs/docs/readme.mdx
+  s_77064a8f1f9fb7::t_e49c8351cf4efb 11,13-14,82
+docs/docs/reference/sync-http-api.mdx
+  s_77064a8f1f9fb7::t_df6f8646a80a1d 19
+docs/docs/running-a-sync.mdx
+  s_77064a8f1f9fb7::t_31cc0a51b91f01 20
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_77064a8f1f9fb7::t_fd2d46c2f512fc 25-28,30
+docs/docs/tutorials/netbox-to-existing-infrahub.mdx
+  s_77064a8f1f9fb7::t_8f1f3f4ed0bfd8 25-28,30
+infrahub_sync/client/models.py
+  s_77064a8f1f9fb7::t_f4058adafda31e 105
+infrahub_sync/product_store/models.py
+  s_77064a8f1f9fb7::t_0883066905c2c3 305,402
+infrahub_sync/product_store/store.py
+  s_77064a8f1f9fb7::t_59ccacc73224eb 235-238,641-659,662-663,665,671-673,687-688,698-699,710
+tests/compose/test_documentation.py
+  s_77064a8f1f9fb7::t_ce5a595f150c1e 306
+tests/image/test_version_policy.py
+  s_77064a8f1f9fb7::t_a68887ee0e9fb8 31
+tests/product_store/test_contract.py
+  s_77064a8f1f9fb7::t_0ddcb0467d10d5 5197-5213,5221-5231,5255,5308-5336
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ef54686a66e73e84bc9df4cb97b41f4fdec4d3b7",
+  "prompts": {},
+  "sessions": {
+    "s_77064a8f1f9fb7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "939dc8cb-70c7-4beb-974f-c09fa514e652",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
