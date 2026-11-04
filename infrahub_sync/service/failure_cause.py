@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from infrahub_sync.client.models import MAX_FAILURE_CAUSE_TEXT
 from infrahub_sync.execution import redact
 from infrahub_sync.infrahub_errors import cause_chain, classify_infrahub_error_chain, quotable_text
 from infrahub_sync.plan.errors import LINEAGE_REFUSALS
@@ -18,12 +19,10 @@ from infrahub_sync.plan.errors import LINEAGE_REFUSALS
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-_MAX_RECORDED_TEXT = 1000
-
 
 def _recordable(text: str, secrets: Sequence[str]) -> str:
     """Return text fit to record and print: redacted, without control characters, capped."""
-    return quotable_text(redact(text, secrets), limit=_MAX_RECORDED_TEXT)
+    return quotable_text(redact(text, secrets), limit=MAX_FAILURE_CAUSE_TEXT)
 
 
 def operator_cause(exc: BaseException, secrets: Sequence[str]) -> dict[str, Any]:
@@ -45,12 +44,10 @@ def operator_cause(exc: BaseException, secrets: Sequence[str]) -> dict[str, Any]
     """
     for link in cause_chain(exc):
         if isinstance(link, LINEAGE_REFUSALS):
-            message = getattr(link, "message", None) or str(link)
-            next_action = getattr(link, "next_action", None)
-            cause: dict[str, Any] = {"cause": _recordable(message, secrets)}
-            if isinstance(next_action, str) and next_action:
-                cause["next_action"] = _recordable(next_action, secrets)
-            return cause
+            return {
+                "cause": _recordable(link.message, secrets),
+                "next_action": _recordable(link.next_action, secrets),
+            }
     classification = classify_infrahub_error_chain(exc)
     if classification is None:
         return {}

@@ -12,28 +12,42 @@ no record. The records are display data: apply does not read them.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from infrahub_sync.plan.models import LastChangeRecord, RecordedAccountRecord
+from infrahub_sync.plan.models import LastChangeRecord
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-    from infrahub_sync.plan.models import LastChangeFieldType, PlannedOperation
+    from infrahub_sync.plan.models import LastChangeFieldType, PlannedOperation, RecordedAccountRecord
+
+
+@dataclass(frozen=True, slots=True)
+class LastChange:
+    """Who last changed a destination value and when, as Infrahub recorded it.
+
+    `None` means Infrahub returned no value for that field; the plan shows it as not recorded.
+    """
+
+    updated_by: RecordedAccountRecord | None
+    updated_at: str | None
+
+
+NOT_RECORDED = LastChange(updated_by=None, updated_at=None)
 
 
 class LastChangeCollector:
     """Collects one `LastChangeRecord` for each field each update of a plan proposes to change.
 
     `changes` is the destination's map from (destination node id, field name) to what it read
-    about that value's last change: an object with `updated_by` (with `id` and
-    `display_label`, or `None`) and `updated_at`. A field the map holds nothing for gets a
-    record with `None` values, which review shows as "not recorded". `metadata_read` is
-    `False` when the destination did not ask for that metadata: Infrahub is older than 1.7.0,
-    its version could not be parsed, or Infrahub refused the version query.
+    about that value's last change. A field the map holds nothing for gets a record with
+    `None` values, which review shows as "not recorded". `metadata_read` is `False` when the
+    destination did not ask for that metadata: Infrahub is older than 1.7.0, its version
+    could not be parsed, or Infrahub refused the version query.
     """
 
-    def __init__(self, changes: Mapping[tuple[str, str], Any], *, metadata_read: bool = False) -> None:
+    def __init__(self, changes: Mapping[tuple[str, str], LastChange], *, metadata_read: bool = False) -> None:
         self.changes = changes
         self.metadata_read = metadata_read
         self.records: list[LastChangeRecord] = []
@@ -47,21 +61,14 @@ class LastChangeCollector:
         if operation.destination_id is None:
             return
         for field, field_type in fields:
-            change = self.changes.get((operation.destination_id, field))
-            account = getattr(change, "updated_by", None)
-            account_id = getattr(account, "id", None)
-            updated_at = getattr(change, "updated_at", None)
+            change = self.changes.get((operation.destination_id, field), NOT_RECORDED)
             self.records.append(
                 LastChangeRecord(
                     operation_id=operation.operation_id,
                     field=field,
                     field_type=field_type,
-                    updated_by=(
-                        RecordedAccountRecord(id=account_id, display_label=getattr(account, "display_label", None))
-                        if isinstance(account_id, str) and account_id
-                        else None
-                    ),
-                    updated_at=updated_at if isinstance(updated_at, str) else None,
+                    updated_by=change.updated_by,
+                    updated_at=change.updated_at,
                 )
             )
 

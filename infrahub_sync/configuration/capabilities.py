@@ -410,11 +410,10 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
     except (AuthenticationError, httpx.HTTPStatusError) as exc:
         # A 403 is a missing permission and only a 401 is a refused token.
         classification = classify_infrahub_error(exc)
+        msg = f"destination refused the schema read: {type(exc).__name__}"
         if classification is None:
-            msg = f"destination refused the schema read: {type(exc).__name__}"
             raise DestinationSchemaReadError(msg, reason="unreachable") from None
         reason = "unauthorized" if classification.problem == "refused_token" else "forbidden"
-        msg = f"destination refused the schema read: {type(exc).__name__}"
         raise DestinationSchemaReadError(msg, reason=reason, detail=classification.describe()) from None
     except (httpx.TransportError, ServerNotReachableError) as exc:
         msg = f"destination server could not be reached: {type(exc).__name__}"

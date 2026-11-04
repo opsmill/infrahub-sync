@@ -62,15 +62,11 @@ def resolve_destination_lineage(destination: object, *, saved_plan: PlanManifest
 
     The engine calls this before either side of a plan is loaded and before the first write
     of an apply, so a lineage refusal stops the run before the source system is read and
-    before anything is written. An apply passes `saved_plan`; a plan does not, so the
-    plan-time call is unchanged for destinations that take no argument.
+    before anything is written. An apply passes `saved_plan`; a plan does not.
     """
     if not isinstance(destination, LineageResolvingDestination):
         return
-    if saved_plan is None:
-        destination.resolve_lineage()
-    else:
-        destination.resolve_lineage(saved_plan=saved_plan)
+    destination.resolve_lineage(saved_plan=saved_plan)
 
 
 def destination_lineage_record(destination: object) -> PlanLineageRecord | None:

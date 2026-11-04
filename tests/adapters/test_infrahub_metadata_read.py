@@ -30,13 +30,12 @@ from infrahub_sync.adapters.infrahub import (
     IMPORT_ACCOUNT_QUERY,
     InfrahubAdapter,
     InfrahubModel,
-    LastChange,
-    RecordedAccount,
     _latest_change,  # noqa: PLC2701 - the edge ordering under test is private.
     metadata_read_supported,
 )
 from infrahub_sync.cache.cursors import CursorState, CursorTier, capture_safe_cursors
-from infrahub_sync.plan.models import LineageAccountRecord
+from infrahub_sync.plan.last_changes import LastChange
+from infrahub_sync.plan.models import LineageAccountRecord, RecordedAccountRecord
 
 DEVICE_KIND = "LabDevice"
 SITE_KIND = "LabSite"
@@ -439,8 +438,8 @@ def test_a_value_infrahub_returns_with_updated_by_is_recorded_for_it() -> None:
     """Attributes, a cardinality-one edge and cardinality-many edges, from the one read."""
     destination = _plan(MetadataClient(rows=_person_changed_rows()))
 
-    alice = RecordedAccount(id="account-alice", display_label="Alice")
-    bob = RecordedAccount(id="account-bob", display_label="Bob")
+    alice = RecordedAccountRecord(id="account-alice", display_label="Alice")
+    bob = RecordedAccountRecord(id="account-bob", display_label="Bob")
     changes = destination.last_changes
     assert changes["device-1", "name"] == LastChange(updated_by=alice, updated_at="2026-10-01T08:00:00+00:00")
     assert changes["device-1", "description"] == LastChange(updated_by=bob, updated_at="2026-10-04T08:00:00+00:00")
@@ -464,8 +463,8 @@ def test_a_value_infrahub_returns_with_updated_by_is_recorded_for_it() -> None:
 )
 def test_the_latest_edge_is_found_whatever_the_precision_of_its_time(latest_at: str) -> None:
     """Every supported Python, 3.10 included, orders edge times whose fraction is not 3 or 6 digits."""
-    alice = RecordedAccount(id="account-alice", display_label="Alice")
-    bob = RecordedAccount(id="account-bob", display_label="Bob")
+    alice = RecordedAccountRecord(id="account-alice", display_label="Alice")
+    bob = RecordedAccountRecord(id="account-bob", display_label="Bob")
     earlier = LastChange(updated_by=alice, updated_at="2026-10-01T08:00:00.000001+00:00")
     latest = LastChange(updated_by=bob, updated_at=latest_at)
 

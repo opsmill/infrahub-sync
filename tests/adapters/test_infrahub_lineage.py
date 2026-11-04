@@ -178,6 +178,20 @@ def test_named_source_and_owner_are_looked_up_by_kind_and_name() -> None:
     ]
 
 
+def test_a_node_named_as_both_source_and_owner_is_read_once() -> None:
+    """When `source` and `owner` name the same node, one lookup resolves both."""
+    client = LineageClient(nodes={("CoreRepository", "inventory"): "repo-1"})
+    named = NamedLineageNode(kind="CoreRepository", name="inventory")
+    adapter = make_adapter(client, InfrahubLineageSettings(source=named, owner=named))
+
+    lineage = adapter.resolve_lineage()
+
+    expected = ResolvedLineageNode(kind="CoreRepository", name="inventory", id="repo-1")
+    assert lineage.source == expected
+    assert lineage.owner == expected
+    assert client.calls == [ACCOUNT_PROFILE_CALL, name_only_lookup("CoreRepository", "inventory"), VERSION_CALL]
+
+
 @pytest.mark.parametrize("kind", sorted(RELATIONSHIPS))
 def test_a_named_node_is_read_with_its_name_only(kind: str) -> None:
     """The lookup selects `name` and excludes every relationship, so it needs `view` on the kind only.
@@ -362,7 +376,7 @@ def test_a_plan_resolves_lineage_before_either_side_is_loaded(tmp_path: Path, *,
     # Assigned, not configured through attribute access: on Python 3.12 and later, the
     # `runtime_checkable` protocol check reads attributes statically and does not find a
     # child mock that `MagicMock` creates on first access.
-    destination.resolve_lineage = MagicMock(side_effect=lambda: events.append("resolve_lineage"))
+    destination.resolve_lineage = MagicMock(side_effect=lambda **_: events.append("resolve_lineage"))
     engine = Potenda(
         source=source,
         destination=destination,

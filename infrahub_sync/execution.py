@@ -50,6 +50,7 @@ from infrahub_sync.cache.paths import cache_root_for
 from infrahub_sync.cache.sidecars import RunFile
 from infrahub_sync.configuration.models import REDACTED
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE
+from infrahub_sync.infrahub_errors import cause_chain
 from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
@@ -516,13 +517,7 @@ def sanitize_exception_chain(exc: BaseException, secrets: Sequence[str]) -> Exce
     ``__suppress_context__`` set so no unredacted original can be reached from
     the returned exception.
     """
-    chain: list[BaseException] = []
-    seen: set[int] = set()
-    current: BaseException | None = exc
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        chain.append(current)
-        current = current.__cause__ or (None if current.__suppress_context__ else current.__context__)
+    chain = list(cause_chain(exc))
 
     sanitized: Exception = RuntimeError("unknown cause")
     for original in reversed(chain):

@@ -468,7 +468,7 @@ class NamedLineageNodeNotFoundError(LookupError):
 # The refusals a run records with their message and next action, not only their class name: each
 # message is written by this repository and names only settings, kinds, node names, account names
 # and ids, never a token or a server response (FR-011, FR-012).
-LINEAGE_REFUSALS: tuple[type[Exception], ...] = (
+LINEAGE_REFUSALS: tuple[type[PlanArtifactError | NamedLineageNodeNotFoundError], ...] = (
     PlanLineageMissingError,
     ImportAccountMismatchError,
     NamedLineageNodeNotFoundError,

@@ -58,12 +58,14 @@ from infrahub_sync.plan.keying import (
     refuse_unkeyed_create_coverage,
     writable_convergence_reason,
 )
+from infrahub_sync.plan.last_changes import NOT_RECORDED, LastChange
 from infrahub_sync.plan.models import (
     DestinationBindingRecord,
     LineageAccountRecord,
     LineageNodeRecord,
     PlanLineageRecord,
     PlanManifest,
+    RecordedAccountRecord,
 )
 
 logger = logging.getLogger(__name__)
@@ -832,32 +834,10 @@ def metadata_read_supported(version: str) -> bool:
     return (*release, 0, 0, 0)[:3] >= METADATA_MIN_VERSION
 
 
-@dataclass(frozen=True, slots=True)
-class RecordedAccount:
-    """The account Infrahub recorded as `updated_by`, by id and display label."""
-
-    id: str
-    display_label: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class LastChange:
-    """Who last changed a destination value and when, as Infrahub recorded it.
-
-    `None` means Infrahub returned no value for that field; the plan shows it as not recorded.
-    """
-
-    updated_by: RecordedAccount | None
-    updated_at: str | None
-
-
-NOT_RECORDED = LastChange(updated_by=None, updated_at=None)
-
-
-def _recorded_account(prop: NodeProperty | None) -> RecordedAccount | None:
+def _recorded_account(prop: NodeProperty | None) -> RecordedAccountRecord | None:
     if prop is None or not prop.id:
         return None
-    return RecordedAccount(id=prop.id, display_label=prop.display_label)
+    return RecordedAccountRecord(id=prop.id, display_label=prop.display_label)
 
 
 def _edge_last_change(edge: RelatedNodeSync) -> LastChange:
@@ -1020,7 +1000,13 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             source = ResolvedLineageNode(kind="CoreAccount", name=import_account.name, id=import_account.id)
         else:
             source = self._resolve_named_lineage_node("source", settings.source)
-        owner = None if settings.owner is None else self._resolve_named_lineage_node("owner", settings.owner)
+        if settings.owner is None:
+            owner = None
+        elif settings.owner == settings.source:
+            # The same node: it was read once as the source, so it is not read again.
+            owner = source
+        else:
+            owner = self._resolve_named_lineage_node("owner", settings.owner)
         self.lineage = ResolvedLineage(
             import_account=import_account, source=source, owner=owner, protect=settings.protect
         )
@@ -1418,32 +1404,25 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # and a lookup there could fetch.
         node_schema = self.schema[node_kind]
 
-        for attr_name in node_schema.attribute_names:
-            if has_field(config=self.config, name=node_kind, field=attr_name):
-                attr = getattr(node, attr_name)
-                val = attr.value
-                # IP types come back from the Infrahub SDK as ipaddress
-                # objects; DiffSync models store them as their string form
-                # (e.g. "10.0.0.1/32"), so normalise here. Other non-string
-                # kinds — List, Number, Boolean, DateTime — pass through
-                # unchanged: stringifying them turns a real list `[]` into
-                # the four-character literal `"[]"`, which then fails
-                # Pydantic validation on `list[str]`-typed fields.
-                if isinstance(
-                    val,
-                    (ipaddress.IPv4Interface, ipaddress.IPv6Interface, ipaddress.IPv4Network, ipaddress.IPv6Network),
-                ):
-                    data[attr_name] = str(val)
-                else:
-                    data[attr_name] = val
+        for attr_name in self._mapped_attribute_names(node_kind, node_schema):
+            attr = getattr(node, attr_name)
+            val = attr.value
+            # IP types come back from the Infrahub SDK as ipaddress
+            # objects; DiffSync models store them as their string form
+            # (e.g. "10.0.0.1/32"), so normalise here. Other non-string
+            # kinds — List, Number, Boolean, DateTime — pass through
+            # unchanged: stringifying them turns a real list `[]` into
+            # the four-character literal `"[]"`, which then fails
+            # Pydantic validation on `list[str]`-typed fields.
+            if isinstance(
+                val,
+                (ipaddress.IPv4Interface, ipaddress.IPv6Interface, ipaddress.IPv4Network, ipaddress.IPv6Network),
+            ):
+                data[attr_name] = str(val)
+            else:
+                data[attr_name] = val
 
-        for rel_schema in node_schema.relationships:
-            if not has_field(config=self.config, name=node_kind, field=rel_schema.name):
-                continue
-            peer_schema = self.schema.get(rel_schema.peer)
-            if peer_schema is None:
-                continue
-
+        for rel_schema, peer_schema in self._mapped_relationships(node_kind, node_schema):
             if rel_schema.cardinality == "one":
                 rel: RelatedNodeSync = getattr(node, rel_schema.name)
                 if not rel.id:
@@ -1493,6 +1472,23 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         return data
 
+    def _mapped_attribute_names(self, node_kind: str, node_schema: MainSchemaTypesAPI) -> Iterator[str]:
+        """The attributes of `node_kind` the configuration maps."""
+        for attr_name in node_schema.attribute_names:
+            if has_field(config=self.config, name=node_kind, field=attr_name):
+                yield attr_name
+
+    def _mapped_relationships(
+        self, node_kind: str, node_schema: MainSchemaTypesAPI
+    ) -> Iterator[tuple[RelationshipSchemaAPI, MainSchemaTypesAPI]]:
+        """The relationships of `node_kind` the configuration maps and whose peer kind the schema has, with that peer's schema."""
+        for rel_schema in node_schema.relationships:
+            if not has_field(config=self.config, name=node_kind, field=rel_schema.name):
+                continue
+            peer_schema = self.schema.get(rel_schema.peer)
+            if peer_schema is not None:
+                yield rel_schema, peer_schema
+
     def _record_last_changes(self, node: InfrahubNodeSync) -> None:
         """Keep the `updated_by` and `updated_at` of each mapped field of a node read with metadata.
 
@@ -1505,18 +1501,12 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         node_id = str(node.id)
         node_kind = node.get_kind()
         node_schema = self.schema[node_kind]
-        for attr_name in node_schema.attribute_names:
-            if not has_field(config=self.config, name=node_kind, field=attr_name):
-                continue
+        for attr_name in self._mapped_attribute_names(node_kind, node_schema):
             attr = getattr(node, attr_name)
             self.last_changes[node_id, attr_name] = LastChange(
                 updated_by=_recorded_account(attr.updated_by), updated_at=attr.updated_at
             )
-        for rel_schema in node_schema.relationships:
-            if not has_field(config=self.config, name=node_kind, field=rel_schema.name):
-                continue
-            if self.schema.get(rel_schema.peer) is None:
-                continue
+        for rel_schema, _ in self._mapped_relationships(node_kind, node_schema):
             if rel_schema.cardinality == "one":
                 change = _edge_last_change(getattr(node, rel_schema.name))
             elif rel_schema.cardinality == "many":
@@ -1901,8 +1891,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             )
             return
         for reference in references:
-            edges = create_data.get(reference.field)
-            for edge in edges if isinstance(edges, list) else [edges]:
+            for edge in _edge_inputs(create_data.get(reference.field)):
                 if isinstance(edge, dict) and edge.get("id") not in current[reference.field]:
                     edge["owner"] = owner_id
 
@@ -1950,6 +1939,11 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 _LINEAGE_EDGE_PROPERTIES = ("source", "owner", "is_protected")
 
 
+def _edge_inputs(value: Any) -> Iterator[Any]:
+    """Yield each edge of a relationship's input: the items of a list, or the value itself."""
+    yield from value if isinstance(value, list) else [value]
+
+
 def clear_lineage_on_pool_edges(create_data: dict[str, Any], node_schema: NodeSchemaAPI) -> None:
     """Remove `source`, `owner` and `is_protected` from each relationship edge allocated from a resource pool.
 
@@ -1959,8 +1953,7 @@ def clear_lineage_on_pool_edges(create_data: dict[str, Any], node_schema: NodeSc
     An edge is allocated from a pool when its input carries the `from_pool` key.
     """
     for name in node_schema.relationship_names:
-        edges = create_data.get(name)
-        for edge in edges if isinstance(edges, list) else [edges]:
+        for edge in _edge_inputs(create_data.get(name)):
             if isinstance(edge, dict) and "from_pool" in edge:
                 for prop in _LINEAGE_EDGE_PROPERTIES:
                     edge.pop(prop, None)

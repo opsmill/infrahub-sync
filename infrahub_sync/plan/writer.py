@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.errors import DuplicateOperationIdError, PlanGenerationExistsError
-from infrahub_sync.plan.models import LAST_CHANGES_FILE_NAME, PLAN_FORMAT_VERSION, PlanManifest
+from infrahub_sync.plan.models import LAST_CHANGES_FILE_NAME, PLAN_FORMAT_VERSION, PlanLastChangesRecord, PlanManifest
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -267,12 +267,12 @@ def write_plan_artifact(
         last_changes_bytes = encode_last_changes(last_changes)
         # Before the manifest: a failure here leaves no manifest, so the artifact reads as torn.
         _atomic_write_bytes(plan_dir / LAST_CHANGES_FILE_NAME, last_changes_bytes)
-        last_changes_field = {
-            "path": LAST_CHANGES_FILE_NAME,
-            "sha256": hashlib.sha256(last_changes_bytes).hexdigest(),
-            "count": len(last_changes),
-            "metadata_read": metadata_read,
-        }
+        last_changes_field = PlanLastChangesRecord(
+            path=LAST_CHANGES_FILE_NAME,
+            sha256=hashlib.sha256(last_changes_bytes).hexdigest(),
+            count=len(last_changes),
+            metadata_read=metadata_read,
+        ).model_dump()
 
     body: dict[str, Any] = {
         "format_version": PLAN_FORMAT_VERSION,

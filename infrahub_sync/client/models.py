@@ -12,6 +12,10 @@ Operation = Literal["plan", "verify", "apply", "sync"]
 TerminalState = Literal["completed", "failed", "cancelled", "abandoned", "interrupted"]
 TerminalOutcome = Literal["succeeded", "failed", "cancelled", "abandoned", "ambiguous"]
 
+# The longest `cause` and `next_action` text a failed stage records in a run's results, and the
+# longest the CLI prints of each.
+MAX_FAILURE_CAUSE_TEXT = 1000
+
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 _LEGAL_EXECUTION_VERDICTS = {
     ("completed", "succeeded"),

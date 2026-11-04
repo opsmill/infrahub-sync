@@ -19,13 +19,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 from infrahub_sdk.exceptions import AuthenticationError, GraphQLError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
 
 REFUSED_TOKEN_STATUS = 401
 MISSING_PERMISSION_STATUS = 403
@@ -143,12 +143,7 @@ def _classify_status_error(exc: httpx.HTTPStatusError) -> InfrahubErrorClassific
 
 def _classify_graphql_error(exc: GraphQLError) -> InfrahubErrorClassification | None:
     """A GraphQL error whose message starts "You do not have" is a missing permission."""
-    messages = [
-        error["message"]
-        for error in exc.errors or ()
-        if isinstance(error, dict) and isinstance(error.get("message"), str)
-    ]
-    denials = [message for message in messages if message.strip().startswith(_DENIAL_PREFIX)]
+    denials = [message for message in _error_messages(exc.errors or ()) if message.strip().startswith(_DENIAL_PREFIX)]
     if not denials:
         return None
     return _missing_permission(denials, error_type=type(exc).__name__, http_status=None)
@@ -163,6 +158,11 @@ def _response_messages(response: httpx.Response) -> list[str]:
     errors = body.get("errors") if isinstance(body, dict) else None
     if not isinstance(errors, list):
         return []
+    return _error_messages(errors)
+
+
+def _error_messages(errors: Iterable[Any]) -> list[str]:
+    """Return the `message` string of each error that is a mapping with one."""
     return [error["message"] for error in errors if isinstance(error, dict) and isinstance(error.get("message"), str)]
 
 

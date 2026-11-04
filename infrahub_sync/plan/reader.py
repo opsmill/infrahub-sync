@@ -142,15 +142,26 @@ def last_changes_mismatch(record: PlanLastChangesRecord, sidecar_bytes: bytes | 
     differs from the record; `None` when they match. Shared by the reader and the pre-apply
     verifier, so review and apply refuse the same files.
     """
+    return _checked_last_change_lines(record, sidecar_bytes)[0]
+
+
+def _checked_last_change_lines(
+    record: PlanLastChangesRecord, sidecar_bytes: bytes | None
+) -> tuple[tuple[str, str] | None, list[bytes]]:
+    """`last_changes_mismatch`'s result, with the file's record lines once the digest matches.
+
+    The lines are empty when the file is absent or its digest differs, so the reader splits
+    the file once for both the count check and the records it parses.
+    """
     if sidecar_bytes is None:
-        return f"{record.count} record(s) at {PLAN_DIR_NAME}/{LAST_CHANGES_FILE_NAME}", "no last-change file"
+        return (f"{record.count} record(s) at {PLAN_DIR_NAME}/{LAST_CHANGES_FILE_NAME}", "no last-change file"), []
     digest = hashlib.sha256(sidecar_bytes).hexdigest()
     if digest != record.sha256:
-        return f"a file whose SHA-256 digest is {record.sha256}", f"a file whose SHA-256 digest is {digest}"
-    count = len(operation_record_lines(sidecar_bytes))
-    if count != record.count:
-        return f"{record.count} record(s)", f"{count} record(s)"
-    return None
+        return (f"a file whose SHA-256 digest is {record.sha256}", f"a file whose SHA-256 digest is {digest}"), []
+    lines = operation_record_lines(sidecar_bytes)
+    if len(lines) != record.count:
+        return (f"{record.count} record(s)", f"{len(lines)} record(s)"), lines
+    return None, lines
 
 
 def supported_versions_text() -> str:
@@ -490,7 +501,7 @@ def _parse_last_changes(
     record = manifest.last_changes
     if record is None:
         return None
-    mismatch = last_changes_mismatch(record, raw.last_changes_bytes)
+    mismatch, lines = _checked_last_change_lines(record, raw.last_changes_bytes)
     if mismatch is not None:
         raise _torn(
             run_id,
@@ -498,7 +509,6 @@ def _parse_last_changes(
             expected=mismatch[0],
             found=mismatch[1],
         )
-    assert raw.last_changes_bytes is not None  # `last_changes_mismatch` refuses an absent file
     # What each update writes, by field and field type: an attribute is a payload key, a
     # relationship is a recorded reference. A record may name only a field its update writes.
     updates: dict[str, set[tuple[str, str]]] = {
@@ -509,7 +519,7 @@ def _parse_last_changes(
     }
     line_by_field: dict[tuple[str, str], int] = {}
     records: list[LastChangeRecord] = []
-    for number, line in enumerate(operation_record_lines(raw.last_changes_bytes), start=1):
+    for number, line in enumerate(lines, start=1):
         try:
             change = LastChangeRecord.model_validate(json.loads(line))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:

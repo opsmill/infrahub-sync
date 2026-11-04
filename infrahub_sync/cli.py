@@ -37,6 +37,7 @@ from infrahub_sync.client import (
     TransportError,
     ValidationReportResource,
 )
+from infrahub_sync.client.models import MAX_FAILURE_CAUSE_TEXT
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 
 if TYPE_CHECKING:
@@ -614,9 +615,6 @@ def _echo_completed_destination_branch(client: SyncClient, run_id: str) -> None:
     _echo_fields((("destination_branch", plan.destination_branch),))
 
 
-_MAX_PRINTED_CAUSE = 1000
-
-
 def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
     """Print what the service recorded about a failed stage, before the run-terminal error.
 
@@ -640,10 +638,10 @@ def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
     typer.echo(f"{stage} failed: {error_type}", err=True)
     cause = failure.get("cause")
     if isinstance(cause, str) and cause:
-        typer.echo(f"cause: {_display(cause[:_MAX_PRINTED_CAUSE])}", err=True)
+        typer.echo(f"cause: {_display(cause[:MAX_FAILURE_CAUSE_TEXT])}", err=True)
     next_action = failure.get("next_action")
     if isinstance(next_action, str) and next_action:
-        typer.echo(f"hint: {_display(next_action[:_MAX_PRINTED_CAUSE])}", err=True)
+        typer.echo(f"hint: {_display(next_action[:MAX_FAILURE_CAUSE_TEXT])}", err=True)
     elif error_type == "PlanSchemaChangedError":
         typer.echo("hint: create and review a new plan before applying again", err=True)
     elif error_type == "RegisteredPlanVerificationError":

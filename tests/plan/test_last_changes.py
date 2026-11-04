@@ -19,7 +19,7 @@ import pytest
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.derive import operations_from_diff
 from infrahub_sync.plan.errors import PlanArtifactTornError
-from infrahub_sync.plan.last_changes import LastChangeCollector
+from infrahub_sync.plan.last_changes import LastChange, LastChangeCollector
 from infrahub_sync.plan.models import LastChangeRecord, PlanManifest, RecordedAccountRecord
 from infrahub_sync.plan.reader import read_plan_artifact_bytes
 from infrahub_sync.plan.review import read_saved_plan, resolve_run_directory
@@ -53,10 +53,9 @@ ACCOUNT = RecordedAccountRecord(id="account-jane", display_label="Jane Doe")
 UPDATED_AT = "2026-10-21T09:14:03Z"
 
 
-def _change(account: RecordedAccountRecord | None = ACCOUNT, updated_at: str | None = UPDATED_AT) -> SimpleNamespace:
+def _change(account: RecordedAccountRecord | None = ACCOUNT, updated_at: str | None = UPDATED_AT) -> LastChange:
     """A last change as the Infrahub adapter keeps it: `updated_by` with id and label, `updated_at`."""
-    updated_by = None if account is None else SimpleNamespace(id=account.id, display_label=account.display_label)
-    return SimpleNamespace(updated_by=updated_by, updated_at=updated_at)
+    return LastChange(updated_by=account, updated_at=updated_at)
 
 
 def _derive(
