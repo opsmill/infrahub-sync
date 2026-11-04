@@ -1,0 +1,30 @@
+dev/adr/0016-the-compose-deployment-is-one-tag-pinned-file.md
+  s_5af47e422ac3fa::t_1417c1a2ff1e14 33-34
+changelog/+sync-api-port-8001.changed.md
+  s_5af47e422ac3fa::t_5c2197df83ec61 1
+docs/docs/compose-deployment.mdx
+  s_5af47e422ac3fa::t_32de4c61f37725 79-80
+docs/docs/development/knowledge/repository-tour.md
+  s_5af47e422ac3fa::t_d87f79d336e6b6 82-83
+  s_5af47e422ac3fa::t_eac5ec8b1f1163 81,84-85
+changelog/+infrahub-1-11-9-pin.housekeeping.md
+  s_5af47e422ac3fa::t_5e5d3fbd98e72c 1
+changelog/+testcontainers-test-class.added.md
+  s_5af47e422ac3fa::t_97e89989cb34b6 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8411dda0dc3bb2e9aab1dbd5d81381e38723514a",
+  "prompts": {},
+  "sessions": {
+    "s_5af47e422ac3fa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a22d1ed-b182-4832-b120-0eb989b94fab",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
