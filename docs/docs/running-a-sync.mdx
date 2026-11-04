@@ -153,10 +153,10 @@ on a `cause:` line:
   needs.
 - Infrahub refused the token with HTTP 401.
 - The `source` or `owner` setting names a node that does not exist in the destination.
-- The saved plan records no import account, or the apply runs with a different import account
-  than the plan. The cause names both accounts.
+- The saved plan records no import account.
+- The apply runs with a different import account than the plan. The cause names both accounts.
 
-For the last two, a `hint:` line says what to do next. `runs results RUN_ID` prints the same
+For the last three, a `hint:` line says what to do next. `runs results RUN_ID` prints the same
 fields, as `cause`, `next_action` and `infrahub_error`, under `plan_failure`, `sync_failure`
 or `apply_failure`.
 

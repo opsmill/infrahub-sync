@@ -145,7 +145,9 @@ the contract, and [Adding an adapter](../guides/adding-an-adapter.md) is the pro
 `infrahub_sync/infrahub_errors.py` sits outside the adapters package because the apply, the
 destination schema read and the service worker's failure record all use it. It classifies an
 Infrahub error as a refused token (HTTP 401) or a missing permission (HTTP 403, or a GraphQL
-permission denial), and quotes only the permission Infrahub names. `classify_infrahub_error_chain`
+permission denial). It quotes the permission Infrahub names. When a 403 names no permission, it
+quotes the server message instead, with control characters removed and its length capped at
+300 characters. `classify_infrahub_error_chain`
 walks the cause chain, because a plan wraps every load failure in a `ValueError`.
 
 ### Cache and incremental extraction
