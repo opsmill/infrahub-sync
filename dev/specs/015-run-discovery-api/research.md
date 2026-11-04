@@ -109,11 +109,20 @@ All paths are relative to the repository root on `015-run-discovery-api` (based 
 
 - **Finding**: successful `apply` and `sync` both set `phase="applied"`; plans set
   `planned` (`infrahub_sync/service/`).
+- **Finding** (follow-up, 2026-11-04): an apply advances the plan run in place, so a run's
+  `started_at` is when its plan was created, not when it was applied. The apply and sync
+  stages write `phase = 'applied'` and `finished_at` together, in one `ExecutionFinishWriteback`
+  committed when the stage finishes (`infrahub_sync/service/flow.py`, `_execute_stage`). No other
+  write sets `phase = 'applied'`, so `finished_at` is the time the apply happened and is never
+  NULL on an applied run.
 - **Decision**: for each version on the returned page, select the newest run by
-  `(started_at, run_id)` and the newest run with `phase = 'applied'`, using the new binding
-  index. One query per page, not per row (window function or two grouped subqueries, both
-  available on SQLite 3.25+ and PostgreSQL).
-- **Rationale**: answers "was this version ever applied?" without a client-side scan.
+  `(started_at, run_id)`, and the most recently applied run: the run with
+  `phase = 'applied'` ordered by `(finished_at, run_id)` descending. One query per page, not
+  per row (a window function, available on SQLite 3.25+ and PostgreSQL). If plan P1 is
+  created before plan P2, P2 is applied, and then P1 is applied, `latest_applied_run` is P1.
+- **Rationale**: answers "which run last changed the destination for this version?" without a
+  client-side scan. Ordering applied runs by `started_at` reported the most recently planned
+  applied run instead.
 
 ## R8. Pagination for configuration and version lists
 

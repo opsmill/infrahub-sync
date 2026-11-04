@@ -66,6 +66,11 @@ are never updated.
 | `latest_run` | `RunReference` or `null` |
 | `latest_applied_run` | `RunReference` or `null` |
 
+`latest_run` is the version's run with the newest `(started_at, run_id)`. `latest_applied_run`
+is the most recently applied run: the run with `phase = 'applied'` and the newest
+`(finished_at, run_id)`. An apply advances the plan run in place, so its `started_at` is the
+time the plan was created, and `finished_at` is the time the apply finished (research R7).
+
 ### `RunReference` (new)
 
 | Field | Type |

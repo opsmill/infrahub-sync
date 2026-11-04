@@ -188,7 +188,9 @@ infrahub-sync configs versions CONFIG_ID
 ```
 
 For each version, newest first, it prints the `latest_run` and the `latest_applied_run`, each
-with its `run_id`, phase, outcome, and start time.
+with its `run_id`, phase, outcome, and start time. `latest_run` is the run created most
+recently. `latest_applied_run` is the run applied most recently, which can be an older plan
+that you applied after a newer one. Its start time is the time the plan was created.
 
 `runs artifacts RUN_ID` lists the files that the service kept for a run.
 `runs cancel RUN_ID` cancels a run that has not finished. It asks for confirmation, or

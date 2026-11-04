@@ -362,7 +362,10 @@ in the same envelope:
 - `GET /configs/{config_id}/versions` orders versions by `registry_version`, newest first. Each
   item carries `config_id`, `registry_version`, `package_checksum`, `created_at`,
   `registered_by`, `registration_reason`, `latest_run` and `latest_applied_run`, and no
-  package content. `registered_by` and `registration_reason` are `null` for versions
+  package content. `latest_run` is the version's newest run by `started_at`.
+  `latest_applied_run` is the most recently applied run, ordered by the time its apply
+  finished. An apply updates the plan run, so its `started_at` is the time the plan was
+  created. `registered_by` and `registration_reason` are `null` for versions
   registered before they were recorded. Read
   `GET /configs/{config_id}/versions/{registry_version}` for the package content.
 

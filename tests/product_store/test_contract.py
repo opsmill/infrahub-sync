@@ -5742,6 +5742,32 @@ def test_version_page_reads_each_versions_latest_run_and_latest_applied_run(
     assert page.items[2].latest_run.started_at == _LIST_T0 + timedelta(minutes=2)
 
 
+def test_version_page_reports_the_most_recently_applied_run_not_the_most_recently_planned(
+    listing_provider: ProductProjection,
+) -> None:
+    config_id = listing_provider.create_configuration(_configuration_package()).config_id
+    # P1 planned at t1, P2 planned at t2; P2 applied at t3, then P1 applied at t4. An apply
+    # advances the plan run in place, so P1 keeps the older start time but was applied last.
+    listing_provider.create_run(_listed_run("run-p1", 1, config_id=config_id, registry_version=1))
+    listing_provider.create_run(_listed_run("run-p2", 2, config_id=config_id, registry_version=1))
+    for run_id, minutes in (("run-p2", 3), ("run-p1", 4)):
+        listing_provider._records.finish(
+            run_id,
+            phase="applied",
+            outcome="succeeded",
+            finished_at=_LIST_T0 + timedelta(minutes=minutes),
+            summary={},
+            results={},
+        )
+
+    (item,) = listing_provider.list_configuration_version_page(config_id).items
+
+    assert item.latest_run is not None
+    assert item.latest_run.run_id == "run-p2"
+    assert item.latest_applied_run is not None
+    assert item.latest_applied_run.run_id == "run-p1"
+
+
 def test_version_page_respects_the_limit_and_continues_after_a_version(listing_provider: ProductProjection) -> None:
     config_id = listing_provider.create_configuration(_configuration_package()).config_id
     for url in ("https://second.netbox.test", "https://third.netbox.test"):

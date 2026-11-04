@@ -418,7 +418,7 @@ class RunReference(BaseModel):
 
 
 class ConfigurationVersionSummary(BaseModel):
-    """One configuration version without its package, with its latest run and latest applied run."""
+    """One configuration version without its package, with its latest run and most recently applied run."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

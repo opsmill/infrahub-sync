@@ -446,7 +446,7 @@ class RunReference(_ResourceModel):
 
 
 class ConfigurationVersionSummaryResource(_ResourceModel):
-    """One configuration version without its package, with its latest run and latest applied run.
+    """One configuration version without its package, with its latest run and most recently applied run.
 
     ``GET /configs/{config_id}/versions/{registry_version}`` returns the full version.
     """

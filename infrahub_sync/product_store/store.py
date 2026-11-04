@@ -329,8 +329,11 @@ _SELECT_CONFIGURATION_VERSION_LIST = """SELECT config_id, registry_version, pack
 registered_by, registration_reason FROM configuration_versions WHERE config_id = ?"""
 _CONFIGURATION_VERSION_LIST_AFTER = " AND registry_version < ?"
 _CONFIGURATION_VERSION_LIST_ORDER = " ORDER BY registry_version DESC LIMIT ?"
-# For every version on one page, the newest run and the newest applied run, in one query. Each
-# branch ranks the version's runs by ``(started_at, run_id)`` descending and keeps the first;
+# For every version on one page, the newest run and the most recently applied run, in one query.
+# The first branch ranks the version's runs by ``(started_at, run_id)`` descending. The applied
+# branch ranks by ``(finished_at, run_id)`` descending: an apply advances the plan run in place,
+# so ``started_at`` is when the plan was created, while ``finished_at`` is written with
+# ``phase = 'applied'`` when the apply stage finishes. Each branch keeps its first row;
 # ``ROW_NUMBER`` is available on SQLite 3.25+ and PostgreSQL. ``{0}`` is a list of ``?``.
 _SELECT_LATEST_VERSION_RUNS = """SELECT registry_version, kind, run_id, phase, outcome, started_at FROM (
 SELECT registry_version, 'latest' AS kind, run_id, phase, outcome, started_at,
@@ -338,7 +341,7 @@ ROW_NUMBER() OVER (PARTITION BY registry_version ORDER BY started_at DESC, run_i
 FROM product_runs WHERE config_id = ? AND registry_version IN ({0})
 UNION ALL
 SELECT registry_version, 'applied' AS kind, run_id, phase, outcome, started_at,
-ROW_NUMBER() OVER (PARTITION BY registry_version ORDER BY started_at DESC, run_id DESC) AS position
+ROW_NUMBER() OVER (PARTITION BY registry_version ORDER BY finished_at DESC, run_id DESC) AS position
 FROM product_runs WHERE config_id = ? AND registry_version IN ({0}) AND phase = 'applied'
 ) ranked WHERE position = 1"""
 _SELECT_CONFIGURATION_VERSION = """SELECT config_id, registry_version, package_checksum, declared_content, created_at
