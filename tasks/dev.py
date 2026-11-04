@@ -90,7 +90,10 @@ BUILD_INPUT_FILES = ("Dockerfile", "pyproject.toml", "uv.lock")
 BUILD_SERVICE = "prefect-server"
 # What `docker image inspect` prints for a label the image does not carry.
 _NO_LABEL_VALUES = frozenset({"", "<no value>"})
-_WILDCARD_OR_LOOPBACK = frozenset({"", "127.0.0.1", "localhost", "0.0.0.0", "::", "::1"})  # noqa: S104
+# The bind addresses whose publication the host reaches at 127.0.0.1: the wildcards and
+# the usual loopback names. Not `is_loopback()`: a publication bound to 127.0.0.2 is
+# loopback but is not reached at 127.0.0.1.
+_REACHED_AT_127_0_0_1 = frozenset({"", "127.0.0.1", "localhost", "0.0.0.0", "::", "::1"})  # noqa: S104
 # The variable that moves Infrahub's publication off loopback, and the one that sets its
 # initial admin token. `docker-compose.infrahub.yml` falls back to the token below, which
 # is published in this repository and so protects nothing on an address other hosts reach.
@@ -134,7 +137,7 @@ class Publication:
         the Docker bridge gateway on Linux, replaces `127.0.0.1`.
         """
         address = self.host_ip.strip()
-        if address in _WILDCARD_OR_LOOPBACK:
+        if address in _REACHED_AT_127_0_0_1:
             host = "127.0.0.1"
         elif ":" in address:
             host = f"[{address}]"
@@ -231,7 +234,7 @@ def _environment(services: Mapping[str, Any], name: str) -> dict[str, str]:
 def infrahub_server(services: Mapping[str, Any]) -> tuple[Publication, str]:
     """Return the host publication of `infrahub-server`'s port 8000 and its initial admin token."""
     publication = _publication(services, "infrahub-server", 8000)
-    token = str((services["infrahub-server"].get("environment") or {}).get("INFRAHUB_INITIAL_ADMIN_TOKEN", ""))
+    token = str((services["infrahub-server"].get("environment") or {}).get(INFRAHUB_ADMIN_TOKEN_VARIABLE, ""))
     return publication, token
 
 

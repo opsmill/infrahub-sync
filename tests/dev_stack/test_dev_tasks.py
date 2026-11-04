@@ -19,7 +19,7 @@ from tasks import dev
 if TYPE_CHECKING:
     from invoke.tasks import Task
 
-ADMIN_TOKEN = "06438eb2-8019-4776-878c-0941b1f1d1ec"  # noqa: S105 -- the development default
+ADMIN_TOKEN = dev.PUBLIC_INFRAHUB_ADMIN_TOKEN
 
 
 def _resolved(
@@ -63,8 +63,8 @@ class FakeDocker:
     def __init__(self, *, label: str | None = None, project: str = "infrahub-sync-dev") -> None:
         self.label = label
         self.project = project
-        self.infrahub_host_ip = "127.0.0.1"
-        self.infrahub_token = ADMIN_TOKEN
+        # `_resolved` keyword arguments for `infrahub-server`, such as `infrahub_host_ip`.
+        self.infrahub: dict[str, str] = {}
         self.commands: list[str] = []
         self.envs: list[dict[str, str] | None] = []
 
@@ -75,8 +75,7 @@ class FakeDocker:
             resolved = _resolved(
                 project=self.project,
                 infrahub="--profile infrahub" in command,
-                infrahub_host_ip=self.infrahub_host_ip,
-                infrahub_token=self.infrahub_token,
+                **self.infrahub,
             )
             return _Result(json.dumps(resolved))
         if command.startswith("docker image inspect"):
@@ -118,7 +117,7 @@ def _body(task_object: object) -> Any:  # noqa: ANN401 -- an Invoke task body
 
 
 def test_dev_settings_reads_the_resolved_development_file(context: Context, fake: FakeDocker) -> None:
-    fake.infrahub_host_ip = "0.0.0.0"  # noqa: S104 -- reading the settings starts nothing, so it is not refused
+    fake.infrahub["infrahub_host_ip"] = "0.0.0.0"  # noqa: S104 -- reading the settings starts nothing, so it is not refused
     settings = dev.dev_settings(context)
 
     assert fake.commands == [
@@ -223,7 +222,7 @@ def test_an_infrahub_on_another_network_is_not_checked() -> None:
 def test_starting_an_exposed_infrahub_with_the_public_token_runs_nothing(
     context: Context, fake: FakeDocker, task_object: object
 ) -> None:
-    fake.infrahub_host_ip = "0.0.0.0"  # noqa: S104
+    fake.infrahub["infrahub_host_ip"] = "0.0.0.0"  # noqa: S104
 
     with pytest.raises(dev.DevStackError, match="INFRAHUB_BIND_ADDRESS") as refused:
         _body(task_object)(context)
@@ -236,8 +235,8 @@ def test_starting_an_exposed_infrahub_with_the_public_token_runs_nothing(
 def test_starting_an_exposed_infrahub_with_a_token_of_its_own_proceeds(
     context: Context, fake: FakeDocker, task_object: object
 ) -> None:
-    fake.infrahub_host_ip = "172.17.0.1"
-    fake.infrahub_token = CUSTOM_TOKEN
+    fake.infrahub["infrahub_host_ip"] = "172.17.0.1"
+    fake.infrahub["infrahub_token"] = CUSTOM_TOKEN
 
     _body(task_object)(context)
 
@@ -245,7 +244,7 @@ def test_starting_an_exposed_infrahub_with_a_token_of_its_own_proceeds(
 
 
 def test_stopping_an_exposed_infrahub_is_not_refused(context: Context, fake: FakeDocker) -> None:
-    fake.infrahub_host_ip = "0.0.0.0"  # noqa: S104
+    fake.infrahub["infrahub_host_ip"] = "0.0.0.0"  # noqa: S104
 
     _body(dev.dev_stop)(context)
 

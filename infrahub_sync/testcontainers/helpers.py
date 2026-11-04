@@ -54,6 +54,11 @@ LOGGED_SERVICES = ("sync-bootstrap", "sync-api", "sync-worker", "prefect-server"
 # file's `cli` service presents, so the two defaults name the same principal.
 TEST_API_TOKEN = "infrahub-sync-test-token-0123456789"
 
+# The variable `InfrahubDockerCompose.create_env_file` reads the Infrahub administrator token
+# from, and the Sync variable that carries the same token to the worker.
+INFRAHUB_ADMIN_TOKEN_VARIABLE = "INFRAHUB_TESTING_INITIAL_ADMIN_TOKEN"
+INFRAHUB_CREDENTIAL_VARIABLE = "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
+
 # Test-only values for the variables the root file requires, and the ports and tokens a
 # test deployment needs. None of them is a real credential. The passwords are URL-safe
 # because the root file builds connection strings from them. Port `0` asks Docker for a
@@ -69,15 +74,10 @@ TEST_DEFAULTS: dict[str, str] = {
         {"test": {"token": TEST_API_TOKEN, "administrator": True}}, separators=(",", ":")
     ),
     "INFRAHUB_SYNC_API_TOKEN": TEST_API_TOKEN,
-    # The Infrahub test deployment's administrator token, so a run can write to it. An
-    # exported `INFRAHUB_TESTING_INITIAL_ADMIN_TOKEN` replaces it in `environment_values`.
-    "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": PROJECT_ENV_VARIABLES["INFRAHUB_TESTING_INITIAL_ADMIN_TOKEN"],
+    # The Infrahub test deployment's administrator token, so a run can write to it.
+    INFRAHUB_CREDENTIAL_VARIABLE: PROJECT_ENV_VARIABLES[INFRAHUB_ADMIN_TOKEN_VARIABLE],
     "INFRAHUB_SYNC_API_PORT": "0",
 }
-# The variable `InfrahubDockerCompose.create_env_file` reads the Infrahub administrator token
-# from, and the Sync variable that carries the same token to the worker.
-INFRAHUB_ADMIN_TOKEN_VARIABLE = "INFRAHUB_TESTING_INITIAL_ADMIN_TOKEN"
-INFRAHUB_CREDENTIAL_VARIABLE = "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
 
 # `${NAME`, but not the escaped `$${NAME` Compose passes through to a container.
 _VARIABLE_REFERENCE = re.compile(r"(?<!\$)\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)")

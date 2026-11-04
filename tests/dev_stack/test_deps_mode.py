@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
     from invoke.tasks import Task
 
-ADMIN_TOKEN = "06438eb2-8019-4776-878c-0941b1f1d1ec"  # noqa: S105 -- the development default
+ADMIN_TOKEN = dev.PUBLIC_INFRAHUB_ADMIN_TOKEN
 SYNC_ENV = {
     "INFRAHUB_SYNC_DATABASE_URL": "postgresql://postgres:devpassword@postgres:5432/infrahub_sync",
     "INFRAHUB_SYNC_S3_BUCKET": "infrahub-sync",

@@ -11,6 +11,7 @@ import subprocess  # noqa: S404 -- real benchmark subprocess regression
 import sys
 import time
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -37,7 +38,7 @@ from development.bench.runtime import BenchmarkError, docker_memory_mib, measure
 from development.netbox.datasets.change_netbox import expected_text, plan_changes
 from tasks import bench, dev
 
-DESTINATION_TOKEN = "06438eb2-8019-4776-878c-0941b1f1d1ec"  # noqa: S105 -- the development default
+DESTINATION_TOKEN = dev.PUBLIC_INFRAHUB_ADMIN_TOKEN
 HOST_URL = "http://127.0.0.1:18000"
 
 
@@ -62,14 +63,22 @@ def isolated_runner_lock(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(bench, "RUNNER_LOCK", tmp_path / "shared-runner.lock")
 
 
-@pytest.fixture(autouse=True)
-def resolved_destination(monkeypatch) -> list[dev.ComposeTarget]:
-    """Answer the destination's `docker compose config` without Docker; record each target."""
-    targets: list[dev.ComposeTarget] = []
+@dataclass
+class ResolvedDestination:
+    """The configuration the fake `docker compose config` answers, and each target it was asked for."""
+
+    configuration: dict[str, Any] = field(default_factory=destination_configuration)
+    targets: list[dev.ComposeTarget] = field(default_factory=list)
+
+
+@pytest.fixture(name="resolved_destination", autouse=True)
+def _resolved_destination(monkeypatch) -> ResolvedDestination:
+    """Answer the destination's `docker compose config` without Docker; a test may replace the answer."""
+    destination = ResolvedDestination()
 
     def resolved(_context: Context, target: dev.ComposeTarget) -> dict[str, Any]:
-        targets.append(target)
-        return destination_configuration()
+        destination.targets.append(target)
+        return destination.configuration
 
     def development_settings(*_args: object, **_kwargs: object) -> NoReturn:
         msg = "the benchmark destination must not come from the development settings"
@@ -78,7 +87,7 @@ def resolved_destination(monkeypatch) -> list[dev.ComposeTarget]:
     monkeypatch.setattr(bench.dev, "resolved_compose", resolved)
     monkeypatch.setattr(bench.dev, "dev_settings", development_settings)
     monkeypatch.delenv(bench.INFRAHUB_HOST_URL_VARIABLE, raising=False)
-    return targets
+    return destination
 
 
 @pytest.fixture
@@ -628,33 +637,23 @@ def test_v2_flags_are_only_sent_to_the_isolated_release(tmp_path, variant) -> No
     assert ("--no-full-extract" in command) == (variant == "incremental")
 
 
-@pytest.fixture
-def infrahub_network_selected(monkeypatch) -> pytest.MonkeyPatch:
-    """Select an Infrahub network, whose credential belongs to an Infrahub the benchmark does not start."""
-    monkeypatch.setenv(dev.INFRAHUB_NETWORK_VARIABLE, "infrahub_default")
-    monkeypatch.setenv(dev.INFRAHUB_CREDENTIAL_VARIABLE, "external-infrahub-credential")
-    return monkeypatch
-
-
+@pytest.mark.parametrize("infrahub_network", ["", "infrahub_default"], ids=["no-network", "network-selected"])
 def test_the_benchmark_reads_the_destination_from_its_own_compose_configuration(
-    resolved_destination: list[dev.ComposeTarget],
+    monkeypatch, resolved_destination: ResolvedDestination, infrahub_network: str
 ) -> None:
+    if infrahub_network:
+        # A selected network's credential belongs to an Infrahub the benchmark does not start.
+        monkeypatch.setenv(dev.INFRAHUB_NETWORK_VARIABLE, infrahub_network)
+        monkeypatch.setenv(dev.INFRAHUB_CREDENTIAL_VARIABLE, "external-infrahub-credential")
+
     stack = bench.CellStack()
 
     assert stack.infrahub_url == "http://127.0.0.1:8000"
     assert stack.infrahub_token == DESTINATION_TOKEN
-    assert [(target.project, tuple(target.profiles)) for target in resolved_destination] == [
+    assert [(target.project, tuple(target.profiles)) for target in resolved_destination.targets] == [
         (bench.DESTINATION_PROJECT, ("infrahub",))
     ]
-    assert resolved_destination[0].env == stack.destination_env
-
-
-@pytest.mark.usefixtures("infrahub_network_selected")
-def test_an_infrahub_network_does_not_change_the_destination() -> None:
-    stack = bench.CellStack()
-
-    assert stack.infrahub_url == "http://127.0.0.1:8000"
-    assert stack.infrahub_token == DESTINATION_TOKEN
+    assert resolved_destination.targets[0].env == stack.destination_env
 
 
 def test_the_host_url_variable_changes_only_the_host(monkeypatch) -> None:
@@ -682,15 +681,15 @@ def test_a_mismatched_port_names_the_published_port() -> None:
     assert "18000" in str(refused.value)
 
 
-def test_the_host_url_follows_the_destination_publication(monkeypatch) -> None:
-    monkeypatch.setattr(bench.dev, "resolved_compose", lambda *_args: destination_configuration("18000"))
+def test_the_host_url_follows_the_destination_publication(resolved_destination: ResolvedDestination) -> None:
+    resolved_destination.configuration = destination_configuration("18000")
 
     assert bench.CellStack().infrahub_url == HOST_URL
     assert bench.CellStack(infrahub_url=HOST_URL).infrahub_url == HOST_URL
 
 
-def test_an_exposed_destination_with_the_public_token_is_refused(monkeypatch) -> None:
-    monkeypatch.setattr(bench.dev, "resolved_compose", lambda *_args: destination_configuration(host_ip="0.0.0.0"))  # noqa: S104
+def test_an_exposed_destination_with_the_public_token_is_refused(resolved_destination: ResolvedDestination) -> None:
+    resolved_destination.configuration = destination_configuration(host_ip="0.0.0.0")  # noqa: S104
 
     with pytest.raises(BenchmarkError, match="INFRAHUB_INITIAL_ADMIN_TOKEN") as refused:
         bench.CellStack()
@@ -698,15 +697,17 @@ def test_an_exposed_destination_with_the_public_token_is_refused(monkeypatch) ->
     assert DESTINATION_TOKEN not in str(refused.value)
 
 
-def test_an_exposed_destination_with_a_token_of_its_own_is_allowed(monkeypatch) -> None:
-    configuration = destination_configuration(host_ip="172.17.0.1", token="a-token-of-the-developer")  # noqa: S106
-    monkeypatch.setattr(bench.dev, "resolved_compose", lambda *_args: configuration)
+def test_an_exposed_destination_with_a_token_of_its_own_is_allowed(resolved_destination: ResolvedDestination) -> None:
+    resolved_destination.configuration = destination_configuration(
+        host_ip="172.17.0.1",
+        token="a-token-of-the-developer",  # noqa: S106
+    )
 
     assert bench.CellStack().infrahub_url == "http://172.17.0.1:8000"
 
 
-def test_a_destination_without_an_infrahub_publication_is_refused(monkeypatch) -> None:
-    monkeypatch.setattr(bench.dev, "resolved_compose", lambda *_args: {"services": {}})
+def test_a_destination_without_an_infrahub_publication_is_refused(resolved_destination: ResolvedDestination) -> None:
+    resolved_destination.configuration = {"services": {}}
 
     with pytest.raises(BenchmarkError, match="infrahub-server publication"):
         bench.CellStack()
