@@ -416,9 +416,12 @@ LastChangeFieldType = Literal["attribute", "relationship"]
 
 
 class RecordedAccountRecord(BaseModel):
-    """The account Infrahub recorded as `updated_by` for a value, by id and display label."""
+    """The account Infrahub recorded as `updated_by` for a value, by id and display label.
 
-    model_config = ConfigDict(extra="forbid")
+    Frozen, so the Infrahub adapter can share one record among every value the same account changed.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     id: str = Field(min_length=1)
     display_label: str | None = None

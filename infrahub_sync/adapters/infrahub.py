@@ -834,18 +834,31 @@ def metadata_read_supported(version: str) -> bool:
     return (*release, 0, 0, 0)[:3] >= METADATA_MIN_VERSION
 
 
-def _recorded_account(prop: NodeProperty | None) -> RecordedAccountRecord | None:
+# The accounts a load has already validated, keyed by (account id, display label).
+RecordedAccounts = dict[tuple[str, str | None], RecordedAccountRecord]
+
+
+def _recorded_account(prop: NodeProperty | None, accounts: RecordedAccounts) -> RecordedAccountRecord | None:
+    """The `updated_by` account of one value, validated once per account and load.
+
+    A plan reads metadata for every mapped field of every node, and nearly all of those fields
+    name one of a few accounts, so each account is validated once and its frozen record shared.
+    """
     if prop is None or not prop.id:
         return None
-    return RecordedAccountRecord(id=prop.id, display_label=prop.display_label)
+    key = (prop.id, prop.display_label)
+    record = accounts.get(key)
+    if record is None:
+        record = accounts[key] = RecordedAccountRecord(id=prop.id, display_label=prop.display_label)
+    return record
 
 
-def _edge_last_change(edge: RelatedNodeSync) -> LastChange:
+def _edge_last_change(edge: RelatedNodeSync, accounts: RecordedAccounts) -> LastChange:
     """The `relationship_metadata` of one edge, read with `include_metadata=True`."""
     metadata = edge.get_relationship_metadata()
     if metadata is None:
         return NOT_RECORDED
-    return LastChange(updated_by=_recorded_account(metadata.updated_by), updated_at=metadata.updated_at)
+    return LastChange(updated_by=_recorded_account(metadata.updated_by, accounts), updated_at=metadata.updated_at)
 
 
 # The fractional seconds of an ISO 8601 time. Python 3.10's `datetime.fromisoformat` reads only
@@ -908,6 +921,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     # plans over the same values give the same operations. Set by `__init__` and reset by
     # `resolve_lineage`; read and written through `last_changes`.
     _last_changes: dict[tuple[str, str], LastChange] | None = None
+    # The `updated_by` accounts those reads named, each validated once; reset with `last_changes`.
+    _recorded_accounts: RecordedAccounts | None = None
     # Cache state: absent means hydration has not been attempted; None means
     # one attempt was exhausted; a string is the resolved DiffSync identity.
     _peer_unique_ids: dict[tuple[str, str], str | None]
@@ -991,6 +1006,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     @last_changes.setter
     def last_changes(self, value: dict[tuple[str, str], LastChange]) -> None:
         self._last_changes = value
+        self._recorded_accounts = None
 
     def resolve_lineage(self, *, saved_plan: PlanManifest | None = None) -> ResolvedLineage:
         """Resolve the import account, the source and the owner this run writes, and keep them.
@@ -1539,20 +1555,23 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         relationship's from its most recently changed edge. A field Infrahub returned nothing
         for is kept as `NOT_RECORDED`. Nothing here reaches the DiffSync models.
         """
+        if self._recorded_accounts is None:
+            self._recorded_accounts = {}
+        accounts = self._recorded_accounts
         node_id = str(node.id)
         node_kind = node.get_kind()
         node_schema = self.schema[node_kind]
         for attr_name in self._mapped_attribute_names(node_kind, node_schema):
             attr = getattr(node, attr_name)
             self.last_changes[node_id, attr_name] = LastChange(
-                updated_by=_recorded_account(attr.updated_by), updated_at=attr.updated_at
+                updated_by=_recorded_account(attr.updated_by, accounts), updated_at=attr.updated_at
             )
         for rel_schema, _ in self._mapped_relationships(node_kind, node_schema):
             if rel_schema.cardinality == "one":
-                change = _edge_last_change(getattr(node, rel_schema.name))
+                change = _edge_last_change(getattr(node, rel_schema.name), accounts)
             elif rel_schema.cardinality == "many":
                 rel_manager: RelationshipManagerSync = getattr(node, rel_schema.name)
-                change = _latest_change(_edge_last_change(peer) for peer in rel_manager.peers)
+                change = _latest_change(_edge_last_change(peer, accounts) for peer in rel_manager.peers)
             else:
                 continue
             self.last_changes[node_id, rel_schema.name] = change

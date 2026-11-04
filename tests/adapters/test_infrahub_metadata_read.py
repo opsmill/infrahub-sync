@@ -24,6 +24,7 @@ from infrahub_sdk import Config, InfrahubClientSync
 from infrahub_sdk.exceptions import AuthenticationError, GraphQLError
 from infrahub_sdk.node import InfrahubNodeSync
 from infrahub_sdk.schema.main import NodeSchemaAPI
+from pydantic import ValidationError
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncConfig
 from infrahub_sync.adapters.infrahub import (
@@ -453,6 +454,19 @@ def test_a_value_infrahub_returns_with_updated_by_is_recorded_for_it() -> None:
         for (node_id, _), change in changes.items()
         if node_id != "device-2"
     ), "no value Infrahub returned with `updated_by` is left without it"
+
+
+def test_each_account_is_validated_once_per_load_and_its_record_shared() -> None:
+    """Values one account changed share one frozen record, so a load does not validate per field."""
+    destination = _plan(MetadataClient(rows=_person_changed_rows()))
+
+    changes = destination.last_changes
+    alice_name = changes["device-1", "name"].updated_by
+    alice_site = changes["device-1", "site"].updated_by
+    assert alice_name is not None
+    assert alice_name is alice_site
+    with pytest.raises(ValidationError):
+        alice_name.display_label = "Mallory"
 
 
 @pytest.mark.parametrize(
