@@ -1,0 +1,34 @@
+tests/dev_stack/test_dev_tasks.py
+  s_5af47e422ac3fa::t_9ac178f0606aa2 25-31,47-48,66-67,75-81,121,192-252
+  s_5af47e422ac3fa::t_b81ea65c84e7c1 253-254
+tests/test_benchmark_runner.py
+  s_5af47e422ac3fa::t_9ac178f0606aa2 44-46,52-53,692-705
+  s_5af47e422ac3fa::t_fc2a1f56da94a2 706-707
+development/docker-compose.infrahub-ports.yml
+  s_5af47e422ac3fa::t_62b09cd979b9a2 12-17
+tasks/dev.py
+  s_5af47e422ac3fa::t_de39e597c6a69f 43,94-99,238-276,498,500-503,633-634,636,741-742,744
+  s_5af47e422ac3fa::t_3d3e65614933e3 497,499
+changelog/+dev-infrahub-bind-token.security.md
+  s_5af47e422ac3fa::t_62b09cd979b9a2 1
+tasks/bench.py
+  s_5af47e422ac3fa::t_de39e597c6a69f 117-118,122,126-130
+docs/docs/development-stack.mdx
+  s_5af47e422ac3fa::t_62b09cd979b9a2 251-268
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "01a21d821e034014b70a4c17872eef85d0bf03b5",
+  "prompts": {},
+  "sessions": {
+    "s_5af47e422ac3fa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1a22d1ed-b182-4832-b120-0eb989b94fab",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
