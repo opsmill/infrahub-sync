@@ -460,6 +460,7 @@ Infrahub instance's responsibility; this deployment's CLI does not load it.
 ## Use it
 
 Run the `infrahub-sync` CLI from your machine against the published Sync API port.
+To install it, see [Install the CLI](./installation.mdx#install-the-cli).
 From the directory that holds `.env`, point it at this deployment, then run a
 command:
 
@@ -468,6 +469,20 @@ export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8000
 export INFRAHUB_SYNC_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_API_TOKEN=//p' .env)"
 infrahub-sync configs list
 ```
+
+If `.env` sets `INFRAHUB_SYNC_API_PORT`, use that port in the URL instead of `8000`.
+`INFRAHUB_SYNC_BIND_ADDRESS` sets which network interfaces of the Docker host accept
+connections; it is not an address to put in the URL. To run the CLI from another
+machine, use the Docker host's hostname or IP address that this machine can reach, for
+example `http://sync.example.invalid:8000`. This works only when
+`INFRAHUB_SYNC_BIND_ADDRESS` includes that interface: the default, `127.0.0.1`, accepts
+connections from the Docker host itself only. That machine has no `.env`, so set
+`INFRAHUB_SYNC_API_TOKEN` to the `INFRAHUB_SYNC_API_TOKEN` value from `.env` on the
+Docker host instead of running the `sed` line.
+
+The exported `INFRAHUB_SYNC_API_TOKEN` also overrides the value in `.env` for every
+`docker compose` command you run from this shell, including the `cli` service. After
+you change the token in `.env`, export it again, or open a new shell.
 
 See [Connect the CLI to the Sync API](running-a-sync#connect-the-cli-to-the-sync-api).
 The commands on this page use the CLI this way.

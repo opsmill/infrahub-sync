@@ -1,0 +1,1 @@
+The documentation now explains how to install the V3 `infrahub-sync` CLI from PyPI, which the Compose pages ask operators to run on their own machine. On SQLite, the audit-reason migration no longer rewrites the schema table at every startup when the columns already allow a missing reason.

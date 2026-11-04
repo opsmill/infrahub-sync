@@ -22,8 +22,12 @@ fresh local Infrahub and the public NetBox demo, follow the
 - Have Nautobot and Infrahub running, with API tokens for each. The worker
   container must be able to reach both servers; the Docker host must also reach
   Infrahub to load its schema.
+- Install the V3 `infrahub-sync` CLI on the Docker host; see
+  [Install the CLI](../installation.mdx#install-the-cli). Until version 3.0.0 is
+  published on PyPI, that section explains how to run each `infrahub-sync` command
+  through the deployment's `cli` service instead.
 - Have Python 3 with `venv` and `pip` on the Docker host for the separate
-  Infrahub schema tool. The Sync CLI is already included in the deployment.
+  Infrahub schema tool.
 - Choose an Infrahub branch where you can load the example schema. Loading the
   schema changes that branch's types; the later preview does not import data.
   If `TestingSite` or `TestingDevice` already exists there with a different
