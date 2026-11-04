@@ -40,6 +40,7 @@ another one.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import shlex
@@ -90,6 +91,12 @@ BUILD_SERVICE = "prefect-server"
 # What `docker image inspect` prints for a label the image does not carry.
 _NO_LABEL_VALUES = frozenset({"", "<no value>"})
 _WILDCARD_OR_LOOPBACK = frozenset({"", "127.0.0.1", "localhost", "0.0.0.0", "::", "::1"})  # noqa: S104
+# The variable that moves Infrahub's publication off loopback, and the one that sets its
+# initial admin token. `docker-compose.infrahub.yml` falls back to the token below, which
+# is published in this repository and so protects nothing on an address other hosts reach.
+INFRAHUB_BIND_VARIABLE = "INFRAHUB_BIND_ADDRESS"
+INFRAHUB_ADMIN_TOKEN_VARIABLE = "INFRAHUB_INITIAL_ADMIN_TOKEN"  # noqa: S105 -- a variable name
+PUBLIC_INFRAHUB_ADMIN_TOKEN = "06438eb2-8019-4776-878c-0941b1f1d1ec"  # noqa: S105 -- the public development default
 
 # What `dev.smoke` sets so the smoke suite reads the development stack's settings.
 SMOKE_STACK_VARIABLE = "INFRAHUB_SYNC_SMOKE_STACK"
@@ -226,6 +233,45 @@ def infrahub_server(services: Mapping[str, Any]) -> tuple[Publication, str]:
     publication = _publication(services, "infrahub-server", 8000)
     token = str((services["infrahub-server"].get("environment") or {}).get("INFRAHUB_INITIAL_ADMIN_TOKEN", ""))
     return publication, token
+
+
+def is_loopback(host_ip: str) -> bool:
+    """Report whether a publication's bind address reaches this host only.
+
+    `localhost`, `::1` and every 127.0.0.0/8 address are loopback. An empty address, which
+    Docker publishes on every interface, and a wildcard such as `0.0.0.0` are not.
+    """
+    address = host_ip.strip().strip("[]")
+    if address.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(address).is_loopback
+    except ValueError:
+        return False
+
+
+def require_private_infrahub(publication: Publication | None, token: str) -> None:
+    """Refuse an Infrahub published beyond loopback that keeps the public development admin token.
+
+    Compose cannot make `INFRAHUB_INITIAL_ADMIN_TOKEN` required only when
+    `INFRAHUB_BIND_ADDRESS` names another address, so the tasks that start Infrahub check
+    the resolved publication and token here. The message never names the token.
+
+    Raises:
+        DevStackError: when Infrahub is published on a non-loopback address and its initial
+            admin token is empty or the public development default.
+    """
+    if publication is None or is_loopback(publication.host_ip):
+        return
+    if token.strip() and token != PUBLIC_INFRAHUB_ADMIN_TOKEN:
+        return
+    where = publication.host_ip.strip() or "every address"
+    msg = (
+        f"{INFRAHUB_BIND_VARIABLE} publishes Infrahub on {where}, but its initial admin token is the public "
+        f"development default; export {INFRAHUB_ADMIN_TOKEN_VARIABLE} with a token of your own and use the same "
+        f"value as INFRAHUB_API_TOKEN, or unset {INFRAHUB_BIND_VARIABLE} to publish Infrahub on 127.0.0.1 only"
+    )
+    raise DevStackError(msg)
 
 
 def parse_dev_settings(resolved: Mapping[str, Any], *, infrahub_network: str = "") -> DevSettings:
@@ -448,6 +494,13 @@ def _infrahub_reachable(address: str) -> bool:
     return True
 
 
+def _start_settings(context: Context, network: str = "") -> DevSettings:
+    """The settings of a task that brings the `infrahub` profile up, refused when it would expose Infrahub."""
+    settings = dev_settings(context, infrahub_network=network)
+    require_private_infrahub(settings.infrahub, settings.infrahub_admin_token)
+    return settings
+
+
 def _seed_settings(context: Context) -> DevSettings:
     settings = dev_settings(context)
     if settings.infrahub is None:
@@ -577,9 +630,10 @@ def dev_start(context: Context, infrahub_network: str = "") -> None:
 
     With --infrahub-network NAME (or INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK), the stack's own
     Infrahub stays off and the worker joins NAME. When the local NetBox runs, the worker
-    also joins NetBox's network.
+    also joins NetBox's network. Refuses to start when INFRAHUB_BIND_ADDRESS publishes
+    Infrahub beyond loopback and INFRAHUB_INITIAL_ADMIN_TOKEN keeps the public default.
     """
-    settings = dev_settings(context, infrahub_network=infrahub_network)
+    settings = _start_settings(context, infrahub_network)
     _rebuild_when_stale(context, settings)
     compose(
         context,
@@ -684,8 +738,10 @@ def dev_deps(context: Context, infrahub_network: str = "") -> None:
     its own terminal. With --infrahub-network NAME (or INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK),
     the stack's own Infrahub stays off; the host worker then reaches the Infrahub at
     INFRAHUB_SYNC_DEV_INFRAHUB_URL, which must be an address the host can resolve.
+    Refuses to start when INFRAHUB_BIND_ADDRESS publishes Infrahub beyond loopback and
+    INFRAHUB_INITIAL_ADMIN_TOKEN keeps the public default.
     """
-    settings = dev_settings(context, infrahub_network=infrahub_network)
+    settings = _start_settings(context, infrahub_network)
     _rebuild_when_stale(context, settings)
     profiles = DEPS_PROFILES if not settings.infrahub_network else ()
     compose(

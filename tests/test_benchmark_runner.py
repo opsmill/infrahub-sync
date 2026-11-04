@@ -41,14 +41,16 @@ DESTINATION_TOKEN = "06438eb2-8019-4776-878c-0941b1f1d1ec"  # noqa: S105 -- the 
 HOST_URL = "http://127.0.0.1:18000"
 
 
-def destination_configuration(port: str = "8000") -> dict[str, Any]:
+def destination_configuration(
+    port: str = "8000", host_ip: str = "127.0.0.1", token: str = DESTINATION_TOKEN
+) -> dict[str, Any]:
     """What `docker compose config` resolves for the destination's `infrahub` profile."""
     return {
         "name": bench.DESTINATION_PROJECT,
         "services": {
             "infrahub-server": {
-                "ports": [{"target": 8000, "published": port, "host_ip": "127.0.0.1"}],
-                "environment": {"INFRAHUB_INITIAL_ADMIN_TOKEN": DESTINATION_TOKEN},
+                "ports": [{"target": 8000, "published": port, "host_ip": host_ip}],
+                "environment": {"INFRAHUB_INITIAL_ADMIN_TOKEN": token},
             }
         },
     }
@@ -685,6 +687,22 @@ def test_the_host_url_follows_the_destination_publication(monkeypatch) -> None:
 
     assert bench.CellStack().infrahub_url == HOST_URL
     assert bench.CellStack(infrahub_url=HOST_URL).infrahub_url == HOST_URL
+
+
+def test_an_exposed_destination_with_the_public_token_is_refused(monkeypatch) -> None:
+    monkeypatch.setattr(bench.dev, "resolved_compose", lambda *_args: destination_configuration(host_ip="0.0.0.0"))  # noqa: S104
+
+    with pytest.raises(BenchmarkError, match="INFRAHUB_INITIAL_ADMIN_TOKEN") as refused:
+        bench.CellStack()
+
+    assert DESTINATION_TOKEN not in str(refused.value)
+
+
+def test_an_exposed_destination_with_a_token_of_its_own_is_allowed(monkeypatch) -> None:
+    configuration = destination_configuration(host_ip="172.17.0.1", token="a-token-of-the-developer")  # noqa: S106
+    monkeypatch.setattr(bench.dev, "resolved_compose", lambda *_args: configuration)
+
+    assert bench.CellStack().infrahub_url == "http://172.17.0.1:8000"
 
 
 def test_a_destination_without_an_infrahub_publication_is_refused(monkeypatch) -> None:

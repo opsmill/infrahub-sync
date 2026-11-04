@@ -248,6 +248,24 @@ Compose also reads a `.env` file from the `development/` directory. The reposito
 Every port except Infrahub's is published on `127.0.0.1` only. Infrahub's port is published on
 `INFRAHUB_BIND_ADDRESS`.
 
+The stack's Infrahub starts with the initial admin token
+`06438eb2-8019-4776-878c-0941b1f1d1ec` unless `INFRAHUB_INITIAL_ADMIN_TOKEN` names another one.
+That default is public, so `dev.start` and `dev.deps` refuse to start when
+`INFRAHUB_BIND_ADDRESS` names an address other than loopback (`127.0.0.1`, any other
+127.0.0.0/8 address, `::1` or `localhost`) and `INFRAHUB_INITIAL_ADMIN_TOKEN` is unset, empty or
+equal to that default. To publish Infrahub on another address, export a token of your own, and
+use the same value as `INFRAHUB_API_TOKEN` for any client that connects to that Infrahub:
+
+```bash
+export INFRAHUB_BIND_ADDRESS=172.17.0.1
+export INFRAHUB_INITIAL_ADMIN_TOKEN=<a token of your own>
+export INFRAHUB_API_TOKEN="$INFRAHUB_INITIAL_ADMIN_TOKEN"
+```
+
+Compose cannot make a variable required only when another one has a given value, so the
+development tasks check this before they start the containers. A plain `docker compose up`
+does not check it. The benchmark runner applies the same check to its Infrahub.
+
 ## Run a first sync
 
 This path imports the official NetBox demo data from a local NetBox into a branch of a local

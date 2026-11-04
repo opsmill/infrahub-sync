@@ -22,7 +22,13 @@ if TYPE_CHECKING:
 ADMIN_TOKEN = "06438eb2-8019-4776-878c-0941b1f1d1ec"  # noqa: S105 -- the development default
 
 
-def _resolved(*, project: str = "infrahub-sync-dev", infrahub: bool = True) -> dict[str, Any]:
+def _resolved(
+    *,
+    project: str = "infrahub-sync-dev",
+    infrahub: bool = True,
+    infrahub_host_ip: str = "127.0.0.1",
+    infrahub_token: str = ADMIN_TOKEN,
+) -> dict[str, Any]:
     """What `docker compose config --format json` prints, trimmed to the fields the tasks read."""
     services: dict[str, Any] = {
         "sync-api": {
@@ -38,8 +44,8 @@ def _resolved(*, project: str = "infrahub-sync-dev", infrahub: bool = True) -> d
     }
     if infrahub:
         services["infrahub-server"] = {
-            "ports": [{"mode": "ingress", "host_ip": "0.0.0.0", "target": 8000, "published": "8091"}],  # noqa: S104
-            "environment": {"INFRAHUB_INITIAL_ADMIN_TOKEN": ADMIN_TOKEN},
+            "ports": [{"mode": "ingress", "host_ip": infrahub_host_ip, "target": 8000, "published": "8091"}],
+            "environment": {"INFRAHUB_INITIAL_ADMIN_TOKEN": infrahub_token},
         }
     return {"name": project, "services": services}
 
@@ -57,6 +63,8 @@ class FakeDocker:
     def __init__(self, *, label: str | None = None, project: str = "infrahub-sync-dev") -> None:
         self.label = label
         self.project = project
+        self.infrahub_host_ip = "127.0.0.1"
+        self.infrahub_token = ADMIN_TOKEN
         self.commands: list[str] = []
         self.envs: list[dict[str, str] | None] = []
 
@@ -64,7 +72,13 @@ class FakeDocker:
         self.commands.append(command)
         self.envs.append(kwargs.get("env"))
         if command.endswith("config --format json"):
-            return _Result(json.dumps(_resolved(project=self.project, infrahub="--profile infrahub" in command)))
+            resolved = _resolved(
+                project=self.project,
+                infrahub="--profile infrahub" in command,
+                infrahub_host_ip=self.infrahub_host_ip,
+                infrahub_token=self.infrahub_token,
+            )
+            return _Result(json.dumps(resolved))
         if command.startswith("docker image inspect"):
             return _Result(self.label or "", ok=self.label is not None)
         if command.startswith("docker network inspect"):
@@ -104,6 +118,7 @@ def _body(task_object: object) -> Any:  # noqa: ANN401 -- an Invoke task body
 
 
 def test_dev_settings_reads_the_resolved_development_file(context: Context, fake: FakeDocker) -> None:
+    fake.infrahub_host_ip = "0.0.0.0"  # noqa: S104 -- reading the settings starts nothing, so it is not refused
     settings = dev.dev_settings(context)
 
     assert fake.commands == [
@@ -172,6 +187,69 @@ def test_a_failed_config_names_the_command(monkeypatch: pytest.MonkeyPatch) -> N
 )
 def test_a_publication_url_uses_its_bind_address(host_ip: str, url: str) -> None:
     assert dev.Publication(host_ip, "8080").url == url
+
+
+CUSTOM_TOKEN = "a-token-of-the-developer"  # noqa: S105 -- a test value
+LOOPBACK_ADDRESSES = ["127.0.0.1", "127.10.0.3", "::1", "[::1]", "localhost"]
+EXPOSED_ADDRESSES = ["", "0.0.0.0", "::", "172.17.0.1", "192.0.2.10", "fd00::1"]  # noqa: S104
+
+
+@pytest.mark.parametrize("host_ip", LOOPBACK_ADDRESSES)
+@pytest.mark.parametrize("token", [ADMIN_TOKEN, "", CUSTOM_TOKEN])
+def test_a_loopback_infrahub_is_allowed_with_any_token(host_ip: str, token: str) -> None:
+    dev.require_private_infrahub(dev.Publication(host_ip, "8000"), token)
+
+
+@pytest.mark.parametrize("host_ip", EXPOSED_ADDRESSES)
+@pytest.mark.parametrize("token", [ADMIN_TOKEN, "", "  "])
+def test_an_exposed_infrahub_is_refused_with_the_public_or_no_token(host_ip: str, token: str) -> None:
+    with pytest.raises(dev.DevStackError, match="INFRAHUB_INITIAL_ADMIN_TOKEN") as refused:
+        dev.require_private_infrahub(dev.Publication(host_ip, "8000"), token)
+
+    assert "INFRAHUB_API_TOKEN" in str(refused.value)
+    assert ADMIN_TOKEN not in str(refused.value)
+
+
+@pytest.mark.parametrize("host_ip", EXPOSED_ADDRESSES)
+def test_an_exposed_infrahub_is_allowed_with_a_token_of_its_own(host_ip: str) -> None:
+    dev.require_private_infrahub(dev.Publication(host_ip, "8000"), CUSTOM_TOKEN)
+
+
+def test_an_infrahub_on_another_network_is_not_checked() -> None:
+    dev.require_private_infrahub(None, "")
+
+
+@pytest.mark.parametrize("task_object", [dev.dev_start, dev.dev_deps])
+def test_starting_an_exposed_infrahub_with_the_public_token_runs_nothing(
+    context: Context, fake: FakeDocker, task_object: object
+) -> None:
+    fake.infrahub_host_ip = "0.0.0.0"  # noqa: S104
+
+    with pytest.raises(dev.DevStackError, match="INFRAHUB_BIND_ADDRESS") as refused:
+        _body(task_object)(context)
+
+    assert fake.compose_commands() == []
+    assert ADMIN_TOKEN not in str(refused.value)
+
+
+@pytest.mark.parametrize("task_object", [dev.dev_start, dev.dev_deps])
+def test_starting_an_exposed_infrahub_with_a_token_of_its_own_proceeds(
+    context: Context, fake: FakeDocker, task_object: object
+) -> None:
+    fake.infrahub_host_ip = "172.17.0.1"
+    fake.infrahub_token = CUSTOM_TOKEN
+
+    _body(task_object)(context)
+
+    assert any(" up --detach" in command for command in fake.compose_commands())
+
+
+def test_stopping_an_exposed_infrahub_is_not_refused(context: Context, fake: FakeDocker) -> None:
+    fake.infrahub_host_ip = "0.0.0.0"  # noqa: S104
+
+    _body(dev.dev_stop)(context)
+
+    assert any(command.endswith(" stop") for command in fake.compose_commands())
 
 
 def test_dev_build_labels_the_image_with_its_build_inputs(context: Context, fake: FakeDocker) -> None:

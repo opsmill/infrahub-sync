@@ -114,14 +114,20 @@ def destination_infrahub(context: Context, target: dev.ComposeTarget) -> tuple[d
     development settings, which follow the Infrahub network selection.
 
     Raises:
-        BenchmarkError: when Compose cannot resolve the destination or it publishes no Infrahub port.
+        BenchmarkError: when Compose cannot resolve the destination, it publishes no Infrahub
+            port, or it publishes Infrahub beyond loopback with the public development admin token.
     """
     try:
         resolved = dev.resolved_compose(context, target)
-        return dev.infrahub_server(resolved.get("services") or {})
+        publication, token = dev.infrahub_server(resolved.get("services") or {})
     except (dev.DevStackError, KeyError):
         msg = "cannot resolve the benchmark destination's infrahub-server publication from its Compose configuration"
         raise BenchmarkError(msg) from None
+    try:
+        dev.require_private_infrahub(publication, token)
+    except dev.DevStackError as exc:
+        raise BenchmarkError(str(exc)) from None
+    return publication, token
 
 
 def cell_options(  # noqa: PLR0913, PLR0917 -- cell coordinates
