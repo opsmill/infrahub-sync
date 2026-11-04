@@ -223,7 +223,7 @@ def test_a_plan_reads_the_server_version_before_either_side_is_loaded(tmp_path: 
     assert sorted(events[1:]) == ["destination.load metadata_read=True", "source.load"]
 
 
-class _VersionReadFailed(Exception):
+class _VersionReadFailedError(Exception):
     """Stands in for a version read that stops the plan, such as an HTTP 401."""
 
 
@@ -236,7 +236,7 @@ def test_a_failed_version_read_stops_the_plan_before_the_source_is_read(
     client = LineageClient()
 
     def refuse_version() -> str:
-        raise _VersionReadFailed
+        raise _VersionReadFailedError
 
     client.get_version = refuse_version  # ty: ignore[invalid-assignment]
     destination = _loading_adapter(client, events)
@@ -249,7 +249,7 @@ def test_a_failed_version_read_stops_the_plan_before_the_source_is_read(
         concurrent_load=concurrent_load,
     )
 
-    with pytest.raises(_VersionReadFailed):
+    with pytest.raises(_VersionReadFailedError):
         engine.load_both_sides()
 
     assert events == [], "neither side is loaded"

@@ -1559,14 +1559,8 @@ def test_an_error_raised_while_handling_another_does_not_take_its_next_action(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Only the explicit `raise ... from` chain lends a next action, never the error being handled."""
-    try:
-        try:
-            raise PlanSchemaChangedError("schema changed")
-        except PlanSchemaChangedError:
-            raise RuntimeError(f"cleanup failed {LINEAGE_TOKEN}")  # noqa: B904
-    except RuntimeError as unrelated:
-        failure = unrelated
-    assert isinstance(failure.__context__, PlanSchemaChangedError)
+    failure = RuntimeError(f"cleanup failed {LINEAGE_TOKEN}")
+    failure.__context__ = PlanSchemaChangedError("schema changed")
 
     stored = _record_apply_failure(monkeypatch, tmp_path, "run-apply-context", failure)
 
@@ -1576,13 +1570,9 @@ def test_an_error_raised_while_handling_another_does_not_take_its_next_action(
 @pytest.mark.usefixtures("_claimed_worker_execution")
 def test_an_error_raised_from_a_refusal_takes_its_next_action(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A wrapper raised `from` a refusal records the refusal's next action."""
-    try:
-        try:
-            raise PlanSchemaChangedError("schema changed")
-        except PlanSchemaChangedError as refusal:
-            raise ValueError(f"apply failed {LINEAGE_TOKEN}") from refusal
-    except ValueError as wrapper:
-        failure = wrapper
+    failure = ValueError(f"apply failed {LINEAGE_TOKEN}")
+    failure.__cause__ = PlanSchemaChangedError("schema changed")
+    failure.__suppress_context__ = True
 
     stored = _record_apply_failure(monkeypatch, tmp_path, "run-apply-cause", failure)
 
