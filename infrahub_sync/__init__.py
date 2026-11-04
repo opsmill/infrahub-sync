@@ -179,32 +179,34 @@ class SyncConfig(pydantic.BaseModel):
         """Return the operator-provided `order` if set, else flattened tiers
         auto-computed from `schema_mapping`.
 
-        Logs the tier layout and any dropped optional edges at INFO level.
+        Logs the tier layout at INFO and any dropped optional edges at WARNING,
+        as `compute_order_and_tiers` does by default.
         """
         order, _tiers = self.compute_order_and_tiers()
         return order
 
     def compute_order_and_tiers(
-        self, generic_peers: Mapping[str, tuple[str, ...]] | None = None
+        self, generic_peers: Mapping[str, tuple[str, ...]] | None = None, *, announce: bool = True
     ) -> tuple[list[str], list[set[str]] | None]:
         """Return `(flat_order, tiers)` from a single topological pass.
 
         `tiers` is `None` when an explicit `order` is configured. Callers that
         need both the flat order and the tier layout should use this rather
         than calling `compute_order()` and `compute_tiers()` separately, which
-        would sort the graph twice. Logs the tier layout and any dropped
-        optional edges at INFO level.
+        would sort the graph twice.
+
+        Logs the tier layout at INFO and any dropped optional edges at WARNING.
+        `announce=False` logs both at DEBUG, for a caller that recomputes a
+        layout the same run already logged.
         """
         if self.order:
             return list(self.order), None
         tiers, dropped = compute_tiers(self.schema_mapping, generic_peers)
+        layout_level, dropped_level = (logging.INFO, logging.WARNING) if announce else (logging.DEBUG, logging.DEBUG)
         for idx, tier in enumerate(tiers):
-            logger.info("tier %d (%d): %s", idx, len(tier), sorted(tier))
+            logger.log(layout_level, "tier %d (%d): %s", idx, len(tier), sorted(tier))
         if dropped:
-            logger.warning(
-                "dropped optional edges to break cycles: %s",
-                dropped,
-            )
+            logger.log(dropped_level, "dropped optional edges to break cycles: %s", dropped)
         return flatten_tiers(tiers), tiers
 
 

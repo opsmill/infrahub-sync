@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import copy
 import importlib
+import logging
+import re
 import sys
 import types
 from dataclasses import dataclass, field
@@ -323,6 +325,40 @@ def test_registered_engine_and_saved_plan_apply_use_snapshot_generic_peers(
     applier = PlanApplier.open_existing(instance, run_id="generic-engine")
     assert applier.engine.top_level == ["LocationSite", "InfraDevice"]
     assert applier.engine.tiers == [{"LocationSite"}, {"InfraDevice"}]
+
+
+def _tier_layout_messages(caplog: pytest.LogCaptureFixture, level: int) -> list[str]:
+    """The tier-layout lines (`tier N (size): [...]`) captured at exactly `level`."""
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == level and re.search(r"\btier \d+ \(", record.getMessage())
+    ]
+
+
+def test_planning_logs_each_tier_of_the_write_order_once(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    instance = _registered_instance(tmp_path)
+    caplog.set_level(logging.DEBUG, logger="infrahub_sync")
+
+    get_potenda_from_instance(sync_instance=instance, run_id="tier-log-plan")
+
+    assert _tier_layout_messages(caplog, logging.INFO) == ["tier 0 (1): ['BuiltinTag']"]
+
+
+def test_opening_a_run_for_apply_does_not_announce_the_write_order_again(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Opening the run for apply recomputes the layout whether or not a plan is stored.
+    instance = _registered_instance(tmp_path)
+    get_potenda_from_instance(sync_instance=instance, run_id="tier-log-apply")
+    caplog.clear()
+    caplog.set_level(logging.DEBUG, logger="infrahub_sync")
+
+    applier = PlanApplier.open_existing(instance, run_id="tier-log-apply")
+
+    assert applier.engine.tiers == [{"BuiltinTag"}]
+    assert _tier_layout_messages(caplog, logging.INFO) == []
+    assert _tier_layout_messages(caplog, logging.DEBUG) == ["tier 0 (1): ['BuiltinTag']"]
 
 
 def test_no_generated_python_is_written_or_read_by_a_registered_run(tmp_path: Path) -> None:

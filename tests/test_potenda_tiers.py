@@ -1,8 +1,9 @@
-"""Potenda stores the computed tiers and logs them on diff."""
+"""Potenda stores the computed tiers without logging them again."""
 
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
@@ -29,8 +30,8 @@ def test_potenda_accepts_tiers_kwarg() -> None:
     assert ptd.tiers == [{"A"}, {"B", "C"}]
 
 
-def test_potenda_logs_tiers_on_construction(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.INFO, logger="infrahub_sync.potenda")
+def test_potenda_does_not_repeat_the_tier_layout_it_is_given(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.DEBUG, logger="infrahub_sync")
     Potenda(
         source=_FakeAdapter(),  # ty: ignore[invalid-argument-type]
         destination=_FakeAdapter(),  # ty: ignore[invalid-argument-type]
@@ -38,6 +39,4 @@ def test_potenda_logs_tiers_on_construction(caplog: pytest.LogCaptureFixture) ->
         top_level=["A", "B"],
         tiers=[{"A"}, {"B"}],
     )
-    msgs = [r.getMessage() for r in caplog.records]
-    assert any("tier 0" in m for m in msgs)
-    assert any("tier 1" in m for m in msgs)
+    assert not [r.getMessage() for r in caplog.records if re.search(r"\btier \d+ \(", r.getMessage())]
