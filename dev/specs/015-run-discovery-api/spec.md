@@ -65,8 +65,9 @@ runs created.
 1. **Given** configuration C has two runs on version 1 (one applied, one only planned) and
    one run on version 2 (only planned), **When** the client lists runs filtered on C,
    **Then** it receives three runs, newest first, each showing its run identifier, version,
-   branch, actor, start and finish times, phase, outcome and whether reconciliation is
-   required.
+   actor, start and finish times, phase, outcome and whether reconciliation is required.
+   The destination branch is not stored on the run today, so it stays readable from the
+   run's plan rather than the list (see Assumptions).
 2. **Given** the same runs, **When** the client lists runs filtered on C and version 1,
    **Then** it receives the two runs of version 1.
 3. **Given** 120 runs match a filter, **When** the client reads the list without a page
@@ -304,6 +305,11 @@ Documentation:
   update.
 - Any authenticated principal can already read any run by its identifier, so listing all runs
   to every principal exposes no new data.
+- A run does not store its destination branch; it exists in the saved plan
+  (`destination_branch`). Showing the branch in the run list would need a new stored field
+  and a decision for existing runs, so it is deferred.
+- Versions registered before this change have no recorded registering actor or reason; the
+  version list reports these as empty.
 
 ## Out of Scope
 
