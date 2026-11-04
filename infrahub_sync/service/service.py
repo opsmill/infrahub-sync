@@ -629,7 +629,11 @@ class RunService:
             raise self._error(422, "request-invalid", str(exc)) from None
         if config_id is not None:
             self._require_configuration_filter(config_id, registry_version)
-        filters: dict[str, FilterValue] = {"config_id": config_id, "registry_version": registry_version}
+        filters: dict[str, FilterValue] = {
+            "list": "runs",
+            "config_id": config_id,
+            "registry_version": registry_version,
+        }
         after = None if cursor is None else timestamp_key(decode_cursor(cursor, filters))
         page = self._projection.list_runs(
             RunFilters(config_id=config_id, registry_version=registry_version), after=after, limit=page_size

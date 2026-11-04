@@ -774,7 +774,7 @@ def diff_cmd(
     wait_timeout: float = typer.Option(DEFAULT_WAIT_TIMEOUT, "--wait-timeout", help="Bounded wait in seconds."),
     poll_interval: float = typer.Option(DEFAULT_POLL_INTERVAL, "--poll-interval", help="Poll interval in seconds."),
 ) -> None:
-    """Deprecated alias of `plan`, removed in 3.0."""
+    """Deprecated alias of `plan`; it will be removed in a later release."""
     typer.echo(_DIFF_DEPRECATION, err=True)
     plan_cmd(
         ctx,

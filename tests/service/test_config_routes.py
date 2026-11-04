@@ -1449,3 +1449,35 @@ def test_invalid_cursor_is_answered_with_422_in_the_error_envelope(
     ):
         assert response.status_code == 422
         assert response.json() == expected
+
+
+def test_a_cursor_is_refused_by_another_filter_configuration_or_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cursor is bound to its list and its filters, even when both lists are unfiltered."""
+    client, projection = _discovery_client(tmp_path, monkeypatch)
+    alpha = _register(client, _named_package("alpha"), "register-alpha-1")
+    _register(client, _named_package("alpha", "https://alpha-2.netbox.test"), "register-alpha-2")
+    beta = _register(client, _named_package("beta"), "register-beta-1")
+    _register(client, _named_package("beta", "https://beta-2.netbox.test"), "register-beta-2")
+    _add_version(client, alpha, _named_package("alpha", "https://alpha-v2.netbox.test"), "alpha-version-2")
+    for index in range(2):
+        projection.create_run(_bound_run(f"bound-run-{index:03d}", index, alpha, 1, "accepted"))
+
+    name_cursor = client.get("/configs", params={"name": "alpha", "limit": 1}).json()["next_cursor"]
+    version_cursor = client.get(f"/configs/{alpha}/versions", params={"limit": 1}).json()["next_cursor"]
+    configs_cursor = client.get("/configs", params={"limit": 1}).json()["next_cursor"]
+    runs_cursor = client.get("/runs", params={"limit": 1}).json()["next_cursor"]
+    assert None not in {name_cursor, version_cursor, configs_cursor, runs_cursor}
+    # Each cursor is still accepted by the request it was issued for.
+    assert client.get("/configs", params={"name": "alpha", "cursor": name_cursor}).status_code == 200
+    assert client.get("/runs", params={"cursor": runs_cursor}).status_code == 200
+
+    for response in (
+        client.get("/configs", params={"name": "beta", "cursor": name_cursor}),
+        client.get(f"/configs/{beta}/versions", params={"cursor": version_cursor}),
+        client.get("/runs", params={"cursor": configs_cursor}),
+        client.get("/configs", params={"cursor": runs_cursor}),
+    ):
+        assert response.status_code == 422, response.text
+        assert response.json()["error"]["code"] == "invalid-cursor"

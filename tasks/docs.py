@@ -24,7 +24,31 @@ def _generate_infrahubsync_documentation(context: Context) -> None:
     exec_cmd += " --output docs/docs/reference/cli.mdx"
     with context.cd(ESCAPED_REPO_PATH):
         context.run(exec_cmd)
-    _drop_hidden_commands(DOCUMENTATION_DIRECTORY / "docs" / "reference" / "cli.mdx")
+    reference = DOCUMENTATION_DIRECTORY / "docs" / "reference" / "cli.mdx"
+    _drop_hidden_commands(reference)
+    _insert_api_token_intro(reference)
+
+
+# Hand-written paragraph placed before the root command's first "**Usage**:" line. Typer has
+# no place for it, so generation inserts it after every run.
+_API_TOKEN_INTRO = (
+    "Set `INFRAHUB_SYNC_API_TOKEN` to the bearer token for your actor before running any\n"
+    "command; the CLI reads it from the environment and never accepts it as a flag. See\n"
+    "[Sync HTTP API — Configure principals](./sync-http-api.mdx#configure-principals) for how\n"
+    "tokens are issued.\n"
+)
+
+
+def _insert_api_token_intro(path: Path) -> None:
+    """Insert the `INFRAHUB_SYNC_API_TOKEN` paragraph before the root command's usage block."""
+    text = path.read_text(encoding="utf-8")
+    if _API_TOKEN_INTRO in text:
+        return
+    marker = "**Usage**:\n"
+    if marker not in text:
+        msg = f"{path} has no '**Usage**:' line to place the API token paragraph before"
+        raise ValueError(msg)
+    path.write_text(text.replace(marker, f"{_API_TOKEN_INTRO}\n{marker}", 1), encoding="utf-8")
 
 
 def _hidden_command_paths() -> set[str]:

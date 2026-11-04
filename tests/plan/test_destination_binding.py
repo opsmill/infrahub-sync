@@ -182,8 +182,8 @@ def test_a_different_url_is_a_destination_binding_failure(tmp_path: Path) -> Non
     assert failure.check == "destination_binding"
     assert RECORDED_URL in str(failure.expected)
     assert LIVE_URL in str(failure.found)
-    assert "--allow-destination-change" in failure.next_action
-    assert "Re-run `plan`" in failure.next_action
+    assert "--allow-destination-change" not in failure.next_action
+    assert "Create a new plan against the current destination with `plan`" in failure.next_action
 
 
 def test_a_different_branch_alone_is_a_destination_binding_failure(tmp_path: Path) -> None:
@@ -280,7 +280,8 @@ def test_a_destination_mismatch_refuses_before_the_engine_is_reached(tmp_path: P
     assert RECORDED_URL in message
     assert LIVE_URL in message
     assert "Nothing was written" in message
-    assert "--allow-destination-change" in message
+    assert "--allow-destination-change" not in message
+    assert "Create a new plan against the current destination" in message
     assert engine.apply_calls == 0
 
 

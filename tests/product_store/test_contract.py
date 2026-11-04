@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -4327,6 +4328,7 @@ _RUN_DISCOVERY_COLUMNS = {
 }
 _RUN_DISCOVERY_INDEXES = {
     "product_runs_started": ["started_at", "run_id"],
+    "product_runs_config_started": ["config_id", "started_at", "run_id"],
     "product_runs_binding_started": ["config_id", "registry_version", "started_at", "run_id"],
 }
 # The configuration tables as they were before the run-discovery columns existed.
@@ -4410,6 +4412,32 @@ def test_preexisting_database_without_run_discovery_columns_is_upgraded(tmp_path
     loaded = store.lookup("legacy-run-001").value
     assert loaded is not None
     assert loaded.destination_branch is None
+
+
+def test_undecodable_legacy_package_logs_its_config_id_only(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    database = tmp_path / "legacy.sqlite3"
+    undecodable = "{not json secret-token-value"
+    with sqlite3.connect(database) as connection:
+        connection.execute(_LEGACY_PRODUCT_RUNS_TABLE)
+        for statement in _LEGACY_CONFIGURATION_TABLES:
+            connection.execute(statement)
+        connection.execute(
+            "INSERT INTO configurations (config_id, created_at) VALUES ('legacy-config', '2026-01-01T00:00:00+00:00')"
+        )
+        connection.execute(
+            "INSERT INTO configuration_versions (config_id, registry_version, package_checksum, declared_content, "
+            "created_at) VALUES ('legacy-config', 1, 'sha256:legacy', ?, '2026-01-01T00:00:00+00:00')",
+            (undecodable,),
+        )
+
+    with caplog.at_level(logging.WARNING, logger="infrahub_sync.product_store.store"):
+        SQLiteRunStore(database)
+
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert any("legacy-config" in message for message in warnings)
+    assert not any("secret-token-value" in message for message in warnings)
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT name FROM configurations").fetchone() == (None,)
 
 
 def test_run_destination_branch_round_trips(provider: ProductProjection) -> None:

@@ -47,7 +47,7 @@ from .paging import (
 from .service import ServiceAPIError
 
 _CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
-_MAX_REGISTRY_VERSION = 2**63 - 1
+MAX_REGISTRY_VERSION = 2**63 - 1
 _MAX_PAGE_LIMIT = 256
 
 
@@ -80,7 +80,7 @@ def _provider_error_boundary(operation: Any) -> Any:
     return guarded
 
 
-def _strict_integer(value: str, *, minimum: int, maximum: int) -> int:
+def parse_bounded_integer(value: str, *, minimum: int, maximum: int) -> int:
     """Parse one bounded API integer without accepting FastAPI's coercions."""
     if not value.isascii() or not value.isdecimal():
         raise ServiceAPIError(422, "request-invalid", "the request does not match the API schema")
@@ -90,9 +90,9 @@ def _strict_integer(value: str, *, minimum: int, maximum: int) -> int:
     return number
 
 
-def _page_limit(value: str | None) -> int | None:
+def parse_page_limit(value: str | None) -> int | None:
     """Parse a list's ``limit`` query value without FastAPI's coercions (``1.0``, ``true``)."""
-    return None if value is None else _strict_integer(value, minimum=MIN_LIMIT, maximum=MAX_LIMIT)
+    return None if value is None else parse_bounded_integer(value, minimum=MIN_LIMIT, maximum=MAX_LIMIT)
 
 
 def _page_size(limit: int | None) -> int:
@@ -177,7 +177,7 @@ class ConfigurationRoutes:
             InvalidCursorError: ``cursor`` does not decode or was issued for another name.
         """
         page_size = _page_size(limit)
-        filters: dict[str, FilterValue] = {"name": name}
+        filters: dict[str, FilterValue] = {"list": "configs", "name": name}
         after = None if cursor is None else timestamp_key(decode_cursor(cursor, filters))
         page = self._call(self._service.list_configs, name=name, after=after, limit=page_size)
         items = tuple(ConfigurationSummaryResource.model_validate(item, from_attributes=True) for item in page.items)
@@ -205,7 +205,7 @@ class ConfigurationRoutes:
             ConfigurationAPIError: ``404`` for an unknown configuration.
         """
         page_size = _page_size(limit)
-        filters: dict[str, FilterValue] = {"config_id": config_id}
+        filters: dict[str, FilterValue] = {"list": "versions", "config_id": config_id}
         after = None if cursor is None else version_key(decode_cursor(cursor, filters))
         page = self._call(self._service.list_versions, config_id=config_id, after=after, limit=page_size)
         items = tuple(
@@ -413,7 +413,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         cursor: Annotated[str | None, Query()] = None,
     ) -> ConfigurationPage:
         """Return one page of configurations, newest first, optionally only those named ``name``."""
-        return routes.list_configs(name=name, cursor=cursor, limit=_page_limit(limit))
+        return routes.list_configs(name=name, cursor=cursor, limit=parse_page_limit(limit))
 
     @router.get("/configs/{config_id}")
     def get_config(
@@ -429,7 +429,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         cursor: Annotated[str | None, Query()] = None,
     ) -> ConfigurationVersionPage:
         """Return one page of a configuration's version summaries, newest version first."""
-        return routes.list_versions(config_id, cursor=cursor, limit=_page_limit(limit))
+        return routes.list_versions(config_id, cursor=cursor, limit=parse_page_limit(limit))
 
     @router.get("/configs/{config_id}/versions/{registry_version}")
     def get_version(
@@ -438,7 +438,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         _principal: Annotated[Principal, Depends(authenticate)],
     ) -> Any:
         return routes.get_version(
-            config_id, _strict_integer(registry_version, minimum=1, maximum=_MAX_REGISTRY_VERSION)
+            config_id, parse_bounded_integer(registry_version, minimum=1, maximum=MAX_REGISTRY_VERSION)
         )
 
     @router.post("/configs/{config_id}/versions/{registry_version}/validate")
@@ -451,9 +451,9 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
     ) -> Any:
         return routes.validate(
             config_id,
-            _strict_integer(registry_version, minimum=1, maximum=_MAX_REGISTRY_VERSION),
-            offset=_strict_integer(offset, minimum=0, maximum=_MAX_REGISTRY_VERSION),
-            limit=_strict_integer(limit, minimum=1, maximum=_MAX_PAGE_LIMIT),
+            parse_bounded_integer(registry_version, minimum=1, maximum=MAX_REGISTRY_VERSION),
+            offset=parse_bounded_integer(offset, minimum=0, maximum=MAX_REGISTRY_VERSION),
+            limit=parse_bounded_integer(limit, minimum=1, maximum=_MAX_PAGE_LIMIT),
         )
 
     return router

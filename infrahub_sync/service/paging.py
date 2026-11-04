@@ -6,7 +6,9 @@ keys:
 - ``k``: the last returned row's sort key, for example ``[started_at, run_id]`` for runs or
   ``registry_version`` for versions;
 - ``f``: the first 16 hex characters of the SHA-256 of the canonical JSON of the filters the
-  cursor was issued for.
+  cursor was issued for. Each caller includes its list kind (``"list": "runs"``,
+  ``"configs"`` or ``"versions"``) in those filters, so a cursor from one list is refused by
+  another list even when both are unfiltered.
 
 A cursor that does not decode, or that is presented with different filters, is refused with
 ``InvalidCursorError``, which the HTTP layer maps to ``422 invalid-cursor``.
@@ -19,7 +21,7 @@ import binascii
 import hashlib
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, TypeGuard
 
 if TYPE_CHECKING:
@@ -38,6 +40,13 @@ _FILTER_DIGEST_LENGTH = 16
 # Longest cursor accepted before decoding. A real cursor holds one sort key and one digest, so
 # this bound refuses oversized input without limiting any cursor the service issues.
 _MAX_CURSOR_LENGTH = 2048
+# Most ``[`` and ``{`` characters accepted in a decoded cursor. A cursor the service issues
+# holds one object and at most one list; the bound refuses deeply nested JSON before
+# ``json.loads`` can exhaust the recursion limit.
+_MAX_CURSOR_BRACKETS = 4
+# Largest sort-key integer: SQLite and PostgreSQL store ``registry_version`` as a signed
+# 64-bit integer.
+_MAX_SORT_KEY_INTEGER = 2**63 - 1
 _URL_SAFE_BASE64 = re.compile(r"^[A-Za-z0-9_-]+$")
 _CURSOR_KEYS = frozenset({"k", "f"})
 
@@ -80,8 +89,13 @@ def decode_cursor(value: str, filters: Mapping[str, FilterValue]) -> SortKey:
         raise InvalidCursorError
     try:
         raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    except binascii.Error:
+        raise InvalidCursorError from None
+    if raw.count(b"[") + raw.count(b"{") > _MAX_CURSOR_BRACKETS:
+        raise InvalidCursorError
+    try:
         payload: Any = json.loads(raw.decode("utf-8"))
-    except (binascii.Error, UnicodeDecodeError, json.JSONDecodeError):
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
         raise InvalidCursorError from None
     if not isinstance(payload, dict) or set(payload) != _CURSOR_KEYS:
         raise InvalidCursorError
@@ -120,16 +134,22 @@ def timestamp_key(key: SortKey) -> tuple[datetime, str]:
         raise InvalidCursorError from None
     if parsed.utcoffset() is None or not identifier:
         raise InvalidCursorError
-    return parsed, str(identifier)
+    try:
+        # Normalizing here refuses a timestamp that parses but leaves the datetime range in
+        # UTC, such as ``9999-12-31T23:59:59-23:59``, before it reaches the store.
+        normalized = parsed.astimezone(timezone.utc)
+    except (ValueError, OverflowError):
+        raise InvalidCursorError from None
+    return normalized, str(identifier)
 
 
 def version_key(key: SortKey) -> int:
     """Return the ``registry_version`` a version-list cursor holds.
 
     Raises:
-        InvalidCursorError: the key is not a positive integer.
+        InvalidCursorError: the key is not an integer from 1 to 2**63 - 1.
     """
-    if not isinstance(key, int) or key < 1:
+    if not isinstance(key, int) or not 1 <= key <= _MAX_SORT_KEY_INTEGER:
         raise InvalidCursorError
     return key
 

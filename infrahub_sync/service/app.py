@@ -16,7 +16,14 @@ from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUP
 
 from .auth import Principal, PrincipalResolver
 from .compatibility import API_STABILITY, API_VERSIONS, installed_server_version
-from .config_routes import ConfigurationAPIError, ConfigurationRoutes, configuration_router
+from .config_routes import (
+    MAX_REGISTRY_VERSION,
+    ConfigurationAPIError,
+    ConfigurationRoutes,
+    configuration_router,
+    parse_bounded_integer,
+    parse_page_limit,
+)
 from .liveness import RunLivenessReconciler
 from .models import (
     ApplyRunRequest,
@@ -191,17 +198,23 @@ def create_app(
         status, content = await service.create_run(body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
-    # Declared before ``/runs/{run_id}`` so that the run list is never read as a run ID.
     @application.get("/runs", responses=ERROR_RESPONSES)
     def list_runs(
         _principal: Annotated[Principal, Depends(authenticate)],
         config_id: Annotated[str | None, Query()] = None,
-        registry_version: Annotated[int | None, Query(ge=1)] = None,
-        limit: Annotated[int | None, Query()] = None,
+        registry_version: Annotated[str | None, Query()] = None,
+        limit: Annotated[str | None, Query()] = None,
         cursor: Annotated[str | None, Query()] = None,
     ) -> RunPage:
         """Return one page of runs, newest first, optionally for one configuration or version."""
-        return service.list_runs(config_id=config_id, registry_version=registry_version, cursor=cursor, limit=limit)
+        version = (
+            None
+            if registry_version is None
+            else parse_bounded_integer(registry_version, minimum=1, maximum=MAX_REGISTRY_VERSION)
+        )
+        return service.list_runs(
+            config_id=config_id, registry_version=version, cursor=cursor, limit=parse_page_limit(limit)
+        )
 
     @application.get("/runs/{run_id}", responses=ERROR_RESPONSES)
     async def get_run(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> RunResource:

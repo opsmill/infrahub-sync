@@ -186,8 +186,9 @@ def public_run_resource(run: ProductRun) -> PublicRunResource:
 def public_run_page(runs: Iterable[ProductRun], next_cursor: str | None) -> RunPage:
     """Project one page of store runs into the bounded public run list.
 
-    Each run goes through `public_run_resource` first, so a list item is exactly the
-    resource `GET /runs/{run_id}` would build from the same record.
+    Each run goes through `public_run_resource` first, so a list item has the same fields as
+    the resource `GET /runs/{run_id}` builds from the same record, with `artifact_refs` and
+    `prefect_executions` empty.
     """
     return EmittedRunPage.model_validate(
         {

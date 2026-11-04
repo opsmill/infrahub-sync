@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
@@ -50,6 +51,8 @@ from infrahub_sync.product_store.models import (
     RunPage,
     RunReference,
 )
+
+logger = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS product_runs (
@@ -164,11 +167,13 @@ _ADDED_NULLABLE_COLUMNS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     ("configuration_versions", (("registered_by", "TEXT"), ("registration_reason", "TEXT"))),
     ("configurations", (("name", "TEXT"),)),
 )
-# Indexes for listing runs newest first, unfiltered and filtered by configuration binding.
-# Created after the column migration because ``product_runs_binding_started`` names binding
-# columns a pre-existing table only gains there. ``IF NOT EXISTS`` makes each re-run a no-op.
+# Indexes for listing runs newest first: unfiltered, filtered by configuration, and filtered
+# by configuration and version. Created after the column migration because the configuration
+# indexes name binding columns a pre-existing table only gains there. ``IF NOT EXISTS`` makes
+# each re-run a no-op.
 _RUN_LISTING_INDEXES: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS product_runs_started ON product_runs (started_at, run_id)",
+    "CREATE INDEX IF NOT EXISTS product_runs_config_started ON product_runs (config_id, started_at, run_id)",
     "CREATE INDEX IF NOT EXISTS product_runs_binding_started "
     "ON product_runs (config_id, registry_version, started_at, run_id)",
 )
@@ -733,14 +738,17 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         """Fill a NULL ``configurations.name`` from the configuration's latest version's package.
 
         Covers configurations registered before the column existed. A package that declares
-        no name, or whose stored content does not decode, leaves the name NULL. Only NULL
-        names are written, so a second start-up changes nothing.
+        no name, or whose stored content does not decode, leaves the name NULL; content that
+        does not decode is logged as a warning with the ``config_id`` only. Only NULL names are
+        written, so a second start-up changes nothing.
         """
         cursor.execute(self._sql(_SELECT_UNNAMED_CONFIGURATION_PACKAGES))
         for config_id, declared_content in cursor.fetchall():
             try:
                 content = json.loads(declared_content)
             except (TypeError, ValueError):
+                # Never log the content: a stored package can hold credentials.
+                logger.warning("Configuration %s: the stored package does not decode; its name stays unset", config_id)
                 continue
             name = _declared_configuration_name(content)
             if name is not None:

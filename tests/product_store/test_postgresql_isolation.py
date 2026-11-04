@@ -188,6 +188,7 @@ _RUN_DISCOVERY_COLUMNS = {
 }
 _RUN_DISCOVERY_INDEXES = {
     "product_runs_started": "(started_at, run_id)",
+    "product_runs_config_started": "(config_id, started_at, run_id)",
     "product_runs_binding_started": "(config_id, registry_version, started_at, run_id)",
 }
 

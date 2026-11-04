@@ -2191,6 +2191,11 @@ def test_the_run_list_filters_by_configuration_and_version_without_execution_det
         ({"limit": "many"}, 422, "request-invalid"),
         ({"registry_version": 0}, 422, "request-invalid"),
         ({"cursor": "not a cursor"}, 422, "invalid-cursor"),
+        ({"limit": "1.0"}, 422, "request-invalid"),
+        ({"limit": "5.000"}, 422, "request-invalid"),
+        ({"limit": "true"}, 422, "request-invalid"),
+        ({"config_id": "missing-config", "registry_version": "1.0"}, 422, "request-invalid"),
+        ({"config_id": "missing-config", "registry_version": str(2**63)}, 422, "request-invalid"),
     ],
     ids=[
         "unknown-configuration",
@@ -2201,6 +2206,11 @@ def test_the_run_list_filters_by_configuration_and_version_without_execution_det
         "limit-not-an-integer",
         "version-0",
         "malformed-cursor",
+        "limit-float",
+        "limit-float-trailing-zeros",
+        "limit-boolean",
+        "version-float",
+        "version-above-64-bit",
     ],
 )
 def test_the_run_list_refuses_unknown_filters_and_out_of_range_parameters(
@@ -2285,6 +2295,44 @@ def test_the_run_list_pages_stay_stable_while_new_runs_arrive(
     assert not set(seen) & set(newer)
     expected_order = sorted(originals, key=lambda run_id: (originals.index(run_id) // 2, run_id), reverse=True)
     assert seen == expected_order
+
+
+def test_the_run_list_without_a_limit_returns_fifty_runs_and_a_cursor(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, projection, _orchestration = service_api
+    for index in range(60):
+        projection.create_run(_stored_run(f"default-run-{index:03d}", index))
+
+    page = _list(client).json()
+
+    assert len(page["items"]) == 50
+    assert page["next_cursor"] is not None
+    rest = _list(client, cursor=page["next_cursor"]).json()
+    assert len(rest["items"]) == 10
+    assert rest["next_cursor"] is None
+
+
+def test_every_actor_lists_the_same_runs(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """FR-001/FR-002: the run list does not depend on who asks or who started the run."""
+    client, projection, _orchestration = service_api
+    version = client.app.state.run_binding
+    created = _create_for(client, version, key="actor-list-key")
+    projection.create_run(_stored_run("legacy-run-001", 0))
+
+    pages = {
+        token: client.get("/runs", headers={"Authorization": f"Bearer {token}"})
+        for token in (OWNER_TOKEN, OTHER_TOKEN, ADMIN_TOKEN)
+    }
+
+    for response in pages.values():
+        assert response.status_code == 200, response.text
+    owner_page = pages[OWNER_TOKEN].json()
+    assert {item["run_id"] for item in owner_page["items"]} == {created["run_id"], "legacy-run-001"}
+    assert pages[OTHER_TOKEN].json() == owner_page
+    assert pages[ADMIN_TOKEN].json() == owner_page
 
 
 @pytest.mark.parametrize(

@@ -419,9 +419,9 @@ def destination_binding_failure(
 
     Evaluated at the apply seam (`PlanApplier`), not inside `verify_plan`: like
     `write_surface`, its subject is the destination adapter rather than the artifact, but
-    unlike every `verify_plan` check it is also **overridable** — the CLI's
-    `--allow-destination-change` exists for a deliberate cross-environment apply — so it
-    cannot sit behind a gate whose non-empty result is an unconditional refusal.
+    unlike every `verify_plan` check it is also **overridable** — the apply API's
+    `allow_destination_change` argument exists for a deliberate cross-environment apply, although
+    no CLI command exposes it — so it cannot sit behind a gate whose non-empty result is an unconditional refusal.
 
     Returns `None` — the check is skipped, not passed — when the manifest is absent or
     unparseable (the format gate owns that verdict), when it predates the field, or when
@@ -450,8 +450,7 @@ def destination_binding_failure(
         expected=f"url {recorded_binding.url!r}, branch {recorded_binding.branch!r}",
         found=f"url {live.url!r}, branch {live.branch!r}",
         next_action=(
-            "Re-run `plan` against this destination to rebuild the plan artifact, or pass "
-            "`--allow-destination-change` to deliberately apply it across environments."
+            "Create a new plan against the current destination with `plan`, review it, and apply that plan instead."
         ),
     )
 
