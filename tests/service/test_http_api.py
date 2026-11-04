@@ -70,6 +70,7 @@ from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService, ServiceA
 from tests.service.execution_fixtures import append_execution
 
 if TYPE_CHECKING:
+    from httpx import Response
     from opsmill_prefect_extras.executors import RemoteExecutionClient
     from prefect.client.schemas.objects import State
 
@@ -2009,3 +2010,69 @@ def test_the_client_still_reads_a_run_resource_from_a_newer_server() -> None:
 
     assert parsed.run_id == "run-forward-compatible"
     assert parsed.model_extra == {"field_from_a_newer_server": "readable"}
+
+
+_NO_REASON_FIELD = object()
+
+
+def _create_with_reason(client: TestClient, reason: object, *, key: str) -> Response:
+    version = client.app.state.run_binding
+    body: dict[str, object] = {
+        "operation": "plan",
+        "config_id": version.config_id,
+        "registry_version": version.registry_version,
+    }
+    if reason is not _NO_REASON_FIELD:
+        body["reason"] = reason
+    return client.post("/runs", headers={"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": key}, json=body)
+
+
+@pytest.mark.parametrize(
+    ("first", "retry", "replayed"),
+    [
+        pytest.param(_NO_REASON_FIELD, _NO_REASON_FIELD, True, id="absent-then-absent"),
+        pytest.param(_NO_REASON_FIELD, None, True, id="absent-then-null"),
+        pytest.param(None, None, True, id="null-then-null"),
+        pytest.param(_NO_REASON_FIELD, "now with a reason", False, id="absent-then-present"),
+        pytest.param("first reason", _NO_REASON_FIELD, False, id="present-then-absent"),
+    ],
+)
+def test_a_run_without_a_reason_is_accepted_and_replays_by_reason(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    first: object,
+    retry: object,
+    *,
+    replayed: bool,
+) -> None:
+    """An omitted reason is one value for idempotency: it replays itself and conflicts with a text."""
+    client, projection, orchestration = service_api
+
+    accepted = _create_with_reason(client, first, key="optional-reason-key")
+    again = _create_with_reason(client, retry, key="optional-reason-key")
+
+    assert accepted.status_code == 202, accepted.json()
+    assert len(orchestration.submissions) == 1
+    if replayed:
+        assert again.status_code == 202
+        assert again.json() == accepted.json()
+    else:
+        assert again.status_code == 409
+        assert again.json()["error"]["code"] == "idempotency-conflict"
+    run_id = accepted.json()["run"]["run_id"]
+    stored = {None if value is _NO_REASON_FIELD else value for value in (first, retry)}
+    assert {event.reason for event in projection.audit_events(run_id)} == stored
+    assert [event.reason for event in projection.audit_events(run_id) if event.outcome == "accepted"] == [
+        None if first is _NO_REASON_FIELD else first
+    ]
+
+
+@pytest.mark.parametrize("reason", ["", "   "])
+def test_a_run_with_an_empty_reason_is_refused(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration], reason: str
+) -> None:
+    client, _projection, orchestration = service_api
+
+    refused = _create_with_reason(client, reason, key="empty-reason-key")
+
+    assert refused.status_code == 422
+    assert orchestration.submissions == []

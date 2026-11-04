@@ -424,7 +424,8 @@ earlier:
 uv run infrahub-sync configs validate CONFIG_ID 1
 ```
 
-**Create a plan run.** `diff` takes its identity as options, and an audit reason is required:
+**Create a plan run.** `diff` takes its identity as options. The audit reason is optional;
+when given, it is recorded in the audit history:
 
 ```bash
 uv run infrahub-sync diff --config-id CONFIG_ID --version 1 \
@@ -442,9 +443,9 @@ Against an **empty destination that matches the mapping**, the worked example pr
 those devices produces fewer operations, or none. Do not read a different count as a failure
 without checking what the destination held first.
 
-**Apply the reviewed plan.** The run identity is positional; the checksum you just reviewed and
-an audit reason are required options. The service verifies the checksum before any worker
-executes:
+**Apply the reviewed plan.** The run identity is positional, and the checksum you just reviewed
+is a required option. The audit reason is optional. The service verifies the checksum before
+any worker executes:
 
 ```bash
 uv run infrahub-sync apply RUN_ID \

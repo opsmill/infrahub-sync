@@ -334,7 +334,7 @@ def _echo_validation(resource: ValidationReportResource) -> None:
 def configs_register(
     ctx: typer.Context,
     package: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
-    reason: str = typer.Option(..., "--reason", help="Audit reason for the mutation."),
+    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the mutation."),
     idempotency_key: str | None = typer.Option(
         None,
         "--idempotency-key",
@@ -357,7 +357,7 @@ def configs_version(
     ctx: typer.Context,
     config_id: str = typer.Argument(...),
     package: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True),
-    reason: str = typer.Option(..., "--reason", help="Audit reason for the mutation."),
+    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the mutation."),
     idempotency_key: str | None = typer.Option(
         None,
         "--idempotency-key",
@@ -487,7 +487,7 @@ def _operation_request(
     config_id: str,
     version: int,
     branch: str | None,
-    reason: str,
+    reason: str | None,
 ) -> CreateRunRequest:
     return cast(
         "CreateRunRequest",
@@ -588,7 +588,7 @@ def _admit_run(
     config_id: str,
     version: int,
     branch: str | None,
-    reason: str,
+    reason: str | None,
     idempotency_key: str | None,
     wait: bool,
     wait_timeout: float,
@@ -623,7 +623,7 @@ def diff_cmd(
     *,
     config_id: str = typer.Option(..., "--config-id", help="Registered configuration identity."),
     version: int = typer.Option(..., "--version", help="Registered configuration version."),
-    reason: str = typer.Option(..., "--reason", help="Audit reason for the plan."),
+    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the plan."),
     branch: str | None = typer.Option(None, "--branch", help="Destination branch admitted by the Sync API."),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for this run's execution."),  # noqa: FBT003
@@ -654,7 +654,7 @@ def sync_cmd(
     *,
     config_id: str = typer.Option(..., "--config-id", help="Registered configuration identity."),
     version: int = typer.Option(..., "--version", help="Registered configuration version."),
-    reason: str = typer.Option(..., "--reason", help="Audit reason for the synchronization."),
+    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the synchronization."),
     branch: str | None = typer.Option(None, "--branch", help="Destination branch admitted by the Sync API."),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for this run's execution."),  # noqa: FBT003
@@ -686,7 +686,7 @@ def apply_cmd(
     *,
     run_id: str = typer.Argument(..., help="Service-issued run ID whose plan was reviewed."),
     expected_checksum: str = typer.Option(..., "--expected-checksum", help="Checksum printed by `runs plan`."),
-    reason: str = typer.Option(..., "--reason", help="Audit reason for the apply."),
+    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the apply."),
     branch: str | None = typer.Option(None, "--branch", help="Destination branch admitted by the Sync API."),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for this run's apply execution."),  # noqa: FBT003

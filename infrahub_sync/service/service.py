@@ -547,7 +547,7 @@ class RunService:
         self,
         receipt: MutationReceipt | None,
         principal: Principal,
-        reason: str,
+        reason: str | None,
         message: str,
         *,
         run_id: str | None = None,
@@ -632,7 +632,7 @@ class RunService:
         receipt: MutationReceipt,
         parameters: dict[str, object],
         principal: Principal,
-        reason: str,
+        reason: str | None,
     ) -> tuple[int, dict[str, Any]]:
         assert receipt.resource_kind == "run"
         assert receipt.run_id is not None
@@ -707,7 +707,7 @@ class RunService:
         idempotency_key: str,
         *,
         operation: str,
-        reason: str,
+        reason: str | None,
         body: dict[str, Any],
         admit_write: bool = False,
     ) -> MutationReceipt:
@@ -736,7 +736,7 @@ class RunService:
         idempotency_key: str,
         *,
         operation: str,
-        reason: str,
+        reason: str | None,
         body: dict[str, Any],
     ) -> MutationReceipt | None:
         requested = self._new_receipt(
@@ -766,7 +766,7 @@ class RunService:
         receipt: MutationReceipt,
         parameters: dict[str, object],
         principal: Principal,
-        reason: str,
+        reason: str | None,
     ) -> tuple[int, dict[str, Any]]:
         """Replay completed receipts and revalidate configurations before submission."""
         if receipt.state == "accepted":
@@ -791,7 +791,7 @@ class RunService:
         target_run_id: str | None,
         run_id: str,
         body: dict[str, Any],
-        reason: str,
+        reason: str | None,
         now: datetime,
     ) -> MutationReceipt:
         key_digest = sha256(idempotency_key.encode()).hexdigest()
@@ -837,7 +837,7 @@ class RunService:
                 mutation_id=stored.receipt_id,
             )
 
-    def _owned_run(self, run_id: str, principal: Principal, operation: str, reason: str) -> ProductRun:
+    def _owned_run(self, run_id: str, principal: Principal, operation: str, reason: str | None) -> ProductRun:
         run = self._required_run(run_id)
         if not principal.administrator and run.actor != principal.actor:
             self._audit(
@@ -986,7 +986,7 @@ class RunService:
         *,
         actor: str,
         operation: str,
-        reason: str,
+        reason: str | None,
         outcome: str,
     ) -> None:
         event = AuditEvent(
@@ -1014,7 +1014,7 @@ class RunService:
         self,
         actor: str,
         operation: str,
-        reason: str,
+        reason: str | None,
         *,
         run_id: str | None = None,
         **parameters: str | None,

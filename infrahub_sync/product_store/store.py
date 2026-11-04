@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS configuration_baselines (
 CREATE TABLE IF NOT EXISTS mutation_receipts (
     receipt_id TEXT PRIMARY KEY, actor TEXT NOT NULL, key_digest TEXT NOT NULL,
     operation TEXT NOT NULL, target_run_id TEXT, request_fingerprint TEXT NOT NULL,
-    reason TEXT NOT NULL, resource_kind TEXT NOT NULL DEFAULT 'run', resource_id TEXT NOT NULL, run_id TEXT, prefect_key TEXT,
+    reason TEXT, resource_kind TEXT NOT NULL DEFAULT 'run', resource_id TEXT NOT NULL, run_id TEXT, prefect_key TEXT,
     state TEXT NOT NULL, response_status INTEGER, response_body TEXT, flow_run_id TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     UNIQUE (actor, key_digest)
@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS write_admissions (
 );
 CREATE TABLE IF NOT EXISTS audit_events (
     event_id TEXT PRIMARY KEY, run_id TEXT, actor TEXT NOT NULL, operation TEXT NOT NULL,
-    reason TEXT NOT NULL, outcome TEXT NOT NULL, created_at TEXT NOT NULL
+    reason TEXT, outcome TEXT NOT NULL, created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS audit_events_run_created
     ON audit_events (run_id, created_at);
@@ -232,10 +232,10 @@ END
 _SQLITE_UNIQUE_CONSTRAINT_CODES = frozenset({1555, 2067})
 _POSTGRESQL_SCHEMA_CONFLICT_CODES = frozenset({"23505", "42P07", "42710"})
 _POSTGRESQL_DUPLICATE_COLUMN_CODE = "42701"
-# ``_migrate_mutation_receipts`` is the one catalog read that needs nullability, and it projects
-# exactly (column_name, is_nullable). The other two read column names alone. PostgreSQL declares
-# ``information_schema.columns.is_nullable`` over the ``yes_or_no`` domain, so these two strings
-# are the whole set of readable answers.
+# On PostgreSQL, ``_column_nullability`` is the one catalog read that needs nullability, and
+# it projects exactly (column_name, is_nullable). The other two read column names alone. PostgreSQL
+# declares ``information_schema.columns.is_nullable`` over the ``yes_or_no`` domain, so these
+# two strings are the whole set of readable answers.
 _CATALOG_NULLABILITY_ROW_WIDTH = 2
 _CATALOG_NULLABILITY_VALUES = frozenset({"YES", "NO"})
 # The stages one run's admission arbitrates against each other. Cancellation is
@@ -573,6 +573,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     self._migrate_product_runs_columns(cursor)
                     self._migrate_prefect_execution_columns(cursor)
                     self._migrate_mutation_receipts(cursor)
+                    self._migrate_audit_events(cursor)
                     self._ensure_mutation_receipt_resource_constraint(cursor)
                     self._ensure_configuration_binding_constraint(cursor)
                     connection.commit()
@@ -637,46 +638,76 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             if column not in existing:
                 cursor.execute(f"ALTER TABLE prefect_executions ADD COLUMN {column} {sql_type}")
 
+    def _column_nullability(self, cursor: _Cursor, table: str) -> dict[str, str]:
+        """Return each column of ``table`` mapped to ``"YES"`` (nullable) or ``"NO"``.
+
+        SQLite reports ``notnull`` through ``PRAGMA table_info``; PostgreSQL answers from
+        ``information_schema``, whose rows ``_catalog_nullability`` refuses unless each one is
+        exactly readable.
+        """
+        if self._dialect == "sqlite":
+            cursor.execute(f"PRAGMA table_info({table})")
+            return {str(row[1]): "NO" if row[3] else "YES" for row in cursor.fetchall()}
+        cursor.execute(
+            self._sql(
+                "SELECT column_name, is_nullable FROM information_schema.columns "
+                "WHERE table_name = ? AND table_schema = current_schema()"
+            ),
+            (table,),
+        )
+        return _catalog_nullability(cursor.fetchall())
+
     def _migrate_mutation_receipts(self, cursor: _Cursor) -> None:
         """Add resource identity columns and preserve every legacy receipt in place."""
-        column_nullability: dict[str, str] = {}
-        if self._dialect == "sqlite":
-            cursor.execute("PRAGMA table_info(mutation_receipts)")
-            columns = frozenset(str(row[1]) for row in cursor.fetchall())
-        else:
-            cursor.execute(
-                self._sql(
-                    "SELECT column_name, is_nullable FROM information_schema.columns "
-                    "WHERE table_name = ? AND table_schema = current_schema()"
-                ),
-                ("mutation_receipts",),
-            )
-            column_nullability = _catalog_nullability(cursor.fetchall())
-            columns = frozenset(column_nullability)
-        if "resource_kind" not in columns:
+        column_nullability = self._column_nullability(cursor, "mutation_receipts")
+        if "resource_kind" not in column_nullability:
             cursor.execute("ALTER TABLE mutation_receipts ADD COLUMN resource_kind TEXT")
-        if "resource_id" not in columns:
+        if "resource_id" not in column_nullability:
             cursor.execute("ALTER TABLE mutation_receipts ADD COLUMN resource_id TEXT")
         cursor.execute(
             "UPDATE mutation_receipts SET resource_kind = 'run', resource_id = run_id "
             "WHERE resource_kind IS NULL OR resource_id IS NULL"
         )
+        required = [column for column in ("run_id", "prefect_key", "reason") if column_nullability.get(column) == "NO"]
+        if not required:
+            return
         if self._dialect == "sqlite":
             # SQLite has no supported additive ALTER that removes NOT NULL. The table has a
             # fixed, repository-owned legacy shape and a rebuild would also reconstruct the
-            # dependent write_admissions foreign key. Updating these two declarations is the
+            # dependent write_admissions foreign key. Updating these three declarations is the
             # only in-place migration that preserves rows, indexes, and references.
             cursor.execute("PRAGMA writable_schema = ON")
             cursor.execute(
-                "UPDATE sqlite_master SET sql = REPLACE(REPLACE(sql, 'run_id TEXT NOT NULL', 'run_id TEXT'), "
-                "'prefect_key TEXT NOT NULL', 'prefect_key TEXT') WHERE type = 'table' AND name = 'mutation_receipts'"
+                "UPDATE sqlite_master SET sql = REPLACE(REPLACE(REPLACE(sql, 'run_id TEXT NOT NULL', 'run_id TEXT'), "
+                "'prefect_key TEXT NOT NULL', 'prefect_key TEXT'), 'reason TEXT NOT NULL', 'reason TEXT') "
+                "WHERE type = 'table' AND name = 'mutation_receipts'"
             )
             cursor.execute("PRAGMA writable_schema = OFF")
         else:
-            if column_nullability.get("run_id") == "NO":
-                cursor.execute("ALTER TABLE mutation_receipts ALTER COLUMN run_id DROP NOT NULL")
-            if column_nullability.get("prefect_key") == "NO":
-                cursor.execute("ALTER TABLE mutation_receipts ALTER COLUMN prefect_key DROP NOT NULL")
+            for column in required:
+                cursor.execute(f"ALTER TABLE mutation_receipts ALTER COLUMN {column} DROP NOT NULL")
+
+    def _migrate_audit_events(self, cursor: _Cursor) -> None:
+        """Allow an audit event without a reason, preserving every legacy event in place.
+
+        A request may omit its audit reason, and the event then stores NULL rather than a
+        made-up text. Legacy tables declared ``reason TEXT NOT NULL``; this drops that
+        constraint the same way ``_migrate_mutation_receipts`` does, and does nothing on a
+        table that already allows NULL.
+        """
+        if self._column_nullability(cursor, "audit_events").get("reason") != "NO":
+            return
+        if self._dialect == "sqlite":
+            # The same in-place declaration update as ``_migrate_mutation_receipts``, for
+            # the same reason: SQLite has no ALTER that removes NOT NULL.
+            cursor.execute("PRAGMA writable_schema = ON")
+            cursor.execute(
+                "UPDATE sqlite_master SET sql = REPLACE(sql, 'reason TEXT NOT NULL', 'reason TEXT') "
+                "WHERE type = 'table' AND name = 'audit_events'"
+            )
+            cursor.execute("PRAGMA writable_schema = OFF")
+            return
+        cursor.execute("ALTER TABLE audit_events ALTER COLUMN reason DROP NOT NULL")
 
     def _mutation_receipt_resource_constraint_exists(self, cursor: _Cursor) -> bool:
         if self._dialect == "sqlite":

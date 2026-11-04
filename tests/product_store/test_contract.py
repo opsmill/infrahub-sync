@@ -4463,6 +4463,8 @@ _LEGACY_MUTATION_RECEIPT_COLUMNS = frozenset(
     }
 )
 
+_LEGACY_AUDIT_EVENT_COLUMNS = frozenset({"event_id", "run_id", "actor", "operation", "reason", "outcome", "created_at"})
+
 
 def _drop_not_null_statements(database: _FakePostgreSQLDatabase) -> list[str]:
     return [statement for statement in database.statements if "DROP NOT NULL" in statement]
@@ -4488,10 +4490,12 @@ def test_postgresql_repeated_initialization_skips_completed_mutation_receipt_nul
             (),
             (
                 ("prefect_key", "YES"),
+                ("reason", "YES"),
                 ("resource_id", "NO"),
                 ("resource_kind", "NO"),
                 ("run_id", "YES"),
             ),
+            (("reason", "YES"),),
         ]
         connection.cursor.return_value.fetchone.return_value = (1,)
         connections.append(connection)
@@ -4504,7 +4508,7 @@ def test_postgresql_repeated_initialization_skips_completed_mutation_receipt_nul
         call.args[0].strip()
         for connection in connections
         for call in connection.cursor.return_value.execute.call_args_list
-        if call.args[0].strip().startswith("ALTER TABLE mutation_receipts ALTER COLUMN")
+        if call.args[0].strip().startswith(("ALTER TABLE mutation_receipts ALTER COLUMN", "ALTER TABLE audit_events"))
         and call.args[0].strip().endswith("DROP NOT NULL")
     ]
     assert recurring_ddl == []
@@ -4515,15 +4519,20 @@ def test_postgresql_legacy_mutation_receipt_nullability_migrates_once() -> None:
 
     The two halves belong together: skipping the DDL only because a column is already nullable
     is correct, skipping it while a real ``NOT NULL`` column survives is the legacy-migration
-    regression the idempotency work must not cause.
+    regression the idempotency work must not cause. ``reason`` is relaxed on both tables that
+    carry it, because a request may omit its audit reason.
     """
     database = _FakePostgreSQLDatabase(
         tables=_PARENT_TABLES,
         columns={
             "product_runs": _PARENT_PRODUCT_RUNS_COLUMNS,
             "mutation_receipts": _LEGACY_MUTATION_RECEIPT_COLUMNS,
+            "audit_events": _LEGACY_AUDIT_EVENT_COLUMNS,
         },
-        not_null={"mutation_receipts": frozenset({"run_id", "prefect_key"})},
+        not_null={
+            "mutation_receipts": frozenset({"run_id", "prefect_key", "reason"}),
+            "audit_events": frozenset({"actor", "operation", "reason", "outcome", "created_at"}),
+        },
     )
 
     PostgreSQLRunStore(database.connect)
@@ -4531,8 +4540,11 @@ def test_postgresql_legacy_mutation_receipt_nullability_migrates_once() -> None:
     assert _drop_not_null_statements(database) == [
         "ALTER TABLE mutation_receipts ALTER COLUMN run_id DROP NOT NULL",
         "ALTER TABLE mutation_receipts ALTER COLUMN prefect_key DROP NOT NULL",
+        "ALTER TABLE mutation_receipts ALTER COLUMN reason DROP NOT NULL",
+        "ALTER TABLE audit_events ALTER COLUMN reason DROP NOT NULL",
     ]
     assert database.not_null["mutation_receipts"] == set()
+    assert database.not_null["audit_events"] == {"actor", "operation", "outcome", "created_at"}
 
     database.statements.clear()
     PostgreSQLRunStore(database.connect)
@@ -5140,3 +5152,185 @@ def test_configuration_binding_check_expression_permits_exactly_the_two_legal_st
         connection.close()
 
     assert bool(row[0]) is legal
+
+
+# ---------------------------------------------------------------------------
+# An audit reason is optional: absent is stored as NULL, never as a made-up text
+# ---------------------------------------------------------------------------
+
+
+def _audit_event(event_id: str, *, reason: str | None) -> AuditEvent:
+    return AuditEvent(
+        event_id=event_id,
+        run_id="run-001",
+        actor="operator@example.com",
+        operation="plan",
+        reason=reason,
+        outcome="accepted",
+        created_at=datetime(2026, 8, 10, 12, tzinfo=timezone.utc),
+    )
+
+
+def test_absent_reason_round_trips_as_null(provider: ProductProjection) -> None:
+    """A receipt and an audit event without a reason read back without one."""
+    receipt = _receipt().model_copy(update={"reason": None})
+
+    reserved, created = provider.reserve_mutation(receipt, run=_run())
+    provider.record_audit(_audit_event("audit-no-reason", reason=None))
+
+    assert created is True
+    assert reserved.reason is None
+    restored = provider.lookup_mutation(receipt.actor, receipt.key_digest).value
+    assert restored is not None
+    assert restored.reason is None
+    assert [event.reason for event in provider.audit_events("run-001")] == [None]
+
+
+def test_a_present_reason_must_not_be_empty() -> None:
+    """Omitting the reason is allowed; storing an empty one is still refused."""
+    with pytest.raises(ValidationError):
+        _audit_event("audit-empty", reason="")
+    with pytest.raises(ValidationError):
+        _receipt(reason="")
+
+
+@pytest.mark.parametrize(
+    "build",
+    [_receipt, lambda: _audit_event("audit-missing", reason="operator request")],
+    ids=["mutation-receipt", "audit-event"],
+)
+def test_a_missing_reason_is_refused(build: Callable[[], BaseModel]) -> None:
+    """A receipt or audit event must state its reason, even when that reason is null."""
+    model = build()
+    payload = model.model_dump()
+    del payload["reason"]
+
+    with pytest.raises(ValidationError) as caught:
+        type(model).model_validate(payload)
+
+    assert [(error["type"], error["loc"]) for error in caught.value.errors()] == [("missing", ("reason",))]
+
+
+_LEGACY_AUDIT_EVENTS_DDL = (
+    "CREATE TABLE audit_events ("
+    "event_id TEXT PRIMARY KEY, run_id TEXT, actor TEXT NOT NULL, operation TEXT NOT NULL, "
+    "reason TEXT NOT NULL, outcome TEXT NOT NULL, created_at TEXT NOT NULL)"
+)
+
+
+def _create_legacy_reason_tables(database: Path) -> None:
+    """Create the legacy receipt and audit tables, whose reason columns are NOT NULL."""
+    legacy = sqlite3.connect(database)
+    try:
+        legacy.execute(_LEGACY_RECEIPT_AND_EXECUTION_DDL[0])
+        legacy.execute(_LEGACY_AUDIT_EVENTS_DDL)
+        legacy.commit()
+    finally:
+        legacy.close()
+
+
+def _sqlite_table_sql_and_reason_notnull(database: Path) -> dict[str, tuple[str, int]]:
+    connection = sqlite3.connect(database)
+    try:
+        result: dict[str, tuple[str, int]] = {}
+        for table in ("mutation_receipts", "audit_events"):
+            (sql,) = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+            ).fetchone()
+            notnull = next(row[3] for row in connection.execute(f"PRAGMA table_info({table})") if row[1] == "reason")
+            result[table] = (sql, notnull)
+        return result
+    finally:
+        connection.close()
+
+
+def test_sqlite_migration_makes_legacy_reason_columns_nullable_and_is_idempotent(tmp_path: Path) -> None:
+    """A legacy SQLite file keeps its rows and accepts a NULL reason after the migration.
+
+    The second construction runs the same migration over the already-migrated file, which
+    must leave the table declarations exactly as the first construction left them.
+    """
+    database = tmp_path / "legacy.sqlite3"
+    legacy_receipt = _receipt()
+    _create_legacy_reason_tables(database)
+    legacy = sqlite3.connect(database)
+    try:
+        legacy_values = product_store_store._receipt_values(legacy_receipt)
+        legacy.execute(
+            "INSERT INTO mutation_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            legacy_values[:7] + legacy_values[9:],
+        )
+        legacy.execute(
+            "INSERT INTO audit_events VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "audit-legacy",
+                "run-001",
+                "operator@example.com",
+                "plan",
+                "legacy reason",
+                "accepted",
+                "2026-08-10T12:00:00+00:00",
+            ),
+        )
+        legacy.commit()
+        with pytest.raises(sqlite3.IntegrityError):
+            legacy.execute(
+                "INSERT INTO audit_events VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("audit-null", None, "operator@example.com", "plan", None, "accepted", "2026-08-10T12:00:00+00:00"),
+            )
+    finally:
+        legacy.close()
+
+    SQLiteRunStore(database)
+    migrated = _sqlite_table_sql_and_reason_notnull(database)
+    SQLiteRunStore(database)
+
+    assert _sqlite_table_sql_and_reason_notnull(database) == migrated
+    assert {table: notnull for table, (_sql, notnull) in migrated.items()} == {
+        "mutation_receipts": 0,
+        "audit_events": 0,
+    }
+    projection = ProductProjection(SQLiteRunStore(database), FileArtifactStore(tmp_path / "objects"))
+    restored = projection.lookup_mutation(legacy_receipt.actor, legacy_receipt.key_digest).value
+    assert restored is not None
+    assert restored.reason == legacy_receipt.reason
+
+    absent = _receipt("mutation-002", run_id="run-002", client_key="second-key").model_copy(update={"reason": None})
+    reserved, created = projection.reserve_mutation(absent, run=_run("run-002"))
+    projection.record_audit(_audit_event("audit-no-reason", reason=None))
+
+    assert created is True
+    assert reserved.reason is None
+    assert sorted((event.event_id, event.reason) for event in projection.audit_events("run-001")) == [
+        ("audit-legacy", "legacy reason"),
+        ("audit-no-reason", None),
+    ]
+
+
+def test_sqlite_migration_writes_the_schema_table_only_while_a_reason_column_is_not_null(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first construction rewrites the legacy declarations; a later one leaves them alone."""
+    database = tmp_path / "legacy.sqlite3"
+    _create_legacy_reason_tables(database)
+
+    statements: list[str] = []
+    connect = sqlite3.connect
+
+    def traced(path: Path) -> sqlite3.Connection:
+        connection = connect(path)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    def schema_writes() -> list[str]:
+        return [statement for statement in statements if "writable_schema" in statement]
+
+    monkeypatch.setattr(sqlite3, "connect", traced)
+    SQLiteRunStore(database)
+    first = schema_writes()
+    statements.clear()
+    SQLiteRunStore(database)
+
+    assert first == ["PRAGMA writable_schema = ON", "PRAGMA writable_schema = OFF"] * 2
+    assert statements != []
+    assert schema_writes() == []

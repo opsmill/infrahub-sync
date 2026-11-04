@@ -54,8 +54,10 @@ unset `HARBOR_HOST` would otherwise send the login to Docker Hub. Newer runs on 
 | `workflow-publish.yml` (from `trigger-release.yml` on `release: published`) | true | `<version>`, plus `latest` per the rule below | inherited |
 | Manual `workflow_dispatch` | chosen at dispatch | listed at dispatch | inherited |
 
-The required check **Full qualification** passes when the PR `image` job succeeds, or when it
-is skipped because no file in the `image_inputs` filter changed.
+The PR `image` job waits for lint to pass before building when a file in the `image_inputs`
+filter changed. The required check **Full qualification** passes when that build succeeds, or
+when it is skipped because no image input changed. A failed lint run also skips the image build
+and fails **Full qualification**.
 
 ### Release path and `latest`
 

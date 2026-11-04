@@ -21,8 +21,8 @@ FROM python:3.13-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b60333
 RUN apt-get update \
  && apt-get install --yes --no-install-recommends \
     libpcre2-8-0=10.42-1+deb12u2 \
-    libssl3=3.0.22-1~deb12u1 \
-    openssl=3.0.22-1~deb12u1 \
+    libssl3=3.0.22-1~deb12u2 \
+    openssl=3.0.22-1~deb12u2 \
     perl-base=5.36.0-7+deb12u4 \
  && rm -rf /var/lib/apt/lists/* \
  && python -m pip uninstall --yes --no-cache-dir pip \
