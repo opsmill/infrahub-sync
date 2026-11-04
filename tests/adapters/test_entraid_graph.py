@@ -12,7 +12,7 @@ import pytest
 
 pytest.importorskip("msgraph")
 
-from azure.core.exceptions import AzureError, ServiceRequestError, ServiceResponseError
+from azure.core.exceptions import AzureError, ServiceRequestError, ServiceResponseError  # ty: ignore[unresolved-import]
 
 from infrahub_sync.adapters import entraid
 from infrahub_sync.adapters.entraid import (

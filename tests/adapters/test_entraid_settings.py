@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("msgraph")
 
-from azure.identity.aio import ClientSecretCredential, DefaultAzureCredential
+from azure.identity.aio import ClientSecretCredential, DefaultAzureCredential  # ty: ignore[unresolved-import]
 
 from infrahub_sync.adapters import entraid
 from infrahub_sync.adapters.entraid import (

@@ -17,8 +17,8 @@ from infrahub_sync import SchemaMappingModel, SyncAdapter, SyncConfig
 
 pytest.importorskip("msgraph")
 
-from azure.core.credentials import AccessToken
-from azure.core.exceptions import ClientAuthenticationError
+from azure.core.credentials import AccessToken  # ty: ignore[unresolved-import]
+from azure.core.exceptions import ClientAuthenticationError  # ty: ignore[unresolved-import]
 
 from infrahub_sync.adapters import entraid
 from infrahub_sync.adapters.entraid import EntraidAdapter, EntraidModel
