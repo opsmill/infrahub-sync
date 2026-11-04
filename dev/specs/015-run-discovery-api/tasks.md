@@ -129,8 +129,16 @@ latest run and latest applied run; actor and reason recorded at registration.
 - [X] T039 [P] Update `docs/docs/development/constitution.md` line 20 to name `plan` instead of `diff`, and the CLI command list in `AGENTS.md`
 - [X] T040 Regenerate the CLI reference with `uv run invoke docs.generate` (writes `docs/docs/reference/cli.mdx`) and confirm `diff` does not appear; state in it that a configuration value is tried as an identifier before a name (critique P2)
 - [X] T041 [P] Add changelog fragments under `changelog/`: `+run-discovery.added.md` (run list, token check, Prefect tags, new CLI commands), `+run-discovery.changed.md` (paged list envelopes, `diff` renamed `plan`), `+run-discovery.removed.md` (`offset` parameter on configuration lists)
-- [ ] T042 Run `uv run invoke docs.lint`, `uv run invoke format`, `uv run invoke lint`, `uv run ty check .`, `uv run invoke tests.tests-unit`, and the CLI sanity commands from `AGENTS.md`; record results
-- [ ] T043 Run the end-to-end scenario in [quickstart.md](quickstart.md) on the local development stack and record the outcome in `dev/specs/015-run-discovery-api/quickstart.md` notes
+- [X] T042 Run `uv run invoke docs.lint`, `uv run invoke format`, `uv run invoke lint`, `uv run ty check .`, `uv run invoke tests.tests-unit`, and the CLI sanity commands from `AGENTS.md`; record results
+  - Results on 2026-11-04 at HEAD 9bb18ea3:
+    - `docs.lint`: exit 0, rumdl found no issues in 140 files.
+    - `format`: exit 0, ruff left 374 files unchanged; the working tree stayed clean.
+    - `lint`: exit 0.
+    - `ty check .`: exit 0 with 18 `unused-ignore-comment` warnings and no errors.
+    - `tests.tests-unit`: 5899 passed, 4 skipped, 218 deselected, 0 failed.
+    - CLI sanity: `infrahub-sync --help` exits 0 and lists `plan`, `sync`, `apply`, `verify`, `whoami`, `configs` and `runs`. `list --directory examples/` and `generate --name from-netbox --directory examples/` fail with `No such command`, because commit 95f1c2b96 ("Convert the CLI to the Sync HTTP client") removed both commands before this feature. The `AGENTS.md` sanity list still names them.
+- [X] T043 Run the end-to-end scenario in [quickstart.md](quickstart.md) on the local development stack and record the outcome in `dev/specs/015-run-discovery-api/quickstart.md` notes
+  - All nine steps passed on 2026-11-04. The results are in "Validation notes (2026-11-04)" in `quickstart.md`.
 
 ## Dependencies and execution order
 
