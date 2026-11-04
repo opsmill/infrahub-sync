@@ -472,6 +472,17 @@ def test_the_latest_edge_is_found_whatever_the_precision_of_its_time(latest_at: 
     assert _latest_change([latest, earlier]) == latest
 
 
+def test_two_edges_changed_within_one_microsecond_are_ordered_by_their_nanoseconds() -> None:
+    """Cutting the time to microseconds would make these two edges equal and keep the first."""
+    alice = RecordedAccountRecord(id="account-alice", display_label="Alice")
+    bob = RecordedAccountRecord(id="account-bob", display_label="Bob")
+    earlier = LastChange(updated_by=alice, updated_at="2026-10-05T08:00:00.123456001Z")
+    latest = LastChange(updated_by=bob, updated_at="2026-10-05T08:00:00.123456002Z")
+
+    assert _latest_change([earlier, latest]) == latest
+    assert _latest_change([latest, earlier]) == latest
+
+
 def test_a_value_infrahub_holds_no_metadata_for_is_recorded_as_empty() -> None:
     """A field with no `updated_by` in the answer is kept as `None`, which the plan shows as not recorded."""
     destination = _plan(MetadataClient(rows=_person_changed_rows()))

@@ -853,23 +853,28 @@ def _edge_last_change(edge: RelatedNodeSync) -> LastChange:
 _FRACTIONAL_SECONDS = re.compile(r"(?<=:\d\d)\.(\d+)")
 
 
-def _change_time(change: LastChange) -> datetime:
-    """`updated_at` as a time to compare edges by; a missing or unparsable value sorts first.
+def _change_time(change: LastChange) -> tuple[datetime, int]:
+    """`updated_at` as a key to compare edges by; a missing or unparsable value sorts first.
 
-    The fractional seconds are cut or padded to microseconds first, so every supported Python
-    reads the same timestamp the same way.
+    The key is the time to the microsecond and the nanoseconds below it. `datetime` holds only
+    microseconds, and Python 3.10's `fromisoformat` reads only 3 or 6 fractional digits, so the
+    fraction is cut to microseconds for the `datetime` and its next 3 digits are kept apart. Two
+    edges changed within one microsecond then still compare by their full precision.
     """
-    earliest = datetime.min.replace(tzinfo=timezone.utc)
+    earliest = (datetime.min.replace(tzinfo=timezone.utc), 0)
     if change.updated_at is None:
         return earliest
-    text = _FRACTIONAL_SECONDS.sub(
-        lambda fraction: "." + fraction.group(1)[:6].ljust(6, "0"), change.updated_at.replace("Z", "+00:00"), count=1
-    )
+    text = change.updated_at.replace("Z", "+00:00")
+    match = _FRACTIONAL_SECONDS.search(text)
+    digits = match.group(1) if match is not None else ""
+    if match is not None:
+        text = text[: match.start()] + "." + digits[:6].ljust(6, "0") + text[match.end() :]
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
         return earliest
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+    nanoseconds = int(digits[6:9].ljust(3, "0"))
+    return (parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc), nanoseconds)
 
 
 def _latest_change(changes: Iterable[LastChange]) -> LastChange:
