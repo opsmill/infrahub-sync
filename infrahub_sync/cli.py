@@ -620,10 +620,10 @@ def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
 
     `<stage> failed: <error type>`, then `cause:` when the run recorded an operator cause (a
     missing permission, a refused token or a lineage refusal), and `hint:` when it recorded a
-    next action. The record is the API's, and the API stores only text written for the
-    operator. Each value is
-    still capped and printed through `_display`, so recorded text cannot reach the terminal as
-    an escape sequence.
+    next action. A record without a next action, from an older Sync API, gets the fixed hint
+    for its error type or recovery signal when it has one. The record is the API's, and the API
+    stores only text written for the operator. Each value is still capped and printed through
+    `_display`, so recorded text cannot reach the terminal as an escape sequence.
     """
     try:
         failure = client.get_results(run_id).results.get(f"{stage}_failure")
@@ -643,6 +643,21 @@ def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
     next_action = failure.get("next_action")
     if isinstance(next_action, str) and next_action:
         typer.echo(f"hint: {_display(next_action[:MAX_FAILURE_CAUSE_TEXT])}", err=True)
+        return
+    # A record written before the service recorded every next action (an older Sync API)
+    # carries only the error type and, for a refused registered plan, its recovery signal.
+    if error_type == "PlanSchemaChangedError":
+        typer.echo("hint: create and review a new plan before applying again", err=True)
+    elif error_type == "RegisteredPlanVerificationError":
+        recovery_action = failure.get("recovery_action")
+        if recovery_action == "rebuild":
+            typer.echo("hint: re-run diff for this sync, review the new plan, then apply that run", err=True)
+        elif recovery_action == "compatible_version":
+            typer.echo(
+                "hint: re-run diff with this version and review the new plan, "
+                "or apply the reviewed plan with the version that wrote it",
+                err=True,
+            )
 
 
 def _admit_run(

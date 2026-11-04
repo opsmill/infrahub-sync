@@ -442,18 +442,31 @@ COMPATIBLE_VERSION_HINT = (
             {"recovery_action": "compatible_version", "next_action": COMPATIBLE_VERSION_HINT},
             f"hint: {COMPATIBLE_VERSION_HINT}",
         ),
+        (
+            "RegisteredPlanVerificationError",
+            {"recovery_action": "rebuild", "next_action": "checksum: rebuild"},
+            "hint: checksum: rebuild",
+        ),
+        # An older record without `next_action` gets the fixed hint for its recovery signal.
+        ("RegisteredPlanVerificationError", {"recovery_action": "rebuild"}, f"hint: {REBUILD_HINT}"),
+        (
+            "RegisteredPlanVerificationError",
+            {"recovery_action": "compatible_version"},
+            f"hint: {COMPATIBLE_VERSION_HINT}",
+        ),
+        ("PlanSchemaChangedError", {}, "hint: create and review a new plan before applying again"),
         ("RegisteredPlanVerificationError", {"recovery_action": "private-token-canary"}, None),
-        ("PlanSchemaChangedError", {}, None),
+        ("RegisteredPlanVerificationError", {}, None),
         ("OperationApplyFailedError", {"recovery_action": "rebuild"}, None),
     ],
 )
-def test_failed_apply_renders_only_the_recorded_next_action_as_a_hint(
+def test_failed_apply_renders_the_recorded_next_action_or_the_older_records_hint(
     client: MagicMock,
     error_type: str,
     recorded: dict[str, str],
     expected_hint: str | None,
 ) -> None:
-    """Print the recorded next action as the hint, and no hint from the class name alone."""
+    """Print the recorded next action as the hint; without one, the fixed hint an older record's type or signal maps to."""
     client.wait_for_run.side_effect = RunTerminalError(
         "service-run-1",
         terminal_state="failed",

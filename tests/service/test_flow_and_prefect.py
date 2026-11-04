@@ -1555,6 +1555,41 @@ def test_an_unclassified_failure_records_no_cause_text(monkeypatch: pytest.Monke
     assert LINEAGE_TOKEN not in stored.model_dump_json()
 
 
+@pytest.mark.usefixtures("_claimed_worker_execution")
+def test_an_error_raised_while_handling_another_does_not_take_its_next_action(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only the explicit `raise ... from` chain lends a next action, never the error being handled."""
+    try:
+        try:
+            raise PlanSchemaChangedError("schema changed")
+        except PlanSchemaChangedError:
+            raise RuntimeError(f"cleanup failed {LINEAGE_TOKEN}")  # noqa: B904
+    except RuntimeError as unrelated:
+        failure = unrelated
+    assert isinstance(failure.__context__, PlanSchemaChangedError)
+
+    stored = _record_apply_failure(monkeypatch, tmp_path, "run-apply-context", failure)
+
+    assert "next_action" not in stored.results["apply_failure"]
+
+
+@pytest.mark.usefixtures("_claimed_worker_execution")
+def test_an_error_raised_from_a_refusal_takes_its_next_action(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A wrapper raised `from` a refusal records the refusal's next action."""
+    try:
+        try:
+            raise PlanSchemaChangedError("schema changed")
+        except PlanSchemaChangedError as refusal:
+            raise ValueError(f"apply failed {LINEAGE_TOKEN}") from refusal
+    except ValueError as wrapper:
+        failure = wrapper
+
+    stored = _record_apply_failure(monkeypatch, tmp_path, "run-apply-cause", failure)
+
+    assert stored.results["apply_failure"]["next_action"] == PlanSchemaChangedError.next_action
+
+
 @pytest.mark.parametrize(
     ("failure", "expected_next_action"),
     [
@@ -1564,19 +1599,27 @@ def test_an_unclassified_failure_records_no_cause_text(monkeypatch: pytest.Monke
             id="schema-changed",
         ),
         pytest.param(
-            service_flow.RegisteredPlanVerificationError(f"refused {LINEAGE_TOKEN}", "rebuild"),
+            service_flow.RegisteredPlanVerificationError(
+                f"refused {LINEAGE_TOKEN}", "rebuild", guidance="format_version: rebuild it"
+            ),
             "re-run diff for this sync, review the new plan, then apply that run",
             id="registered-rebuild",
         ),
         pytest.param(
-            service_flow.RegisteredPlanVerificationError(f"refused {LINEAGE_TOKEN}", "compatible_version"),
+            service_flow.RegisteredPlanVerificationError(
+                f"refused {LINEAGE_TOKEN}", "compatible_version", guidance="format_version: use another version"
+            ),
             "re-run diff with this version and review the new plan, "
             "or apply the reviewed plan with the version that wrote it",
             id="registered-compatible-version",
         ),
         pytest.param(
-            service_flow.RegisteredPlanVerificationError(f"refused {LINEAGE_TOKEN}", None),
-            None,
+            service_flow.RegisteredPlanVerificationError(
+                f"refused {LINEAGE_TOKEN}",
+                None,
+                guidance="checksum: Re-run `diff` for this sync to rebuild the snapshot and its plan artifact.",
+            ),
+            "checksum: Re-run `diff` for this sync to rebuild the snapshot and its plan artifact.",
             id="registered-no-signal",
         ),
     ],

@@ -36,14 +36,15 @@ _RECOVERY_NEXT_ACTIONS: dict[RecoveryAction, str] = {
 class RegisteredPlanVerificationError(ValueError):
     """A managed plan refusal with a fixed, safe recovery signal for the CLI.
 
-    `next_action` is the fixed text for `recovery_action`, and empty when the refusal has no
-    recovery signal.
+    `next_action` is the fixed text for `recovery_action`. Without a recovery signal it is
+    `guidance`: each failed check's name and its fixed next action, the text the message is
+    built from, which echoes no manifest value.
     """
 
-    def __init__(self, message: str, recovery_action: RecoveryAction | None) -> None:
+    def __init__(self, message: str, recovery_action: RecoveryAction | None, *, guidance: str) -> None:
         super().__init__(message)
         self.recovery_action = recovery_action
-        self.next_action = "" if recovery_action is None else _RECOVERY_NEXT_ACTIONS[recovery_action]
+        self.next_action = guidance if recovery_action is None else _RECOVERY_NEXT_ACTIONS[recovery_action]
 
 
 # The errors whose `next_action` this repository writes, beside the lineage refusals that
@@ -68,8 +69,12 @@ def operator_cause(exc: BaseException, secrets: Sequence[str]) -> dict[str, Any]
       `next_action`. This repository writes those messages, and they
       name settings, kinds, node names, account names and ids only.
     - Otherwise, the first link that carries a non-empty `next_action` this repository writes
-      (a `PlanArtifactError`, or a `RegisteredPlanVerificationError` with a recovery signal)
-      records that `next_action`, and never its message.
+      (a `PlanArtifactError` or a `RegisteredPlanVerificationError`) records that
+      `next_action`, and never its message.
+
+    The search for a next action follows only the explicit `raise ... from` links, never an
+    error that was being handled when another was raised. The Infrahub classification below
+    walks the whole chain.
     - A refused token or a missing permission records `infrahub_error` and its description as
       `cause`. The description quotes only the permission Infrahub names, or a
       capped server message, never the request or the token.
@@ -78,7 +83,9 @@ def operator_cause(exc: BaseException, secrets: Sequence[str]) -> dict[str, Any]
     run records. Any other message records nothing here: its text can be a destination's
     response.
     """
-    links = tuple(cause_chain(exc))
+    # The explicit `raise ... from` links only: an unrelated error that was being handled when
+    # `exc` was raised (its `__context__`) must not lend `exc` its next action.
+    links = tuple(cause_chain(exc, follow_context=False))
     for link in links:
         if isinstance(link, LINEAGE_REFUSALS):
             return {

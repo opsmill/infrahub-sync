@@ -95,17 +95,22 @@ def classify_infrahub_error(exc: BaseException) -> InfrahubErrorClassification |
     return None
 
 
-def cause_chain(exc: BaseException) -> Iterator[BaseException]:
+def cause_chain(exc: BaseException, *, follow_context: bool = True) -> Iterator[BaseException]:
     """Yield `exc`, then each error it was raised from, stopping at a cycle.
 
-    The walk follows `__cause__`, then `__context__` unless it is suppressed.
+    The walk follows `__cause__`, then `__context__` unless it is suppressed. With
+    `follow_context=False` it follows only the explicit `__cause__` links (`raise ... from`),
+    so an unrelated error that was being handled when `exc` was raised is not part of it.
     """
     seen: set[int] = set()
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         yield current
-        current = current.__cause__ or (None if current.__suppress_context__ else current.__context__)
+        if current.__cause__ is not None or not follow_context:
+            current = current.__cause__
+        else:
+            current = None if current.__suppress_context__ else current.__context__
 
 
 def classify_infrahub_error_chain(exc: BaseException) -> InfrahubErrorClassification | None:

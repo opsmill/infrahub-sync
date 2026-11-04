@@ -165,6 +165,21 @@ def test_a_destination_without_the_write_surface_is_refused_before_any_write(tmp
     assert "infrahub-sync diff" in message
 
 
+def test_a_failed_gate_names_each_failed_check_in_its_next_action(tmp_path: Path) -> None:
+    """The next action the CLI prints as the hint names the failed check and that check's next action."""
+    directory = _run_dir(tmp_path)
+    write_artifact(directory, [operation_record()], run_id=RUN_ID, source_snapshot=[])
+
+    with pytest.raises(PlanVerificationError) as caught:
+        _potenda(directory, SurfacelessDestination()).apply_plan(
+            ownership=granted_ownership(), config_version=CONFIG_VERSION
+        )
+
+    next_action = caught.value.next_action
+    assert next_action.startswith("write_surface: The destination adapter 'SurfacelessDestination'")
+    assert next_action != PlanVerificationError.next_action
+
+
 def test_a_recorded_delete_is_collected_and_never_dispatched(tmp_path: Path, caplog) -> None:
     """A delete-bearing plan applies its non-deletes and ends with the skip recorded (AD055)."""
     directory = _run_dir(tmp_path)

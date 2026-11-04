@@ -247,7 +247,7 @@ def _verify_registered_apply(
                 recovery_action = "rebuild"
             elif format_failure.next_action.endswith(UNSUPPORTED_FORMAT_NEXT_ACTION):
                 recovery_action = "compatible_version"
-        raise RegisteredPlanVerificationError(message, recovery_action)
+        raise RegisteredPlanVerificationError(message, recovery_action, guidance=guidance)
     manifest = parse_plan_artifact(artifact, run_id=run_id).manifest
     if manifest.configuration_binding != binding:
         raise ValueError(_REGISTERED_PLAN_BINDING_MISMATCH)

@@ -159,8 +159,12 @@ on a `cause:` line:
 For the last three, a `hint:` line says what to do next. A `hint:` line also follows other
 refusals that infrahub-sync writes a next action for, such as a destination schema that changed
 since the plan was made, a saved plan whose format version is missing or not supported by this
-release, or an operation that the destination rejected during an apply. These refusals print no
-`cause:` line, unless Infrahub also refused a request with HTTP 401 or 403. `runs results RUN_ID`
+release, or an operation that the destination rejected during an apply. When a saved plan fails
+its checks before an apply, the hint names each failed check and what to do about it. These
+refusals print no `cause:` line, unless Infrahub also refused a request with HTTP 401 or 403.
+When the run was recorded by an earlier Sync API release that recorded no next action, the
+command prints the fixed hint for a changed schema or a saved plan's format version, as earlier
+releases did. `runs results RUN_ID`
 prints the same fields, as `cause`, `next_action` and `infrahub_error`, under `plan_failure`,
 `sync_failure` or `apply_failure`.
 
