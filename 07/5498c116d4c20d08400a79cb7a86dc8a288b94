@@ -1,0 +1,26 @@
+infrahub_sync/potenda/__init__.py
+  s_77064a8f1f9fb7::t_d556cec6f9ebfd 510,528-531,534
+infrahub_sync/adapters/infrahub.py
+  s_77064a8f1f9fb7::t_d556cec6f9ebfd 1013-1014,1052-1054
+infrahub_sync/plan/write_surface.py
+  s_77064a8f1f9fb7::t_d556cec6f9ebfd 89,107-109
+tests/adapters/test_infrahub_lineage.py
+  s_77064a8f1f9fb7::t_ec63e88e02f10b 228-230
+  s_77064a8f1f9fb7::t_df96fc9220e532 155,200-202,214,219-227,231-252
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "075498c116d4c20d08400a79cb7a86dc8a288b94",
+  "prompts": {},
+  "sessions": {
+    "s_77064a8f1f9fb7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "939dc8cb-70c7-4beb-974f-c09fa514e652",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
