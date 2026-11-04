@@ -215,7 +215,7 @@ def test_derivation_without_a_collector_is_unchanged() -> None:
 
 
 class _LastChangeDestination:
-    """A destination with the members `LineageResolvingDestination` declares, and nothing to resolve."""
+    """A destination with the members `LineageResolvingDestination` and `MetadataReadingDestination` declare, and nothing to resolve."""
 
     lineage_record = None
 
@@ -543,7 +543,7 @@ def test_a_plan_run_writes_the_last_changes_the_destination_read(
     destination = _keyed_destination(device_attrs={"model": "c9200", "tags": ["zeta", "alpha"]})
     destination.last_changes = {(DERIVED_DESTINATION_ID, "model"): _change()}  # ty: ignore[unresolved-attribute]
     destination.metadata_read = True  # ty: ignore[unresolved-attribute]
-    # The other members of `LineageResolvingDestination`, so the engine reads the map.
+    # The members of `LineageResolvingDestination` too, as the Infrahub destination has both.
     destination.lineage_record = None  # ty: ignore[unresolved-attribute]
     destination.resolve_lineage = lambda **_kwargs: None  # ty: ignore[unresolved-attribute]
     destination.resolve_metadata_read = lambda: None  # ty: ignore[unresolved-attribute]

@@ -981,7 +981,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     def last_changes(self) -> dict[tuple[str, str], LastChange]:
         """Who last changed each value this plan read, keyed by (destination node id, field name).
 
-        A property, so every adapter has the member the engine's `LineageResolvingDestination`
+        A property, so every adapter has the member the engine's `MetadataReadingDestination`
         check looks for, including one built without `__init__`; it starts empty.
         """
         if self._last_changes is None:

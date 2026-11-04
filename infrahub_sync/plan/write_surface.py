@@ -50,15 +50,32 @@ class PlannedWriteDestination(Protocol):
 class LineageResolvingDestination(Protocol):
     """A destination that resolves the lineage it writes, before a plan reads and before an apply writes.
 
-    It also keeps what a plan records about that lineage and about the last change of each
-    value it read (FR-007). Only the Infrahub destination is one; every other destination
-    records no lineage and no last changes. Like `PlannedWriteDestination`, the `isinstance`
-    check is presence-only, so each value read through it is still checked before use.
+    It also keeps the lineage a plan records in its manifest. Only the Infrahub destination is
+    one; every other destination records no lineage. Like `PlannedWriteDestination`, the
+    `isinstance` check is presence-only, so each value read through it is still checked
+    before use. Reading last-change metadata is a separate capability,
+    `MetadataReadingDestination`, so a destination can resolve lineage without it.
     """
 
     @property
     def lineage_record(self) -> PlanLineageRecord | None:
         """The lineage a plan records in its manifest, or `None` before `resolve_lineage` runs."""
+
+    def resolve_lineage(self, *, saved_plan: PlanManifest | None = None) -> object:
+        """Resolve and keep the lineage this run writes; raise to stop the run.
+
+        An apply passes the saved plan's manifest, so the destination can compare the
+        lineage the plan recorded with the lineage it resolves now. A plan passes none.
+        """
+
+
+@runtime_checkable
+class MetadataReadingDestination(Protocol):
+    """A destination that reads who last changed each value, for the plan's last-change file (FR-007).
+
+    Only the Infrahub destination is one; every other destination records no last changes.
+    The `isinstance` check is presence-only, like `LineageResolvingDestination`'s.
+    """
 
     @property
     def last_changes(self) -> Mapping[tuple[str, str], LastChange]:
@@ -67,13 +84,6 @@ class LineageResolvingDestination(Protocol):
     @property
     def metadata_read(self) -> bool:
         """Whether this plan's reads asked for `updated_by` and `updated_at`."""
-
-    def resolve_lineage(self, *, saved_plan: PlanManifest | None = None) -> object:
-        """Resolve and keep the lineage this run writes; raise to stop the run.
-
-        An apply passes the saved plan's manifest, so the destination can compare the
-        lineage the plan recorded with the lineage it resolves now. A plan passes none.
-        """
 
     def resolve_metadata_read(self) -> None:
         """Decide, at the start of a plan's destination load, whether its reads ask for metadata."""
@@ -97,7 +107,7 @@ def resolve_destination_metadata_read(destination: object) -> None:
     The engine calls this at the start of the destination load, after the lineage is
     resolved and beside the source load, and before the destination's cursors are captured.
     """
-    if not isinstance(destination, LineageResolvingDestination):
+    if not isinstance(destination, MetadataReadingDestination):
         return
     destination.resolve_metadata_read()
 
@@ -119,7 +129,7 @@ def destination_last_changes(destination: object) -> LastChangeCollector | None:
     `None` when the destination keeps no last changes (it is not Infrahub), so the plan is
     written without `plan/last_changes.jsonl` and without the manifest's `last_changes` field.
     """
-    if not isinstance(destination, LineageResolvingDestination):
+    if not isinstance(destination, MetadataReadingDestination):
         return None
     changes = destination.last_changes
     if not isinstance(changes, Mapping):

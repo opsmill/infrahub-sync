@@ -24,7 +24,13 @@ from infrahub_sync.adapters.infrahub import (
     require_lineage_settings,
 )
 from infrahub_sync.configuration.infrahub_lineage import InfrahubLineageSettings, NamedLineageNode
-from infrahub_sync.plan.write_surface import LineageResolvingDestination
+from infrahub_sync.plan.write_surface import (
+    LineageResolvingDestination,
+    MetadataReadingDestination,
+    destination_last_changes,
+    resolve_destination_lineage,
+    resolve_destination_metadata_read,
+)
 from infrahub_sync.potenda import Potenda
 
 IMPORT_ACCOUNT = {"id": "account-1", "name": {"value": "netbox-import"}}
@@ -93,13 +99,40 @@ def make_adapter(client: LineageClient, settings: InfrahubLineageSettings | None
 
 
 def test_the_adapter_is_a_lineage_resolving_destination_even_without_init() -> None:
-    """The engine's presence check finds every member, and the annotation lets ty check their types."""
+    """The engine's presence checks find every member, and the annotations let ty check their types."""
     adapter: LineageResolvingDestination = make_adapter(LineageClient())
+    reader: MetadataReadingDestination = make_adapter(LineageClient())
 
     assert isinstance(adapter, LineageResolvingDestination)
-    assert adapter.last_changes == {}
-    assert adapter.metadata_read is False
+    assert isinstance(reader, MetadataReadingDestination)
     assert adapter.lineage_record is None
+    assert reader.last_changes == {}
+    assert reader.metadata_read is False
+
+
+class _LineageOnlyDestination:
+    """A destination that resolves lineage and reads no last-change metadata."""
+
+    def __init__(self) -> None:
+        self.resolved_with: list[object] = []
+
+    @property
+    def lineage_record(self) -> None:
+        return None
+
+    def resolve_lineage(self, *, saved_plan: object = None) -> None:
+        self.resolved_with.append(saved_plan)
+
+
+def test_a_destination_without_metadata_reading_still_has_its_lineage_resolved() -> None:
+    """Metadata reading is not a prerequisite for lineage resolution."""
+    destination = _LineageOnlyDestination()
+
+    resolve_destination_lineage(destination)
+    resolve_destination_metadata_read(destination)
+
+    assert destination.resolved_with == [None]
+    assert destination_last_changes(destination) is None
 
 
 def test_without_settings_the_import_account_is_the_source_and_there_is_no_owner() -> None:
