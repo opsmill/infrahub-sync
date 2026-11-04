@@ -31,7 +31,9 @@ from typing import TYPE_CHECKING
 from invoke import Context, task
 
 from . import smoke_dataset
-from .smoke_dataset import (  # noqa: F401 -- re-exported: the smoke suite imports these names from here
+
+# The smoke suite imports these names from here, so they are re-exported unused.
+from .smoke_dataset import (  # noqa: F401 # pylint: disable=unused-import
     SCHEMA_CONVERGE_SECONDS,
     SCHEMA_FILE,
     SHARED_DEVICE_NAME,
@@ -558,14 +560,7 @@ def seed(context: Context) -> None:
     """Write the smoke dataset into the running preview: schema, branch, shared device."""
     values = load_preview_env()
     env = _runtime_env(values)
-    print(f" - [{NAMESPACE}] Seeding {env['INFRAHUB_ADDRESS']}, which writes:")
-    print(f" - [{NAMESPACE}]   the schema in {SCHEMA_FILE}")
-    print(f" - [{NAMESPACE}]   {SMOKE_KIND} {SHARED_DEVICE_NAME} on main, then the {SMOKE_BRANCH} branch")
-    context.run(
-        f"uv run infrahubctl schema load --wait {SCHEMA_CONVERGE_SECONDS} {shlex.quote(str(SCHEMA_FILE))}",
-        env={"INFRAHUB_ADDRESS": env["INFRAHUB_ADDRESS"], "INFRAHUB_API_TOKEN": env["INFRAHUB_API_TOKEN"]},
-    )
-    ensure_smoke_branch(env)
+    smoke_dataset.load_smoke_dataset(context, env["INFRAHUB_ADDRESS"], env["INFRAHUB_API_TOKEN"], namespace=NAMESPACE)
 
 
 @task

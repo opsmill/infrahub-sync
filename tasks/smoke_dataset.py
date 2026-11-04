@@ -60,11 +60,14 @@ def ensure_smoke_branch(address: str, token: str) -> None:
     client.branch.create(SMOKE_BRANCH, sync_with_git=False)
 
 
-def load_smoke_dataset(context: Context, address: str, token: str) -> None:
-    """Load the smoke schema, then the shared device and the smoke branch."""
-    print(f" - [{NAMESPACE}] Seeding {address}, which writes:")
-    print(f" - [{NAMESPACE}]   the schema in {SCHEMA_FILE}")
-    print(f" - [{NAMESPACE}]   {SMOKE_KIND} {SHARED_DEVICE_NAME} on main, then the {SMOKE_BRANCH} branch")
+def load_smoke_dataset(context: Context, address: str, token: str, *, namespace: str = NAMESPACE) -> None:
+    """Load the smoke schema, then the shared device and the smoke branch.
+
+    `namespace` is the prefix of the progress lines, so each calling task keeps its own.
+    """
+    print(f" - [{namespace}] Seeding {address}, which writes:")
+    print(f" - [{namespace}]   the schema in {SCHEMA_FILE}")
+    print(f" - [{namespace}]   {SMOKE_KIND} {SHARED_DEVICE_NAME} on main, then the {SMOKE_BRANCH} branch")
     context.run(
         f"uv run infrahubctl schema load --wait {SCHEMA_CONVERGE_SECONDS} {shlex.quote(str(SCHEMA_FILE))}",
         env={"INFRAHUB_ADDRESS": address, "INFRAHUB_API_TOKEN": token},
