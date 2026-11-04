@@ -1,0 +1,25 @@
+docs/docs/tutorials/netbox-to-existing-infrahub.mdx
+  s_5ff3d60bfb497b::t_066c5dd13763ce 26-28
+README.md
+  s_5ff3d60bfb497b::t_066c5dd13763ce 23-26
+docs/docs/installation.mdx
+  s_5ff3d60bfb497b::t_066c5dd13763ce 48-57
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_5ff3d60bfb497b::t_066c5dd13763ce 26-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c79c8f55e2d2342a6932dcd02e46bcb78883f6b",
+  "prompts": {},
+  "sessions": {
+    "s_5ff3d60bfb497b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4f0b441-46e5-4f6d-90b8-68208a4f492b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
