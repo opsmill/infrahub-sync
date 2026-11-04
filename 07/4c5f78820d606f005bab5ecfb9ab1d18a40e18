@@ -1,0 +1,19 @@
+dev/specs/015-run-discovery-api/opsmill-implement-report.md
+  s_f718d35766c589::t_27367947477ae3 1-215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "074c5f78820d606f005bab5ecfb9ab1d18a40e18",
+  "prompts": {},
+  "sessions": {
+    "s_f718d35766c589": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3abfa013-58d0-4a35-aa91-617e78043d5c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
