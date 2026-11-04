@@ -227,8 +227,9 @@ The reader splits the file's checks in two:
   The reader stops at the first bad line and sets `LoadedPlan.last_changes` to `None` and
   `LoadedPlan.last_changes_problem` to the line number and the reason. Review adds one
   verification note, for example `last_changes.jsonl line 4 repeats field 'name' of operation
-  'op-12' (first recorded on line 2); last-change details are not shown`, and shows no last-change
-  details for any field. The Sync API sends that note in `PlanResource.verification_notes` with
+  'op_3f9a1c2b7d4e6a80' (first recorded on line 2); last-change details are not shown`, and
+  shows no last-change details for any field. The Sync API sends that note in
+  `PlanResource.verification_notes` with
   `last_changes: null`. Apply reads the same plan as the plan without the bad line.
 
 An update field with no record is accepted: the payload holds every source attribute, not only the

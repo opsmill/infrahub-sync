@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from infrahub_sync.client.models import MAX_FAILURE_CAUSE_TEXT
 from infrahub_sync.execution import redact
 from infrahub_sync.infrahub_errors import cause_chain, classify_infrahub_error_chain, quotable_text
-from infrahub_sync.plan.errors import LINEAGE_REFUSALS, NamedLineageNodeNotFoundError, PlanArtifactError
+from infrahub_sync.plan.errors import LINEAGE_REFUSALS, PlanArtifactError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -46,9 +46,10 @@ class RegisteredPlanVerificationError(ValueError):
         self.next_action = "" if recovery_action is None else _RECOVERY_NEXT_ACTIONS[recovery_action]
 
 
-# The errors whose `next_action` this repository writes. Only their next action is recorded:
-# whether a message is safe to quote is decided by `LINEAGE_REFUSALS` alone.
-_HINTED_ERRORS = (PlanArtifactError, NamedLineageNodeNotFoundError, RegisteredPlanVerificationError)
+# The errors whose `next_action` this repository writes, beside the lineage refusals that
+# `operator_cause` returns for first. Only their next action is recorded: whether a message is
+# safe to quote is decided by `LINEAGE_REFUSALS` alone.
+_HINTED_ERRORS = (PlanArtifactError, RegisteredPlanVerificationError)
 
 
 def _recordable(text: str, secrets: Sequence[str]) -> str:

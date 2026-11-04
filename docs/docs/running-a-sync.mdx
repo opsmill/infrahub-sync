@@ -156,11 +156,13 @@ on a `cause:` line:
 - The saved plan records no import account.
 - The apply runs with a different import account than the plan. The cause names both accounts.
 
-For the last three, a `hint:` line says what to do next. A `hint:` line, without a `cause:`
-line, also follows other refusals that infrahub-sync writes a next action for, such as a
-destination schema that changed since the plan was made, or a saved plan that fails
-verification. `runs results RUN_ID` prints the same fields, as `cause`, `next_action` and
-`infrahub_error`, under `plan_failure`, `sync_failure` or `apply_failure`.
+For the last three, a `hint:` line says what to do next. A `hint:` line also follows other
+refusals that infrahub-sync writes a next action for, such as a destination schema that changed
+since the plan was made, a saved plan whose format version is missing or not supported by this
+release, or an operation that the destination rejected during an apply. These refusals print no
+`cause:` line, unless Infrahub also refused a request with HTTP 401 or 403. `runs results RUN_ID`
+prints the same fields, as `cause`, `next_action` and `infrahub_error`, under `plan_failure`,
+`sync_failure` or `apply_failure`.
 
 For any other failure, the error message is recorded on the run's Prefect flow run:
 

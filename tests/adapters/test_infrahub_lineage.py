@@ -92,6 +92,9 @@ class LineageClient:
 def make_adapter(client: LineageClient, settings: InfrahubLineageSettings | None = None) -> InfrahubAdapter:
     """The adapter with only the state lineage resolution reads, and no network setup."""
     adapter = InfrahubAdapter.__new__(InfrahubAdapter)
+    # DiffSync's `__str__` reads `name`, which `Adapter.__init__` sets. The engine's load logs
+    # the adapter at INFO, so without it a test that runs after one enabling INFO fails.
+    adapter.name = adapter.type
     adapter.client = client
     if settings is not None:
         adapter.lineage_settings = settings
