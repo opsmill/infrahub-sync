@@ -10,10 +10,13 @@ every setting that application reads (database, UI, authentication, telemetry) c
 from the environment, as it does under `prefect server start`.
 
 The listener is uvicorn's, not Prefect's CLI: the address and port come from the
-command line above, and the settings `prefect server start` turns into uvicorn
-options (`PREFECT_SERVER_API_HOST`, `PREFECT_SERVER_API_PORT`,
-`PREFECT_SERVER_API_KEEPALIVE_TIMEOUT`, `PREFECT_SERVER_LOGGING_LEVEL` and the
-websocket ping settings) have no effect here.
+command line above. `PREFECT_SERVER_API_HOST`, `PREFECT_SERVER_API_PORT`,
+`PREFECT_SERVER_API_KEEPALIVE_TIMEOUT` and the websocket ping settings, which
+`prefect server start` passes to uvicorn and the application does not read, have no
+effect here. `PREFECT_SERVER_LOGGING_LEVEL` still applies: `create_app()` sets up
+Prefect's logging, which gives that level to the `prefect.server`, `uvicorn` and
+`fastapi` loggers. Only the uvicorn `--log-level` option that `prefect server start`
+derives from it is not passed.
 """
 
 from __future__ import annotations
