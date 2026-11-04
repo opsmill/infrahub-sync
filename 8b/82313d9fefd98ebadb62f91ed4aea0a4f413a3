@@ -1,0 +1,22 @@
+dev/specs/015-run-discovery-api/tasks.md
+  s_f718d35766c589::t_443deff343f4ab 140-141
+  s_f718d35766c589::t_6604d93e24be24 132-139
+dev/specs/015-run-discovery-api/quickstart.md
+  s_f718d35766c589::t_4991db2e546087 45-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8b82313d9fefd98ebadb62f91ed4aea0a4f413a3",
+  "prompts": {},
+  "sessions": {
+    "s_f718d35766c589": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3abfa013-58d0-4a35-aa91-617e78043d5c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
