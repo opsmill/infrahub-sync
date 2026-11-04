@@ -25,9 +25,11 @@ from infrahub_sync.adapters.infrahub import (
 )
 from infrahub_sync.configuration.infrahub_lineage import InfrahubLineageSettings, NamedLineageNode
 from infrahub_sync.plan.write_surface import (
+    LineageRecordingDestination,
     LineageResolvingDestination,
     MetadataReadingDestination,
     destination_last_changes,
+    destination_lineage_record,
     resolve_destination_lineage,
     resolve_destination_metadata_read,
 )
@@ -104,37 +106,38 @@ def make_adapter(client: LineageClient, settings: InfrahubLineageSettings | None
 def test_the_adapter_is_a_lineage_resolving_destination_even_without_init() -> None:
     """The engine's presence checks find every member, and the annotations let ty check their types."""
     adapter: LineageResolvingDestination = make_adapter(LineageClient())
+    recorder: LineageRecordingDestination = make_adapter(LineageClient())
     reader: MetadataReadingDestination = make_adapter(LineageClient())
 
     assert isinstance(adapter, LineageResolvingDestination)
+    assert isinstance(recorder, LineageRecordingDestination)
     assert isinstance(reader, MetadataReadingDestination)
-    assert adapter.lineage_record is None
+    assert recorder.lineage_record is None
     assert reader.last_changes == {}
     assert reader.metadata_read is False
 
 
-class _LineageOnlyDestination:
-    """A destination that resolves lineage and reads no last-change metadata."""
+class _ResolveOnlyDestination:
+    """A destination with `resolve_lineage` and no other lineage or metadata member."""
 
     def __init__(self) -> None:
         self.resolved_with: list[object] = []
-
-    @property
-    def lineage_record(self) -> None:
-        return None
 
     def resolve_lineage(self, *, saved_plan: object = None) -> None:
         self.resolved_with.append(saved_plan)
 
 
-def test_a_destination_without_metadata_reading_still_has_its_lineage_resolved() -> None:
-    """Metadata reading is not a prerequisite for lineage resolution."""
-    destination = _LineageOnlyDestination()
+def test_a_destination_with_only_resolve_lineage_still_has_its_lineage_resolved() -> None:
+    """The FR-012 checks in `resolve_lineage` do not depend on `lineage_record` or metadata reading."""
+    destination = _ResolveOnlyDestination()
 
+    assert isinstance(destination, LineageResolvingDestination)
     resolve_destination_lineage(destination)
+    resolve_destination_lineage(destination, saved_plan="manifest")  # ty: ignore[invalid-argument-type]
     resolve_destination_metadata_read(destination)
 
-    assert destination.resolved_with == [None]
+    assert destination.resolved_with == [None, "manifest"]
+    assert destination_lineage_record(destination) is None
     assert destination_last_changes(destination) is None
 
 
@@ -474,10 +477,9 @@ def test_a_plan_resolves_lineage_before_either_side_is_loaded(tmp_path: Path, *,
     destination = _ordered_side("destination", events)
     # Assigned, not configured through attribute access: on Python 3.12 and later, the
     # `runtime_checkable` protocol check reads attributes statically and does not find a
-    # child mock that `MagicMock` creates on first access. Both members of
-    # `LineageResolvingDestination` are needed.
+    # child mock that `MagicMock` creates on first access. `resolve_lineage` is the only
+    # member of `LineageResolvingDestination`.
     destination.resolve_lineage = MagicMock(side_effect=lambda **_: events.append("resolve_lineage"))
-    destination.lineage_record = None
     engine = Potenda(
         source=source,
         destination=destination,
@@ -502,7 +504,6 @@ def test_a_lineage_refusal_stops_the_plan_before_the_source_is_read(tmp_path: Pa
     destination.resolve_lineage = MagicMock(
         side_effect=NodeNotFoundError(identifier={"name__value": ["missing"]}, node_type="CoreAccountGroup")
     )
-    destination.lineage_record = None
     engine = Potenda(
         source=source,
         destination=destination,

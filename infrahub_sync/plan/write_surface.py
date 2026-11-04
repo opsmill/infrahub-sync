@@ -50,16 +50,14 @@ class PlannedWriteDestination(Protocol):
 class LineageResolvingDestination(Protocol):
     """A destination that resolves the lineage it writes, before a plan reads and before an apply writes.
 
-    It also keeps the lineage a plan records in its manifest. Only the Infrahub destination is
-    one; every other destination records no lineage. Like `PlannedWriteDestination`, the
-    `isinstance` check is presence-only, so each value read through it is still checked
-    before use. Reading last-change metadata is a separate capability,
-    `MetadataReadingDestination`, so a destination can resolve lineage without it.
+    Only the Infrahub destination is one; every other destination records no lineage. Like
+    `PlannedWriteDestination`, the `isinstance` check is presence-only, so each value read
+    through it is still checked before use. The protocol declares `resolve_lineage` alone:
+    that call is what enforces the import-account comparison and the named-node checks
+    (FR-012), so it must not depend on any other member being present. Keeping the lineage
+    record for the manifest (`LineageRecordingDestination`) and reading last-change metadata
+    (`MetadataReadingDestination`) are separate capabilities.
     """
-
-    @property
-    def lineage_record(self) -> PlanLineageRecord | None:
-        """The lineage a plan records in its manifest, or `None` before `resolve_lineage` runs."""
 
     def resolve_lineage(self, *, saved_plan: PlanManifest | None = None) -> object:
         """Resolve and keep the lineage this run writes; raise to stop the run.
@@ -67,6 +65,19 @@ class LineageResolvingDestination(Protocol):
         An apply passes the saved plan's manifest, so the destination can compare the
         lineage the plan recorded with the lineage it resolves now. A plan passes none.
         """
+
+
+@runtime_checkable
+class LineageRecordingDestination(Protocol):
+    """A destination that keeps the lineage a plan records in its manifest.
+
+    Only the Infrahub destination is one. The `isinstance` check is presence-only, like
+    `LineageResolvingDestination`'s, so the value is still checked before use.
+    """
+
+    @property
+    def lineage_record(self) -> PlanLineageRecord | None:
+        """The lineage a plan records in its manifest, or `None` before `resolve_lineage` runs."""
 
 
 @runtime_checkable
@@ -118,7 +129,7 @@ def destination_lineage_record(destination: object) -> PlanLineageRecord | None:
 
     `None` when the destination records no lineage, so the plan is written without the field.
     """
-    if not isinstance(destination, LineageResolvingDestination):
+    if not isinstance(destination, LineageRecordingDestination):
         return None
     record = destination.lineage_record
     return record if isinstance(record, PlanLineageRecord) else None
