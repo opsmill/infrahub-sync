@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | `infrahub-sync plan --config CONFIG --version N [--branch B] [--reason R]` | `POST /runs` (`operation: plan`) | Renamed from `diff` |
 | `infrahub-sync diff ...` | same as `plan` | Hidden alias; prints `warning: 'diff' is deprecated, use 'plan'` to stderr; removed at 3.0 |
-| `infrahub-sync verify RUN_ID [--reason R]` | `POST /runs/{id}/verify` | New |
+| `infrahub-sync verify RUN_ID [--reason R] [--idempotency-key K] [--wait/--no-wait] [--wait-timeout S] [--poll-interval S]` | `POST /runs/{id}/verify` | New. Waits for the verification by default, like `apply`. |
 | `infrahub-sync apply RUN_ID --expected-checksum C ...` | `POST /runs/{id}/apply` | Unchanged |
 | `infrahub-sync sync --config CONFIG --version N ...` | `POST /runs` (`operation: sync`) | Unchanged except name resolution |
 | `infrahub-sync runs list [--config CONFIG] [--version N] [--limit L] [--all]` | `GET /runs` | New |
@@ -14,12 +14,16 @@
 | `infrahub-sync runs plan RUN_ID` | `GET /runs/{id}/plan` | Unchanged |
 | `infrahub-sync runs results RUN_ID` | `GET /runs/{id}/results` | Unchanged |
 | `infrahub-sync runs artifacts RUN_ID` | `GET /runs/{id}/artifacts` | New |
-| `infrahub-sync runs cancel RUN_ID [--reason R] [--yes]` | `POST /runs/{id}/cancel` | New. Without `--yes`, prompts for confirmation when interactive and refuses (exit 2) when not, because cancelling a write can leave an `ambiguous` outcome. |
+| `infrahub-sync runs cancel RUN_ID [--reason R] [--idempotency-key K] [--yes]` | `POST /runs/{id}/cancel` | New. Without `--yes`, prompts for confirmation when interactive and refuses (exit 2) when not, because cancelling a write can leave an `ambiguous` outcome. |
 | `infrahub-sync whoami` | `GET /me` | New |
 | `infrahub-sync configs list [--name N] [--limit L] [--all]` | `GET /configs` | Adds name column, filter, paging |
 | `infrahub-sync configs versions CONFIG [--limit L] [--all]` | `GET /configs/{id}/versions` | Adds latest run and latest applied run columns, paging |
 
 `--config-id` stays accepted as an alias of `--config` on `plan`, `diff` and `sync`.
+
+`--idempotency-key` on `verify` and `runs cancel` sends the `Idempotency-Key` header, as it
+already does on `apply`, so that a retried request does not start a second verification or
+cancellation.
 
 ## Configuration name resolution
 
