@@ -1,0 +1,25 @@
+infrahub_sync/service/flow.py
+  s_77064a8f1f9fb7::t_e8530d5cf9196a 54-59,263
+infrahub_sync/plan/verify.py
+  s_77064a8f1f9fb7::t_f799de055849ad 56,488-496
+infrahub_sync/plan/write_surface.py
+  s_77064a8f1f9fb7::t_599e42fcbe6197 118
+infrahub_sync/potenda/__init__.py
+  s_77064a8f1f9fb7::t_b9bf4988009fff 102-103,105-106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a5d329f574052f7945bcc082e2de43c4a4b7dd47",
+  "prompts": {},
+  "sessions": {
+    "s_77064a8f1f9fb7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "939dc8cb-70c7-4beb-974f-c09fa514e652",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
