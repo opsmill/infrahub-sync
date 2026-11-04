@@ -200,7 +200,7 @@ $ infrahub-sync configs version [OPTIONS] {CONFIG} {package}
 **Options**:
 
 * `--reason <str>`: Optional audit reason for the mutation.
-* `--idempotency-key <str>`: Retry key. A new key is generated and printed when omitted.
+* `--idempotency-key <str>`: Retry key. A new key is generated and printed when omitted. Retry with the printed config_id: the name follows the newest version, so it can change.
 * `--help`: Show this message and exit.
 
 ### `infrahub-sync configs list`

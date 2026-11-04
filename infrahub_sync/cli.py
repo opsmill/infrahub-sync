@@ -317,10 +317,13 @@ def _is_not_found(error: SyncClientError) -> bool:
     return isinstance(error, APIError) and error.status == 404
 
 
-def _resolve_config(client: SyncClient, value: str) -> ConfigurationSummaryResource:
+def _resolve_config(
+    client: SyncClient, value: str, *, not_found_hint: str | None = None
+) -> ConfigurationSummaryResource:
     """Resolve a configuration ID or name, trying the ID first.
 
     A value that is both one configuration's ID and another's name resolves to the ID.
+    ``not_found_hint`` is printed after the error when nothing matches.
     """
     try:
         return client.get_config(value)
@@ -339,6 +342,8 @@ def _resolve_config(client: SyncClient, value: str) -> ConfigurationSummaryResou
             typer.echo(_display(match.config_id), err=True)
     else:
         typer.echo(_display(f"error: no configuration has the id or name '{value}'"), err=True)
+        if not_found_hint is not None:
+            typer.echo(_display(not_found_hint), err=True)
     raise typer.Exit(2)
 
 
@@ -489,18 +494,31 @@ def configs_version(
     idempotency_key: str | None = typer.Option(
         None,
         "--idempotency-key",
-        help="Retry key. A new key is generated and printed when omitted.",
+        help=(
+            "Retry key. A new key is generated and printed when omitted. Retry with the printed "
+            "config_id: the name follows the newest version, so it can change."
+        ),
     ),
 ) -> None:
     """Create the next immutable version of a registered configuration."""
     with _client_errors():
-        key = _idempotency_key(idempotency_key)
-        _echo_idempotency_key(key)
         request = cast(
             "ConfigMutationRequest",
             _request(ConfigMutationRequest, package=_package(package), reason=reason),
         )
-        config_id = _config_id(ctx, config)
+        # The name follows the newest version's package, so a first attempt that registered a
+        # package with a new name leaves the old name unresolvable. The config_id is printed
+        # with the key, before the mutation, so a retry can name the configuration by it.
+        hint = (
+            None
+            if idempotency_key is None
+            else "hint: retry with the config_id printed by the first attempt; "
+            "the name follows the newest version and can change"
+        )
+        config_id = _resolve_config(_client(ctx), config, not_found_hint=hint).config_id
+        key = _idempotency_key(idempotency_key)
+        _echo_fields((("config_id", config_id),))
+        _echo_idempotency_key(key)
         _echo_registered_version(_client(ctx).create_config_version(config_id, request, key))
 
 

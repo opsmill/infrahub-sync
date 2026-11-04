@@ -38,6 +38,18 @@ Applies to every `CONFIG` argument or `--config` option:
 The identifier is tried before the name, so a value that is both a `config_id` and another
 configuration's name resolves to the identifier. The CLI reference states this order.
 
+### Retrying `configs version` after a rename
+
+A configuration's name follows its newest version's package. If the first attempt of
+`configs version CONFIG PACKAGE` stored a package with a new name and the response was lost,
+the old name no longer resolves on retry. So `configs version` resolves `CONFIG` before it
+sends the request and prints `config_id: <id>` and `idempotency_key: <key>` before the
+mutation. A retry names the configuration by that `config_id`:
+`infrahub-sync configs version <config_id> PACKAGE --idempotency-key <key>`. When
+`--idempotency-key` is given and `CONFIG` matches nothing, the error is followed by
+`hint: retry with the config_id printed by the first attempt; the name follows the newest
+version and can change`.
+
 ## Output
 
 - `runs list` prints one row per run: `run_id`, `config_id@version` (or `-`), branch (or `-`),

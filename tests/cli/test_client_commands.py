@@ -1519,6 +1519,55 @@ def test_configuration_with_no_identifier_or_name_match_is_refused(
     target(client).assert_not_called()
 
 
+def test_configs_version_retry_after_a_rename_uses_the_printed_config_id(client: MagicMock, tmp_path: Path) -> None:
+    """The name follows the newest version, so the first attempt can rename the configuration."""
+    package = tmp_path / "package.yaml"
+    package.write_text("name: renamed\n", encoding="utf-8")
+    names = {"cfg-1": "from netbox"}
+
+    def get_config(value: str) -> ConfigurationSummaryResource:
+        if value not in names:
+            raise ConfigsAPIError(404, "configuration-not-found", "not-found", "unknown")
+        return ConfigurationSummaryResource(config_id=value, created_at=NOW, name=names[value])
+
+    def iter_configs(*, name: str, **_kwargs: object) -> Iterator[ConfigurationSummaryResource]:
+        return iter(
+            ConfigurationSummaryResource(config_id=config_id, created_at=NOW, name=current)
+            for config_id, current in names.items()
+            if current == name
+        )
+
+    def stored_then_lost(*_args: object) -> RegisteredVersionResource:
+        # The service stores the version, which renames the configuration, and the response is lost.
+        names["cfg-1"] = "renamed"
+        operation = "create_config_version"
+        raise TransportError(operation)
+
+    client.get_config.side_effect = get_config
+    client.iter_configs.side_effect = iter_configs
+    client.create_config_version.side_effect = stored_then_lost
+
+    first = _invoke(client, "configs", "version", "from netbox", str(package))
+    key = client.create_config_version.call_args.args[2]
+    by_name = _invoke(client, "configs", "version", "from netbox", str(package), "--idempotency-key", key)
+    client.create_config_version.side_effect = None
+    by_id = _invoke(client, "configs", "version", "cfg-1", str(package), "--idempotency-key", key)
+
+    assert first.exit_code == 1
+    assert "config_id: cfg-1" in first.stdout
+    assert f"idempotency_key: {key}" in first.stdout
+    assert by_name.exit_code == 2
+    assert by_name.stderr.splitlines() == [
+        "error: no configuration has the id or name 'from netbox'",
+        "hint: retry with the config_id printed by the first attempt; "
+        "the name follows the newest version and can change",
+    ]
+    assert by_id.exit_code == 0, by_id.output
+    assert client.create_config_version.call_count == 2
+    assert client.create_config_version.call_args.args[0] == "cfg-1"
+    assert client.create_config_version.call_args.args[2] == key
+
+
 def test_configuration_lookup_errors_other_than_not_found_are_reported(client: MagicMock) -> None:
     client.get_config.side_effect = ConfigsAPIError(403, "forbidden", "authorization", "denied")
 
