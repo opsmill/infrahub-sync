@@ -14,9 +14,11 @@ with the artifact before any of its contents are interpreted:
 4. a `format_version` outside `SUPPORTED_FORMAT_VERSIONS` → `PlanFormatVersionError`
    listing the versions supported, deliberately distinct in wording from (1) because the
    remedies differ (FR-027, SC-018);
-5. a manifest whose `last_changes` field names a `last_changes.jsonl` that is absent, whose
-   digest or record count differs, or whose records do not name an update of the plan →
-   `PlanArtifactTornError` naming the file, so review and apply refuse it (FR-007);
+5. a manifest whose `last_changes` field names a `last_changes.jsonl` that is absent, or
+   whose digest or record count differs → `PlanArtifactTornError` naming the file, so review
+   and apply refuse it (FR-007). A file that matches but whose records fail the content
+   checks is not refused: the file is display-only, so the reader reports the first bad line
+   in `LoadedPlan.last_changes_problem` and review shows it as a note;
 6. an operation whose `action` is outside `ACTIONS` → `UnsupportedOperationActionError`
    listing `ACTIONS`. This is what puts FR-017's genuinely-unsupported class **before any
    destination write**, and because the review path reads through this same function, an
@@ -88,7 +90,9 @@ class LoadedPlan:
     re-encode the artifact and risk a re-encoding that differs from what was hashed.
 
     `last_changes` holds the records of `last_changes.jsonl`, or `None` for a plan whose
-    manifest has no `last_changes` field (FR-007).
+    manifest has no `last_changes` field (FR-007). It is also `None` when the file matches
+    its digest but a record fails the content checks; `last_changes_problem` then names the
+    first bad line and the reason, which review shows as a verification note.
     """
 
     manifest: PlanManifest
@@ -96,6 +100,7 @@ class LoadedPlan:
     manifest_mapping: dict[str, Any]
     operations_bytes: bytes
     last_changes: list[LastChangeRecord] | None = None
+    last_changes_problem: str | None = None
 
 
 @dataclass(frozen=True)
@@ -486,21 +491,30 @@ def _parse_operations(
 
 def _parse_last_changes(
     raw: RawPlanArtifact, manifest: PlanManifest, operations: Sequence[PlannedOperation], run_id: str
-) -> list[LastChangeRecord] | None:
-    """Check `last_changes.jsonl` against the manifest and return its records (FR-007).
+) -> tuple[list[LastChangeRecord] | None, str | None]:
+    """Check `last_changes.jsonl` against the manifest and return `(records, problem)` (FR-007).
 
-    `None` when the manifest has no `last_changes` field: the plan was made before the file
-    existed, or its destination keeps no last changes. The digest is part of the checksummed
-    manifest, so a file that does not match it was changed after the plan was written.
+    `(None, None)` when the manifest has no `last_changes` field: the plan was made before
+    the file existed, or its destination keeps no last changes.
 
-    Each record must name an update of the plan and a field that update writes, with the
-    matching field type, and no field of an update may have two records. An update field
-    with no record is accepted: the payload holds every source attribute, not only the
-    changed ones, so the operations alone do not show which fields must have a record.
+    Integrity is refused: the digest is part of the checksummed manifest, so a file that is
+    absent, or whose digest or record count does not match, was changed after the plan was
+    written, and review and apply refuse it.
+
+    Content is not refused. The file is display-only and apply never reads it, so a record
+    that fails the checks below — a writer bug, since the digest matches — must not block
+    review or apply. The first bad line's reason comes back as `problem`, with `records`
+    `None`, so review shows one warning and no last-change details at all.
+
+    Each record must be a JSON object, a valid `LastChangeRecord`, name an update of the
+    plan and a field that update writes, with the matching field type, and no field of an
+    update may have two records. An update field with no record is accepted: the payload
+    holds every source attribute, not only the changed ones, so the operations alone do not
+    show which fields must have a record.
     """
     record = manifest.last_changes
     if record is None:
-        return None
+        return None, None
     mismatch, lines = _checked_last_change_lines(record, raw.last_changes_bytes)
     if mismatch is not None:
         raise _torn(
@@ -520,47 +534,37 @@ def _parse_last_changes(
     line_by_field: dict[tuple[str, str], int] = {}
     records: list[LastChangeRecord] = []
     for number, line in enumerate(lines, start=1):
-        try:
-            change = LastChangeRecord.model_validate(json.loads(line))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise _torn(
-                run_id,
-                f"{LAST_CHANGES_FILE_NAME} line {number} is not parseable JSON",
-                expected="one canonical JSON object per line",
-                found=f"unparseable text on line {number}",
-            ) from exc
-        except ValidationError as exc:
-            raise _torn(
-                run_id,
-                f"{LAST_CHANGES_FILE_NAME} line {number} is not a valid last-change record",
-                expected="a complete last-change record",
-                found=f"line {number} — {_describe_validation_error(exc)}",
-            ) from exc
-        if change.operation_id not in updates:
-            raise _torn(
-                run_id,
-                f"{LAST_CHANGES_FILE_NAME} line {number} names no update of this plan",
-                expected="the operation id of an update in operations.jsonl",
-                found=f"operation {change.operation_id!r}",
-            )
-        if (change.field, change.field_type) not in updates[change.operation_id]:
-            raise _torn(
-                run_id,
-                f"{LAST_CHANGES_FILE_NAME} line {number} names a field its update does not write",
-                expected="an attribute in the update's payload or a relationship it records",
-                found=f"{change.field_type} {change.field!r} of operation {change.operation_id!r}",
-            )
-        first_line = line_by_field.get((change.operation_id, change.field))
-        if first_line is not None:
-            raise _torn(
-                run_id,
-                f"{LAST_CHANGES_FILE_NAME} repeats field {change.field!r} of operation {change.operation_id!r}",
-                expected="at most one record for each field of an update",
-                found=f"field {change.field!r} on both line {first_line} and line {number}",
-            )
+        change = _checked_last_change(line, updates, line_by_field)
+        if isinstance(change, str):
+            return None, f"{LAST_CHANGES_FILE_NAME} line {number} {change}"
         line_by_field[change.operation_id, change.field] = number
         records.append(change)
-    return records
+    return records, None
+
+
+def _checked_last_change(
+    line: bytes, updates: dict[str, set[tuple[str, str]]], line_by_field: dict[tuple[str, str], int]
+) -> LastChangeRecord | str:
+    """Parse one last-change line, or return why its content is bad, after the line number."""
+    try:
+        change = LastChangeRecord.model_validate(json.loads(line))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return "is not parseable JSON"
+    except ValidationError as exc:
+        return f"is not a valid last-change record ({_describe_validation_error(exc)})"
+    if change.operation_id not in updates:
+        return f"names no update of this plan (operation {change.operation_id!r})"
+    if (change.field, change.field_type) not in updates[change.operation_id]:
+        return (
+            "names a field its update does not write "
+            f"({change.field_type} {change.field!r} of operation {change.operation_id!r})"
+        )
+    first_line = line_by_field.get((change.operation_id, change.field))
+    if first_line is not None:
+        return (
+            f"repeats field {change.field!r} of operation {change.operation_id!r} (first recorded on line {first_line})"
+        )
+    return change
 
 
 def require_plan_directory(run_dir: Path) -> Path:
@@ -618,9 +622,9 @@ def parse_plan_artifact(raw: RawPlanArtifact, *, run_id: str) -> LoadedPlan:
         PlanArtifactTornError: the artifact is incomplete or inconsistent — a missing or
             malformed manifest, an absent operations file, a line count disagreeing with
             `operations_count`, or an operations line that fails record validation for a
-            reason other than its action (FR-010); or a `last_changes.jsonl` that does not
-            match the manifest's record of it, or holds a record for a field no update of
-            the plan writes, or two records for one field of an update (FR-007).
+            reason other than its action (FR-010); or a `last_changes.jsonl` that is absent
+            or does not match the manifest's digest or record count (FR-007). A record that
+            fails the content checks is not refused: see `LoadedPlan.last_changes_problem`.
         PlanFormatVersionError: `format_version` is outside `SUPPORTED_FORMAT_VERSIONS`
             (FR-027).
         UnsupportedOperationActionError: an operation's `action` is outside `ACTIONS`,
@@ -629,12 +633,14 @@ def parse_plan_artifact(raw: RawPlanArtifact, *, run_id: str) -> LoadedPlan:
     """
     manifest, mapping = _parse_manifest(raw, run_id)
     operations, operations_bytes = _parse_operations(raw, manifest, run_id)
+    last_changes, last_changes_problem = _parse_last_changes(raw, manifest, operations, run_id)
     return LoadedPlan(
         manifest=manifest,
         operations=operations,
         manifest_mapping=mapping,
         operations_bytes=operations_bytes,
-        last_changes=_parse_last_changes(raw, manifest, operations, run_id),
+        last_changes=last_changes,
+        last_changes_problem=last_changes_problem,
     )
 
 

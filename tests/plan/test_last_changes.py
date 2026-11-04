@@ -11,21 +11,29 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from infrahub_sync.plan.canonical import canonical_json_bytes
+from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.derive import operations_from_diff
 from infrahub_sync.plan.errors import PlanArtifactTornError
 from infrahub_sync.plan.last_changes import LastChange, LastChangeCollector
 from infrahub_sync.plan.models import LastChangeRecord, PlanManifest, RecordedAccountRecord
-from infrahub_sync.plan.reader import read_plan_artifact_bytes
+from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import read_saved_plan, resolve_run_directory
 from infrahub_sync.plan.verify import verify_plan
 from infrahub_sync.plan.write_surface import destination_last_changes
-from infrahub_sync.plan.writer import LAST_CHANGES_FILE_NAME, MANIFEST_FILE_NAME, PLAN_DIR_NAME, write_plan_artifact
+from infrahub_sync.plan.writer import (
+    LAST_CHANGES_FILE_NAME,
+    MANIFEST_FILE_NAME,
+    OPERATIONS_FILE_NAME,
+    PLAN_DIR_NAME,
+    write_plan_artifact,
+)
 from tests.plan.artifact_fixtures import CONFIG_VERSION, RUN_ID, SYNC_NAME
 from tests.test_potenda_plan_artifact import (
     DERIVED_DESTINATION_ID,
@@ -322,45 +330,152 @@ def test_review_refuses_a_missing_file_the_manifest_names(tmp_path: Path) -> Non
         read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, base_directory=tmp_path)
 
 
-def _first_record_with(**changes: str) -> Callable[[list[LastChangeRecord]], list[LastChangeRecord]]:
-    """Replace the first record's field or field type, keeping the others."""
-    return lambda records: [records[0].model_copy(update=changes), *records[1:]]
-
-
-@pytest.mark.parametrize(
-    ("edit", "message"),
-    [
-        pytest.param(
-            lambda records: [*records, records[0]],
-            r"last_changes\.jsonl repeats field 'model' of operation",
-            id="duplicate-field",
-        ),
-        pytest.param(
-            _first_record_with(field="serial"),
-            r"last_changes\.jsonl line 1 names a field its update does not write",
-            id="field-not-in-the-update",
-        ),
-        pytest.param(
-            _first_record_with(field_type="relationship"),
-            r"last_changes\.jsonl line 1 names a field its update does not write",
-            id="attribute-recorded-as-a-relationship",
-        ),
-        pytest.param(
-            _first_record_with(field="tags", field_type="attribute"),
-            r"last_changes\.jsonl line 1 names a field its update does not write",
-            id="relationship-recorded-as-an-attribute",
-        ),
-    ],
-)
-def test_review_refuses_a_record_that_does_not_match_its_update(
-    tmp_path: Path, edit: Callable[[list[LastChangeRecord]], list[LastChangeRecord]], message: str
-) -> None:
+def test_review_refuses_a_file_whose_record_count_does_not_match(tmp_path: Path) -> None:
     operations, records = _update_operations()
-    ordered = sorted(records, key=lambda record: (record.operation_id, record.field))
-    _write(tmp_path, last_changes=edit(ordered), operations=operations)
+    directory = _write(tmp_path, last_changes=records, operations=operations)
+    path = directory / PLAN_DIR_NAME / LAST_CHANGES_FILE_NAME
+    # Drop a line and record the new digest, but keep the old count: only the count disagrees.
+    lines = path.read_bytes().splitlines(keepends=True)
+    _replace_last_change_lines(directory, lines[1:], count=len(lines))
 
-    with pytest.raises(PlanArtifactTornError, match=message):
+    with pytest.raises(PlanArtifactTornError, match=r"last_changes\.jsonl does not match the manifest's record of it"):
         read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, base_directory=tmp_path)
+    failures = verify_plan(artifact=read_plan_artifact_bytes(directory), run_id=RUN_ID, config_version=CONFIG_VERSION)
+    assert [failure.check for failure in failures] == ["last_changes"]
+
+
+def _replace_last_change_lines(directory: Path, lines: Sequence[bytes], *, count: int | None = None) -> None:
+    """Write `lines` as the last-change file and record its digest, so the file matches.
+
+    The manifest's digest and count are updated and its `plan_checksum` recomputed, which is
+    what a writer that produced these lines would have written: only the content is bad.
+    """
+    sidecar = b"".join(lines)
+    (directory / PLAN_DIR_NAME / LAST_CHANGES_FILE_NAME).write_bytes(sidecar)
+    manifest_file = directory / PLAN_DIR_NAME / MANIFEST_FILE_NAME
+    manifest = json.loads(manifest_file.read_bytes())
+    manifest["last_changes"]["sha256"] = hashlib.sha256(sidecar).hexdigest()
+    manifest["last_changes"]["count"] = len(lines) if count is None else count
+    operations_bytes = (directory / PLAN_DIR_NAME / OPERATIONS_FILE_NAME).read_bytes()
+    manifest["plan_checksum"] = compute_plan_checksum(manifest, operations_bytes)
+    manifest_file.write_bytes(canonical_json_bytes(manifest))
+
+
+def _record_lines(records: Sequence[LastChangeRecord]) -> list[bytes]:
+    return [canonical_json_bytes(record.model_dump(mode="json")) + b"\n" for record in records]
+
+
+def _ordered_records() -> tuple[list[PlannedOperation], list[LastChangeRecord]]:
+    operations, records = _update_operations()
+    return operations, sorted(records, key=lambda record: (record.operation_id, record.field))
+
+
+# Each case: the bad last-change file's lines, built from the ordered good records, and the
+# note review must show. Every bad line here is the last line, so removing it gives the plan
+# SC-001 compares against.
+_CONTENT_FAILURES = [
+    pytest.param(
+        lambda records: [*_record_lines(records), _record_lines(records)[0]],
+        r"^last_changes\.jsonl line 4 repeats field 'model' of operation 'op_[0-9a-f]+' "
+        r"\(first recorded on line 1\); last-change details are not shown$",
+        id="duplicate-field",
+    ),
+    pytest.param(
+        lambda records: [
+            *_record_lines(records),
+            _record_lines([records[0].model_copy(update={"field": "serial"})])[0],
+        ],
+        r"^last_changes\.jsonl line 4 names a field its update does not write \(attribute 'serial' of operation",
+        id="field-not-in-the-update",
+    ),
+    pytest.param(
+        lambda records: [
+            *_record_lines(records),
+            _record_lines([records[0].model_copy(update={"field_type": "relationship"})])[0],
+        ],
+        r"^last_changes\.jsonl line 4 names a field its update does not write \(relationship 'model'",
+        id="attribute-recorded-as-a-relationship",
+    ),
+    pytest.param(
+        lambda records: [
+            *_record_lines(records),
+            _record_lines([records[0].model_copy(update={"operation_id": "op_ffffffffffffffff"})])[0],
+        ],
+        r"^last_changes\.jsonl line 4 names no update of this plan \(operation 'op_ffffffffffffffff'\)",
+        id="no-such-update",
+    ),
+    pytest.param(
+        lambda records: [*_record_lines(records), b"{not json\n"],
+        r"^last_changes\.jsonl line 4 is not parseable JSON; last-change details are not shown$",
+        id="not-json",
+    ),
+    pytest.param(
+        lambda records: [*_record_lines(records), b'{"field":"\xff"}\n'],
+        r"^last_changes\.jsonl line 4 is not parseable JSON; last-change details are not shown$",
+        id="not-utf-8",
+    ),
+    pytest.param(
+        lambda records: [*_record_lines(records), b'{"operation_id":"op_0"}\n'],
+        r"^last_changes\.jsonl line 4 is not a valid last-change record \(operation_id: ",
+        id="not-a-record",
+    ),
+]
+
+
+@pytest.mark.parametrize(("bad_lines", "note"), _CONTENT_FAILURES)
+def test_review_shows_one_note_and_no_last_changes_for_a_bad_record(
+    tmp_path: Path, bad_lines: Callable[[list[LastChangeRecord]], list[bytes]], note: str
+) -> None:
+    """A file that matches its digest but holds a bad record is shown, not refused."""
+    operations, records = _ordered_records()
+    directory = _write(tmp_path, last_changes=records, operations=operations)
+    _replace_last_change_lines(directory, bad_lines(records))
+
+    saved = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, base_directory=tmp_path)
+
+    assert saved.checksum_ok
+    assert saved.last_changes is None
+    assert len(saved.verification_notes) == 1
+    assert re.search(note, saved.verification_notes[0])
+    assert sorted(operation.operation_id for operation in saved.operations()) == sorted(
+        operation.operation_id for operation in operations
+    )
+
+
+@pytest.mark.parametrize(("bad_lines", "note"), _CONTENT_FAILURES)
+def test_apply_reads_a_plan_with_a_bad_record_as_the_plan_without_it(
+    tmp_path: Path, bad_lines: Callable[[list[LastChangeRecord]], list[bytes]], note: str
+) -> None:
+    """SC-001: the plan passes verification and parses to the same operations."""
+    del note
+    operations, records = _ordered_records()
+    good = _write(tmp_path / "good", last_changes=records, operations=operations)
+    bad = _write(tmp_path / "bad", last_changes=records, operations=operations)
+    _replace_last_change_lines(bad, bad_lines(records))
+
+    good_raw, bad_raw = read_plan_artifact_bytes(good), read_plan_artifact_bytes(bad)
+
+    assert verify_plan(artifact=bad_raw, run_id=RUN_ID, config_version=CONFIG_VERSION) == []
+    good_plan = parse_plan_artifact(good_raw, run_id=RUN_ID)
+    bad_plan = parse_plan_artifact(bad_raw, run_id=RUN_ID)
+    assert bad_plan.operations == good_plan.operations
+    assert bad_plan.operations_bytes == good_plan.operations_bytes
+    assert bad_plan.last_changes is None
+    assert bad_plan.last_changes_problem is not None
+    assert good_plan.last_changes_problem is None
+
+
+def test_review_names_the_first_bad_line(tmp_path: Path) -> None:
+    operations, records = _ordered_records()
+    directory = _write(tmp_path, last_changes=records, operations=operations)
+    lines = _record_lines(records)
+    _replace_last_change_lines(directory, [lines[0], b"{not json\n", lines[1], lines[0]])
+
+    saved = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, base_directory=tmp_path)
+
+    assert saved.verification_notes == [
+        "last_changes.jsonl line 2 is not parseable JSON; last-change details are not shown"
+    ]
 
 
 def test_review_accepts_an_update_field_with_no_record(tmp_path: Path) -> None:

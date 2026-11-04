@@ -214,13 +214,25 @@ then `field`, so the same plan inputs give the same bytes; zero records encode t
 
 A `null` is rendered as `not recorded`. For a cardinality-many relationship the record is the edge
 that changed most recently. The checksum covers the file through the manifest's `last_changes.sha256`.
-Review and the pre-apply check (`last_changes`) both refuse a plan whose file is absent, or whose
-digest or record count differs from the manifest's record. Reading the plan, for review and for
-apply, also refuses a record that names no update of the plan, a record whose field its update does
-not write (an `attribute` not in the update's `payload`, or a `relationship` not in its
-`relationships`), and a second record for the same field of an update. An update field with no
-record is accepted: the payload holds every source attribute, not only the changed ones, so the
-operations do not show which fields must have a record.
+The reader splits the file's checks in two:
+
+- Integrity checks refuse the plan. Review and the pre-apply check (`last_changes`) both refuse a
+  plan whose file is absent, or whose digest or record count differs from the manifest's record,
+  because such a file was changed after the plan was written.
+- Content checks do not refuse it. A file that matches its digest but holds a bad record comes from
+  a writer bug, and apply does not read the file, so the plan stays reviewable and appliable. A bad
+  record is a line that is not UTF-8 JSON, that fails `LastChangeRecord` validation, that names no
+  update of the plan, whose field its update does not write (an `attribute` not in the update's
+  `payload`, or a `relationship` not in its `relationships`), or that repeats a field of an update.
+  The reader stops at the first bad line and sets `LoadedPlan.last_changes` to `None` and
+  `LoadedPlan.last_changes_problem` to the line number and the reason. Review adds one
+  verification note, for example `last_changes.jsonl line 4 repeats field 'name' of operation
+  'op-12' (first recorded on line 2); last-change details are not shown`, and shows no last-change
+  details for any field. The Sync API sends that note in `PlanResource.verification_notes` with
+  `last_changes: null`. Apply reads the same plan as the plan without the bad line.
+
+An update field with no record is accepted: the payload holds every source attribute, not only the
+changed ones, so the operations do not show which fields must have a record.
 
 ### Determinism
 

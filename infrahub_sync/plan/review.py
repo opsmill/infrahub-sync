@@ -76,7 +76,9 @@ class SavedPlan:
         last_changes: The records of `last_changes.jsonl`: who last changed each field each
             update proposes to change, and when (FR-007). `None` for a plan without the file,
             which review shows without last-change data. A file that does not match the
-            manifest's digest is refused while reading, not noted.
+            manifest's digest or count is refused while reading, not noted. A file that
+            matches but holds a bad record is `None` too, with a verification note naming
+            the first bad line and the reason.
     """
 
     def __init__(
@@ -390,7 +392,8 @@ def read_saved_plan(
             stored runs (AD073).
         PlanFormatV1Error: the run exists but holds no `plan/` directory (FR-019).
         PlanArtifactTornError: the artifact is present but incomplete (FR-010), or its
-            `last_changes.jsonl` does not match the manifest's digest or count (FR-007).
+            `last_changes.jsonl` is absent or does not match the manifest's digest or count
+            (FR-007).
         PlanFormatVersionError: the artifact's `format_version` is unsupported (FR-027).
         PlanArtifactUnreadableError: a path exists but could not be read (AD036).
         UnsupportedOperationActionError: an operation's `action` is outside `ACTIONS`. The
@@ -423,6 +426,11 @@ def read_saved_plan(
         _snapshot_note(failure)
         for failure in source_snapshot_failures(run_id=run_id, run_dir=directory, mapping=loaded.manifest_mapping)
     )
+    # A last-change file that matches its digest but holds a bad record is display-only
+    # data the apply never reads, so review shows the operations, this one warning and no
+    # last-change details, rather than refusing the plan (FR-007).
+    if loaded.last_changes_problem is not None:
+        notes.append(f"{loaded.last_changes_problem}; last-change details are not shown")
     declared_kinds = None if config is None else [entry.name for entry in config.schema_mapping]
     return SavedPlan(
         manifest=loaded.manifest,

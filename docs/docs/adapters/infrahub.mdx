@@ -279,6 +279,7 @@ A relationship edge that Infrahub allocates from a resource pool is the one exce
     - Infrahub records this metadata from version 1.7.0. On an earlier version, or when the plan cannot read the Infrahub version, the import does not read the metadata, and every field shows `not recorded`.
     - On Infrahub 1.11.9, only a relationship with no edge shows `not recorded`.
 - The plan only displays this record. It does not stop a change.
+- When a saved record is inconsistent, for example two records for one field, `runs plan` shows the operations and one `verification_note:` line that names the line of `last_changes.jsonl` and the reason, and shows no last-change lines. An apply of that plan goes ahead.
 - When the import reads this record, on Infrahub 1.7.0 or later, it reads the destination in full on every plan and does not use the incremental read.
 
 ### Permissions of the import account

@@ -1279,6 +1279,20 @@ def test_runs_plan_detail_of_an_older_plan_shows_no_last_change_lines(client: Ma
     assert "last change:" not in result.output
 
 
+def test_runs_plan_detail_of_a_plan_with_a_bad_last_change_record_shows_the_warning(client: MagicMock) -> None:
+    """A bad record shows one warning and the operations, never a "not recorded" line."""
+    note = "last_changes.jsonl line 4 repeats field 'name' of operation 'op-12'; last-change details are not shown"
+    plan = _plan_with_an_update(None)
+    client.get_plan.return_value = plan.model_copy(update={"verification_notes": (note,)})
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert f"verification_note: {note}" in result.output.splitlines()
+    assert "last change:" not in result.output
+    assert all(operation.operation_id in result.output for operation in plan.operations)
+
+
 def test_runs_plan_summary_shows_no_last_change_lines(client: MagicMock) -> None:
     """Without `--detail` the review stays a summary, however many fields a plan changes."""
     client.get_plan.return_value = _plan_with_an_update((_last_change("site", "relationship", None, None),))

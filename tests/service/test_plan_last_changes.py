@@ -82,3 +82,16 @@ def test_the_review_of_an_older_plan_omits_last_changes() -> None:
     published = json.loads(document.model_dump_json())
     published.pop("last_changes")
     assert PlanResource.model_validate(published).last_changes is None
+
+
+def test_the_review_of_a_plan_with_a_bad_last_change_record_carries_the_note() -> None:
+    """A bad record publishes no records and the reader's note, in the existing field."""
+    note = "last_changes.jsonl line 4 repeats field 'name' of operation 'op-12'; last-change details are not shown"
+    saved = _saved(None)
+    saved.verification_notes.append(note)
+
+    document = service_flow._review_document(RUN_ID, saved)
+
+    assert document.last_changes is None
+    assert document.verification_notes == (note,)
+    assert document.checksum_ok
