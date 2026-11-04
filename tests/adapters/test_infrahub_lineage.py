@@ -437,8 +437,10 @@ def test_a_plan_resolves_lineage_before_either_side_is_loaded(tmp_path: Path, *,
     destination = _ordered_side("destination", events)
     # Assigned, not configured through attribute access: on Python 3.12 and later, the
     # `runtime_checkable` protocol check reads attributes statically and does not find a
-    # child mock that `MagicMock` creates on first access.
+    # child mock that `MagicMock` creates on first access. Both members of
+    # `LineageResolvingDestination` are needed.
     destination.resolve_lineage = MagicMock(side_effect=lambda **_: events.append("resolve_lineage"))
+    destination.lineage_record = None
     engine = Potenda(
         source=source,
         destination=destination,
@@ -463,6 +465,7 @@ def test_a_lineage_refusal_stops_the_plan_before_the_source_is_read(tmp_path: Pa
     destination.resolve_lineage = MagicMock(
         side_effect=NodeNotFoundError(identifier={"name__value": ["missing"]}, node_type="CoreAccountGroup")
     )
+    destination.lineage_record = None
     engine = Potenda(
         source=source,
         destination=destination,
