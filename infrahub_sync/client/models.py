@@ -102,7 +102,7 @@ class ConfigMutationRequest(_RequestModel):
 
     @field_validator("reason")
     @classmethod
-    def _require_reason(cls, value: str | None) -> str | None:
+    def _validate_reason(cls, value: str | None) -> str | None:
         if value is not None and (value != value.strip() or not value.isprintable()):
             raise ValueError(_REASON_MESSAGE)
         return value
