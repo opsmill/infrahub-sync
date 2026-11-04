@@ -448,9 +448,13 @@ def destination_binding_failure(
 
     Evaluated at the apply seam (`PlanApplier`), not inside `verify_plan`: like
     `write_surface`, its subject is the destination adapter rather than the artifact, but
-    unlike every `verify_plan` check it is also **overridable** — the CLI's
-    `--allow-destination-change` exists for a deliberate cross-environment apply — so it
-    cannot sit behind a gate whose non-empty result is an unconditional refusal.
+    unlike every `verify_plan` check it is also **overridable** — a direct Python caller of
+    `execute_run` can pass `allow_destination_change=True` to apply to the same Infrahub
+    instance reached through another URL or on another branch — so it cannot sit behind a
+    gate whose non-empty result is an unconditional refusal. The override cannot carry a plan
+    to another Infrahub instance: that instance has its own import account, so apply still
+    refuses with `ImportAccountMismatchError` (FR-012). The CLI and the Sync API do not
+    expose the override, so the refusal's next action asks for a new plan.
 
     Returns `None` — the check is skipped, not passed — when the manifest is absent or
     unparseable (the format gate owns that verdict), when it predates the field, or when
@@ -479,8 +483,9 @@ def destination_binding_failure(
         expected=f"url {recorded_binding.url!r}, branch {recorded_binding.branch!r}",
         found=f"url {live.url!r}, branch {live.branch!r}",
         next_action=(
-            "Re-run `diff` against this destination to rebuild the plan artifact, or pass "
-            "`--allow-destination-change` to deliberately apply it across environments."
+            "Re-run `diff` against this destination to create a new plan, and review it. "
+            "A plan made against another Infrahub instance cannot be applied here, because "
+            "that instance records changes under its own import account."
         ),
     )
 

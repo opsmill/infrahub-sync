@@ -446,7 +446,9 @@ class PlanApplier:
 
         The binding precheck compares the manifest's recorded destination against the live
         adapter's and refuses on a mismatch; `allow_destination_change` turns that refusal into
-        a logged warning for a deliberate cross-environment apply. Plans without the recorded
+        a logged warning, for an apply to the same Infrahub instance through another URL or on
+        another branch. It cannot carry a plan to another instance: the engine still refuses on
+        the import account (FR-012). Plans without the recorded
         field, and destinations that expose no binding, skip the check.
 
         `expected_checksum` travels to the engine rather than being answered here, so the
@@ -486,7 +488,7 @@ class PlanApplier:
         if allow_destination_change:
             logger.warning(
                 "Applying run %s to a different destination than it was planned against: "
-                "recorded %s; live %s (--allow-destination-change).",
+                "recorded %s; live %s (allow_destination_change).",
                 self.run_id,
                 failure.expected,
                 failure.found,
