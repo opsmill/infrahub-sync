@@ -168,7 +168,8 @@ All paths are relative to the repository root on `015-run-discovery-api` (based 
   tags (`opsmill_prefect_extras/executors.py:589-617`) and the vendored copy must stay
   byte-identical to upstream (`opsmill_prefect_extras/VENDORED.md`). Prefect's
   `update_flow_run(..., tags=...)` replaces the tag list instead of merging.
-- **Decision**: extend `_title` (`orchestration.py:184-205`) to read the flow run's current
+- **Decision** (superseded by the revised decision below): extend `_title`
+  (`orchestration.py:184-205`) to read the flow run's current
   tags (`read_flow_run`) and call
   `update_flow_run(flow_run_id, name=..., tags=sorted(current_tags | run_tags))`, and widen
   the `_NamingClient` protocol. Taking the union keeps the deployment's tags and any tag an
@@ -178,6 +179,25 @@ All paths are relative to the repository root on `015-run-discovery-api` (based 
 - **Rationale**: no change to vendored code; one API call already exists at that point.
 - **Alternatives considered**: tags at creation through the executor (requires changing
   upstream `opsmill-prefect-extras` first).
+- **Revised decision** (follow-up, 2026-11-04): set the title and the run tags when the flow run
+  is created, without changing the vendored executor. `PrefectOrchestration.submit` wraps the
+  injected `RemoteExecutionClient` in `_LabelledCreationClient`, which passes every call
+  through and adds `name=` and `tags=` to `create_flow_run_from_deployment`. The executor is
+  built per submission from that wrapper (`executor_factory`, default `RemoteWorkflowExecutor`).
+  `_title`, `_current_tags`, the `read_flow_run` before the update and the `update_flow_run`
+  call are removed.
+- **Finding**: Prefect 3.8.6's `PrefectClient.create_flow_run_from_deployment` accepts `name`
+  and `tags`, and the server creates the run with
+  `tags=set(deployment.tags).union(flow_run.tags)`
+  (`prefect/server/api/deployments.py`). The resulting tag set is the one the update wrote:
+  the deployment's tags, including a tag an operator added to the deployment, plus the run
+  tags. The previous fallback to `SERVICE_DEFINITION.tags` when the current tags could not be
+  read, which could drop operator tags, no longer exists. A replay with the same idempotency
+  key returns the flow run Prefect created first, with its original title and tags.
+  `tests/integration/test_service_prefect_idempotency.py` checks the name and tag set against
+  Prefect's temporary server.
+- **FR-012**: there is no separate tagging call that can fail after Prefect accepted the run.
+  The tags travel in the creation request, which fails or succeeds as it did before.
 
 ## R10. Token check
 

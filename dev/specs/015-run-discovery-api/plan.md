@@ -94,7 +94,7 @@ infrahub_sync/
 │   ├── config_routes.py  # paged /configs and /versions, name filter
 │   ├── models.py         # bounded emitted variants for the new resources
 │   ├── paging.py         # NEW: cursor encode/decode, filter digest, limit validation
-│   └── orchestration.py  # tags in _title
+│   └── orchestration.py  # tags at flow-run creation
 ├── client/
 │   ├── models.py         # page and summary resources, PrincipalResource
 │   └── client.py         # list_runs, iter pages, me, paged config lists

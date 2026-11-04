@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from math import isfinite
-from typing import Any, Final, Protocol, cast
+from typing import TYPE_CHECKING, Any, Final, Protocol, cast
 from uuid import UUID
 
 import httpx
@@ -26,7 +25,8 @@ from prefect.client.schemas.responses import (
 from prefect.exceptions import ObjectNotFound
 from prefect.states import Cancelling
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 SERVICE_FLOW_NAME = "infrahub-sync-service"
 SERVICE_DEPLOYMENT_NAME = "run"
@@ -178,14 +178,62 @@ def run_tags(parameters: dict[str, object]) -> frozenset[str]:
     return frozenset(tags)
 
 
-class _NamingClient(Protocol):
-    """The Prefect client methods that title and tag an accepted flow run."""
+class _LabellingClient(Protocol):
+    """The Prefect flow-run creation call with the title and tags Prefect accepts at creation."""
 
-    async def read_flow_run(self, flow_run_id: UUID) -> Any: ...
+    async def create_flow_run_from_deployment(
+        self,
+        deployment_id: UUID,
+        *,
+        parameters: dict[str, Any],
+        idempotency_key: str | None = None,
+        name: str | None = None,
+        tags: list[str] | None = None,
+    ) -> Any: ...
 
-    async def update_flow_run(
-        self, flow_run_id: UUID, *, name: str, tags: list[str] | None = None
-    ) -> httpx.Response: ...
+
+class _LabelledCreationClient:
+    """Pass the executor's Prefect calls through, adding one run's title and tags at creation.
+
+    The vendored executor creates the flow run without a name or tags, and its copy must stay
+    identical to upstream. Prefect's ``create_flow_run_from_deployment`` accepts both; the
+    server gives the run the union of the deployment's tags and these, so the deployment's
+    tags, including any an operator added to the deployment, are kept.
+    """
+
+    def __init__(self, client: RemoteExecutionClient, *, name: str, tags: list[str]) -> None:
+        self._client = client
+        self._name = name
+        self._tags = tags
+
+    async def read_deployment_by_name(self, name: str) -> Any:
+        """Read the deployment unchanged."""
+        return await self._client.read_deployment_by_name(name)
+
+    async def create_flow_run_from_deployment(
+        self,
+        deployment_id: UUID,
+        *,
+        parameters: dict[str, Any],
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Create the flow run with this run's title and tags."""
+        client = cast("_LabellingClient", self._client)
+        return await client.create_flow_run_from_deployment(
+            deployment_id,
+            parameters=parameters,
+            idempotency_key=idempotency_key,
+            name=self._name,
+            tags=self._tags,
+        )
+
+    async def read_flow_run(self, flow_run_id: UUID) -> Any:
+        """Read the flow run unchanged."""
+        return await self._client.read_flow_run(flow_run_id)
+
+    async def set_flow_run_state(self, flow_run_id: UUID, state: State[Any]) -> object:
+        """Request the state transition unchanged."""
+        return await self._client.set_flow_run_state(flow_run_id, state)
 
 
 class _PoolClient(Protocol):
@@ -199,51 +247,30 @@ class _PoolClient(Protocol):
 class PrefectOrchestration:
     """Use Prefect Extras for submission and Prefect as live-state authority."""
 
-    def __init__(self, client: RemoteExecutionClient, executor: IdempotentWorkflowExecutor | None = None) -> None:
+    def __init__(
+        self,
+        client: RemoteExecutionClient,
+        executor_factory: Callable[[RemoteExecutionClient], IdempotentWorkflowExecutor] = RemoteWorkflowExecutor,
+    ) -> None:
         self._client = client
-        self._executor = executor or RemoteWorkflowExecutor(client)
+        self._executor_factory = executor_factory
 
     async def submit(self, parameters: dict[str, object], *, idempotency_key: str) -> Submission:
-        handle = await self._executor.submit(SERVICE_DEFINITION, parameters, idempotency_key=idempotency_key)
-        await self._title(handle.id, parameters)
-        return Submission(flow_run_id=handle.id, state=await handle.status())
+        """Create the flow run with its title and run tags, so a waiting run is already labelled.
 
-    async def _title(self, flow_run_id: str, parameters: dict[str, object]) -> None:
-        """Give the accepted flow run its title and run tags before a worker starts it.
-
-        The vendored executor creates the flow run under a name Prefect generates and
-        with only the deployment's tags. The flow sets the same title again when it
-        starts; setting it here as well means a run waiting for a worker is listed under
-        its title too. Prefect replaces the tag list on update, so the run tags are
-        written together with the flow run's current tags (the deployment's and any an
-        operator added). If the current tags cannot be read, the deployment's tags stand
-        in for them, so the run is still titled and filterable. A failure leaves the
-        generated name, never an unsubmitted run: Prefect has accepted the run and it
-        will execute.
+        The flow sets the same title again when it starts. The run tags are ``run:``,
+        ``stage:`` and, for a registered run, ``config:`` and ``config-version:``; Prefect adds
+        the deployment's tags. A replay with the same idempotency key returns the flow run
+        Prefect created first, with the title and tags it was created with.
         """
-        name = run_name(parameters.get("stage"), parameters.get("configuration_name"))
-        client = cast("_NamingClient", self._client)
-        current_tags = await self._current_tags(client, flow_run_id)
-        tags = sorted(current_tags | run_tags(parameters))
-        try:
-            await client.update_flow_run(UUID(flow_run_id), name=name, tags=tags)
-        except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-            _log_prefect_failure(_NOT_TITLED, flow_run_id, error)
-
-    @staticmethod
-    async def _current_tags(client: _NamingClient, flow_run_id: str) -> frozenset[str]:
-        """Return the flow run's current tags, or the deployment's tags if Prefect cannot say."""
-        failure: Exception
-        try:
-            tags = (await client.read_flow_run(UUID(flow_run_id))).tags
-            if isinstance(tags, list) and all(isinstance(tag, str) for tag in tags):
-                return frozenset(cast("list[str]", tags))
-            # An answer without a list of strings is unreadable like any failed read.
-            failure = TypeError()
-        except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-            failure = error
-        _log_prefect_failure(_TAGS_NOT_READ, flow_run_id, failure)
-        return frozenset(SERVICE_DEFINITION.tags)
+        labelled = _LabelledCreationClient(
+            self._client,
+            name=run_name(parameters.get("stage"), parameters.get("configuration_name")),
+            tags=sorted(run_tags(parameters)),
+        )
+        executor = self._executor_factory(labelled)
+        handle = await executor.submit(SERVICE_DEFINITION, parameters, idempotency_key=idempotency_key)
+        return Submission(flow_run_id=handle.id, state=await handle.status())
 
     async def observe(self, flow_run_id: str) -> Observation:
         try:
@@ -280,16 +307,6 @@ class PrefectOrchestration:
         if not _cancellation_acknowledged(result, requested_state):
             return CancellationResult(acknowledged=False, reason="prefect-cancellation-unavailable")
         return CancellationResult(acknowledged=True)
-
-
-_NOT_TITLED = "flow run %s was accepted but not titled or tagged (%s, status=%s); it still runs"
-_TAGS_NOT_READ = "flow run %s: current tags not read (%s, status=%s); keeping the deployment tags"
-
-
-def _log_prefect_failure(message: str, flow_run_id: str, error: Exception) -> None:
-    """Log a Prefect call that failed after Prefect accepted the run, with its HTTP status if any."""
-    response = getattr(error, "response", None)
-    logger.warning(message, flow_run_id, type(error).__name__, getattr(response, "status_code", None))
 
 
 def _pinned_list(value: object) -> list[Any]:

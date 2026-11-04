@@ -881,13 +881,7 @@ class _RemoteClient:
         self.flow_run = _RemoteFlowRun(uuid4())
         self.keys: list[str | None] = []
         self.parameters: list[dict[str, Any]] = []
-        self.names: list[str] = []
-
-    async def update_flow_run(self, flow_run_id: UUID, *, name: str, tags: list[str] | None = None):
-        assert flow_run_id == self.flow_run.id
-        self.names.append(name)
-        if tags is not None:
-            self.flow_run.tags = tags
+        self.names: list[str | None] = []
 
     async def read_deployment_by_name(self, name: str):
         assert name == SERVICE_DEFINITION.key
@@ -899,10 +893,15 @@ class _RemoteClient:
         *,
         parameters: dict[str, Any],
         idempotency_key: str | None = None,
+        name: str | None = None,
+        tags: list[str] | None = None,
     ):
         assert deployment_id == self.deployment_id
         self.keys.append(idempotency_key)
         self.parameters.append(parameters)
+        self.names.append(name)
+        # Prefect gives the run the union of the deployment's tags and the requested ones.
+        self.flow_run.tags = sorted({*SERVICE_DEFINITION.tags, *(tags or [])})
         return self.flow_run
 
     async def read_flow_run(self, flow_run_id: UUID):
@@ -941,6 +940,15 @@ async def test_prefect_extras_executor_receives_opaque_key_unchanged() -> None:
     assert client.keys == ["opaque-prefect-key"]
     assert client.parameters == [parameters]
     assert client.names == ["Plan sync of netbox-to-infrahub"]
+    assert client.flow_run.tags == sorted(
+        {
+            *SERVICE_DEFINITION.tags,
+            "run:run-001",
+            "stage:plan",
+            "config:config-001",
+            "config-version:config-001@1",
+        }
+    )
 
 
 class _ReadTransportFailureClient:

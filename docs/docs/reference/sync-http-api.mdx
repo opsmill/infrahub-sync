@@ -384,8 +384,8 @@ It performs no other action. Use it to check a token before you submit a run.
 ### Find a run's flow runs in Prefect
 
 Each flow run that Sync submits to Prefect carries tags that identify its run, its stage and,
-for a registered run, its configuration version. Sync adds them to the tags the flow run
-already has:
+for a registered run, its configuration version. Sync creates the flow run with these tags,
+and Prefect adds the deployment's tags, including any tag you added to the deployment:
 
 | Tag | Example |
 | --- | --- |
