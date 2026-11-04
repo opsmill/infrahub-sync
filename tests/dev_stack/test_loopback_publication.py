@@ -112,6 +112,7 @@ def test_the_one_adjustable_address_ships_as_loopback() -> None:
         ("", "http://localhost:8080"),
         ("172.17.0.1", "http://172.17.0.1:8080"),
         ("fd00::1", "http://[fd00::1]:8080"),
+        ("::1", "http://[::1]:8080"),  # IPv6-only loopback; `localhost` may resolve to 127.0.0.1.
     ],
 )
 def test_the_preview_tasks_reach_infrahub_where_it_is_published(bind_address: str, expected: str) -> None:

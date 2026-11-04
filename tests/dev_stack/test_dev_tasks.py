@@ -182,7 +182,13 @@ def test_a_failed_config_names_the_command(monkeypatch: pytest.MonkeyPatch) -> N
 
 @pytest.mark.parametrize(
     ("host_ip", "url"),
-    [("", "http://127.0.0.1:8080"), ("172.17.0.1", "http://172.17.0.1:8080"), ("fd00::1", "http://[fd00::1]:8080")],
+    [
+        ("", "http://127.0.0.1:8080"),
+        ("172.17.0.1", "http://172.17.0.1:8080"),
+        ("fd00::1", "http://[fd00::1]:8080"),
+        # An IPv6-only loopback publication does not answer at 127.0.0.1.
+        ("::1", "http://[::1]:8080"),
+    ],
 )
 def test_a_publication_url_uses_its_bind_address(host_ip: str, url: str) -> None:
     assert dev.Publication(host_ip, "8080").url == url

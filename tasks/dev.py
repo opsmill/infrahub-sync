@@ -91,9 +91,10 @@ BUILD_SERVICE = "prefect-server"
 # What `docker image inspect` prints for a label the image does not carry.
 _NO_LABEL_VALUES = frozenset({"", "<no value>"})
 # The bind addresses whose publication the host reaches at 127.0.0.1: the wildcards and
-# the usual loopback names. Not `is_loopback()`: a publication bound to 127.0.0.2 is
-# loopback but is not reached at 127.0.0.1.
-_REACHED_AT_127_0_0_1 = frozenset({"", "127.0.0.1", "localhost", "0.0.0.0", "::", "::1"})  # noqa: S104
+# the IPv4 loopback names. Not `is_loopback()`: a publication bound to 127.0.0.2 is
+# loopback but is not reached at 127.0.0.1, and one bound to `::1` listens on IPv6 only,
+# so it is reached at `[::1]`.
+_REACHED_AT_127_0_0_1 = frozenset({"", "127.0.0.1", "localhost", "0.0.0.0", "::"})  # noqa: S104
 # The variable that moves Infrahub's publication off loopback, and the one that sets its
 # initial admin token. `docker-compose.infrahub.yml` falls back to the token below, which
 # is published in this repository and so protects nothing on an address other hosts reach.

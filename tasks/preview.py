@@ -156,7 +156,8 @@ def load_preview_env() -> dict[str, str]:
     return values
 
 
-_WILDCARD_OR_LOOPBACK = frozenset({"", "127.0.0.1", "localhost", "0.0.0.0", "::", "::1"})  # noqa: S104
+# A publication bound to `::1` listens on IPv6 only, so it is reached at `[::1]`, not here.
+_WILDCARD_OR_LOOPBACK = frozenset({"", "127.0.0.1", "localhost", "0.0.0.0", "::"})  # noqa: S104
 
 
 def preview_urls(values: dict[str, str]) -> dict[str, str]:
