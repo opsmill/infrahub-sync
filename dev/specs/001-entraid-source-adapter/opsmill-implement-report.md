@@ -249,3 +249,22 @@ report above was already committed with status DONE.
     - pylint and rumdl were not run again. No file they check changed after the first run's lint pass.
 - No test was added or changed in this run.
 - Change to next step 1: delete `_ty_probe.py` with a new commit, because it is now tracked.
+
+## 9. Second resumed run on 2026-11-04
+
+A third run was started with the same resume instructions. The work was already finished.
+
+- **Base commit**: `50f0bd3f`. **Status**: DONE.
+- State found:
+    - The working tree was clean, so there was nothing from an interrupted run to commit.
+    - `tasks.md` exists and all 26 tasks are ticked, so `speckit-opsmill-prep` was not run and no chunk was dispatched.
+- `git rm _ty_probe.py` was denied by the permission mode again. The empty file is still on the branch.
+- Review: this run changed no code, so `speckit-review-run` was not run again. The review in section 5 covers the full
+  change.
+- Checks run at 2026-11-04T00:14:00Z, with the same results as section 8:
+    - `uv run pytest -q`: `315 passed, 3 skipped`.
+    - `uv run ruff check .`: `All checks passed!`
+    - `uv run ruff format --check .`: `79 files already formatted`.
+    - `uv run ty check .`: 14 warnings and no errors.
+- No test was added or changed in this run.
+- Next step 1 is unchanged: a person with permission to delete files removes `_ty_probe.py` in a new commit.
