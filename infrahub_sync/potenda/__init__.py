@@ -531,8 +531,11 @@ class Potenda:
         complete is re-raised, just like the sequential path would do.
         The destination's lineage is resolved first, then the destination decides whether its
         reads ask for metadata (a server version read for Infrahub). Both happen before either
-        side is loaded, so a failed lineage or version read stops the plan before the source
-        system is read, and `metadata_read` is set before the destination's cursors are captured.
+        side is loaded, and `metadata_read` is set before the destination's cursors are captured.
+        A lineage refusal, or a version read error that propagates (an HTTP 401 or a transport
+        error), stops the plan before the source system is read. A version query that Infrahub
+        refuses with a GraphQL error or a missing permission does not stop the plan: the plan
+        continues without reading metadata (see `InfrahubAdapter._read_metadata_support`).
         """
         resolve_destination_lineage(self.destination)
         resolve_destination_metadata_read(self.destination)
