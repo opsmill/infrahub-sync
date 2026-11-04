@@ -1,0 +1,31 @@
+docs/docs/reference/cli.mdx
+  s_f718d35766c589::t_951037815612f7 203
+infrahub_sync/cli.py
+  s_f718d35766c589::t_238fa3f7605d9f 320-322,326
+  s_f718d35766c589::t_429d4c8b185d2a 345-346
+  s_f718d35766c589::t_d8af2c670c4f7e 497-500,509-521
+tests/cli/test_client_commands.py
+  s_f718d35766c589::t_5b57c4372c9f24 1522-1542,1545-1570
+  s_f718d35766c589::t_52eaa337718152 1543-1544
+docs/docs/configuration-package.mdx
+  s_f718d35766c589::t_9bb9bb96e5396d 152-153
+  s_f718d35766c589::t_8fc402e6764194 154-155
+dev/specs/015-run-discovery-api/contracts/cli.md
+  s_f718d35766c589::t_db51861b28696e 41-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "515b77f027eb65e16baccb488a5bdce2449bba39",
+  "prompts": {},
+  "sessions": {
+    "s_f718d35766c589": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3abfa013-58d0-4a35-aa91-617e78043d5c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
