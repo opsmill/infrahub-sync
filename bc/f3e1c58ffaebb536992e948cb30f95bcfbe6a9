@@ -1,0 +1,43 @@
+tests/plan/test_last_changes.py
+  s_77064a8f1f9fb7::t_b1e9a3deb5640b 333,335-339,341,343-378,380-392,394-415,417-436,438,440-475
+  s_77064a8f1f9fb7::t_31f9b8546691c7 379,393,416,437,439
+  s_77064a8f1f9fb7::t_b5bed349dde43f 14,21,26,30-36
+  s_77064a8f1f9fb7::t_fd3f0235f606eb 476-478
+infrahub_sync/plan/reader.py
+  s_77064a8f1f9fb7::t_a2e8bdbaccfe22 538-539,543-545,547-564,566-567
+  s_77064a8f1f9fb7::t_b78d4445d9324a 542
+  s_77064a8f1f9fb7::t_40328e48793edb 93-95,103
+  s_77064a8f1f9fb7::t_935dcfe2d96ef4 625-627
+  s_77064a8f1f9fb7::t_d9adc52402a7a4 17-21
+  s_77064a8f1f9fb7::t_b47eceb94a2f16 494-513,517
+  s_77064a8f1f9fb7::t_029a3758a0e199 537,546,565
+  s_77064a8f1f9fb7::t_2c8864340d1538 636,642-643
+tests/cli/test_client_commands.py
+  s_77064a8f1f9fb7::t_f4c860ae180ee5 1282-1295
+docs/docs/development/knowledge/plan-artifact.md
+  s_77064a8f1f9fb7::t_8f5232573a00c0 217-235
+docs/docs/adapters/infrahub.mdx
+  s_77064a8f1f9fb7::t_d45d2815d848f5 282
+infrahub_sync/plan/review.py
+  s_77064a8f1f9fb7::t_88e475e0ee7bc6 79-81
+  s_77064a8f1f9fb7::t_118668352d1b0d 429-433
+  s_77064a8f1f9fb7::t_fae85e8030c0ba 395-396
+tests/service/test_plan_last_changes.py
+  s_77064a8f1f9fb7::t_44c6caf646cb5d 85-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bcf3e1c58ffaebb536992e948cb30f95bcfbe6a9",
+  "prompts": {},
+  "sessions": {
+    "s_77064a8f1f9fb7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "939dc8cb-70c7-4beb-974f-c09fa514e652",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
