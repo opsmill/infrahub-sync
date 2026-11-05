@@ -242,8 +242,7 @@ the code that makes it pass.
     `cause` text is never shown.
 - **FR-003**: The artifact MUST be built only from fixed templates and from values that the product records
   hold: identifiers, counts, outcomes and fixed next actions. It MUST pass through the run's redaction before
-  it is published (ADR 0021,
-  [secret redaction](../../../docs/docs/development/guidelines/secret-redaction.md)).
+  it is published ([secret redaction](../../../docs/docs/development/guidelines/secret-redaction.md)).
 - **FR-004**: If publishing the artifact raises an error, the stage's outcome and its recorded result MUST NOT
   change. The worker MUST log one warning that names the run and the stage, without the error text.
 - **FR-005**: Outside a Prefect flow run, the worker MUST NOT try to publish an artifact.

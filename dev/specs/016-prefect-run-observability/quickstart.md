@@ -38,8 +38,9 @@ a browser shows that flow run (see [contracts/cli-output.md](./contracts/cli-out
 In the Prefect UI, open the flow run, then its Artifacts tab. Expected: one markdown artifact with the key
 `sync-run-<lowercased run-id>-plan` (see [contracts/prefect-surfaces.md](./contracts/prefect-surfaces.md)).
 
-The last line in the flow run's Logs tab reads
+The worker's last line in the flow run's Logs tab reads
 `service run <run-id> stage=plan outcome=planned; next step: ` followed by `` `infrahub-sync runs show <run-id>` ``.
+Prefect's own `Finished in state ...` line follows it.
 
 The same check can be run without a browser, through Prefect's API:
 `POST http://127.0.0.1:4230/api/artifacts/filter`.

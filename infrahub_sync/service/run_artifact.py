@@ -7,7 +7,8 @@ operator who opens the flow run in the Prefect UI reads where the run is and wha
 without searching the logs.
 
 The text is built from named fields of the stored run record and fixed templates only, plus
-the failure's next action, which the failure boundary builds from fixed templates (ADR 0021).
+the failure's next action, which the failure boundary builds from fixed templates
+(docs/docs/development/guidelines/secret-redaction.md).
 It never reads a failure's `cause`, so it never holds the text of an exception, a provider's
 error message, configuration content or an address. The finished text is redacted with the
 stage's secrets. A failure to publish is logged and never fails the run.

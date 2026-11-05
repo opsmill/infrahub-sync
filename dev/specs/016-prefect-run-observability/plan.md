@@ -50,7 +50,7 @@ measurable way.
 
 **Constraints**:
 
-- ADR 0021 applies: no provider text in operator output.
+- No provider text in operator output.
 - The documented redaction rules apply.
 - No new HTTP routes.
 - Response fields are optional only.
