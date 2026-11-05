@@ -1,0 +1,22 @@
+tests/client/test_client.py
+  s_f718d35766c589::t_89a9a11c6c7f8d 674-676
+infrahub_sync/client/client.py
+  s_f718d35766c589::t_baccaa40f31d43 28-29
+  s_f718d35766c589::t_09b9c779f6d8dc 551-553
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b2b940797d616e6d3277ea42428af304d2c75051",
+  "prompts": {},
+  "sessions": {
+    "s_f718d35766c589": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3abfa013-58d0-4a35-aa91-617e78043d5c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
