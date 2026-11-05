@@ -62,6 +62,7 @@ destination-schema checks.
 |---|---|
 | `models.py` | The package envelope, its parser, and the finding type |
 | `capabilities.py` | `AdapterConfigurationCapabilities` and the closed `BUILTIN_ADAPTER_CAPABILITIES` registry |
+| `infrahub_lineage.py` | The parser and validator for an Infrahub destination's `source`, `owner` and `protect` settings |
 | `validation.py` | The finding-producing checks and their fixed execution order |
 | `credentials.py` | What a credential reference is, and how a provider resolves one |
 | `schema_validation.py` | The opt-in destination-schema checks |
@@ -146,6 +147,14 @@ is kept.
 Every bundled adapter has a matching entry in `BUILTIN_ADAPTER_CAPABILITIES`; the pair is what
 makes a package using that adapter admissible. [Adapter anatomy](adapter-anatomy.md) explains
 the contract, and [Adding an adapter](../guides/adding-an-adapter.md) is the procedure.
+
+`infrahub_sync/infrahub_errors.py` sits outside the adapters package because the apply, the
+destination schema read and the service worker's failure record all use it. It classifies an
+Infrahub error as a refused token (HTTP 401) or a missing permission (HTTP 403, or a GraphQL
+permission denial). It quotes the permission Infrahub names. When a 403 names no permission, it
+quotes the server message instead, with control characters removed and its length capped at
+300 characters. `classify_infrahub_error_chain`
+walks the cause chain, because a plan wraps every load failure in a `ValueError`.
 
 ### Cache and incremental extraction
 

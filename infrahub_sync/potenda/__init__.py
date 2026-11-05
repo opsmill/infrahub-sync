@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # the engine owns load, compare, plan writing and apply
 from __future__ import annotations
 
 import logging
@@ -7,17 +8,12 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 # The one costly module-level import: apply's exception boundary must name the SDK's errors.
-from infrahub_sdk.exceptions import (
-    AuthenticationError,
-    GraphQLError,
-    ServerNotResponsiveError,
-)
-from infrahub_sdk.exceptions import (
-    Error as InfrahubSDKError,
-)
+from infrahub_sdk.exceptions import Error as InfrahubSDKError
+from infrahub_sdk.exceptions import GraphQLError, ServerNotResponsiveError
 from tqdm import tqdm
 
 from infrahub_sync import resolve_effective_diffsync_flags
+from infrahub_sync.infrahub_errors import classify_infrahub_error
 
 # These plan imports are cheap; imports that reach pyarrow stay deferred below.
 from infrahub_sync.plan.config_version import resolve_config_version, validate_config_version
@@ -30,7 +26,13 @@ from infrahub_sync.plan.errors import (
     SkippedDeleteOperation,
 )
 from infrahub_sync.plan.models import ACTIONS, DESTINATION_ID_FORMAT_VERSION, ApplyRecord
-from infrahub_sync.plan.write_surface import PlannedWriteDestination
+from infrahub_sync.plan.write_surface import (
+    PlannedWriteDestination,
+    destination_last_changes,
+    destination_lineage_record,
+    resolve_destination_lineage,
+    resolve_destination_metadata_read,
+)
 
 # Justified once here rather than per site. Nearly every `infrahub_sync`
 # import in this module is deliberately deferred into the function that needs it: the cache
@@ -42,6 +44,7 @@ from infrahub_sync.plan.write_surface import PlannedWriteDestination
 # pylint: disable=import-outside-toplevel
 
 logger = logging.getLogger(__name__)
+
 
 # The apply path's **operational** exception boundary. An exception from
 # the write surface is reported as `OperationApplyFailedError` — a designed destination refusal,
@@ -98,7 +101,11 @@ def _plan_refusal(failures: Sequence[VerificationFailure], *, run_id: str) -> Pl
         f"The plan artifact of run {run_id!r} cannot be applied: {len(failures)} pre-apply check(s) "
         f"failed and nothing was written to the destination.\n{detail}"
     )
-    return PlanVerificationError(msg)
+    from infrahub_sync.plan.verify import failure_guidance
+
+    # The next action names each failed check with its own next action, so the hint the CLI
+    # prints says what to fix.
+    return PlanVerificationError(msg, next_action=failure_guidance(failures))
 
 
 # The destination's uniqueness refusal, as measured: this exact message grammar, and
@@ -222,10 +229,11 @@ def _operational_failure_summary(exc: Exception) -> str:
 
     SDK exceptions can embed a complete GraphQL request or response body in
     ``str(exc)``.  The exception remains chained for an explicitly requested
-    developer traceback, while normal CLI output receives only its category.
+    developer traceback, while normal CLI output receives only its category, or for a refused
+    token or a missing permission the classification, which quotes only the permission (FR-008).
     """
-    if isinstance(exc, AuthenticationError):
-        return "an authentication failure (AuthenticationError)"
+    if (classification := classify_infrahub_error(exc)) is not None:
+        return classification.describe()  # Every `AuthenticationError` is classified here.
     if isinstance(exc, ServerNotResponsiveError):
         return "a destination timeout (ServerNotResponsiveError)"
     if isinstance(exc, GraphQLError):
@@ -520,7 +528,16 @@ class Potenda:
 
         Exceptions from either side are surfaced: the first failure to
         complete is re-raised, just like the sequential path would do.
+        The destination's lineage is resolved first, then the destination decides whether its
+        reads ask for metadata (a server version read for Infrahub). Both happen before either
+        side is loaded, and `metadata_read` is set before the destination's cursors are captured.
+        A lineage refusal, or a version read error that propagates (an HTTP 401 or a transport
+        error), stops the plan before the source system is read. A version query that Infrahub
+        refuses with a GraphQL error or a missing permission does not stop the plan: the plan
+        continues without reading metadata (see `InfrahubAdapter.resolve_metadata_read`).
         """
+        resolve_destination_lineage(self.destination)
+        resolve_destination_metadata_read(self.destination)
         if not self.concurrent_load:
             self.source_load()
             self.destination_load()
@@ -648,6 +665,7 @@ class Potenda:
         from infrahub_sync.plan.writer import write_plan_artifact as write_artifact
 
         resolve_tier = partial(tier_of, tiers=self.tiers, top_level=self.top_level)
+        last_changes = destination_last_changes(self.destination)  # FR-007; `None` writes no last-change file
         operations = []
         for diff in diffs:
             operations.extend(
@@ -657,6 +675,7 @@ class Potenda:
                     tier_of=resolve_tier,
                     source_adapter=self.source,
                     destination_adapter=self.destination,
+                    last_changes=last_changes,
                 )
             )
 
@@ -699,6 +718,9 @@ class Potenda:
             destination_binding=getattr(self.destination, "destination_binding", None),
             configuration_binding=self.configuration_binding,
             schema_fingerprint=self.schema_fingerprint,
+            lineage=destination_lineage_record(self.destination),
+            last_changes=None if last_changes is None else last_changes.records,
+            metadata_read=last_changes is not None and last_changes.metadata_read,
         )
         logger.info(
             "Plan artifact: wrote %d operation(s) to %s (deletes computed: %s)",
@@ -856,7 +878,8 @@ class Potenda:
         # Everything the gate can see is already reported; what remains for the parser is
         # per-record validity — an unrecognized `action` above all — which is still refused
         # before the first destination write.
-        loaded = parse_plan_artifact(raw, run_id=run_id)
+        # `last_changes.jsonl` is display-only: the gate above checked it, and apply never reads it.
+        loaded = parse_plan_artifact(raw, run_id=run_id, parse_last_changes=False)
 
         # Readable and reviewable, but not applyable. Refused after the artifact has been
         # read, before `ownership.before_operation` and therefore before the first dispatch,
@@ -868,6 +891,8 @@ class Potenda:
         # Check the entire artifact before dispatching its first operation.
         _validate_infrahub_plan_payload(destination, loaded.operations, run_id=run_id)
 
+        # Resolved again before the first write, never reused; compared with the plan's (FR-012).
+        resolve_destination_lineage(destination, saved_plan=loaded.manifest)
         self._last_applied_plan_action_counts = {
             action: sum(operation.action == action for operation in loaded.operations) for action in ACTIONS
         }

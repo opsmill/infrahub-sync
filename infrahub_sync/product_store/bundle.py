@@ -53,7 +53,7 @@ BUNDLE_MANIFEST_NAME = "bundle-manifest.json"
 BUNDLE_MEDIA_TYPE = "application/vnd.infrahub-sync.run-bundle.v1+zip"
 MAX_BUNDLE_BYTES = 64 * 1024 * 1024
 # The most members one bundle may hold, not counting the manifest. A checkpoint carries
-# the plan's two files plus one Parquet file per extracted resource kind, so this sits far
+# the plan's two or three files plus one Parquet file per extracted resource kind, so this sits far
 # above any real configuration. It exists because the byte bound alone does not bound the
 # entry count: an archive of empty members stays small while costing the reader one entry,
 # one set element, and one dictionary entry each.

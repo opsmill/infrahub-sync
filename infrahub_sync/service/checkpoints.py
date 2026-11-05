@@ -9,7 +9,8 @@ atomic extraction.
 Two checkpoints exist, and their membership is fixed rather than incidental:
 
 The plan checkpoint carries what verify and apply consume -- the plan manifest, the
-operations file, and the source snapshots the manifest declares. The final checkpoint
+operations file, the last-change file when the manifest names one, and the source snapshots
+the manifest declares. The final checkpoint
 carries the applied run sidecar and nothing else. It records what the engine completed;
 it is not a recovery input, a success receipt, or future incremental state, so nothing
 reads it back and no stage may infer anything from its presence.
@@ -65,6 +66,18 @@ class CheckpointUnavailableError(RuntimeError):
         self.reason = reason
 
 
+def _declared_members(manifest: PlanManifest) -> list[str]:
+    """The run-relative paths of the files the manifest declares beside itself and the operations.
+
+    The last-change file first, when the manifest records one, then each source snapshot.
+    Every path is the one the manifest records, so the checkpoint carries the files the
+    plan checksum covers and no path rebuilt from a constant.
+    """
+    members = [] if manifest.last_changes is None else [f"{PLAN_DIR_NAME}/{manifest.last_changes.path}"]
+    members.extend(record.path for record in manifest.source_snapshot)
+    return members
+
+
 def publish_plan_checkpoint(
     projection: ProductProjection,
     run_id: str,
@@ -75,16 +88,17 @@ def publish_plan_checkpoint(
 ) -> ArtifactReference:
     """Publish the plan this stage wrote as this run's fixed plan checkpoint.
 
-    The source snapshots come from the manifest rather than from a directory listing: the
-    manifest is what the plan's checksum covers, so a file the plan does not account for
-    cannot enter the checkpoint and a file it declares cannot be silently missing from it.
+    The source snapshots and the last-change file come from the manifest rather than from a
+    directory listing: the manifest is what the plan's checksum covers, so a file the plan
+    does not account for cannot enter the checkpoint and a file it declares cannot be
+    silently missing from it.
     """
     members = {
         _PLAN_MANIFEST_MEMBER: (run_directory / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes(),
         _PLAN_OPERATIONS_MEMBER: (run_directory / PLAN_DIR_NAME / OPERATIONS_FILE_NAME).read_bytes(),
     }
-    for record in manifest.source_snapshot:
-        members[record.path] = (run_directory / record.path).read_bytes()
+    for member in _declared_members(manifest):
+        members[member] = (run_directory / member).read_bytes()
     return projection.publish_artifact(
         run_id,
         artifact_id=PLAN_CHECKPOINT_ARTIFACT_ID,

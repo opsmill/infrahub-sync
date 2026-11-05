@@ -182,8 +182,11 @@ def test_a_different_url_is_a_destination_binding_failure(tmp_path: Path) -> Non
     assert failure.check == "destination_binding"
     assert RECORDED_URL in str(failure.expected)
     assert LIVE_URL in str(failure.found)
+    # The CLI and the Sync API do not expose the override, and the override cannot carry a plan
+    # to another Infrahub instance (its import account differs), so the advice names neither.
     assert "--allow-destination-change" not in failure.next_action
     assert "Create a new plan against the current destination with `plan`" in failure.next_action
+    assert "another Infrahub instance cannot be applied" in failure.next_action
 
 
 def test_a_different_branch_alone_is_a_destination_binding_failure(tmp_path: Path) -> None:

@@ -21,6 +21,7 @@ from prefect.client.schemas.objects import WorkerStatus
 from prefect.exceptions import MissingContextError, ObjectNotFound
 from prefect.runtime import flow_run as current_flow_run
 
+from infrahub_sync.client.models import RECOVERY_NEXT_ACTIONS, RecoveryAction
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
 from infrahub_sync.configuration.runtime import resolve_runtime_instance
 from infrahub_sync.configuration.storage import (
@@ -45,12 +46,17 @@ from infrahub_sync.orchestration.flow import (
     RunLoggerBridge,
 )
 from infrahub_sync.plan.config_version import resolve_config_version
-from infrahub_sync.plan.errors import PlanSchemaChangedError
+from infrahub_sync.plan.errors import PlanSchemaChangedError, PlanVerificationError
 from infrahub_sync.plan.models import ApplyRecord, PlanManifest
 from infrahub_sync.plan.ownership import ProvenWriteOwnership, WriteDispatchTracker
 from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import SavedPlan, resolve_run_directory
-from infrahub_sync.plan.verify import RE_PLAN_NEXT_ACTION, UNSUPPORTED_FORMAT_NEXT_ACTION, verify_plan
+from infrahub_sync.plan.verify import (
+    RE_PLAN_NEXT_ACTION,
+    UNSUPPORTED_FORMAT_NEXT_ACTION,
+    failure_guidance,
+    verify_plan,
+)
 from infrahub_sync.product_store import (
     BaselineWriteback,
     ExecutionFinishWriteback,
@@ -62,6 +68,7 @@ from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, RuntimeModel
 
 from .apply_guard import ApplyGuard, hold_apply_guard
 from .checkpoints import publish_final_checkpoint, publish_plan_checkpoint, rehydrate_plan_checkpoint
+from .failure_cause import operator_cause
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME, run_name
@@ -101,12 +108,22 @@ _NO_CONFIGURATION_DIRECTORY = ""
 _WRITE_STAGES = ("apply", "sync")
 
 
-class RegisteredPlanVerificationError(ValueError):
-    """A managed plan refusal with a fixed, safe recovery signal for the CLI."""
+class RegisteredPlanVerificationError(PlanVerificationError, ValueError):
+    """A managed plan refusal with a fixed, safe recovery signal for the CLI.
 
-    def __init__(self, message: str, recovery_action: Literal["rebuild", "compatible_version"] | None) -> None:
-        super().__init__(message)
+    `next_action` is the fixed text for `recovery_action`. Without a recovery signal it is
+    `guidance`: each failed check's name and its fixed next action, the text the message is
+    built from, which echoes no manifest value.
+    """
+
+    def __init__(self, message: str, recovery_action: RecoveryAction | None, *, guidance: str) -> None:
+        super().__init__(
+            message, next_action=guidance if recovery_action is None else RECOVERY_NEXT_ACTIONS[recovery_action]
+        )
         self.recovery_action = recovery_action
+        # The message already carries the guidance, so the exception's text stays the message
+        # alone rather than the base class's message followed by its next action.
+        self.args = (message,)
 
 
 def _raise_writeback_refused() -> None:
@@ -172,6 +189,12 @@ def _review_document(run_id: str, saved: SavedPlan) -> PlanResource:
         operations=tuple(operation.model_dump(mode="json") for operation in saved.operations()),
         schema_fingerprint=saved.manifest.registered_schema_fingerprint,
         destination_branch=saved.manifest.destination_binding.branch if saved.manifest.destination_binding else None,
+        lineage=saved.manifest.lineage.model_dump(mode="json") if saved.manifest.lineage is not None else None,
+        last_changes=(
+            None
+            if saved.last_changes is None
+            else tuple(record.model_dump(mode="json") for record in saved.last_changes)
+        ),
     )
 
 
@@ -237,19 +260,17 @@ def _verify_registered_apply(
     artifact = read_plan_artifact_bytes(resolve_run_directory(instance.name, run_id, base_directory=base_directory))
     failures = verify_plan(artifact=artifact, run_id=run_id, config_version=resolve_config_version(instance))
     if failures:
-        # The verifier's actions describe the artifact state without echoing manifest
-        # values, which may contain credentials in a damaged or hand-edited artifact.
-        guidance = "; ".join(f"{failure.check}: {failure.next_action}" for failure in failures)
+        guidance = failure_guidance(failures)
         message = f"{_REGISTERED_PLAN_VERIFICATION_FAILED}: {guidance}"
         format_failure = next((failure for failure in failures if failure.check == "format_version"), None)
-        recovery_action: Literal["rebuild", "compatible_version"] | None = None
+        recovery_action: RecoveryAction | None = None
         if format_failure is not None:
             if format_failure.next_action.endswith(RE_PLAN_NEXT_ACTION):
                 recovery_action = "rebuild"
             elif format_failure.next_action.endswith(UNSUPPORTED_FORMAT_NEXT_ACTION):
                 recovery_action = "compatible_version"
-        raise RegisteredPlanVerificationError(message, recovery_action)
-    manifest = parse_plan_artifact(artifact, run_id=run_id).manifest
+        raise RegisteredPlanVerificationError(message, recovery_action, guidance=guidance)
+    manifest = parse_plan_artifact(artifact, run_id=run_id, parse_last_changes=False).manifest
     if manifest.configuration_binding != binding:
         raise ValueError(_REGISTERED_PLAN_BINDING_MISMATCH)
     if manifest.plan_checksum != expected_checksum:
@@ -700,8 +721,11 @@ def _failure_evidence(
     *,
     outcome: str,
     record: ApplyRecord | None,
+    secrets: Sequence[str],
 ) -> dict[str, Any]:
     """Describe one failure, with whatever is known about what it wrote.
+
+    The failure's operator cause is recorded too, when it has one: see `operator_cause`.
 
     A failure raised by the engine carries its own partial record; a failure raised after
     the engine returned — a sidecar write, the guard's release, the product commit — carries
@@ -727,6 +751,7 @@ def _failure_evidence(
     }
     if isinstance(exc, UnsupportedSyncStoreError):
         evidence.update(reason=UNSUPPORTED_STORE_REASON, message=UNSUPPORTED_STORE_MESSAGE)
+    evidence.update(operator_cause(exc, secrets))
     if stage == "apply" and isinstance(exc, RegisteredPlanVerificationError) and exc.recovery_action is not None:
         evidence["recovery_action"] = exc.recovery_action
     written = effective_apply_record(exc, record)
@@ -788,7 +813,7 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
         else:
             ambiguous = dispatch_started
         terminal_state, terminal_outcome = ("interrupted", "ambiguous") if ambiguous else ("failed", "failed")
-        evidence = _failure_evidence(stage, exc, outcome=terminal_outcome, record=record)
+        evidence = _failure_evidence(stage, exc, outcome=terminal_outcome, record=record, secrets=secrets)
         results: dict[str, Any] = {f"{stage}_failure": evidence}
         if stage == "verify":
             writeback: ExecutionWriteback = ExecutionMergeWriteback(results=results)

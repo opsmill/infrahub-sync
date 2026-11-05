@@ -378,8 +378,9 @@ def keyed_write_scope() -> Iterator[KeyedWriteScope]:
         adapter = InfrahubAdapter.__new__(InfrahubAdapter)
         adapter.client = client
         adapter.schema = client.schema.all(branch=branch)
-        adapter.source_node = None
-        adapter.owner_node = None
+        # A planned write needs the lineage an apply resolves first: the token's own account
+        # as source, no owner and no protection.
+        adapter.resolve_lineage()
         yield KeyedWriteScope(
             client=client,
             adapter=adapter,

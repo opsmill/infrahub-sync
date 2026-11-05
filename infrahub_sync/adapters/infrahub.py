@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import re
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from functools import lru_cache
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from diffsync import Adapter, DiffSyncModel
 from diffsync.exceptions import ObjectNotFound
@@ -11,8 +15,9 @@ from infrahub_sdk import (
     Config,
     InfrahubClientSync,
 )
-from infrahub_sdk.exceptions import GraphQLError, NodeNotFoundError
+from infrahub_sdk.exceptions import AuthenticationError, GraphQLError, NodeNotFoundError, SchemaNotFoundError
 from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
+from packaging.version import InvalidVersion, Version
 from pydantic import ValidationError
 
 from infrahub_sync import (
@@ -27,12 +32,21 @@ from infrahub_sync.configuration.credentials import (
     pin_infrahub_sdk_authority,
     select_runtime_credential,
 )
+from infrahub_sync.configuration.infrahub_lineage import (
+    InfrahubLineageSettings,
+    NamedLineageNode,
+    parse_infrahub_lineage_settings,
+)
 from infrahub_sync.generator import has_field
+from infrahub_sync.infrahub_errors import classify_infrahub_error
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.errors import (
+    ImportAccountMismatchError,
+    NamedLineageNodeNotFoundError,
     NullRelationshipValueError,
     PeerAmbiguousError,
     PeerNotFoundError,
+    PlanLineageMissingError,
     ReviewedPayloadFieldMissingError,
     SkippedDeleteOperation,
     StaleDestinationIdError,
@@ -45,7 +59,15 @@ from infrahub_sync.plan.keying import (
     refuse_unkeyed_create_coverage,
     writable_convergence_reason,
 )
-from infrahub_sync.plan.models import DestinationBindingRecord
+from infrahub_sync.plan.last_changes import NOT_RECORDED, LastChange
+from infrahub_sync.plan.models import (
+    DestinationBindingRecord,
+    LineageAccountRecord,
+    LineageNodeRecord,
+    PlanLineageRecord,
+    PlanManifest,
+    RecordedAccountRecord,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,13 +92,18 @@ def resolved_endpoint(settings: Mapping[str, Any], branch: str | None) -> tuple[
 _TIMESTAMP_FILTER_KW = "node_metadata__updated_at__after"
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, MutableMapping, Sequence
+    from collections.abc import Iterable, Iterator, MutableMapping, Sequence
 
     from infrahub_sdk.node import InfrahubNodeSync, RelatedNodeSync, RelationshipManagerSync
+    from infrahub_sdk.node.property import NodeProperty
     from infrahub_sdk.schema import MainSchemaTypesAPI
     from infrahub_sdk.store import NodeStoreSync
 
-    from infrahub_sync.plan.models import PlannedOperation
+    from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
+
+    # The attributes and the relationships (with each peer's schema) the configuration maps for
+    # one node kind, as `InfrahubAdapter._mapped_fields` returns them.
+    MappedFields: TypeAlias = tuple[list[str], list[tuple[RelationshipSchemaAPI, MainSchemaTypesAPI]]]
 
 
 def _node_has_complete_attributes(node: InfrahubNodeSync, node_schema: MainSchemaTypesAPI) -> bool:
@@ -660,10 +687,245 @@ def _unresolved_peer_identifiers(
     )
 
 
+class InfrahubLineageSettingsError(ValueError):
+    """The destination's `source`, `owner` or `protect` setting is refused.
+
+    The message lists one refusal per setting, each naming the setting.
+    """
+
+
+class ImportAccountUnreadableError(RuntimeError):
+    """Infrahub answered the import account query without an account id."""
+
+
+class LineageNotResolvedError(RuntimeError):
+    """A planned write was attempted before `resolve_lineage` set the source, owner and protection.
+
+    Without a resolved lineage the write would carry no source, no owner and no protection, so
+    the operation is refused before any destination write.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class ImportAccount:
+    """The account behind the token the import uses, as its `AccountProfile` query returns it."""
+
+    id: str
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedLineageNode:
+    """A source or owner node, with the id Infrahub gave it."""
+
+    kind: str
+    name: str
+    id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedLineage:
+    """The lineage one run writes, resolved against the destination before any source read.
+
+    `source` is the named source node, or the import account when no source is named.
+    `owner` is the named owner node, or `None` when no owner is named.
+    """
+
+    import_account: ImportAccount
+    source: ResolvedLineageNode
+    owner: ResolvedLineageNode | None
+    protect: bool
+
+    def plan_record(self) -> PlanLineageRecord:
+        """The manifest's `lineage` field: the import account by name and id, source and owner by kind and name."""
+        return PlanLineageRecord(
+            import_account=LineageAccountRecord(name=self.import_account.name, id=self.import_account.id),
+            source=LineageNodeRecord(kind=self.source.kind, name=self.source.name),
+            owner=None if self.owner is None else LineageNodeRecord(kind=self.owner.kind, name=self.owner.name),
+            protect=self.protect,
+        )
+
+
+def require_recorded_import_account(saved_plan: PlanManifest) -> LineageAccountRecord:
+    """Return the import account the saved plan recorded, or refuse a plan that records none (FR-012)."""
+    if saved_plan.lineage is None:
+        logger.warning(
+            "Apply refused: saved plan %s records no import account",
+            saved_plan.run_id,
+            extra={"run_id": saved_plan.run_id},
+        )
+        msg = (
+            f"The saved plan for run {saved_plan.run_id!r} records no import account, so this apply cannot "
+            "check that it runs with the account the plan was made with. Nothing was written to the destination."
+        )
+        raise PlanLineageMissingError(msg)
+    return saved_plan.lineage.import_account
+
+
+def refuse_other_import_account(
+    *, saved_plan: PlanManifest, recorded: LineageAccountRecord, live: ImportAccount
+) -> None:
+    """Refuse an apply whose import account is not the one the saved plan recorded, naming both (FR-012)."""
+    if recorded.id == live.id:
+        return
+    logger.warning(
+        "Apply refused: plan import account %s (%s), apply import account %s (%s)",
+        recorded.name,
+        recorded.id,
+        live.name,
+        live.id,
+        extra={
+            "run_id": saved_plan.run_id,
+            "plan_import_account": recorded.name,
+            "plan_import_account_id": recorded.id,
+            "apply_import_account": live.name,
+            "apply_import_account_id": live.id,
+        },
+    )
+    msg = (
+        f"The saved plan for run {saved_plan.run_id!r} was made with the import account {recorded.name!r} "
+        f"(id {recorded.id}), and this apply runs with the import account {live.name!r} (id {live.id}). "
+        "Nothing was written to the destination."
+    )
+    raise ImportAccountMismatchError(msg)
+
+
+def require_lineage_settings(settings: Mapping[str, Any]) -> InfrahubLineageSettings:
+    """Return the typed lineage settings, or raise `InfrahubLineageSettingsError` naming each refusal."""
+    parsed = parse_infrahub_lineage_settings(settings)
+    if parsed.settings is None:
+        msg = "; ".join(finding.message for finding in parsed.findings)
+        raise InfrahubLineageSettingsError(msg)
+    return parsed.settings
+
+
+# The caller's own account, as the `AccountProfile` query of `client.get_user()` reads it, with
+# the account's `name` selected as well. `client.get_user()` selects only `display_label`, which
+# Infrahub 1.10 renders from the `label` attribute: it fills `label` from the name in title case,
+# so the account `netbox` is labelled `Netbox`. `AccountProfile` needs no permission on accounts.
+IMPORT_ACCOUNT_QUERY = "query IMPORT_ACCOUNT { AccountProfile { id name { value } } }"
+
+
+def _import_account_from_profile(response: Mapping[str, Any]) -> ImportAccount:
+    """Read the account id and name out of the `AccountProfile` answer of `IMPORT_ACCOUNT_QUERY`."""
+    profile = response.get("AccountProfile")
+    if not isinstance(profile, Mapping):
+        profile = {}
+    account_id = profile.get("id")
+    if not isinstance(account_id, str) or not account_id:
+        msg = "Infrahub returned no account id for the import account's token."
+        raise ImportAccountUnreadableError(msg)
+    name_attribute = profile.get("name")
+    name = name_attribute.get("value") if isinstance(name_attribute, Mapping) else None
+    return ImportAccount(id=account_id, name=name if isinstance(name, str) and name else account_id)
+
+
+# Infrahub records `updated_by` and `updated_at` on attributes and relationship edges from 1.7.0.
+# An older server's GraphQL schema has no such fields, so a query that asks for them is refused
+# whole.
+METADATA_MIN_VERSION = (1, 7, 0)
+
+
+def metadata_read_supported(version: str | None) -> bool:
+    """Whether a server of this version records `updated_by` and `updated_at`: 1.7.0 or later.
+
+    A version that cannot be parsed counts as older, so no read asks for fields the server may
+    not have. That includes no version at all: `get_version()` returns `None` when the server
+    answers `version: null`. Only the release numbers are compared, so a pre-release of 1.7.0
+    counts as 1.7.0.
+    """
+    if not isinstance(version, str):
+        return False
+    try:
+        release = Version(version).release
+    except InvalidVersion:
+        return False
+    return (*release, 0, 0, 0)[:3] >= METADATA_MIN_VERSION
+
+
+@lru_cache(maxsize=1024)
+def _account_record(account_id: str, display_label: str | None) -> RecordedAccountRecord:
+    """The validated record of one account, built once and shared, since the record is frozen.
+
+    A plan reads metadata for every mapped field of every node, and nearly all of those fields
+    name one of a few accounts, so each account is validated once rather than once per value.
+    """
+    return RecordedAccountRecord(id=account_id, display_label=display_label)
+
+
+def _recorded_account(prop: NodeProperty | None) -> RecordedAccountRecord | None:
+    """The `updated_by` account of one value, or `None` when the value names none."""
+    if prop is None or not prop.id:
+        return None
+    return _account_record(prop.id, prop.display_label)
+
+
+def _edge_last_change(edge: RelatedNodeSync) -> LastChange:
+    """The `relationship_metadata` of one edge, read with `include_metadata=True`."""
+    metadata = edge.get_relationship_metadata()
+    if metadata is None:
+        return NOT_RECORDED
+    return LastChange(updated_by=_recorded_account(metadata.updated_by), updated_at=metadata.updated_at)
+
+
+# The fractional seconds of an ISO 8601 time. Python 3.10's `datetime.fromisoformat` reads only
+# exactly 3 or 6 digits, and a timestamp can carry any number of them, up to nanoseconds.
+_FRACTIONAL_SECONDS = re.compile(r"(?<=:\d\d)\.(\d+)")
+
+# The key of a missing or unparsable `updated_at`: before every recorded change.
+_EARLIEST = (datetime.min.replace(tzinfo=timezone.utc), 0)
+
+
+def _change_time(change: LastChange) -> tuple[datetime, int]:
+    """`updated_at` as a key to compare edges by; a missing or unparsable value sorts first.
+
+    The key is the time to the microsecond and the nanoseconds below it. `datetime` holds only
+    microseconds, and Python 3.10's `fromisoformat` reads only 3 or 6 fractional digits, so the
+    fraction is cut to microseconds for the `datetime` and its next 3 digits are kept apart. Two
+    edges changed within one microsecond then still compare by their full precision.
+    """
+    if change.updated_at is None:
+        return _EARLIEST
+    text = change.updated_at.replace("Z", "+00:00")
+    match = _FRACTIONAL_SECONDS.search(text)
+    fraction = (match.group(1) if match is not None else "").ljust(9, "0")
+    if match is not None:
+        text = text[: match.start()] + "." + fraction[:6] + text[match.end() :]
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return _EARLIEST
+    return (parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc), int(fraction[6:9]))
+
+
+def _latest_change(changes: Iterable[LastChange]) -> LastChange:
+    """The last change of a cardinality-many relationship: its most recently changed edge.
+
+    Infrahub records metadata on each edge, not on the relationship. An edge that a person removed
+    leaves no edge to read, so that removal is not part of the result.
+    """
+    recorded = [change for change in changes if change != NOT_RECORDED]
+    if not recorded:
+        return NOT_RECORDED
+    return max(recorded, key=_change_time)
+
+
 class InfrahubAdapter(DiffSyncMixin, Adapter):
     type = "Infrahub"
 
     continue_on_error: bool = False
+    # Class defaults so an adapter built without `__init__` (tests of the write path) has
+    # no lineage until `resolve_lineage` runs or a caller sets it.
+    lineage_settings: InfrahubLineageSettings = InfrahubLineageSettings()
+    lineage: ResolvedLineage | None = None
+    # Whether this plan's destination reads ask for `updated_by` and `updated_at`: set by
+    # `resolve_metadata_read` from the server version, false until then and during an apply.
+    metadata_read: bool = False
+    # What those reads returned, keyed by (destination node id, field name). Kept here and not
+    # in the DiffSync models, so a value a person changed is compared by its value only and two
+    # plans over the same values give the same operations. Set by `__init__` and reset by
+    # `resolve_lineage`; read and written through `last_changes`.
+    _last_changes: dict[tuple[str, str], LastChange] | None = None
     # Cache state: absent means hydration has not been attempted; None means
     # one attempt was exhausted; a string is the resolved DiffSync identity.
     _peer_unique_ids: dict[tuple[str, str], str | None]
@@ -710,39 +972,185 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         self.client = InfrahubClientSync(address=infrahub_url, config=Config(**sdk_config))
 
-        # Resolve source and owner nodes for lineage tracking
-        # Default: use CoreAccount matching config.source.name
-        # Override: if source/owner specified in destination settings, use CoreAccountGroup
-        remote_account = config.source.name
-        try:
-            default_account = self.client.get(kind="CoreAccount", name__value=remote_account)
-        except NodeNotFoundError:
-            default_account = None
-
-        # Resolve source - group if specified in settings, else default account
-        source_setting = settings.get("source")
-        if source_setting:
-            try:
-                self.source_node = self.client.get(kind="CoreAccountGroup", hfid=[source_setting])
-            except NodeNotFoundError:
-                logger.warning("CoreAccountGroup '%s' not found for source, falling back to account", source_setting)
-                self.source_node = default_account
-        else:
-            self.source_node = default_account
-
-        # Resolve owner - group if specified in settings, else default account
-        owner_setting = settings.get("owner")
-        if owner_setting:
-            try:
-                self.owner_node = self.client.get(kind="CoreAccountGroup", hfid=[owner_setting])
-            except NodeNotFoundError:
-                logger.warning("CoreAccountGroup '%s' not found for owner, falling back to account", owner_setting)
-                self.owner_node = default_account
-        else:
-            self.owner_node = default_account
+        # Parsed here, resolved against the destination by `resolve_lineage` at the start of
+        # each plan and each apply. Nothing is read from the destination for lineage now.
+        # Only a destination writes lineage, and registration checks these settings for the
+        # destination role alone, so an Infrahub source keeps the defaults and is not refused.
+        self.lineage_settings = (
+            require_lineage_settings(
+                {"source": settings.get("source"), "owner": settings.get("owner"), "protect": settings.get("protect")}
+            )
+            if target == "destination"
+            else InfrahubLineageSettings()
+        )
 
         # We will keep a copy of the schema
         self.schema: MutableMapping[str, MainSchemaTypesAPI] = self.client.schema.all(branch=infrahub_branch)
+
+    @property
+    def lineage_record(self) -> PlanLineageRecord | None:
+        """The lineage a plan records in its manifest, or `None` before `resolve_lineage` runs."""
+        return None if self.lineage is None else self.lineage.plan_record()
+
+    @property
+    def last_changes(self) -> dict[tuple[str, str], LastChange]:
+        """Who last changed each value this plan read, keyed by (destination node id, field name).
+
+        A property, so every adapter has the member the engine's `MetadataReadingDestination`
+        check looks for, including one built without `__init__`; it starts empty.
+        """
+        if self._last_changes is None:
+            self._last_changes = {}
+        return self._last_changes
+
+    @last_changes.setter
+    def last_changes(self, value: dict[tuple[str, str], LastChange]) -> None:
+        self._last_changes = value
+
+    def resolve_lineage(self, *, saved_plan: PlanManifest | None = None) -> ResolvedLineage:
+        """Resolve the import account, the source and the owner this run writes, and keep them.
+
+        The engine calls this once at the start of a plan, before either side is loaded, and
+        once at the start of an apply, before the first write. Each call reads the destination
+        again, so an apply does not reuse what the plan resolved.
+
+        The import account is the account behind the token, from one `AccountProfile` query
+        (`IMPORT_ACCOUNT_QUERY`), which needs no permission on accounts. It is the source
+        unless the `source` setting names a node. There is no lookup of an account named after
+        the source system and no fallback: a named node that the destination does not have
+        stops the run.
+
+        `saved_plan` is the manifest an apply is about to write. It must record an import
+        account, and that account's id must equal the id that query returns now;
+        otherwise the apply is refused before any named node is read and before any write
+        (FR-012). A plan passes no manifest.
+
+        The server version is read by `resolve_metadata_read`, not here (the order is stated
+        at `Potenda.load_both_sides`); this call resets `metadata_read` to false.
+        """
+        settings = self.lineage_settings
+        if saved_plan is None:
+            import_account = self._read_import_account()
+        else:
+            recorded = require_recorded_import_account(saved_plan)
+            import_account = self._read_import_account()
+            refuse_other_import_account(saved_plan=saved_plan, recorded=recorded, live=import_account)
+        if settings.source is None:
+            source = ResolvedLineageNode(kind="CoreAccount", name=import_account.name, id=import_account.id)
+        else:
+            source = self._resolve_named_lineage_node("source", settings.source)
+        if settings.owner is None:
+            owner = None
+        elif settings.owner == settings.source:
+            # The same node: it was read once as the source, so it is not read again.
+            owner = source
+        else:
+            owner = self._resolve_named_lineage_node("owner", settings.owner)
+        self.lineage = ResolvedLineage(
+            import_account=import_account, source=source, owner=owner, protect=settings.protect
+        )
+        logger.info(
+            "Resolved lineage: import account %s, source %s %s, owner %s",
+            import_account.name,
+            source.kind,
+            source.name,
+            "none" if owner is None else f"{owner.kind} {owner.name}",
+        )
+        self.metadata_read = False
+        self.last_changes = {}
+        return self.lineage
+
+    def resolve_metadata_read(self) -> None:
+        """Read the server version once for a plan, before the destination load reads anything.
+
+        The order is stated at `Potenda.load_both_sides`.
+        `metadata_read` is true from Infrahub 1.7.0, the first version that records
+        `updated_by` and `updated_at`. Only a plan calls this; an apply loads nothing.
+
+        A server that refuses the version query is treated like one whose version cannot be
+        parsed: the plan continues and every last change shows as not recorded.
+        A refusal is a GraphQL error, or an HTTP 403 the SDK raises as `AuthenticationError`.
+        An HTTP 401 still stops the plan: the token is refused, and every later read would be
+        refused too.
+
+        The warning names the error class, or the classification of a missing permission. It
+        never includes the error's text, which can hold the whole request or response.
+        """
+        try:
+            version = self.client.get_version()
+        except (GraphQLError, AuthenticationError) as exc:
+            classification = classify_infrahub_error(exc)
+            if isinstance(exc, AuthenticationError) and (
+                classification is None or classification.problem != "missing_permission"
+            ):
+                raise
+            logger.warning(
+                "Infrahub refused the server version query, so this plan does not read updated_by and updated_at: %s",
+                type(exc).__name__ if classification is None else classification.describe(),
+                extra={"infrahub_version": None, "metadata_read": False},
+            )
+            self.metadata_read = False
+            return
+        supported = metadata_read_supported(version)
+        logger.info(
+            "Infrahub server version %s: this plan %s updated_by and updated_at",
+            version or "unknown",
+            "reads" if supported else "does not read",
+            extra={"infrahub_version": version, "metadata_read": supported},
+        )
+        self.metadata_read = supported
+
+    def _read_import_account(self) -> ImportAccount:
+        """Return the account behind the token, read with one `AccountProfile` query.
+
+        No `operation_name` is passed: `execute_graphql` takes it from infrahub-sdk 1.22 only,
+        and the project supports 1.18. The query names its one operation, so none is needed.
+        """
+        return _import_account_from_profile(self.client.execute_graphql(query=IMPORT_ACCOUNT_QUERY))
+
+    def _resolve_named_lineage_node(self, setting: str, named: NamedLineageNode) -> ResolvedLineageNode:
+        """Return the id of the node a `source` or `owner` setting names.
+
+        One `client.get(kind=..., name__value=...)` that selects the name and excludes every
+        relationship of the kind. With the SDK's default fields the read also needs `view` on
+        the peer kinds of those relationships (`CoreAccountRole` and `CoreGroup` for a group,
+        credentials and tags for a repository); with the name only it needs `view` on the
+        named kind only. The kind's relationships come from the schema the SDK
+        has cached, which `get` reads anyway.
+
+        A named node that does not exist raises `NamedLineageNodeNotFoundError`, so the run
+        stops with no fallback node. So does a kind the destination schema does not have on the
+        branch the run reads, with a message that says so (FR-004).
+        """
+        extra = {"lineage_setting": setting, "lineage_kind": named.kind, "lineage_name": named.name}
+        try:
+            schema = self.client.schema.get(kind=named.kind)
+        except SchemaNotFoundError as exc:
+            logger.warning(
+                "Lineage refused: the setting %s names %s %s, and the destination schema has no kind %s",
+                setting,
+                named.kind,
+                named.name,
+                named.kind,
+                extra=extra,
+            )
+            raise NamedLineageNodeNotFoundError(
+                setting=setting, kind=named.kind, name=named.name, kind_missing=True
+            ) from exc
+        relationships = [relationship.name for relationship in schema.relationships]
+        try:
+            node = self.client.get(kind=named.kind, name__value=named.name, include=["name"], exclude=relationships)
+        except NodeNotFoundError as exc:
+            logger.warning(
+                "Lineage refused: the setting %s names %s %s, which does not exist",
+                setting,
+                named.kind,
+                named.name,
+                extra=extra,
+            )
+            raise NamedLineageNodeNotFoundError(setting=setting, kind=named.kind, name=named.name) from exc
+        node_id = _require_node_id(node, context=f"for the {named.kind} named {named.name!r}")
+        return ResolvedLineageNode(kind=named.kind, name=named.name, id=node_id)
 
     def cursor_tier_for(self, model_name: str) -> CursorTier:
         """TIMESTAMP for any kind present in the live Infrahub schema.
@@ -752,7 +1160,16 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         destination schema knows about. Kinds absent from `self.schema`
         fall back to NONE — defensive guard so the engine never attempts
         an incremental query for an unknown kind.
+
+        NONE for every kind while this plan reads metadata (`metadata_read`). An incremental
+        load takes unchanged nodes from the previous snapshot, which holds no `updated_by` or
+        `updated_at`, so a plan would show "not recorded" for values Infrahub holds (FR-007).
+        With no cursor tier, the engine loads each kind in full through `model_loader`, whose
+        one read carries the metadata. `resolve_metadata_read` runs first (see
+        `Potenda.load_both_sides`), so the answer reflects the server version.
         """
+        if self.metadata_read:
+            return CursorTier.NONE
         if model_name in self.schema:
             return CursorTier.TIMESTAMP
         return CursorTier.NONE
@@ -772,10 +1189,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             kind=model_name,
             populate_store=True,
             prefetch_relationships=True,
+            include_metadata=self.metadata_read,
             **filter_kwargs,
         )
+        mapped: dict[str, MappedFields] = {}
         for node in nodes:
-            yield self.infrahub_node_to_diffsync(node=node)
+            payload = self.infrahub_node_to_diffsync(node=node, mapped=mapped)
+            if self.metadata_read:
+                self._record_last_changes(node, mapped=mapped)
+            yield payload
 
     def list_existing_ids(self, model_name: str) -> Iterator[str]:
         """Yield unique IDs for all Infrahub nodes of `model_name`.
@@ -812,12 +1234,23 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         element = next((el for el in self.config.schema_mapping if el.name == model_name), None)
         if element:
             # Retrieve all nodes corresponding to model_name (list of InfrahubNodeSync)
+            # With `include_metadata`, the same read also returns `updated_by` and `updated_at` for
+            # each attribute and each edge, cardinality-many edges included, because they are named
+            # in `include`. No request is added.
             nodes = self.client.all(
-                kind=model_name, include=identifier_and_attribute_fields(model), populate_store=True
+                kind=model_name,
+                include=identifier_and_attribute_fields(model),
+                populate_store=True,
+                include_metadata=self.metadata_read,
             )
 
             # Transform the list of InfrahubNodeSync into a list of (node, dict) tuples
-            node_dict_pairs = [(node, self.infrahub_node_to_diffsync(node=node)) for node in nodes]
+            # The mapped fields of each kind are computed once for this read, not once per node.
+            mapped: dict[str, MappedFields] = {}
+            node_dict_pairs = [(node, self.infrahub_node_to_diffsync(node=node, mapped=mapped)) for node in nodes]
+            if self.metadata_read:
+                for node in nodes:
+                    self._record_last_changes(node, mapped=mapped)
             total = len(node_dict_pairs)
 
             # Extract the list of dicts for filtering and transforming
@@ -1006,45 +1439,37 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             return
         self.client.store.set(key=unique_id, node=sdk_peer)
 
-    def infrahub_node_to_diffsync(self, node: InfrahubNodeSync) -> dict[str, Any]:
+    def infrahub_node_to_diffsync(
+        self, node: InfrahubNodeSync, *, mapped: dict[str, MappedFields] | None = None
+    ) -> dict[str, Any]:
         """
         Convert an Infrahub node into a dictionary suitable for creating a DiffSyncModel.
 
-        Handles attribute conversion and relationship resolution.
+        Handles attribute conversion and relationship resolution. `mapped` is the per-read
+        memo `_mapped_fields` fills; without it the mapped fields are computed for this node.
         """
         data: dict[str, Any] = {"local_id": str(node.id)}
-        node_kind = node.get_kind()
-        # Schema comes from the adapter's loaded mapping; the SDK schema manager is not
-        # consulted because a node built with an explicit schema is absent from its cache
-        # and a lookup there could fetch.
-        node_schema = self.schema[node_kind]
+        attr_names, relationships = self._mapped_fields(node.get_kind(), mapped)
 
-        for attr_name in node_schema.attribute_names:
-            if has_field(config=self.config, name=node_kind, field=attr_name):
-                attr = getattr(node, attr_name)
-                val = attr.value
-                # IP types come back from the Infrahub SDK as ipaddress
-                # objects; DiffSync models store them as their string form
-                # (e.g. "10.0.0.1/32"), so normalise here. Other non-string
-                # kinds — List, Number, Boolean, DateTime — pass through
-                # unchanged: stringifying them turns a real list `[]` into
-                # the four-character literal `"[]"`, which then fails
-                # Pydantic validation on `list[str]`-typed fields.
-                if isinstance(
-                    val,
-                    (ipaddress.IPv4Interface, ipaddress.IPv6Interface, ipaddress.IPv4Network, ipaddress.IPv6Network),
-                ):
-                    data[attr_name] = str(val)
-                else:
-                    data[attr_name] = val
+        for attr_name in attr_names:
+            attr = getattr(node, attr_name)
+            val = attr.value
+            # IP types come back from the Infrahub SDK as ipaddress
+            # objects; DiffSync models store them as their string form
+            # (e.g. "10.0.0.1/32"), so normalise here. Other non-string
+            # kinds — List, Number, Boolean, DateTime — pass through
+            # unchanged: stringifying them turns a real list `[]` into
+            # the four-character literal `"[]"`, which then fails
+            # Pydantic validation on `list[str]`-typed fields.
+            if isinstance(
+                val,
+                (ipaddress.IPv4Interface, ipaddress.IPv6Interface, ipaddress.IPv4Network, ipaddress.IPv6Network),
+            ):
+                data[attr_name] = str(val)
+            else:
+                data[attr_name] = val
 
-        for rel_schema in node_schema.relationships:
-            if not has_field(config=self.config, name=node_kind, field=rel_schema.name):
-                continue
-            peer_schema = self.schema.get(rel_schema.peer)
-            if peer_schema is None:
-                continue
-
+        for rel_schema, peer_schema in relationships:
             if rel_schema.cardinality == "one":
                 rel: RelatedNodeSync = getattr(node, rel_schema.name)
                 if not rel.id:
@@ -1093,6 +1518,69 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 data[rel_schema.name] = sorted(values)
 
         return data
+
+    def _mapped_fields(self, node_kind: str, mapped: dict[str, MappedFields] | None) -> MappedFields:
+        """The mapped attributes and relationships of `node_kind`, taken from `mapped` when it has them.
+
+        The schema comes from the adapter's loaded mapping; the SDK schema manager is not
+        consulted because a node built with an explicit schema is absent from its cache and a
+        lookup there could fetch. `mapped` is a memo one read passes to every node it converts,
+        keyed by node kind; it is filled the first time a kind is seen.
+        """
+        if mapped is not None and node_kind in mapped:
+            return mapped[node_kind]
+        node_schema = self.schema[node_kind]
+        fields = (
+            list(self._mapped_attribute_names(node_kind, node_schema)),
+            list(self._mapped_relationships(node_kind, node_schema)),
+        )
+        if mapped is not None:
+            mapped[node_kind] = fields
+        return fields
+
+    def _mapped_attribute_names(self, node_kind: str, node_schema: MainSchemaTypesAPI) -> Iterator[str]:
+        """The attributes of `node_kind` the configuration maps."""
+        for attr_name in node_schema.attribute_names:
+            if has_field(config=self.config, name=node_kind, field=attr_name):
+                yield attr_name
+
+    def _mapped_relationships(
+        self, node_kind: str, node_schema: MainSchemaTypesAPI
+    ) -> Iterator[tuple[RelationshipSchemaAPI, MainSchemaTypesAPI]]:
+        """The relationships of `node_kind` the configuration maps and whose peer kind the schema has, with that peer's schema."""
+        for rel_schema in node_schema.relationships:
+            if not has_field(config=self.config, name=node_kind, field=rel_schema.name):
+                continue
+            peer_schema = self.schema.get(rel_schema.peer)
+            if peer_schema is not None:
+                yield rel_schema, peer_schema
+
+    def _record_last_changes(self, node: InfrahubNodeSync, *, mapped: dict[str, MappedFields] | None = None) -> None:
+        """Keep the `updated_by` and `updated_at` of each mapped field of a node read with metadata.
+
+        The fields are those `infrahub_node_to_diffsync` converts: mapped attributes, and mapped
+        relationships whose peer kind the schema has. An attribute's values come from
+        `node.<attribute>`; a cardinality-one relationship's from its edge; a cardinality-many
+        relationship's from its most recently changed edge. A field Infrahub returned nothing
+        for is kept as `NOT_RECORDED`. Nothing here reaches the DiffSync models.
+        """
+        last_changes = self.last_changes
+        node_id = str(node.id)
+        attr_names, relationships = self._mapped_fields(node.get_kind(), mapped)
+        for attr_name in attr_names:
+            attr = getattr(node, attr_name)
+            last_changes[node_id, attr_name] = LastChange(
+                updated_by=_recorded_account(attr.updated_by), updated_at=attr.updated_at
+            )
+        for rel_schema, _ in relationships:
+            if rel_schema.cardinality == "one":
+                change = _edge_last_change(getattr(node, rel_schema.name))
+            elif rel_schema.cardinality == "many":
+                rel_manager: RelationshipManagerSync = getattr(node, rel_schema.name)
+                change = _latest_change(_edge_last_change(peer) for peer in rel_manager.peers)
+            else:
+                continue
+            last_changes[node_id, rel_schema.name] = change
 
     def new_peer_resolver(self) -> PeerResolver:
         """Build the peer resolver for one apply (FR-014, AD086).
@@ -1224,6 +1712,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         Raises:
             SkippedDeleteOperation: the operation is a recorded delete (a designed
                 limitation, not a failure), and no skip is recorded — see above.
+            LineageNotResolvedError: `resolve_lineage` has not set this run's source, owner
+                and protection, so no write is made for this operation.
             ReviewedPayloadFieldMissingError: the live schema or SDK mutation would omit
                 a reviewed direct payload field, so no write is made for this operation.
             UnaccountedIdentityComponentError: a human-friendly-ID component of the
@@ -1243,6 +1733,17 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 "destination was not touched."
             )
             raise SkippedDeleteOperation(msg)
+
+        # Checked before the schema read and the peer lookups, so a refused operation reads and
+        # writes nothing.
+        lineage = self.lineage
+        if lineage is None:
+            msg = (
+                f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} was refused: "
+                "the import's source, owner and protection were not resolved before the write. "
+                "No destination write was attempted."
+            )
+            raise LineageNotResolvedError(msg)
 
         # Preflight refreshed this cache once for the whole plan. Reuse the schema that
         # the SDK will render with; a fresh full-branch download per operation is costly
@@ -1330,11 +1831,31 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             if not _has_unwritable_hfid_component(node_schema):
                 self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
 
-        source_id = self.source_node.id if self.source_node else None
-        owner_id = self.owner_node.id if self.owner_node else None
+        source_id = lineage.source.id
+        owner_id = None if lineage.owner is None else lineage.owner.id
+        # `None` leaves the `is_protected` key out of the payload, so a value protected earlier
+        # keeps its flag; the flag is sent only when the package turns `protect` on (FR-006).
+        is_protected = True if lineage.protect else None
+        # The owner goes on every value a create writes. An update sends it on no attribute,
+        # so the server keeps the owner each value holds, including an empty one (FR-002);
+        # it goes only on the relationship edges the update adds, because an edge the update
+        # sends again keeps the owner it holds.
         create_data = self.client.schema.generate_payload_create(
-            schema=node_schema, data=data, source=source_id, owner=owner_id, is_protected=True
+            schema=node_schema,
+            data=data,
+            source=source_id,
+            owner=owner_id if operation.action == "create" else None,
+            is_protected=is_protected,
         )
+        if operation.action == "update" and owner_id is not None and references:
+            self._set_owner_on_added_edges(
+                create_data=create_data,
+                operation=operation,
+                node_schema=node_schema,
+                references=references,
+                owner_id=owner_id,
+            )
+        clear_lineage_on_pool_edges(create_data, node_schema)
         node = self.client.create(kind=operation.kind, data=create_data)
         if operation.action == "update":
             # The recorded id, set on the node rather than put into `data`. The SDK renders
@@ -1369,6 +1890,76 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         node_id = _require_node_id(node, context=f"for operation {operation.operation_id!r}")
         peers.remember(operation.kind, operation.identity, node_id)
         return node_id
+
+    def _current_peer_ids(
+        self,
+        *,
+        operation: PlannedOperation,
+        node_schema: NodeSchemaAPI,
+        references: Sequence[RelationshipReference],
+    ) -> dict[str, set[str]] | None:
+        """Return the peer ids the destination node has now, for each relationship the update writes.
+
+        One `client.get` by the recorded id, in the request shape `RelationshipManager.fetch()`
+        uses: the cardinality-many relationships the update writes are included, and every
+        attribute and every other relationship is excluded, so no attribute value is selected.
+        Cardinality-one relationships come back without being included, because the SDK selects
+        every one that is not excluded. `None` when the node does not exist: the upsert keyed by
+        that id is then refused as a stale id, and no edge is treated as added.
+        """
+        written = {reference.field for reference in references}
+        include = [reference.field for reference in references if reference.cardinality == "many"]
+        exclude = [
+            *node_schema.attribute_names,
+            *(name for name in node_schema.relationship_names if name not in written),
+        ]
+        node = self.client.get(
+            kind=operation.kind,
+            id=operation.destination_id,
+            include=include,
+            exclude=exclude,
+            populate_store=False,
+            raise_when_missing=False,
+        )
+        if node is None:
+            return None
+        current: dict[str, set[str]] = {}
+        for reference in references:
+            related = getattr(node, reference.field)
+            if reference.cardinality == "many":
+                current[reference.field] = set(related.peer_ids)
+            else:
+                current[reference.field] = {related.id} if related.id else set()
+        return current
+
+    def _set_owner_on_added_edges(
+        self,
+        *,
+        create_data: dict[str, Any],
+        operation: PlannedOperation,
+        node_schema: NodeSchemaAPI,
+        references: Sequence[RelationshipReference],
+        owner_id: str,
+    ) -> None:
+        """Put the owner on the relationship edges an update adds, and on no other edge.
+
+        An edge is added when its peer is not among the node's current peers (cardinality
+        many), or differs from the current peer (cardinality one). Infrahub replaces an
+        existing edge's owner whenever one is sent, so every other edge is left without the
+        `owner` key and keeps the owner it has.
+        """
+        current = self._current_peer_ids(operation=operation, node_schema=node_schema, references=references)
+        if current is None:
+            logger.debug(
+                "Owner not set on operation %s: the node %s was not found",
+                operation.operation_id,
+                operation.destination_id,
+            )
+            return
+        for reference in references:
+            for edge in _edge_inputs(create_data.get(reference.field)):
+                if isinstance(edge, dict) and edge.get("id") not in current[reference.field]:
+                    edge["owner"] = owner_id
 
     @staticmethod
     def _assert_identity_components_accounted_for(
@@ -1409,6 +2000,29 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             "unkeyed and every re-apply would duplicate the object."
         )
         raise UnaccountedIdentityComponentError(msg)
+
+
+_LINEAGE_EDGE_PROPERTIES = ("source", "owner", "is_protected")
+
+
+def _edge_inputs(value: Any) -> Iterator[Any]:
+    """Yield each edge of a relationship's input: the items of a list, or the value itself."""
+    yield from value if isinstance(value, list) else [value]
+
+
+def clear_lineage_on_pool_edges(create_data: dict[str, Any], node_schema: NodeSchemaAPI) -> None:
+    """Remove `source`, `owner` and `is_protected` from each relationship edge allocated from a resource pool.
+
+    Infrahub sets the pool as the source of an edge it allocates, so that edge must carry none
+    of the import's lineage properties, and the pool stays its source. No V3 write path
+    allocates from a pool today; this keeps the rule in place for the write path that does.
+    An edge is allocated from a pool when its input carries the `from_pool` key.
+    """
+    for name in node_schema.relationship_names:
+        for edge in _edge_inputs(create_data.get(name)):
+            if isinstance(edge, dict) and "from_pool" in edge:
+                for prop in _LINEAGE_EDGE_PROPERTIES:
+                    edge.pop(prop, None)
 
 
 def _has_unwritable_hfid_component(node_schema: NodeSchemaAPI) -> bool:

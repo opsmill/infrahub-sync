@@ -220,7 +220,12 @@ class _Harness(InfrahubAdapter):
             item=item,
         )
 
-    def infrahub_node_to_diffsync(self, node: object) -> dict[str, Any]:  # noqa: PLR6301
+    def infrahub_node_to_diffsync(  # noqa: PLR6301
+        self,
+        node: object,
+        *,
+        mapped: dict[str, Any] | None = None,  # noqa: ARG002 — matches the production signature
+    ) -> dict[str, Any]:
         # Return whatever fake data the test attached to the node.
         return dict(node._fake_diffsync_data)  # ty: ignore[unresolved-attribute]
 

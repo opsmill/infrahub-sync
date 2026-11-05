@@ -28,10 +28,11 @@ For *why* the format is shaped this way, see [ADR 0001](https://github.com/opsmi
 ├── run.json, cursors.json, schema-sub-hash.txt
 └── plan/                     # the artifact
     ├── operations.jsonl      # written FIRST
+    ├── last_changes.jsonl    # written second, only when the destination is Infrahub
     └── manifest.json         # written LAST — its presence is the commit point
 ```
 
-Both files are written tmp-then-`replace`, the same way the other sidecars are. The write order is
+Every file is written tmp-then-`replace`, the same way the other sidecars are. The write order is
 load-bearing, and it is what makes the failure verdicts disjoint without any heuristic:
 
 | Observation | Verdict |
@@ -169,6 +170,8 @@ The data model rejects a stored identifier that does not match its own triple.
 | `operations_count` | Keeps an empty plan distinguishable from a torn one |
 | `delete_operations_computed` | `false` when the destination side was loaded incrementally |
 | `destination_binding` | `{url, branch}` — the destination the plan was computed against, URL-normalized, **never the token**. A registered package takes the URL from its declared settings only; a local configuration directory lets `INFRAHUB_ADDRESS` or `INFRAHUB_URL` override it. Compared for equality at apply time. Additive: absent on plans written before it existed, and the check is skipped for them |
+| `lineage` | `{import_account: {name, id}, source: {kind, name}, owner: {kind, name} or null, protect}` — the import account the plan was computed with and the lineage its writes carry. `source` is `CoreAccount` and the import account's name when the package names no source; `owner` is `null` when it names none. An Infrahub apply refuses before any write when its own import account's `id` differs, and refuses a plan without this field, asking for a new plan. Additive: absent when the destination is not Infrahub and on plans written before it existed |
+| `last_changes` | `{path, sha256, count, metadata_read}` — the record of `last_changes.jsonl`. `path` is always `last_changes.jsonl`, relative to `plan/`; `sha256` is the digest of the file's bytes; `count` is its number of records; `metadata_read` is `false` when the plan did not ask Infrahub for `updated_by` and `updated_at`, because the server is older than 1.7.0, its version could not be parsed, or Infrahub refused the version query. Additive: absent when the destination is not Infrahub and on plans written before it existed; review then shows no last-change data |
 | `plan_checksum` | Lowercase sha256 hex over the manifest body plus the operations bytes |
 | *(any other key)* | Tolerated on read, preserved, and included in the bytes the checksum covers |
 
@@ -193,6 +196,44 @@ re-plan of an unchanged source. The digest is taken over the table with `_extrac
 file order; `_source_id` and `_tombstone` stay in, both being deterministic for identical input. What
 this stops detecting is a change confined to the extraction timestamp. An absent recorded file, a
 disagreeing digest and a disagreeing row count are all still refusals.
+
+### The last-change file
+
+`last_changes.jsonl` records who last changed each field that an update proposes to change, and
+when. It is display data: `runs plan --detail` renders it, and apply does not read it. A create has
+no record. One canonical JSON object per line, every line LF-terminated, sorted by `operation_id`
+then `field`, so the same plan inputs give the same bytes; zero records encode to zero bytes.
+
+| Field | Meaning |
+|---|---|
+| `operation_id` | The `operation_id` of the update the field belongs to |
+| `field` | The attribute or relationship name |
+| `field_type` | `attribute` or `relationship` |
+| `updated_by` | `{id, display_label}` of the account Infrahub recorded, or `null` |
+| `updated_at` | ISO 8601 time Infrahub recorded, or `null` |
+
+A `null` is rendered as `not recorded`. For a cardinality-many relationship the record is the edge
+that changed most recently. The checksum covers the file through the manifest's `last_changes.sha256`.
+The reader splits the file's checks in two:
+
+- Integrity checks refuse the plan. Review and the pre-apply check (`last_changes`) both refuse a
+  plan whose file is absent, or whose digest or record count differs from the manifest's record,
+  because such a file was changed after the plan was written.
+- Content checks do not refuse it. A file that matches its digest but holds a bad record comes from
+  a writer bug, and apply does not read the file, so the plan can still be reviewed and applied. A bad
+  record is a line that is not UTF-8 JSON, that fails `LastChangeRecord` validation, that names no
+  update of the plan, whose field its update does not write (an `attribute` not in the update's
+  `payload`, or a `relationship` not in its `relationships`), or that repeats a field of an update.
+  The reader stops at the first bad line and sets `LoadedPlan.last_changes` to `None` and
+  `LoadedPlan.last_changes_problem` to the line number and the reason. Review adds one
+  verification note, for example `last_changes.jsonl line 4 repeats field 'name' of operation
+  'op_3f9a1c2b7d4e6a80' (first recorded on line 2); last-change details are not shown`, and
+  shows no last-change details for any field. The Sync API sends that note in
+  `PlanResource.verification_notes` with
+  `last_changes: null`. Apply reads the same plan as the plan without the bad line.
+
+An update field with no record is accepted: the payload holds every source attribute, not only the
+changed ones, so the operations do not show which fields must have a record.
 
 ### Determinism
 

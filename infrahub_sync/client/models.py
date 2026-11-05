@@ -12,6 +12,28 @@ Operation = Literal["plan", "verify", "apply", "sync"]
 TerminalState = Literal["completed", "failed", "cancelled", "abandoned", "interrupted"]
 TerminalOutcome = Literal["succeeded", "failed", "cancelled", "abandoned", "ambiguous"]
 
+# The longest `cause` and `next_action` text a failed stage records in a run's results, and the
+# longest the CLI prints of each.
+MAX_FAILURE_CAUSE_TEXT = 1000
+
+# The fixed next actions the service records and the CLI prints as `hint:`. Defined here because
+# the CLI and the service both import this module, and the CLI uses them for a record an older
+# Sync API wrote without a `next_action`. Fixed text, so a record never quotes the manifest
+# values a damaged or hand-edited artifact may hold.
+SCHEMA_CHANGED_NEXT_ACTION = "create and review a new plan before applying again"
+
+# The recovery signal a refused registered plan carries.
+RecoveryAction = Literal["rebuild", "compatible_version"]
+
+# The next action for each recovery signal.
+RECOVERY_NEXT_ACTIONS: dict[RecoveryAction, str] = {
+    "rebuild": "re-run plan for this sync, review the new plan, then apply that run",
+    "compatible_version": (
+        "re-run plan with this version and review the new plan, "
+        "or apply the reviewed plan with the version that wrote it"
+    ),
+}
+
 # Page sizes of the run, configuration and version lists: the default when a request gives
 # none, and the accepted range.
 DEFAULT_LIMIT = 50
@@ -379,6 +401,53 @@ class PlanOperationResource(_ResourceModel):
     destination_id: str | None = None
 
 
+class PlanLineageAccountResource(_ResourceModel):
+    """The import account a saved plan was computed with."""
+
+    name: str = Field(min_length=1)
+    id: str = Field(min_length=1)
+
+
+class PlanLineageNodeResource(_ResourceModel):
+    """A source or owner node, by kind and name, as the saved plan recorded it."""
+
+    kind: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+
+
+class PlanLineageResource(_ResourceModel):
+    """The lineage a saved plan writes: import account, source, owner and protection.
+
+    `owner` is `None` when the package names no owner.
+    """
+
+    import_account: PlanLineageAccountResource
+    source: PlanLineageNodeResource
+    owner: PlanLineageNodeResource | None = None
+    protect: bool
+
+
+class PlanLastChangeAccountResource(_ResourceModel):
+    """The account Infrahub recorded as `updated_by` for a value, by id and display label."""
+
+    id: str = Field(min_length=1)
+    display_label: str | None = None
+
+
+class PlanLastChangeResource(_ResourceModel):
+    """Who last changed one field an update proposes to change, and when.
+
+    `updated_by` or `updated_at` is `None` when Infrahub holds no value for it, or when the
+    plan did not read metadata; review shows such a value as "not recorded".
+    """
+
+    operation_id: str = Field(min_length=1)
+    field: str = Field(min_length=1)
+    field_type: Literal["attribute", "relationship"]
+    updated_by: PlanLastChangeAccountResource | None = None
+    updated_at: str | None = None
+
+
 class PlanResource(_ResourceModel):
     """Return a saved plan, checksum, summary, and operations."""
 
@@ -392,6 +461,12 @@ class PlanResource(_ResourceModel):
     # reviewer reads the binding the apply will compare. `None` for an unregistered plan.
     schema_fingerprint: str | None = None
     destination_branch: str | None = None
+    # The lineage the plan records in its manifest. `None` for a plan whose destination
+    # records no lineage. Optional, so a service that does not send it still validates.
+    lineage: PlanLineageResource | None = None
+    # Who last changed each field each update proposes to change, from the plan's
+    # `last_changes.jsonl`. `None` for a plan made without the file. Optional, like `lineage`.
+    last_changes: tuple[PlanLastChangeResource, ...] | None = None
 
 
 class ResultsResource(_ResourceModel):

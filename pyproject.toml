@@ -15,7 +15,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "infrahub-sdk>=1.17,<2",
+    "infrahub-sdk>=1.18,<2",
     "structlog>=25.1,<27.0",
     "typing-extensions>=4.4",
     "httpx>=0.27,<1",
@@ -93,7 +93,7 @@ service = [
     # not to `dev`: the image installs `--no-dev --extra service`, and a dev-only
     # placement leaves `infrahubctl` unable to start there for a missing
     # `ariadne_codegen`. The base install stays free of it.
-    "infrahub-sdk[ctl]>=1.17,<2; python_version >= '3.11'",
+    "infrahub-sdk[ctl]>=1.18,<2; python_version >= '3.11'",
     "prefect==3.8.6; python_version >= '3.11'",
     # prefect already resolves this transitively; declaring it directly is what lets
     # `infrahub_sync/adapters/prometheus.py` import `prometheus_client.parser`

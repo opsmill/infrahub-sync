@@ -26,7 +26,7 @@ from unittest.mock import patch
 
 import pytest
 from infrahub_sdk import Config, InfrahubClientSync
-from infrahub_sdk.exceptions import AuthenticationError, GraphQLError, ServerNotResponsiveError
+from infrahub_sdk.exceptions import AuthenticationError, GraphQLError, NodeNotFoundError, ServerNotResponsiveError
 from infrahub_sdk.node import InfrahubNodeSync
 from infrahub_sdk.node.attribute import Attribute
 from infrahub_sdk.schema import NodeSchemaAPI
@@ -40,10 +40,19 @@ from infrahub_sdk.schema.main import (
 )
 
 from infrahub_sync.adapters.infrahub import (
+    IMPORT_ACCOUNT_QUERY,
+    ImportAccount,
     InfrahubAdapter,
     InfrahubModel,
+    LineageNotResolvedError,
+    NamedLineageNodeNotFoundError,
     PeerResolver,
+    ResolvedLineage,
+    ResolvedLineageNode,
+    clear_lineage_on_pool_edges,
 )
+from infrahub_sync.configuration.infrahub_lineage import InfrahubLineageSettings, NamedLineageNode
+from infrahub_sync.plan.derive import operations_from_diff
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
     NullRelationshipValueError,
@@ -59,8 +68,17 @@ from infrahub_sync.plan.models import ApplyRecord, PlannedOperation, Relationshi
 from infrahub_sync.plan.review import read_saved_plan
 from infrahub_sync.plan.write_surface import PlannedWriteDestination
 from infrahub_sync.potenda import Potenda
-from tests.plan.artifact_fixtures import CONFIG_VERSION, SYNC_NAME, operation_record, write_artifact
+from tests.plan.artifact_fixtures import CONFIG_VERSION, SYNC_NAME, operation_record
+from tests.plan.artifact_fixtures import write_artifact as write_fixture_artifact
 from tests.plan.ownership_fixtures import granted_ownership
+from tests.test_potenda_plan_artifact import (
+    _FakeAdapter,
+    _FakeDiff,
+    _FakeElement,
+    build_config,
+    qualified_source,
+    resolver,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -81,8 +99,24 @@ TEAM_KIND = "TestTeam"
 GROUP_KIND = "TestGroup"
 
 NODE_ID = "written-node-1"
+# The account the import account query answers for at the start of an apply.
+IMPORT_ACCOUNT_ID = "import-account-1"
 # The destination id a fixture update carries unless its case is about the id itself.
 DEFAULT_DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
+# The lineage a saved plan records: the account the import account query answers for, so an
+# apply runs with the account the plan was made with (FR-012).
+RECORDED_LINEAGE: dict[str, Any] = {
+    "import_account": {"name": "import-account", "id": IMPORT_ACCOUNT_ID},
+    "source": {"kind": "CoreAccount", "name": "import-account"},
+    "owner": None,
+    "protect": False,
+}
+
+
+def write_artifact(run_directory: Path, records: Any = (), **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
+    """Write a saved plan as the fixture builder does, recording `RECORDED_LINEAGE` unless a case sets its own."""
+    kwargs.setdefault("lineage", RECORDED_LINEAGE)
+    return write_fixture_artifact(run_directory, records, **kwargs)
 
 
 def _text(attr_id: str, name: str, *, optional: bool = True) -> AttributeSchemaAPI:
@@ -294,8 +328,19 @@ class RecordingClient(InfrahubClientSync):
     # -- the transport edge ------------------------------------------------------------
 
     def execute_graphql(self, *args: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401, ARG002
-        """Record the rendered mutation and answer as a successful write would."""
+        """Record the rendered mutation and answer as a successful write would.
+
+        The import account query that starts an apply is answered with the import account, and
+        the version query of a plan with the pinned Infrahub version.
+        """
         query = kwargs["query"]
+        if query == IMPORT_ACCOUNT_QUERY:
+            self.events.append(("account_profile", None))
+            return {"AccountProfile": {"id": IMPORT_ACCOUNT_ID, "name": {"value": "import-account"}}}
+        if "InfrahubInfo" in query:
+            # The server version a plan reads after resolving its lineage.
+            self.events.append(("version", None))
+            return {"InfrahubInfo": {"version": "1.11.9"}}
         match = re.search(r"mutation\s*\{\s*(\w+)", query)
         if match is None:
             msg = f"Unrecognised mutation rendered by the SDK: {query!r}"
@@ -322,6 +367,13 @@ class RecordingClient(InfrahubClientSync):
             data[rel_name] = [
                 {"id": peer_id, "__typename": peer_kind} for peer_id in self.existing_peers.get((kind, rel_name), [])
             ]
+        # The SDK selects every cardinality-one relationship that is not excluded, so a seeded
+        # cardinality-one peer is answered without being named in `include`.
+        excluded = set(kwargs.get("exclude") or ())
+        for rel in schema.relationships:
+            seeded = self.existing_peers.get((kind, rel.name))
+            if rel.cardinality == RelationshipCardinality.ONE and rel.name not in excluded and seeded:
+                data[rel.name] = {"id": seeded[0], "__typename": rel.peer}
         return InfrahubNodeSync(client=self, schema=schema, data=data)
 
     def filters(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401, ARG002
@@ -377,14 +429,31 @@ def make_node(client: RecordingClient, kind: str, node_id: str) -> InfrahubNodeS
     return InfrahubNodeSync(client=client, schema=SCHEMAS[kind], data={"id": node_id})
 
 
-def make_adapter(client: RecordingClient, *, source: str | None = None, owner: str | None = None) -> InfrahubAdapter:
-    """The adapter with only the state the planned-write surface reads, and no network setup."""
+def make_adapter(
+    client: RecordingClient, *, source: str = IMPORT_ACCOUNT_ID, owner: str | None = None, protect: bool = False
+) -> InfrahubAdapter:
+    """The adapter with only the state the planned-write surface reads, and no network setup.
+
+    The lineage is resolved as an apply resolves it before its first write: `source` is the
+    import account and the source of every value, with the given owner and protection.
+    """
     adapter = InfrahubAdapter.__new__(InfrahubAdapter)
     adapter.client = client
-    adapter.source_node = make_node(client, SITE_KIND, source) if source else None
-    adapter.owner_node = make_node(client, SITE_KIND, owner) if owner else None
+    adapter.lineage = resolved_lineage(source=source, owner=owner, protect=protect)
     adapter.schema = dict(SCHEMAS)
     return adapter
+
+
+def resolved_lineage(
+    *, source: str = IMPORT_ACCOUNT_ID, owner: str | None = None, protect: bool = False
+) -> ResolvedLineage:
+    """A lineage as `resolve_lineage` returns it: the import account `source` as source."""
+    return ResolvedLineage(
+        import_account=ImportAccount(id=source, name="source-account"),
+        source=ResolvedLineageNode(kind="CoreAccount", name="source-account", id=source),
+        owner=None if owner is None else ResolvedLineageNode(kind="CoreAccountGroup", name="owners", id=owner),
+        protect=protect,
+    )
 
 
 def make_operation(
@@ -540,6 +609,20 @@ def test_the_write_is_client_create_then_an_upsert_of_payload_plus_resolved_peer
     assert rendered_related_id(query, "site") == "site-id-1", (
         f"The relationship must reach the write as the resolved destination node id. Rendered:\n{query}"
     )
+
+
+def test_a_write_before_the_lineage_is_resolved_is_refused_with_no_request() -> None:
+    """Without a resolved lineage the write would carry no source, owner or protection, so it is refused."""
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    adapter.lineage = None
+    peers = PeerResolver(adapter)
+    peers.remember(SITE_KIND, {"name": "site-a"}, "site-id-1")
+
+    with pytest.raises(LineageNotResolvedError, match="No destination write was attempted"):
+        adapter.apply_planned_operation(operation=server_operation("server-a"), peers=peers)
+
+    assert client.events == [], f"A refused write must send no request; the client recorded {client.events}."
 
 
 def test_no_unmapped_destination_field_is_written() -> None:
@@ -903,6 +986,86 @@ def test_direct_apply_writes_every_reviewed_field_without_drift(tmp_path: Path) 
     assert client.schema_fetches == 1
 
 
+def test_apply_resolves_lineage_before_the_first_write_and_writes_with_it(tmp_path: Path) -> None:
+    """An apply reads the import account before its first write, and the write carries it as source."""
+    directory = apply_run_dir(tmp_path)
+    operation = operation_record(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
+    write_artifact(directory, [operation], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+    adapter = make_adapter(client)
+
+    state, _ = apply_and_record_state(engine_over(directory, adapter))
+
+    assert state == "applied"
+    names = [name for name, _ in client.events]
+    assert names.count("account_profile") == 1
+    assert names.index("account_profile") < names.index("mutation")
+    assert adapter.lineage is not None
+    assert adapter.lineage.source.id == IMPORT_ACCOUNT_ID
+    assert f'source: "{IMPORT_ACCOUNT_ID}"' in client.mutations[0][1]
+
+
+def test_an_apply_of_several_operations_reads_the_import_account_once(tmp_path: Path) -> None:
+    """FR-001: one import account query per apply run, however many operations it writes."""
+    directory = apply_run_dir(tmp_path)
+    records = [
+        operation_record(kind=SITE_KIND, identity={"name": name}, payload={"name": name})
+        for name in ("site-a", "site-b", "site-c")
+    ]
+    write_artifact(directory, records, run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+
+    state, _ = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert state == "applied"
+    names = [name for name, _ in client.events]
+    assert names.count("mutation") == 3
+    assert names.count("account_profile") == 1
+
+
+def test_apply_resolves_lineage_again_rather_than_reusing_what_was_set(tmp_path: Path) -> None:
+    """Lineage already held by the adapter is replaced by the apply's own resolution."""
+    directory = apply_run_dir(tmp_path)
+    operation = operation_record(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
+    write_artifact(directory, [operation], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+    adapter = make_adapter(client, source="stale-account")
+
+    state, _ = apply_and_record_state(engine_over(directory, adapter))
+
+    assert state == "applied"
+    assert adapter.lineage is not None
+    assert adapter.lineage.source.id == IMPORT_ACCOUNT_ID
+    assert "stale-account" not in client.mutations[0][1]
+
+
+def test_a_named_lineage_node_that_does_not_exist_stops_the_apply_before_any_write(tmp_path: Path) -> None:
+    """A named owner the destination does not have stops the apply with nothing written, and no fallback."""
+    directory = apply_run_dir(tmp_path)
+    operation = operation_record(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
+    write_artifact(directory, [operation], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+    group = NodeSchemaAPI(id="group-schema", name="AccountGroup", namespace="Core", attributes=[], relationships=[])
+    client.live_schema = BranchSchema(hash="fixture", nodes={**SCHEMAS, "CoreAccountGroup": group})
+    client.schema.set_cache(client.live_schema)
+    adapter = make_adapter(client)
+    adapter.lineage_settings = InfrahubLineageSettings(owner=NamedLineageNode(kind="CoreAccountGroup", name="missing"))
+
+    def _no_such_node(**kwargs: Any) -> Any:  # noqa: ANN401
+        client.events.append(("get", kwargs))
+        raise NodeNotFoundError(identifier={"name__value": ["missing"]}, node_type="CoreAccountGroup")
+
+    client.get = _no_such_node  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(NamedLineageNodeNotFoundError):
+        engine_over(directory, adapter).apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
+
+    assert client.mutations == []
+    assert [payload for name, payload in client.events if name == "get"] == [
+        {"kind": "CoreAccountGroup", "name__value": "missing", "include": ["name"], "exclude": []}
+    ]
+
+
 @pytest.mark.parametrize("action", ["create", "update"])
 def test_ambiguous_null_optional_relationship_is_refused(action: str) -> None:
     """A payload null cannot be assumed to be a relationship after schema drift."""
@@ -943,10 +1106,16 @@ def test_a_null_mandatory_cardinality_one_relationship_is_refused_before_any_wri
     assert client.mutations == [], "The refusal must happen before any destination mutation."
 
 
-def test_generate_payload_create_receives_the_source_owner_and_protection_arguments() -> None:
-    """FR-013: the planned create passes the source, owner, and protection arguments to payload generation."""
+@pytest.mark.parametrize(
+    ("protect", "is_protected"),
+    [pytest.param(False, None, id="protect-off"), pytest.param(True, True, id="protect-on")],
+)
+def test_generate_payload_create_receives_the_source_owner_and_protection_arguments(
+    *, protect: bool, is_protected: bool | None
+) -> None:
+    """The planned create passes the source, the owner and, only when `protect` is on, the protection flag."""
     client = RecordingClient()
-    adapter = make_adapter(client, source="source-account-1", owner="owner-account-1")
+    adapter = make_adapter(client, source="source-account-1", owner="owner-account-1", protect=protect)
 
     operation = make_operation(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
     with record_payload_create(client) as calls:
@@ -957,8 +1126,121 @@ def test_generate_payload_create_receives_the_source_owner_and_protection_argume
     assert call["schema"] is SITE_SCHEMA
     assert call["source"] == "source-account-1"
     assert call["owner"] == "owner-account-1"
-    assert call["is_protected"] is True
+    assert call["is_protected"] is is_protected
     assert call["data"] == {"name": "site-a"}, "`data` is the payload plus resolved peer ids, and nothing else."
+
+
+def _created_with_default_lineage(operation: PlannedOperation) -> str:
+    """Apply one create with the import account as source, no owner and no protection; return the mutation."""
+    client = RecordingClient()
+    adapter = make_adapter(client, source=IMPORT_ACCOUNT_ID)
+    peers = PeerResolver(adapter)
+    peers.remember(TAG_KIND, {"name": "tag-b"}, "tag-id-2")
+    peers.remember(TAG_KIND, {"name": "tag-c"}, "tag-id-3")
+    peers.remember(SITE_KIND, {"name": "site-a"}, "site-id-1")
+
+    adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert len(client.mutations) == 1
+    return client.mutations[0][1]
+
+
+TEAM_CREATE = make_operation(
+    kind=TEAM_KIND,
+    identity={"name": "team-a"},
+    payload={"name": "team-a", "description": "core"},
+    relationships=[
+        RelationshipReference(
+            field="members", peer_kind=TAG_KIND, cardinality="many", peers=[{"name": "tag-b"}, {"name": "tag-c"}]
+        )
+    ],
+)
+
+
+@pytest.mark.parametrize(
+    ("operation", "attributes", "edges"),
+    [
+        pytest.param(TEAM_CREATE, 2, 2, id="attributes-and-many-edges"),
+        pytest.param(server_operation("server-a"), 1, 1, id="attribute-and-one-edge"),
+    ],
+)
+def test_a_create_sends_the_source_on_every_attribute_and_edge_and_no_owner_or_protection(
+    operation: PlannedOperation, attributes: int, edges: int
+) -> None:
+    """FR-001, FR-006: with no owner and no `protect`, a create sends the source and nothing else."""
+    rendered = _created_with_default_lineage(operation)
+
+    attribute_sources = re.findall(rf'(?<!_relation__)\bsource:\s*"{IMPORT_ACCOUNT_ID}"', rendered)
+    assert len(attribute_sources) == attributes, rendered
+    assert rendered.count(f'_relation__source: "{IMPORT_ACCOUNT_ID}"') == edges, rendered
+    assert "is_protected" not in rendered, f"No protection key may be sent:\n{rendered}"
+    # An owner property is a node id string; the `owner` relationship of `TestTeam` is not mapped.
+    assert re.search(r'\bowner:\s*"', rendered) is None, f"No owner may be sent:\n{rendered}"
+    assert "_relation__owner" not in rendered, rendered
+
+
+def _applied_with_protection(operation: PlannedOperation, *, protect: bool) -> str:
+    """Apply one operation with the import account as source, no owner and `protect` as given; return the mutation."""
+    client = RecordingClient()
+    adapter = make_adapter(client, source=IMPORT_ACCOUNT_ID, protect=protect)
+    peers = PeerResolver(adapter)
+    peers.remember(TAG_KIND, {"name": "tag-b"}, "tag-id-2")
+    peers.remember(TAG_KIND, {"name": "tag-c"}, "tag-id-3")
+    peers.remember(SITE_KIND, {"name": "site-a"}, "site-id-1")
+
+    adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert len(client.mutations) == 1
+    return client.mutations[0][1]
+
+
+TEAM_UPDATE = make_operation(
+    kind=TEAM_KIND,
+    action="update",
+    identity={"name": "team-a"},
+    payload={"name": "team-a", "description": "edge"},
+    relationships=[
+        RelationshipReference(
+            field="members", peer_kind=TAG_KIND, cardinality="many", peers=[{"name": "tag-b"}, {"name": "tag-c"}]
+        )
+    ],
+)
+
+PROTECTION_CASES = [
+    pytest.param(TEAM_CREATE, 2, 2, id="create-attributes-and-many-edges"),
+    pytest.param(server_operation("server-a"), 1, 1, id="create-attribute-and-one-edge"),
+    pytest.param(TEAM_UPDATE, 2, 2, id="update-attributes-and-many-edges"),
+]
+
+
+@pytest.mark.parametrize(("operation", "attributes", "edges"), PROTECTION_CASES)
+def test_protect_on_without_an_owner_protects_every_attribute_and_edge_written(
+    operation: PlannedOperation, attributes: int, edges: int
+) -> None:
+    """FR-006: with `protect` on and no owner, creates and updates protect every value they write."""
+    rendered = _applied_with_protection(operation, protect=True)
+
+    attribute_flags = re.findall(r"(?<!_relation__)\bis_protected:\s*true", rendered)
+    assert len(attribute_flags) == attributes, f"Every attribute written must be protected:\n{rendered}"
+    assert rendered.count("_relation__is_protected: true") == edges, (
+        f"Every relationship edge written must be protected:\n{rendered}"
+    )
+    assert re.search(r'\bowner:\s*"', rendered) is None, f"No owner may be sent:\n{rendered}"
+    assert "_relation__owner" not in rendered, rendered
+
+
+@pytest.mark.parametrize(("operation", "attributes", "edges"), PROTECTION_CASES)
+def test_protect_off_sends_no_protection_key_on_a_create_or_an_update(
+    operation: PlannedOperation, attributes: int, edges: int
+) -> None:
+    """FR-006: with `protect` off, neither a create nor an update sends `is_protected`, so earlier flags stay."""
+    rendered = _applied_with_protection(operation, protect=False)
+
+    assert "is_protected" not in rendered, f"No protection key may be sent:\n{rendered}"
+    # The source still reaches every value written, so the case is not vacuous.
+    attribute_sources = re.findall(rf'(?<!_relation__)\bsource:\s*"{IMPORT_ACCOUNT_ID}"', rendered)
+    assert len(attribute_sources) == attributes, rendered
+    assert rendered.count(f'_relation__source: "{IMPORT_ACCOUNT_ID}"') == edges, rendered
 
 
 def test_a_payload_missing_an_identity_component_is_refused_before_any_write() -> None:
@@ -1051,7 +1333,7 @@ def test_the_upsert_carries_the_per_peer_write_metadata() -> None:
     reach the destination is the upsert's own peer list, not any later write.
     """
     client = RecordingClient()
-    adapter = make_adapter(client, source="source-account-1", owner="owner-account-1")
+    adapter = make_adapter(client, source="source-account-1", owner="owner-account-1", protect=True)
     peers = PeerResolver(adapter)
     peers.remember(TAG_KIND, {"name": "tag-b"}, "tag-id-2")
 
@@ -1911,3 +2193,274 @@ def test_a_failing_transport_or_auth_on_peer_resolution_is_named_and_actionable(
         "The failing operation's own write must not have been attempted: the resolver runs first, so "
         "only the preceding operation's upsert reached the transport."
     )
+
+
+# ---------------------------------------------------------------------------------------
+# The owner: set on creates and on the relationship edges an update adds, never changed (FR-002)
+# ---------------------------------------------------------------------------------------
+
+OWNER_ID = "owner-group-1"
+OWNER_GROUP = NamedLineageNode(kind="CoreAccountGroup", name="network-team")
+
+
+def _owner_count(rendered: str) -> tuple[int, int]:
+    """How many attributes and how many relationship edges of a rendered mutation carry the owner."""
+    attributes = len(re.findall(rf'(?<!_relation__)\bowner:\s*"{OWNER_ID}"', rendered))
+    edges = rendered.count(f'_relation__owner: "{OWNER_ID}"')
+    return attributes, edges
+
+
+def _edge_block(rendered: str, peer_id: str) -> str:
+    """The rendered input object of the relationship edge to `peer_id`."""
+    match = re.search(rf'\{{\s*id:\s*"{peer_id}"[^{{}}]*\}}', rendered)
+    assert match is not None, f"No edge to {peer_id!r} was rendered:\n{rendered}"
+    return match.group(0)
+
+
+def _applied_with_owner(operation: PlannedOperation, client: RecordingClient | None = None) -> RecordingClient:
+    """Apply one operation with the import account as source and `OWNER_ID` as the named owner."""
+    client = client or RecordingClient()
+    adapter = make_adapter(client, source=IMPORT_ACCOUNT_ID, owner=OWNER_ID)
+    peers = PeerResolver(adapter)
+    peers.remember(TAG_KIND, {"name": "tag-b"}, "tag-id-2")
+    peers.remember(TAG_KIND, {"name": "tag-c"}, "tag-id-3")
+    peers.remember(SITE_KIND, {"name": "site-a"}, "site-id-1")
+    peers.remember(SITE_KIND, {"name": "site-b"}, "site-id-2")
+    adapter.apply_planned_operation(operation=operation, peers=peers)
+    assert len(client.mutations) == 1
+    return client
+
+
+@pytest.mark.parametrize(
+    ("operation", "attributes", "edges"),
+    [
+        pytest.param(TEAM_CREATE, 2, 2, id="attributes-and-many-edges"),
+        pytest.param(server_operation("server-a"), 1, 1, id="attribute-and-one-edge"),
+    ],
+)
+def test_a_create_sends_the_named_owner_on_every_attribute_and_edge(
+    operation: PlannedOperation, attributes: int, edges: int
+) -> None:
+    """FR-002: every value a create writes is a value the run creates, so each carries the owner."""
+    client = _applied_with_owner(operation)
+
+    assert _owner_count(client.mutations[0][1]) == (attributes, edges), client.mutations[0][1]
+    assert issued_reads(client) == [], "A create adds every edge, so it reads no current peers."
+
+
+def test_an_update_sends_no_owner_on_attributes() -> None:
+    """The attributes of an existing node keep the owner they have, including an empty one."""
+    operation = make_operation(
+        kind=TEAM_KIND,
+        action="update",
+        identity={"name": "team-a"},
+        payload={"name": "team-a", "description": "core"},
+    )
+
+    client = _applied_with_owner(operation)
+
+    rendered = client.mutations[0][1]
+    assert _owner_count(rendered) == (0, 0), rendered
+    assert f'source: "{IMPORT_ACCOUNT_ID}"' in rendered, "The update still writes the source."
+    assert issued_reads(client) == [], "An update with no relationship reference adds no edge, so it reads nothing."
+
+
+def test_an_update_sends_the_owner_only_on_the_cardinality_many_edges_it_adds() -> None:
+    """An edge to a peer the node already has is written without the owner key."""
+    client = RecordingClient()
+    client.existing_peers[TEAM_KIND, "members"] = ["tag-id-2"]
+    operation = team_operation(["tag-b", "tag-c"]).model_copy(
+        update={"payload": {"name": "team-a", "description": "core"}}
+    )
+
+    _applied_with_owner(operation, client)
+
+    rendered = client.mutations[0][1]
+    assert _owner_count(rendered) == (0, 1), rendered
+    assert "_relation__owner" not in _edge_block(rendered, "tag-id-2"), rendered
+    assert f'_relation__owner: "{OWNER_ID}"' in _edge_block(rendered, "tag-id-3"), rendered
+    reads = issued_reads(client)
+    assert len(reads) == 1, "One read of the node's current peers for the update."
+    assert reads[0]["id"] == DEFAULT_DESTINATION_ID
+    assert reads[0]["include"] == ["members"]
+    assert {"name", "description"} <= set(reads[0]["exclude"]), "The read selects no attribute value."
+
+
+@pytest.mark.parametrize(
+    ("current_site", "planned_site", "owner_on_edge"),
+    [
+        pytest.param("site-id-1", "site-a", False, id="same-peer"),
+        pytest.param("site-id-1", "site-b", True, id="other-peer"),
+        pytest.param(None, "site-a", True, id="no-current-peer"),
+    ],
+)
+def test_an_update_sends_the_owner_on_a_cardinality_one_edge_only_when_the_peer_changes(
+    current_site: str | None, planned_site: str, *, owner_on_edge: bool
+) -> None:
+    """A cardinality-one edge is added when the planned peer differs from the current one."""
+    client = RecordingClient()
+    if current_site is not None:
+        client.existing_peers[SERVER_KIND, "site"] = [current_site]
+    operation = server_operation("server-a", site_name=planned_site).model_copy(
+        update={"action": "update", "destination_id": DEFAULT_DESTINATION_ID}
+    )
+
+    _applied_with_owner(operation, client)
+
+    rendered = client.mutations[0][1]
+    assert _owner_count(rendered) == (0, 1 if owner_on_edge else 0), rendered
+    reads = issued_reads(client)
+    assert len(reads) == 1
+    assert reads[0]["include"] == [], "A cardinality-one relationship is selected without being included."
+    assert "site" not in reads[0]["exclude"]
+
+
+def test_an_update_with_no_named_owner_reads_no_current_peers() -> None:
+    """With no owner named there is nothing to decide, so apply makes no extra read."""
+    client = RecordingClient()
+    client.existing_peers[TEAM_KIND, "members"] = ["tag-id-2"]
+    adapter = make_adapter(client, source=IMPORT_ACCOUNT_ID)
+    peers = PeerResolver(adapter)
+    peers.remember(TAG_KIND, {"name": "tag-c"}, "tag-id-3")
+
+    adapter.apply_planned_operation(operation=team_operation(["tag-c"]), peers=peers)
+
+    assert issued_reads(client) == []
+    assert "_relation__owner" not in client.mutations[0][1]
+
+
+class NamedOwnerClient(RecordingClient):
+    """A destination where the group the `owner` setting names exists with id `OWNER_ID`."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.group_schema = NodeSchemaAPI(
+            id="group-schema", name="AccountGroup", namespace="Core", attributes=[], relationships=[]
+        )
+        self.live_schema = BranchSchema(hash="fixture", nodes={**SCHEMAS, OWNER_GROUP.kind: self.group_schema})
+        self.schema.set_cache(self.live_schema)
+
+    def get(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        if kwargs.get("kind") == OWNER_GROUP.kind:
+            self.events.append(("owner_lookup", kwargs))
+            return InfrahubNodeSync(client=self, schema=self.group_schema, data={"id": OWNER_ID})
+        return super().get(*args, **kwargs)
+
+
+def test_an_update_that_changes_nothing_is_not_planned() -> None:
+    """Spec edge case: a node whose values equal the destination's gives no operation to apply."""
+    unchanged = _FakeElement(
+        kind="BuiltinTag",
+        name="prod",
+        keys={"name": "prod"},
+        source_attrs={"description": "production", "slug": "prod"},
+        dest_attrs={"description": "production", "slug": "prod"},
+    )
+
+    operations = operations_from_diff(
+        _FakeDiff({"BuiltinTag": [unchanged]}),
+        config=build_config(),
+        tier_of=resolver(),
+        source_adapter=qualified_source(),
+        destination_adapter=_FakeAdapter("destination", []),
+    )
+
+    assert operations == []
+
+
+def test_an_apply_with_a_named_owner_and_nothing_to_change_makes_no_write_call(tmp_path: Path) -> None:
+    """Spec edge case: with nothing to change, apply writes nothing, so no owner changes."""
+    directory = apply_run_dir(tmp_path)
+    owner_record = {"kind": OWNER_GROUP.kind, "name": OWNER_GROUP.name}
+    write_artifact(
+        directory, [], run_id=APPLY_RUN_ID, source_snapshot=[], lineage={**RECORDED_LINEAGE, "owner": owner_record}
+    )
+    client = NamedOwnerClient()
+    adapter = make_adapter(client)
+    adapter.lineage_settings = InfrahubLineageSettings(owner=OWNER_GROUP)
+
+    state, _ = apply_and_record_state(engine_over(directory, adapter))
+
+    assert state == "applied"
+    assert adapter.lineage is not None
+    assert adapter.lineage.owner is not None
+    assert adapter.lineage.owner.id == OWNER_ID, "Precondition: the owner was resolved for this apply."
+    assert client.mutations == []
+    assert issued_reads(client) == [], "No update was applied, so no current peers were read."
+
+
+POOL_ID = "pool-1"
+
+
+def _lineage_keys(edge: dict[str, Any]) -> set[str]:
+    """The lineage properties an edge input carries."""
+    return {key for key in ("source", "owner", "is_protected") if key in edge}
+
+
+def test_an_edge_allocated_from_a_pool_carries_no_source_owner_or_protection() -> None:
+    """The pool stays the source of an edge it allocates; other edges keep their lineage."""
+    client = RecordingClient()
+    create_data = client.schema.generate_payload_create(
+        schema=TEAM_SCHEMA,
+        data={"name": "team-a", "members": ["tag-id-2", "tag-id-3"]},
+        source=IMPORT_ACCOUNT_ID,
+        owner=OWNER_ID,
+        is_protected=True,
+    )
+    create_data["members"][0] = {"from_pool": {"id": POOL_ID}, **create_data["members"][0]}
+    del create_data["members"][0]["id"]
+
+    clear_lineage_on_pool_edges(create_data, TEAM_SCHEMA)
+
+    assert create_data["members"][0] == {"from_pool": {"id": POOL_ID}}
+    assert _lineage_keys(create_data["members"][1]) == {"source", "owner", "is_protected"}
+    assert _lineage_keys(create_data["name"]) == {"source", "owner", "is_protected"}, "Attributes keep their lineage."
+
+
+def test_a_cardinality_one_edge_allocated_from_a_pool_carries_no_lineage() -> None:
+    """The pool rule holds for a cardinality-one edge too."""
+    create_data: dict[str, Any] = {
+        "name": {"value": "server-a", "source": IMPORT_ACCOUNT_ID},
+        "site": {"from_pool": {"id": POOL_ID}, "source": IMPORT_ACCOUNT_ID, "owner": OWNER_ID, "is_protected": True},
+    }
+
+    clear_lineage_on_pool_edges(create_data, SERVER_SCHEMA)
+
+    assert create_data["site"] == {"from_pool": {"id": POOL_ID}}
+    assert create_data["name"]["source"] == IMPORT_ACCOUNT_ID
+
+
+class _StopAtCreateError(Exception):
+    """Raised by the spy once the payload handed to `client.create` is recorded."""
+
+
+def test_the_write_path_clears_lineage_on_pool_edges_before_the_node_is_built() -> None:
+    """A write path that allocates from a pool hands `client.create` no lineage on that edge."""
+    client = RecordingClient()
+    adapter = make_adapter(client, source=IMPORT_ACCOUNT_ID, owner=OWNER_ID, protect=True)
+    peers = PeerResolver(adapter)
+    peers.remember(TAG_KIND, {"name": "tag-b"}, "tag-id-2")
+    peers.remember(TAG_KIND, {"name": "tag-c"}, "tag-id-3")
+    real = client.schema.generate_payload_create
+    handed: list[dict[str, Any]] = []
+
+    def allocate_first_member(**kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
+        payload = real(**kwargs)
+        payload["members"][0]["from_pool"] = {"id": POOL_ID}
+        return payload
+
+    def record_create(*, kind: str, data: dict[str, Any], **_: Any) -> InfrahubNodeSync:  # noqa: ANN401
+        del kind
+        handed.append(data)
+        raise _StopAtCreateError
+
+    with (
+        patch.object(client.schema, "generate_payload_create", allocate_first_member),
+        patch.object(client, "create", record_create),
+        pytest.raises(_StopAtCreateError),
+    ):
+        adapter.apply_planned_operation(operation=TEAM_CREATE, peers=peers)
+
+    members = handed[0]["members"]
+    assert _lineage_keys(members[0]) == set(), members
+    assert _lineage_keys(members[1]) == {"source", "owner", "is_protected"}, members

@@ -36,8 +36,6 @@ def _make_adapter(schema_kinds: list[str]) -> "InfrahubAdapter":
     adapter.config = config
     adapter.client = fake_client
     adapter.schema = {k: MagicMock() for k in schema_kinds}
-    adapter.source_node = None
-    adapter.owner_node = None
     adapter.continue_on_error = False
     return adapter
 
@@ -79,6 +77,7 @@ def test_list_changed_since_uses_updated_at_filter(tmp_path: Path) -> None:
         kind="InfraDevice",
         populate_store=True,
         prefetch_relationships=True,
+        include_metadata=False,
         node_metadata__updated_at__after="2026-05-17T09:59:59Z",
     )
     assert rows == [{"local_id": "1", "name": "leaf1"}]
@@ -161,6 +160,7 @@ def test_model_loader_requests_identifiers_and_mapped_attributes() -> None:
         kind="InfraDevice",
         include=["device", "name", "description"],
         populate_store=True,
+        include_metadata=False,
     )
 
 

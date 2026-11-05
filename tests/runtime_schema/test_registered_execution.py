@@ -136,6 +136,20 @@ class _InfrahubClient:
         self.created: list[tuple[str, dict[str, Any]]] = []
 
     @staticmethod
+    def execute_graphql(*, query: str) -> dict[str, Any]:
+        """The import account behind the token, as its `AccountProfile` query answers it.
+
+        Only the arguments infrahub-sdk 1.18 accepts: `operation_name` arrived in 1.22.
+        """
+        assert "AccountProfile" in query, f"unexpected GraphQL query {query!r}"
+        return {"AccountProfile": {"id": "import-account-id", "name": {"value": "import-account"}}}
+
+    @staticmethod
+    def get_version() -> str:
+        """A server older than 1.7.0, so the plan reads no `updated_by` or `updated_at` from these nodes."""
+        return "1.6.0"
+
+    @staticmethod
     def get(*_args: object, **kwargs: object) -> _Node:
         raise NodeNotFoundError(identifier={"key": [str(kwargs)]}, node_type=str(kwargs.get("kind")))
 
