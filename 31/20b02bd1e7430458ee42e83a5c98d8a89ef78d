@@ -1,0 +1,239 @@
+development/docker-compose.infrahub.yml
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 13-16,19,34-53,85-86,89-90,119-120,165,183,192-193,195,200,206-207,249,265,275-276,296-297,313,331-332,375,379
+.github/workflows/trigger-push-stable.yml
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 170-172,266-267,324
+dev/specs/010-prefect-from-sync-image/research.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-452
+tests/compose/test_stacks.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-40
+infrahub_sync/testcontainers/__init__.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-27
+tests/conftest.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-72
+docs/docs/operations/day-2-operations.mdx
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 16
+tests/test_linter_tasks.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 44,64-65,76
+tasks/dev.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 5-6,8-37,42-44,47-50,52,55-60,64,67-77,81,83-374,378,391-392,394-395,398,401-407,410-417,419-437,439-440,443,447-598,600-838
+tasks/smoke_dataset.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-75
+docs/docs/custom-certificates.mdx
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 33
+tests/dev_stack/test_netbox_network.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 4
+changelog/+infrahub-1-11-9-pin.housekeeping.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1
+dev/specs/010-prefect-from-sync-image/spec.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-545
+docs/docs/tutorials/netbox-to-existing-infrahub.mdx
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 243,255
+tests/compose/test_image_pins.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-170
+changelog/+prefect-from-sync-image.changed.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-5
+tests/compose/stacks.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-78
+tests/compose/test_compose_minimum.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 30,217
+docs/docs/development/guidelines/testing-tiers.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 556-634
+tests/compose/testcontainers-override.yml
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-8
+tests/dev_stack/test_loopback_publication.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 27,115
+infrahub_sync/adapters/aci.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 9,29-31,80
+changelog/+sync-api-port-8001.changed.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1
+dev/specs/010-prefect-from-sync-image/data-model.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-108
+docs/docs/development/knowledge/quality-gates.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 22,112,116-118
+docs/docs/development/guides/netbox-benchmark-runner.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 10,46,57,62-79,133
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 242,254
+tests/test_benchmark_runner.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 14,39-57,66-92,362,429,640-743,913,919-921,930,970,989,1055-1061,1063,1117,1188-1190,1300,1333,1339,1356,1363,1544
+docs/docs/adapters/slurpit.mdx
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 33,37-40
+dev/adr/0016-the-compose-deployment-is-one-tag-pinned-file.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 33-34,62-88
+infrahub_sync/testcontainers/helpers.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-312
+README.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 76,91,96-97
+tests/preview/test_service_api.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 43,206
+docs/docs/development/guides/preview-stack.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 7-11
+.github/workflows/workflow-linter.yml
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 102
+dev/adr/0019-prefect-is-an-internal-component-of-sync.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 59-72
+docs/docs/quickstart-compose.mdx
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 35,89-90,104
+infrahub_sync/testcontainers/docker-compose.yml
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-367
+changelog/+dev-infrahub-bind-token.security.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1
+tests/runtime_schema/test_registered_execution.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 13-14,344-375
+  s_cbe6f0cb4dfc5f::t_9ba7b9edf6a242 376-377
+tasks/bench.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 16,59,64,67-68,70-73,77-132,157,160-163,170-172,190-196,206,239,260,265,283,286,302,310,353,505-513,522,572
+infrahub_sync/__init__.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 182-183,189,196-200,205,207,209
+changelog/+dependency-update.housekeeping.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1
+changelog/+testcontainers-test-class.added.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1
+docs/docs/running-a-sync.mdx
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 27,34,175-178,181
+dev/specs/010-prefect-from-sync-image/checklists/requirements.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-44
+docs/docs/snippets/prefect-ui.override.yml
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-13
+tests/compose/conftest.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 54-58,250,262,318,398
+tests/compose/lifecycle.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 21,29-33,100,103-105
+dev/specs/010-prefect-from-sync-image/tasks.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-363
+tasks/linter.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 19-23,25-28,35-37,40,159-162
+tests/dev_stack/test_profiles.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-134
+tests/preview/test_preview_configuration.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 13,147,288,309,458-460,476,490-492,507,532,565,587-589
+changelog/+single-tier-layout-log.fixed.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1
+tests/test_development_stack_docs.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1,11-14,59-95
+tests/dev_stack/test_build_inputs.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-115
+changelog/+dev-stack-profiles.changed.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1
+development/preview.env
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 18-20,31-32
+tests/configuration/test_contracts.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 2102-2107
+tests/testcontainers/test_image_selection.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-259
+tests/testcontainers/test_packaging.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-57
+tasks/__init__.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 132
+.github/workflows/release-publish.yml
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 161-163
+development/docker-compose.yml
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-291
+dev/specs/010-prefect-from-sync-image/contracts/invoke-tasks.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-68
+tests/test_potenda_tiers.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1,6,33-34,42
+tests/test_unit_tier.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-111
+tests/test_workflow_contracts.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 736-741,748,1785-1786,1790
+tasks/release.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 3-4,6-7,14-19,39-40,81-87,130-133,136-142,157-162,168-171,174-180,189-193
+  s_cbe6f0cb4dfc5f::t_a86b59631541d3 194
+tests/dev_stack/test_deps_mode.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-327
+tests/test_release_pin.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 12-13,21,28-31,38-43,61,71-75,92,119,161,176,188-190,207-209,219-330
+docs/docs/adapters/choosing-an-adapter.mdx
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 42
+infrahub_sync/service/worker.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 212-214
+tests/compose/test_compose_contract.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 20,36,67-68,74-76,122-156,227-228,230-231,233,346-351,354,371-380,445-608,614,619,630,641-642,647,661,679-680,685-686,697,724,728,739-741,758,783,808,834,842,850,857,867
+tests/dev_stack/test_infrahub_network.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 5-8
+tests/dev_stack/test_dev_tasks.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-407
+docs/docs/contributing.mdx
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 164
+docs/docs/development-stack.mdx
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 5-9,11-14,18-21,25-27,35-37,39-40,42-59,62,65-95,100-159,162-174,176-180,182,184-282,338-340,345-346,349,351-353,359,405-406,413,418,428-448
+dev/specs/010-prefect-from-sync-image/contracts/compose-services.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-56
+pyproject.toml
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 54-58,77-79,90-91,135-137,141-148,169-170,175-178
+.github/workflows/workflow-nightly-e2e.yml
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 237-239,241,245-246
+tasks/preview.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 33-43,159-160,231-232,564
+tests/compose/test_bootstrap_idempotence.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 22-23,51-68,175-194
+  s_cbe6f0cb4dfc5f::t_482df0949c0382 195-196
+dev/specs/010-prefect-from-sync-image/contracts/testcontainers-api.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-87
+docker-compose.yml
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 100-102,105,122-124,126,142,147-151,153,155-162,176-179,181,187-188,194,249
+tests/compose/test_lifecycle.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 26,146
+dev/specs/010-prefect-from-sync-image/opsmill-implement-report.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-119
+development/docker-compose.preview.yml
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 3
+tests/compose/test_prefect_server_start.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-116
+tests/compose/test_testcontainers_fixture.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-266
+tests/test_sync_config_order.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 7-10,55-94
+  s_cbe6f0cb4dfc5f::t_a5a45f2e59aa12 95-96
+docs/docs/compose-deployment.mdx
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 5-7,11-13,39-41,60-61,72-81,128-130,298,304-316,328-331,384-465,477,571,749,777,814,954,961-972
+dev/specs/010-prefect-from-sync-image/quickstart.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-96
+tests/preview/conftest.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 18,25,75-77,95-128,133
+dev/specs/010-prefect-from-sync-image/plan.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-202
+tests/compose/fixture-override.yaml
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 5,10-13
+tests/service/test_prefect_server.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-114
+AGENTS.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 50-52,77,190
+tests/compose/test_documentation.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 420-438,446-473
+infrahub_sync/service/prefect_server.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-39
+Dockerfile
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 79-82,84-85
+development/docker-compose.infrahub-ports.yml
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 1-25
+infrahub_sync/utils.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 412-415
+tasks/netbox.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 19,113
+tests/dev_stack/test_compose_valid.py
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 3,25-28,42,51,53,62,64,71,75-76,78
+docs/docs/development/knowledge/repository-tour.md
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 81-86,198-205,222-224,232-237,242-244,258-260
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_cbe6f0cb4dfc5f::t_c281960b2f1d1c 194,343
+uv.lock
+  s_cbe6f0cb4dfc5f::t_3e51815793951a 15-17,29,33-34,38,40,45,47,49,54,56,58,63,65,67,72,77,79,81,90-92,108,110,134,139,141,146,148,150,164,169-206,229,231,233,238,245,247,252,259,261,373,375,377,391,393,395,400,403-458,463-552,593-659,664-727,740,746-792,797,799-801,803-806,810,812-833,838,846,848,853,855,857,922,928-956,982,984,986,996-997,1008,1010-1013,1015-1029,1043,1045,1047,1061-1103,1108,1110-1112,1114-1115,1117,1119-1137,1142,1144-1164,1166-1167,1169,1171,1176,1178-1181,1183-1197,1249-1252,1261,1298,1301-1302,1315,1319,1322,1333-1334,1336,1356,1358-1359,1369,1383,1394-1395,1401-1404,1410-1411,1417-1418,1431,1448-1449,1464-1481,1485,1487,1489,1513,1526,1544,1546,1551,1556,1559-1569,1571,1573,1590,1592-1614,1619,1624,1626,1743,1748,1750,1755,1757,1759,1771,1801,1806,1808,1815-1817,1823-1836,1839,1844,1846,1851,1853-1919,1924,1929,1931,1957,1964-1972,1975,1977,1979,2059,2065-2088,2102,2107,2109,2123-2164,2169,2171,2173,2178,2180,2182,2187,2189,2191,2196,2202-2250,2267-2279,2281-2286,2288,2293,2295,2297,2313,2317-2318,2325-2326,2328,2344-2345,2353-2354,2359-2362,2374-2427,2430,2432,2434-2442,2456,2461,2463-2485,2568,2570,2572,2577,2583,2585,2641-2653,2655-2660,2662,2787-2789,2791-2793,2800-2819,2822,2834-2835,2842,2844,2849,2851,2853,2858,2860,2862,2867,2875-2876,2880,2882,2903-2905,2907-2908,2915-2932,2935,2946,2948,2953,2960,2962,2970-2971,3019,3021,3023,3028,3030,3032,3049,3051,3053,3058,3060,3062,3132-3195,3226,3236-3304,3309,3317,3319,3351-3355,3357-3358,3365-3383,3386,3390-3391,3393,3395,3496,3503-3573,3660,3662,3664-3670,3675,3680,3682,3687,3689,3691,3714,3717,3721,3723,3737,3739-3741,3743-3791,3793-3828,3833,3852,3854-3856,3858-3859,3861,3863-3881,3909-3923,3944-3975,3980,3982,3984,3992,4003,4008,4010,4015,4017,4019,4048,4053-4054,4057,4059,4085,4087,4089,4094,4096,4098,4112,4114,4116,4121,4126,4128,4133,4135,4137,4142,4147,4149,4228,4230,4232,4246,4253,4255,4260,4263,4267,4269,4274,4276,4278,4283,4285,4287-4298,4466-4518
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3120b02bd1e7430458ee42e83a5c98d8a89ef78d",
+  "prompts": {},
+  "sessions": {
+    "s_cbe6f0cb4dfc5f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d5e80e17-8181-4000-b060-139613942c05",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
