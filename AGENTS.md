@@ -103,7 +103,7 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 
 - `infrahub-sync configs` — register and inspect configuration packages (safe).
 - `infrahub-sync runs list` — list runs, newest first, optionally for one configuration or version (safe).
-- `infrahub-sync runs show` / `runs plan` / `runs results` / `runs artifacts` — inspect one run and its saved plan (safe).
+- `infrahub-sync runs show` / `runs plan` / `runs results` / `runs artifacts` — inspect one run, its saved plan, its results and its artifacts (safe).
 - `infrahub-sync whoami` — check which actor the API token belongs to (safe).
 - `infrahub-sync plan` — create a plan run and review its summary (Sync API required). `diff` is a hidden, deprecated alias.
 - `infrahub-sync verify` — check a run's saved plan against the destination without writing (Sync API required).

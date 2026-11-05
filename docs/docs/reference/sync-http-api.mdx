@@ -352,9 +352,10 @@ in the same envelope:
 
 `next_cursor` is `null` on the last page. The lists return no total count.
 
-- `GET /runs` orders runs by `started_at`, newest first. A list item has the same fields as
-  `GET /runs/{run_id}`, except that `artifact_refs` and `prefect_executions` are always empty;
-  read the run itself for them. `destination_branch` is the branch the run writes to. It is
+- `GET /runs` orders runs by `started_at`, newest first. A list item has the same fields as the
+  `run` object that `GET /runs/{run_id}` returns, except that `artifact_refs` and
+  `prefect_executions` are always empty. The list has no `orchestration` field. Read the run
+  itself for those values. `destination_branch` is the branch the run writes to. It is
   `null` for runs created before the field existed. Without filters, the list also includes
   legacy runs that have no `config_id`.
 - `GET /configs` orders configurations by `created_at`, newest first. Each item carries

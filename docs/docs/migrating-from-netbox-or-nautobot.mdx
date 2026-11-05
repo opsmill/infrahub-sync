@@ -179,14 +179,14 @@ for what each one covers and needs.
 
 :::
 
-The diff prints the proposed changes to the terminal without modifying Infrahub. Review it model by model:
+The `plan` command prints the proposed changes to the terminal without modifying Infrahub. Review them model by model:
 
 - Are the right models being created in Infrahub?
 - Are field values being mapped correctly?
 - Are relationships between models being resolved correctly?
 - Are there any unexpected creates, updates, or deletes?
 
-When the diff looks correct, review the saved plan and apply it by checksum:
+When the plan looks correct, review the saved plan and apply it by checksum:
 
 ```shell
 infrahub-sync runs plan <run-id> --detail
@@ -206,7 +206,7 @@ kinds that reference them.
 
 ### Migrate one model at a time
 
-For the first sync, enable only the most independent models (tags, locations). Verify the data in Infrahub, then add the next layer of models (racks, devices), run again, and so on. This keeps the diff output reviewable and isolates any mapping issues to the model that caused them.
+For the first sync, enable only the most independent models (tags, locations). Verify the data in Infrahub, then add the next layer of models (racks, devices), run again, and so on. This keeps the plan output reviewable and isolates any mapping issues to the model that caused them.
 
 ## Phase 4 — Run in side-by-side mode
 
