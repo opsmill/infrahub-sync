@@ -1,0 +1,50 @@
+dev/specs/016-prefect-run-observability/contracts/prefect-surfaces.md
+  s_01f3e2b1e0dad4::t_10269963a6956f 38
+docs/docs/orchestration.mdx
+  s_01f3e2b1e0dad4::t_10269963a6956f 97-98
+infrahub_sync/service/prefect_ui.py
+  s_01f3e2b1e0dad4::t_9588ae5f58c44d 25,28-30,33,35-36
+infrahub_sync/service/service.py
+  s_01f3e2b1e0dad4::t_940006eb132a74 1013-1015
+development/docker-compose.yml
+  s_01f3e2b1e0dad4::t_b9ce3f89595916 245-246
+tests/service/test_run_log_next_step.py
+  s_01f3e2b1e0dad4::t_4362b1a699e864 344-346,348-353,373
+  s_01f3e2b1e0dad4::t_1ac3c107412b10 322-343,347,354-361,364-372,374-375,476-477,481,500-541
+  s_01f3e2b1e0dad4::t_18cf1d2fca2412 362-363
+tests/service/test_run_artifact.py
+  s_01f3e2b1e0dad4::t_d24844549f0879 215-221
+tests/service/test_status_observation_budget.py
+  s_01f3e2b1e0dad4::t_06f28f19ab5e0e 452-454,571-589
+  s_01f3e2b1e0dad4::t_e888a5982f6b03 590-591
+tests/service/test_worker_claim.py
+  s_01f3e2b1e0dad4::t_1ac3c107412b10 239-241
+infrahub_sync/service/run_artifact.py
+  s_01f3e2b1e0dad4::t_10269963a6956f 130-136
+dev/specs/016-prefect-run-observability/opsmill-implement-report.md
+  s_01f3e2b1e0dad4::t_fac72e28c65ea7 97-110
+tests/service/test_prefect_ui.py
+  s_01f3e2b1e0dad4::t_2ab7b38ad664d1 21,31-52
+infrahub_sync/testcontainers/docker-compose.yml
+  s_01f3e2b1e0dad4::t_b9ce3f89595916 246-250
+infrahub_sync/service/flow.py
+  s_01f3e2b1e0dad4::t_676e605f3a77b6 13,805,1043-1046,1051-1068
+docker-compose.yml
+  s_01f3e2b1e0dad4::t_b9ce3f89595916 246-250
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b905422a1f176b8054fba5827aee5eabb8c95eed",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
