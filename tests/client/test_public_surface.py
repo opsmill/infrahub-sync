@@ -54,6 +54,22 @@ def test_public_client_surface_has_concise_docstrings() -> None:
             assert operation.__doc__, name
 
 
+def test_list_page_models_and_principal_are_public() -> None:
+    assert {
+        "RunPage",
+        "ConfigurationPage",
+        "ConfigurationVersionPage",
+        "PrincipalResource",
+        "RunReference",
+    } <= set(client_package.__all__)
+
+
+def test_client_exposes_page_and_iteration_methods() -> None:
+    for name in ("list_runs", "iter_runs", "me", "list_configs", "iter_configs", "list_config_versions"):
+        assert callable(getattr(SyncClient, name)), name
+    assert callable(SyncClient.iter_config_versions)
+
+
 def test_client_originated_exception_taxonomy_is_closed() -> None:
     pending = list(SyncClientError.__subclasses__())
     subclasses: set[type[SyncClientError]] = set()

@@ -12,8 +12,11 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from infrahub_sync.client.models import (
+    ConfigurationPage,
     ConfigurationSummaryResource,
+    ConfigurationVersionPage,
     ConfigurationVersionResource,
+    ConfigurationVersionSummaryResource,
     RegisteredConfigurationResource,
     RegisteredVersionResource,
     ValidationReportResource,
@@ -27,14 +30,26 @@ from infrahub_sync.product_store import (
     ProductStoreProviderError,
     configs,
 )
+from infrahub_sync.product_store.models import MAX_REGISTRY_VERSION
 
 from .auth import Principal
 from .models import ConfigMutationRequest
+from .paging import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    MIN_LIMIT,
+    FilterValue,
+    decode_cursor,
+    encode_cursor,
+    timestamp_cursor,
+    timestamp_key,
+    version_key,
+)
 from .service import ServiceAPIError
 
-_CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
-_MAX_REGISTRY_VERSION = 2**63 - 1
-_MAX_PAGE_LIMIT = 256
+CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+# Most findings one validation-report page returns, and the default page size.
+_MAX_VALIDATION_FINDINGS_PAGE = 256
 
 
 class ConfigurationAPIError(Exception):
@@ -64,14 +79,24 @@ def _provider_error_boundary(operation: Any) -> Any:
     return guarded
 
 
-def _strict_integer(value: str, *, minimum: int, maximum: int) -> int:
+def parse_bounded_integer(value: str, *, minimum: int, maximum: int) -> int:
     """Parse one bounded API integer without accepting FastAPI's coercions."""
     if not value.isascii() or not value.isdecimal():
         raise ServiceAPIError(422, "request-invalid", "the request does not match the API schema")
-    number = int(value)
+    # Refuse a value with more digits than the maximum before ``int()``, which raises
+    # ``ValueError`` past Python's integer string-digit limit.
+    digits = value.lstrip("0") or "0"
+    if len(digits) > len(str(maximum)):
+        raise ServiceAPIError(422, "request-invalid", "the request does not match the API schema")
+    number = int(digits)
     if number < minimum or number > maximum:
         raise ServiceAPIError(422, "request-invalid", "the request does not match the API schema")
     return number
+
+
+def parse_page_limit(value: str | None) -> int | None:
+    """Parse a list's ``limit`` query value without FastAPI's coercions (``1.0``, ``true``)."""
+    return None if value is None else parse_bounded_integer(value, minimum=MIN_LIMIT, maximum=MAX_LIMIT)
 
 
 class ConfigurationRoutes:
@@ -107,23 +132,55 @@ class ConfigurationRoutes:
                 raise ConfigurationAPIError(503, "internal") from None
             raise ConfigurationAPIError(503, "configs") from None
 
-    def register(self, package: dict[str, Any]) -> RegisteredConfigurationResource:
-        """Register a package and return its configuration and first version."""
+    def register(
+        self, package: dict[str, Any], *, actor: str | None = None, reason: str | None = None
+    ) -> RegisteredConfigurationResource:
+        """Register a package and return its configuration and first version.
 
-        result = self._call(self._service.register, package=package)
+        ``actor`` and ``reason`` are recorded on the first version, with this server's
+        secrets redacted.
+        """
+
+        result = self._call(self._service.register, package=package, actor=actor, reason=reason, secrets=self._secrets)
         return RegisteredConfigurationResource.model_validate(result, from_attributes=True)
 
-    def create_version(self, config_id: str, package: dict[str, Any]) -> RegisteredVersionResource:
-        """Create or retrieve an identical registered configuration version."""
+    def create_version(
+        self, config_id: str, package: dict[str, Any], *, actor: str | None = None, reason: str | None = None
+    ) -> RegisteredVersionResource:
+        """Create or retrieve an identical registered configuration version.
 
-        result = self._call(self._service.create_version, config_id=config_id, package=package)
+        ``actor`` and ``reason`` are recorded on a created version, with this server's
+        secrets redacted.
+        """
+
+        result = self._call(
+            self._service.create_version,
+            config_id=config_id,
+            package=package,
+            actor=actor,
+            reason=reason,
+            secrets=self._secrets,
+        )
         return RegisteredVersionResource.model_validate(result, from_attributes=True)
 
-    def list_configs(self) -> tuple[ConfigurationSummaryResource, ...]:
-        """Return the complete ordered configuration list."""
+    def list_configs(
+        self, *, name: str | None = None, cursor: str | None = None, limit: int | None = None
+    ) -> ConfigurationPage:
+        """Return one page of configurations, newest first, optionally only those named ``name``.
 
-        results = self._call(self._service.list_configs)
-        return tuple(ConfigurationSummaryResource.model_validate(result, from_attributes=True) for result in results)
+        ``limit`` is already bounded by the route (`parse_page_limit`); ``None`` means the default.
+
+        Raises:
+            InvalidCursorError: ``cursor`` does not decode or was issued for another name.
+        """
+        page_size = DEFAULT_LIMIT if limit is None else limit
+        filters: dict[str, FilterValue] = {"list": "configs", "name": name}
+        after = None if cursor is None else timestamp_key(decode_cursor(cursor, filters))
+        page = self._call(self._service.list_configs, name=name, after=after, limit=page_size)
+        items = tuple(ConfigurationSummaryResource.model_validate(item, from_attributes=True) for item in page.items)
+        last = items[-1] if page.has_more else None
+        next_cursor = None if last is None else timestamp_cursor(last.created_at, last.config_id, filters)
+        return ConfigurationPage(items=items, next_cursor=next_cursor)
 
     def get_config(self, config_id: str) -> ConfigurationSummaryResource:
         """Return one registered configuration summary."""
@@ -131,11 +188,27 @@ class ConfigurationRoutes:
         result = self._call(self._service.get_config, config_id=config_id)
         return ConfigurationSummaryResource.model_validate(result, from_attributes=True)
 
-    def list_versions(self, config_id: str) -> tuple[ConfigurationVersionResource, ...]:
-        """Return the complete ordered version list for a configuration."""
+    def list_versions(
+        self, config_id: str, *, cursor: str | None = None, limit: int | None = None
+    ) -> ConfigurationVersionPage:
+        """Return one page of a configuration's version summaries, newest version first.
 
-        results = self._call(self._service.list_versions, config_id=config_id)
-        return tuple(ConfigurationVersionResource.model_validate(result, from_attributes=True) for result in results)
+        ``limit`` is already bounded by the route (`parse_page_limit`); ``None`` means the default.
+
+        Raises:
+            InvalidCursorError: ``cursor`` does not decode or was issued for another
+                configuration.
+            ConfigurationAPIError: ``404`` for an unknown configuration.
+        """
+        page_size = DEFAULT_LIMIT if limit is None else limit
+        filters: dict[str, FilterValue] = {"list": "versions", "config_id": config_id}
+        after = None if cursor is None else version_key(decode_cursor(cursor, filters))
+        page = self._call(self._service.list_versions, config_id=config_id, after=after, limit=page_size)
+        items = tuple(
+            ConfigurationVersionSummaryResource.model_validate(item, from_attributes=True) for item in page.items
+        )
+        next_cursor = encode_cursor(items[-1].registry_version, filters) if page.has_more else None
+        return ConfigurationVersionPage(items=items, next_cursor=next_cursor)
 
     def get_version(self, config_id: str, registry_version: int) -> ConfigurationVersionResource:
         """Return one immutable registered configuration version."""
@@ -144,7 +217,7 @@ class ConfigurationRoutes:
         return ConfigurationVersionResource.model_validate(result, from_attributes=True)
 
     def validate(
-        self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = _MAX_PAGE_LIMIT
+        self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = _MAX_VALIDATION_FINDINGS_PAGE
     ) -> ValidationReportResource:
         """Validate a version and return the requested ordered findings page.
 
@@ -232,10 +305,10 @@ class ConfigurationRoutes:
             raise ServiceAPIError(409, "idempotency-in-progress", "the matching request is still being processed")
         try:
             if operation == "register-config":
-                result = self.register(package)
+                result = self.register(package, actor=actor, reason=reason)
                 response_status = 201
             else:
-                result = self.create_version(resource_id, package)
+                result = self.create_version(resource_id, package, actor=actor, reason=reason)
                 response_status = 201 if result.created else 200
         except ConfigurationAPIError as error:
             if error.proven_pre_effect:
@@ -282,7 +355,7 @@ class ConfigurationRoutes:
 def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempotency_key: Any) -> APIRouter:
     """Create the seven authenticated configuration resources."""
     router = APIRouter()
-    config_id_parameter = APIPath(pattern=_CONFIG_ID_PATTERN)
+    config_id_parameter = APIPath(pattern=CONFIG_ID_PATTERN)
     registry_version_parameter = APIPath()
     page_offset = Query()
     page_limit = Query()
@@ -331,12 +404,12 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
     @router.get("/configs")
     def list_configs(
         _principal: Annotated[Principal, Depends(authenticate)],
-        offset: Annotated[str, page_offset] = "0",
-        limit: Annotated[str, page_limit] = str(_MAX_PAGE_LIMIT),
-    ) -> Any:
-        _strict_integer(offset, minimum=0, maximum=_MAX_REGISTRY_VERSION)
-        _strict_integer(limit, minimum=1, maximum=_MAX_PAGE_LIMIT)
-        return routes.list_configs()
+        name: Annotated[str | None, Query()] = None,
+        limit: Annotated[str | None, page_limit] = None,
+        cursor: Annotated[str | None, Query()] = None,
+    ) -> ConfigurationPage:
+        """Return one page of configurations, newest first, optionally only those named ``name``."""
+        return routes.list_configs(name=name, cursor=cursor, limit=parse_page_limit(limit))
 
     @router.get("/configs/{config_id}")
     def get_config(
@@ -348,12 +421,11 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
     def list_versions(
         config_id: Annotated[str, config_id_parameter],
         _principal: Annotated[Principal, Depends(authenticate)],
-        offset: Annotated[str, page_offset] = "0",
-        limit: Annotated[str, page_limit] = str(_MAX_PAGE_LIMIT),
-    ) -> Any:
-        _strict_integer(offset, minimum=0, maximum=_MAX_REGISTRY_VERSION)
-        _strict_integer(limit, minimum=1, maximum=_MAX_PAGE_LIMIT)
-        return routes.list_versions(config_id)
+        limit: Annotated[str | None, page_limit] = None,
+        cursor: Annotated[str | None, Query()] = None,
+    ) -> ConfigurationVersionPage:
+        """Return one page of a configuration's version summaries, newest version first."""
+        return routes.list_versions(config_id, cursor=cursor, limit=parse_page_limit(limit))
 
     @router.get("/configs/{config_id}/versions/{registry_version}")
     def get_version(
@@ -362,7 +434,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         _principal: Annotated[Principal, Depends(authenticate)],
     ) -> Any:
         return routes.get_version(
-            config_id, _strict_integer(registry_version, minimum=1, maximum=_MAX_REGISTRY_VERSION)
+            config_id, parse_bounded_integer(registry_version, minimum=1, maximum=MAX_REGISTRY_VERSION)
         )
 
     @router.post("/configs/{config_id}/versions/{registry_version}/validate")
@@ -371,13 +443,13 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         registry_version: Annotated[str, registry_version_parameter],
         _principal: Annotated[Principal, Depends(authenticate)],
         offset: Annotated[str, page_offset] = "0",
-        limit: Annotated[str, page_limit] = str(_MAX_PAGE_LIMIT),
+        limit: Annotated[str, page_limit] = str(_MAX_VALIDATION_FINDINGS_PAGE),
     ) -> Any:
         return routes.validate(
             config_id,
-            _strict_integer(registry_version, minimum=1, maximum=_MAX_REGISTRY_VERSION),
-            offset=_strict_integer(offset, minimum=0, maximum=_MAX_REGISTRY_VERSION),
-            limit=_strict_integer(limit, minimum=1, maximum=_MAX_PAGE_LIMIT),
+            parse_bounded_integer(registry_version, minimum=1, maximum=MAX_REGISTRY_VERSION),
+            offset=parse_bounded_integer(offset, minimum=0, maximum=MAX_REGISTRY_VERSION),
+            limit=parse_bounded_integer(limit, minimum=1, maximum=_MAX_VALIDATION_FINDINGS_PAGE),
         )
 
     return router

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
@@ -30,12 +31,16 @@ from infrahub_sync.product_store.bundle import (
     PLAN_CHECKPOINT_ARTIFACT_ID,
 )
 from infrahub_sync.product_store.models import (
+    DEFAULT_LIMIT,
     ArtifactReference,
     AuditEvent,
     BaselineWriteback,
     ConfigurationBaseline,
+    ConfigurationPage,
     ConfigurationSummary,
     ConfigurationVersion,
+    ConfigurationVersionPage,
+    ConfigurationVersionSummary,
     ExecutionFinishWriteback,
     ExecutionMergeWriteback,
     ExecutionWriteback,
@@ -43,7 +48,12 @@ from infrahub_sync.product_store.models import (
     MutationReceipt,
     PrefectExecutionLink,
     ProductRun,
+    RunFilters,
+    RunPage,
+    RunReference,
 )
+
+logger = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS product_runs (
@@ -139,17 +149,41 @@ _UPDATE_LATEST_EXECUTION_CANCELLED = (
 )
 
 # Nullable run-to-configuration binding columns on ``product_runs``. Added by an
-# introspection-guarded ALTER (see ``_migrate_product_runs_columns``) rather than baked into
+# introspection-guarded ALTER (see ``_migrate_added_columns``) rather than baked into
 # the ``product_runs`` definition above, so a pre-existing deployment's table is migrated the
-# same way a brand-new one is initialized. Deliberately inert so far: no ``ProductRun`` field
-# reads or writes them, and nothing allocates a run into a registered configuration yet — only
-# the invariant that a row's three binding columns are either all NULL (unregistered) or all
-# NOT NULL (registered), so that a future writer inherits an already-enforced constraint
-# rather than introducing one.
+# same way a brand-new one is initialized. ``ProductRun.config_id``, ``registry_version`` and
+# ``package_checksum`` read and write them; a row's three binding columns are either all NULL
+# (unregistered run) or all NOT NULL (registered run), enforced by a CHECK constraint on
+# PostgreSQL and a pair of triggers on SQLite.
 _CONFIGURATION_BINDING_COLUMNS: tuple[tuple[str, str], ...] = (
     ("config_id", "TEXT"),
     ("registry_version", "INTEGER"),
     ("package_checksum", "TEXT"),
+)
+# Every nullable column the start-up migration adds to a pre-existing table, per table. Each is
+# added only when the catalog does not list it, so a second start-up issues no ALTER. Runs
+# created before ``destination_branch`` existed keep NULL; nothing backfills it.
+_ADDED_NULLABLE_COLUMNS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    ("product_runs", (*_CONFIGURATION_BINDING_COLUMNS, ("destination_branch", "TEXT"))),
+    ("configuration_versions", (("registered_by", "TEXT"), ("registration_reason", "TEXT"))),
+    ("configurations", (("name", "TEXT"),)),
+)
+# Indexes for listing runs newest first: unfiltered, filtered by configuration, and filtered
+# by configuration and version; for each version's most recently applied run, a partial index
+# over applied runs only, in the order ``_SELECT_LATEST_VERSION_RUNS`` ranks them; and for the
+# configuration list, its name filter and its ``(created_at, config_id)`` order. Created after
+# the column migration because these indexes name columns a pre-existing table only gains
+# there. ``IF NOT EXISTS`` makes each re-run a no-op. SQLite and PostgreSQL both scan an
+# ascending index backwards for a descending order, and both support partial indexes.
+_RUN_LISTING_INDEXES: tuple[str, ...] = (
+    "CREATE INDEX IF NOT EXISTS product_runs_started ON product_runs (started_at, run_id)",
+    "CREATE INDEX IF NOT EXISTS product_runs_config_started ON product_runs (config_id, started_at, run_id)",
+    "CREATE INDEX IF NOT EXISTS product_runs_binding_started "
+    "ON product_runs (config_id, registry_version, started_at, run_id)",
+    "CREATE INDEX IF NOT EXISTS product_runs_binding_applied "
+    "ON product_runs (config_id, registry_version, finished_at, run_id) WHERE phase = 'applied'",
+    "CREATE INDEX IF NOT EXISTS configurations_name ON configurations (name)",
+    "CREATE INDEX IF NOT EXISTS configurations_created ON configurations (created_at, config_id)",
 )
 _PREFECT_EXECUTION_LIVENESS_COLUMNS: tuple[tuple[str, str], ...] = (
     ("submitted_at", "TEXT"),
@@ -270,14 +304,58 @@ _JSON_MAPPING_ADAPTER = TypeAdapter(dict[str, Any])
 _INVALID_SERVICE_WORKER_ID = "service worker identity is invalid"
 
 _INSERT_CONFIGURATION = "INSERT INTO configurations (config_id, created_at) VALUES (?, ?)"
-_SELECT_CONFIGURATION = "SELECT config_id, created_at FROM configurations WHERE config_id = ?"
+# A configuration summary: identity, current name and the highest registered version.
+_CONFIGURATION_SUMMARY_COLUMNS = """configurations.config_id, configurations.created_at, configurations.name,
+(SELECT MAX(versions.registry_version) FROM configuration_versions AS versions
+WHERE versions.config_id = configurations.config_id)"""
+_SELECT_CONFIGURATION = "SELECT " + _CONFIGURATION_SUMMARY_COLUMNS + " FROM configurations WHERE config_id = ?"  # noqa: S608 - module constants only.
 # The one stated configurations listing order. ``created_at`` alone is not total — the clock
 # can give two registrations one timestamp — so ``config_id`` makes the order deterministic.
-_SELECT_CONFIGURATIONS = "SELECT config_id, created_at FROM configurations ORDER BY created_at, config_id"
+_SELECT_CONFIGURATIONS = (
+    "SELECT " + _CONFIGURATION_SUMMARY_COLUMNS + " FROM configurations ORDER BY created_at, config_id"  # noqa: S608 - module constants only.
+)
+# The paged configuration list is assembled from these fixed fragments; every value is bound.
+# Newest first, with ``config_id`` breaking equal creation times, keyset paged like the run list.
+_SELECT_CONFIGURATION_LIST = "SELECT " + _CONFIGURATION_SUMMARY_COLUMNS + " FROM configurations"  # noqa: S608 - module constants only.
+_CONFIGURATION_LIST_NAME = "configurations.name = ?"
+_CONFIGURATION_LIST_AFTER = (
+    "(configurations.created_at < ? OR (configurations.created_at = ? AND configurations.config_id < ?))"
+)
+_CONFIGURATION_LIST_ORDER = " ORDER BY configurations.created_at DESC, configurations.config_id DESC LIMIT ?"
+_UPDATE_CONFIGURATION_NAME = "UPDATE configurations SET name = ? WHERE config_id = ?"
+# Fill of ``configurations.name`` for rows registered before the column existed, run by the
+# start-up that adds the column: the latest version's package of every configuration whose
+# name is still NULL.
+_SELECT_UNNAMED_CONFIGURATION_PACKAGES = """SELECT configurations.config_id, versions.declared_content
+FROM configurations JOIN configuration_versions AS versions ON versions.config_id = configurations.config_id
+WHERE configurations.name IS NULL AND versions.registry_version = (SELECT MAX(latest.registry_version)
+FROM configuration_versions AS latest WHERE latest.config_id = configurations.config_id)"""
+_FILL_CONFIGURATION_NAME = "UPDATE configurations SET name = ? WHERE config_id = ? AND name IS NULL"
 _INSERT_CONFIGURATION_VERSION = """INSERT INTO configuration_versions (config_id, registry_version, package_checksum,
-declared_content, created_at) VALUES (?, ?, ?, ?, ?)"""
+declared_content, created_at, registered_by, registration_reason) VALUES (?, ?, ?, ?, ?, ?, ?)"""
+# The paged version list: summaries without the package, newest version first.
+_SELECT_CONFIGURATION_VERSION_LIST = """SELECT config_id, registry_version, package_checksum, created_at,
+registered_by, registration_reason FROM configuration_versions WHERE config_id = ?"""
+_CONFIGURATION_VERSION_LIST_AFTER = " AND registry_version < ?"
+_CONFIGURATION_VERSION_LIST_ORDER = " ORDER BY registry_version DESC LIMIT ?"
+# For every version on one page, the newest run and the most recently applied run, in one query.
+# The first branch ranks the version's runs by ``(started_at, run_id)`` descending. The applied
+# branch ranks by ``(finished_at, run_id)`` descending: an apply advances the plan run in place,
+# so ``started_at`` is when the plan was created, while ``finished_at`` is written with
+# ``phase = 'applied'`` when the apply stage finishes. Each branch keeps its first row;
+# ``ROW_NUMBER`` is available on SQLite 3.25+ and PostgreSQL. ``{0}`` is a list of ``?``.
+_SELECT_LATEST_VERSION_RUNS = """SELECT registry_version, kind, run_id, phase, outcome, started_at, finished_at FROM (
+SELECT registry_version, 'latest' AS kind, run_id, phase, outcome, started_at, finished_at,
+ROW_NUMBER() OVER (PARTITION BY registry_version ORDER BY started_at DESC, run_id DESC) AS position
+FROM product_runs WHERE config_id = ? AND registry_version IN ({0})
+UNION ALL
+SELECT registry_version, 'applied' AS kind, run_id, phase, outcome, started_at, finished_at,
+ROW_NUMBER() OVER (PARTITION BY registry_version ORDER BY finished_at DESC, run_id DESC) AS position
+FROM product_runs WHERE config_id = ? AND registry_version IN ({0}) AND phase = 'applied'
+) ranked WHERE position = 1"""
 _SELECT_CONFIGURATION_VERSION = """SELECT config_id, registry_version, package_checksum, declared_content, created_at
 FROM configuration_versions WHERE config_id = ? AND registry_version = ?"""
+_CONFIGURATION_VERSION_EXISTS = "SELECT 1 FROM configuration_versions WHERE config_id = ? AND registry_version = ?"
 _SELECT_CONFIGURATION_VERSION_BY_CHECKSUM = """SELECT config_id, registry_version, package_checksum, declared_content,
 created_at FROM configuration_versions WHERE config_id = ? AND package_checksum = ?"""
 _SELECT_CONFIGURATION_VERSIONS = """SELECT config_id, registry_version, package_checksum, declared_content, created_at
@@ -288,10 +366,22 @@ _SELECT_NEXT_CONFIGURATION_VERSION = (
 
 _INSERT_PRODUCT_RUN = """INSERT INTO product_runs (run_id, operation, configuration_reference, config_id,
 registry_version, package_checksum, actor, audit_links, started_at, finished_at, phase, outcome, summary, results,
-reconciliation_required) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
-_SELECT_PRODUCT_RUN = """SELECT run_id, operation, configuration_reference, actor, audit_links, started_at,
-finished_at, phase, outcome, summary, results, config_id, registry_version, package_checksum, reconciliation_required
-FROM product_runs WHERE run_id = ?"""
+reconciliation_required, destination_branch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+_PRODUCT_RUN_COLUMNS = """run_id, operation, configuration_reference, actor, audit_links, started_at,
+finished_at, phase, outcome, summary, results, config_id, registry_version, package_checksum, reconciliation_required,
+destination_branch"""
+_SELECT_PRODUCT_RUN = "SELECT " + _PRODUCT_RUN_COLUMNS + " FROM product_runs WHERE run_id = ?"  # noqa: S608 - module constants only.
+# The run list is assembled from these fixed fragments only; every value is a bound parameter.
+# The keyset predicate is the row comparison ``(started_at, run_id) < (?, ?)`` written out as an
+# OR, which SQLite and PostgreSQL both evaluate identically over the UTC text timestamps.
+_SELECT_PRODUCT_RUN_LIST = "SELECT " + _PRODUCT_RUN_COLUMNS + " FROM product_runs"  # noqa: S608 - module constants only.
+_RUN_LIST_CONFIGURATION = "config_id = ?"
+_RUN_LIST_VERSION = "registry_version = ?"
+_RUN_LIST_AFTER = "(started_at < ? OR (started_at = ? AND run_id < ?))"
+_RUN_LIST_ORDER = " ORDER BY started_at DESC, run_id DESC LIMIT ?"
+_SELECT_AUDIT_LINKS_FOR_RUNS = (
+    "SELECT run_id, event_id FROM audit_events WHERE run_id IN ({}) ORDER BY created_at, event_id"
+)
 _SELECT_RUN_ARTIFACT_REFERENCES = """SELECT run_id, artifact_id, kind, media_type, digest, size, object_key,
 manifest_key, created_at, expires_at, published, visibility FROM artifact_refs
 WHERE run_id = ? AND published = 1 AND visibility = 'public' ORDER BY artifact_id"""
@@ -508,10 +598,21 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def configuration_exists(self, config_id: str) -> bool: ...
 
-    def create_configuration(self, package: ConfigurationPackage) -> ConfigurationVersion: ...
+    def create_configuration(
+        self,
+        package: ConfigurationPackage,
+        *,
+        registered_by: str | None = None,
+        registration_reason: str | None = None,
+    ) -> ConfigurationVersion: ...
 
     def add_configuration_version(
-        self, config_id: str, package: ConfigurationPackage
+        self,
+        config_id: str,
+        package: ConfigurationPackage,
+        *,
+        registered_by: str | None = None,
+        registration_reason: str | None = None,
     ) -> tuple[ConfigurationVersion, bool]: ...
 
     def lookup_configuration(self, config_id: str) -> LookupResult[ConfigurationSummary]: ...
@@ -520,9 +621,23 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         self, config_id: str, registry_version: int
     ) -> LookupResult[ConfigurationVersion]: ...
 
+    def configuration_version_exists(self, config_id: str, registry_version: int) -> bool: ...
+
     def list_configurations(self) -> tuple[ConfigurationSummary, ...]: ...
 
     def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]: ...
+
+    def list_configuration_page(
+        self, *, name: str | None = None, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
+    ) -> ConfigurationPage: ...
+
+    def list_configuration_version_page(
+        self, config_id: str, *, after: int | None = None, limit: int = DEFAULT_LIMIT
+    ) -> ConfigurationVersionPage: ...
+
+    def list_runs(
+        self, filters: RunFilters, *, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
+    ) -> RunPage: ...
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
 
@@ -570,7 +685,10 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             cursor.execute(statement)
-                    self._migrate_product_runs_columns(cursor)
+                    added = self._migrate_added_columns(cursor)
+                    if ("configurations", "name") in added:
+                        self._fill_configuration_names(cursor)
+                    self._ensure_run_listing_indexes(cursor)
                     self._migrate_prefect_execution_columns(cursor)
                     self._migrate_mutation_receipts(cursor)
                     self._migrate_audit_events(cursor)
@@ -593,47 +711,76 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             finally:
                 connection.close()
 
-    def _read_product_run_columns(self, cursor: _Cursor) -> frozenset[str]:
-        """Return the existing columns on ``product_runs`` for this store's own dialect.
+    def _read_table_columns(self, cursor: _Cursor, table: str) -> frozenset[str]:
+        """Return the existing columns on ``table`` for this store's own dialect.
 
         The statement is selected from ``self._dialect``, never discovered by running a
         statement to see whether it fails: on PostgreSQL, a probe-driven failure would abort
         the surrounding transaction and force a ``rollback()`` that discards every other
-        uncommitted ``CREATE TABLE`` this same call still needs to commit.
+        uncommitted ``CREATE TABLE`` this same call still needs to commit. ``table`` is always
+        one of this module's own table names, never caller input.
         """
         if self._dialect == "sqlite":
-            cursor.execute("PRAGMA table_info(product_runs)")
+            cursor.execute(f"PRAGMA table_info({table})")
             return frozenset(str(row[1]) for row in cursor.fetchall())
         cursor.execute(
             self._sql(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name = ? AND table_schema = current_schema()"
             ),
-            ("product_runs",),
+            (table,),
         )
         return frozenset(str(row[0]) for row in cursor.fetchall())
 
-    def _migrate_product_runs_columns(self, cursor: _Cursor) -> None:
-        """Additively bring a pre-existing ``product_runs`` table up to the current column set."""
-        existing = self._read_product_run_columns(cursor)
-        for column, sql_type in _CONFIGURATION_BINDING_COLUMNS:
-            if column not in existing:
-                cursor.execute(f"ALTER TABLE product_runs ADD COLUMN {column} {sql_type}")
+    def _migrate_added_columns(self, cursor: _Cursor) -> frozenset[tuple[str, str]]:
+        """Additively bring pre-existing tables up to the current nullable column set.
+
+        Covers ``product_runs`` (configuration binding and ``destination_branch``),
+        ``configuration_versions`` (``registered_by``, ``registration_reason``) and
+        ``configurations`` (``name``). Every column is nullable, so no existing row needs a
+        value, and a column the catalog already lists is skipped. Returns the
+        ``(table, column)`` pairs this call added.
+        """
+        added: set[tuple[str, str]] = set()
+        for table, columns in _ADDED_NULLABLE_COLUMNS:
+            existing = self._read_table_columns(cursor, table)
+            for column, sql_type in columns:
+                if column not in existing:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}")
+                    added.add((table, column))
+        return frozenset(added)
+
+    def _fill_configuration_names(self, cursor: _Cursor) -> None:
+        """Fill a NULL ``configurations.name`` from the configuration's latest version's package.
+
+        Runs only in the start-up that adds the column, because every configuration
+        registered after that writes its name. Covers configurations registered before the
+        column existed. A package that declares
+        no name, or whose stored content does not decode, leaves the name NULL; content that
+        does not decode is logged as a warning with the ``config_id`` only. Only NULL names are
+        written, so a second start-up changes nothing.
+        """
+        cursor.execute(self._sql(_SELECT_UNNAMED_CONFIGURATION_PACKAGES))
+        for config_id, declared_content in cursor.fetchall():
+            try:
+                content = json.loads(declared_content)
+            except (TypeError, ValueError):
+                # Never log the content: a stored package can hold credentials.
+                logger.warning("Configuration %s: the stored package does not decode; its name stays unset", config_id)
+                continue
+            name = _declared_configuration_name(content)
+            if name is not None:
+                cursor.execute(self._sql(_FILL_CONFIGURATION_NAME), (name, config_id))
+
+    @staticmethod
+    def _ensure_run_listing_indexes(cursor: _Cursor) -> None:
+        """Create the run-listing indexes once the binding columns are guaranteed to exist."""
+        for statement in _RUN_LISTING_INDEXES:
+            cursor.execute(statement)
 
     def _migrate_prefect_execution_columns(self, cursor: _Cursor) -> None:
         """Add liveness columns without fabricating timestamps for legacy links."""
-        if self._dialect == "sqlite":
-            cursor.execute("PRAGMA table_info(prefect_executions)")
-            existing = frozenset(str(row[1]) for row in cursor.fetchall())
-        else:
-            cursor.execute(
-                self._sql(
-                    "SELECT column_name FROM information_schema.columns WHERE table_name = ? "
-                    "AND table_schema = current_schema()"
-                ),
-                ("prefect_executions",),
-            )
-            existing = frozenset(str(row[0]) for row in cursor.fetchall())
+        existing = self._read_table_columns(cursor, "prefect_executions")
         for column, sql_type in _PREFECT_EXECUTION_LIVENESS_COLUMNS:
             if column not in existing:
                 cursor.execute(f"ALTER TABLE prefect_executions ADD COLUMN {column} {sql_type}")
@@ -751,7 +898,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         from only one would let the other stay missing forever once construction is repeated,
         since a later construction would see the survivor and skip recreating the pair.
 
-        The PostgreSQL query is schema-qualified for the same reason ``_read_product_run_columns``
+        The PostgreSQL query is schema-qualified for the same reason ``_read_table_columns``
         is: without ``table_schema = current_schema()``, a same-named constraint in another schema
         would satisfy this check and leave the current schema's table unguarded.
         """
@@ -837,13 +984,16 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 run.package_checksum,
                 run.actor,
                 _json(run.audit_links),
-                run.started_at.isoformat(),
-                _iso(run.finished_at),
+                # Stored as UTC so that text order equals time order when runs are listed,
+                # even when an injected service clock is not UTC.
+                _utc_iso(run.started_at),
+                None if run.finished_at is None else _utc_iso(run.finished_at),
                 run.phase,
                 run.outcome,
                 _json(run.summary),
                 _json(run.results),
                 run.reconciliation_required,
+                run.destination_branch,
             ),
         )
 
@@ -1259,7 +1409,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         (
                             writeback.phase,
                             writeback.outcome,
-                            writeback.finished_at.isoformat(),
+                            _utc_iso(writeback.finished_at),
                             _json(writeback.summary),
                             _json(writeback.results),
                             run_id,
@@ -1501,7 +1651,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         return False
                     cursor.execute(
                         self._sql(_UPDATE_LATEST_EXECUTION_TERMINAL),
-                        (phase, outcome, acknowledged_at.isoformat(), run_id, flow_run_id),
+                        (phase, outcome, _utc_iso(acknowledged_at), run_id, flow_run_id),
                     )
                     self._record_write_ambiguity(
                         cursor, run_id, flow_run_id, terminal_state=state, terminal_outcome=outcome
@@ -1571,7 +1721,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     return False
                 cursor.execute(
                     self._sql(_UPDATE_LATEST_EXECUTION_CANCELLED),
-                    (terminal_at.isoformat(), run_id, flow_run_id),
+                    (_utc_iso(terminal_at), run_id, flow_run_id),
                 )
                 connection.commit()
             except Exception:
@@ -1633,7 +1783,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     return False
                 cursor.execute(
                     self._sql(_UPDATE_LATEST_EXECUTION_TERMINAL),
-                    (phase, outcome, terminal_at.isoformat(), run_id, flow_run_id),
+                    (phase, outcome, _utc_iso(terminal_at), run_id, flow_run_id),
                 )
                 self._record_write_ambiguity(
                     cursor, run_id, flow_run_id, terminal_state=state, terminal_outcome=outcome
@@ -1758,7 +1908,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     return False
                 cursor.execute(
                     self._sql(_UPDATE_LATEST_EXECUTION_TERMINAL),
-                    (phase, outcome, terminal_at.isoformat(), run_id, flow_run_id),
+                    (phase, outcome, _utc_iso(terminal_at), run_id, flow_run_id),
                 )
                 self._record_write_ambiguity(
                     cursor,
@@ -2097,7 +2247,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         finally:
             connection.close()
 
-    def create_configuration(self, package: ConfigurationPackage) -> ConfigurationVersion:
+    def create_configuration(
+        self,
+        package: ConfigurationPackage,
+        *,
+        registered_by: str | None = None,
+        registration_reason: str | None = None,
+    ) -> ConfigurationVersion:
         """Durably register a brand-new configuration and its first version."""
         config_id = _generate_config_id()
         version = ConfigurationVersion(
@@ -2112,7 +2268,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             cursor = connection.cursor()
             try:
                 cursor.execute(self._sql(_INSERT_CONFIGURATION), (config_id, version.created_at.isoformat()))
-                self._insert_configuration_version_row(cursor, version)
+                self._insert_configuration_version_row(
+                    cursor,
+                    version,
+                    name=package.configuration.name or None,
+                    registered_by=registered_by,
+                    registration_reason=registration_reason,
+                )
                 connection.commit()
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 # DB-API drivers do not share an integrity-error base class;
@@ -2128,7 +2290,21 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             connection.close()
         return version
 
-    def _insert_configuration_version_row(self, cursor: _Cursor, version: ConfigurationVersion) -> None:
+    def _insert_configuration_version_row(
+        self,
+        cursor: _Cursor,
+        version: ConfigurationVersion,
+        *,
+        name: str | None,
+        registered_by: str | None = None,
+        registration_reason: str | None = None,
+    ) -> None:
+        """Insert one version and make ``name``, its package's name, the configuration's name.
+
+        Runs inside the transaction that allocates the version, which is always the newest
+        one, so the configuration's name is always its latest version's name. ``name`` is
+        ``None`` when the package declares an empty name.
+        """
         _require_checksum_digests_content(version.package_checksum, version.declared_content)
         cursor.execute(
             self._sql(_INSERT_CONFIGURATION_VERSION),
@@ -2138,13 +2314,28 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 version.package_checksum,
                 _json(version.declared_content),
                 version.created_at.isoformat(),
+                registered_by,
+                registration_reason,
             ),
+        )
+        cursor.execute(
+            self._sql(_UPDATE_CONFIGURATION_NAME),
+            (name, version.config_id),
         )
 
     def add_configuration_version(
-        self, config_id: str, package: ConfigurationPackage
+        self,
+        config_id: str,
+        package: ConfigurationPackage,
+        *,
+        registered_by: str | None = None,
+        registration_reason: str | None = None,
     ) -> tuple[ConfigurationVersion, bool]:
-        """Atomically allocate the next version, or return the existing one for a known checksum."""
+        """Atomically allocate the next version, or return the existing one for a known checksum.
+
+        An existing version is returned unchanged: its actor and reason stay those of the
+        request that created it.
+        """
         checksum = package.checksum()
         last_conflict: BaseException | None = None
         for attempt in range(_CONFIGURATION_VERSION_ATTEMPTS):
@@ -2162,7 +2353,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         declared_content=package.declared_content(),
                         created_at=datetime.now(timezone.utc),
                     )
-                    self._insert_configuration_version_row(cursor, version)
+                    self._insert_configuration_version_row(
+                        cursor,
+                        version,
+                        name=package.configuration.name or None,
+                        registered_by=registered_by,
+                        registration_reason=registration_reason,
+                    )
                     connection.commit()
                 except Exception as exc:  # pylint: disable=broad-exception-caught
                     # DB-API drivers do not share an integrity-error base class;
@@ -2213,7 +2410,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             connection.close()
         if row is None:
             return LookupResult(value=None, reason="configuration-not-found")
-        return LookupResult(value=ConfigurationSummary(config_id=row[0], created_at=row[1]))
+        return LookupResult(value=_configuration_summary_from_row(row))
 
     def lookup_configuration_version(self, config_id: str, registry_version: int) -> LookupResult[ConfigurationVersion]:
         connection = self._connect()
@@ -2230,6 +2427,19 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             return LookupResult(value=None, reason="configuration-version-not-found")
         return LookupResult(value=_configuration_version_from_row(row))
 
+    def configuration_version_exists(self, config_id: str, registry_version: int) -> bool:
+        """Return whether one configuration version exists, without reading its package."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_CONFIGURATION_VERSION_EXISTS), (config_id, registry_version))
+                return cursor.fetchone() is not None
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
     def list_configurations(self) -> tuple[ConfigurationSummary, ...]:
         """Return every registered configuration in the one stated order (see the SQL)."""
         connection = self._connect()
@@ -2242,7 +2452,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.close()
         finally:
             connection.close()
-        return tuple(ConfigurationSummary(config_id=row[0], created_at=row[1]) for row in rows)
+        return tuple(_configuration_summary_from_row(row) for row in rows)
 
     def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]:
         connection = self._connect()
@@ -2256,6 +2466,128 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         finally:
             connection.close()
         return tuple(_configuration_version_from_row(row) for row in rows)
+
+    def list_configuration_page(
+        self, *, name: str | None = None, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
+    ) -> ConfigurationPage:
+        """Return up to ``limit`` configurations, newest first, after the ``after`` key.
+
+        Configurations are ordered by ``(created_at, config_id)`` descending; ``after`` is the
+        last key of the previous page. ``name`` keeps only configurations whose current name
+        is exactly ``name``. The query reads one row past the page to detect a further page.
+        """
+        conditions: list[str] = []
+        parameters: list[object] = []
+        if name is not None:
+            conditions.append(_CONFIGURATION_LIST_NAME)
+            parameters.append(name)
+        if after is not None:
+            conditions.append(_CONFIGURATION_LIST_AFTER)
+            parameters.extend(_keyset_parameters(after))
+        statement = _filtered(_SELECT_CONFIGURATION_LIST, conditions) + _CONFIGURATION_LIST_ORDER
+        rows, has_more = self._read_page(statement, parameters, limit)
+        return ConfigurationPage(items=tuple(_configuration_summary_from_row(row) for row in rows), has_more=has_more)
+
+    def _read_page(
+        self,
+        statement: str,
+        parameters: Sequence[object],
+        limit: int,
+        follow_up: Callable[[_Cursor, Sequence[Sequence[Any]]], None] | None = None,
+    ) -> tuple[Sequence[Sequence[Any]], bool]:
+        """Read up to ``limit`` rows of ``statement`` and whether more rows follow them.
+
+        ``statement`` ends with a ``LIMIT ?`` placeholder that this method binds to
+        ``limit + 1``, so one row past the page tells whether a further page exists.
+        ``follow_up`` runs on the same cursor with the page's rows when the page is not empty.
+
+        Raises:
+            ValueError: ``limit`` is less than 1.
+        """
+        if limit < 1:
+            msg = "limit must be a positive integer"
+            raise ValueError(msg)
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(statement), (*parameters, limit + 1))
+                rows = cursor.fetchall()
+                page = rows[:limit]
+                if follow_up is not None and page:
+                    follow_up(cursor, page)
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return page, len(rows) > limit
+
+    def list_configuration_version_page(
+        self, config_id: str, *, after: int | None = None, limit: int = DEFAULT_LIMIT
+    ) -> ConfigurationVersionPage:
+        """Return up to ``limit`` version summaries of one configuration, newest version first.
+
+        ``after`` is the last ``registry_version`` of the previous page. A second query, one
+        per page, reads each listed version's newest run and newest applied run.
+        """
+        statement = _SELECT_CONFIGURATION_VERSION_LIST
+        parameters: list[object] = [config_id]
+        if after is not None:
+            statement += _CONFIGURATION_VERSION_LIST_AFTER
+            parameters.append(after)
+        statement += _CONFIGURATION_VERSION_LIST_ORDER
+        latest: dict[tuple[int, str], RunReference] = {}
+
+        def read_latest_runs(cursor: _Cursor, page: Sequence[Sequence[Any]]) -> None:
+            versions = tuple(int(row[1]) for row in page)
+            placeholders = ", ".join("?" for _ in versions)
+            cursor.execute(
+                self._sql(_SELECT_LATEST_VERSION_RUNS.format(placeholders)),
+                (config_id, *versions, config_id, *versions),
+            )
+            for registry_version, kind, run_id, phase, outcome, started_at, finished_at in cursor.fetchall():
+                latest[int(registry_version), str(kind)] = RunReference(
+                    run_id=run_id, phase=phase, outcome=outcome, started_at=started_at, finished_at=finished_at
+                )
+
+        rows, has_more = self._read_page(statement, parameters, limit, read_latest_runs)
+        return ConfigurationVersionPage(
+            items=tuple(_configuration_version_summary_from_row(row, latest) for row in rows), has_more=has_more
+        )
+
+    def list_runs(
+        self, filters: RunFilters, *, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
+    ) -> RunPage:
+        """Return up to ``limit`` runs matching ``filters``, newest first, after the ``after`` key.
+
+        Runs are ordered by ``(started_at, run_id)`` descending; ``after`` is the last key of
+        the previous page, so a run created since then is newer and never appears. One query
+        reads one row past the page to detect a further page, and one more reads the page's
+        audit links. Artifact references and execution links are not loaded.
+        """
+        conditions: list[str] = []
+        parameters: list[object] = []
+        if filters.config_id is not None:
+            conditions.append(_RUN_LIST_CONFIGURATION)
+            parameters.append(filters.config_id)
+        if filters.registry_version is not None:
+            conditions.append(_RUN_LIST_VERSION)
+            parameters.append(filters.registry_version)
+        if after is not None:
+            conditions.append(_RUN_LIST_AFTER)
+            parameters.extend(_keyset_parameters(after))
+        statement = _filtered(_SELECT_PRODUCT_RUN_LIST, conditions) + _RUN_LIST_ORDER
+        audit_links: dict[str, list[Sequence[Any]]] = {}
+
+        def read_audit_links(cursor: _Cursor, page: Sequence[Sequence[Any]]) -> None:
+            audit_links.update({row[0]: [] for row in page})
+            placeholders = ", ".join("?" for _ in page)
+            cursor.execute(self._sql(_SELECT_AUDIT_LINKS_FOR_RUNS.format(placeholders)), tuple(audit_links))
+            for run_id, event_id in cursor.fetchall():
+                audit_links[run_id].append((event_id,))
+
+        rows, has_more = self._read_page(statement, parameters, limit, read_audit_links)
+        return RunPage(items=tuple(_run_from_rows(row, (), (), audit_links[row[0]]) for row in rows), has_more=has_more)
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None:
         connection = self._connect()
@@ -2352,7 +2684,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         "UPDATE product_runs SET phase = ?, outcome = ?, finished_at = ?, summary = ?, results = ? "
                         "WHERE run_id = ?"
                     ),
-                    (phase, outcome, finished_at.isoformat(), _json(summary), _json(results), run_id),
+                    (phase, outcome, _utc_iso(finished_at), _json(summary), _json(results), run_id),
                 )
                 _require_run_finished(cursor, run_id)
                 connection.commit()
@@ -2900,20 +3232,45 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Return all audit evidence, optionally narrowed to one Sync run."""
         return self._records.audit_events(run_id)
 
-    def create_configuration(self, package: ConfigurationPackage) -> ConfigurationVersion:
-        """Validate, then durably register a brand-new configuration's first version."""
+    def create_configuration(
+        self,
+        package: ConfigurationPackage,
+        *,
+        registered_by: str | None = None,
+        registration_reason: str | None = None,
+        secrets: Sequence[str] = (),
+    ) -> ConfigurationVersion:
+        """Validate, then durably register a brand-new configuration's first version.
+
+        ``registered_by`` and ``registration_reason`` are recorded on the version with every
+        value in ``secrets`` redacted.
+        """
         validate_package_credentials(package)
-        return self._records.create_configuration(package)
+        actor, reason = _redacted_registration(registered_by, registration_reason, secrets)
+        return self._records.create_configuration(package, registered_by=actor, registration_reason=reason)
 
     def add_configuration_version(
-        self, config_id: str, package: ConfigurationPackage
+        self,
+        config_id: str,
+        package: ConfigurationPackage,
+        *,
+        registered_by: str | None = None,
+        registration_reason: str | None = None,
+        secrets: Sequence[str] = (),
     ) -> tuple[ConfigurationVersion, bool]:
-        """Validate, then atomically add a version to an existing configuration."""
+        """Validate, then atomically add a version to an existing configuration.
+
+        ``registered_by`` and ``registration_reason`` are recorded on a created version with
+        every value in ``secrets`` redacted.
+        """
         validate_package_credentials(package)
         if not self._records.configuration_exists(config_id):
             msg = f"Cannot add a version to unavailable configuration ID {config_id!r}"
             raise ConfigurationNotFoundError(msg)
-        return self._records.add_configuration_version(config_id, package)
+        actor, reason = _redacted_registration(registered_by, registration_reason, secrets)
+        return self._records.add_configuration_version(
+            config_id, package, registered_by=actor, registration_reason=reason
+        )
 
     def lookup_configuration(self, config_id: str) -> LookupResult[ConfigurationSummary]:
         """Look up a configuration's registry identity by its server-generated ID."""
@@ -2923,6 +3280,10 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Look up one immutable configuration version by its integer ordinal."""
         return self._records.lookup_configuration_version(config_id, registry_version)
 
+    def configuration_version_exists(self, config_id: str, registry_version: int) -> bool:
+        """Return whether one configuration version exists, without reading or parsing its package."""
+        return self._records.configuration_version_exists(config_id, registry_version)
+
     def list_configurations(self) -> tuple[ConfigurationSummary, ...]:
         """Return every registered configuration's identity, ordered by creation time then ID."""
         return self._records.list_configurations()
@@ -2930,6 +3291,24 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
     def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]:
         """Return every registered version of one configuration, oldest first."""
         return self._records.list_configuration_versions(config_id)
+
+    def list_configuration_page(
+        self, *, name: str | None = None, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
+    ) -> ConfigurationPage:
+        """Return one page of configurations, newest first, optionally only those named ``name``."""
+        return self._records.list_configuration_page(name=name, after=after, limit=limit)
+
+    def list_configuration_version_page(
+        self, config_id: str, *, after: int | None = None, limit: int = DEFAULT_LIMIT
+    ) -> ConfigurationVersionPage:
+        """Return one page of a configuration's version summaries, newest version first."""
+        return self._records.list_configuration_version_page(config_id, after=after, limit=limit)
+
+    def list_runs(
+        self, filters: RunFilters, *, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
+    ) -> RunPage:
+        """Return one page of runs, newest first, without artifact references or execution links."""
+        return self._records.list_runs(filters, after=after, limit=limit)
 
     def record_results(
         self,
@@ -3161,6 +3540,15 @@ def _iso(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat()
 
 
+def _utc_iso(value: datetime) -> str:
+    """Format an aware timestamp in UTC, so that stored text order equals time order.
+
+    ``started_at`` and ``finished_at`` are ranked as text (run lists, the most recently
+    applied run). An injected clock that is not UTC would otherwise break that order.
+    """
+    return value.astimezone(timezone.utc).isoformat()
+
+
 def _execution_timestamp_microseconds(value: str) -> int:
     """Convert one persisted aware ISO timestamp to a comparable integer."""
     parsed = datetime.fromisoformat(value)
@@ -3204,6 +3592,7 @@ def _run_from_rows(
             "package_checksum": row[13],
             # SQLite stores a BOOLEAN column as 0/1; PostgreSQL returns a bool.
             "reconciliation_required": bool(row[14]),
+            "destination_branch": row[15],
             "artifact_refs": [_reference_from_row(item).model_dump() for item in references],
             "prefect_executions": [
                 {
@@ -3351,6 +3740,59 @@ def _generate_config_id() -> str:
     that a docstring claims mirrors it but nothing enforces.
     """
     return generate_run_id()
+
+
+def _redacted_registration(
+    registered_by: str | None, registration_reason: str | None, secrets: Sequence[str]
+) -> tuple[str | None, str | None]:
+    """Return a registration's actor and reason with every value in ``secrets`` redacted."""
+    return _redact_value(registered_by, secrets), _redact_value(registration_reason, secrets)
+
+
+def _configuration_summary_from_row(row: Sequence[Any]) -> ConfigurationSummary:
+    return ConfigurationSummary(config_id=row[0], created_at=row[1], name=row[2], latest_version=row[3])
+
+
+def _configuration_version_summary_from_row(
+    row: Sequence[Any], latest: Mapping[tuple[int, str], RunReference]
+) -> ConfigurationVersionSummary:
+    """Build one version summary; ``latest`` maps ``(registry_version, kind)`` to that run."""
+    return ConfigurationVersionSummary(
+        config_id=row[0],
+        registry_version=row[1],
+        package_checksum=row[2],
+        created_at=row[3],
+        registered_by=row[4],
+        registration_reason=row[5],
+        latest_run=latest.get((int(row[1]), "latest")),
+        latest_applied_run=latest.get((int(row[1]), "applied")),
+    )
+
+
+def _keyset_parameters(after: tuple[datetime, str]) -> tuple[str, str, str]:
+    """Return the bound values of a ``(timestamp, identifier)`` descending keyset clause.
+
+    The clause compares the UTC ISO timestamp twice (strictly older, or equal with a
+    smaller identifier), so the timestamp is bound twice before the identifier.
+    """
+    when = after[0].astimezone(timezone.utc).isoformat()
+    return when, when, after[1]
+
+
+def _filtered(statement: str, conditions: Sequence[str]) -> str:
+    """Return ``statement`` with ``conditions`` joined into one ``WHERE`` clause, if any."""
+    return statement + " WHERE " + " AND ".join(conditions) if conditions else statement
+
+
+def _declared_configuration_name(declared_content: Any) -> str | None:
+    """Return ``configuration.name`` from declared package content, or ``None`` when absent."""
+    if not isinstance(declared_content, dict):
+        return None
+    configuration = declared_content.get("configuration")
+    if not isinstance(configuration, dict):
+        return None
+    name = configuration.get("name")
+    return name if isinstance(name, str) and name else None
 
 
 def _configuration_version_from_row(row: Sequence[Any]) -> ConfigurationVersion:

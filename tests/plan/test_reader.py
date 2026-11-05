@@ -89,7 +89,7 @@ def test_a_v1_run_directory_is_rejected_as_the_pre_existing_format(tmp_path: Pat
     message = str(raised.value)
     assert RUN_ID in message
     assert str(directory / "plan") in message
-    assert "diff" in raised.value.next_action
+    assert "`plan`" in raised.value.next_action
     assert raised.value.next_action in message
 
 
@@ -458,7 +458,7 @@ def test_an_unusable_format_version_keeps_version_refusal_with_rebuild_guidance(
     assert repr(declared) in message
     assert "incomplete" in message
     assert "apply it with the version that wrote it" not in raised.value.next_action
-    assert "Re-run `diff`" in raised.value.next_action
+    assert "Re-run `plan`" in raised.value.next_action
     for supported in SUPPORTED_FORMAT_VERSIONS:
         assert str(supported) in message
 
@@ -534,7 +534,7 @@ def test_the_unrecognized_action_wording_is_not_the_delete_wording(tmp_path: Pat
     message = str(raised.value).lower()
     assert "skipped" not in message
     assert "not executed" not in message
-    assert "re-run `diff`" in message
+    assert "re-run `plan`" in message
 
 
 def test_an_unrecognized_action_takes_precedence_over_a_generic_tear(tmp_path: Path) -> None:

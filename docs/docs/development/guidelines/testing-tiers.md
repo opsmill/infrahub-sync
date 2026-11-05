@@ -309,7 +309,7 @@ point them at:
 ##### The `from-netbox` example check
 
 The `from-netbox` example check runs the shipped `examples/netbox_to_infrahub` package
-through the Sync API: register it, then `diff` and `sync` into an Infrahub branch. It is not a
+through the Sync API: register it, then `plan` and `sync` into an Infrahub branch. It is not a
 pytest test. Run it by hand when you change the example mapping, the NetBox adapter, or the
 pinned NetBox image, and record the result in the pull request. The nightly
 end-to-end workflow also runs it against the pinned local `demo` dataset.
@@ -379,12 +379,12 @@ Run these commands from the repository root:
    uv run infrahub-sync configs register .netbox/from-netbox.local.yml --reason "register the local NetBox demo import"
    ```
 
-5. Create the branch, then run `diff` and `sync` with the `config_id` and `registry_version`
+5. Create the branch, then run `plan` and `sync` with the `config_id` and `registry_version`
    from the registration.
 
    ```bash
    uv run infrahubctl branch create netbox-import
-   uv run infrahub-sync diff --config-id <config-id> --version <version> --branch netbox-import --reason "review the local NetBox demo import"
+   uv run infrahub-sync plan --config-id <config-id> --version <version> --branch netbox-import --reason "review the local NetBox demo import"
    uv run infrahub-sync sync --config-id <config-id> --version <version> --branch netbox-import --reason "import the local NetBox demo data"
    ```
 

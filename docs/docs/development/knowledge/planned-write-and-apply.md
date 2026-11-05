@@ -105,7 +105,7 @@ identifier and **original** action, so the review-to-apply link is unaffected.
 
 An update whose target was deleted out-of-band **no longer materializes as a create**. It carries that
 object's recorded id, the destination answers `NODE_NOT_FOUND` with `extensions.http_status` 404 and
-creates nothing, and the apply raises `StaleDestinationIdError` asking for a fresh `diff`. Both halves
+creates nothing, and the apply raises `StaleDestinationIdError` asking for a fresh `plan`. Both halves
 of that signature are required, in one error: the code alone does not prove the id path ran, and the
 refusal claims the write never happened.
 
@@ -342,7 +342,7 @@ then parse them.**
    AFTER the parse, so a torn format-2 artifact still reports as torn rather than merely
    old; BEFORE the resolver and the loop, so nothing is dispatched. A format-2 update
    records no destination id and so cannot be keyed; the plan stays readable and
-   reviewable, and the message asks for a fresh `diff`
+   reviewable, and the message asks for a fresh `plan`
 5. peers = destination.new_peer_resolver()
 6. applied: list[str] = []   ;   skipped_deletes: list[str] = []      # both ORDERED
 7. for operation in stored order:

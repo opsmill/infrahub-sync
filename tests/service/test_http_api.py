@@ -33,7 +33,9 @@ from prefect.client.schemas.responses import (
 from prefect.states import Cancelled, Cancelling, Running
 from pydantic import BaseModel
 
+from infrahub_sync.adapters.infrahub import resolved_endpoint
 from infrahub_sync.configuration import ConfigurationPackage
+from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.validation import credential_namespace_finding
 from infrahub_sync.plan.models import PlanManifest
 from infrahub_sync.plan.review import SavedPlan
@@ -1802,6 +1804,7 @@ def test_confirmation_schema_errors_and_openapi_contract(
 
     paths = openapi["paths"]
     assert set(paths) == {
+        "/me",
         "/runs",
         "/runs/{run_id}",
         "/runs/{run_id}/plan",
@@ -2076,3 +2079,366 @@ def test_a_run_with_an_empty_reason_is_refused(
 
     assert refused.status_code == 422
     assert orchestration.submissions == []
+
+
+# GET /runs (US1): the run list, its filters, its paging, and the stored destination branch.
+READ = {"Authorization": f"Bearer {OWNER_TOKEN}"}
+_LIST_T0 = datetime(2026, 11, 4, 9, tzinfo=timezone.utc)
+
+
+def _package_variant(*, name: str = "registered-inventory", branch: str | None = None) -> ConfigurationPackage:
+    declared = _registered_package().model_dump(mode="json")
+    declared["configuration"]["name"] = name
+    if branch is not None:
+        declared["configuration"]["destination"]["settings"]["branch"] = branch
+    return ConfigurationPackage.model_validate(declared)
+
+
+def _create_for(
+    client: TestClient, version: ConfigurationVersion, *, key: str, branch: str | None = None
+) -> dict[str, object]:
+    body: dict[str, object] = {
+        "operation": "plan",
+        "config_id": version.config_id,
+        "registry_version": version.registry_version,
+        "reason": "review inventory changes",
+    }
+    if branch is not None:
+        body["branch"] = branch
+    response = client.post("/runs", headers={**READ, "Idempotency-Key": key}, json=body)
+    assert response.status_code == 202, response.text
+    return response.json()["run"]
+
+
+def _stored_run(run_id: str, minutes: int, *, version: ConfigurationVersion | None = None) -> ProductRun:
+    binding: dict[str, object] = {"configuration_reference": "legacy-inventory"}
+    if version is not None:
+        binding = {
+            "configuration_reference": f"{version.config_id}@{version.registry_version}",
+            "config_id": version.config_id,
+            "registry_version": version.registry_version,
+            "package_checksum": version.package_checksum,
+        }
+    return ProductRun.model_validate(
+        {
+            "run_id": run_id,
+            "operation": "plan",
+            "actor": "owner",
+            "started_at": _LIST_T0 + timedelta(minutes=minutes),
+            "phase": "accepted",
+            **binding,
+        }
+    )
+
+
+def _list(client: TestClient, **params: object) -> Response:
+    return client.get("/runs", headers=READ, params={key: value for key, value in params.items() if value is not None})
+
+
+def test_the_run_list_requires_a_bearer_token(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, _projection, _orchestration = service_api
+
+    refused = client.get("/runs")
+
+    assert refused.status_code == 401
+    assert refused.json()["error"]["code"] == "unauthenticated"
+    assert client.get("/runs", headers={"Authorization": "Bearer not-a-token"}).status_code == 401
+
+
+def test_the_run_list_filters_by_configuration_and_version_without_execution_detail(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """Spec US1 scenarios 1-2: three runs of configuration C, two of its version 1."""
+    client, projection, _orchestration = service_api
+    version_1 = client.app.state.run_binding
+    version_2, _created = projection.add_configuration_version(version_1.config_id, _package_variant(name="renamed"))
+    first = _create_for(client, version_1, key="list-key-1")
+    second = _create_for(client, version_1, key="list-key-2")
+    third = _create_for(client, version_2, key="list-key-3")
+    _create_for(client, projection.create_configuration(_package_variant(name="other")), key="list-key-4")
+    projection.create_run(_stored_run("legacy-run-001", 0))
+
+    by_configuration = _list(client, config_id=version_1.config_id)
+    by_version = _list(client, config_id=version_1.config_id, registry_version=1)
+    unfiltered = _list(client)
+
+    assert by_configuration.status_code == 200, by_configuration.text
+    configuration_ids = {item["run_id"] for item in by_configuration.json()["items"]}
+    assert configuration_ids == {first["run_id"], second["run_id"], third["run_id"]}
+    assert {item["run_id"] for item in by_version.json()["items"]} == {first["run_id"], second["run_id"]}
+    assert len(unfiltered.json()["items"]) == 5
+    assert "legacy-run-001" in {item["run_id"] for item in unfiltered.json()["items"]}
+    assert by_configuration.json()["next_cursor"] is None
+    detail = client.get(f"/runs/{first['run_id']}", headers=READ).json()["run"]
+    assert detail["prefect_executions"] != []
+    for item in unfiltered.json()["items"]:
+        assert item["artifact_refs"] == []
+        assert item["prefect_executions"] == []
+    listed = next(item for item in by_version.json()["items"] if item["run_id"] == first["run_id"])
+    assert listed == {**detail, "artifact_refs": [], "prefect_executions": []}
+
+
+@pytest.mark.parametrize(
+    ("params", "status", "code"),
+    [
+        ({"config_id": "missing-config"}, 404, "configuration-not-found"),
+        ({"config_id": "missing-config", "registry_version": 1}, 404, "configuration-not-found"),
+        ({"registry_version": 99}, 422, "request-invalid"),
+        ({"limit": 0}, 422, "request-invalid"),
+        ({"limit": 201}, 422, "request-invalid"),
+        ({"limit": "many"}, 422, "request-invalid"),
+        ({"registry_version": 0}, 422, "request-invalid"),
+        ({"cursor": "not a cursor"}, 422, "invalid-cursor"),
+        ({"limit": "1.0"}, 422, "request-invalid"),
+        ({"limit": "5.000"}, 422, "request-invalid"),
+        ({"limit": "true"}, 422, "request-invalid"),
+        ({"config_id": "missing-config", "registry_version": "1.0"}, 422, "request-invalid"),
+        ({"config_id": "missing-config", "registry_version": str(2**63)}, 422, "request-invalid"),
+        ({"config_id": "missing-config", "registry_version": "9" * 5000}, 422, "request-invalid"),
+        ({"limit": "1" * 5000}, 422, "request-invalid"),
+        ({"config_id": "not an id"}, 422, "request-invalid"),
+        ({"config_id": "-leading-dash"}, 422, "request-invalid"),
+        ({"config_id": "x" * 129}, 422, "request-invalid"),
+    ],
+    ids=[
+        "unknown-configuration",
+        "unknown-configuration-with-version",
+        "version-without-configuration",
+        "limit-0",
+        "limit-201",
+        "limit-not-an-integer",
+        "version-0",
+        "malformed-cursor",
+        "limit-float",
+        "limit-float-trailing-zeros",
+        "limit-boolean",
+        "version-float",
+        "version-above-64-bit",
+        "version-past-integer-digit-limit",
+        "limit-past-integer-digit-limit",
+        "configuration-id-with-space",
+        "configuration-id-leading-dash",
+        "configuration-id-too-long",
+    ],
+)
+def test_the_run_list_refuses_unknown_filters_and_out_of_range_parameters(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    params: dict[str, object],
+    status: int,
+    code: str,
+) -> None:
+    client, _projection, _orchestration = service_api
+
+    refused = _list(client, **params)
+
+    assert refused.status_code == status, refused.text
+    assert refused.json()["error"]["code"] == code
+    assert refused.json()["error"]["status"] == status
+
+
+def test_the_run_list_refuses_an_unknown_version_of_a_known_configuration(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, _projection, _orchestration = service_api
+    version = client.app.state.run_binding
+
+    refused = _list(client, config_id=version.config_id, registry_version=99)
+
+    assert refused.status_code == 404
+    assert refused.json()["error"]["code"] == "configuration-version-not-found"
+
+
+@pytest.mark.parametrize("limit", [1, 200])
+def test_the_run_list_accepts_the_limit_bounds(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration], limit: int
+) -> None:
+    client, projection, _orchestration = service_api
+    projection.create_run(_stored_run("legacy-run-001", 0))
+
+    assert _list(client, limit=limit).status_code == 200
+
+
+def test_the_run_list_pages_with_a_cursor_bound_to_its_filters(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, projection, _orchestration = service_api
+    version = client.app.state.run_binding
+    for index in range(3):
+        projection.create_run(_stored_run(f"bound-run-{index:03d}", index, version=version))
+    projection.create_run(_stored_run("legacy-run-001", 10))
+
+    first = _list(client, config_id=version.config_id, limit=2).json()
+    assert [item["run_id"] for item in first["items"]] == ["bound-run-002", "bound-run-001"]
+    assert first["next_cursor"] is not None
+    last = _list(client, config_id=version.config_id, limit=2, cursor=first["next_cursor"]).json()
+    assert [item["run_id"] for item in last["items"]] == ["bound-run-000"]
+    assert last["next_cursor"] is None
+
+    other_filters = _list(client, limit=2, cursor=first["next_cursor"])
+    assert other_filters.status_code == 422
+    assert other_filters.json()["error"]["code"] == "invalid-cursor"
+
+
+def test_the_run_list_pages_stay_stable_while_new_runs_arrive(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """SC-005, FR-004: every original run appears exactly once; no newer run appears."""
+    client, projection, _orchestration = service_api
+    # Two runs per start minute, so the run ID tie-break decides order inside every pair.
+    originals = [f"original-{index:03d}" for index in range(120)]
+    for index, run_id in enumerate(originals):
+        projection.create_run(_stored_run(run_id, index // 2))
+
+    page = _list(client, limit=50).json()
+    seen = [item["run_id"] for item in page["items"]]
+    newer = [f"newer-{index:03d}" for index in range(10)]
+    for index, run_id in enumerate(newer):
+        projection.create_run(_stored_run(run_id, 1000 + index))
+    while page["next_cursor"] is not None:
+        page = _list(client, limit=50, cursor=page["next_cursor"]).json()
+        seen.extend(item["run_id"] for item in page["items"])
+
+    assert len(seen) == len(originals)
+    assert sorted(seen) == sorted(originals)
+    assert not set(seen) & set(newer)
+    expected_order = sorted(originals, key=lambda run_id: (originals.index(run_id) // 2, run_id), reverse=True)
+    assert seen == expected_order
+
+
+def test_the_run_list_without_a_limit_returns_fifty_runs_and_a_cursor(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, projection, _orchestration = service_api
+    for index in range(60):
+        projection.create_run(_stored_run(f"default-run-{index:03d}", index))
+
+    page = _list(client).json()
+
+    assert len(page["items"]) == 50
+    assert page["next_cursor"] is not None
+    rest = _list(client, cursor=page["next_cursor"]).json()
+    assert len(rest["items"]) == 10
+    assert rest["next_cursor"] is None
+
+
+def test_every_actor_lists_the_same_runs(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """FR-001/FR-002: the run list does not depend on who asks or who started the run."""
+    client, projection, _orchestration = service_api
+    version = client.app.state.run_binding
+    created = _create_for(client, version, key="actor-list-key")
+    projection.create_run(_stored_run("legacy-run-001", 0))
+
+    pages = {
+        token: client.get("/runs", headers={"Authorization": f"Bearer {token}"})
+        for token in (OWNER_TOKEN, OTHER_TOKEN, ADMIN_TOKEN)
+    }
+
+    for response in pages.values():
+        assert response.status_code == 200, response.text
+    owner_page = pages[OWNER_TOKEN].json()
+    assert {item["run_id"] for item in owner_page["items"]} == {created["run_id"], "legacy-run-001"}
+    assert pages[OTHER_TOKEN].json() == owner_page
+    assert pages[ADMIN_TOKEN].json() == owner_page
+
+
+@pytest.mark.parametrize(
+    ("declared", "requested", "expected"),
+    [
+        (None, None, "main"),
+        (None, "review", "review"),
+        ("declared-branch", "review", "declared-branch"),
+        ("declared-branch", None, "declared-branch"),
+    ],
+    ids=["undeclared-default", "undeclared-requested", "declared-over-requested", "declared"],
+)
+def test_a_new_run_records_the_branch_its_worker_plans_against(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    declared: str | None,
+    requested: str | None,
+    expected: str,
+) -> None:
+    """FR-006a: the run list and the run read show the effective destination branch.
+
+    The unit tier cannot build a saved plan, which needs a live Infrahub. The worker binds a
+    plan to the branch ``effective_destination_branch`` resolves from the registered settings
+    and the submitted ``branch`` parameter, then ``resolved_endpoint`` hands the adapter's
+    destination binding; this checks the stored branch equals both resolutions.
+    """
+    client, projection, orchestration = service_api
+    package = _package_variant(name="branch-inventory", branch=declared)
+    version = projection.create_configuration(package)
+
+    created = _create_for(client, version, key=f"branch-key-{declared}-{requested}", branch=requested)
+
+    detail = client.get(f"/runs/{created['run_id']}", headers=READ).json()["run"]
+    (listed,) = _list(client, config_id=version.config_id).json()["items"]
+    assert created["destination_branch"] == detail["destination_branch"] == listed["destination_branch"] == expected
+    submitted, _key = orchestration.submissions[-1]
+    settings = package.configuration.destination.settings
+    worker_branch = effective_destination_branch(settings, cast("str | None", submitted["branch"]))
+    assert worker_branch == expected
+    assert resolved_endpoint(settings or {}, worker_branch)[1] == expected
+
+
+def test_a_run_stored_without_a_branch_shows_null(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, projection, _orchestration = service_api
+    projection.create_run(_stored_run("legacy-run-001", 0))
+
+    (listed,) = _list(client).json()["items"]
+    detail = client.get("/runs/legacy-run-001", headers=READ).json()["run"]
+
+    assert listed["destination_branch"] is None
+    assert detail["destination_branch"] is None
+
+
+# GET /me (US4): a token check that returns the caller's actor name and administrator flag.
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [
+        (OWNER_TOKEN, {"actor": "owner", "administrator": False}),
+        (ADMIN_TOKEN, {"actor": "admin", "administrator": True}),
+    ],
+    ids=["owner", "admin"],
+)
+def test_the_token_check_returns_exactly_the_actor_and_administrator_flag(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    token: str,
+    expected: dict[str, object],
+) -> None:
+    """Spec US4 scenario 1: the body names the actor and the flag, and nothing else."""
+    client, projection, orchestration = service_api
+
+    response = client.get("/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json() == expected
+    assert token not in response.text
+    assert projection.audit_events() == ()
+    assert orchestration.submissions == []
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"Authorization": "Bearer not-a-token"}, {"Authorization": "Basic not-a-bearer-token"}],
+    ids=["missing", "invalid", "not-bearer"],
+)
+def test_the_token_check_refuses_an_invalid_token_and_records_the_refusal(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    headers: dict[str, str],
+) -> None:
+    """Spec US4 scenario 2: the refusal is recorded like on other routes, with no success event."""
+    client, projection, _orchestration = service_api
+
+    response = client.get("/me", headers=headers)
+
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "unauthenticated"
+    assert response.headers["WWW-Authenticate"] == "Bearer"
+    events = projection.audit_events()
+    assert [(event.actor, event.outcome) for event in events] == [("unauthenticated", "refused-authentication")]

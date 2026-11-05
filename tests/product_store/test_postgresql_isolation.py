@@ -165,3 +165,88 @@ def test_each_generated_schema_name_is_namespaced_and_unique() -> None:
     assert len(names) == 50
     assert all(name.startswith(SCHEMA_NAME_PREFIX) for name in names)
     assert all(re.fullmatch(r"[a-z0-9_]+", name) for name in names)
+
+
+# The pre-run-discovery shape of the three tables the start-up migration extends.
+_LEGACY_RUN_DISCOVERY_TABLES = (
+    "CREATE TABLE product_runs (run_id TEXT PRIMARY KEY, operation TEXT NOT NULL, "
+    "configuration_reference TEXT NOT NULL, actor TEXT, audit_links TEXT NOT NULL, started_at TEXT NOT NULL, "
+    "finished_at TEXT, phase TEXT NOT NULL, outcome TEXT, summary TEXT NOT NULL, results TEXT NOT NULL, "
+    "reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE)",
+    "CREATE TABLE configurations (config_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)",
+    "CREATE TABLE configuration_versions (config_id TEXT NOT NULL, registry_version INTEGER NOT NULL, "
+    "package_checksum TEXT NOT NULL, declared_content TEXT NOT NULL, created_at TEXT NOT NULL, "
+    "PRIMARY KEY (config_id, registry_version), FOREIGN KEY (config_id) REFERENCES configurations(config_id))",
+    "INSERT INTO product_runs (run_id, operation, configuration_reference, audit_links, started_at, phase, "
+    "summary, results) VALUES ('legacy-run-001', 'plan', 'sha256:legacy', '[]', "
+    "'2026-01-01T00:00:00+00:00', 'planning', '{}', '{}')",
+)
+_RUN_DISCOVERY_COLUMNS = {
+    "product_runs": {"config_id", "registry_version", "package_checksum", "destination_branch"},
+    "configuration_versions": {"registered_by", "registration_reason"},
+    "configurations": {"name"},
+}
+_RUN_DISCOVERY_INDEXES = {
+    "product_runs_started": "(started_at, run_id)",
+    "product_runs_config_started": "(config_id, started_at, run_id)",
+    "product_runs_binding_started": "(config_id, registry_version, started_at, run_id)",
+    "product_runs_binding_applied": "(config_id, registry_version, finished_at, run_id) WHERE (phase = 'applied'::text)",
+    "configurations_name": "(name)",
+    "configurations_created": "(created_at, config_id)",
+}
+
+
+@pytest.mark.integration
+def test_postgresql_start_up_upgrades_a_database_without_the_run_discovery_schema_once() -> None:
+    """A real server: legacy tables gain the columns and indexes, and a second start-up is a no-op."""
+    schema = postgresql_isolation.isolated_schema(
+        postgresql_isolation.dsn_or_skip("the run-discovery migration's PostgreSQL case")
+    )
+    # pylint: disable-next=import-outside-toplevel,import-error
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
+
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.product_store.store import PostgreSQLRunStore
+
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.service.storage import PsycopgConnectionFactory
+
+    def connect() -> Any:  # noqa: ANN401 - the provider's own connection wrapper.
+        return PsycopgConnectionFactory(psycopg.connect)(schema.dsn)
+
+    def catalog() -> tuple[dict[str, set[str]], dict[str, str]]:
+        with psycopg.connect(schema.dsn) as connection:
+            columns: dict[str, set[str]] = {}
+            for table, column in connection.execute(
+                "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = current_schema()"
+            ):
+                columns.setdefault(table, set()).add(column)
+            indexes = dict(
+                connection.execute(
+                    "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = current_schema()"
+                ).fetchall()
+            )
+        return columns, indexes
+
+    schema.create()
+    try:
+        with psycopg.connect(schema.dsn) as connection:
+            for statement in _LEGACY_RUN_DISCOVERY_TABLES:
+                connection.execute(statement)
+            connection.commit()
+
+        store = PostgreSQLRunStore(connect)
+        upgraded = catalog()
+        PostgreSQLRunStore(connect)
+
+        columns, indexes = upgraded
+        for table, expected in _RUN_DISCOVERY_COLUMNS.items():
+            assert expected <= columns[table], table
+        for index, definition in _RUN_DISCOVERY_INDEXES.items():
+            assert indexes[index].endswith(definition), indexes[index]
+        assert catalog() == upgraded
+        loaded = store.lookup("legacy-run-001").value
+        assert loaded is not None
+        assert loaded.destination_branch is None
+    finally:
+        schema.drop()

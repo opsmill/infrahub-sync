@@ -75,7 +75,7 @@ For any feature where the existing system has a direct capability and Infrahub d
 ## Operational considerations
 
 - **Run direction matters for conflict handling.** When syncing NetBox → Infrahub or Nautobot → Infrahub, a matched object is always updated from the source, so edits made in Infrahub to a synced model are overwritten on the next sync run — there is no flag that exempts a matched object from that update. Make sure everyone on the team understands which side is the source of truth for each model.
-- **Use `diff` regularly.** Before applying any sync — and especially during initial setup — run `infrahub-sync diff` to verify what would change. The diff is read-only.
+- **Use `plan` regularly.** Before applying any sync — and especially during initial setup — run `infrahub-sync plan` to verify what would change. The plan is read-only.
 - **Schedule syncs on a cadence that matches data change rates.** If the source data changes hourly, sync hourly. If it changes daily, sync daily. This release of Infrahub Sync has no built-in scheduler — use cron, CI, or a workflow tool. See [Schedule sync runs](./orchestration.mdx).
 - **Set explicit ownership boundaries.** If a model is edited both in NetBox or Nautobot and directly in Infrahub, the sync run overwrites the Infrahub edit on that model with the existing system's data every time. Decide upfront which side is authoritative for a given model, and keep direct Infrahub edits out of synced models.
 

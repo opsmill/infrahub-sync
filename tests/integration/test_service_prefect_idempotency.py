@@ -47,7 +47,10 @@ async def test_same_opaque_key_creates_one_prefect_flow_run(isolated_prefect_ser
     }
     async with get_client() as client:
         flow_id = await client.create_flow_from_name(SERVICE_FLOW_NAME)
-        deployment_id = await client.create_deployment(flow_id, name=SERVICE_DEPLOYMENT_NAME)
+        # A tag an operator added to the deployment, next to the tags Sync deploys with.
+        deployment_id = await client.create_deployment(
+            flow_id, name=SERVICE_DEPLOYMENT_NAME, tags=["infrahub-sync", "service", "team:network"]
+        )
         orchestration = PrefectOrchestration(client)
 
         first = await orchestration.submit(parameters, idempotency_key="opaque-server-proof")
@@ -55,4 +58,17 @@ async def test_same_opaque_key_creates_one_prefect_flow_run(isolated_prefect_ser
         runs = await client.read_flow_runs()
 
     assert first.flow_run_id == second.flow_run_id
-    assert len([run for run in runs if run.deployment_id == deployment_id]) == 1
+    (run,) = [run for run in runs if run.deployment_id == deployment_id]
+    # The server creates the run with its title and the union of the deployment's and the run's tags.
+    assert run.name == "Plan sync"
+    assert sorted(run.tags) == sorted(
+        {
+            "infrahub-sync",
+            "service",
+            "team:network",
+            "run:run-server-idempotency",
+            "stage:plan",
+            "config:config-001",
+            "config-version:config-001@1",
+        }
+    )

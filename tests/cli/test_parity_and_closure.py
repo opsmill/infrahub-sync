@@ -5,10 +5,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
 from infrahub_sync.cli import app
+from infrahub_sync.client import SyncClient
 from infrahub_sync.configuration import ConfigurationPackage
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,11 +19,26 @@ _RETIRED_OPTION = (
     r"--(?:directory|config-file|adapter-path|product-cache-location|from-plan|concurrent-load|full-extract|parallel|"
     r"allow-rowcount-drop|continue-on-error|show-progress|allow-destination-change|run-id)"
 )
-_CLI_INVOCATION = r"(?<![\w.-])(?:uv\s+run\s+)?infrahub-sync\s+(?=(?:configs|runs|diff|sync|apply|generate|list)\b)"
+_CLI_INVOCATION = (
+    r"(?<![\w.-])(?:uv\s+run\s+)?infrahub-sync\s+"
+    r"(?=(?:configs|runs|plan|verify|whoami|diff|sync|apply|generate|list)\b)"
+)
+# `configs list --name` filters configurations by name and is a current option. Every other
+# command lost `--name` when configurations moved to the registry, so only that one
+# invocation is exempt from the removed-option rule.
+_CONFIGS_LIST = r"configs\s+list(?![\w-])"
+# `diff` is a hidden, deprecated alias of `plan`; live docs teach `plan`.
 REMOVED_COMMAND = re.compile(
-    rf"{_CLI_INVOCATION}(?:generate|list)(?![\w-])"
+    rf"{_CLI_INVOCATION}(?:generate|list|diff)(?![\w-])"
     rf"|(?<![\w-]){_RETIRED_OPTION}(?![\w-])"
-    rf"|{_CLI_INVOCATION}(?:(?!infrahub-sync|```|\n\s*\n)[\s\S])*?(?<![\w-])--(?:name|diff)(?![\w-])"
+    rf"|{_CLI_INVOCATION}(?!{_CONFIGS_LIST})(?:(?!infrahub-sync|```|\n\s*\n)[\s\S])*?(?<![\w-])--(?:name|diff)(?![\w-])"
+)
+_VALID_NAME_OPTION = re.compile(
+    # A `configs list ... --name` invocation on one line, or the `configs list` section of the
+    # generated CLI reference, which lists `--name` as an option bullet.
+    rf"{_CONFIGS_LIST}[^\n]*?(?<![\w-])--name(?![\w-])"
+    r"|^#+ `infrahub-sync configs list`\n(?:(?!#)[^\n]*\n)*",
+    re.MULTILINE,
 )
 
 # One row for every CLI consumer in envelope section 12. The HTTP details stay owned by
@@ -34,11 +51,17 @@ CLI_CLIENT_PARITY = (
     ("configs show CONFIG_ID --version VERSION", "get_config_version", "GET /configs/{config_id}/versions/{version}"),
     ("configs versions CONFIG_ID", "list_config_versions", "GET /configs/{config_id}/versions"),
     ("configs validate CONFIG_ID VERSION", "validate_config", "POST /configs/{config_id}/versions/{version}/validate"),
-    ("diff", "plan", "POST /runs"),
+    ("plan", "plan", "POST /runs"),
     ("sync", "sync", "POST /runs"),
+    ("verify RUN_ID", "verify", "POST /runs/{run_id}/verify"),
+    ("runs list", "list_runs", "GET /runs"),
+    ("runs list --all", "iter_runs", "GET /runs"),
     ("runs plan RUN_ID", "get_plan", "GET /runs/{run_id}/plan"),
     ("runs show RUN_ID", "get_run", "GET /runs/{run_id}"),
     ("runs results RUN_ID", "get_results", "GET /runs/{run_id}/results"),
+    ("runs artifacts RUN_ID", "list_artifacts", "GET /runs/{run_id}/artifacts"),
+    ("runs cancel RUN_ID", "cancel_run", "POST /runs/{run_id}/cancel"),
+    ("whoami", "me", "GET /me"),
     ("apply RUN_ID", "apply", "POST /runs/{run_id}/apply"),
     ("apply RUN_ID failure evidence", "get_results", "GET /runs/{run_id}/results"),
 )
@@ -66,12 +89,19 @@ def test_parity_matrix_is_exactly_the_accepted_cli_surface() -> None:
         "validate_config",
         "plan",
         "sync",
+        "verify",
+        "list_runs",
+        "iter_runs",
         "get_plan",
         "get_run",
         "get_results",
+        "list_artifacts",
+        "cancel_run",
+        "me",
         "apply",
         "get_results",
     ]
+    assert all(callable(getattr(SyncClient, row[1])) for row in CLI_CLIENT_PARITY)
 
 
 def test_root_help_closes_removed_commands_and_adds_resource_groups() -> None:
@@ -79,7 +109,11 @@ def test_root_help_closes_removed_commands_and_adds_resource_groups() -> None:
 
     assert "configs" in help_text
     assert "runs" in help_text
-    assert "diff" in help_text
+    assert "plan" in help_text
+    assert "verify" in help_text
+    assert "whoami" in help_text
+    # `diff` is a hidden, deprecated alias of `plan`.
+    assert "diff" not in help_text
     assert "sync" in help_text
     assert "apply" in help_text
     assert "generate" not in help_text
@@ -90,7 +124,7 @@ def test_root_help_closes_removed_commands_and_adds_resource_groups() -> None:
 def test_all_retired_local_execution_options_are_absent_from_live_command_help() -> None:
     help_text = "\n".join(
         (
-            _help("diff"),
+            _help("plan"),
             _help("sync"),
             _help("apply"),
             _help("runs", "plan"),
@@ -117,7 +151,7 @@ def test_all_retired_local_execution_options_are_absent_from_live_command_help()
     assert not (removed & set(help_text.split()))
     assert "--detail" in _help("runs", "plan")
     assert "--kind" in _help("runs", "plan")
-    for command in ("show", "results"):
+    for command in ("show", "results", "list", "artifacts", "cancel"):
         assert command in _help("runs"), f"`runs {command}` is absent from the group's help"
 
 
@@ -153,7 +187,8 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
         path for path in (ROOT / "docs/docs").rglob("*.mdx") if "release-notes" not in path.relative_to(ROOT).parts
     )
     files.extend((ROOT / "examples").rglob("*.md"))
-    text = "\n".join(path.read_text(encoding="utf-8") for path in files)
+    # Remove the one valid `--name` usage (`configs list --name`) before the token check.
+    text = _VALID_NAME_OPTION.sub("", "\n".join(path.read_text(encoding="utf-8") for path in files))
     removed_options = (
         "--name",
         "--config-file",
@@ -176,9 +211,30 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
     source_files = []
     for pattern in ("*.yaml", "*.yml", "*.json", "*.py"):
         source_files.extend((ROOT / "examples").rglob(pattern))
-    source_text = "\n".join(path.read_text(encoding="utf-8") for path in source_files)
+    source_text = _VALID_NAME_OPTION.sub("", "\n".join(path.read_text(encoding="utf-8") for path in source_files))
 
     assert not [token for token in removed_options if token in source_text]
+
+
+@pytest.mark.parametrize(
+    ("snippet", "command_rejected", "name_token_remains"),
+    [
+        ("uv run infrahub-sync configs list --name from-netbox", False, False),
+        ("infrahub-sync configs list --limit 20 --name from-netbox", False, False),
+        ("### `infrahub-sync configs list`\n\n* `--name <str>`: Only these.\n", False, False),
+        ("infrahub-sync plan --config from-netbox --version 1", False, False),
+        ("infrahub-sync sync --name from-netbox", True, True),
+        ("infrahub-sync plan --name from-netbox", True, True),
+        ("infrahub-sync configs show --name from-netbox", True, True),
+        ("### `infrahub-sync configs show`\n\n* `--name <str>`: Removed.\n", False, True),
+        ("infrahub-sync diff --config from-netbox --version 1", True, False),
+    ],
+)
+def test_removed_command_rule_exempts_only_configs_list_name(
+    snippet: str, *, command_rejected: bool, name_token_remains: bool
+) -> None:
+    assert (REMOVED_COMMAND.search(snippet) is not None) is command_rejected
+    assert ("--name" in _VALID_NAME_OPTION.sub("", snippet)) is name_token_remains
 
 
 def test_active_sources_do_not_teach_removed_commands() -> None:

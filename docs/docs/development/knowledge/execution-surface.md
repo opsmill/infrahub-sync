@@ -21,7 +21,7 @@ The behavior below follows the [released execution source][execution-source].
 
 | Caller | Entry point and responsibility |
 | --- | --- |
-| CLI `diff`, `sync`, `apply` | Call `SyncClient` methods over HTTP; inspect API run and plan resources. They do not call `execute_run`. |
+| CLI `plan`, `sync`, `apply` | Call `SyncClient` methods over HTTP; inspect API run and plan resources. They do not call `execute_run`. |
 | Sync service worker | Call `execute_run` for each stage, passing `base_directory` for that stage's private scratch directory. A service `sync` composes plan, verify and apply. |
 | Direct Python caller | Pass a resolved `SyncInstance` to `execute_run`; the operation selects the lifecycle and return type. |
 | Direct Prefect flow | Call `run_remote_request`, which resolves a configuration name and calls `execute_run` in-process for a plan. |

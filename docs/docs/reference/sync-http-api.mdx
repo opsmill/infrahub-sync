@@ -13,6 +13,20 @@ separate four-parameter deployment. Use the Sync API when a trusted automation c
 needs reviewed-plan apply, durable results, artifact retrieval, or actor-scoped mutation
 control.
 
+## Terms
+
+- **Configuration**: a registered sync definition, identified by `config_id`. Its `name` is
+  readable but not unique.
+- **Configuration version**: one immutable registered revision of a configuration,
+  identified by `config_id` and `registry_version`.
+- **Run**: one attempt to synchronize one configuration version to one branch, identified by
+  `run_id`. A run creates exactly one plan and applies that plan at most once.
+- **Plan**: the creates, updates and recorded deletes that a run computes before it writes,
+  with their checksum. Verify and apply act on the plan of the run they name: they do not
+  compute a new plan.
+- **Stage**: one execution step of a run: `plan`, `verify`, `apply` or `sync`. Each stage runs
+  as one Prefect flow run.
+
 ## Install the service profile
 
 The service profile requires Python 3.11 or later. Install it from a repository checkout on
@@ -271,11 +285,13 @@ an absent reason and a `null` reason are the same value, and both differ from an
 | --- | --- |
 | `POST /configs` | Register a new configuration package as version 1. Administrator only. |
 | `POST /configs/{config_id}/versions` | Register a new version of an existing configuration. Administrator only. |
-| `GET /configs` | List registered configurations. |
-| `GET /configs/{config_id}` | Return one registered configuration's summary. |
-| `GET /configs/{config_id}/versions` | List a configuration's registered versions. |
-| `GET /configs/{config_id}/versions/{registry_version}` | Return one registered version. |
+| `GET /me` | Return the actor that the bearer token authenticates as and its administrator flag. |
+| `GET /configs` | List registered configurations, newest first, one page at a time. Filter by exact `name`. |
+| `GET /configs/{config_id}` | Return one registered configuration's summary, with its `name` and `latest_version`. |
+| `GET /configs/{config_id}/versions` | List a configuration's version summaries, newest first, one page at a time. |
+| `GET /configs/{config_id}/versions/{registry_version}` | Return one registered version, with its package content. |
 | `POST /configs/{config_id}/versions/{registry_version}/validate` | Re-check a registered version against the adapter declarations installed now. |
+| `GET /runs` | List runs, newest first, one page at a time. Filter by `config_id` and `registry_version`. |
 | `POST /runs` | Create one Sync run and accept `plan` or confirmed composed `sync`. |
 | `GET /runs/{run_id}` | Return the durable product record, with current linked Prefect detail for non-terminal executions. |
 | `GET /runs/{run_id}/plan` | Return retained saved-plan review data. |
@@ -285,6 +301,104 @@ an absent reason and a `null` reason are the same value, and both differ from an
 | `POST /runs/{run_id}/verify` | Accept read-only saved-plan verification without changing product lifecycle state. |
 | `POST /runs/{run_id}/apply` | Accept a confirmed apply for the exact retained reviewed checksum. |
 | `POST /runs/{run_id}/cancel` | Ask Prefect to cancel only the latest active linked execution. |
+
+### CLI commands and the API actions they call
+
+A configuration value in the CLI can be a `config_id` or a configuration name. The CLI reads
+`GET /configs/{config_id}` first and, when no configuration has that identifier, looks the
+value up as a name. When several configurations share the name, the CLI exits with status 2 and
+lists their identifiers.
+
+| CLI command | API action |
+| --- | --- |
+| `infrahub-sync configs register PACKAGE` | `POST /configs` |
+| `infrahub-sync configs version CONFIG PACKAGE` | `POST /configs/{config_id}/versions` |
+| `infrahub-sync configs list` | `GET /configs` |
+| `infrahub-sync configs show CONFIG` | `GET /configs/{config_id}` |
+| `infrahub-sync configs show CONFIG --version VERSION` | `GET /configs/{config_id}/versions/{registry_version}` |
+| `infrahub-sync configs versions CONFIG` | `GET /configs/{config_id}/versions` |
+| `infrahub-sync configs validate CONFIG VERSION` | `POST /configs/{config_id}/versions/{registry_version}/validate` |
+| `infrahub-sync plan` | `POST /runs` with `operation: plan` |
+| `infrahub-sync sync` | `POST /runs` with `operation: sync` |
+| `infrahub-sync verify RUN_ID` | `POST /runs/{run_id}/verify` |
+| `infrahub-sync apply RUN_ID` | `POST /runs/{run_id}/apply` |
+| `infrahub-sync runs list` | `GET /runs` |
+| `infrahub-sync runs show RUN_ID` | `GET /runs/{run_id}` |
+| `infrahub-sync runs plan RUN_ID` | `GET /runs/{run_id}/plan` |
+| `infrahub-sync runs results RUN_ID` | `GET /runs/{run_id}/results` |
+| `infrahub-sync runs artifacts RUN_ID` | `GET /runs/{run_id}/artifacts` |
+| `infrahub-sync runs cancel RUN_ID` | `POST /runs/{run_id}/cancel` |
+| `infrahub-sync whoami` | `GET /me` |
+
+The `diff` command is a hidden, deprecated alias of `plan`. It calls the same action and
+prints a deprecation warning to standard error.
+
+### List runs and configurations
+
+`GET /runs`, `GET /configs` and `GET /configs/{config_id}/versions` return one page at a time
+in the same envelope:
+
+```json
+{"items": [], "next_cursor": null}
+```
+
+| Query parameter | Applies to | Rule |
+| --- | --- | --- |
+| `limit` | all three lists | Items per page, from 1 to 200. Defaults to 50. A value outside that range returns `422 request-invalid`. |
+| `cursor` | all three lists | The `next_cursor` of the previous page, sent with the same filters. A cursor that does not decode, or that was issued for another list or for other filters, returns `422 invalid-cursor`. |
+| `config_id` | `GET /runs` | Only runs of this configuration. A malformed configuration ID returns `422 request-invalid`; an unknown configuration returns `404 configuration-not-found`. |
+| `registry_version` | `GET /runs` | Only runs of this configuration version. Requires `config_id`, otherwise `422 request-invalid`. An unknown version returns `404 configuration-version-not-found`. |
+| `name` | `GET /configs` | Only configurations with exactly this name. |
+
+`next_cursor` is `null` on the last page. The lists return no total count.
+
+- `GET /runs` orders runs by `started_at`, newest first. A list item has the same fields as the
+  `run` object that `GET /runs/{run_id}` returns, except that `artifact_refs` and
+  `prefect_executions` are always empty. The list has no `orchestration` field. Read the run
+  itself for those values. `destination_branch` is the branch the run writes to. It is
+  `null` for runs created before the field existed. Without filters, the list also includes
+  legacy runs that have no `config_id`.
+- `GET /configs` orders configurations by `created_at`, newest first. Each item carries
+  `config_id`, `name`, `latest_version` and `created_at`.
+- `GET /configs/{config_id}/versions` orders versions by `registry_version`, newest first. Each
+  item carries `config_id`, `registry_version`, `package_checksum`, `created_at`,
+  `registered_by`, `registration_reason`, `latest_run` and `latest_applied_run`, and no
+  package content. `latest_run` is the version's newest run by `started_at`.
+  `latest_applied_run` is the most recently applied run, ordered by the time its apply
+  finished. An apply updates the plan run, so its `started_at` is the time the plan was
+  created and its `finished_at` is the time the apply finished. Each run reference carries
+  `run_id`, `phase`, `outcome`, `started_at` and `finished_at`; `finished_at` is `null` for a
+  run that has not finished. `registered_by` and `registration_reason` are `null` for versions
+  registered before they were recorded. Read
+  `GET /configs/{config_id}/versions/{registry_version}` for the package content.
+
+Both configuration lists previously returned a bare array and accepted `offset`. They now
+return the envelope above. `offset` is removed: the service ignores it, so a client that
+pages with `offset` reads the first page again.
+
+`GET /me` returns the actor that the token authenticates as:
+
+```json
+{"actor": "automation@example.com", "administrator": false}
+```
+
+It performs no other action. Use it to check a token before you submit a run.
+
+### Find a run's flow runs in Prefect
+
+Each flow run that Sync submits to Prefect carries tags that identify its run, its stage and,
+for a registered run, its configuration version. Sync creates the flow run with these tags,
+and Prefect adds the deployment's tags, including any tag you added to the deployment:
+
+| Tag | Example |
+| --- | --- |
+| `run:<run_id>` | `run:20260810T1500-0123abcd` |
+| `stage:<stage>` | `stage:apply` |
+| `config:<config_id>` | `config:cfg-netbox` |
+| `config-version:<config_id>@<registry_version>` | `config-version:cfg-netbox@2` |
+
+Filter flow runs by one of these tags in the Prefect UI or API to list every stage of one run,
+or every run of one configuration version.
 
 ### Create a plan
 
@@ -431,7 +545,7 @@ Sync never calls an adapter or infers success after an uncertain result, and the
 endpoint that clears `reconciliation_required`. Reconcile by planning again:
 
 1. create a new plan run on the same registered configuration;
-2. read its summary. An empty diff means the destination currently matches the desired
+2. read its summary. A plan with no operations means the destination currently matches the desired
    state; it does not prove which run made the changes; and
 3. otherwise review the remaining operations and apply that new plan.
 
@@ -455,10 +569,10 @@ Every error uses the same envelope:
 | --- | --- |
 | `401` | Missing or invalid authentication. |
 | `403` | The actor does not own the mutation and is not an administrator. |
-| `404` | The Sync run or run-owned artifact does not exist. |
+| `404` | The Sync run or run-owned artifact does not exist, or a list filter names an unknown configuration (`configuration-not-found`) or configuration version (`configuration-version-not-found`). |
 | `409` | Idempotency conflict, missing confirmation, stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). |
 | `410` | The retained plan or artifact has expired. |
-| `422` | Invalid request schema, missing idempotency key, or a secret-bearing flow parameter. |
+| `422` | Invalid request schema or query parameter (`request-invalid`), a list cursor that does not decode or was issued for another list or other filters (`invalid-cursor`), missing idempotency key, or a secret-bearing flow parameter. |
 | `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved. |
 
 Prefect detail can expire or become unavailable while the durable Sync record, results,
