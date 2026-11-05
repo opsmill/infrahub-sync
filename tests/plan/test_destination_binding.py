@@ -194,6 +194,17 @@ def test_a_different_branch_alone_is_a_destination_binding_failure(tmp_path: Pat
     assert failure is not None
     assert failure.check == "destination_binding"
     assert "staging" in str(failure.found)
+    assert "Apply it again with `--branch main`" in failure.next_action
+    assert "create a new plan against the current destination with `plan`" in failure.next_action
+
+
+def test_a_plan_for_the_default_branch_applied_to_another_branch_names_no_branch(tmp_path: Path) -> None:
+    artifact = _artifact(tmp_path, destination_binding={"url": RECORDED_URL, "branch": None})
+
+    failure = destination_binding_failure(run_id=RUN_ID, artifact=artifact, live=_live(branch="staging"))
+
+    assert failure is not None
+    assert "Apply it again without `--branch`" in failure.next_action
 
 
 def test_a_plan_without_the_field_skips_the_check(tmp_path: Path) -> None:

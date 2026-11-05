@@ -419,9 +419,13 @@ def destination_binding_failure(
 
     Evaluated at the apply seam (`PlanApplier`), not inside `verify_plan`: like
     `write_surface`, its subject is the destination adapter rather than the artifact, but
-    unlike every `verify_plan` check it is also **overridable** — the apply API's
-    `allow_destination_change` argument exists for a deliberate cross-environment apply, although
-    no CLI command exposes it — so it cannot sit behind a gate whose non-empty result is an unconditional refusal.
+    unlike every `verify_plan` check it is also **overridable** — the Python `execute_run`
+    surface's `allow_destination_change` argument exists for a deliberate cross-environment
+    apply, although neither the Sync HTTP API nor any CLI command exposes it — so it cannot sit
+    behind a gate whose non-empty result is an unconditional refusal.
+
+    When only the branch differs, the usual cause is an apply without `--branch`, or with
+    another one, so the next action names the recorded branch to apply with.
 
     Returns `None` — the check is skipped, not passed — when the manifest is absent or
     unparseable (the format gate owns that verdict), when it predates the field, or when
@@ -444,14 +448,25 @@ def destination_binding_failure(
         )
     if recorded_binding == live:
         return None
+    new_plan = "create a new plan against the current destination with `plan`, review it, and apply that plan instead."
+    if recorded_binding.url != live.url:
+        next_action = new_plan[0].upper() + new_plan[1:]
+    elif recorded_binding.branch is None:
+        next_action = (
+            "The plan was created for the destination's default branch. Apply it again without `--branch`, or "
+            + new_plan
+        )
+    else:
+        next_action = (
+            f"The plan was created for branch {recorded_binding.branch!r}. Apply it again with "
+            f"`--branch {recorded_binding.branch}`, or " + new_plan
+        )
     return _failure(
         "destination_binding",
         run_id=run_id,
         expected=f"url {recorded_binding.url!r}, branch {recorded_binding.branch!r}",
         found=f"url {live.url!r}, branch {live.branch!r}",
-        next_action=(
-            "Create a new plan against the current destination with `plan`, review it, and apply that plan instead."
-        ),
+        next_action=next_action,
     )
 
 
