@@ -792,6 +792,8 @@ def test_configuration_route_grammar_refuses_hostile_values_before_service_class
         ("get", "/configs/good/versions/true", {}),
         ("get", "/configs/good/versions/1.0", {}),
         ("get", "/configs/good/versions/0", {}),
+        ("get", "/configs/good/versions/" + "9" * 5000, {}),
+        ("get", "/configs?limit=" + "1" * 5000, {}),
         ("post", "/configs/good/versions/1/validate?limit=true", {}),
     ]
     for method, path, kwargs in probes:

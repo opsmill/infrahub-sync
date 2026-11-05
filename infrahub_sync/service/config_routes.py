@@ -83,7 +83,12 @@ def parse_bounded_integer(value: str, *, minimum: int, maximum: int) -> int:
     """Parse one bounded API integer without accepting FastAPI's coercions."""
     if not value.isascii() or not value.isdecimal():
         raise ServiceAPIError(422, "request-invalid", "the request does not match the API schema")
-    number = int(value)
+    # Refuse a value with more digits than the maximum before ``int()``, which raises
+    # ``ValueError`` past Python's integer string-digit limit.
+    digits = value.lstrip("0") or "0"
+    if len(digits) > len(str(maximum)):
+        raise ServiceAPIError(422, "request-invalid", "the request does not match the API schema")
+    number = int(digits)
     if number < minimum or number > maximum:
         raise ServiceAPIError(422, "request-invalid", "the request does not match the API schema")
     return number
