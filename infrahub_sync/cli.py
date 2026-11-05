@@ -15,7 +15,7 @@ from enum import Enum
 from functools import wraps
 from math import isfinite
 from pathlib import Path  # noqa: TC003 - Typer resolves command annotations at runtime.
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import uuid4
 
 import typer
@@ -44,11 +44,11 @@ from infrahub_sync.client import (
     ValidationReportResource,
     VerifyRunRequest,
 )
-from infrahub_sync.client.models import MAX_LIMIT
+from infrahub_sync.client.models import MAX_LIMIT, ListPage
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Iterator, Mapping
 
     from infrahub_sync.client.models import (
         ArtifactReferenceResource,
@@ -61,18 +61,6 @@ if TYPE_CHECKING:
     )
 
 _Resource = TypeVar("_Resource")
-_ItemT_co = TypeVar("_ItemT_co", covariant=True)
-
-
-class _ListPage(Protocol[_ItemT_co]):
-    """One page a list endpoint returns: its items and the cursor of the next page."""
-
-    @property
-    def items(self) -> Sequence[_ItemT_co]: ...
-
-    @property
-    def next_cursor(self) -> str | None: ...
-
 
 DEFAULT_WAIT_TIMEOUT = 30 * 60.0
 DEFAULT_POLL_INTERVAL = 2.0
@@ -362,7 +350,7 @@ def _echo_list(
     *,
     all_pages: bool,
     every_item: Callable[[], Iterable[_Resource]],
-    first_page: Callable[[], _ListPage[_Resource]],
+    first_page: Callable[[], ListPage[_Resource]],
     write: Callable[[Iterable[_Resource]], None],
 ) -> None:
     """Write every item with ``--all``, else the first page and a note when more follow."""

@@ -31,6 +31,7 @@ from infrahub_sync.product_store.bundle import (
     PLAN_CHECKPOINT_ARTIFACT_ID,
 )
 from infrahub_sync.product_store.models import (
+    DEFAULT_LIMIT,
     ArtifactReference,
     AuditEvent,
     BaselineWriteback,
@@ -322,8 +323,9 @@ _CONFIGURATION_LIST_AFTER = (
 )
 _CONFIGURATION_LIST_ORDER = " ORDER BY configurations.created_at DESC, configurations.config_id DESC LIMIT ?"
 _UPDATE_CONFIGURATION_NAME = "UPDATE configurations SET name = ? WHERE config_id = ?"
-# Start-up fill of ``configurations.name`` for rows registered before the column existed: the
-# latest version's package of every configuration whose name is still NULL.
+# Fill of ``configurations.name`` for rows registered before the column existed, run by the
+# start-up that adds the column: the latest version's package of every configuration whose
+# name is still NULL.
 _SELECT_UNNAMED_CONFIGURATION_PACKAGES = """SELECT configurations.config_id, versions.declared_content
 FROM configurations JOIN configuration_versions AS versions ON versions.config_id = configurations.config_id
 WHERE configurations.name IS NULL AND versions.registry_version = (SELECT MAX(latest.registry_version)
@@ -619,20 +621,22 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         self, config_id: str, registry_version: int
     ) -> LookupResult[ConfigurationVersion]: ...
 
+    def configuration_version_exists(self, config_id: str, registry_version: int) -> bool: ...
+
     def list_configurations(self) -> tuple[ConfigurationSummary, ...]: ...
 
     def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]: ...
 
     def list_configuration_page(
-        self, *, name: str | None = None, after: tuple[datetime, str] | None = None, limit: int = 50
+        self, *, name: str | None = None, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
     ) -> ConfigurationPage: ...
 
     def list_configuration_version_page(
-        self, config_id: str, *, after: int | None = None, limit: int = 50
+        self, config_id: str, *, after: int | None = None, limit: int = DEFAULT_LIMIT
     ) -> ConfigurationVersionPage: ...
 
     def list_runs(
-        self, filters: RunFilters, *, after: tuple[datetime, str] | None = None, limit: int = 50
+        self, filters: RunFilters, *, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
     ) -> RunPage: ...
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
@@ -681,8 +685,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             cursor.execute(statement)
-                    self._migrate_added_columns(cursor)
-                    self._fill_configuration_names(cursor)
+                    added = self._migrate_added_columns(cursor)
+                    if ("configurations", "name") in added:
+                        self._fill_configuration_names(cursor)
                     self._ensure_run_listing_indexes(cursor)
                     self._migrate_prefect_execution_columns(cursor)
                     self._migrate_mutation_receipts(cursor)
@@ -727,24 +732,30 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         )
         return frozenset(str(row[0]) for row in cursor.fetchall())
 
-    def _migrate_added_columns(self, cursor: _Cursor) -> None:
+    def _migrate_added_columns(self, cursor: _Cursor) -> frozenset[tuple[str, str]]:
         """Additively bring pre-existing tables up to the current nullable column set.
 
         Covers ``product_runs`` (configuration binding and ``destination_branch``),
         ``configuration_versions`` (``registered_by``, ``registration_reason``) and
         ``configurations`` (``name``). Every column is nullable, so no existing row needs a
-        value, and a column the catalog already lists is skipped.
+        value, and a column the catalog already lists is skipped. Returns the
+        ``(table, column)`` pairs this call added.
         """
+        added: set[tuple[str, str]] = set()
         for table, columns in _ADDED_NULLABLE_COLUMNS:
             existing = self._read_table_columns(cursor, table)
             for column, sql_type in columns:
                 if column not in existing:
                     cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}")
+                    added.add((table, column))
+        return frozenset(added)
 
     def _fill_configuration_names(self, cursor: _Cursor) -> None:
         """Fill a NULL ``configurations.name`` from the configuration's latest version's package.
 
-        Covers configurations registered before the column existed. A package that declares
+        Runs only in the start-up that adds the column, because every configuration
+        registered after that writes its name. Covers configurations registered before the
+        column existed. A package that declares
         no name, or whose stored content does not decode, leaves the name NULL; content that
         does not decode is logged as a warning with the ``config_id`` only. Only NULL names are
         written, so a second start-up changes nothing.
@@ -2416,6 +2427,19 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             return LookupResult(value=None, reason="configuration-version-not-found")
         return LookupResult(value=_configuration_version_from_row(row))
 
+    def configuration_version_exists(self, config_id: str, registry_version: int) -> bool:
+        """Return whether one configuration version exists, without reading its package."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_CONFIGURATION_VERSION_EXISTS), (config_id, registry_version))
+                return cursor.fetchone() is not None
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
     def list_configurations(self) -> tuple[ConfigurationSummary, ...]:
         """Return every registered configuration in the one stated order (see the SQL)."""
         connection = self._connect()
@@ -2444,7 +2468,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         return tuple(_configuration_version_from_row(row) for row in rows)
 
     def list_configuration_page(
-        self, *, name: str | None = None, after: tuple[datetime, str] | None = None, limit: int = 50
+        self, *, name: str | None = None, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
     ) -> ConfigurationPage:
         """Return up to ``limit`` configurations, newest first, after the ``after`` key.
 
@@ -2499,7 +2523,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         return page, len(rows) > limit
 
     def list_configuration_version_page(
-        self, config_id: str, *, after: int | None = None, limit: int = 50
+        self, config_id: str, *, after: int | None = None, limit: int = DEFAULT_LIMIT
     ) -> ConfigurationVersionPage:
         """Return up to ``limit`` version summaries of one configuration, newest version first.
 
@@ -2531,7 +2555,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             items=tuple(_configuration_version_summary_from_row(row, latest) for row in rows), has_more=has_more
         )
 
-    def list_runs(self, filters: RunFilters, *, after: tuple[datetime, str] | None = None, limit: int = 50) -> RunPage:
+    def list_runs(
+        self, filters: RunFilters, *, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
+    ) -> RunPage:
         """Return up to ``limit`` runs matching ``filters``, newest first, after the ``after`` key.
 
         Runs are ordered by ``(started_at, run_id)`` descending; ``after`` is the last key of
@@ -3254,6 +3280,10 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Look up one immutable configuration version by its integer ordinal."""
         return self._records.lookup_configuration_version(config_id, registry_version)
 
+    def configuration_version_exists(self, config_id: str, registry_version: int) -> bool:
+        """Return whether one configuration version exists, without reading or parsing its package."""
+        return self._records.configuration_version_exists(config_id, registry_version)
+
     def list_configurations(self) -> tuple[ConfigurationSummary, ...]:
         """Return every registered configuration's identity, ordered by creation time then ID."""
         return self._records.list_configurations()
@@ -3263,18 +3293,20 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         return self._records.list_configuration_versions(config_id)
 
     def list_configuration_page(
-        self, *, name: str | None = None, after: tuple[datetime, str] | None = None, limit: int = 50
+        self, *, name: str | None = None, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
     ) -> ConfigurationPage:
         """Return one page of configurations, newest first, optionally only those named ``name``."""
         return self._records.list_configuration_page(name=name, after=after, limit=limit)
 
     def list_configuration_version_page(
-        self, config_id: str, *, after: int | None = None, limit: int = 50
+        self, config_id: str, *, after: int | None = None, limit: int = DEFAULT_LIMIT
     ) -> ConfigurationVersionPage:
         """Return one page of a configuration's version summaries, newest version first."""
         return self._records.list_configuration_version_page(config_id, after=after, limit=limit)
 
-    def list_runs(self, filters: RunFilters, *, after: tuple[datetime, str] | None = None, limit: int = 50) -> RunPage:
+    def list_runs(
+        self, filters: RunFilters, *, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
+    ) -> RunPage:
         """Return one page of runs, newest first, without artifact references or execution links."""
         return self._records.list_runs(filters, after=after, limit=limit)
 

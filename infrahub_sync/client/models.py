@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 - Pydantic resolves resource annotations at runtime.
 from math import isfinite
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, TypeVar, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -17,6 +17,19 @@ TerminalOutcome = Literal["succeeded", "failed", "cancelled", "abandoned", "ambi
 DEFAULT_LIMIT = 50
 MIN_LIMIT = 1
 MAX_LIMIT = 200
+
+_Item_co = TypeVar("_Item_co", covariant=True)
+
+
+class ListPage(Protocol[_Item_co]):
+    """A list response envelope: one page of items and the cursor of the next page."""
+
+    @property
+    def items(self) -> tuple[_Item_co, ...]: ...
+
+    @property
+    def next_cursor(self) -> str | None: ...
+
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 _LEGAL_EXECUTION_VERDICTS = {

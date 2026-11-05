@@ -53,7 +53,7 @@ from infrahub_sync.configuration.schema_validation import (
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.configuration.validation import _CODE_UNSUPPORTED_SYNC_STORE, _location_digest
 from infrahub_sync.execution import REDACTED, json_string_forms, redact, redaction_order
-from infrahub_sync.product_store.models import MAX_REGISTRY_VERSION
+from infrahub_sync.product_store.models import DEFAULT_LIMIT, MAX_REGISTRY_VERSION
 from infrahub_sync.product_store.store import (
     ConfigurationNotFoundError,
     ConfigurationVersionAllocationError,
@@ -808,7 +808,7 @@ def list_configs(
     projection: ProductProjection,
     name: str | None = None,
     after: tuple[datetime, str] | None = None,
-    limit: int = 50,
+    limit: int = DEFAULT_LIMIT,
 ) -> ConfigurationPage:
     """Return one page of registered configurations, newest first with an ID tiebreak.
 
@@ -842,7 +842,7 @@ def list_versions(
     config_id: str,
     projection: ProductProjection,
     after: int | None = None,
-    limit: int = 50,
+    limit: int = DEFAULT_LIMIT,
 ) -> ConfigurationVersionPage:
     """Return one page of a configuration's version summaries, newest version first.
 

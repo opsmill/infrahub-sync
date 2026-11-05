@@ -35,6 +35,7 @@ from infrahub_sync.product_store.models import MAX_REGISTRY_VERSION
 from .auth import Principal
 from .models import ConfigMutationRequest
 from .paging import (
+    DEFAULT_LIMIT,
     MAX_LIMIT,
     MIN_LIMIT,
     FilterValue,
@@ -44,7 +45,7 @@ from .paging import (
     timestamp_key,
     version_key,
 )
-from .service import ServiceAPIError, page_size_or_refuse
+from .service import ServiceAPIError
 
 _CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 # Most findings one validation-report page returns, and the default page size.
@@ -162,11 +163,12 @@ class ConfigurationRoutes:
     ) -> ConfigurationPage:
         """Return one page of configurations, newest first, optionally only those named ``name``.
 
+        ``limit`` is already bounded by the route (`parse_page_limit`); ``None`` means the default.
+
         Raises:
-            ServiceAPIError: ``422 request-invalid`` for a limit outside 1-200.
             InvalidCursorError: ``cursor`` does not decode or was issued for another name.
         """
-        page_size = page_size_or_refuse(limit)
+        page_size = DEFAULT_LIMIT if limit is None else limit
         filters: dict[str, FilterValue] = {"list": "configs", "name": name}
         after = None if cursor is None else timestamp_key(decode_cursor(cursor, filters))
         page = self._call(self._service.list_configs, name=name, after=after, limit=page_size)
@@ -186,13 +188,14 @@ class ConfigurationRoutes:
     ) -> ConfigurationVersionPage:
         """Return one page of a configuration's version summaries, newest version first.
 
+        ``limit`` is already bounded by the route (`parse_page_limit`); ``None`` means the default.
+
         Raises:
-            ServiceAPIError: ``422 request-invalid`` for a limit outside 1-200.
             InvalidCursorError: ``cursor`` does not decode or was issued for another
                 configuration.
             ConfigurationAPIError: ``404`` for an unknown configuration.
         """
-        page_size = page_size_or_refuse(limit)
+        page_size = DEFAULT_LIMIT if limit is None else limit
         filters: dict[str, FilterValue] = {"list": "versions", "config_id": config_id}
         after = None if cursor is None else version_key(decode_cursor(cursor, filters))
         page = self._call(self._service.list_versions, config_id=config_id, after=after, limit=page_size)

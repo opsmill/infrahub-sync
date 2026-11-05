@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from infrahub_sync.product_store.models import DEFAULT_LIMIT as STORE_DEFAULT_LIMIT
 from infrahub_sync.service.paging import (
     DEFAULT_LIMIT,
     InvalidCursorError,
@@ -164,6 +165,10 @@ def test_timestamp_key_outside_the_utc_range_or_malformed_is_refused(key: SortKe
 
 def test_limit_defaults_to_fifty() -> None:
     assert validate_limit(None) == DEFAULT_LIMIT == 50
+
+
+def test_the_store_default_page_size_equals_the_api_default() -> None:
+    assert STORE_DEFAULT_LIMIT == DEFAULT_LIMIT
 
 
 @pytest.mark.parametrize("value", [1, 50, 200])

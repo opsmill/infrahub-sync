@@ -7,7 +7,7 @@ import re
 from hashlib import sha256
 from math import isfinite
 from time import monotonic, sleep
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -38,6 +38,7 @@ from .models import (
     ConfigurationVersionSummaryResource,
     CreateRunRequest,
     ErrorEnvelope,
+    ListPage,
     OrchestrationSummary,
     PlanResource,
     PrincipalResource,
@@ -59,18 +60,6 @@ if TYPE_CHECKING:
 
 _Model = TypeVar("_Model", bound=BaseModel)
 _Item = TypeVar("_Item")
-_Item_co = TypeVar("_Item_co", covariant=True)
-
-
-class _Page(Protocol[_Item_co]):
-    """A list response envelope: one page of items and the cursor of the next page."""
-
-    @property
-    def items(self) -> tuple[_Item_co, ...]: ...
-
-    @property
-    def next_cursor(self) -> str | None: ...
-
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _DIGEST = re.compile(r"sha-256=(?P<digest>[0-9a-f]{64})")
@@ -565,7 +554,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         return params
 
     @staticmethod
-    def _iterate(operation: str, read_page: Callable[..., _Page[_Item]], **arguments: Any) -> Iterator[_Item]:
+    def _iterate(operation: str, read_page: Callable[..., ListPage[_Item]], **arguments: Any) -> Iterator[_Item]:
         """Yield every item of ``read_page(**arguments, cursor=...)``, following ``next_cursor``."""
         cursor: str | None = None
         seen: set[str] = set()

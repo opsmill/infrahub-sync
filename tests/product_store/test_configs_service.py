@@ -1748,9 +1748,8 @@ def test_configuration_name_follows_the_latest_registered_version(tmp_path: Path
     assert (summary.name, summary.latest_version) == ("renamed", 2)
 
 
-def test_start_up_fills_a_missing_name_from_the_latest_version_and_leaves_an_unnamed_package_null(
-    tmp_path: Path,
-) -> None:
+def test_start_up_that_adds_the_name_column_fills_it_from_the_latest_version(tmp_path: Path) -> None:
+    """The start-up that adds ``configurations.name`` fills it; a package without a name leaves it NULL."""
     root = tmp_path / "product-cache"
     root.mkdir()
     projection = local_product_projection(root)
@@ -1758,8 +1757,10 @@ def test_start_up_fills_a_missing_name_from_the_latest_version_and_leaves_an_unn
     config_id = registered.configuration.config_id
     connection = sqlite3.connect(root / "product-records.sqlite3")
     try:
-        # A configuration registered before names were stored, and one whose package has no name.
-        connection.execute("UPDATE configurations SET name = NULL WHERE config_id = ?", (config_id,))
+        # A store created before names were stored: drop the column, so that the next start-up
+        # adds it and fills it. Then add a configuration whose package has no name.
+        connection.execute("DROP INDEX configurations_name")
+        connection.execute("ALTER TABLE configurations DROP COLUMN name")
         connection.execute(
             "INSERT INTO configurations (config_id, created_at) VALUES (?, ?)",
             ("config-unnamed", "2026-11-04T09:00:00+00:00"),

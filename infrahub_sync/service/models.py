@@ -150,11 +150,21 @@ EMITTED_RESOURCES: tuple[type[BaseModel], ...] = (
 _EmittedExecutionLink = cast(
     "type[PublicExecutionLink]", EmittedRunResource.model_fields["prefect_executions"].annotation.__args__[0]
 )
+# The run list's own bounded item class. Building each item as this class lets the page take
+# the items without validating them again: Pydantic does not revalidate an instance of a
+# field's own model class.
+_EmittedRunPageItem = cast("type[PublicRunResource]", EmittedRunPage.model_fields["items"].annotation.__args__[0])
 
 
-def public_execution_link(link: PrefectExecutionLink) -> PublicExecutionLink:
+def _execution_link_class(resource: type[PublicRunResource]) -> type[PublicExecutionLink]:
+    return cast("type[PublicExecutionLink]", resource.model_fields["prefect_executions"].annotation.__args__[0])
+
+
+def public_execution_link(
+    link: PrefectExecutionLink, model: type[PublicExecutionLink] = _EmittedExecutionLink
+) -> PublicExecutionLink:
     """Project one persistence record without internal worker identities."""
-    return _EmittedExecutionLink.model_validate(
+    return model.model_validate(
         link.model_dump(
             include={
                 "flow_run_id",
@@ -168,17 +178,18 @@ def public_execution_link(link: PrefectExecutionLink) -> PublicExecutionLink:
     )
 
 
-def public_run_resource(run: ProductRun) -> PublicRunResource:
+def public_run_resource(run: ProductRun, model: type[PublicRunResource] = EmittedRunResource) -> PublicRunResource:
     """Project a store run into the self-contained public wire resource.
 
     The projection copies the record's fields wholesale, so the strict variant is what
     keeps a future internal field from reaching an operator without anyone choosing to
     publish it.
     """
-    return EmittedRunResource.model_validate(
+    link_model = _execution_link_class(model)
+    return model.model_validate(
         {
             **run.model_dump(exclude={"prefect_executions"}),
-            "prefect_executions": tuple(public_execution_link(link) for link in run.prefect_executions),
+            "prefect_executions": tuple(public_execution_link(link, link_model) for link in run.prefect_executions),
         }
     )
 
@@ -188,11 +199,9 @@ def public_run_page(runs: Iterable[ProductRun], next_cursor: str | None) -> RunP
 
     Each run goes through `public_run_resource` first, so a list item has the same fields as
     the resource `GET /runs/{run_id}` builds from the same record, with `artifact_refs` and
-    `prefect_executions` empty.
+    `prefect_executions` empty. Each item is validated once, as the page's own bounded item
+    class, and the page then checks only its own fields.
     """
     return EmittedRunPage.model_validate(
-        {
-            "items": [public_run_resource(run).model_dump(mode="json") for run in runs],
-            "next_cursor": next_cursor,
-        }
+        {"items": tuple(public_run_resource(run, _EmittedRunPageItem) for run in runs), "next_cursor": next_cursor}
     )

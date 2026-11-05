@@ -656,9 +656,8 @@ class RunService:
         """Refuse a run-list filter naming a configuration or version that was never registered."""
         if not self._projection.lookup_configuration(config_id).available:
             raise self._error(404, CONFIGURATION_NOT_FOUND_REASON, "the requested configuration does not exist")
-        if (
-            registry_version is not None
-            and not self._projection.lookup_configuration_version(config_id, registry_version).available
+        if registry_version is not None and not self._projection.configuration_version_exists(
+            config_id, registry_version
         ):
             raise self._error(
                 404, CONFIGURATION_VERSION_NOT_FOUND_REASON, "the requested configuration version does not exist"

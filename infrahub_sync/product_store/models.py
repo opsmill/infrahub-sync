@@ -14,6 +14,9 @@ from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 # The largest registry version the store can allocate: the signed 64-bit integer limit.
 MAX_REGISTRY_VERSION = 2**63 - 1
+# Page size of the store's configuration, version and run lists when a caller gives none.
+# Equal to the Sync API's ``DEFAULT_LIMIT``; the store does not import the client package.
+DEFAULT_LIMIT = 50
 _INVALID_SERVICE_WORKER_ID = "service worker identity is invalid"
 _LEGAL_EXECUTION_VERDICTS = {
     ("completed", "succeeded"),
