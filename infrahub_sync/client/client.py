@@ -25,6 +25,8 @@ from .errors import (
     TransportError,
 )
 from .models import (
+    MAX_LIMIT,
+    MIN_LIMIT,
     ApplyRunRequest,
     ArtifactContent,
     ArtifactListResource,
@@ -546,7 +548,9 @@ class SyncClient:  # pylint: disable=too-many-public-methods
     def _page_params(self, limit: int | None, cursor: str | None) -> dict[str, str | int]:
         params: dict[str, str | int] = {}
         if limit is not None:
-            params[_LIMIT_ARG] = self._positive_integer(limit, _LIMIT_ARG)
+            if type(limit) is not int or not MIN_LIMIT <= limit <= MAX_LIMIT:  # pylint: disable=unidiomatic-typecheck
+                raise ClientInputError(_LIMIT_ARG)
+            params[_LIMIT_ARG] = limit
         if cursor is not None:
             if not isinstance(cursor, str) or not cursor:
                 raise ClientInputError(_CURSOR_ARG)
