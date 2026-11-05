@@ -1,5 +1,93 @@
 # Implementation report: Prefect run observability and the missing Sync API address
 
+- **Status**: DONE
+- **Spec directory**: `dev/specs/016-prefect-run-observability`
+- **Branch**: `016-prefect-run-observability`. It is not pushed and has no pull request.
+- **Base commit**: `8bc54ce9`, the last preparation commit, on top of `feature/v3-develop` at `3c617102`.
+- **Head commit**: the commit that adds this report, after `b905422a`.
+- **Wall-clock time**: about 1 hour, from 15:30 to 16:25 UTC on 2026-11-05.
+- **Tasks**: 35 of 35 done.
+- **Unit tier**:
+  - before: `6422 passed, 7 skipped, 1 xfailed`;
+  - after: `6529 passed, 4 skipped, 246 deselected, 1 xfailed`.
+
+## Chunk ledger
+
+| Chunk | Tasks | ✅ / ⚠️ / ❌ | Commit | Flagged by the chunk |
+| --- | --- | --- | --- | --- |
+| 0. Setup: baseline (run by the orchestrator) | T001 | 1 / 0 / 0 | `c4ee909a` | None |
+| 1. US6: CLI hint | T002–T004 | 3 / 0 / 0 | `f0d6adc0` | The guard test uses `sync --wait-timeout 0`, because Typer rejects `runs list --limit 0` before the client runs. |
+| 2. US5: terminal state | T005–T006 | 2 / 0 / 0 | `3117df11` | Three existing tests now expect the verdict (FR-019). |
+| 3. US4: refused claim | T007–T009 | 3 / 0 / 0 | `d7d2b39a` | `flow.py` reached the Pylint 1,000-line limit, so the chunk added a module-level `too-many-lines` disable, as other large modules have. |
+| 4. US2: last log line | T010–T014 | 5 / 0 / 0 | `e6bf0f40` | The unused `run_logger` parameter of `_execute_stage` was removed, and its two test callers were updated. |
+| 5. US1: run summary artifact | T015–T020 | 6 / 0 / 0 | `6b59a232` | The configuration line is left out for an unregistered run. The docstring cited ADR 0021, which is not on this branch; `b2ef7728` fixed it. |
+| 6. US3: Prefect UI link | T021–T029 | 9 / 0 / 0 | `defa1951` | One table row was added to `compose-deployment.mdx` early, because a documentation test requires every Compose variable to be documented. |
+| 7. Polish | T030–T035 | 6 / 0 / 0 | `90d2168e` | The packaged copy of the Compose file had to be updated to match the root file. `towncrier create` reinstalls the environment without the Prefect and service extras. |
+| Orchestrator fix | — | — | `b2ef7728` | Replaced the ADR 0021 citations. The quickstart now mentions Prefect's own final log line. |
+| Review fixes | — | — | `b905422a` | See "Review fixes" below. |
+
+## Tasks not completed
+
+None.
+
+## Local-pass evidence
+
+Every test was run offline in the uv virtual environment, with the dev, Prefect and service extras installed, on
+macOS with Python 3.11.8 and Prefect 3.8.6.
+
+| Test | Type | Run command | Passed at (UTC) | Pass line |
+| --- | --- | --- | --- | --- |
+| `tests/cli/test_client_commands.py::test_a_missing_or_invalid_address_prints_how_to_set_it[url-unset\|url-not-http\|url-with-credentials\|token-unset]`, `::test_a_client_input_error_for_another_argument_prints_no_hint` | unit | `uv run pytest tests/cli/test_client_commands.py -q -p no:cacheprovider -k "how_to_set_it or prints_no_hint"` | 2026-11-05T15:36:11Z | `5 passed, 145 deselected in 0.25s` |
+| `tests/service/test_status_observation_budget.py`: 2 new and 3 changed terminal-state tests | unit | `uv run pytest tests/service/test_status_observation_budget.py::<test> -q -p no:cacheprovider` | 2026-11-05T15:39:37Z – 15:39:42Z | `1 passed, 2 warnings` for each |
+| `tests/service/test_worker_claim.py::test_expired_worker_claim_refusal_precedes_all_stage_runtime_construction[...]`, `::test_claim_refusal_prevents_registry_and_adapter_construction[...]`, `::test_claim_refusal_message_names_the_run_and_the_recovery_commands`, `::test_claim_refusal_is_logged_at_error_before_the_flow_fails` | unit | `uv run pytest tests/service/test_worker_claim.py -q -p no:cacheprovider -k refus -v` | 2026-11-05T15:44:12Z | `10 passed, 6 deselected in 0.65s` |
+| `tests/service/test_run_log_next_step.py`: 15 tests for the last log line | unit | `uv run pytest tests/service/test_run_log_next_step.py -q -p no:cacheprovider -rA` | 2026-11-05T15:49:50Z | `18 passed in 0.66s` |
+| `tests/service/test_run_artifact.py`: 12 tests, plus 5 artifact tests in `test_run_log_next_step.py` | unit | `uv run pytest tests/service/test_run_artifact.py tests/service/test_run_log_next_step.py -q -p no:cacheprovider` | 2026-11-05T15:56:04Z | `37 passed in 0.58s` |
+| `tests/service/test_prefect_ui.py`, and the Prefect link tests in `test_status_observation_budget.py`, `test_config_routes.py`, `tests/cli/test_client_commands.py` and `tests/dev_stack/test_compose_valid.py` | unit | `uv run pytest <those files> -o addopts="" -v -p no:cacheprovider -k "<link tests>"` | 2026-11-05T16:02:18Z | `22 passed, 251 deselected, 2 warnings in 0.65s` |
+| Review-fix tests in `test_run_artifact.py`, `test_status_observation_budget.py`, `test_run_log_next_step.py`, `test_worker_claim.py` and `test_prefect_ui.py` | unit | `uv run pytest <file> -q -p no:cacheprovider` | 2026-11-05T16:18:45Z – 16:21:02Z | `14 passed`, `29 passed`, `43 passed`, `15 passed` |
+| Whole service and CLI tiers, after the review fixes | unit | `uv run pytest tests/service tests/cli -q -p no:cacheprovider` | 2026-11-05T16:22:17Z | `1088 passed, 1 skipped, 2 warnings in 31.73s` |
+| Offline Compose and development-stack tests | unit | `uv run pytest tests/compose tests/dev_stack -q -p no:cacheprovider -m "not compose and not docker"` | 2026-11-05, after `b905422a` | `428 passed, 52 deselected, 1 xfailed` |
+| Live plan on the development stack | end-to-end (manual) | See "Live check" | 2026-11-05T16:07:32Z | Artifact, link, last log line and hint all observed |
+
+## Review findings
+
+| Severity | File | Finding | Status |
+| --- | --- | --- | --- |
+| High | `docker-compose.yml` and its copies | The comments said the artifact links the flow run. The example address pointed at a UI that is off by default. | Fixed, `b905422a` |
+| High | `infrahub_sync/service/run_artifact.py` | The FR-004 warning did not name the run and the stage, and the test fixed the wrong text in place. | Fixed, `b905422a` |
+| Medium | `infrahub_sync/service/service.py` | A redacted verdict could differ from the raw `terminal_state`. | Fixed, `b905422a` |
+| Medium | tests | No test of failure-path redaction, no flow-level test of FR-004, FR-017 clauses unchecked. | Fixed, `b905422a` |
+| Medium | `infrahub_sync/service/flow.py` | `RecordedFailure.outcome` was typed `str`. | Fixed, `b905422a` |
+| Medium | `infrahub_sync/service/service.py` | `RunService(prefect_ui_url=...)` does not validate a value passed by a direct caller. Only `build_app` validates. | Deferred |
+| Low | `infrahub_sync/service/prefect_ui.py` | An empty `?` or `#`, surrounding whitespace, and a bad host were accepted. | Fixed, `b905422a` |
+| Low | `infrahub_sync/service/flow.py` | A stale comment. A failing log line could replace the stage failure. | Fixed, `b905422a` |
+| Low | `infrahub_sync/service/flow.py` | Prefect's engine also logs the re-raised `ExecutionClaimRefusedError`, so the guidance appears twice in a refused flow run's log. | Deferred |
+| Low | `infrahub_sync/service/flow.py` | The refused-claim guidance says `apply <run_id>`, which is right only when the refused run holds a reviewed plan. | Deferred |
+| Advisory | `flow.py`, `prefect_ui.py`, `service.py` | Simplifications: one helper per stage exit, a shared next-action reader, a shared URL check with `client/client.py`, a clearer verdict expression. | Deferred |
+| Low | `tests/service/test_run_log_next_step.py` | Stale module docstring. | Fixed in the report commit |
+
+## Autonomous decisions
+
+- The spec and the brief cited ADR 0021, taken from the reference commits. That ADR is not on this branch, so
+  `b2ef7728` replaced the citations with the secret-redaction guideline.
+- FR-019 required changing the expected values of three existing terminal-state tests. A fourth test expected
+  `***`, and the review fixes changed it, because the raw `terminal_state` next to it already showed the value.
+- The Prefect UI link was checked with HTTP requests, not in a browser. The page returns 200 for an HTML request
+  and 404 for `Accept: */*`.
+- On the failure exit, the last log line and the artifact publish are best-effort (`suppress(Exception)`), so the
+  stage failure is always the error raised.
+- Four reviewers ran instead of six. The code and error-handling reviews ran together, and so did the comment and
+  type reviews.
+
+## Suggested next steps
+
+1. Review the branch, then open a pull request into `feature/v3-develop` with `changes/minor` when you choose.
+2. Consider the deferred findings:
+   - validate the URL inside `RunService`;
+   - remove the duplicated refused-claim guidance;
+   - word the `apply` hint for a refused run that is not a plan run;
+   - the simplifications.
+3. Run `speckit-opsmill-extract` after review.
+
 ## Baseline
 
 Measured on branch `016-prefect-run-observability` at `8bc54ce9`, at 2026-11-05T15:30:17Z, before any

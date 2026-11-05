@@ -1,8 +1,9 @@
 """The last log line of a service stage names the stage's outcome and the operator's next step.
 
 `service_sync_run` writes that line once, at whichever of its three exits the stage takes:
-a stored success, a recorded failure, or a failure the worker could not record. The line is
-written after the outcome is stored, so it never announces an outcome the store does not hold.
+a stored success, a recorded failure, or a failure the worker could not record. On the first
+two it is written after the outcome is stored; on the third it reports `failed` while the
+store keeps the run nonterminal (plan.md, "Stage exits").
 """
 
 from __future__ import annotations
