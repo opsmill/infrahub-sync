@@ -635,7 +635,7 @@ class PeerIdentifierError(ValueError):
             "Likely cause: schema_mapping does not declare a 'fields:' entry for the missing "
             "key, or the peer record was not loaded with that field populated. "
             f"To fix it, either populate the missing key on the {peer_kind} peer record in "
-            "Infrahub and run the diff or sync command again, or add the key to the "
+            "Infrahub and run the plan or sync command again, or add the key to the "
             f"'fields:' entry for {peer_kind} in the schema_mapping, create a new "
             "configuration version with 'infrahub-sync configs version', and run the "
             "command with the new --version. A registered version cannot be edited."

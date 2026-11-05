@@ -7,7 +7,7 @@ import logging
 import re
 import sys
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 from unittest.mock import MagicMock
@@ -19,24 +19,33 @@ from infrahub_sync.cli import _display, app  # noqa: PLC2701 - the renderer unde
 from infrahub_sync.client import (
     APIError,
     ApplyRunRequest,
+    ArtifactListResource,
+    ArtifactReferenceResource,
+    CancelRunRequest,
     ClientInputError,
     CompatibilityError,
     ConfigMutationRequest,
     ConfigsAPIError,
+    ConfigurationPage,
     ConfigurationSummaryResource,
+    ConfigurationVersionPage,
     ConfigurationVersionResource,
+    ConfigurationVersionSummaryResource,
     CreateRunRequest,
     OrchestrationSummary,
     PlanLastChangeResource,
     PlanOperationResource,
     PlanResource,
     PlanSummaryResource,
+    PrincipalResource,
     ProtocolError,
     PublicExecutionLink,
     PublicRunResource,
     RegisteredConfigurationResource,
     RegisteredVersionResource,
     ResultsResource,
+    RunPage,
+    RunReference,
     RunResource,
     RunTerminalError,
     RunWaitTimeoutError,
@@ -44,6 +53,7 @@ from infrahub_sync.client import (
     TransportError,
     ValidationFindingResource,
     ValidationReportResource,
+    VerifyRunRequest,
 )
 
 if TYPE_CHECKING:
@@ -63,6 +73,22 @@ def _version(version: int = 1) -> ConfigurationVersionResource:
         package_checksum=CHECKSUM,
         declared_content={"name": "edge-sync"},
         created_at=NOW,
+    )
+
+
+def _version_summary(
+    version: int = 1,
+    *,
+    latest_run: RunReference | None = None,
+    latest_applied_run: RunReference | None = None,
+) -> ConfigurationVersionSummaryResource:
+    return ConfigurationVersionSummaryResource(
+        config_id="edge-sync",
+        registry_version=version,
+        package_checksum=CHECKSUM,
+        created_at=NOW,
+        latest_run=latest_run,
+        latest_applied_run=latest_applied_run,
     )
 
 
@@ -151,9 +177,14 @@ def _plan() -> PlanResource:
 @pytest.fixture
 def client() -> MagicMock:
     injected = MagicMock(spec=SyncClient)
-    injected.list_configs.return_value = (ConfigurationSummaryResource(config_id="edge-sync", created_at=NOW),)
-    injected.get_config.return_value = ConfigurationSummaryResource(config_id="edge-sync", created_at=NOW)
-    injected.list_config_versions.return_value = (_version(),)
+    injected.list_configs.return_value = ConfigurationPage(
+        items=(ConfigurationSummaryResource(config_id="edge-sync", created_at=NOW),)
+    )
+    # The resolver reads `GET /configs/{value}` first, so any identifier resolves to itself.
+    injected.get_config.side_effect = lambda config_id: ConfigurationSummaryResource(
+        config_id=config_id, created_at=NOW
+    )
+    injected.list_config_versions.return_value = ConfigurationVersionPage(items=(_version_summary(),))
     injected.get_config_version.return_value = _version()
     injected.register_config.return_value = RegisteredConfigurationResource(
         configuration=ConfigurationSummaryResource(config_id="edge-sync", created_at=NOW),
@@ -180,6 +211,9 @@ def client() -> MagicMock:
     injected.wait_for_run.side_effect = lambda accepted, **_kwargs: accepted
     injected.get_plan.return_value = _plan()
     injected.get_run.return_value = _run()
+    injected.verify.return_value = _run()
+    injected.cancel_run.return_value = _run(phase="cancelling")
+    injected.iter_configs.side_effect = lambda **_kwargs: iter(())
     return injected
 
 
@@ -252,10 +286,11 @@ def test_configuration_reads_and_validation_keep_machine_fields_and_finding_orde
     validated = _invoke(client, "configs", "validate", "edge-sync", "1", "--offset", "2", "--limit", "3")
 
     assert all(result.exit_code == 0 for result in (listed, summary, shown, versions, validated))
-    client.list_configs.assert_called_once_with()
-    client.get_config.assert_called_once_with("edge-sync")
+    client.list_configs.assert_called_once_with(name=None, limit=None)
+    # Each CONFIG argument is resolved through `GET /configs/{value}` first; `show` prints that read.
+    assert client.get_config.call_count == 4
     client.get_config_version.assert_called_once_with("edge-sync", 1)
-    client.list_config_versions.assert_called_once_with("edge-sync")
+    client.list_config_versions.assert_called_once_with("edge-sync", limit=None)
     client.validate_config.assert_called_once_with("edge-sync", 1, offset=2, limit=3)
     assert f"package_checksum: {CHECKSUM}" in shown.output
     assert "offset: 2" in validated.output
@@ -265,11 +300,11 @@ def test_configuration_reads_and_validation_keep_machine_fields_and_finding_orde
     assert validated.output.index("first finding") < validated.output.index("second finding")
 
 
-def test_diff_uses_registered_tuple_waits_and_renders_service_plan(client: MagicMock) -> None:
+def test_plan_uses_registered_tuple_waits_and_renders_service_plan(client: MagicMock) -> None:
     result = _invoke(
         client,
-        "diff",
-        "--config-id",
+        "plan",
+        "--config",
         "edge-sync",
         "--version",
         "1",
@@ -418,9 +453,9 @@ def test_apply_sends_only_reviewed_checksum_and_shipped_fields(client: MagicMock
     assert key == "retry-apply"
 
 
-REBUILD_HINT = "re-run diff for this sync, review the new plan, then apply that run"
+REBUILD_HINT = "re-run plan for this sync, review the new plan, then apply that run"
 COMPATIBLE_VERSION_HINT = (
-    "re-run diff with this version and review the new plan, or apply the reviewed plan with the version that wrote it"
+    "re-run plan with this version and review the new plan, or apply the reviewed plan with the version that wrote it"
 )
 
 
@@ -948,11 +983,11 @@ def test_display_keeps_ordinary_non_ascii_text() -> None:
     assert _display("Zürich-東京 Łódź") == "Zürich-東京 Łódź"
 
 
-def test_diff_summary_escapes_terminal_controls_in_the_saved_plan(client: MagicMock) -> None:
+def test_plan_summary_escapes_terminal_controls_in_the_saved_plan(client: MagicMock) -> None:
     plan = _plan()
     client.get_plan.return_value = plan.model_copy(update={"verification_notes": ("ok\x1b[1A\rforged",)})
 
-    result = _invoke(client, "diff", "--config-id", "edge-sync", "--version", "1", "--reason", "review")
+    result = _invoke(client, "plan", "--config-id", "edge-sync", "--version", "1", "--reason", "review")
 
     assert result.exit_code == 0, result.output
     _assert_no_terminal_controls(result.output)
@@ -1170,7 +1205,7 @@ def test_closed_client_errors_map_to_cli_exits(
     assert f"error: {label}" in result.output
 
 
-@pytest.mark.parametrize("operation", ["register", "diff"])
+@pytest.mark.parametrize("operation", ["register", "plan"])
 def test_store_refusal_explains_how_to_keep_data_in_memory(tmp_path: Path, client: MagicMock, operation: str) -> None:
     """A 422 unsupported-sync-store response prints guidance to remove the store block."""
     if operation == "register":
@@ -1182,7 +1217,7 @@ def test_store_refusal_explains_how_to_keep_data_in_memory(tmp_path: Path, clien
         arguments = ("configs", "register", str(package_path), "--reason", "register inventory")
     else:
         client.plan.side_effect = APIError(422, "unsupported-sync-store")
-        arguments = ("diff", "--config-id", "edge-sync", "--version", "1", "--reason", "plan inventory")
+        arguments = ("plan", "--config", "edge-sync", "--version", "1", "--reason", "plan inventory")
 
     result = _invoke(client, *arguments)
 
@@ -1196,7 +1231,9 @@ def test_store_refusal_explains_how_to_keep_data_in_memory(tmp_path: Path, clien
     [
         pytest.param(("configs", "register", "{package}"), "register_config", id="configs-register"),
         pytest.param(("configs", "version", "edge-sync", "{package}"), "create_config_version", id="configs-version"),
-        pytest.param(("diff", "--config-id", "edge-sync", "--version", "1"), "plan", id="diff"),
+        pytest.param(("plan", "--config", "edge-sync", "--version", "1"), "plan", id="plan"),
+        pytest.param(("verify", "service-run-1"), "verify", id="verify"),
+        pytest.param(("runs", "cancel", "service-run-1", "--yes"), "cancel_run", id="runs-cancel"),
         pytest.param(("sync", "--config-id", "edge-sync", "--version", "1"), "sync", id="sync"),
         pytest.param(("apply", "service-run-1", "--expected-checksum", CHECKSUM), "apply", id="apply"),
     ],
@@ -1229,7 +1266,17 @@ def test_a_given_reason_is_still_validated(client: MagicMock, tmp_path: Path, re
 
 
 @pytest.mark.parametrize(
-    "command", [("configs", "register"), ("configs", "version"), ("diff",), ("sync",), ("apply",)], ids=" ".join
+    "command",
+    [
+        ("configs", "register"),
+        ("configs", "version"),
+        ("plan",),
+        ("sync",),
+        ("apply",),
+        ("verify",),
+        ("runs", "cancel"),
+    ],
+    ids=" ".join,
 )
 def test_help_does_not_mark_reason_as_required(command: tuple[str, ...]) -> None:
     result = RUNNER.invoke(app, [*command, "--help"], env={"NO_COLOR": "1", "COLUMNS": "200", "TERM": "dumb"})
@@ -1349,3 +1396,441 @@ def test_runs_plan_escapes_the_recorded_account_label(client: MagicMock) -> None
     assert result.exit_code == 0, result.output
     _assert_no_terminal_controls(result.output)
     assert "updated_by=Jane\\x1b[2KDoe" in result.output
+
+
+def _public_run(run_id: str, *, config_id: str | None = "edge-sync", outcome: str | None = None) -> PublicRunResource:
+    return PublicRunResource(
+        run_id=run_id,
+        operation="plan",
+        configuration_reference="edge-sync@1",
+        config_id=config_id,
+        registry_version=1 if config_id is not None else None,
+        package_checksum=CHECKSUM if config_id is not None else None,
+        actor="operator",
+        started_at=NOW,
+        phase="planned",
+        outcome=outcome,
+        destination_branch="review" if config_id is not None else None,
+    )
+
+
+def _help_text(*args: str) -> str:
+    result = RUNNER.invoke(app, [*args, "--help"], env={"NO_COLOR": "1", "COLUMNS": "200", "TERM": "dumb"})
+    assert result.exit_code == 0, result.output
+    return result.output
+
+
+def test_diff_is_a_hidden_alias_of_plan_that_warns_on_stderr(client: MagicMock) -> None:
+    result = _invoke(
+        client, "diff", "--config-id", "edge-sync", "--version", "1", "--reason", "review", "--idempotency-key", "k"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr.splitlines()[0] == "warning: 'diff' is deprecated, use 'plan'"
+    assert "deprecated" not in result.stdout
+    request, key = client.plan.call_args.args
+    assert request == CreateRunRequest(
+        operation="plan", config_id="edge-sync", registry_version=1, confirm_writes=False, reason="review"
+    )
+    assert key == "k"
+    assert f"plan_checksum: {CHECKSUM}" in result.stdout
+
+
+def test_root_help_lists_plan_and_hides_diff() -> None:
+    commands = {line.split()[1] for line in _help_text().splitlines() if line.startswith("│ ")}
+
+    assert {"plan", "verify", "whoami", "sync", "apply", "configs", "runs"} <= commands
+    assert "diff" not in commands
+
+
+def test_plan_accepts_config_and_its_config_id_alias() -> None:
+    help_text = _help_text("plan")
+
+    assert "--config" in help_text
+    assert "--config-id" in help_text
+
+
+def test_verify_calls_client_verify_with_the_reason_and_retry_key(client: MagicMock) -> None:
+    result = _invoke(client, "verify", "service-run-1", "--reason", "recheck", "--idempotency-key", "retry-verify")
+
+    assert result.exit_code == 0, result.output
+    client.verify.assert_called_once_with("service-run-1", VerifyRunRequest(reason="recheck"), "retry-verify")
+    assert "idempotency_key: retry-verify" in result.output
+    assert "run_id: service-run-1" in result.output
+
+
+def test_runs_list_without_filters_prints_one_row_per_run(client: MagicMock) -> None:
+    client.list_runs.return_value = RunPage(
+        items=(_public_run("run-2", outcome="planned"), _public_run("run-1", config_id=None)),
+        next_cursor=None,
+    )
+
+    result = _invoke(client, "runs", "list")
+
+    assert result.exit_code == 0, result.output
+    client.list_runs.assert_called_once_with(config_id=None, registry_version=None, limit=None)
+    client.get_config.assert_not_called()
+    assert result.stdout.splitlines() == [
+        f"run-2  edge-sync@1  review  planned  planned  operator  {NOW.isoformat()}",
+        f"run-1  -  -  planned  -  operator  {NOW.isoformat()}",
+    ]
+    assert "more runs" not in result.output
+
+
+def test_runs_list_filters_by_configuration_and_version_and_limit(client: MagicMock) -> None:
+    client.list_runs.return_value = RunPage(items=(_public_run("run-1"),), next_cursor=None)
+
+    result = _invoke(client, "runs", "list", "--config", "edge-sync", "--version", "2", "--limit", "5")
+
+    assert result.exit_code == 0, result.output
+    client.get_config.assert_called_once_with("edge-sync")
+    client.list_runs.assert_called_once_with(config_id="edge-sync", registry_version=2, limit=5)
+
+
+def test_runs_list_version_without_config_is_refused(client: MagicMock) -> None:
+    result = _invoke(client, "runs", "list", "--version", "2")
+
+    assert result.exit_code == 2
+    assert "argument: version" in result.output
+    client.list_runs.assert_not_called()
+
+
+def test_runs_list_prints_the_more_runs_hint_when_a_next_page_exists(client: MagicMock) -> None:
+    client.list_runs.return_value = RunPage(items=(_public_run("run-2"),), next_cursor="c1")
+
+    result = _invoke(client, "runs", "list")
+
+    assert result.exit_code == 0, result.output
+    assert "more runs: rerun with --all, or --limit up to 200" in result.stderr
+    assert "more runs" not in result.stdout
+
+
+def test_runs_list_all_follows_cursors(client: MagicMock) -> None:
+    client.iter_runs.return_value = iter((_public_run("run-3"), _public_run("run-2"), _public_run("run-1")))
+
+    result = _invoke(client, "runs", "list", "--all", "--limit", "1")
+
+    assert result.exit_code == 0, result.output
+    client.iter_runs.assert_called_once_with(config_id=None, registry_version=None, limit=1)
+    client.list_runs.assert_not_called()
+    assert [line.split()[0] for line in result.stdout.splitlines()] == ["run-3", "run-2", "run-1"]
+    assert "more runs" not in result.output
+
+
+def test_runs_artifacts_calls_list_artifacts(client: MagicMock) -> None:
+    client.list_artifacts.return_value = ArtifactListResource(
+        run_id="service-run-1",
+        artifacts=(
+            ArtifactReferenceResource(
+                artifact_id="artifact-1",
+                run_id="service-run-1",
+                kind="plan",
+                media_type="application/json",
+                digest=CHECKSUM,
+                size=12,
+                object_key=f"runs/service-run-1/{CHECKSUM}/plan.json",
+                manifest_key=f"runs/service-run-1/{CHECKSUM}/manifest.json",
+                created_at=NOW,
+            ),
+        ),
+    )
+
+    result = _invoke(client, "runs", "artifacts", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    client.list_artifacts.assert_called_once_with("service-run-1")
+    assert "artifact_id: artifact-1" in result.output
+    assert "kind: plan" in result.output
+    assert f"digest: {CHECKSUM}" in result.output
+
+
+def test_runs_cancel_without_yes_refuses_when_not_interactive(client: MagicMock) -> None:
+    result = _invoke(client, "runs", "cancel", "service-run-1")
+
+    assert result.exit_code == 2
+    assert "--yes" in result.stderr
+    client.cancel_run.assert_not_called()
+
+
+def test_runs_cancel_with_yes_calls_cancel_run(client: MagicMock) -> None:
+    result = _invoke(
+        client, "runs", "cancel", "service-run-1", "--yes", "--reason", "stop", "--idempotency-key", "retry-cancel"
+    )
+
+    assert result.exit_code == 0, result.output
+    client.cancel_run.assert_called_once_with("service-run-1", CancelRunRequest(reason="stop"), "retry-cancel")
+    assert "phase: cancelling" in result.output
+
+
+@pytest.mark.parametrize(("answer", "cancelled"), [("y\n", True), ("n\n", False)])
+def test_runs_cancel_prompts_when_interactive(
+    client: MagicMock, monkeypatch: pytest.MonkeyPatch, answer: str, *, cancelled: bool
+) -> None:
+    monkeypatch.setattr("infrahub_sync.cli._stdin_is_interactive", lambda: True)
+
+    result = RUNNER.invoke(app, ["runs", "cancel", "service-run-1"], obj={"client": client}, input=answer)
+
+    assert client.cancel_run.called is cancelled
+    assert result.exit_code == (0 if cancelled else 1), result.output
+
+
+def test_whoami_prints_actor_and_administrator(client: MagicMock) -> None:
+    client.me.return_value = PrincipalResource(actor="operator", administrator=False)
+
+    result = _invoke(client, "whoami")
+
+    assert result.exit_code == 0, result.output
+    client.me.assert_called_once_with()
+    assert result.stdout.splitlines() == ["actor: operator", "administrator: false"]
+
+
+def test_configs_list_filters_by_name_and_prints_the_name(client: MagicMock) -> None:
+    client.list_configs.return_value = ConfigurationPage(
+        items=(
+            ConfigurationSummaryResource(config_id="edge-sync", created_at=NOW, name="from-netbox", latest_version=3),
+        ),
+        next_cursor="c1",
+    )
+
+    result = _invoke(client, "configs", "list", "--name", "from-netbox", "--limit", "1")
+
+    assert result.exit_code == 0, result.output
+    client.list_configs.assert_called_once_with(name="from-netbox", limit=1)
+    assert "name: from-netbox" in result.stdout
+    assert "latest_version: 3" in result.stdout
+    assert "more configurations: rerun with --all, or --limit up to 200" in result.stderr
+
+
+def test_configs_list_all_follows_cursors(client: MagicMock) -> None:
+    client.iter_configs.side_effect = None
+    client.iter_configs.return_value = iter(
+        (
+            ConfigurationSummaryResource(config_id="b", created_at=NOW),
+            ConfigurationSummaryResource(config_id="a", created_at=NOW),
+        )
+    )
+
+    result = _invoke(client, "configs", "list", "--all")
+
+    assert result.exit_code == 0, result.output
+    client.iter_configs.assert_called_once_with(name=None, limit=None)
+    client.list_configs.assert_not_called()
+    assert result.stdout.index("config_id: b") < result.stdout.index("config_id: a")
+
+
+def test_configs_versions_prints_latest_run_columns_and_pages(client: MagicMock) -> None:
+    latest = RunReference(run_id="run-2", phase="planned", outcome=None, started_at=NOW)
+    applied_at = NOW + timedelta(hours=1)
+    applied = RunReference(run_id="run-1", phase="applied", outcome="succeeded", started_at=NOW, finished_at=applied_at)
+    registered = _version_summary(2, latest_run=latest, latest_applied_run=applied).model_copy(
+        update={"registered_by": "admin@example.com", "registration_reason": "first import"}
+    )
+    client.list_config_versions.return_value = ConfigurationVersionPage(
+        items=(registered, _version_summary(1)),
+        next_cursor="c1",
+    )
+
+    result = _invoke(client, "configs", "versions", "edge-sync", "--limit", "2")
+
+    assert result.exit_code == 0, result.output
+    client.list_config_versions.assert_called_once_with("edge-sync", limit=2)
+    lines = result.stdout.splitlines()
+    assert "registered_by: admin@example.com" in lines
+    assert "registration_reason: first import" in lines
+    assert "registered_by: <none>" in lines
+    assert f"latest_run: run-2 phase=planned outcome=- started_at={NOW.isoformat()}" in lines
+    # The applied run shows when its apply finished, not when its plan was created.
+    assert f"latest_applied_run: run-1 phase=applied outcome=succeeded finished_at={applied_at.isoformat()}" in lines
+    assert "latest_run: <none>" in lines
+    assert "more versions: rerun with --all, or --limit up to 200" in result.stderr
+
+
+def test_configs_versions_all_follows_cursors(client: MagicMock) -> None:
+    client.iter_config_versions.return_value = iter((_version_summary(2), _version_summary(1)))
+
+    result = _invoke(client, "configs", "versions", "edge-sync", "--all")
+
+    assert result.exit_code == 0, result.output
+    client.iter_config_versions.assert_called_once_with("edge-sync", limit=None)
+    client.list_config_versions.assert_not_called()
+    assert "registry_version: 2" in result.stdout
+    assert "registry_version: 1" in result.stdout
+
+
+# Each row names a command that takes a configuration and reads back the config_id it sent.
+_RESOLVING_COMMANDS = [
+    pytest.param(
+        ("plan", "--config", "{config}", "--version", "1", "--no-wait"),
+        lambda client: client.plan.call_args.args[0].config_id,
+        lambda client: client.plan,
+        id="plan",
+    ),
+    pytest.param(
+        ("sync", "--config-id", "{config}", "--version", "1", "--no-wait"),
+        lambda client: client.sync.call_args.args[0].config_id,
+        lambda client: client.sync,
+        id="sync",
+    ),
+    pytest.param(
+        ("runs", "list", "--config", "{config}"),
+        lambda client: client.list_runs.call_args.kwargs["config_id"],
+        lambda client: client.list_runs,
+        id="runs-list",
+    ),
+    pytest.param(
+        ("configs", "versions", "{config}"),
+        lambda client: client.list_config_versions.call_args.args[0],
+        lambda client: client.list_config_versions,
+        id="configs-versions",
+    ),
+]
+
+
+def _configured(client: MagicMock) -> MagicMock:
+    client.list_runs.return_value = RunPage(items=(), next_cursor=None)
+    return client
+
+
+def _named(*config_ids: str) -> Callable[..., Iterator[ConfigurationSummaryResource]]:
+    return lambda **_kwargs: iter(
+        ConfigurationSummaryResource(config_id=config_id, created_at=NOW, name="from netbox")
+        for config_id in config_ids
+    )
+
+
+@pytest.mark.parametrize(("arguments", "sent_config", "target"), _RESOLVING_COMMANDS)
+def test_configuration_identifier_found_is_used_without_a_name_lookup(
+    client: MagicMock,
+    arguments: tuple[str, ...],
+    sent_config: Callable[[MagicMock], str],
+    target: Callable[[MagicMock], MagicMock],
+) -> None:
+    result = _invoke(_configured(client), *(argument.format(config="edge-sync") for argument in arguments))
+
+    assert result.exit_code == 0, result.output
+    client.get_config.assert_called_once_with("edge-sync")
+    client.iter_configs.assert_not_called()
+    target(client).assert_called_once()
+    assert sent_config(client) == "edge-sync"
+
+
+@pytest.mark.parametrize(
+    "not_found",
+    [
+        pytest.param(ConfigsAPIError(404, "configuration-not-found", "not-found", "unknown"), id="unknown-id"),
+        pytest.param(ClientInputError("config_id"), id="not-an-identifier"),
+    ],
+)
+@pytest.mark.parametrize(("arguments", "sent_config", "target"), _RESOLVING_COMMANDS)
+def test_configuration_name_with_one_match_is_used(
+    client: MagicMock,
+    arguments: tuple[str, ...],
+    sent_config: Callable[[MagicMock], str],
+    target: Callable[[MagicMock], MagicMock],
+    not_found: Exception,
+) -> None:
+    client.get_config.side_effect = not_found
+    client.iter_configs.side_effect = _named("cfg-1")
+
+    result = _invoke(_configured(client), *(argument.format(config="from netbox") for argument in arguments))
+
+    assert result.exit_code == 0, result.output
+    client.iter_configs.assert_called_once_with(name="from netbox")
+    target(client).assert_called_once()
+    assert sent_config(client) == "cfg-1"
+
+
+@pytest.mark.parametrize(("arguments", "_sent_config", "target"), _RESOLVING_COMMANDS)
+def test_configuration_name_with_several_matches_is_refused_with_the_ids(
+    client: MagicMock,
+    arguments: tuple[str, ...],
+    _sent_config: Callable[[MagicMock], str],
+    target: Callable[[MagicMock], MagicMock],
+) -> None:
+    client.get_config.side_effect = ConfigsAPIError(404, "configuration-not-found", "not-found", "unknown")
+    client.iter_configs.side_effect = _named("cfg-1", "cfg-2")
+
+    result = _invoke(_configured(client), *(argument.format(config="from netbox") for argument in arguments))
+
+    assert result.exit_code == 2
+    assert result.stderr.splitlines() == [
+        "error: name 'from netbox' matches several configurations:",
+        "cfg-1",
+        "cfg-2",
+    ]
+    target(client).assert_not_called()
+
+
+@pytest.mark.parametrize(("arguments", "_sent_config", "target"), _RESOLVING_COMMANDS)
+def test_configuration_with_no_identifier_or_name_match_is_refused(
+    client: MagicMock,
+    arguments: tuple[str, ...],
+    _sent_config: Callable[[MagicMock], str],
+    target: Callable[[MagicMock], MagicMock],
+) -> None:
+    client.get_config.side_effect = ConfigsAPIError(404, "configuration-not-found", "not-found", "unknown")
+
+    result = _invoke(_configured(client), *(argument.format(config="missing") for argument in arguments))
+
+    assert result.exit_code == 2
+    assert result.stderr.splitlines() == ["error: no configuration has the id or name 'missing'"]
+    target(client).assert_not_called()
+
+
+def test_configs_version_retry_after_a_rename_uses_the_printed_config_id(client: MagicMock, tmp_path: Path) -> None:
+    """The name follows the newest version, so the first attempt can rename the configuration."""
+    package = tmp_path / "package.yaml"
+    package.write_text("name: renamed\n", encoding="utf-8")
+    names = {"cfg-1": "from netbox"}
+
+    def get_config(value: str) -> ConfigurationSummaryResource:
+        if value not in names:
+            raise ConfigsAPIError(404, "configuration-not-found", "not-found", "unknown")
+        return ConfigurationSummaryResource(config_id=value, created_at=NOW, name=names[value])
+
+    def iter_configs(*, name: str, **_kwargs: object) -> Iterator[ConfigurationSummaryResource]:
+        return iter(
+            ConfigurationSummaryResource(config_id=config_id, created_at=NOW, name=current)
+            for config_id, current in names.items()
+            if current == name
+        )
+
+    def stored_then_lost(*_args: object) -> RegisteredVersionResource:
+        # The service stores the version, which renames the configuration, and the response is lost.
+        names["cfg-1"] = "renamed"
+        operation = "create_config_version"
+        raise TransportError(operation)
+
+    client.get_config.side_effect = get_config
+    client.iter_configs.side_effect = iter_configs
+    client.create_config_version.side_effect = stored_then_lost
+
+    first = _invoke(client, "configs", "version", "from netbox", str(package))
+    key = client.create_config_version.call_args.args[2]
+    by_name = _invoke(client, "configs", "version", "from netbox", str(package), "--idempotency-key", key)
+    client.create_config_version.side_effect = None
+    by_id = _invoke(client, "configs", "version", "cfg-1", str(package), "--idempotency-key", key)
+
+    assert first.exit_code == 1
+    assert "config_id: cfg-1" in first.stdout
+    assert f"idempotency_key: {key}" in first.stdout
+    assert by_name.exit_code == 2
+    assert by_name.stderr.splitlines() == [
+        "error: no configuration has the id or name 'from netbox'",
+        "hint: retry with the config_id printed by the first attempt; "
+        "the name follows the newest version and can change",
+    ]
+    assert by_id.exit_code == 0, by_id.output
+    assert client.create_config_version.call_count == 2
+    assert client.create_config_version.call_args.args[0] == "cfg-1"
+    assert client.create_config_version.call_args.args[2] == key
+
+
+def test_configuration_lookup_errors_other_than_not_found_are_reported(client: MagicMock) -> None:
+    client.get_config.side_effect = ConfigsAPIError(403, "forbidden", "authorization", "denied")
+
+    result = _invoke(client, "configs", "versions", "edge-sync")
+
+    assert result.exit_code == 1
+    assert "status: 403" in result.output
+    client.iter_configs.assert_not_called()

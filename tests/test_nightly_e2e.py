@@ -122,7 +122,7 @@ def test_planned_counts_include_unexecuted_deletes(runner: ModuleType) -> None:
 
 
 def test_from_netbox_accepts_cli_terminal_outcomes(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A completed diff is planned and a completed sync is applied."""
+    """A completed plan run is planned and a completed sync is applied."""
     checked: list[str] = []
 
     def cli(*command: str, **_kwargs: object) -> str:
@@ -130,18 +130,18 @@ def test_from_netbox_accepts_cli_terminal_outcomes(runner: ModuleType, monkeypat
             return ""
         if "register" in command:
             return "config_id: config-1\nregistry_version: 1\n"
-        if "diff" in command:
-            return "run_id: diff-1\noperations: 1688\n"
+        if "plan" in command:
+            return "run_id: plan-1\noperations: 1688\n"
         if "sync" in command:
             return "run_id: sync-1\n"
         if "show" in command:
-            return "outcome: planned\n" if "diff-1" in command else "outcome: applied\n"
+            return "outcome: planned\n" if "plan-1" in command else "outcome: applied\n"
         pytest.fail(f"unexpected command: {command}")
 
     monkeypatch.setattr(runner, "run", cli)
     monkeypatch.setattr(runner, "check_import_counts", lambda run_id, _env: checked.append(run_id))
     runner.from_netbox({})
-    assert checked == ["diff-1"]
+    assert checked == ["plan-1"]
 
 
 def test_import_counts_match_planned_operations(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -167,7 +167,7 @@ def test_import_counts_match_planned_operations(runner: ModuleType, monkeypatch:
 
     monkeypatch.setattr(sdk, "InfrahubClientSync", Client, raising=False)
     monkeypatch.setitem(sys.modules, "infrahub_sdk", sdk)
-    runner.check_import_counts("diff-1", {"INFRAHUB_ADDRESS": "unused", "INFRAHUB_API_TOKEN": "unused"})
+    runner.check_import_counts("plan-1", {"INFRAHUB_ADDRESS": "unused", "INFRAHUB_API_TOKEN": "unused"})
 
 
 def test_schema_loads_the_pinned_bundle(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:

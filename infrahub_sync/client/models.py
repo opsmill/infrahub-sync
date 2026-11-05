@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 - Pydantic resolves resource annotations at runtime.
 from math import isfinite
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, TypeVar, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -27,12 +27,31 @@ RecoveryAction = Literal["rebuild", "compatible_version"]
 
 # The next action for each recovery signal.
 RECOVERY_NEXT_ACTIONS: dict[RecoveryAction, str] = {
-    "rebuild": "re-run diff for this sync, review the new plan, then apply that run",
+    "rebuild": "re-run plan for this sync, review the new plan, then apply that run",
     "compatible_version": (
-        "re-run diff with this version and review the new plan, "
+        "re-run plan with this version and review the new plan, "
         "or apply the reviewed plan with the version that wrote it"
     ),
 }
+
+# Page sizes of the run, configuration and version lists: the default when a request gives
+# none, and the accepted range.
+DEFAULT_LIMIT = 50
+MIN_LIMIT = 1
+MAX_LIMIT = 200
+
+_Item_co = TypeVar("_Item_co", covariant=True)
+
+
+class ListPage(Protocol[_Item_co]):
+    """A list response envelope: one page of items and the cursor of the next page."""
+
+    @property
+    def items(self) -> tuple[_Item_co, ...]: ...
+
+    @property
+    def next_cursor(self) -> str | None: ...
+
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 _LEGAL_EXECUTION_VERDICTS = {
@@ -212,6 +231,9 @@ class PublicRunResource(_ResourceModel):
     # Exposed directly rather than through ``results``: an operator deciding whether a run
     # needs reconciling must not have to parse failure evidence to find out.
     reconciliation_required: bool = False
+    # The effective Infrahub branch the run writes to; ``None`` for runs created before
+    # the store recorded it.
+    destination_branch: str | None = None
     artifact_refs: tuple[ArtifactReferenceResource, ...] = ()
     prefect_executions: tuple[PublicExecutionLink, ...] = ()
 
@@ -327,11 +349,30 @@ class ServiceStatusResource(_ResourceModel):
     worker: WorkerStatusResource
 
 
+class PrincipalResource(_ResourceModel):
+    """Name the authenticated caller and whether it is an administrator."""
+
+    actor: str
+    administrator: bool
+
+
 class RunResource(_ResourceModel):
     """Combine a public run record with its orchestration history."""
 
     run: PublicRunResource
     orchestration: tuple[OrchestrationSummary, ...]
+
+
+class RunPage(_ResourceModel):
+    """One page of the run list, newest first.
+
+    Items carry the public run fields with empty ``artifact_refs`` and
+    ``prefect_executions``; ``GET /runs/{run_id}`` returns them. ``next_cursor`` is ``None``
+    on the last page.
+    """
+
+    items: tuple[PublicRunResource, ...]
+    next_cursor: str | None = None
 
 
 class PlanSummaryResource(_ResourceModel):
@@ -455,6 +496,11 @@ class ConfigurationSummaryResource(_ResourceModel):
 
     config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
     created_at: datetime
+    # ``configuration.name`` of the latest version's package; names are not unique.
+    name: str | None = None
+    # The highest registered version. The server always sends it; ``None`` only when reading
+    # a server that predates the field.
+    latest_version: int | None = Field(default=None, ge=1)
 
     @field_validator("created_at")
     @classmethod
@@ -462,6 +508,67 @@ class ConfigurationSummaryResource(_ResourceModel):
         checked = _timezone(value, "configuration timestamps must include a timezone")
         assert checked is not None
         return checked
+
+
+class ConfigurationPage(_ResourceModel):
+    """One page of the configuration list, newest first; ``next_cursor`` is ``None`` on the last page."""
+
+    items: tuple[ConfigurationSummaryResource, ...]
+    next_cursor: str | None = None
+
+
+class RunReference(_ResourceModel):
+    """The identity and state of one run, as a configuration version's latest run shows it."""
+
+    run_id: str
+    phase: str
+    outcome: str | None = None
+    started_at: datetime
+    # When the run last finished a stage; for an applied run, when its apply finished.
+    finished_at: datetime | None = None
+
+    @field_validator("started_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, "run timestamps must include a timezone")
+        assert checked is not None
+        return checked
+
+    @field_validator("finished_at")
+    @classmethod
+    def _require_finished_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone(value, "run timestamps must include a timezone")
+
+
+class ConfigurationVersionSummaryResource(_ResourceModel):
+    """One configuration version without its package, with its latest run and most recently applied run.
+
+    ``GET /configs/{config_id}/versions/{registry_version}`` returns the full version.
+    """
+
+    config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    registry_version: int = Field(ge=1)
+    package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    created_at: datetime
+    # ``None`` for versions registered before the server recorded who registered them and why.
+    registered_by: str | None = None
+    registration_reason: str | None = None
+    latest_run: RunReference | None = None
+    latest_applied_run: RunReference | None = None
+
+    @field_validator("created_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, "configuration-version timestamps must include a timezone")
+        assert checked is not None
+        return checked
+
+
+class ConfigurationVersionPage(_ResourceModel):
+    """One page of a configuration's versions, newest version first."""
+
+    items: tuple[ConfigurationVersionSummaryResource, ...]
+    next_cursor: str | None = None
 
 
 class ConfigurationVersionResource(_ResourceModel):

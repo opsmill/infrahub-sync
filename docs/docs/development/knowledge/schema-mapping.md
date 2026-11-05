@@ -115,7 +115,7 @@ Two mappings in `examples/netbox_to_infrahub/config.yml` sit exactly on this lin
 kinds require `ip_namespace`. Their updates work; a fresh create under them is refused rather than
 silently duplicated, and they need a mapping or schema fix.
 
-Refusals happen at `diff` time, and the write surface repeats the same check; see
+Refusals happen at `plan` time, and the write surface repeats the same check; see
 [Planned writes and apply](planned-write-and-apply.md).
 
 ### Filters

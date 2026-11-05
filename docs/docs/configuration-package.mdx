@@ -149,7 +149,10 @@ The output is paged. The default page holds 256 findings. The output reports
 generates a key and prints it before it sends the request.
 
 If the connection fails, you cannot tell whether the service stored the version. Run the
-same command again with the printed key. If the service already accepted the first request,
+same command again with the printed key. For `configs version`, name the configuration by the
+`config_id` that the first attempt printed, not by its name: the name follows the newest
+version, so a stored version with a new name renames the configuration. If the service
+already accepted the first request,
 it returns the original response and stores nothing new. A retry with the same key but a
 different request is refused with `idempotency-conflict`.
 

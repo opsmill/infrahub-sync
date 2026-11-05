@@ -504,7 +504,7 @@ def test_the_write_surface_failure_names_the_adapter_that_was_passed_in(tmp_path
     assert MISSING_ADAPTER in _text(failure)
     assert MISSING_ADAPTER in str(failure.found)
     assert MISSING_ADAPTER in failure.next_action
-    assert "infrahub-sync diff" in failure.next_action
+    assert "infrahub-sync plan" in failure.next_action
     assert "before running `sync` or `apply`" in failure.next_action
 
 
@@ -558,7 +558,7 @@ def test_a_byte_corrupt_snapshot_is_a_classified_source_snapshot_failure(tmp_pat
     text = _text(failure)
     assert "A/BuiltinTag.parquet" in text
     assert "not a readable Parquet snapshot" in text
-    assert "Re-run `diff`" in failure.next_action
+    assert "Re-run `plan`" in failure.next_action
 
 
 def test_a_byte_corrupt_snapshot_still_lets_every_other_failure_be_named(tmp_path: Path) -> None:

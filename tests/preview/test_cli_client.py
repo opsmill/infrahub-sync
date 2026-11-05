@@ -155,7 +155,7 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(  # noqa: P
 
     planned = run_cli(
         preview_env,
-        "diff",
+        "plan",
         "--config-id",
         config_id,
         "--version",

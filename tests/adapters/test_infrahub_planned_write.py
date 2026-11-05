@@ -1817,7 +1817,7 @@ def test_a_uniqueness_refusal_is_not_described_as_something_re_applying_fixes(tm
 
     The plan proposes a create; the destination already holds an object the constraint collides
     with. Applying the same plan again proposes the same create and is refused identically, so
-    the advice has to be a fresh `diff` — or reconciling the object that is in the way.
+    the advice has to be a fresh `plan` — or reconciling the object that is in the way.
     """
     directory = apply_run_dir(tmp_path)
     write_artifact(
@@ -1842,7 +1842,7 @@ def test_a_uniqueness_refusal_is_not_described_as_something_re_applying_fixes(tm
     assert isinstance(outcome, OperationApplyFailedError)
     assert "re-applying the plan converges it" not in str(outcome)
     assert "refused the same way" in str(outcome)
-    assert "re-run `diff`" in outcome.next_action
+    assert "re-run `plan`" in outcome.next_action
     assert "converges rather than duplicating" not in outcome.next_action
     assert "uniqueness constraint 'name-scope'" in str(outcome), "The classifier still names the constraint."
 
@@ -1984,7 +1984,7 @@ def test_a_destination_missing_only_the_resolver_factory_is_refused_before_any_w
     assert "DestinationWithoutThePeerResolverFactory" in message, (
         "The refusal names the adapter it refused, which is why the verifier receives a name (AD058)."
     )
-    assert "infrahub-sync diff" in message
+    assert "infrahub-sync plan" in message
     assert destination.dispatched == [], "Refused before any write, not part-way through one."
 
 

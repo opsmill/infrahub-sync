@@ -112,7 +112,7 @@ A single package moves data one way, from its source to its destination.
 | `owner` | `{kind, name}` mapping | No | No owner | Node set as the owner of the values the import creates. See [Lineage tracking](#lineage-tracking) |
 | `protect` | boolean | No | false | Mark the values the import creates or changes as protected |
 
-For the destination, a declared `branch` takes precedence over the `--branch` option of `diff`, `sync`, and `apply`. The option is used only when the package declares no branch, and `main` is used when neither is set. `INFRAHUB_DEFAULT_BRANCH` and `INFRAHUB_DEFAULT_BRANCH_FROM_GIT` do not change this choice. The completed `diff`, `sync`, and `apply` commands print `destination_branch`; `runs plan` also shows the branch saved with a plan.
+For the destination, a declared `branch` takes precedence over the `--branch` option of `plan`, `sync`, and `apply`. The option is used only when the package declares no branch, and `main` is used when neither is set. `INFRAHUB_DEFAULT_BRANCH` and `INFRAHUB_DEFAULT_BRANCH_FROM_GIT` do not change this choice. The completed `plan`, `sync`, and `apply` commands print `destination_branch`; `runs plan` also shows the branch saved with a plan.
 
 The SDK still reads other `INFRAHUB_` settings for connection behavior. These include `ECHO_GRAPHQL_QUERIES`, `IDENTIFIER`, `INSERT_TRACKER`, `MAX_CONCURRENT_EXECUTION`, `MODE`, `PAGINATION_SIZE`, `PRIORITY`, `RETRY_*`, `RATE_LIMIT_*`, `MAX_RETRY_DURATION`, `SCHEMA_CONVERGE_TIMEOUT`, `TRANSPORT`, `RECORDER`, `PROXY`, `PROXY_MOUNTS`, `MARKETPLACE_URL`, `UPDATE_GROUP_CONTEXT`, and `TLS_CA_FILE`. They remain available. The adapter supplies a 60-second timeout, so `INFRAHUB_TIMEOUT` does not replace it. For a registered package, the declared `verify_ssl` setting alone controls TLS verification, and verification is on when it is not declared. The adapter and the destination schema read pass the declared URL and token directly to the SDK, so `INFRAHUB_ADDRESS`, `INFRAHUB_API_TOKEN`, `INFRAHUB_USERNAME`, `INFRAHUB_PASSWORD`, and `INFRAHUB_TLS_INSECURE` cannot replace or add to them. For direct adapter use, `INFRAHUB_TLS_INSECURE` controls TLS verification when `verify_ssl` is not declared.
 
@@ -311,7 +311,7 @@ The import account needs no permission for:
 - setting the source, the owner, or the protection flag;
 - reading who last changed a value.
 
-When Infrahub refuses a request with HTTP 403, the run reports a missing permission and quotes the permission Infrahub names. This applies to a plan and to an apply. A refused token is reported as a token problem. `diff`, `sync` and `apply` print the cause on a `cause:` line, and `runs results RUN_ID` shows it under `cause` and `infrahub_error`. If Infrahub refuses only the version query with HTTP 403, the plan continues and does not record who last changed each value.
+When Infrahub refuses a request with HTTP 403, the run reports a missing permission and quotes the permission Infrahub names. This applies to a plan and to an apply. A refused token is reported as a token problem. `plan`, `sync` and `apply` print the cause on a `cause:` line, and `runs results RUN_ID` shows it under `cause` and `infrahub_error`. If Infrahub refuses only the version query with HTTP 403, the plan continues and does not record who last changed each value.
 
 ## Common issues and troubleshooting
 

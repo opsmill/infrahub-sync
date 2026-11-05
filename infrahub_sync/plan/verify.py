@@ -63,9 +63,9 @@ if TYPE_CHECKING:
 # operator knows what was and was not looked at (AD053).
 GATED_CHECKS: tuple[VerificationCheck, ...] = ("run_binding", "plan_checksum", "source_snapshot", "config_version")
 
-RE_PLAN_NEXT_ACTION = "Re-run `diff` for this sync to rebuild the plan artifact, then apply that run."
+RE_PLAN_NEXT_ACTION = "Re-run `plan` for this sync to rebuild the plan artifact, then apply that run."
 UNSUPPORTED_FORMAT_NEXT_ACTION = (
-    "Re-run `diff` with this version of infrahub-sync to rebuild the artifact, "
+    "Re-run `plan` with this version of infrahub-sync to rebuild the artifact, "
     "or apply it with the version that wrote it."
 )
 
@@ -174,7 +174,7 @@ def _run_binding_failures(run_id: str, mapping: dict[str, Any]) -> list[Verifica
             found=repr(recorded),
             next_action=(
                 "The plan artifact in this run directory was written by a different run, so it is "
-                "not this run's plan. Apply the run that produced it, or re-run `diff` for this sync."
+                "not this run's plan. Apply the run that produced it, or re-run `plan` for this sync."
             ),
         )
     ]
@@ -426,7 +426,7 @@ def _write_surface_failures(run_id: str, write_surface_missing_on: str | None) -
             found=f"adapter {write_surface_missing_on!r} does not implement it",
             next_action=(
                 f"The destination adapter {write_surface_missing_on!r} cannot apply a saved plan. "
-                f"Use `infrahub-sync diff` to review changes without writing, or choose a destination "
+                f"Use `infrahub-sync plan` to review changes without writing, or choose a destination "
                 f"whose adapter implements the planned-write surface before running `sync` or `apply`."
             ),
         )
@@ -448,13 +448,16 @@ def destination_binding_failure(
 
     Evaluated at the apply seam (`PlanApplier`), not inside `verify_plan`: like
     `write_surface`, its subject is the destination adapter rather than the artifact, but
-    unlike every `verify_plan` check it is also **overridable** — a direct Python caller of
-    `execute_run` can pass `allow_destination_change=True` to apply to the same Infrahub
-    instance reached through another URL or on another branch — so it cannot sit behind a
-    gate whose non-empty result is an unconditional refusal. The override cannot carry a plan
-    to another Infrahub instance: that instance has its own import account, so apply still
-    refuses with `ImportAccountMismatchError` (FR-012). The CLI and the Sync API do not
-    expose the override, so the refusal's next action asks for a new plan.
+    unlike every `verify_plan` check it is also **overridable** — the Python `execute_run`
+    surface's `allow_destination_change` argument exists for a deliberate cross-environment
+    apply, although neither the Sync HTTP API nor any CLI command exposes it — so it cannot sit
+    behind a gate whose non-empty result is an unconditional refusal. The override cannot carry
+    a plan to another Infrahub instance: that instance has its own import account, so apply
+    still refuses with `ImportAccountMismatchError` (FR-012).
+
+    When only the branch differs, the usual cause is an apply without `--branch`, or with
+    another one, so the next action names the recorded branch to apply with. When the URL
+    differs, the next action also says why the plan cannot be applied there.
 
     Returns `None` — the check is skipped, not passed — when the manifest is absent or
     unparseable (the format gate owns that verdict), when it predates the field, or when
@@ -477,16 +480,30 @@ def destination_binding_failure(
         )
     if recorded_binding == live:
         return None
+    new_plan = "create a new plan against the current destination with `plan`, review it, and apply that plan instead."
+    if recorded_binding.url != live.url:
+        next_action = (
+            new_plan[0].upper()
+            + new_plan[1:]
+            + " A plan made against another Infrahub instance cannot be applied here, because that"
+            " instance records changes under its own import account."
+        )
+    elif recorded_binding.branch is None:
+        next_action = (
+            "The plan was created for the destination's default branch. Apply it again without `--branch`, or "
+            + new_plan
+        )
+    else:
+        next_action = (
+            f"The plan was created for branch {recorded_binding.branch!r}. Apply it again with "
+            f"`--branch {recorded_binding.branch}`, or " + new_plan
+        )
     return _failure(
         "destination_binding",
         run_id=run_id,
         expected=f"url {recorded_binding.url!r}, branch {recorded_binding.branch!r}",
         found=f"url {live.url!r}, branch {live.branch!r}",
-        next_action=(
-            "Re-run `diff` against this destination to create a new plan, and review it. "
-            "A plan made against another Infrahub instance cannot be applied here, because "
-            "that instance records changes under its own import account."
-        ),
+        next_action=next_action,
     )
 
 

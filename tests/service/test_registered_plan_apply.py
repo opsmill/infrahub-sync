@@ -249,7 +249,7 @@ def test_registered_apply_stores_only_the_fixed_recovery_signal(
     assert stored.phase == "apply-failed"
     assert stored.results["apply_failure"]["error_type"] == "RegisteredPlanVerificationError"
     assert stored.results["apply_failure"]["recovery_action"] == expected_action
-    assert stored.results["apply_failure"]["next_action"].startswith("re-run diff")
+    assert stored.results["apply_failure"]["next_action"].startswith("re-run plan")
     assert "private-token-canary" not in json.dumps(stored.results["apply_failure"])
     assert calls == []
 

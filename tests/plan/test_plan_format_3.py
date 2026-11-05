@@ -90,7 +90,7 @@ def parse(directory: Path) -> LoadedPlan:
 
 
 def test_the_current_plan_format_is_3_and_2_stays_readable() -> None:
-    """Format 3 is what `diff` writes; format 2 stays readable for review (ADR 0001)."""
+    """Format 3 is what `plan` writes; format 2 stays readable for review (ADR 0001)."""
     assert PLAN_FORMAT_VERSION == 3, "A new operation field is a hard format change (extra='forbid')."
     assert frozenset({2, 3}) == SUPPORTED_FORMAT_VERSIONS, "Format-2 plans stay readable and reviewable."
 
@@ -244,7 +244,7 @@ def test_applying_a_format_2_plan_is_refused_with_a_re_plan_instruction(tmp_path
 
     message = str(excinfo.value)
     assert "2" in message, "The refusal names the version it read."
-    assert "diff" in message, "The remedy is a fresh plan, and the message says so."
+    assert "`plan`" in message, "The remedy is a fresh plan, and the message says so."
     assert "not touched" in message
 
 

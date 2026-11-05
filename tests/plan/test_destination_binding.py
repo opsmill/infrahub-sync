@@ -182,10 +182,10 @@ def test_a_different_url_is_a_destination_binding_failure(tmp_path: Path) -> Non
     assert failure.check == "destination_binding"
     assert RECORDED_URL in str(failure.expected)
     assert LIVE_URL in str(failure.found)
-    assert "Re-run `diff`" in failure.next_action
-    # The CLI retired the override flag, and the override cannot carry a plan to another
-    # Infrahub instance (its import account differs), so the advice names neither.
+    # The CLI and the Sync API do not expose the override, and the override cannot carry a plan
+    # to another Infrahub instance (its import account differs), so the advice names neither.
     assert "--allow-destination-change" not in failure.next_action
+    assert "Create a new plan against the current destination with `plan`" in failure.next_action
     assert "another Infrahub instance cannot be applied" in failure.next_action
 
 
@@ -197,6 +197,17 @@ def test_a_different_branch_alone_is_a_destination_binding_failure(tmp_path: Pat
     assert failure is not None
     assert failure.check == "destination_binding"
     assert "staging" in str(failure.found)
+    assert "Apply it again with `--branch main`" in failure.next_action
+    assert "create a new plan against the current destination with `plan`" in failure.next_action
+
+
+def test_a_plan_for_the_default_branch_applied_to_another_branch_names_no_branch(tmp_path: Path) -> None:
+    artifact = _artifact(tmp_path, destination_binding={"url": RECORDED_URL, "branch": None})
+
+    failure = destination_binding_failure(run_id=RUN_ID, artifact=artifact, live=_live(branch="staging"))
+
+    assert failure is not None
+    assert "Apply it again without `--branch`" in failure.next_action
 
 
 def test_a_plan_without_the_field_skips_the_check(tmp_path: Path) -> None:
@@ -283,8 +294,8 @@ def test_a_destination_mismatch_refuses_before_the_engine_is_reached(tmp_path: P
     assert RECORDED_URL in message
     assert LIVE_URL in message
     assert "Nothing was written" in message
-    assert "Re-run `diff`" in message
     assert "--allow-destination-change" not in message
+    assert "Create a new plan against the current destination" in message
     assert engine.apply_calls == 0
 
 

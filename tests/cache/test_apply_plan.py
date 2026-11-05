@@ -162,7 +162,7 @@ def test_a_destination_without_the_write_surface_is_refused_before_any_write(tmp
     message = str(caught.value)
     assert "write_surface" in message
     assert "SurfacelessDestination" in message
-    assert "infrahub-sync diff" in message
+    assert "infrahub-sync plan" in message
 
 
 def test_a_failed_gate_names_each_failed_check_in_its_next_action(tmp_path: Path) -> None:

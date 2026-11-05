@@ -876,6 +876,7 @@ class _RemoteFlowRun:
     def __init__(self, run_id: UUID) -> None:
         self.id = run_id
         self.state = Pending()
+        self.tags = list(SERVICE_DEFINITION.tags)
 
 
 class _RemoteClient:
@@ -884,11 +885,7 @@ class _RemoteClient:
         self.flow_run = _RemoteFlowRun(uuid4())
         self.keys: list[str | None] = []
         self.parameters: list[dict[str, Any]] = []
-        self.names: list[str] = []
-
-    async def update_flow_run(self, flow_run_id: UUID, *, name: str):
-        assert flow_run_id == self.flow_run.id
-        self.names.append(name)
+        self.names: list[str | None] = []
 
     async def read_deployment_by_name(self, name: str):
         assert name == SERVICE_DEFINITION.key
@@ -900,10 +897,15 @@ class _RemoteClient:
         *,
         parameters: dict[str, Any],
         idempotency_key: str | None = None,
+        name: str | None = None,
+        tags: list[str] | None = None,
     ):
         assert deployment_id == self.deployment_id
         self.keys.append(idempotency_key)
         self.parameters.append(parameters)
+        self.names.append(name)
+        # Prefect gives the run the union of the deployment's tags and the requested ones.
+        self.flow_run.tags = sorted({*SERVICE_DEFINITION.tags, *(tags or [])})
         return self.flow_run
 
     async def read_flow_run(self, flow_run_id: UUID):
@@ -942,6 +944,15 @@ async def test_prefect_extras_executor_receives_opaque_key_unchanged() -> None:
     assert client.keys == ["opaque-prefect-key"]
     assert client.parameters == [parameters]
     assert client.names == ["Plan sync of netbox-to-infrahub"]
+    assert client.flow_run.tags == sorted(
+        {
+            *SERVICE_DEFINITION.tags,
+            "run:run-001",
+            "stage:plan",
+            "config:config-001",
+            "config-version:config-001@1",
+        }
+    )
 
 
 class _ReadTransportFailureClient:
@@ -1591,14 +1602,14 @@ def test_an_error_raised_from_a_refusal_takes_its_next_action(monkeypatch: pytes
             service_flow.RegisteredPlanVerificationError(
                 f"refused {LINEAGE_TOKEN}", "rebuild", guidance="format_version: rebuild it"
             ),
-            "re-run diff for this sync, review the new plan, then apply that run",
+            "re-run plan for this sync, review the new plan, then apply that run",
             id="registered-rebuild",
         ),
         pytest.param(
             service_flow.RegisteredPlanVerificationError(
                 f"refused {LINEAGE_TOKEN}", "compatible_version", guidance="format_version: use another version"
             ),
-            "re-run diff with this version and review the new plan, "
+            "re-run plan with this version and review the new plan, "
             "or apply the reviewed plan with the version that wrote it",
             id="registered-compatible-version",
         ),
@@ -1606,9 +1617,9 @@ def test_an_error_raised_from_a_refusal_takes_its_next_action(monkeypatch: pytes
             service_flow.RegisteredPlanVerificationError(
                 f"refused {LINEAGE_TOKEN}",
                 None,
-                guidance="checksum: Re-run `diff` for this sync to rebuild the snapshot and its plan artifact.",
+                guidance="checksum: Re-run `plan` for this sync to rebuild the snapshot and its plan artifact.",
             ),
-            "checksum: Re-run `diff` for this sync to rebuild the snapshot and its plan artifact.",
+            "checksum: Re-run `plan` for this sync to rebuild the snapshot and its plan artifact.",
             id="registered-no-signal",
         ),
     ],

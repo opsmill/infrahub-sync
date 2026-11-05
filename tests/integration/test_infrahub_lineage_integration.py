@@ -1263,7 +1263,7 @@ def _run_plan(
     source: LineagePlanSource,
     sync_name: str,
 ) -> str:
-    """Run a plan as `diff` does, with the account's token: load both sides, compare, write the plan.
+    """Run a plan as the `plan` command does, with the account's token: load both sides, compare, write the plan.
 
     Returns the run id. The run directory is under the test's cache root, where
     `read_saved_plan` finds it by the synchronization's name and the run id.

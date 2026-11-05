@@ -53,6 +53,7 @@ from infrahub_sync.configuration.schema_validation import (
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.configuration.validation import _CODE_UNSUPPORTED_SYNC_STORE, _location_digest
 from infrahub_sync.execution import REDACTED, json_string_forms, redact, redaction_order
+from infrahub_sync.product_store.models import DEFAULT_LIMIT, MAX_REGISTRY_VERSION
 from infrahub_sync.product_store.store import (
     ConfigurationNotFoundError,
     ConfigurationVersionAllocationError,
@@ -63,8 +64,14 @@ from infrahub_sync.product_store.store import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
+    from datetime import datetime
 
-    from infrahub_sync.product_store.models import ConfigurationSummary, ConfigurationVersion
+    from infrahub_sync.product_store.models import (
+        ConfigurationPage,
+        ConfigurationSummary,
+        ConfigurationVersion,
+        ConfigurationVersionPage,
+    )
 
 
 class ConfigsError(Exception):
@@ -644,15 +651,10 @@ def _require_argument_type(value: object, *, name: str, expected: type) -> None:
         raise ConfigsRequestError(msg)
 
 
-# The registry's whole allocatable range. Versions are allocated from 1 and stored as
-# SQLite INTEGER — a signed 64-bit value — so no stored version can ever exceed this.
-_MAX_REGISTRY_VERSION = 2**63 - 1
-
-
 def _require_registry_version(value: object) -> None:
     """Refuse a registry_version outside the domain the registry can ever allocate.
 
-    Exactly ``int`` — no subclass — and within ``1..=_MAX_REGISTRY_VERSION``, as the
+    Exactly ``int`` — no subclass — and within ``1..=MAX_REGISTRY_VERSION``, as the
     caller's own input rather than the store's answer, so every integer is classified
     before SQLite sees it. ``bool`` is an ``int`` subclass, so an ``isinstance`` guard lets
     ``registry_version=True`` reach SQLite, compare equal to 1, and silently resolve version
@@ -665,8 +667,8 @@ def _require_registry_version(value: object) -> None:
         # Fixed message: reading the class's __name__ executes a hostile metaclass.
         msg = "registry_version must be int"
         raise ConfigsRequestError(msg)
-    if not 1 <= value <= _MAX_REGISTRY_VERSION:
-        msg = f"registry_version must be in the registry's allocatable range 1..{_MAX_REGISTRY_VERSION}, not {value}"
+    if not 1 <= value <= MAX_REGISTRY_VERSION:
+        msg = f"registry_version must be in the registry's allocatable range 1..{MAX_REGISTRY_VERSION}, not {value}"
         raise ConfigsRequestError(msg)
 
 
@@ -739,6 +741,9 @@ def register(
     *,
     package: Mapping[str, Any],
     projection: ProductProjection,
+    actor: str | None = None,
+    reason: str | None = None,
+    secrets: Sequence[str] = (),
 ) -> RegisteredConfiguration:
     """Register a brand-new declared configuration and return it with its first version.
 
@@ -746,11 +751,14 @@ def register(
     (:func:`_parse`). Validation happens inside the store, before anything is persisted, so
     an invalid package raises and is never registered. The findings surface is
     :func:`validate`. The caller supplies the durable-store :class:`ProductProjection`
-    through ``projection``.
+    through ``projection``. ``actor`` and ``reason`` are recorded on the first version as
+    who registered it and why, with every value in ``secrets`` redacted.
     """
     parsed = _parse(package)
     try:
-        version = projection.create_configuration(parsed)
+        version = projection.create_configuration(
+            parsed, registered_by=actor, registration_reason=reason, secrets=secrets
+        )
     except CredentialConfigurationError as exc:
         raise _validation_refusal(exc, parsed) from None
     except DuplicateConfigurationError as exc:
@@ -768,17 +776,23 @@ def create_version(
     config_id: str,
     package: Mapping[str, Any],
     projection: ProductProjection,
+    actor: str | None = None,
+    reason: str | None = None,
+    secrets: Sequence[str] = (),
 ) -> RegisteredVersion:
     """Add one version to an existing configuration, or return the identical stored one.
 
     ``package`` is declared JSON-native content; a prebuilt package instance is refused
     (:func:`_parse`). The caller supplies the durable-store :class:`ProductProjection`
-    through ``projection``.
+    through ``projection``. ``actor`` and ``reason`` are recorded on a created version, with
+    every value in ``secrets`` redacted; an identical stored version keeps its own.
     """
     _require_argument_type(config_id, name="config_id", expected=str)
     parsed = _parse(package)
     try:
-        version, created = projection.add_configuration_version(config_id, parsed)
+        version, created = projection.add_configuration_version(
+            config_id, parsed, registered_by=actor, registration_reason=reason, secrets=secrets
+        )
     except CredentialConfigurationError as exc:
         raise _validation_refusal(exc, parsed) from None
     except ConfigurationNotFoundError as exc:
@@ -789,15 +803,23 @@ def create_version(
 
 
 @_service_boundary
-def list_configs(*, projection: ProductProjection) -> tuple[ConfigurationSummary, ...]:
-    """Return every registered configuration exactly once, oldest first with an ID tiebreak.
+def list_configs(
+    *,
+    projection: ProductProjection,
+    name: str | None = None,
+    after: tuple[datetime, str] | None = None,
+    limit: int = DEFAULT_LIMIT,
+) -> ConfigurationPage:
+    """Return one page of registered configurations, newest first with an ID tiebreak.
 
-    The order is the store's own ``ORDER BY created_at, config_id`` — deterministic and total,
-    never a re-sort in this layer. An empty registry is a real answer here, unlike the scoped
-    reads: there is no identifier whose absence could make it a not-found. The caller
-    supplies the durable-store :class:`ProductProjection` through ``projection``.
+    The order is the store's own ``ORDER BY created_at DESC, config_id DESC`` — deterministic
+    and total, never a re-sort in this layer. ``after`` is the ``(created_at, config_id)``
+    of the previous page's last item, and ``name`` keeps only configurations whose current
+    name is exactly ``name``. An empty page is a real answer here, unlike the scoped reads:
+    there is no identifier whose absence could make it a not-found. The caller supplies the
+    durable-store :class:`ProductProjection` through ``projection``.
     """
-    return projection.list_configurations()
+    return projection.list_configuration_page(name=name, after=after, limit=limit)
 
 
 @_service_boundary
@@ -819,17 +841,21 @@ def list_versions(
     *,
     config_id: str,
     projection: ProductProjection,
-) -> tuple[ConfigurationVersion, ...]:
-    """Return every version of one configuration, ordered by ``registry_version`` ascending.
+    after: int | None = None,
+    limit: int = DEFAULT_LIMIT,
+) -> ConfigurationVersionPage:
+    """Return one page of a configuration's version summaries, newest version first.
 
-    A missing configuration refuses — never a silent empty tuple, which would be
+    Each summary carries the version's latest run and latest applied run, and no package.
+    A missing configuration refuses — never a silent empty page, which would be
     indistinguishable from a real answer about a registered configuration. The order is the
-    store's own ``ORDER BY registry_version``, not a re-sort in this layer. The caller
-    supplies the durable-store :class:`ProductProjection` through ``projection``.
+    store's own ``ORDER BY registry_version DESC``, not a re-sort in this layer; ``after`` is
+    the previous page's last ``registry_version``. The caller supplies the durable-store
+    :class:`ProductProjection` through ``projection``.
     """
     _require_argument_type(config_id, name="config_id", expected=str)
     _require_configuration(projection, config_id)
-    return projection.list_configuration_versions(config_id)
+    return projection.list_configuration_version_page(config_id, after=after, limit=limit)
 
 
 @_service_boundary

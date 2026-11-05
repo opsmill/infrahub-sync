@@ -499,7 +499,7 @@ from infrahub_sync.product_store import configs
 from infrahub_sync.service.storage import service_product_projection
 projection = service_product_projection()
 versions = []
-for summary in configs.list_configs(projection=projection):
+for summary in projection.list_configurations():
     for version in projection.list_configuration_versions(summary.config_id):
         versions.append([summary.config_id, version.registry_version, version.package_checksum])
 with psycopg.connect(os.environ["INFRAHUB_SYNC_DATABASE_URL"]) as connection:
