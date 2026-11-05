@@ -702,6 +702,46 @@ def test_runs_show_renders_the_service_record_and_its_selected_execution(client:
 
 
 @pytest.mark.parametrize(
+    ("link", "expected"),
+    [
+        ("http://127.0.0.1:4230/runs/flow-run/flow-service-1", "http://127.0.0.1:4230/runs/flow-run/flow-service-1"),
+        (None, "<none>"),
+    ],
+    ids=("linked", "null"),
+)
+def test_runs_show_prints_the_prefect_flow_run_link_right_after_the_flow_run_id(
+    client: MagicMock, link: str | None, expected: str
+) -> None:
+    """US3: the operator copies the Prefect UI link from the line under the flow run it opens."""
+    resource = _run()
+    execution = resource.orchestration[0].model_copy(update={"prefect_flow_run_url": link})
+    client.get_run.return_value = resource.model_copy(update={"orchestration": (execution,)})
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    flow_run_line = lines.index("flow_run_id: flow-service-1")
+    assert lines[flow_run_line + 1] == f"prefect_flow_run_url: {expected}"
+
+
+def test_runs_show_prints_no_prefect_flow_run_link_when_the_response_omits_it(client: MagicMock) -> None:
+    """A Sync API that predates the link sends no field, which reads as no link."""
+    payload = _run().orchestration[0].model_dump(mode="json")
+    del payload["prefect_flow_run_url"]
+    resource = _run()
+    client.get_run.return_value = resource.model_copy(
+        update={"orchestration": (OrchestrationSummary.model_validate(payload),)}
+    )
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert lines[lines.index("flow_run_id: flow-service-1") + 1] == "prefect_flow_run_url: <none>"
+
+
+@pytest.mark.parametrize(
     ("terminal", "expected_state"),
     [
         (None, "pending"),

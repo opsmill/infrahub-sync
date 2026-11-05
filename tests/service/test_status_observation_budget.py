@@ -573,3 +573,47 @@ def test_an_execution_without_a_terminal_state_reports_its_available_live_observ
     state = _summary_state(tmp_path, link, Observation(available=True, state="Running"))
 
     assert state == "Running"
+
+
+@pytest.mark.parametrize("observed", [True, False], ids=("observed", "unobserved"))
+def test_every_summary_links_its_flow_run_in_the_prefect_ui_when_one_is_set(
+    tmp_path: Path,
+    observed: bool,  # noqa: FBT001 - one parametrized dimension of the summary loop.
+) -> None:
+    """US3: an operator follows a run from its summary into the Prefect UI, whichever branch built it."""
+    links = (_terminal("flow-first", 1), _pending("flow-second", 2))
+    service = RunService(
+        _CountingProjection(local_product_projection(tmp_path)),
+        _CountingOrchestration(),
+        clock=lambda: NOW,
+        prefect_ui_url="http://127.0.0.1:4230",
+    )
+    observations = (
+        {link.flow_run_id: Observation(available=True, state="Running") for link in links} if observed else {}
+    )
+
+    resource = service._resource_with_observations(_run("run-ui-link", links), observations)  # pylint: disable=protected-access
+
+    assert [summary.prefect_flow_run_url for summary in resource.orchestration] == [
+        "http://127.0.0.1:4230/runs/flow-run/flow-first",
+        "http://127.0.0.1:4230/runs/flow-run/flow-second",
+    ]
+
+
+@pytest.mark.parametrize("observed", [True, False], ids=("observed", "unobserved"))
+def test_no_summary_carries_a_prefect_ui_link_when_none_is_set(
+    tmp_path: Path,
+    observed: bool,  # noqa: FBT001 - one parametrized dimension of the summary loop.
+) -> None:
+    """Without a Prefect UI address the link is `None`, not a guessed address."""
+    link = _pending("flow-unlinked", 1)
+    service = RunService(
+        _CountingProjection(local_product_projection(tmp_path)),
+        _CountingOrchestration(),
+        clock=lambda: NOW,
+    )
+    observations = {link.flow_run_id: Observation(available=True, state="Running")} if observed else {}
+
+    resource = service._resource_with_observations(_run("run-no-ui-link", (link,)), observations)  # pylint: disable=protected-access
+
+    assert resource.orchestration[0].prefect_flow_run_url is None

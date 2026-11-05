@@ -163,23 +163,23 @@ contract. A raising `create` leaves the outcome unchanged and logs one WARNING.
 
 ### Tests for User Story 3 (write first, must fail)
 
-- [ ] T021 [P] [US3] Create `tests/service/test_prefect_ui.py`:
+- [X] T021 [P] [US3] Create `tests/service/test_prefect_ui.py`:
   - `prefect_ui_url_from_environment(env)` returns `None` for a missing or empty value, and the value without its trailing `/` for `http://127.0.0.1:4230/` and for `https://example.com/prefect`.
   - It raises `ValueError` whose message names `INFRAHUB_SYNC_PREFECT_UI_URL` and does not contain the value, for `ftp://h`, `127.0.0.1:4230`, `http://u:p@h`, `http://h/?q=1` and `http://h/#f`.
   - `flow_run_url("http://h/prefect", "abc")` returns `"http://h/prefect/runs/flow-run/abc"`.
-- [ ] T022 [P] [US3] In the service test module that checks run summaries (same module as T005), add a test. `RunService(..., prefect_ui_url="http://127.0.0.1:4230")` returns `prefect_flow_run_url` for every orchestration entry, in both the observed and the unobserved branches. Without the argument the field is `None`.
-- [ ] T023 [P] [US3] In `tests/service/` (the module that tests `build_app` in `infrahub_sync/service/serve.py`; find it with `grep -rln "build_app" tests/service`), add a test that `build_app` passes the validated setting to `run_service_factory` as `prefect_ui_url`, and a test that an invalid value raises `ValueError` from `build_app`.
-- [ ] T024 [P] [US3] In `tests/cli/test_client_commands.py`, add tests that `runs show` prints `prefect_flow_run_url: <url>` right after `flow_run_id:` when the response holds the field, and `prefect_flow_run_url: <none>` when it is absent or `null`.
-- [ ] T025 [P] [US3] In `tests/dev_stack/test_compose_valid.py`, or in the Compose contract tests under `tests/compose/` that read the root file, add assertions:
+- [X] T022 [P] [US3] In the service test module that checks run summaries (same module as T005), add a test. `RunService(..., prefect_ui_url="http://127.0.0.1:4230")` returns `prefect_flow_run_url` for every orchestration entry, in both the observed and the unobserved branches. Without the argument the field is `None`.
+- [X] T023 [P] [US3] In `tests/service/` (the module that tests `build_app` in `infrahub_sync/service/serve.py`; find it with `grep -rln "build_app" tests/service`), add a test that `build_app` passes the validated setting to `run_service_factory` as `prefect_ui_url`, and a test that an invalid value raises `ValueError` from `build_app`.
+- [X] T024 [P] [US3] In `tests/cli/test_client_commands.py`, add tests that `runs show` prints `prefect_flow_run_url: <url>` right after `flow_run_id:` when the response holds the field, and `prefect_flow_run_url: <none>` when it is absent or `null`.
+- [X] T025 [P] [US3] In `tests/dev_stack/test_compose_valid.py`, or in the Compose contract tests under `tests/compose/` that read the root file, add assertions:
   - `development/docker-compose.yml` sets `INFRAHUB_SYNC_PREFECT_UI_URL: "http://127.0.0.1:${PREFECT_PORT:-4230}"` on `sync-api`;
   - the root `docker-compose.yml` passes `INFRAHUB_SYNC_PREFECT_UI_URL: "${INFRAHUB_SYNC_PREFECT_UI_URL:-}"` to `sync-api`.
 
 ### Implementation for User Story 3
 
-- [ ] T026 [US3] Create `infrahub_sync/service/prefect_ui.py` with `PREFECT_UI_URL_ENV = "INFRAHUB_SYNC_PREFECT_UI_URL"`, `prefect_ui_url_from_environment(environ: Mapping[str, str] = os.environ) -> str | None` and `flow_run_url(base: str, flow_run_id: str) -> str`. Validate with `httpx.URL`, as `client/client.py:131-142` does. Make T021 pass.
-- [ ] T027 [US3] In `infrahub_sync/client/models.py`, add `prefect_flow_run_url: str | None = None` to `OrchestrationSummary`. In `infrahub_sync/service/service.py`, add the keyword argument `prefect_ui_url: str | None = None` to `RunService.__init__`, and set the field in both `OrchestrationSummary(...)` constructions. In `infrahub_sync/service/serve.py` `build_app`, read `prefect_ui_url_from_environment()` and pass it to `run_service_factory`. Make T022 and T023 pass.
-- [ ] T028 [US3] In `infrahub_sync/cli.py`, around line 620, add `("prefect_flow_run_url", selected.prefect_flow_run_url if selected is not None else None)` after `flow_run_id`. Make T024 pass.
-- [ ] T029 [US3] In `development/docker-compose.yml`, add `INFRAHUB_SYNC_PREFECT_UI_URL: "http://127.0.0.1:${PREFECT_PORT:-4230}"` to the `sync-api` environment. In the root `docker-compose.yml`, add `INFRAHUB_SYNC_PREFECT_UI_URL: "${INFRAHUB_SYNC_PREFECT_UI_URL:-}"` to `sync-api`, with a comment that gives an example value and says that an empty value turns the link off. Make T025 pass, and run `uv run invoke linter.lint-yaml`.
+- [X] T026 [US3] Create `infrahub_sync/service/prefect_ui.py` with `PREFECT_UI_URL_ENV = "INFRAHUB_SYNC_PREFECT_UI_URL"`, `prefect_ui_url_from_environment(environ: Mapping[str, str] = os.environ) -> str | None` and `flow_run_url(base: str, flow_run_id: str) -> str`. Validate with `httpx.URL`, as `client/client.py:131-142` does. Make T021 pass.
+- [X] T027 [US3] In `infrahub_sync/client/models.py`, add `prefect_flow_run_url: str | None = None` to `OrchestrationSummary`. In `infrahub_sync/service/service.py`, add the keyword argument `prefect_ui_url: str | None = None` to `RunService.__init__`, and set the field in both `OrchestrationSummary(...)` constructions. In `infrahub_sync/service/serve.py` `build_app`, read `prefect_ui_url_from_environment()` and pass it to `run_service_factory`. Make T022 and T023 pass.
+- [X] T028 [US3] In `infrahub_sync/cli.py`, around line 620, add `("prefect_flow_run_url", selected.prefect_flow_run_url if selected is not None else None)` after `flow_run_id`. Make T024 pass.
+- [X] T029 [US3] In `development/docker-compose.yml`, add `INFRAHUB_SYNC_PREFECT_UI_URL: "http://127.0.0.1:${PREFECT_PORT:-4230}"` to the `sync-api` environment. In the root `docker-compose.yml`, add `INFRAHUB_SYNC_PREFECT_UI_URL: "${INFRAHUB_SYNC_PREFECT_UI_URL:-}"` to `sync-api`, with a comment that gives an example value and says that an empty value turns the link off. Make T025 pass, and run `uv run invoke linter.lint-yaml`.
 
 **Checkpoint**: All six stories are complete.
 

@@ -52,6 +52,7 @@ from .models import (
 )
 from .orchestration import Observation, PoolStatus, ServiceOrchestration, normalized_pool_status
 from .paging import FilterValue, decode_cursor, timestamp_cursor, timestamp_key, validate_limit
+from .prefect_ui import flow_run_url
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -147,8 +148,10 @@ class RunService:
         secrets: tuple[str, ...] = (),
         cancellation_recovery_seconds: float = 30.0,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        prefect_ui_url: str | None = None,
     ) -> None:
         self._projection = projection
+        self._prefect_ui_url = prefect_ui_url
         self._orchestration = orchestration
         self._secrets = tuple(dict.fromkeys((*collect_secret_values(), *secrets)))
         self._cancellation_recovery_seconds = cancellation_recovery_seconds
@@ -1009,6 +1012,7 @@ class RunService:
             # A finished execution reports its verdict as its state: a live or retained observation can
             # predate the verdict, and a completed execution would otherwise read `Running`.
             verdict = None if link.terminal_state is None else redact(link.terminal_state, self._secrets)
+            link_url = None if self._prefect_ui_url is None else flow_run_url(self._prefect_ui_url, link.flow_run_id)
             if observed is None:
                 orchestration.append(
                     OrchestrationSummary(
@@ -1027,6 +1031,7 @@ class RunService:
                         terminal_at=link.terminal_at,
                         terminal_state=link.terminal_state,
                         terminal_outcome=link.terminal_outcome,
+                        prefect_flow_run_url=link_url,
                     )
                 )
                 continue
@@ -1049,6 +1054,7 @@ class RunService:
                     terminal_at=link.terminal_at,
                     terminal_state=link.terminal_state,
                     terminal_outcome=link.terminal_outcome,
+                    prefect_flow_run_url=link_url,
                 )
             )
         return RunResource(run=public_run_resource(run), orchestration=tuple(orchestration))

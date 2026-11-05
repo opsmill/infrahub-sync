@@ -627,6 +627,8 @@ def _echo_run(resource: RunResource) -> None:
             # The correlation an operator follows into Prefect, from the same
             # selected attempt the state above is read from.
             ("flow_run_id", selected.flow_run_id if selected is not None else None),
+            # The same flow run's page in the Prefect UI, when the Sync API knows where that UI is.
+            ("prefect_flow_run_url", selected.prefect_flow_run_url if selected is not None else None),
         )
     )
 

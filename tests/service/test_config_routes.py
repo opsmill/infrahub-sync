@@ -1161,6 +1161,60 @@ def test_build_app_uses_the_prefect_worker_query_setting_for_liveness_policy(
 
 
 @pytest.mark.parametrize(
+    ("value", "expected"),
+    [("http://127.0.0.1:4230/", "http://127.0.0.1:4230"), ("", None)],
+    ids=("set", "empty"),
+)
+def test_build_app_passes_the_validated_prefect_ui_url_to_the_run_service(
+    monkeypatch: pytest.MonkeyPatch, value: str, expected: str | None
+) -> None:
+    """US3: the run service builds Prefect UI links from the validated setting, or none when it is empty."""
+    monkeypatch.setenv("INFRAHUB_SYNC_PREFECT_UI_URL", value)
+    received: list[object] = []
+
+    class Resolver:
+        secret_values: tuple[str, ...] = ()
+
+    def run_service_factory(*_args: object, **kwargs: object) -> object:
+        received.append(kwargs["prefect_ui_url"])
+        return object()
+
+    build_app(
+        projection_factory=object,
+        resolver_factory=Resolver,
+        run_service_factory=run_service_factory,
+        configuration_routes_factory=lambda **_kwargs: object(),
+        app_factory=lambda *_args: object(),
+    )
+
+    assert received == [expected]
+
+
+def test_build_app_refuses_an_invalid_prefect_ui_url_before_constructing_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An invalid Prefect UI address stops start-up with a message that does not print the value."""
+    monkeypatch.setenv("INFRAHUB_SYNC_PREFECT_UI_URL", "http://user:secret@prefect")
+    constructed: list[str] = []
+
+    def construct(*_args: object, **_kwargs: object) -> object:
+        constructed.append("dependency")
+        return object()
+
+    with pytest.raises(ValueError, match="INFRAHUB_SYNC_PREFECT_UI_URL") as refused:
+        build_app(
+            projection_factory=construct,
+            resolver_factory=construct,
+            run_service_factory=construct,
+            configuration_routes_factory=construct,
+            app_factory=construct,
+        )
+
+    assert "secret" not in str(refused.value)
+    assert constructed == []
+
+
+@pytest.mark.parametrize(
     ("setting", "value"),
     [
         ("INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS", "0"),

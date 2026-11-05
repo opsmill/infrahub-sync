@@ -15,6 +15,7 @@ from .auth import EnvironmentPrincipalResolver
 from .config_routes import ConfigurationRoutes
 from .liveness import LivenessPolicy, RunLivenessReconciler
 from .orchestration import CancellationResult, Observation, PoolStatus, PrefectOrchestration, Submission
+from .prefect_ui import prefect_ui_url_from_environment
 from .service import RunService
 from .storage import service_product_projection
 
@@ -52,6 +53,8 @@ def build_app(
 ) -> FastAPI:
     """Construct the service app from its environment-owned durable storage profile."""
     policy = LivenessPolicy.from_environment(worker_query_seconds=os.environ.get("PREFECT_WORKER_QUERY_SECONDS", "10"))
+    # Validated before any dependency is built, so a bad address stops start-up with no side effect.
+    prefect_ui_url = prefect_ui_url_from_environment()
     projection = projection_factory()
     resolver = resolver_factory()
     # The configuration diagnostics quote declared keys, so this surface needs the ordinary
@@ -64,6 +67,7 @@ def build_app(
         orchestration,
         secrets=resolver.secret_values,
         cancellation_recovery_seconds=policy.stall_threshold_seconds,
+        prefect_ui_url=prefect_ui_url,
     )
     reconciler = RunLivenessReconciler(
         projection,

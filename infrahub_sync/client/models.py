@@ -278,6 +278,8 @@ class OrchestrationSummary(_ResourceModel):
     terminal_at: datetime | None
     terminal_state: TerminalState | None
     terminal_outcome: TerminalOutcome | None
+    # Absent from a Sync API without a Prefect UI address, or one that predates the link.
+    prefect_flow_run_url: str | None = None
 
     @field_validator(
         "submitted_at",
