@@ -345,7 +345,7 @@ in the same envelope:
 | Query parameter | Applies to | Rule |
 | --- | --- | --- |
 | `limit` | all three lists | Items per page, from 1 to 200. Defaults to 50. A value outside that range returns `422 request-invalid`. |
-| `cursor` | all three lists | The `next_cursor` of the previous page, sent with the same filters. Any other value returns `422 invalid-cursor`. |
+| `cursor` | all three lists | The `next_cursor` of the previous page, sent with the same filters. A cursor that does not decode, or that was issued for another list or for other filters, returns `422 invalid-cursor`. |
 | `config_id` | `GET /runs` | Only runs of this configuration. A malformed configuration ID returns `422 request-invalid`; an unknown configuration returns `404 configuration-not-found`. |
 | `registry_version` | `GET /runs` | Only runs of this configuration version. Requires `config_id`, otherwise `422 request-invalid`. An unknown version returns `404 configuration-version-not-found`. |
 | `name` | `GET /configs` | Only configurations with exactly this name. |
@@ -572,7 +572,7 @@ Every error uses the same envelope:
 | `404` | The Sync run or run-owned artifact does not exist, or a list filter names an unknown configuration (`configuration-not-found`) or configuration version (`configuration-version-not-found`). |
 | `409` | Idempotency conflict, missing confirmation, stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). |
 | `410` | The retained plan or artifact has expired. |
-| `422` | Invalid request schema or query parameter (`request-invalid`), a list cursor that is not the previous page's `next_cursor` for the same filters (`invalid-cursor`), missing idempotency key, or a secret-bearing flow parameter. |
+| `422` | Invalid request schema or query parameter (`request-invalid`), a list cursor that does not decode or was issued for another list or other filters (`invalid-cursor`), missing idempotency key, or a secret-bearing flow parameter. |
 | `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved. |
 
 Prefect detail can expire or become unavailable while the durable Sync record, results,
