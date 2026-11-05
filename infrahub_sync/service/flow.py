@@ -1,5 +1,7 @@
 """Separate Prefect flow for API-created durable Sync runs."""
 
+# pylint: disable=too-many-lines  # one module owns the worker's claim, stage execution and run reporting
+
 # Deliberately no ``from __future__ import annotations``. Prefect parameter
 # validation must receive the concrete Literal at runtime; the direct Prefect
 # flow (``infrahub_sync/orchestration/flow.py``) documents the affected
@@ -91,6 +93,15 @@ _LEGACY_CONFIGURATION_DIRECTORY_UNAVAILABLE = (
 )
 _LEGACY_RUN_CONFIGURATION_MISMATCH = "legacy service run configuration version does not match durable run"
 _WORKER_EXECUTION_REFUSED = "service worker execution claim was refused"
+# Fixed text with the run ID as its only value, so the refusal echoes nothing else.
+_WORKER_EXECUTION_REFUSED_GUIDANCE = (
+    "this Prefect flow run is not an execution the Sync API submitted for run {run_id} and is waiting for. "
+    "A Prefect Retry, a run started by hand from the deployment, and an execution whose admission expired "
+    "are refused. Nothing was read or written. A Sync run is not replayed from Prefect: check it with "
+    "`infrahub-sync runs show {run_id}`, then start a new run with `infrahub-sync plan` or "
+    "`infrahub-sync sync`, or apply a reviewed plan with "
+    "`infrahub-sync apply {run_id} --expected-checksum <checksum>`."
+)
 _WORKER_EXECUTION_ID_INVALID = "service worker execution identity is invalid"
 _WORKER_EXECUTION_IDENTITY_UNAVAILABLE = "service worker execution identity is unavailable"
 _WORKER_EXECUTION_WRITEBACK_REFUSED = "service worker execution writeback was refused"
@@ -124,6 +135,19 @@ class RegisteredPlanVerificationError(PlanVerificationError, ValueError):
         # The message already carries the guidance, so the exception's text stays the message
         # alone rather than the base class's message followed by its next action.
         self.args = (message,)
+
+
+class ExecutionClaimRefusedError(RuntimeError):
+    """The worker refused to claim a Prefect flow run the Sync API is not waiting for.
+
+    The message is built from fixed text and the run ID only, and tells the operator how to
+    recover the Sync run without replaying it from Prefect.
+    """
+
+    def __init__(self, run_id: str) -> None:
+        guidance = _WORKER_EXECUTION_REFUSED_GUIDANCE.format(run_id=run_id)
+        super().__init__(f"{_WORKER_EXECUTION_REFUSED}: {guidance}")
+        self.run_id = run_id
 
 
 def _raise_writeback_refused() -> None:
@@ -419,7 +443,7 @@ def _claim_current_execution(projection: ProductProjection, run_id: str) -> tupl
         worker_id=worker_id,
         admission_ttl_seconds=admission_ttl_seconds,
     ):
-        raise RuntimeError(_WORKER_EXECUTION_REFUSED)
+        raise ExecutionClaimRefusedError(run_id)
     return flow_run_id, worker_id
 
 
@@ -883,7 +907,13 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     secrets: list[str] = []
     failure: Exception | None = None
     config_directory, projection = _runtime()
-    flow_run_id, worker_id = _claim_current_execution(projection, run_id)
+    try:
+        flow_run_id, worker_id = _claim_current_execution(projection, run_id)
+    except ExecutionClaimRefusedError as refused:
+        # Put the recovery guidance in the flow run log, where an operator who
+        # pressed Retry looks for it, then fail the flow run as before.
+        run_logger.log(logging.ERROR, "%s", refused)
+        raise
     secrets[:] = collect_secret_values()
     # Owned here rather than by the stage, so the failure boundary can read it however the
     # stage ended.
