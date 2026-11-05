@@ -1,0 +1,25 @@
+dev/specs/016-prefect-run-observability/tasks.md
+  s_01f3e2b1e0dad4::t_98b5fe6f36e9e2 41-42,46
+tests/cli/test_client_commands.py
+  s_01f3e2b1e0dad4::t_3c4a13dcedd63e 1837-1841,1843-1850,1852-1884
+  s_01f3e2b1e0dad4::t_827612a80793bf 1842,1851
+infrahub_sync/cli.py
+  s_01f3e2b1e0dad4::t_3b8b9a3fc614c6 202-207,209
+  s_01f3e2b1e0dad4::t_d2bf2be3af20b7 211-214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f0d6adc0acce10d65f8ddd9c5f403171f68aa888",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
