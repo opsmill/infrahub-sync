@@ -11,6 +11,7 @@ import subprocess  # noqa: S404 -- real benchmark subprocess regression
 import sys
 import time
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,13 +36,58 @@ from development.bench.records import (
 )
 from development.bench.runtime import BenchmarkError, docker_memory_mib, measured_process, output
 from development.netbox.datasets.change_netbox import expected_text, plan_changes
-from tasks import bench
+from tasks import bench, dev
+
+DESTINATION_TOKEN = dev.PUBLIC_INFRAHUB_ADMIN_TOKEN
+HOST_URL = "http://127.0.0.1:18000"
+
+
+def destination_configuration(
+    port: str = "8000", host_ip: str = "127.0.0.1", token: str = DESTINATION_TOKEN
+) -> dict[str, Any]:
+    """What `docker compose config` resolves for the destination's `infrahub` profile."""
+    return {
+        "name": bench.DESTINATION_PROJECT,
+        "services": {
+            "infrahub-server": {
+                "ports": [{"target": 8000, "published": port, "host_ip": host_ip}],
+                "environment": {"INFRAHUB_INITIAL_ADMIN_TOKEN": token},
+            }
+        },
+    }
 
 
 @pytest.fixture(autouse=True)
 def isolated_runner_lock(monkeypatch, tmp_path) -> None:
     """Keep unit callers separate from benchmarks running on the host."""
     monkeypatch.setattr(bench, "RUNNER_LOCK", tmp_path / "shared-runner.lock")
+
+
+@dataclass
+class ResolvedDestination:
+    """The configuration the fake `docker compose config` answers, and each target it was asked for."""
+
+    configuration: dict[str, Any] = field(default_factory=destination_configuration)
+    targets: list[dev.ComposeTarget] = field(default_factory=list)
+
+
+@pytest.fixture(name="resolved_destination", autouse=True)
+def _resolved_destination(monkeypatch) -> ResolvedDestination:
+    """Answer the destination's `docker compose config` without Docker; a test may replace the answer."""
+    destination = ResolvedDestination()
+
+    def resolved(_context: Context, target: dev.ComposeTarget) -> dict[str, Any]:
+        destination.targets.append(target)
+        return destination.configuration
+
+    def development_settings(*_args: object, **_kwargs: object) -> NoReturn:
+        msg = "the benchmark destination must not come from the development settings"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(bench.dev, "resolved_compose", resolved)
+    monkeypatch.setattr(bench.dev, "dev_settings", development_settings)
+    monkeypatch.delenv(bench.INFRAHUB_HOST_URL_VARIABLE, raising=False)
+    return destination
 
 
 @pytest.fixture
@@ -313,7 +359,7 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0913, PLR091
 
         @staticmethod
         def destination_identity() -> tuple[str, str, str]:
-            return "1.11.3", "sha256:image", "image@sha256:digest"
+            return "1.11.9", "sha256:image", "image@sha256:digest"
 
         @staticmethod
         def start_sync() -> None:
@@ -380,7 +426,7 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0913, PLR091
     monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
     monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
     monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
-    monkeypatch.setattr(bench, "CellStack", Stack)
+    monkeypatch.setattr(bench, "CellStack", lambda **_kwargs: Stack())
     monkeypatch.setenv("INFRAHUB_SYNC_API_TOKEN", "test-api-token")
     monkeypatch.setattr(bench, "SyncClient", Client)
     monkeypatch.setattr(bench, "v3_sync", sync)
@@ -591,6 +637,110 @@ def test_v2_flags_are_only_sent_to_the_isolated_release(tmp_path, variant) -> No
     assert ("--no-full-extract" in command) == (variant == "incremental")
 
 
+@pytest.mark.parametrize("infrahub_network", ["", "infrahub_default"], ids=["no-network", "network-selected"])
+def test_the_benchmark_reads_the_destination_from_its_own_compose_configuration(
+    monkeypatch, resolved_destination: ResolvedDestination, infrahub_network: str
+) -> None:
+    if infrahub_network:
+        # A selected network's credential belongs to an Infrahub the benchmark does not start.
+        monkeypatch.setenv(dev.INFRAHUB_NETWORK_VARIABLE, infrahub_network)
+        monkeypatch.setenv(dev.INFRAHUB_CREDENTIAL_VARIABLE, "external-infrahub-credential")
+
+    stack = bench.CellStack()
+
+    assert stack.infrahub_url == "http://127.0.0.1:8000"
+    assert stack.infrahub_token == DESTINATION_TOKEN
+    assert [(target.project, tuple(target.profiles)) for target in resolved_destination.targets] == [
+        (bench.DESTINATION_PROJECT, ("infrahub",))
+    ]
+    assert resolved_destination.targets[0].env == stack.destination_env
+
+
+def test_the_host_url_variable_changes_only_the_host(monkeypatch) -> None:
+    monkeypatch.setenv(bench.INFRAHUB_HOST_URL_VARIABLE, "http://172.17.0.1:8000/")
+
+    assert bench.CellStack().infrahub_url == "http://172.17.0.1:8000"
+
+
+def test_the_option_wins_over_the_host_url_variable(monkeypatch) -> None:
+    monkeypatch.setenv(bench.INFRAHUB_HOST_URL_VARIABLE, "http://127.0.0.1:19000")
+
+    assert bench.CellStack(infrahub_url="http://localhost:8000").infrahub_url == "http://localhost:8000"
+
+
+@pytest.mark.parametrize("url", [HOST_URL, "http://127.0.0.1", "127.0.0.1:8000", "http://127.0.0.1:port"])
+def test_a_url_off_the_published_port_is_refused(url: str) -> None:
+    with pytest.raises(BenchmarkError, match=bench.INFRAHUB_HOST_URL_VARIABLE):
+        bench.CellStack(infrahub_url=url)
+
+
+def test_a_mismatched_port_names_the_published_port() -> None:
+    with pytest.raises(BenchmarkError, match="host port 8000") as refused:
+        bench.CellStack(infrahub_url=HOST_URL)
+
+    assert "18000" in str(refused.value)
+
+
+def test_the_host_url_follows_the_destination_publication(resolved_destination: ResolvedDestination) -> None:
+    resolved_destination.configuration = destination_configuration("18000")
+
+    assert bench.CellStack().infrahub_url == HOST_URL
+    assert bench.CellStack(infrahub_url=HOST_URL).infrahub_url == HOST_URL
+
+
+def test_an_exposed_destination_with_the_public_token_is_refused(resolved_destination: ResolvedDestination) -> None:
+    resolved_destination.configuration = destination_configuration(host_ip="0.0.0.0")  # noqa: S104
+
+    with pytest.raises(BenchmarkError, match="INFRAHUB_INITIAL_ADMIN_TOKEN") as refused:
+        bench.CellStack()
+
+    assert DESTINATION_TOKEN not in str(refused.value)
+
+
+def test_an_exposed_destination_with_a_token_of_its_own_is_allowed(resolved_destination: ResolvedDestination) -> None:
+    resolved_destination.configuration = destination_configuration(
+        host_ip="172.17.0.1",
+        token="a-token-of-the-developer",  # noqa: S106
+    )
+
+    assert bench.CellStack().infrahub_url == "http://172.17.0.1:8000"
+
+
+def test_a_destination_without_an_infrahub_publication_is_refused(resolved_destination: ResolvedDestination) -> None:
+    resolved_destination.configuration = {"services": {}}
+
+    with pytest.raises(BenchmarkError, match="infrahub-server publication"):
+        bench.CellStack()
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="benchmark cells require Python 3.11 to 3.13")
+def test_the_run_task_passes_its_infrahub_url_to_the_stack(monkeypatch, tmp_path) -> None:
+    received = []
+
+    class Stack:
+        @staticmethod
+        def reset(_tier: str) -> None:
+            raise KeyboardInterrupt
+
+        @staticmethod
+        def close() -> None:
+            pass
+
+    def stack(**kwargs: str) -> Stack:
+        received.append(kwargs)
+        return Stack()
+
+    monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
+    monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
+    monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
+    monkeypatch.setattr(bench, "CellStack", stack)
+    monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "harness-sha")
+    with pytest.raises(KeyboardInterrupt):
+        bench.run_cell.body(Context(), infrahub_url=HOST_URL)
+
+    assert received == [{"infrahub_url": HOST_URL}]
+
+
 def test_destination_start_includes_the_schema_task_worker(monkeypatch) -> None:
     commands = []
     stack = bench.CellStack()
@@ -760,14 +910,15 @@ def test_report_before_any_results(monkeypatch, tmp_path, capsys) -> None:
     assert "Valid benchmark medians" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("version", ["1.11.3", "1.10.6"])
+@pytest.mark.parametrize("version", ["1.11.9", "1.10.6"])
 def test_destination_identity_checks_server_and_records_image(monkeypatch, version, docker_sdk) -> None:
     from infrahub_sdk import InfrahubClientSync
 
     monkeypatch.setenv("INFRAHUB_DOCKER_IMAGE", "local/unverified-infrahub")
     stack = bench.CellStack()
-    assert stack.preview_env["INFRAHUB_DOCKER_IMAGE"] == bench.INFRAHUB_IMAGE
-    assert stack.preview_env["VERSION"] == "1.11.3"
+    assert stack.destination_env["INFRAHUB_DOCKER_IMAGE"] == bench.INFRAHUB_IMAGE
+    assert stack.destination_env["VERSION"] == "1.11.9"
+    assert stack.infrahub_url == "http://127.0.0.1:8000"
     image = SimpleNamespace(id="sha256:image", attrs={"RepoDigests": [bench.INFRAHUB_IMAGE + "@sha256:digest"]})
     filters = []
     engine = SimpleNamespace(
@@ -776,7 +927,7 @@ def test_destination_identity_checks_server_and_records_image(monkeypatch, versi
     )
     monkeypatch.setattr(docker_sdk, "from_env", lambda **_kwargs: engine)
     monkeypatch.setattr(InfrahubClientSync, "get_version", lambda _self: version)
-    if version == "1.11.3":
+    if version == "1.11.9":
         assert stack.destination_identity() == (version, "sha256:image", bench.INFRAHUB_IMAGE + "@sha256:digest")
         assert "com.docker.compose.project=infrahub-sync-benchmark" in filters[0]["filters"]["label"]
     else:
@@ -816,7 +967,7 @@ def test_runner_distinguishes_setup_timeout_from_cell_deadline(monkeypatch, tmp_
     monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
     monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
     monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
-    monkeypatch.setattr(bench, "CellStack", Stack)
+    monkeypatch.setattr(bench, "CellStack", lambda **_kwargs: Stack())
     monkeypatch.setattr(bench, "output", lambda argv, **_kwargs: "abc" if "rev-parse" in argv else " M tasks/bench.py")
     bench.run_cell.body(QuietContext())
     row = json.loads(bench.RESULTS.read_text())
@@ -835,7 +986,7 @@ def test_stopped_development_worker_requires_destroy(monkeypatch) -> None:
     stack = bench.CellStack()
     monkeypatch.setattr(stack.context, "run", lambda *_args, **_kwargs: SimpleNamespace(stdout="stopped-worker"))
     monkeypatch.setattr(bench.dev, "_build", lambda _context: pytest.fail("must not build over existing stack"))
-    with pytest.raises(BenchmarkError, match=r"invoke destroy.*removes volumes"):
+    with pytest.raises(BenchmarkError, match=r"invoke dev\.destroy.*removes volumes"):
         stack.start_sync()
     assert stack.started_sync is False
 
@@ -901,8 +1052,15 @@ def test_sync_cleanup_only_owns_created_containers_and_pins_compose(monkeypatch,
     assert stack.started_sync == (phase in {"start-created", "ready"})
     lifecycle = [command for command in commands if command[:2] == ["docker", "compose"]]
     assert all(
-        command[2:6] == ["--project-name", bench.netbox.DEV_STACK_PROJECT, "-f", str(bench.ROOT / "compose.yaml")]
+        command[command.index("--project-name") : command.index("--project-name") + 4]
+        == ["--project-name", bench.netbox.DEV_STACK_PROJECT, "-f", dev.DEV_COMPOSE_FILE]
         for command in lifecycle
+    )
+    # The Sync stack starts without the stack's own Infrahub: the benchmark destination is separate.
+    assert all(
+        "infrahub" not in command[: command.index("--project-name")]
+        for command in lifecycle
+        if "up" in command or "build" in command
     )
     assert any("down" in command for command in lifecycle) == stack.started_sync
     assert commands[0] == [
@@ -956,7 +1114,7 @@ def test_runner_lock_excludes_other_checkouts_before_reset_and_releases(monkeypa
     monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
     monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
     monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "commit")
-    monkeypatch.setattr(bench, "CellStack", Stack)
+    monkeypatch.setattr(bench, "CellStack", lambda **_kwargs: Stack())
     if interrupted:
         with pytest.raises(KeyboardInterrupt):
             bench.run_cell.body(Context())
@@ -1027,9 +1185,9 @@ def test_real_invoke_enforces_deadline_through_stack_lifecycle(monkeypatch, phas
     stack = bench.CellStack()
     command = "exec " + shlex.join([sys.executable, "-c", "import time; time.sleep(5)"])
     monkeypatch.setattr(
-        bench.preview,
-        "_compose",
-        lambda context, _arguments, _env: context.run(command if phase == "compose" else "true"),
+        bench.dev,
+        "compose",
+        lambda context, _arguments, **_kwargs: context.run(command if phase == "compose" else "true"),
     )
     stack.context.deadline = time.monotonic() + 0.2
     started = time.monotonic()
@@ -1139,7 +1297,7 @@ def test_runner_records_keyboard_interrupt_before_propagating(monkeypatch, tmp_p
     monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
     monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
     monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
-    monkeypatch.setattr(bench, "CellStack", Stack)
+    monkeypatch.setattr(bench, "CellStack", lambda **_kwargs: Stack())
     monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "harness-sha")
     with pytest.raises(KeyboardInterrupt):
         bench.run_cell.body(Context(), repetitions=2)
@@ -1172,13 +1330,13 @@ def test_runner_rejects_existing_development_container_before_mutation(monkeypat
 
     monkeypatch.setattr(bench.netbox, "restore", destructive)
     monkeypatch.setattr(bench.netbox, "down", destructive)
-    monkeypatch.setattr(bench.preview, "_compose", destructive)
+    monkeypatch.setattr(bench.dev, "compose", destructive)
     monkeypatch.setattr(bench.dev, "_build", destructive)
     monkeypatch.setattr(bench.dev, "_destroy", destructive)
     bench.run_cell.body(Context(), line=line, v2_ref="2.0.1")
     row = json.loads(bench.RESULTS.read_text())
     assert row["status"] == "failed"
-    assert "uv run invoke destroy" in row["error"]
+    assert "uv run invoke dev.destroy" in row["error"]
     assert "--all" in commands[0]
     assert "com.docker.compose.project=infrahub-sync-dev" in commands[0]
     assert "com.docker.compose.service" not in commands[0]
@@ -1195,14 +1353,14 @@ def test_partial_setup_cleans_only_acquired_stacks(monkeypatch, failure) -> None
             msg = "restore failed"
             raise BenchmarkError(msg)
 
-    def compose(_context, _arguments, _env):
+    def compose(_context: object, _arguments: str, **_kwargs: object) -> None:
         events.append("destination")
         if len(events) == 1:
             msg = "compose failed"
             raise BenchmarkError(msg)
 
     monkeypatch.setattr(bench.netbox, "restore", restore)
-    monkeypatch.setattr(bench.preview, "_compose", compose)
+    monkeypatch.setattr(bench.dev, "compose", compose)
     monkeypatch.setattr(bench.netbox, "down", lambda _context: events.append("source"))
     monkeypatch.setattr(bench.dev, "_destroy", lambda _context: pytest.fail("unacquired Sync stack"))
     with pytest.raises(BenchmarkError):
@@ -1383,7 +1541,7 @@ def test_setup_interrupt_stops_sleeping_grandchild_and_records_reason(monkeypatc
     monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
     monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
     monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
-    monkeypatch.setattr(bench, "CellStack", Stack)
+    monkeypatch.setattr(bench, "CellStack", lambda **_kwargs: Stack())
     monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "harness-sha")
     started = time.monotonic()
     try:
