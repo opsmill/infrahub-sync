@@ -1,6 +1,8 @@
+# Infrahub Sync frontend
+
 Welcome to your new TanStack Start app!
 
-# Getting Started
+## Getting Started
 
 The Infrahub design system, `@infrahub/ui`, comes from the `opsmill/infrahub` repository, which
 is checked out as a Git submodule at `vendor/infrahub` (branch `develop`). Fetch it before you
@@ -23,12 +25,50 @@ Import components from the package name:
 import { Button } from "@infrahub/ui";
 ```
 
+### Calling the Sync API
+
+The browser sends API requests to `/api` on the frontend's own origin. In development, the Vite
+server forwards them to the Sync API, removes the `/api` prefix and adds the bearer token. It
+reads the same environment variables as the `infrahub-sync` CLI, from the shell only, not from a
+`.env` file:
+
+- `INFRAHUB_SYNC_API_URL`, by default `http://127.0.0.1:8001`
+- `INFRAHUB_SYNC_API_TOKEN`
+
+The token is not included in the browser bundle.
+
+`src/api/types.generated.ts` holds TypeScript types for every Sync API route. It is generated
+from the `/openapi.json` of the running Sync API. Regenerate it after the API changes:
+
+```bash
+pnpm codegen:openapi
+```
+
+A route loads its data in its `loader` and reads it in its component with the same query
+options, so the page renders with the data already in the cache:
+
+```tsx
+const versionQuery = $api.queryOptions("get", "/version");
+
+export const Route = createFileRoute("/")({
+  loader: ({ context }) => context.queryClient.ensureQueryData(versionQuery),
+  component: Home,
+});
+
+function Home() {
+  const { data } = useSuspenseQuery(versionQuery);
+  // ...
+}
+```
+
+### Updating the Infrahub design system
+
 To move to a newer Infrahub `develop`, run `git submodule update --remote frontend/vendor/infrahub`
 from the repository root. Then compare the `catalog:` section of
 `vendor/infrahub/frontend/pnpm-workspace.yaml` with the one in `pnpm-workspace.yaml` and copy any
 version changes before you run `pnpm install`.
 
-# Building For Production
+## Building For Production
 
 To build this application for production:
 
@@ -36,11 +76,11 @@ To build this application for production:
 pnpm build
 ```
 
-## Styling
+### Styling
 
 This project uses [Tailwind CSS](https://tailwindcss.com/) for styling.
 
-### Removing Tailwind CSS
+#### Removing Tailwind CSS
 
 If you prefer not to use Tailwind CSS:
 
@@ -49,10 +89,9 @@ If you prefer not to use Tailwind CSS:
 3. Remove `tailwindcss()` from the plugins array in `vite.config.ts`
 4. Remove `@tailwindcss/vite` and `tailwindcss` from `package.json`
 
-## Linting & Formatting
+### Linting & Formatting
 
 This project uses [Biome](https://biomejs.dev/) for linting and formatting. The following scripts are available:
-
 
 ```bash
 pnpm lint
@@ -60,13 +99,11 @@ pnpm format
 pnpm check
 ```
 
-
-
-## Routing
+### Routing
 
 This project uses [TanStack Router](https://tanstack.com/router) with file-based routing. Routes are managed as files in `src/routes`.
 
-### Adding A Route
+#### Adding A Route
 
 To add a new route to your application just add a new file in the `./src/routes` directory.
 
@@ -74,7 +111,7 @@ TanStack will automatically generate the content of the route file for you.
 
 Now that you have two routes you can use a `Link` component to navigate between them.
 
-### Adding Links
+#### Adding Links
 
 To use SPA (Single Page Application) navigation you will need to import the `Link` component from `@tanstack/react-router`.
 
@@ -92,7 +129,7 @@ This will create a link that will navigate to the `/about` route.
 
 More information on the `Link` component can be found in the [Link documentation](https://tanstack.com/router/v1/docs/framework/react/api/router/linkComponent).
 
-### Using A Layout
+#### Using A Layout
 
 In the File Based Routing setup the layout is located in `src/routes/__root.tsx`. Anything you add to the root route will appear in all the routes. The route content will appear in the JSX where you render `{children}` in the `shellComponent`.
 
@@ -131,7 +168,7 @@ export const Route = createRootRoute({
 
 More information on layouts can be found in the [Layouts documentation](https://tanstack.com/router/latest/docs/framework/react/guide/routing-concepts#layouts).
 
-## Server Functions
+### Server Functions
 
 TanStack Start provides server functions that allow you to write server-side code that seamlessly integrates with your client components.
 
@@ -156,7 +193,7 @@ function MyComponent() {
 }
 ```
 
-## API Routes
+### API Routes
 
 You can create API routes by using the `server` property in your route definitions:
 
@@ -173,7 +210,7 @@ export const Route = createFileRoute('/api/hello')({
 })
 ```
 
-## Data Fetching
+### Data Fetching
 
 There are multiple ways to fetch data in your application. You can use TanStack Query to fetch data from a server. But you can also use the `loader` functionality built into TanStack Router to load the data for a route before it's rendered.
 
@@ -204,9 +241,7 @@ function PeopleComponent() {
 
 Loaders simplify your data fetching logic dramatically. Check out more information in the [Loader documentation](https://tanstack.com/router/latest/docs/framework/react/guide/data-loading#loader-parameters).
 
-
-
-# Learn More
+## Learn More
 
 You can learn more about all of the offerings from TanStack in the [TanStack documentation](https://tanstack.com).
 
