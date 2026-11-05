@@ -1,0 +1,21 @@
+dev/specs/016-prefect-run-observability/spec.md
+  s_01f3e2b1e0dad4::t_7045882a2e1307 1-353
+dev/specs/016-prefect-run-observability/checklists/requirements.md
+  s_01f3e2b1e0dad4::t_3f476c0fd2ba98 1-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "08e04c79c0b988369db3051a8af2edd181aebab4",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
