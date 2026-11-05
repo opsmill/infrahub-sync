@@ -35,7 +35,7 @@ service run <run_id> stage=<stage> outcome=<outcome>; next step: <action>
 ```
 
 - If publishing fails, the worker logs one WARNING line,
-  `run summary artifact could not be published (<ErrorType>)`, and the run's outcome is unchanged.
+  `run summary artifact for run <run_id> stage <stage> could not be published (<ErrorType>)`, and the run's outcome is unchanged.
 
 ## Refused claim (ERROR, then the flow run fails)
 

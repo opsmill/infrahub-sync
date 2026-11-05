@@ -236,6 +236,9 @@ def test_claim_refusal_message_names_the_run_and_the_recovery_commands() -> None
     assert "\n" not in message
     assert run_id in message
     assert "Nothing was read or written" in message
+    assert "Prefect Retry" in message
+    assert "admission expired" in message
+    assert "not replayed" in message
     assert f"infrahub-sync runs show {run_id}" in message
     assert "infrahub-sync plan" in message
     assert "infrahub-sync sync" in message

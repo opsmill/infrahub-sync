@@ -94,8 +94,8 @@ same key. The artifact holds:
 
 The artifact is built from the run record's named fields and fixed text only, and the stage's
 secrets are removed from it. It never holds an error message. If the artifact cannot be
-published, the worker logs one WARNING line, `run summary artifact could not be published
-(<ErrorType>)`, and the run's outcome does not change.
+published, the worker logs one WARNING line, `run summary artifact for run <run_id> stage <stage>
+could not be published (<ErrorType>)`, and the run's outcome does not change.
 
 A Sync run is not replayed from Prefect. The worker refuses a flow run that the Sync API did not
 submit and is not waiting for: a Prefect Retry, a run started by hand from the deployment, or an

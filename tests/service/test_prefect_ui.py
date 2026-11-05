@@ -18,6 +18,7 @@ def test_a_missing_or_empty_setting_turns_the_link_off(environ: dict[str, str]) 
     [
         ("http://127.0.0.1:4230/", "http://127.0.0.1:4230"),
         ("https://example.com/prefect", "https://example.com/prefect"),
+        (" http://h ", "http://h"),
     ],
 )
 def test_a_valid_setting_is_returned_without_its_trailing_slash(value: str, expected: str) -> None:
@@ -27,8 +28,28 @@ def test_a_valid_setting_is_returned_without_its_trailing_slash(value: str, expe
 
 @pytest.mark.parametrize(
     "value",
-    ["ftp://h", "127.0.0.1:4230", "http://u:p@h", "http://h/?q=1", "http://h/#f"],
-    ids=("scheme", "relative", "credentials", "query", "fragment"),
+    [
+        "ftp://h",
+        "127.0.0.1:4230",
+        "http://u:p@h",
+        "http://h/?q=1",
+        "http://h/#f",
+        "http://h/?",
+        "http://h/#",
+        "http://[bad",
+        "http://h:x",
+    ],
+    ids=(
+        "scheme",
+        "relative",
+        "credentials",
+        "query",
+        "fragment",
+        "empty-query",
+        "empty-fragment",
+        "unclosed-bracket",
+        "bad-port",
+    ),
 )
 def test_an_invalid_setting_is_refused_without_printing_its_value(value: str) -> None:
     """The refusal names the setting but never echoes a value that may carry credentials."""

@@ -449,7 +449,9 @@ def test_a_secret_that_spells_a_terminal_state_still_reaches_its_cancellation_ve
     assert response.status_code == 200
     summary = response.json()["orchestration"][0]
     assert (summary["terminal_state"], summary["terminal_outcome"]) == ("cancelled", "cancelled")
-    assert (summary["state"], summary["detail_available"]) == ("***", True)
+    # The verdict is a fixed enum the response already carries raw as terminal_state, so the
+    # summary's state repeats it unredacted; the provider-supplied observation stays redacted.
+    assert (summary["state"], summary["detail_available"]) == ("cancelled", True)
     assert response.json()["run"]["prefect_executions"][0]["last_observed_state"] == "***"
     stored = projection.lookup_run("run-overlap").value
     assert stored is not None
@@ -564,6 +566,27 @@ def test_a_terminal_execution_reports_its_verdict_over_an_available_live_observa
     state = _summary_state(tmp_path, link, Observation(available=True, state="Running"))
 
     assert state == "completed"
+
+
+@pytest.mark.parametrize("observed", [True, False], ids=("observed", "unobserved"))
+def test_a_secret_inside_a_terminal_state_name_leaves_state_equal_to_terminal_state(
+    tmp_path: Path,
+    observed: bool,  # noqa: FBT001 - one parametrized dimension of the summary loop.
+) -> None:
+    """The verdict is a fixed enum returned raw as terminal_state, so state repeats it raw."""
+    link = _terminal("flow-failed", 1, terminal_state="failed", terminal_outcome="failed")
+    service = RunService(
+        _CountingProjection(local_product_projection(tmp_path)),
+        _CountingOrchestration(),
+        secrets=("led",),
+        clock=lambda: NOW,
+    )
+    observations = {link.flow_run_id: Observation(available=True, state="Running")} if observed else {}
+
+    resource = service._resource_with_observations(_run("run-led", (link,)), observations)  # pylint: disable=protected-access
+
+    summary = resource.orchestration[0]
+    assert summary.state == summary.terminal_state == "failed"
 
 
 def test_an_execution_without_a_terminal_state_reports_its_available_live_observation(tmp_path: Path) -> None:

@@ -242,7 +242,8 @@ services:
       INFRAHUB_SYNC_SERVICE_BEARER_TOKENS: >-
         ${BEARER_TOKENS:-{"dev": {"token": "infrahub-sync-dev-token", "administrator": true}}}
       INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
-      # The Prefect UI this stack publishes on loopback; run summaries link each flow run to it.
+      # The Prefect UI this stack publishes on loopback; run responses and `runs show`
+      # link each flow run to it.
       INFRAHUB_SYNC_PREFECT_UI_URL: "http://127.0.0.1:${PREFECT_PORT:-4230}"
     ports:
       - "127.0.0.1:${SYNC_API_PORT:-8001}:8000"

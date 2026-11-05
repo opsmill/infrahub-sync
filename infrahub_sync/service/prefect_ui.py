@@ -22,14 +22,18 @@ def prefect_ui_url_from_environment(environ: Mapping[str, str] = os.environ) -> 
         ValueError: The value is not an absolute http or https URL, or it carries user info, a query or
             a fragment. The message names the setting and does not contain the value.
     """
-    value = environ.get(PREFECT_UI_URL_ENV, "")
+    value = environ.get(PREFECT_UI_URL_ENV, "").strip()
     if not value:
         return None
+    # httpx drops an empty `?` or `#`, so the raw value is checked for both.
+    if "?" in value or "#" in value:
+        raise ValueError(_INVALID)
     try:
         url = httpx.URL(value)
-    except Exception:  # noqa: BLE001 - every URL parser failure is the same start-up refusal.
+    except httpx.InvalidURL:
         raise ValueError(_INVALID) from None
-    authority_invalid = url.scheme not in {"http", "https"} or not url.host
+    # httpx percent-encodes characters a host cannot hold, such as an unclosed `[`.
+    authority_invalid = url.scheme not in {"http", "https"} or not url.host or "%" in url.host
     carries_extras = any((url.username, url.password, url.query, url.fragment))
     if authority_invalid or carries_extras:
         raise ValueError(_INVALID)

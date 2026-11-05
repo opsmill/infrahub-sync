@@ -10,7 +10,7 @@
 import logging
 import os
 from collections.abc import Iterator, Sequence
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -802,7 +802,7 @@ def effective_apply_record(exc: Exception, record: ApplyRecord | None) -> ApplyR
 class RecordedFailure:
     """What `_record_failure` stored: the run's terminal outcome and the failure's next action."""
 
-    outcome: str
+    outcome: Literal["failed", "ambiguous"]
     next_action: str | None
 
 
@@ -1040,20 +1040,32 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 dispatch_started=tracker.dispatch_started,
                 record=tracker.applied_record,
             )
-        # After the record, before `secrets.clear()`: the line and the artifact never
-        # announce an outcome the store does not hold, and both are redacted with this
-        # stage's secrets.
+        # After the record, before `secrets.clear()`, so both the line and the artifact are
+        # redacted with this stage's secrets. A recorded failure reports the outcome the store
+        # holds. An unrecorded failure reports `failed` and points at `runs show`, while the
+        # store keeps the run nonterminal for reconciliation to decide.
         if recorded is None:
             outcome, next_action = "failed", None
         else:
             outcome, next_action = recorded.outcome, recorded.next_action
-        run_logger.info(redact(final_log_line(run_id, stage, outcome, next_action), secrets))
-        _publish_run_summary(
-            projection, run_id, stage, outcome, next_action, secrets, run_logger, prefect_context=prefect_context
-        )
-        # Rebuilt after the original exception context exits.
-        sanitized = sanitize_exception_chain(failure, secrets)
-        secrets.clear()
+        try:
+            # Best-effort: neither the line nor the artifact may replace the stage's failure.
+            with suppress(Exception):
+                run_logger.info(redact(final_log_line(run_id, stage, outcome, next_action), secrets))
+                _publish_run_summary(
+                    projection,
+                    run_id,
+                    stage,
+                    outcome,
+                    next_action,
+                    secrets,
+                    run_logger,
+                    prefect_context=prefect_context,
+                )
+            # Rebuilt after the original exception context exits.
+            sanitized = sanitize_exception_chain(failure, secrets)
+        finally:
+            secrets.clear()
         raise sanitized
     outcome, next_action = str(result["outcome"]), result_next_action(result)
     run_logger.info(redact(final_log_line(run_id, stage, outcome, next_action), secrets))

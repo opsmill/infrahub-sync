@@ -243,9 +243,11 @@ services:
       # registered, so there is no destination to hold a credential for yet. A
       # run that selects an absent value fails that run, not this start.
       INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
-      # Optional: the address operators open the Prefect UI at, for example
-      # http://127.0.0.1:4200. Run summaries then link each flow run to its page.
-      # An empty value turns the link off.
+      # Optional: the Prefect UI address that run responses and `runs show` link
+      # each flow run to. The UI is off unless the operator applies the override
+      # in "Turn the Prefect UI on" (docs/docs/compose-deployment.mdx); then use
+      # http://127.0.0.1:${INFRAHUB_SYNC_PREFECT_PORT:-4200}. An empty value turns
+      # the link off.
       INFRAHUB_SYNC_PREFECT_UI_URL: "${INFRAHUB_SYNC_PREFECT_UI_URL:-}"
     read_only: true
     tmpfs: *sync-scratch

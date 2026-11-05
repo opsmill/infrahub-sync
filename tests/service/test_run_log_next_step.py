@@ -319,6 +319,60 @@ def test_the_line_is_redacted(monkeypatch: pytest.MonkeyPatch, flow_calls: list[
     assert "s3cr3t-token" not in _info_lines(flow_calls)[-1]
 
 
+def test_the_recorded_failure_line_is_redacted_before_the_secrets_are_cleared(
+    monkeypatch: pytest.MonkeyPatch, flow_calls: list[tuple[Any, ...]]
+) -> None:
+    """The failure exit writes its line while the stage's secrets are still known."""
+    _stage_raises(monkeypatch)
+    monkeypatch.setattr(service_flow, "collect_secret_values", lambda: ["s3cr3t-token"])
+    monkeypatch.setattr(
+        service_flow, "_record_failure", lambda *_args, **_kwargs: RecordedFailure("failed", "Rotate s3cr3t-token.")
+    )
+
+    with pytest.raises(RuntimeError, match="stage failed"):
+        service_sync_run.fn("run-secret-failure", "plan", "config-001", 1, "a" * 64)
+
+    last_line = _info_lines(flow_calls)[-1]
+    assert "s3cr3t-token" not in last_line
+    assert last_line.endswith("next step: Rotate ***.")
+
+
+def test_a_failing_last_line_still_raises_the_original_sanitized_failure(
+    monkeypatch: pytest.MonkeyPatch, flow_calls: list[tuple[Any, ...]]
+) -> None:
+    """Writing the line is best-effort: it never replaces the stage's failure or skips the cleanup."""
+    monkeypatch.setattr(service_flow, "collect_secret_values", lambda: ["s3cr3t-token"])
+    sanitized_with: list[list[str]] = []
+    sanitize = service_flow.sanitize_exception_chain
+
+    def sanitize_and_keep(failure: BaseException, secrets: list[str]) -> BaseException:
+        sanitized_with.append(secrets)
+        return sanitize(failure, secrets)
+
+    monkeypatch.setattr(service_flow, "sanitize_exception_chain", sanitize_and_keep)
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        msg = "stage failed with s3cr3t-token"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(service_flow, "_execute_stage", fail)
+    monkeypatch.setattr(service_flow, "_record_failure", lambda *_args, **_kwargs: RecordedFailure("failed", None))
+
+    class _BrokenLogger(_RecordingLogger):
+        def info(self, *_args: object) -> None:
+            self.calls.append(("info-failed",))
+            msg = "log handler unavailable"
+            raise OSError(msg)
+
+    monkeypatch.setattr(service_flow, "_run_logger", lambda: (_BrokenLogger(flow_calls), False))
+
+    with pytest.raises(RuntimeError, match="stage failed") as raised:
+        service_sync_run.fn("run-broken-log", "plan", "config-001", 1, "a" * 64)
+
+    assert "s3cr3t-token" not in str(raised.value)
+    assert sanitized_with == [[]]  # the very list sanitized with was cleared afterwards
+
+
 # --- the run summary artifact at each exit of service_sync_run (T018) -------------------------
 
 _REDACTION_PROBE = "s3cr3t-token"
@@ -419,14 +473,12 @@ def test_outside_a_prefect_run_nothing_is_published(
     _stage_returns(monkeypatch, {"outcome": "planned"})
     monkeypatch.setattr(service_flow, "_runtime", lambda: (None, _StoredRun()))
 
-    def create_is_forbidden(**_kwargs: object) -> None:
-        msg = "nothing is published outside a Prefect flow run"
-        raise AssertionError(msg)
-
-    monkeypatch.setattr(service_flow, "create_markdown_artifact", create_is_forbidden)
+    created: list[dict[str, Any]] = []
+    monkeypatch.setattr(service_flow, "create_markdown_artifact", lambda **kwargs: created.append(kwargs))
 
     service_sync_run.fn("run-local", "plan", "config-001", 1, "a" * 64)
 
+    assert created == []
     assert all(call[0] != "log" for call in flow_calls)
 
 
@@ -445,3 +497,45 @@ def test_a_refused_claim_publishes_nothing(
 
     assert created == []
     assert ("artifact",) not in calls
+
+
+def _publish_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    def create(**_kwargs: object) -> None:
+        msg = "artifact store unavailable"
+        raise OSError(msg)
+
+    monkeypatch.setattr(service_flow, "create_markdown_artifact", create)
+
+
+def test_a_failed_publish_leaves_the_success_result_unchanged(
+    monkeypatch: pytest.MonkeyPatch, published: tuple[list[tuple[Any, ...]], list[dict[str, Any]]]
+) -> None:
+    """FR-004: an artifact that cannot be published does not change the stage's result."""
+    calls, _created = published
+    result = {"outcome": "planned"}
+    _stage_returns(monkeypatch, result)
+    _publish_raises(monkeypatch)
+
+    assert service_sync_run.fn("run-ok", "plan", "config-001", 1, "a" * 64) is result
+    assert any(call[0] == "log" and call[1] == logging.WARNING for call in calls)
+
+
+def test_a_failed_publish_leaves_the_stage_failure_unchanged(
+    monkeypatch: pytest.MonkeyPatch, published: tuple[list[tuple[Any, ...]], list[dict[str, Any]]]
+) -> None:
+    """FR-004: on the failure exit, the stage's own sanitized failure is still the one raised."""
+    calls, _created = published
+
+    def fail(*_args: object, **_kwargs: object) -> None:
+        msg = f"stage failed with {_REDACTION_PROBE}"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(service_flow, "_execute_stage", fail)
+    monkeypatch.setattr(service_flow, "_record_failure", lambda *_args, **_kwargs: RecordedFailure("failed", None))
+    _publish_raises(monkeypatch)
+
+    with pytest.raises(RuntimeError, match="stage failed") as raised:
+        service_sync_run.fn("run-bad", "plan", "config-001", 1, "a" * 64)
+
+    assert _REDACTION_PROBE not in str(raised.value)
+    assert any(call[0] == "log" and call[1] == logging.WARNING for call in calls)

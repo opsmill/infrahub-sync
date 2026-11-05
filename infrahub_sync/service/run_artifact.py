@@ -127,4 +127,10 @@ def publish_run_artifact(  # pylint: disable=too-many-arguments
             description=f"Sync run {run_id}, stage {stage}",
         )
     except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-        run_logger.log(logging.WARNING, "run summary artifact could not be published (%s)", type(error).__name__)
+        run_logger.log(
+            logging.WARNING,
+            "run summary artifact for run %s stage %s could not be published (%s)",
+            run_id,
+            stage,
+            type(error).__name__,
+        )

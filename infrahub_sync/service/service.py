@@ -1010,8 +1010,9 @@ class RunService:
             # Live and retained observation text is provider-supplied, so no summary is built from it raw.
             retained = None if link.last_observed_state is None else redact(link.last_observed_state, self._secrets)
             # A finished execution reports its verdict as its state: a live or retained observation can
-            # predate the verdict, and a completed execution would otherwise read `Running`.
-            verdict = None if link.terminal_state is None else redact(link.terminal_state, self._secrets)
+            # predate the verdict, and a completed execution would otherwise read `Running`. The verdict
+            # is a fixed enum, returned raw as terminal_state too, so it is not redacted.
+            verdict = link.terminal_state
             link_url = None if self._prefect_ui_url is None else flow_run_url(self._prefect_ui_url, link.flow_run_id)
             if observed is None:
                 orchestration.append(

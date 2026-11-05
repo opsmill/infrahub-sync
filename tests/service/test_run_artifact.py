@@ -212,7 +212,13 @@ def test_a_failed_publish_logs_one_warning_without_the_error_text() -> None:
 
     _publish(_run(), create, logger, [])
 
-    assert logger.calls == [(logging.WARNING, "run summary artifact could not be published (RuntimeError)")]
+    assert len(logger.calls) == 1
+    level, message = logger.calls[0]
+    assert level == logging.WARNING
+    assert f"run {_RUN_ID}" in message
+    assert "stage plan" in message
+    assert "(RuntimeError)" in message
+    assert "boom" not in message
 
 
 def test_a_missing_run_logs_one_warning_and_publishes_nothing() -> None:
