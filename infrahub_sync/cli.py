@@ -44,19 +44,27 @@ from infrahub_sync.client import (
     ValidationReportResource,
     VerifyRunRequest,
 )
-from infrahub_sync.client.models import MAX_LIMIT, ListPage
+from infrahub_sync.client.models import (
+    MAX_FAILURE_CAUSE_TEXT,
+    MAX_LIMIT,
+    RECOVERY_NEXT_ACTIONS,
+    SCHEMA_CHANGED_NEXT_ACTION,
+    ListPage,
+)
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Mapping
+    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
     from infrahub_sync.client.models import (
         ArtifactReferenceResource,
         ConfigurationSummaryResource,
         ConfigurationVersionResource,
         ConfigurationVersionSummaryResource,
+        PlanLastChangeResource,
         PlanOperationResource,
         PublicRunResource,
+        RecoveryAction,
         RunReference,
     )
 
@@ -65,6 +73,11 @@ _Resource = TypeVar("_Resource")
 DEFAULT_WAIT_TIMEOUT = 30 * 60.0
 DEFAULT_POLL_INTERVAL = 2.0
 VERBOSITY_MAP = {"quiet": logging.WARNING, "default": logging.INFO, "verbose": logging.DEBUG}
+# Shown in the `runs plan` summary when the saved plan names an owner: the import never
+# changes an existing owner, so the owner setting covers only the values a run creates.
+OWNER_SCOPE_NOTICE = "The owner setting applies only to values this run creates."
+# Shown for an `updated_by` or `updated_at` Infrahub holds no value for.
+NOT_RECORDED = "not recorded"
 _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
 _KIND_ARG = "kind"
@@ -667,6 +680,12 @@ def _echo_counts(name: str, counts: Mapping[str, int]) -> None:
     typer.echo(_display(f"{name}: " + ", ".join(f"{key}={value}" for key, value in counts.items())))
 
 
+def _owner_scope_disclosure(plan: PlanResource) -> None:
+    """Say that a named owner covers only the values this run creates, never an existing owner."""
+    if plan.lineage is not None and plan.lineage.owner is not None:
+        typer.echo(OWNER_SCOPE_NOTICE)
+
+
 def _delete_disclosure(plan: PlanResource) -> None:
     if not plan.summary.delete_operations_computed:
         typer.echo("Delete operations were NOT computed for this plan; the review may omit destination deletes.")
@@ -681,7 +700,21 @@ def _identity_text(identity: Mapping[str, Any]) -> str:
     return " ".join(f"{key}={identity[key]}" for key in sorted(identity))
 
 
-def _operation_detail(operation: PlanOperationResource) -> None:
+def _last_change_line(record: PlanLastChangeResource) -> str:
+    """Render who last changed one field and when, or "not recorded" for a missing value.
+
+    An account Infrahub holds without a display label is shown by its id, because a value
+    Infrahub holds is never shown as "not recorded". Labels come from Infrahub, so they are escaped.
+    """
+    account = record.updated_by
+    updated_by = NOT_RECORDED if account is None else (account.display_label or account.id)
+    updated_at = record.updated_at or NOT_RECORDED
+    return _display(
+        f"  last change: {record.field} ({record.field_type}): updated_by={updated_by}, updated_at={updated_at}"
+    )
+
+
+def _operation_detail(operation: PlanOperationResource, last_changes: Sequence[PlanLastChangeResource] = ()) -> None:
     marker = " (not executed)" if operation.action == "delete" else ""
     # Identity values come from the source, so they are escaped before a reviewer reads them.
     typer.echo(
@@ -699,6 +732,8 @@ def _operation_detail(operation: PlanOperationResource) -> None:
     relationships = operation.relationships
     if relationships:
         typer.echo(f"  relationships: {json.dumps(relationships, sort_keys=True, separators=(',', ':'))}")
+    for record in last_changes:
+        typer.echo(_last_change_line(record))
 
 
 def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = None) -> None:
@@ -726,9 +761,14 @@ def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = N
     _echo_counts("by_action", plan.summary.by_action)
     _echo_counts("by_kind", plan.summary.by_kind)
     _delete_disclosure(plan)
+    _owner_scope_disclosure(plan)
     if detail:
+        # Records are grouped by operation; a plan made without them shows no last-change lines.
+        last_changes: dict[str, list[PlanLastChangeResource]] = {}
+        for record in plan.last_changes or ():
+            last_changes.setdefault(record.operation_id, []).append(record)
         for operation in operations:
-            _operation_detail(operation)
+            _operation_detail(operation, last_changes.get(operation.operation_id, ()))
 
 
 def _echo_completed_destination_branch(client: SyncClient, run_id: str) -> None:
@@ -739,6 +779,48 @@ def _echo_completed_destination_branch(client: SyncClient, run_id: str) -> None:
         typer.echo("destination_branch: <unavailable> (saved plan could not be read)")
         return
     _echo_fields((("destination_branch", plan.destination_branch),))
+
+
+def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
+    """Print what the service recorded about a failed stage, before the run-terminal error.
+
+    `<stage> failed: <error type>`, then `cause:` when the run recorded an operator cause (a
+    missing permission, a refused token or a lineage refusal), and `hint:` when it recorded a
+    next action. A record without a next action, from an older Sync API, gets the fixed hint
+    for its error type or recovery signal when it has one. The record is the API's, and the API
+    stores only text written for the operator. Each value is still capped and printed through
+    `_display`, so recorded text cannot reach the terminal as an escape sequence.
+    """
+    try:
+        failure = client.get_results(run_id).results.get(f"{stage}_failure")
+    except SyncClientError:
+        return
+    if not isinstance(failure, dict) or failure.get("stage") != stage:
+        return
+    error_type = failure.get("error_type")
+    if not (
+        isinstance(error_type, str) and len(error_type) <= 128 and error_type.isascii() and error_type.isidentifier()
+    ):
+        return
+    typer.echo(f"{stage} failed: {error_type}", err=True)
+    cause = failure.get("cause")
+    if isinstance(cause, str) and cause:
+        typer.echo(f"cause: {_display(cause[:MAX_FAILURE_CAUSE_TEXT])}", err=True)
+    next_action = failure.get("next_action")
+    if isinstance(next_action, str) and next_action:
+        typer.echo(f"hint: {_display(next_action[:MAX_FAILURE_CAUSE_TEXT])}", err=True)
+        return
+    # A record written before the service recorded every next action (an older Sync API)
+    # carries only the error type and, for a refused registered plan, its recovery signal.
+    hint: str | None = None
+    if error_type == "PlanSchemaChangedError":
+        hint = SCHEMA_CHANGED_NEXT_ACTION
+    elif error_type == "RegisteredPlanVerificationError":
+        recovery_action = failure.get("recovery_action")
+        if isinstance(recovery_action, str):
+            hint = RECOVERY_NEXT_ACTIONS.get(cast("RecoveryAction", recovery_action))
+    if hint is not None:
+        typer.echo(f"hint: {hint}", err=True)
 
 
 def _waiting_client(ctx: typer.Context, *, wait_timeout: float, poll_interval: float) -> SyncClient:
@@ -791,14 +873,19 @@ def _admit_run(
         )
         return client.plan(request, key) if operation == "plan" else client.sync(request, key)
 
-    return client, _submit_and_wait(
-        client,
-        submit,
-        idempotency_key=idempotency_key,
-        wait=wait,
-        wait_timeout=wait_timeout,
-        poll_interval=poll_interval,
-    )
+    try:
+        completed = _submit_and_wait(
+            client,
+            submit,
+            idempotency_key=idempotency_key,
+            wait=wait,
+            wait_timeout=wait_timeout,
+            poll_interval=poll_interval,
+        )
+    except RunTerminalError as error:
+        _echo_stage_failure(client, error.run_id, stage=operation)
+        raise
+    return client, completed
 
 
 @app.command("plan")
@@ -917,35 +1004,7 @@ def apply_cmd(
                 poll_interval=poll_interval,
             )
         except RunTerminalError as error:
-            try:
-                failure = client.get_results(error.run_id).results.get("apply_failure")
-            except SyncClientError:
-                failure = None
-            if isinstance(failure, dict):
-                stage = failure.get("stage")
-                error_type = failure.get("error_type")
-                if (
-                    stage == "apply"
-                    and isinstance(error_type, str)
-                    and len(error_type) <= 128
-                    and error_type.isascii()
-                    and error_type.isidentifier()
-                ):
-                    typer.echo(f"{stage} failed: {error_type}", err=True)
-                    if error_type == "PlanSchemaChangedError":
-                        typer.echo("hint: create and review a new plan before applying again", err=True)
-                    elif error_type == "RegisteredPlanVerificationError":
-                        recovery_action = failure.get("recovery_action")
-                        if recovery_action == "rebuild":
-                            typer.echo(
-                                "hint: re-run plan for this sync, review the new plan, then apply that run", err=True
-                            )
-                        elif recovery_action == "compatible_version":
-                            typer.echo(
-                                "hint: re-run plan with this version and review the new plan, "
-                                "or apply the reviewed plan with the version that wrote it",
-                                err=True,
-                            )
+            _echo_stage_failure(client, error.run_id, stage="apply")
             raise
         if wait:
             _echo_run(completed)

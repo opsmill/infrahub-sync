@@ -38,11 +38,13 @@ from infrahub_sync.plan.errors import PlanArtifactUnreadableError
 from infrahub_sync.plan.models import (
     SUPPORTED_FORMAT_VERSIONS,
     DestinationBindingRecord,
+    PlanLastChangesRecord,
     VerificationFailure,
     require_run_relative_path,
 )
 from infrahub_sync.plan.reader import (
     DuplicateManifestKeyError,
+    last_changes_mismatch,
     load_manifest_mapping,
     operation_record_lines,
     stat_or_unreadable,
@@ -51,7 +53,7 @@ from infrahub_sync.plan.reader import (
 from infrahub_sync.plan.writer import OPERATIONS_FILE_NAME, PLAN_DIR_NAME
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
     from infrahub_sync.plan.models import VerificationCheck
@@ -209,6 +211,33 @@ def _operations_failures(run_id: str, artifact: RawPlanArtifact, mapping: dict[s
 
     failure = plan_checksum_failure(run_id=run_id, manifest_mapping=mapping, operations_bytes=operations_bytes)
     return [] if failure is None else [failure]
+
+
+def _last_changes_failures(
+    run_id: str, artifact: RawPlanArtifact, mapping: dict[str, Any]
+) -> list[VerificationFailure]:
+    """Check `last_changes.jsonl` against the manifest's `last_changes` field (FR-007).
+
+    No failure for a plan without the field. The field itself is covered by the plan
+    checksum; this check covers the file the field describes, by its digest and count.
+    """
+    if "last_changes" not in mapping:
+        return []
+    try:
+        record = PlanLastChangesRecord.model_validate(mapping["last_changes"])
+    except ValidationError:
+        return [
+            _failure(
+                "last_changes",
+                run_id=run_id,
+                expected="a 'last_changes' record with a path, a SHA-256 digest, a count and 'metadata_read'",
+                found="a malformed 'last_changes' record",
+            )
+        ]
+    mismatch = last_changes_mismatch(record, artifact.last_changes_bytes)
+    if mismatch is None:
+        return []
+    return [_failure("last_changes", run_id=run_id, expected=mismatch[0], found=mismatch[1])]
 
 
 def plan_checksum_failure(
@@ -422,10 +451,13 @@ def destination_binding_failure(
     unlike every `verify_plan` check it is also **overridable** — the Python `execute_run`
     surface's `allow_destination_change` argument exists for a deliberate cross-environment
     apply, although neither the Sync HTTP API nor any CLI command exposes it — so it cannot sit
-    behind a gate whose non-empty result is an unconditional refusal.
+    behind a gate whose non-empty result is an unconditional refusal. The override cannot carry
+    a plan to another Infrahub instance: that instance has its own import account, so apply
+    still refuses with `ImportAccountMismatchError` (FR-012).
 
     When only the branch differs, the usual cause is an apply without `--branch`, or with
-    another one, so the next action names the recorded branch to apply with.
+    another one, so the next action names the recorded branch to apply with. When the URL
+    differs, the next action also says why the plan cannot be applied there.
 
     Returns `None` — the check is skipped, not passed — when the manifest is absent or
     unparseable (the format gate owns that verdict), when it predates the field, or when
@@ -450,7 +482,12 @@ def destination_binding_failure(
         return None
     new_plan = "create a new plan against the current destination with `plan`, review it, and apply that plan instead."
     if recorded_binding.url != live.url:
-        next_action = new_plan[0].upper() + new_plan[1:]
+        next_action = (
+            new_plan[0].upper()
+            + new_plan[1:]
+            + " A plan made against another Infrahub instance cannot be applied here, because that"
+            " instance records changes under its own import account."
+        )
     elif recorded_binding.branch is None:
         next_action = (
             "The plan was created for the destination's default branch. Apply it again without `--branch`, or "
@@ -468,6 +505,15 @@ def destination_binding_failure(
         found=f"url {live.url!r}, branch {live.branch!r}",
         next_action=next_action,
     )
+
+
+def failure_guidance(failures: Sequence[VerificationFailure]) -> str:
+    """Each failed check's name with its own next action, for the refusal's next action.
+
+    The text never echoes a failure's `expected` or `found`: they can quote manifest values,
+    which may contain credentials in a damaged or hand-edited artifact.
+    """
+    return "; ".join(f"{failure.check}: {failure.next_action}" for failure in failures)
 
 
 def verify_plan(
@@ -513,6 +559,7 @@ def verify_plan(
     failures: list[VerificationFailure] = []
     failures.extend(_run_binding_failures(run_id, mapping))
     failures.extend(_operations_failures(run_id, artifact, mapping))
+    failures.extend(_last_changes_failures(run_id, artifact, mapping))
     failures.extend(source_snapshot_failures(run_id=run_id, run_dir=artifact.run_dir, mapping=mapping))
     failures.extend(_config_version_failures(run_id, mapping, config_version))
     failures.extend(_write_surface_failures(run_id, write_surface_missing_on))

@@ -33,6 +33,7 @@ from infrahub_sync.client import (
     ConfigurationVersionSummaryResource,
     CreateRunRequest,
     OrchestrationSummary,
+    PlanLastChangeResource,
     PlanOperationResource,
     PlanResource,
     PlanSummaryResource,
@@ -452,27 +453,55 @@ def test_apply_sends_only_reviewed_checksum_and_shipped_fields(client: MagicMock
     assert key == "retry-apply"
 
 
+REBUILD_HINT = "re-run plan for this sync, review the new plan, then apply that run"
+COMPATIBLE_VERSION_HINT = (
+    "re-run plan with this version and review the new plan, or apply the reviewed plan with the version that wrote it"
+)
+
+
 @pytest.mark.parametrize(
-    ("error_type", "recovery_action", "expected_hint"),
+    ("error_type", "recorded", "expected_hint"),
     [
-        ("PlanSchemaChangedError", None, "hint: create and review a new plan before applying again"),
-        ("RegisteredPlanVerificationError", "rebuild", "hint: re-run plan for this sync"),
+        (
+            "PlanSchemaChangedError",
+            {"next_action": "create and review a new plan before applying again"},
+            "hint: create and review a new plan before applying again",
+        ),
         (
             "RegisteredPlanVerificationError",
-            "compatible_version",
-            "or apply the reviewed plan with the version that wrote it",
+            {"recovery_action": "rebuild", "next_action": REBUILD_HINT},
+            f"hint: {REBUILD_HINT}",
         ),
-        ("RegisteredPlanVerificationError", "private-token-canary", None),
-        ("OperationApplyFailedError", "rebuild", None),
+        (
+            "RegisteredPlanVerificationError",
+            {"recovery_action": "compatible_version", "next_action": COMPATIBLE_VERSION_HINT},
+            f"hint: {COMPATIBLE_VERSION_HINT}",
+        ),
+        (
+            "RegisteredPlanVerificationError",
+            {"recovery_action": "rebuild", "next_action": "checksum: rebuild"},
+            "hint: checksum: rebuild",
+        ),
+        # An older record without `next_action` gets the fixed hint for its recovery signal.
+        ("RegisteredPlanVerificationError", {"recovery_action": "rebuild"}, f"hint: {REBUILD_HINT}"),
+        (
+            "RegisteredPlanVerificationError",
+            {"recovery_action": "compatible_version"},
+            f"hint: {COMPATIBLE_VERSION_HINT}",
+        ),
+        ("PlanSchemaChangedError", {}, "hint: create and review a new plan before applying again"),
+        ("RegisteredPlanVerificationError", {"recovery_action": "private-token-canary"}, None),
+        ("RegisteredPlanVerificationError", {}, None),
+        ("OperationApplyFailedError", {"recovery_action": "rebuild"}, None),
     ],
 )
-def test_failed_apply_renders_only_recognized_recovery_hints(
+def test_failed_apply_renders_the_recorded_next_action_or_the_older_records_hint(
     client: MagicMock,
     error_type: str,
-    recovery_action: str | None,
+    recorded: dict[str, str],
     expected_hint: str | None,
 ) -> None:
-    """Show a recovery hint only for recognized failed-apply evidence."""
+    """Print the recorded next action as the hint; without one, the fixed hint an older record's type or signal maps to."""
     client.wait_for_run.side_effect = RunTerminalError(
         "service-run-1",
         terminal_state="failed",
@@ -487,7 +516,7 @@ def test_failed_apply_renders_only_recognized_recovery_hints(
                 "stage": "apply",
                 "outcome": "failed",
                 "error_type": error_type,
-                "recovery_action": recovery_action,
+                **recorded,
             }
         },
     )
@@ -540,6 +569,115 @@ def test_failed_apply_keeps_terminal_verdict_when_failure_evidence_is_unavailabl
     assert "terminal_outcome: failed" in result.output
     assert "phase: apply-failed" in result.output
     assert "outcome: failed" in result.output
+
+
+MISSING_PERMISSION_CAUSE = (
+    "a missing permission: the import account needs the permission `object:*:Core:Account:view:allow_all` "
+    "(AuthenticationError, HTTP 403)"
+)
+MISMATCH_CAUSE = (
+    "The saved plan for run 'service-run-1' was made with the import account 'netbox' (id a-1), and this apply "
+    "runs with the import account 'other' (id a-2). Nothing was written to the destination."
+)
+MISMATCH_NEXT_ACTION = (
+    "Apply with a token of the account the plan recorded, or create a new plan with this token and review it."
+)
+
+
+def _terminal(phase: str) -> RunTerminalError:
+    return RunTerminalError(
+        "service-run-1", terminal_state="failed", terminal_outcome="failed", phase=phase, outcome="failed"
+    )
+
+
+@pytest.mark.parametrize(
+    ("arguments", "stage"),
+    [
+        (("diff", "--config-id", "edge-sync", "--version", "1", "--reason", "review"), "plan"),
+        (("sync", "--config-id", "edge-sync", "--version", "1", "--reason", "sync now"), "sync"),
+        (("apply", "service-run-1", "--expected-checksum", CHECKSUM, "--reason", "apply reviewed plan"), "apply"),
+    ],
+)
+def test_a_failed_run_prints_the_recorded_missing_permission(
+    client: MagicMock, arguments: tuple[str, ...], stage: str
+) -> None:
+    """A 403 at any stage is printed as a missing permission naming the permission, never a refused token."""
+    client.wait_for_run.side_effect = _terminal(f"{stage}-failed")
+    client.get_results.return_value = ResultsResource(
+        run_id="service-run-1",
+        results={
+            f"{stage}_failure": {
+                "stage": stage,
+                "outcome": "failed",
+                "error_type": "ValueError",
+                "cause_type": "ValueError",
+                "infrahub_error": {
+                    "problem": "missing_permission",
+                    "http_status": 403,
+                    "permissions": ["object:*:Core:Account:view:allow_all"],
+                },
+                "cause": MISSING_PERMISSION_CAUSE,
+            }
+        },
+    )
+
+    result = _invoke(client, *arguments)
+
+    assert result.exit_code == 1
+    assert f"{stage} failed: ValueError" in result.output
+    assert f"cause: {MISSING_PERMISSION_CAUSE}" in result.output
+    assert "refused the token" not in result.output
+    assert "error: run-terminal" in result.output
+
+
+def test_a_failed_apply_prints_the_account_mismatch_and_its_next_action(client: MagicMock) -> None:
+    """The operator reads both accounts and what to do, not only the error class."""
+    client.wait_for_run.side_effect = _terminal("apply-failed")
+    client.get_results.return_value = ResultsResource(
+        run_id="service-run-1",
+        results={
+            "apply_failure": {
+                "stage": "apply",
+                "outcome": "failed",
+                "error_type": "ImportAccountMismatchError",
+                "cause_type": None,
+                "cause": MISMATCH_CAUSE,
+                "next_action": MISMATCH_NEXT_ACTION,
+            }
+        },
+    )
+
+    result = _invoke(
+        client, "apply", "service-run-1", "--expected-checksum", CHECKSUM, "--reason", "apply reviewed plan"
+    )
+
+    assert result.exit_code == 1
+    assert "apply failed: ImportAccountMismatchError" in result.output
+    assert f"cause: {MISMATCH_CAUSE}" in result.output
+    assert f"hint: {MISMATCH_NEXT_ACTION}" in result.output
+
+
+def test_a_recorded_cause_is_printed_with_its_control_characters_made_visible(client: MagicMock) -> None:
+    client.wait_for_run.side_effect = _terminal("plan-failed")
+    client.get_results.return_value = ResultsResource(
+        run_id="service-run-1",
+        results={
+            "plan_failure": {
+                "stage": "plan",
+                "outcome": "failed",
+                "error_type": "ValueError",
+                "cause": "line\x1b[2Jone",
+                "next_action": "x" * 5000,
+            }
+        },
+    )
+
+    result = _invoke(client, "diff", "--config-id", "edge-sync", "--version", "1", "--reason", "review")
+
+    assert "\x1b" not in result.output
+    assert "cause: line\\x1b[2Jone" in result.output
+    hint = next(line for line in result.output.splitlines() if line.startswith("hint: "))
+    assert len(hint) <= len("hint: ") + 1000
 
 
 def test_runs_show_renders_the_service_record_and_its_selected_execution(client: MagicMock) -> None:
@@ -1146,6 +1284,118 @@ def test_help_does_not_mark_reason_as_required(command: tuple[str, ...]) -> None
     assert result.exit_code == 0, result.output
     reason_line = next(line for line in result.output.splitlines() if "--reason" in line)
     assert "required" not in reason_line.lower()
+
+
+def _plan_with_an_update(last_changes: tuple[PlanLastChangeResource, ...] | None) -> PlanResource:
+    plan = _plan()
+    update = PlanOperationResource(
+        operation_id="op_0123456789abcdef",
+        action="update",
+        kind="Site",
+        identity={"name": "par1"},
+        tier=0,
+        payload={"description": "Paris"},
+        relationships=(),
+        destination_id="site-1",
+    )
+    return plan.model_copy(update={"operations": (*plan.operations, update), "last_changes": last_changes})
+
+
+def _last_change(field: str, field_type: str, updated_by: dict[str, str | None] | None, updated_at: str | None):  # type: ignore[no-untyped-def]
+    return PlanLastChangeResource.model_validate(
+        {
+            "operation_id": "op_0123456789abcdef",
+            "field": field,
+            "field_type": field_type,
+            "updated_by": updated_by,
+            "updated_at": updated_at,
+        }
+    )
+
+
+def test_runs_plan_detail_shows_who_last_changed_each_field_an_update_changes(client: MagicMock) -> None:
+    """Each changed field shows `updated_by` and `updated_at`, or "not recorded"."""
+    client.get_plan.return_value = _plan_with_an_update(
+        (
+            _last_change(
+                "description", "attribute", {"id": "account-2", "display_label": "Jane Doe"}, "2026-10-21T09:14:03Z"
+            ),
+            _last_change("site", "relationship", None, None),
+            _last_change("status", "attribute", {"id": "account-3", "display_label": None}, None),
+        )
+    )
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.split("\n")
+    update_line = lines.index("op_0123456789abcdef update Site name=par1")
+    assert lines[update_line + 1 : update_line + 7] == [
+        "  destination id: site-1",
+        '  payload: {"description":"Paris"}',
+        "  last change: description (attribute): updated_by=Jane Doe, updated_at=2026-10-21T09:14:03Z",
+        "  last change: site (relationship): updated_by=not recorded, updated_at=not recorded",
+        # Infrahub holds the account, without a label: the id is shown, not "not recorded".
+        "  last change: status (attribute): updated_by=account-3, updated_at=not recorded",
+        "",
+    ]
+    # A create has no last-change record, and no line.
+    create_line = lines.index("op-create create Device name=edge-01")
+    assert not lines[create_line + 1].startswith("  last change:")
+
+
+def test_runs_plan_detail_of_an_older_plan_shows_no_last_change_lines(client: MagicMock) -> None:
+    """A plan made before `last_changes.jsonl` existed is reviewed without last-change data."""
+    client.get_plan.return_value = _plan_with_an_update(None)
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert "last change:" not in result.output
+
+
+def test_runs_plan_detail_of_a_plan_with_a_bad_last_change_record_shows_the_warning(client: MagicMock) -> None:
+    """A bad record shows one warning and the operations, never a "not recorded" line."""
+    note = "last_changes.jsonl line 4 repeats field 'name' of operation 'op-12'; last-change details are not shown"
+    plan = _plan_with_an_update(None)
+    client.get_plan.return_value = plan.model_copy(update={"verification_notes": (note,)})
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert f"verification_note: {note}" in result.output.splitlines()
+    assert "last change:" not in result.output
+    assert all(operation.operation_id in result.output for operation in plan.operations)
+
+
+def test_runs_plan_summary_shows_no_last_change_lines(client: MagicMock) -> None:
+    """Without `--detail` the review stays a summary, however many fields a plan changes."""
+    client.get_plan.return_value = _plan_with_an_update((_last_change("site", "relationship", None, None),))
+
+    result = _invoke(client, "runs", "plan", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert "last change:" not in result.output
+
+
+def test_runs_plan_escapes_the_recorded_account_label(client: MagicMock) -> None:
+    """A display label comes from Infrahub, so it is escaped before a reviewer reads it."""
+    client.get_plan.return_value = _plan_with_an_update(
+        (
+            _last_change(
+                "description",
+                "attribute",
+                {"id": "account-2", "display_label": "Jane\x1b[2KDoe"},
+                "2026-10-21T09:14:03Z",
+            ),
+        )
+    )
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    _assert_no_terminal_controls(result.output)
+    assert "updated_by=Jane\\x1b[2KDoe" in result.output
 
 
 def _public_run(run_id: str, *, config_id: str | None = "edge-sync", outcome: str | None = None) -> PublicRunResource:

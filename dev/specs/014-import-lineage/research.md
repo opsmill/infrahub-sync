@@ -1,0 +1,800 @@
+# Research: Lineage of the data an import writes
+
+**Feature**: [spec.md](./spec.md) | **Plan**: [plan.md](./plan.md) | **Date**: 2026-10-22
+
+Path prefixes used below:
+
+- `SDK/` is infrahub-sdk 1.23.2 as installed by `uv.lock:1149-1150`
+  (`.venv/lib/python3.11/site-packages/infrahub_sdk/`).
+- `../infrahub/backend/infrahub/` is shortened to `BE/` (checkout at `398ad1c66d`, 2026-10-20).
+- `../infrahub/python_sdk/` is the SDK checkout (281 commits after the `v1.23.2` tag); it is used
+  only for the changelog and for changes that are not released.
+- Paths without a prefix are in this repository, on `feature/v3-develop`.
+
+## R-1. Oldest Infrahub version a V3 import supports, and the plan before 1.7.0
+
+**Findings**
+
+- No code checks the Infrahub server version. Every version check in `infrahub_sync/` concerns the
+  Sync HTTP API (`infrahub_sync/service/compatibility.py:14`, `infrahub_sync/client/client.py:525-550`).
+  The destination is checked only through the schema fingerprint
+  (`infrahub_sync/runtime_schema/projection.py:1`).
+- The SDK range is `infrahub-sdk>=1.17,<2` (`pyproject.toml:18`, `:88`); the lock file pins
+  1.23.2 (`uv.lock:1149-1150`).
+- One Infrahub version is pinned for development and tests: 1.10.6
+  (`development/docker-compose.infrahub.yml:254`, `development/preview.env`,
+  `tests/compose/conftest.py:393`). CI has no matrix over Infrahub versions
+  (`.github/workflows/workflow-tests.yml:49` varies only Python).
+- The documentation says: "The measured destination is Infrahub 1.10.6 … Other Infrahub …
+  versions are not measured, and they are not excluded"
+  (`docs/docs/operations/supported-platforms-and-limits.mdx:28-37`).
+- Infrahub records attribute and relationship `updated_by` and `updated_at` from 1.7.0 (spec,
+  Assumptions). A query that selects these fields on an older server asks for fields its GraphQL
+  schema does not have, so the server refuses the whole query. This is inferred from GraphQL
+  validation rules; it was not run against an older server.
+- The SDK reads the server version with `InfrahubInfo { version }` (`SDK/client.py:526-529`).
+
+**Decision**
+
+- The oldest supported Infrahub version stays not known: the repository neither enforces nor
+  documents one, and this feature does not set one.
+- This feature is measured on Infrahub 1.11.9 (product owner, 2026-10-23). The first live checks
+  ran on 1.10.6, and their results stay recorded below, labelled with that version. The
+  repository-wide pin of 1.10.6 listed in the findings above predates this feature, and this
+  feature does not change it.
+- At the start of a plan, the Infrahub adapter reads the server version once with
+  `client.get_version()`. On 1.7.0 or later it requests metadata (R-2). Before 1.7.0, or when the
+  version cannot be parsed, it does not request metadata, and every proposed change shows
+  "not recorded" for `updated_by` and `updated_at` (spec FR-007, Clarifications Q1). The plan
+  continues in both cases.
+
+**Alternatives considered**
+
+- Request metadata always and retry without it after a `GraphQLError`: rejected, because it doubles
+  the first read and hides other query errors behind the retry.
+- Refuse Infrahub before 1.7.0: rejected by the product owner (Clarifications Q1 = A).
+
+## R-2. Reading `updated_by` and `updated_at` without a second read
+
+**Findings**
+
+- The destination side of a plan reads each kind with
+  `client.all(kind=…, include=identifier_and_attribute_fields(model), populate_store=True)`
+  (`infrahub_sync/adapters/infrahub.py:815-817`), with the SDK default page size of 50 (the
+  adapter's SDK configuration at `:699-711` does not change it). The incremental read uses
+  `client.filters(…, prefetch_relationships=True, node_metadata__updated_at__after=…)` (`:771-776`).
+  Cardinality-many relationships are read with `rel_manager.fetch()` (about `:1074`).
+- `include_metadata` is a parameter of `client.all`, `client.filters` and `client.get`
+  (`SDK/client.py:1124`, `:1240`, `:738`); it arrived in SDK 1.18.0
+  (`../infrahub/python_sdk/CHANGELOG.md:202-207`).
+- With `include_metadata=True`, the same query also selects:
+  - on each attribute, `updated_at` and `updated_by { id display_label __typename }`
+    (`SDK/node/attribute.py:212-215`, `SDK/node/constants.py:8`);
+  - on each relationship edge, `relationship_metadata { updated_at updated_by {…} }`
+    (`SDK/node/related_node.py:309-313`, `SDK/node/relationship.py:153-155`);
+  - on each node, `node_metadata` (`SDK/node/node.py:698-699`).
+- One boolean turns all three on; there is no attribute-only option (`SDK/node/node.py:1489`,
+  `:1523`).
+- The query is built once and run once for each page (`SDK/client.py:1284-1302`), so the number
+  of requests does not change.
+- Values are read on the SDK node: `node.<attribute>.updated_at` and `.updated_by`
+  (`SDK/node/attribute.py:121-135`), and `related_node.get_relationship_metadata()`
+  (`SDK/node/related_node.py:243-253`).
+- Server cost, read from the code and not measured:
+  - on the default and global branches, two extra properties are read from each attribute vertex
+    in the same Cypher query (`BE/core/query/node.py:889-892`);
+  - on other branches, one subquery for each attribute finds the latest edge
+    (`BE/core/query/node.py:908-925`);
+  - account details are resolved by a DataLoader: one `get_many` for the distinct accounts of a
+    batch (`BE/graphql/loaders/account.py:100-121`), and none for the system user (`:126-127`).
+
+**Decision**
+
+- Pass `include_metadata=True` (only when R-1 allows it) to the existing read at
+  `infrahub_sync/adapters/infrahub.py:815-817`. That read already carries the metadata of
+  cardinality-many edges (see "Read that carries the metadata of cardinality-many edges" below);
+  `rel_manager.fetch()` cannot carry it and is not changed.
+- Binding condition (product owner, 2026-10-22): the plan must not show "not recorded" for a value
+  Infrahub holds (FR-007). Task T001 finds a read that carries metadata for cardinality-many edges
+  within the existing requests. If no such read exists, work on User Story 3 stops and an
+  amendment of FR-007 goes to the product owner; the plan does not fall back to "not recorded".
+  Result: such a read exists, so User Story 3 proceeds.
+- Keep the metadata out of the DiffSync models. The adapter records it in a separate map keyed by
+  destination node id and field name. Putting it into model attributes would make every value
+  that a person changed look different on every plan, and would break idempotency (constitution
+  principle II).
+- Cost on a 10,000-node plan: the number of requests stays 10,000 / 50 = 200 pages for each kind
+  read, the same as today. Each response grows by the metadata fields, and the server does more
+  work for each attribute. The size of the growth is not known. Tasks measure it with the
+  existing benchmark runner (`docs/docs/development/guides/netbox-benchmark-runner.md`) on
+  Infrahub 1.11.9 (the first measurements below ran on 1.10.6), on the default branch and on another branch, and record the destination
+  read time with and without metadata in the plan's notes. The sources set no threshold, so the
+  result is information only and does not block the merge.
+
+**Read that carries the metadata of cardinality-many edges (task T001, 2026-10-22)**
+
+Result: found. The destination read of a plan,
+`client.all(kind=…, include=identifier_and_attribute_fields(model), populate_store=True)`
+(`infrahub_sync/adapters/infrahub.py:815-817`), returns `relationship_metadata` for every edge of
+each mapped cardinality-many relationship when `include_metadata=True` is added to it. No request
+is added.
+
+- The `include` list names every mapped relationship that is not a component:
+  `identifier_and_attribute_fields` returns the model's identifiers and `_attributes`
+  (`infrahub_sync/adapters/infrahub.py:93-100`), and the generated `_attributes` lists the mapped
+  relationships whose kind is not `Component` (`infrahub_sync/generator/__init__.py:101-119`,
+  template `infrahub_sync/generator/templates/diffsync_models.j2:33`).
+- A cardinality-many relationship named in `include` is put into the node query
+  (`SDK/node/node.py:1506-1511`), and its query part is built with the same `include_metadata`
+  flag (`SDK/node/node.py:1523`, `:807-810`). With the flag on, each edge selects
+  `relationship_metadata { updated_at updated_by { id display_label __typename } }` and
+  `node_metadata` (`SDK/node/relationship.py:153-155`).
+- The response edges become the relationship manager's peers, and the manager is marked as
+  initialized (`SDK/node/relationship.py:201-222`). Each peer reads `relationship_metadata` from
+  its edge (`SDK/node/related_node.py:122-124`) and returns it from `get_relationship_metadata()`
+  (`SDK/node/related_node.py:243-253`).
+- Because the manager is initialized, the converter does not call `rel_manager.fetch()`
+  (`infrahub_sync/adapters/infrahub.py:1070-1074`). That call is therefore not part of this read.
+- Checked by building the query and parsing a response with SDK 1.23.2, without a server: a
+  `TestDevice` schema with a cardinality-many `tags` relationship, `generate_query_data(include=
+  ["name", "tags"], include_metadata=True)`. The `tags.edges` part of the query held the keys
+  `node`, `node_metadata` and `relationship_metadata`. A response shaped like that query, parsed
+  into `InfrahubNodeSync`, gave `tags.initialized == True` and returned the edge's `updated_at` and
+  `updated_by.id` from `get_relationship_metadata()`. This check does not prove what Infrahub
+  returns; the opt-in integration test for User Story 3 checks that, on 1.10.6 and on 1.11.9.
+
+Reads that do not carry the metadata, and why they do not matter for the plan:
+
+- `RelationshipManager.fetch()` takes no argument. When the manager is not initialized, it calls
+  `client.get(…, include=[relationship])` without `include_metadata`, then one `client.filters`
+  for each peer kind (`SDK/node/relationship.py:233-277`). It is reached only for a relationship
+  that the read did not include: a mapped relationship of kind `Component`, which is not a
+  DiffSync attribute and so never appears in a proposed change.
+- The incremental read `client.filters(…, prefetch_relationships=True, …)`
+  (`infrahub_sync/adapters/infrahub.py:771-776`) names no `include`, so cardinality-many
+  relationships are left out of its query (`SDK/node/node.py:1506-1511`) and are read later through
+  `fetch()`. This read is used only by incremental loading (`infrahub_sync/cache/incremental.py:219`,
+  called from `infrahub_sync/potenda/__init__.py:482`). Incremental loading can apply to either
+  side (`:505`, `:509`), but a plan made through the shared execution surface always loads in full:
+  `full_extract` defaults to `True` (`infrahub_sync/execution.py:1132`, set at `:1236`), and the
+  Sync service passes `True` (`infrahub_sync/service/flow.py:295`). So the destination read of a
+  plan is the `client.all` read above. A direct Python caller that passes `full_extract=False`
+  would load unchanged destination nodes from the previous snapshot, which holds no metadata, and
+  changed nodes through this read. Decided below ("Incremental loading when metadata is read").
+
+**Incremental loading when metadata is read (task T034-T036, 2026-10-23)**
+
+Decision: when a plan reads metadata, the destination is loaded in full. While `metadata_read` is
+true, `InfrahubAdapter.cursor_tier_for` returns `CursorTier.NONE` for every kind, so no cursor is
+captured (`infrahub_sync/cache/cursors.py`, `capture_safe_cursor`) and the engine loads each kind
+through `model_loader`, the `client.all` read that carries the metadata
+(`infrahub_sync/potenda/__init__.py`, the "no safe cursor or snapshot" branch of `load_one_side`).
+
+- Rejected: pass the same `include` and `include_metadata=True` to the incremental
+  `client.filters` read. That read returns only the nodes changed since the cursor; the unchanged
+  nodes come from the previous run's snapshot, which holds no `updated_by` or `updated_at`. An
+  update to an unchanged node would then show "not recorded" for a value Infrahub holds, which
+  the product owner's rule forbids (FR-007).
+- The incremental read still passes `include_metadata=self.metadata_read` and records what it
+  returns, so it stays consistent if it is ever reached with metadata on; with the decision above
+  it is not reached while `metadata_read` is true.
+- Cost: a direct Python caller that passes `full_extract=False` gets a full destination read on
+  Infrahub 1.7.0 or later. A plan made through the shared execution surface or the Sync service
+  already loads in full, so it does not change.
+- Before 1.7.0, or with a version that cannot be read or parsed, `metadata_read` is false and
+  incremental loading works as before.
+
+**Cardinality-one relationships (task T036, 2026-10-23)**
+
+A cardinality-one relationship's metadata comes back in the same `client.all` read. The SDK
+always selects cardinality-one relationships (`SDK/node/node.py:1506-1511`), and builds their
+query part with the same `include_metadata` flag (`SDK/node/node.py:794-797`), which adds
+`relationship_metadata` to the edge (`SDK/node/related_node.py:309-313`). The edge's
+`get_relationship_metadata()` then returns it. Checked by parsing a response with SDK 1.23.2,
+without a server (`tests/adapters/test_infrahub_metadata_read.py`); what Infrahub returns is
+checked by the opt-in integration test of User Story 3 (T043), on 1.10.6 and on 1.11.9.
+
+**The last change of a cardinality-many relationship (task T036, 2026-10-23)**
+
+Infrahub records `updated_by` and `updated_at` on each edge, not on the relationship. The adapter
+records, for the relationship, the edge with the latest `updated_at`. An edge a person removed
+leaves no edge to read, so a removal is not part of that value. The sources do not say whether
+Infrahub records a removal anywhere this read returns.
+
+**What Infrahub 1.10.6 returns, checked live (task T043, 2026-10-23)**
+
+Checked against Infrahub 1.10.6 with SDK 1.23.2, on a branch, by the opt-in test
+`test_the_plan_shows_who_last_changed_each_value_it_updates` in
+`tests/integration/test_infrahub_lineage_integration.py`:
+
+- The plan's destination read with `include_metadata=True` returns `updated_by` and `updated_at`
+  for an attribute, a cardinality-one edge and each edge of a cardinality-many relationship. The
+  values equal what an admin reads back with its own query.
+- The read works with the import account of R-7, which holds no permission on `CoreAccount`.
+  `updated_by` still carries the other account's id and display label.
+- An attribute that was never given a value (an optional attribute left empty at create) still
+  holds `updated_by` and `updated_at`: the account and time of the node's create. So "not
+  recorded" never shows for an attribute of a node created on 1.10.6.
+- A relationship with no edge holds nothing: a cardinality-one relationship returns
+  `relationship_metadata: null`, and an empty cardinality-many relationship returns no edge. The
+  plan records `null` for both values, and review shows "not recorded".
+
+**What Infrahub 1.11.9 returns, checked live (2026-10-23)**
+
+Checked against Infrahub 1.11.9 (`registry.opsmill.io/opsmill/infrahub:1.11.9`, digest
+`sha256:bc9a36f0d02a4bcf2d67c8b24f36cc4010e2960de79a086aaa485cd1ab88265f`) with SDK 1.23.2, in a
+local Compose project with anonymous access off:
+
+- The same opt-in test passed at 2026-10-23T18:21:26Z, with the 15 other test ids of the file.
+- A direct read at 2026-10-23T18:28:45Z, on `main` and on a branch, of a `TestLinDevice` created
+  with its optional `serial` left empty and no `tags` edge: `serial` returned `value: null` with
+  `updated_by` set to the creating account and `updated_at` set; `tags` returned no edge.
+- Difference from 1.10.6: none. Every result in the list above holds on 1.11.9, so "not
+  recorded" shows only for a relationship with no edge.
+
+Cost noted for the measurement task (T004): with `include`, each included relationship also
+selects the peer's attributes (`SDK/node/node.py:1514-1521`), and `include_metadata=True` adds
+attribute and node metadata to those peer fields too. This makes each response larger, but adds
+no request.
+
+**Baseline destination read time without metadata (task T004, 2026-10-22, partial)**
+
+Measured on Infrahub 1.10.6 (image digest from `development/docker-compose.infrahub.yml`), in a
+separate local Compose project, on macOS arm64 with 18 CPUs under Docker Desktop:
+
+| Branch | Nodes read | First read (s) | Next three reads (s) | Median of the three (s) |
+|--------|------------|----------------|----------------------|-------------------------|
+| `main` (default) | 10,014 | 26.33 | 21.16, 21.86, 21.95 | 21.86 |
+| `lineage-bench` (other branch) | 10,014 | 26.21 | 21.43, 21.10, 20.60 | 21.10 |
+
+- The read is the plan's destination read shape:
+  `client.all(kind="TestLinDevice", include=["name", "serial", "tags"], populate_store=True)` with
+  the SDK page size of 50 (201 pages), SDK 1.23.2, no `include_metadata`, a fresh node store for
+  each read.
+- Data: a throwaway kind `TestLinDevice` with two text attributes (`name`, `serial`) and a
+  cardinality-many `tags` relationship to `TestLinTag`; 10,000 nodes with two tags each out of 20,
+  plus 14 nodes left by the permission probe of T005. All nodes were created on `main`; the other
+  branch was created after them and holds no change of its own.
+- Not measured, and why:
+  - The NetBox benchmark runner (`tasks/bench.py`) was not used. It pins Infrahub 1.11.3
+    (`tasks/bench.py:63`), not 1.10.6; it needs a seeded and dumped NetBox tier, and no dump exists
+    in this checkout; it reads and writes only the default branch; and it reports the whole sync
+    time (`wall_seconds`, `plan_seconds`), not the destination read alone. It also uses fixed
+    shared Compose projects and a host lock, which another run on this machine was using.
+  - The NetBox schema library kinds were not read, so the time for real mapped kinds with more
+    attributes and relationships is not known.
+- T056 repeats the same read with `include_metadata=True` on the same data shape and records both
+  times (below).
+
+**Destination read time with and without metadata (task T056, 2026-10-22)**
+
+Measured on a new Infrahub 1.10.6 in a separate local Compose project, on the same host (macOS
+arm64, 18 CPUs, Docker Desktop), from 23:39 to 23:58 UTC. The method is the method of T004: the
+same read shape, kinds, page size, SDK and fresh node store for each read, with
+`include_metadata=True` added for the "with metadata" rows. The data was seeded again with the T004
+shape: 10,014 `TestLinDevice` nodes, each with two tags out of 20, all created on `main`; the other
+branch was created after them and holds no change of its own.
+
+Each row is one block of four reads: the first read, then three more reads and their median. The
+blocks ran in the order of the table, so that a read without metadata and a read with metadata
+alternate twice on each branch.
+
+| Branch | Metadata | First read (s) | Next three reads (s) | Median of the three (s) |
+|--------|----------|----------------|----------------------|-------------------------|
+| `main` (default) | without | 27.46 | 22.08, 22.65, 22.56 | 22.56 |
+| `main` (default) | with | 31.79 | 31.17, 32.12, 31.60 | 31.60 |
+| `main` (default) | without | 22.77 | 22.33, 23.59, 22.43 | 22.43 |
+| `main` (default) | with | 31.90 | 32.13, 34.12, 33.35 | 33.35 |
+| `lineage-bench` (other branch) | without | 29.96 | 24.62, 24.31, 23.64 | 24.31 |
+| `lineage-bench` (other branch) | with | 58.57 | 57.55, 59.83, 61.73 | 59.83 |
+| `lineage-bench` (other branch) | without | 26.18 | 24.91, 26.01, 24.97 | 24.97 |
+| `lineage-bench` (other branch) | with | 59.78 | 61.06, 62.18, 62.58 | 62.18 |
+
+- On the default branch, the read with metadata took about 1.4 times as long as the read without:
+  a median of 31.60 s and 33.35 s against 22.56 s and 22.43 s, about 9 to 11 s more for 10,014
+  nodes.
+- On the other branch, it took about 2.5 times as long: 59.83 s and 62.18 s against 24.31 s and
+  24.97 s, about 35 to 37 s more. This matches the server cost read from the code above: on a
+  branch other than the default branch, Infrahub runs one subquery for each attribute to find the
+  latest edge.
+- The times without metadata agree with the T004 baseline within 1 to 4 s (22.4 to 25.0 s here,
+  21.1 to 21.9 s in T004).
+- Every read with metadata returned `updated_by` on the `serial` attribute of the first node; no
+  read without metadata did.
+- Not measured: the NetBox benchmark runner, and real mapped kinds with more attributes and
+  relationships, for the reasons given under the baseline. A plan reads each mapped kind once, so
+  the added time grows with the number of nodes and attributes the plan reads, and is larger on
+  a branch other than the default branch.
+- The result is information only and does not block the merge (plan.md, "Items left open").
+- The read times above were measured on 1.10.6. The measurement on 1.11.9 follows.
+
+**Destination read time with and without metadata on Infrahub 1.11.9 (task T004 rerun, 2026-11-02)**
+
+Measured on Infrahub 1.11.9 (`registry.opsmill.io/opsmill/infrahub:1.11.9`, server version read
+back as 1.11.9), in the Compose project `lineage014-nb2-infrahub` created for this run, with
+anonymous access off, on the same kind of host as above (macOS arm64, 18 CPUs, Docker Desktop),
+SDK 1.23.2, from 15:46 to 16:11 UTC. The method is the method of T004 and T056: each read uses a
+new client, so the node store is fresh; each row is a first read, then three reads and their
+median; the blocks alternate without and with metadata twice on each branch. The reads used the
+admin token.
+
+Two data shapes were read:
+
+- NetBox kinds: the 21 kinds the `examples/netbox_to_infrahub` package maps, 1,688 nodes, read
+  as the adapter's `model_loader` reads them: one `client.all(kind=…, include=<identifiers and
+  mapped fields>, populate_store=True)` for each kind, with `include_metadata=True` added for the
+  "with metadata" rows. The data was the pinned NetBox `demo` dataset, imported by T057 into a
+  branch and merged into `main`. The other branch, `lineage-bench`, was created after the merge
+  and holds no change of its own.
+- The T004 shape: 10,014 `TestLinDevice` nodes, each with a `serial` and two `tags` out of 20,
+  read with `include=["name", "serial", "tags"]`, created on `main`. The other branch,
+  `lineage-bench-syn`, was created after them and holds no change of its own.
+
+| Data | Branch | Metadata | Nodes read | First read (s) | Next three reads (s) | Median of the three (s) |
+|------|--------|----------|------------|----------------|----------------------|-------------------------|
+| NetBox kinds | `main` (default) | without | 1,688 | 10.33 | 5.52, 5.42, 5.42 | 5.42 |
+| NetBox kinds | `main` (default) | with | 1,688 | 17.71 | 14.80, 15.15, 15.60 | 15.15 |
+| NetBox kinds | `main` (default) | without | 1,688 | 5.08 | 5.79, 5.21, 5.36 | 5.36 |
+| NetBox kinds | `main` (default) | with | 1,688 | 15.01 | 15.13, 14.86, 15.11 | 15.11 |
+| NetBox kinds | `lineage-bench` (other branch) | without | 1,688 | 6.63 | 5.55, 5.57, 5.15 | 5.55 |
+| NetBox kinds | `lineage-bench` (other branch) | with | 1,688 | 15.66 | 15.84, 15.29, 15.46 | 15.46 |
+| NetBox kinds | `lineage-bench` (other branch) | without | 1,688 | 5.91 | 5.51, 5.55, 5.57 | 5.55 |
+| NetBox kinds | `lineage-bench` (other branch) | with | 1,688 | 15.49 | 15.31, 15.44, 15.32 | 15.32 |
+| T004 shape | `main` (default) | without | 10,014 | 21.87 | 21.46, 21.11, 21.29 | 21.29 |
+| T004 shape | `main` (default) | with | 10,014 | 29.10 | 33.19, 29.08, 27.99 | 29.08 |
+| T004 shape | `main` (default) | without | 10,014 | 21.68 | 21.04, 20.79, 21.14 | 21.04 |
+| T004 shape | `main` (default) | with | 10,014 | 33.10 | 30.13, 30.91, 28.67 | 30.13 |
+| T004 shape | `lineage-bench-syn` (other branch) | without | 10,014 | 20.72 | 20.32, 20.79, 20.07 | 20.32 |
+| T004 shape | `lineage-bench-syn` (other branch) | with | 10,014 | 54.85 | 53.34, 53.48, 53.60 | 53.48 |
+| T004 shape | `lineage-bench-syn` (other branch) | without | 10,014 | 20.48 | 20.25, 19.93, 20.32 | 20.25 |
+| T004 shape | `lineage-bench-syn` (other branch) | with | 10,014 | 53.57 | 53.58, 53.41, 53.44 | 53.44 |
+
+- NetBox kinds: the read with metadata took about 2.8 times as long as the read without, on both
+  branches: medians of 15.11 to 15.46 s against 5.36 to 5.55 s, about 10 s more for 1,688 nodes.
+  These kinds select more attributes and relationships for each node than the T004 shape, so the
+  added time for each node is larger.
+- NetBox kinds: unlike the T004 shape, the other branch was not slower than `main`. The sources do
+  not say why. One difference is that this data was created on a branch and merged, while the
+  T004 shape was created on `main`.
+- T004 shape: on `main`, the read with metadata took about 1.4 times as long as the read without
+  (29.08 s and 30.13 s against 21.29 s and 21.04 s). On the other branch, it took about 2.6 times
+  as long (53.48 s and 53.44 s against 20.32 s and 20.25 s), about 33 s more for 10,014 nodes.
+- Against 1.10.6 (T004 and T056 above), the T004 shape gives close times on 1.11.9: without
+  metadata, 20.3 to 21.3 s against 21.1 to 25.0 s; with metadata on `main`, 29.1 to 30.1 s
+  against 31.6 to 33.4 s; with metadata on the other branch, 53.4 to 53.5 s against 59.8 to
+  62.2 s.
+- Every read with metadata returned `updated_by` on the first included field of the first node;
+  no read without metadata did.
+- Not measured, and why: the NetBox benchmark runner (`tasks/bench.py`) was not used.
+  - In this branch it pins Infrahub 1.11.3 (`tasks/bench.py:63`), has no option for the Infrahub
+    address, and has no option to turn the metadata read off. The 1.11.9 pin and the
+    `--infrahub-url` option exist only on branch `010-prefect-from-sync-image`, and were not
+    copied into this branch.
+  - The read was timed with the method of the 1.10.6 numbers above (T004 and T056), so the two
+    sets compare. The metadata read was turned on and off with the SDK's `include_metadata`
+    argument in the measuring script; no switch was added to the product. The plan reads metadata whenever
+    the server is Infrahub 1.7.0 or later (`metadata_read_supported`,
+    `infrahub_sync/adapters/infrahub.py:821`).
+  - It uses the fixed Compose projects `infrahub-sync-dev` and `infrahub-sync-benchmark` and a
+    lock for the whole host, while this run had to use its own project names.
+  - It reports the time of the whole sync, not the destination read alone, and it needs a seeded
+    and dumped NetBox tier, which this checkout does not have.
+  - The read above is the read the runner's sync would make for the same kinds, but its time
+    excludes the source read, the comparison and the writes.
+
+**Alternatives considered**
+
+- A second query for metadata, only for nodes with proposed changes: rejected, because it adds
+  requests and a second view of the data that may differ from the first.
+- `property=True`: rejected, because it returns `source`, `owner` and `is_protected` but not
+  `updated_by` (`SDK/node/attribute.py:204-210`).
+
+## R-3. Learning the token's own account without permission to read accounts
+
+**Findings**
+
+- The GraphQL query `AccountProfile` returns the caller's own account
+  (`BE/graphql/resolvers/resolver.py:32-50`, registered at `BE/graphql/manager.py:575`).
+- It needs no permission on accounts:
+  - the query analyzer records no node kind for it (`BE/graphql/analyzer.py:720-734`), so no
+    `object:…:view` permission is requested
+    (`BE/graphql/auth/query_permission_checker/object_permission_checker.py:39-50`);
+  - `AccountManagerPermissionChecker` lets an operation through when it is only `AccountProfile`
+    (`object_permission_checker.py:69`, `:104`).
+- The SDK helper is `client.get_user()` (`SDK/client.py:540-542`, query at `SDK/queries.py:46-83`).
+- The brief records that this was checked against a running Infrahub on 2026-10-20.
+- Selecting `updated_by { display_label }` should not need permission on accounts either, because
+  `updated_by` is not a schema relationship (`BE/graphql/analyzer.py:851-866`). This is read from
+  the code and not tested; tasks test it with an account that cannot read accounts (SC-002).
+
+**Decision**
+
+- At the start of a plan and at the start of an apply, the Infrahub adapter calls
+  `client.get_user()` once and uses the returned account id as the default source. The plan
+  records this import account in the manifest's `lineage.import_account`. Apply compares it with
+  its own import account and refuses before any write when they differ, naming both accounts
+  (FR-012). The current
+  lookup of a `CoreAccount` named after the source system
+  (`infrahub_sync/adapters/infrahub.py:716-721`) is removed (FR-005).
+- A named `{kind, name}` is looked up with one `client.get(kind=…, name__value=…)` for each named
+  node, before the source system is read. `NodeNotFoundError` stops the run with a cause that names
+  the setting, the kind and the name; there is no fallback (FR-004), replacing the warnings at
+  `:727-731` and `:738-742`. Apply repeats the lookup and stops before any write (FR-011).
+- The stop is logged with `structlog`, with the setting, kind and name as context and no secret
+  (constitution, "Logging").
+
+**Alternatives considered**
+
+- Keep the lookup by the source system's name: rejected by FR-005.
+- Ask the operator to name the import account in the package: rejected, because the token already
+  identifies it, and a second setting could name a different account from the one that writes.
+
+## R-4. Stored plan format and product store
+
+**Findings**
+
+- One proposed change is a `PlannedOperation` (`infrahub_sync/plan/models.py:105`). Its field
+  set is closed (`extra="forbid"`, `:108`). It holds the desired source-side values only
+  (`infrahub_sync/plan/derive.py:636`, `:653-657`); no current destination value is stored.
+- A plan is `plan/operations.jsonl` plus `plan/manifest.json` (`infrahub_sync/plan/writer.py:42-43`,
+  `:178`). `PlanManifest` allows extra fields (`infrahub_sync/plan/models.py:377-407`).
+- The checksum is the SHA-256 of the canonical manifest, without `plan_checksum`, `run_id` and
+  `created_at`, followed by the bytes of `operations.jsonl`
+  (`infrahub_sync/plan/checksum.py:59-67`, `models.py:51`).
+- Format rules (`dev/adr/0001-saved-plan-artifact-format.md:84-112`):
+  - an additive manifest field that the checksum covers, and that is absent on older plans, needs
+    no new format version;
+  - a new `PlannedOperation` field needs a new format version, and apply accepts only the current
+    version (`models.py:33-42`).
+- The service publishes a review document, `PlanResource` (`infrahub_sync/client/models.py:341`,
+  published by `infrahub_sync/service/flow.py:178-187`), and a checkpoint
+  (`infrahub_sync/product_store/bundle.py:64`).
+- The product store database keeps no plan content; plans are object-store artifacts that
+  `artifact_refs` points to (`infrahub_sync/product_store/store.py:48-114`).
+
+**Decision**
+
+- The stored plan needs new data, and the product store database does not.
+- Add a third plan file, `plan/last_changes.jsonl`, with one record for each proposed change to an
+  attribute or a relationship (see [data-model.md](./data-model.md)).
+- Add two additive manifest fields, both covered by the checksum and absent on older plans:
+  - `last_changes`: the file's path, SHA-256 digest and record count;
+  - `lineage`: the import account, the resolved source, the named owner (or none), and `protect`.
+- `PlannedOperation` and `PLAN_FORMAT_VERSION` do not change. Plans made before this feature can
+  still be reviewed; apply refuses them because they record no import account (FR-012, product
+  owner decision of 2026-10-22).
+- `PlanResource` gains two optional fields that carry the same records and the owner notice
+  (FR-009). This changes the Sync API response (governance gate "API and plan format" in the
+  spec); the field is optional, so older clients ignore it.
+- The client and service compatibility check needs no change for `lineage` and `last_changes`
+  (task T041, 2026-10-23):
+  - The check compares one declared API version: the service declares `API_VERSIONS =
+    ("v3-unstable",)` (`infrahub_sync/service/compatibility.py:9`), and the client refuses a
+    service that does not list `v3-unstable` (`infrahub_sync/client/client.py:525-531`). The check
+    does not look at response fields.
+  - An older client reads a newer review document, because the review models allow unknown fields
+    (`_ResourceModel`, `extra="allow"`, `infrahub_sync/client/models.py:49-50`).
+  - A newer client reads an older review document, because both fields default to `None`.
+  - Raising the API version would make every older client refuse a service whose responses it can
+    still read. `tests/service/test_compatibility.py` checks the declared version and that both
+    sides read each other's review document.
+- The plan checkpoint copies a fixed list of files, not the plan directory (task T003,
+  2026-10-22). `publish_plan_checkpoint` builds the bundle members from
+  `plan/manifest.json`, `plan/operations.jsonl` and the paths in the manifest's
+  `source_snapshot` (`infrahub_sync/service/checkpoints.py:82-87`, member names at `:47-48`), and
+  passes them to `write_bundle` (`:93`). `bundle.py:64` only names the artifact; the bundle format
+  stores whatever members it is given and checks them against its own bundle manifest
+  (`infrahub_sync/product_store/bundle.py:147-162`), so it needs no change. The path
+  `plan/last_changes.jsonl` matches the accepted member path pattern (`bundle.py:80`).
+  - File to change: `infrahub_sync/service/checkpoints.py`, adding `plan/last_changes.jsonl` to
+    the members in `publish_plan_checkpoint` (`:82-85`). Its docstring (`:76-80`) explains why the
+    list follows the manifest, so the new file is added when the manifest's `last_changes` field
+    names it.
+  - The comment on `MAX_BUNDLE_MEMBERS` says "the plan's two files"
+    (`infrahub_sync/product_store/bundle.py:55-56`) and must say three.
+  - Rehydration extracts every member of the bundle (`infrahub_sync/service/checkpoints.py:118-136`,
+    `extract_bundle` at `:135`), so the verify and apply stages receive the new file without a change there.
+
+**Alternatives considered**
+
+- Add a `last_changes` field to `PlannedOperation` (format 4): rejected, because the data is for
+  display only (D-2) and a new format version would add reader changes this feature does not need.
+- Keep the data only in `PlanResource`: rejected, because `runs plan` reads the stored plan and
+  would not show it.
+- Leave the sidecar outside the checksum: rejected, because a reviewer would then approve a
+  checksum that does not cover what they viewed.
+
+## R-5. Telling a missing permission from a refused token
+
+**Findings**
+
+- SDK 1.23.2 raises `AuthenticationError` for both HTTP 401 and 403 (`SDK/client.py:1439-1446`).
+  The exception holds only the message (`SDK/exceptions.py:178-181`), and the message of a 403
+  contains the server's text. It is raised `from` the `httpx.HTTPStatusError`
+  (`SDK/client.py:1446`), so `__cause__.response.status_code` still holds the status.
+- The server's texts are `"You do not have the following permission: {permission}"` and
+  `"You do not have one of the following permissions: …"` (`BE/permissions/manager.py:57-90`).
+  The error is `PermissionDeniedError` with `HTTP_CODE = 403` (`BE/exceptions.py:344-350`).
+- A denial inside a resolver comes back in the GraphQL `errors` list and the SDK raises
+  `GraphQLError` (`SDK/client.py:1453-1462`).
+- Today the run reports every `AuthenticationError` as "an authentication failure"
+  (`infrahub_sync/potenda/__init__.py:220-238`), and configuration validation reports 401 and 403
+  as `unauthorized` (`infrahub_sync/configuration/capabilities.py:258-264`).
+- A typed error with the HTTP status is in the SDK checkout but not released
+  (`../infrahub/python_sdk/changelog/+error-catalogue-envelope.changed.md`).
+
+**Decision**
+
+- Classify an `AuthenticationError` by the status of its `__cause__`: 403 is a missing permission,
+  401 is a refused token. A 403 quotes the permission text after "You do not have … permission(s):"
+  when present, and the whole server message otherwise. A `GraphQLError` whose message starts with
+  "You do not have" is also a missing permission. An `AuthenticationError` without an HTTP cause
+  is a refused token, which only a 401 path produces in 1.23.2. The classification lives in one
+  function with unit tests for each case (FR-008).
+- When the SDK releases the typed error, the function switches to it; this is a follow-up and not
+  part of this feature.
+
+**Alternatives considered**
+
+- Classify on the message text alone: rejected, because a 403 with another message would be
+  reported as a refused token, against SC-006.
+- Read the HTTP status through a custom SDK requester: rejected, because it replaces SDK
+  transport code when the exception chain already carries the status.
+
+## R-6. Writing source, owner and protection
+
+**Findings**
+
+- `generate_payload_create` puts the same `source`, `owner` and `is_protected` on every attribute
+  and every relationship edge, and leaves out `is_protected` when it is `None`
+  (`SDK/schema/__init__.py:222-255`).
+- Today every write passes `is_protected=True` (`infrahub_sync/adapters/infrahub.py:1336`), and
+  an update is written through the same path with `node.save(allow_upsert=True)` (`:1364`).
+- On the server, an attribute changes `is_protected`, `source` or `owner` only when the key is
+  present and differs (`BE/core/attribute.py:729-738`). A relationship property is written only
+  when it is not `None` (`BE/core/relationship/model.py:494-499`).
+- No V3 write path allocates from a resource pool: no `from_pool` is used in `infrahub_sync/`. The
+  server sets the pool as the source of an allocated edge (`BE/core/relationship/model.py:643`).
+- Reading the SDK suggests that a node fetched with `include_metadata=True` and then saved with
+  `do_full_update=True` could send `updated_at`, which the server's input types do not accept
+  (`SDK/node/attribute.py:180-199`, `SDK/node/constants.py:4-5`). The write path builds fresh
+  payloads and does not save fetched nodes, so it is not exposed; tasks add a test that keeps it so.
+
+**Decision**
+
+- `source`: the import account's id, or the named source's id, on every attribute and edge written.
+- `owner`: only on a create, and on relationship edges that an update adds (peers that the
+  destination node does not have yet). Never on attributes of an existing node (D-8, FR-002).
+- `is_protected`: `True` when `protect` is on; otherwise `None`, so the key is not sent (FR-006).
+- If a later feature allocates from a resource pool, that edge carries none of the three
+  (Clarifications Q2). A unit test asserts the rule on the payload builder so the exception holds
+  when allocation is added.
+
+**How an update tells which relationship edges it adds (task T002, 2026-10-22)**
+
+Findings:
+
+- Apply loads neither side and compares nothing: it reads the stored operations and runs them in
+  order (`infrahub_sync/potenda/__init__.py:743-745`, loop at `:885-902`). The only destination
+  reads before a write are:
+  - the schema, cached by the adapter;
+  - one `client.filters` for each peer identity that the peer resolver has not met yet
+    (`infrahub_sync/adapters/infrahub.py:420`, `:552-556`; results kept by `remember` at `:416`).
+  Neither read returns the peers that the destination node has now.
+- The stored operation cannot tell either. An update's payload and references come from the
+  source side of the comparison only (`infrahub_sync/plan/derive.py:636-681`). The comparison
+  stores every attribute of the source object, changed or not (`diffsync/helpers.py:223`), and the
+  destination's values (`dest_attrs`) are not written to the plan. So a cardinality-many reference
+  lists every desired peer, and a cardinality-one reference names the desired peer, whether or not
+  the destination already has them.
+- The write sends the whole peer list. `generate_payload_create` copies the same `source`, `owner`
+  and `is_protected` onto every edge (`SDK/schema/__init__.py:244-253`), and the update is an
+  upsert keyed by the recorded id (`infrahub_sync/adapters/infrahub.py:1335-1345`, `:1364`).
+- On the server, an edge to a peer the node does not have is created with the properties sent
+  (`BE/core/relationship/model.py:1574-1578`). An edge the node already has is updated for every
+  property whose sent value differs from the stored one (`:1580-1597`, comparison at `:435-454`),
+  and a property sent as `None` is skipped (`:493-508`). So sending an owner on an edge that exists
+  replaces its owner, and leaving the owner out keeps it. The server offers no option that sets an
+  owner on new edges only.
+- The SDK accepts properties on each peer separately: each item of a cardinality-many list is a
+  dictionary whose `owner` key is read for that edge alone (`SDK/node/related_node.py:96`,
+  `:111-119`).
+
+Decision:
+
+- When the package names an owner, apply reads the destination node's current peers before it
+  writes an update that carries relationship references. It makes one
+  `client.get(kind=operation.kind, id=operation.destination_id, include=[…], exclude=[…])` for the
+  operation, naming the cardinality-many relationships the update writes, the same request shape
+  that `RelationshipManager.fetch()` uses (`SDK/node/relationship.py:245-253`). Cardinality-one
+  relationships come back in the same read, because the SDK always selects them
+  (`SDK/node/node.py:1506-1511`).
+- An edge counts as added when its resolved peer id is not among the node's current peers for that
+  relationship (cardinality many), or differs from the current peer (cardinality one). Only those
+  edges carry `owner`. Every other edge and every attribute of the update is written without the
+  `owner` key, so the server keeps the owner it holds, including an empty one (D-8).
+- When no owner is named, apply makes no extra read; the update sends no owner at all.
+- Cost: one read for each update operation with relationship references, and only when an owner is
+  named. Creates need no read, because every edge of a new node is added.
+- Not covered: a person who adds the same edge between this read and the write. The edge then gets
+  the named owner. The sources say nothing about this case.
+
+Alternatives considered:
+
+- Record the added peers in the plan, from the comparison's destination values: rejected, because
+  a new field on `PlannedOperation` or `RelationshipReference` needs a new plan format version
+  (`infrahub_sync/plan/models.py:80`, `dev/adr/0001-saved-plan-artifact-format.md:84-112`), and
+  the destination can change between the plan and the apply.
+- Use the last-changes file to carry the added peers: rejected, because that file is display only
+  (D-2), and apply would then depend on data the reviewer views but does not approve as writes.
+- Send the owner on every edge of an update: rejected, because it replaces the owner of edges the
+  node already has (D-8, FR-002).
+
+## R-7. Smallest permission set of the import account
+
+**Findings**
+
+- The spec relies on "the documented permissions" of the import account (SC-002, FR-010), but no
+  source lists them yet.
+- The run calls `InfrahubInfo` (`SDK/client.py:526-529`) and `AccountProfile`
+  (`SDK/client.py:540-542`). The brief records that `AccountProfile` works without permission on
+  accounts; for `InfrahubInfo` this is not known.
+
+**Decision**
+
+- Task T005 finds the smallest permission set on Infrahub 1.10.6, then again on 1.11.9, for the default
+  branch and for another branch, by running plan and sync with an account that starts with no
+  permission and gains one permission at a time. It includes the `InfrahubInfo` and
+  `AccountProfile` queries and the read of each allowed named kind. The result is recorded here as
+  a table, T019 tests against it, and T051 documents it.
+
+**Smallest permission set (task T005, 2026-10-22)**
+
+Found on Infrahub 1.10.6 (local Compose project, anonymous access off). Each of two accounts, one
+for the default branch and one for the branch `lineage-probe`, started as a member of a group whose
+only role held no permission. A probe ran every destination call of a plan and an apply with the
+account's API token. After each run, the first refused call's message named the missing
+permission, and one permission was added to the role. When every call passed, each permission was
+removed in turn and the probe run again, to prove it was needed.
+
+| Permission | Default branch | Other branch | Needed for | How it was proven needed |
+|------------|----------------|--------------|------------|--------------------------|
+| No permission | Enough | Enough | `InfrahubInfo` (`client.get_version()`), `AccountProfile` (`client.get_user()`), the schema read (`client.schema.all`) | All three passed for an account with no permission |
+| Global `edit_default_branch` (decision `allow_all`) | Needed | Not needed | Every create and update | Without it, every write on `main` was refused with "You are not allowed to change data in the default branch"; every write on the other branch passed without it |
+| Object `view` on each destination kind the plan reads, including the peer kind of each included relationship | `allow_default` | `allow_other` | The plan read (`client.all(…, include=…)`, with or without `include_metadata=True`), the peer lookup (`client.filters`), and apply's read of a node's current peers (`client.get(…, include=[…])`) | Removing `view` on `TestLinDevice` refused its read; removing `view` on `TestLinTag` refused its own read and the read of `TestLinDevice`, whose `tags` peers are `TestLinTag` |
+| Object `create` on each kind written | `allow_default` | `allow_other` | Every create and every update | The adapter writes both through an upsert (`node.save(allow_upsert=True)`, `infrahub_sync/adapters/infrahub.py:1364`), and the server asks for `create` and `update` on an upsert; removing `create` refused both |
+| Object `update` on each kind written | `allow_default` | `allow_other` | Every create and every update | Removing `update` refused both, for the same reason |
+| Object `view` on `CoreAccount`, `CoreAccountGroup`, `CoreRepository` or `CoreReadOnlyRepository` | `allow_default` | `allow_other` | Only when the package names a node of that kind as `source` or `owner`: the lookup by name | Without it, the lookup of that kind was refused; with only it, the lookup of that kind passed and the lookups of the three other kinds stayed refused |
+
+Read with the name only. A lookup of a named node that selects only `name` and leaves out the
+kind's relationships (`client.get(kind=…, name__value=…, include=["name"], exclude=[…every
+relationship…])`) needs only `view` on that kind. With the SDK's default fields, the lookup also
+needs:
+
+- `CoreAccountGroup`: `view` on `CoreAccountRole` and `CoreGroup`;
+- `CoreRepository` and `CoreReadOnlyRepository`: `view` on `CoreCredential`,
+  `CorePasswordCredential` and `BuiltinTag`;
+- `CoreAccount`: nothing more.
+
+Not needed:
+
+- `delete`: a V3 apply records deletes and never runs them (ADR 0004). It was not probed.
+- `manage_accounts`, and `view` on `CoreAccount` for the import account itself: writes that set
+  `source` to the import account and `owner` to a `CoreAccountGroup` passed without them. An admin
+  read afterwards showed the import account as the attribute source, the group as the owner, and
+  `is_protected` false.
+- Anything for `protect`: a create with `is_protected=True` passed with the same set.
+- `view` on `CoreAccount` for metadata: the plan read with `include_metadata=True` passed without
+  it and returned `updated_by` as the import account and the edge metadata of `tags` (SC-002).
+
+Limits of the probe:
+
+- The probe issued the adapter's request shapes directly with SDK 1.23.2, against two throwaway
+  kinds (`TestLinDevice` with a cardinality-many `tags` to `TestLinTag`); it did not run the Sync
+  service end to end. A real package needs the same three object permissions for each of its
+  mapped destination kinds and for the peer kinds of their included relationships.
+- No `CoreRepository` or `CoreReadOnlyRepository` could be created: the server refused the
+  create with "Unable to clone the repository …", because the probe's Git location does not
+  exist. The repository lookups were proven on a
+  query that matched no node; the permission check runs before the query, so the result does not
+  change which permission is needed.
+- The source of written relationship edges was not read back; the attribute source and owner
+  were. Task T019 read it back on 1.10.6: each `tags` edge an apply created has the import
+  account as source, no owner and `is_protected` `null`. SDK 1.23.2 leaves the edge `source`
+  unset on a cardinality-many relationship read with `property=True`, so the test reads the
+  edge `properties` with a GraphQL query of its own.
+- Task T019 found that the import account's name cannot come from `client.get_user()`: its
+  query selects only `display_label`, which Infrahub 1.10.6 renders from the account's `label`,
+  and Infrahub fills `label` from the name in title case (the account `admin` is labelled
+  `Admin`). The adapter sends its own `AccountProfile` query, selecting `id` and `name`, which
+  also passed for an account with no permission on accounts.
+- An object permission with decision `allow_all` (value 6, the sum of `allow_default` 2 and
+  `allow_other` 4) should cover both branches; this was not tested.
+- The code before this feature looks up a `CoreAccount` named after the source system
+  (`infrahub_sync/adapters/infrahub.py:718`), which needs `view` on `CoreAccount`. The design
+  removes that lookup (FR-005), so the table above does not list it.
+
+**Smallest permission set on Infrahub 1.11.9 (2026-10-23)**
+
+The probe of T005 ran again, unchanged, on Infrahub 1.11.9
+(`registry.opsmill.io/opsmill/infrahub:1.11.9`, digest
+`sha256:bc9a36f0d02a4bcf2d67c8b24f36cc4010e2960de79a086aaa485cd1ab88265f`), in a new local Compose
+project with anonymous access off, from 18:27:14 to 18:28:06 UTC. The same two accounts, one for
+`main` and one for the branch `lineage-probe`, started with no permission. One permission was added
+at a time, then each was removed in turn to prove it was needed. SDK 1.23.2.
+
+- Every row of the table above holds on 1.11.9, for the default branch and for the other branch.
+- The probe added the same permissions, in the same order: seven on `main` (`view`, `create` and
+  `update` with `allow_default` on `TestLinDevice` and on `TestLinTag`, and global
+  `edit_default_branch`), and six on `lineage-probe` (the same object permissions with
+  `allow_other`, and no global permission).
+- Removing each permission refused the same calls as on 1.10.6.
+- `InfrahubInfo`, `AccountProfile` and the schema read passed with no permission.
+- For each of `CoreAccount`, `CoreAccountGroup`, `CoreRepository` and `CoreReadOnlyRepository`,
+  `view` on that kind alone let the name-only lookup of that kind pass, and the lookups of the
+  three other kinds stayed refused. With the SDK's default fields, the lookups needed the same
+  extra kinds as on 1.10.6.
+- An admin read afterwards showed, on both branches: the import account as the attribute source,
+  the group as the owner, `is_protected` false on a value written without `protect` and true on a
+  value written with it. The import account's read with `include_metadata=True` returned
+  `updated_by` and the edge metadata of `tags`, without `view` on `CoreAccount`.
+- The schema read from `main` reports `branch: agnostic` for `CoreAccount`, `CoreAccountGroup`,
+  `CoreRepository` and `CoreReadOnlyRepository`, and for their `name` attribute.
+- The same limits apply: no `CoreRepository` or `CoreReadOnlyRepository` could be created, so the
+  repository lookups were proven on a query that matched no node.
+
+Differences between 1.10.6 and 1.11.9:
+
+- No difference in the permission set, in which call each permission is needed for, or in the
+  written source, owner and protection.
+- The only difference observed is the order in which a refusal message lists the permissions it
+  needs. On the other branch, the lookup of `CoreAccountGroup` with the SDK's default fields listed
+  `object:Core:AccountGroup:view:allow_other | object:Core:Group:view:allow_other |
+  object:Core:AccountRole:view:allow_other` on 1.10.6, and the same three permissions with the last
+  two in the other order on 1.11.9. The lookups of `CoreRepository` and `CoreReadOnlyRepository`
+  with the default fields listed the same four permissions in a different order. The set of
+  permissions in each message is the same.
+
+**Lookup by name after a rename on `main`, on Infrahub 1.11.9 (2026-10-23)**
+
+The reproduction of the branch-agnostic rename (plan.md, "Items left open"; spec.md, FR-011) ran
+again on 1.11.9 at 18:28:14 UTC, with the same script and SDK 1.23.2. The results are the same as
+on 1.10.6:
+
+- On a branch created before a rename of a `CoreAccountGroup` on `main`, a filter by the earlier
+  name still returns the group, which reports the new name. `client.get` by the earlier name
+  returns it too.
+- On `main` and on a branch created after the rename, the filter by the earlier name returns
+  nothing, and `client.get` raises `NodeNotFoundError`.
+- After a deletion on `main`, a filter by name and a filter by id return nothing on a branch
+  created before the deletion.
+
+This was checked at the lookup level: `client.get(kind=…, name__value=…)`, the call the import's
+lookup makes (`infrahub_sync/adapters/infrahub.py:1091`), with the SDK's default fields. A plan
+through the Sync service on a branch created before a rename was not run again on 1.11.9 at that
+time. It ran on 2026-11-02 with NetBox as the source (quickstart.md, "Scenario 2 with NetBox"):
+the plan completed, and an apply after a second rename wrote every create with the renamed group
+as owner.
+
+**Permission set for the NetBox mapping, through the Sync service, on Infrahub 1.11.9 (task T057, 2026-11-02)**
+
+The `examples/netbox_to_infrahub` package, with the schema snapshot `tests/data/nightly_schema`,
+ran through the Sync service on a branch other than the default branch. The import account
+started with the table above applied to the package's 21 kinds. Details are in quickstart.md,
+"Permission set of the import account for the NetBox mapping".
+
+- The table above is not enough for real kinds. The plan's destination read,
+  `client.all(kind=…, include=[…])`, also selects the SDK's default fields, which include every
+  cardinality-one relationship of the kind. The read was refused until the account had `view` on
+  the peer kind of each cardinality-one relationship of each mapped kind, mapped or not.
+- When that peer kind is a generic, the read also needs `view` on the kinds that use it:
+  `DcimGenericDevice` needed `DcimDevice`, `ComputePhysicalServer` and
+  `VirtualizationVirtualMachine`; `IpamGenericVLAN` needed `IpamVLAN`, `IpamCVLAN` and `IpamSVLAN`.
+- The throwaway kinds of T005 have no cardinality-one relationship, so the probe could not show
+  this.
+- The run passed with 82 permissions: `create` and `update` on the 21 written kinds, and `view`
+  on 40 kinds, including `CoreAccountGroup`. Eight of those `view` permissions were added before
+  a refusal named them, so each of those eight is not proven to be needed. No permission was
+  removed one at a time afterwards, so the set is not proven to be the smallest.
+- `docs/docs/adapters/infrahub.mdx`, "Permissions of the import account", now names the peer kinds
+  of cardinality-one relationships and the kinds that use a generic peer.

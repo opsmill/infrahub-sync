@@ -14,7 +14,7 @@ removal mutations. Do not weaken the assertions.
 
 Two further destination-state assertions ride along, because they are about what the write
 carries rather than about a second write: every peer keeps the `is_protected` write property
-the planned write sends, and an optional cardinality-one relationship (`lead`) that no
+the planned write sends when `protect` is on, and an optional cardinality-one relationship (`lead`) that no
 operation here maps is left exactly as it was found by applies that carry `members`.
 
 Everything this module writes — the throwaway schema, the tags, the team — goes to a branch it
@@ -42,6 +42,7 @@ import requests
 from infrahub_sdk.node.attribute import Attribute
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter
+from infrahub_sync.configuration.infrahub_lineage import InfrahubLineageSettings
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlanAction, PlannedOperation, RelationshipReference
 
@@ -214,8 +215,8 @@ def _destination_peer_protection(client: InfrahubClientSync, team_id: str, branc
 
     `property=True` is what makes the SDK request the relationship's write properties; without
     it every peer comes back with `is_protected` unset and the assertion would be vacuous. The
-    test adapter has no source or owner account, so protection is the write property that is
-    checkable live; `source` and `owner` are covered offline.
+    test adapter turns `protect` on and names no owner, so protection is the write property
+    checked live; `source` and `owner` are covered offline.
     """
     node = client.get(kind=TEAM_KIND, id=team_id, branch=branch, include=[MEMBERS_RELATIONSHIP], property=True)
     members: RelationshipManagerSync = getattr(node, MEMBERS_RELATIONSHIP)
@@ -277,8 +278,10 @@ def live_shrink_fixture() -> Iterator[tuple[InfrahubClientSync, InfrahubAdapter,
         adapter = InfrahubAdapter.__new__(InfrahubAdapter)
         adapter.client = client
         adapter.schema = client.schema.all(branch=branch)
-        adapter.source_node = None
-        adapter.owner_node = None
+        # Protection is sent only when the package turns `protect` on, so the protection
+        # assertion below needs it on; the source is the token's own account.
+        adapter.lineage_settings = InfrahubLineageSettings(protect=True)
+        adapter.resolve_lineage()
 
         team_name = f"shrink-team-{suffix}"
         yield client, adapter, tag_ids, team_name, branch

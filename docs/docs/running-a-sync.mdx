@@ -215,10 +215,33 @@ The `config:` and `config-version:` tags are set only on runs of a registered co
 
 ## Find why a run failed
 
-`plan`, `verify`, `sync`, and `apply` print the final phase and outcome of a failed run, such as
-`phase: plan-failed`. When an `apply` command fails and the run recorded the class of the
-apply error, it also prints `apply failed: <ErrorClass>`. The error message itself is
-recorded on the run's Prefect flow run:
+`plan`, `verify`, `sync`, and `apply` print the final phase and outcome of a failed run, such
+as `phase: plan-failed`. When the run recorded the class of the error, the command also prints
+`<stage> failed: <ErrorClass>`, for example `plan failed: ValueError`.
+
+For some failures the run also records a cause that you can act on, and the command prints it
+on a `cause:` line:
+
+- Infrahub refused a request with HTTP 403. The cause names the permission the import account
+  needs.
+- Infrahub refused the token with HTTP 401.
+- The `source` or `owner` setting names a node that does not exist in the destination.
+- The saved plan records no import account.
+- The apply runs with a different import account than the plan. The cause names both accounts.
+
+For the last three, a `hint:` line says what to do next. A `hint:` line also follows other
+refusals that infrahub-sync writes a next action for, such as a destination schema that changed
+since the plan was made, a saved plan whose format version is missing or not supported by this
+release, or an operation that the destination rejected during an apply. When a saved plan fails
+its checks before an apply, the hint names each failed check and what to do about it. These
+refusals print no `cause:` line, unless Infrahub also refused a request with HTTP 401 or 403.
+When the run was recorded by an earlier Sync API release that recorded no next action, the
+command prints the fixed hint for a changed schema or a saved plan's format version, as earlier
+releases did. `runs results RUN_ID`
+prints the same fields, as `cause`, `next_action` and `infrahub_error`, under `plan_failure`,
+`sync_failure` or `apply_failure`.
+
+For any other failure, the error message is recorded on the run's Prefect flow run:
 
 1. Run `runs show RUN_ID`. The output includes `flow_run_id`. You can also filter flow runs
    in the Prefect UI by the tag `run:RUN_ID`.
@@ -292,8 +315,9 @@ and the retry key. Check the run later with `runs show RUN_ID` or `runs plan RUN
 - A run that succeeds prints its latest record.
 - A run that fails, is cancelled, or ends in an unknown state exits with a nonzero status
   and prints the run ID and its final fields.
-- A failed apply also prints `apply failed: <ErrorClass>` when the service recorded the
-  error. For `PlanSchemaChangedError`, the destination schema changed after the plan was
+- A failed run also prints `<stage> failed: <ErrorClass>` when the service recorded the
+  error, and `cause:` and `hint:` lines when it recorded them; see
+  [Find why a run failed](#find-why-a-run-failed). For `PlanSchemaChangedError`, the destination schema changed after the plan was
   saved: create and review a new plan. A plan saved by a different release can need a new
   plan too, and the message says so.
 - When the wait times out, the CLI exits with a nonzero status and prints the run ID and its

@@ -660,7 +660,8 @@ def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
         ),
         pytest.param(sdk_exceptions.AuthenticationError("denied"), "unauthorized", id="sdk-authentication"),
         pytest.param(_http_status_error(401), "unauthorized", id="http-status-401"),
-        pytest.param(_http_status_error(403), "unauthorized", id="http-status-403"),
+        # A 403 is a missing permission, never a refused token.
+        pytest.param(_http_status_error(403), "forbidden", id="http-status-403"),
         pytest.param(_http_status_error(500), "unreachable", id="http-status-500"),
         pytest.param(httpx.ConnectError("refused"), "unreachable", id="httpx-transport"),
         pytest.param(
@@ -681,6 +682,25 @@ def test_every_live_accessor_classification_arm_lands_as_a_typed_finding(
     _mock_schema_read_failure(monkeypatch, exception)
 
     _read_failure_and_write_findings(reason)
+
+
+def test_a_schema_read_without_permission_quotes_the_missing_permission(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 403 on the schema read is recorded as a missing permission and names the permission."""
+    request = httpx.Request("GET", "http://localhost:8000/api/schema", headers={"X-INFRAHUB-KEY": "test-token"})
+    response = httpx.Response(
+        403,
+        json={"errors": [{"message": "You do not have the following permission: global:manage_schema:allow_all"}]},
+        request=request,
+    )
+    _mock_schema_read_failure(monkeypatch, httpx.HTTPStatusError("refused", request=request, response=response))
+
+    result = collect_destination_schema_findings(package(package_data()))
+
+    message = result.findings[0].message
+    assert "forbidden" in message
+    assert "`global:manage_schema:allow_all`" in message
+    assert "unauthorized" not in message
+    assert "test-token" not in message
 
 
 def test_a_missing_branch_lands_as_a_typed_finding_not_a_boundary_refusal(

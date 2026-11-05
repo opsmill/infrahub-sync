@@ -263,6 +263,54 @@ def test_rehydration_places_the_whole_plan_or_nothing(tmp_path: Path) -> None:
         assert (destination / "A" / "resource0.parquet").is_file()
 
 
+def test_the_plan_checkpoint_carries_the_last_change_file_the_manifest_names(tmp_path: Path) -> None:
+    """`plan/last_changes.jsonl` travels with the plan, so verify and review read the same file."""
+    from infrahub_sync.plan.models import LastChangeRecord, RecordedAccountRecord
+    from infrahub_sync.service.checkpoints import publish_plan_checkpoint
+
+    run_id = "run-plan-checkpoint-last-changes"
+    projection = _product_run(tmp_path / "product", run_id)
+    directory = tmp_path / "authored" / SYNC_NAME / run_id
+    side = directory / "A"
+    side.mkdir(parents=True)
+    _write_parquet(side / "resource0.parquet")
+    update = PlannedOperation.model_validate(
+        operation_record(action="update", identity={"name": "prod"}, destination_id="node-1")
+    )
+    manifest = write_plan_artifact(
+        run_dir=directory,
+        run_id=run_id,
+        config_version="configuration-v1",
+        source_snapshot=[SourceSnapshotRecord(**record) for record in source_snapshot_records(directory)],
+        deletes_computed=True,
+        operations=[update],
+        last_changes=[
+            LastChangeRecord(
+                operation_id=update.operation_id,
+                field="description",
+                field_type="attribute",
+                updated_by=RecordedAccountRecord(id="account-jane", display_label="Jane Doe"),
+                updated_at="2026-10-21T09:14:03Z",
+            )
+        ],
+        metadata_read=True,
+    )
+    publish_plan_checkpoint(projection, run_id, run_directory=directory, manifest=manifest)
+
+    stored = projection.lookup_internal_artifact(run_id, PLAN_CHECKPOINT_ARTIFACT_ID)
+    assert stored.value is not None
+    with zipfile.ZipFile(BytesIO(stored.value)) as archive:
+        names = sorted(name for name in archive.namelist() if name != "bundle-manifest.json")
+    assert names == ["A/resource0.parquet", "plan/last_changes.jsonl", "plan/manifest.json", "plan/operations.jsonl"]
+
+    with stage_scratch("verify") as scratch:
+        destination = scratch.run_directory(SYNC_NAME, run_id)
+        rehydrate_plan_checkpoint(projection, run_id, destination=destination)
+        assert (destination / "plan" / "last_changes.jsonl").read_bytes() == (
+            directory / "plan" / "last_changes.jsonl"
+        ).read_bytes()
+
+
 def test_rehydration_refuses_a_checkpoint_that_was_never_published(tmp_path: Path) -> None:
     """A missing checkpoint is a named refusal, not an empty directory."""
     run_id = "run-rehydrate-missing"

@@ -32,7 +32,13 @@ from infrahub_sdk.node import InfrahubNodeSync
 from infrahub_sdk.schema import NodeSchemaAPI
 from infrahub_sdk.schema.main import BranchSchema
 
-from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerResolver
+from infrahub_sync.adapters.infrahub import (
+    ImportAccount,
+    InfrahubAdapter,
+    PeerResolver,
+    ResolvedLineage,
+    ResolvedLineageNode,
+)
 from infrahub_sync.plan.errors import UnaccountedIdentityComponentError
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
@@ -176,12 +182,24 @@ class ConvergingClient(ConformanceClient):
         return response
 
 
+# The account an apply resolves as its import account and the source of every value it writes.
+IMPORT_ACCOUNT_ID = "import-account-1"
+
+
 def make_adapter(client: ConformanceClient) -> InfrahubAdapter:
-    """The adapter with only the state the planned-write surface reads, and no network setup."""
+    """The adapter with only the state the planned-write surface reads, and no network setup.
+
+    The lineage is resolved as an apply resolves it before its first write, with the import
+    account as source, no owner and no protection.
+    """
     adapter = InfrahubAdapter.__new__(InfrahubAdapter)
     adapter.client = client
-    adapter.source_node = None
-    adapter.owner_node = None
+    adapter.lineage = ResolvedLineage(
+        import_account=ImportAccount(id=IMPORT_ACCOUNT_ID, name="import-account"),
+        source=ResolvedLineageNode(kind="CoreAccount", name="import-account", id=IMPORT_ACCOUNT_ID),
+        owner=None,
+        protect=False,
+    )
     adapter.schema = dict(SCHEMAS)
     return adapter
 

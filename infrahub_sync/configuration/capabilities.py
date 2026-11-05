@@ -12,6 +12,7 @@ from types import MappingProxyType
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
+from .infrahub_lineage import validate_infrahub_lineage_settings
 from .models import _SETTING_NAME, ConfigurationPackage, ValidationFinding, is_renderable_setting_path
 
 AdapterRole = Literal["source", "destination"]
@@ -41,14 +42,23 @@ class DestinationSchemaReadError(Exception):
     "unauthorized", "unreachable", ...) and is validated here so the finding a
     failed read becomes can carry it verbatim. The message follows the module's
     own rule for refusal text: exception type names, never third-party content.
+
+    ``detail`` is set only for a refused token or a missing permission, to the cause
+    `classify_infrahub_error` describes: the permission Infrahub names, or its denial
+    message with control characters removed. It never holds the token or the request.
     """
 
-    def __init__(self, message: str, *, reason: str) -> None:
+    def __init__(self, message: str, *, reason: str, detail: str | None = None) -> None:
         if _SCHEMA_READ_REASON.fullmatch(reason) is None:
             msg = f"schema read failure reason {reason!r} is not a short lowercase word"
             raise ValueError(msg)
         super().__init__(message)
         self.reason = reason
+        self.detail = detail
+
+    def describe(self) -> str:
+        """Return the reason, followed by the classified cause when there is one."""
+        return self.reason if self.detail is None else f"{self.reason} ({self.detail})"
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +257,8 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
         Error as InfrahubSdkError,
     )
 
+    from infrahub_sync.infrahub_errors import classify_infrahub_error
+
     # pylint: enable=import-outside-toplevel
     url, sdk_config = _resolved_client_settings(package, branch)
     try:
@@ -255,14 +267,14 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
     except (httpx.TimeoutException, ServerNotResponsiveError) as exc:
         msg = f"destination schema read timed out: {type(exc).__name__}"
         raise DestinationSchemaReadError(msg, reason="timeout") from None
-    except AuthenticationError as exc:
-        msg = f"destination refused the schema read credentials: {type(exc).__name__}"
-        raise DestinationSchemaReadError(msg, reason="unauthorized") from None
-    except httpx.HTTPStatusError as exc:
-        unauthorized = exc.response.status_code in {401, 403}
-        reason = "unauthorized" if unauthorized else "unreachable"
+    except (AuthenticationError, httpx.HTTPStatusError) as exc:
+        # A 403 is a missing permission and only a 401 is a refused token.
+        classification = classify_infrahub_error(exc)
         msg = f"destination refused the schema read: {type(exc).__name__}"
-        raise DestinationSchemaReadError(msg, reason=reason) from None
+        if classification is None:
+            raise DestinationSchemaReadError(msg, reason="unreachable") from None
+        reason = "unauthorized" if classification.problem == "refused_token" else "forbidden"
+        raise DestinationSchemaReadError(msg, reason=reason, detail=classification.describe()) from None
     except (httpx.TransportError, ServerNotReachableError) as exc:
         msg = f"destination server could not be reached: {type(exc).__name__}"
         raise DestinationSchemaReadError(msg, reason="unreachable") from None
@@ -522,12 +534,13 @@ BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
         "infrahub": AdapterConfigurationCapabilities(
             adapter_name="infrahub",
             roles=_BOTH,
-            allowed_settings=frozenset({"branch", "owner", "source", "token", "url", "verify_ssl"}),
+            allowed_settings=frozenset({"branch", "owner", "protect", "source", "token", "url", "verify_ssl"}),
             credential_setting_paths=("token",),
             supported_destination_write_operations=_CREATE_UPDATE,
             destination_schema_validation=True,
             destination_schema_accessor=_read_infrahub_destination_schema,
             incremental_extraction=True,
+            validator=validate_infrahub_lineage_settings,
         ),
         "ipfabricsync": AdapterConfigurationCapabilities(
             adapter_name="ipfabricsync",

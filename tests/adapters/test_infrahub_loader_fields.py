@@ -279,7 +279,15 @@ class StrictClient:
             for kind, rows_for_kind in rows.items()
         }
 
-    def all(self, *, kind: str, include: list[str] | None = None, populate_store: bool = True) -> list[StrictNode]:
+    def all(
+        self,
+        *,
+        kind: str,
+        include: list[str] | None = None,
+        populate_store: bool = True,
+        include_metadata: bool = False,
+    ) -> list[StrictNode]:
+        assert include_metadata is False, "no adapter here resolves lineage, so no read asks for metadata"
         self.all_calls.append({"kind": kind, "include": include, "populate_store": populate_store})
         requested = set(include or [])
         nodes = []
@@ -319,8 +327,6 @@ class _Harness(InfrahubAdapter):
         self.config = config
         self.client = client
         self.schema = client.schemas  # ty: ignore[invalid-assignment]
-        self.source_node = None
-        self.owner_node = None
         self.continue_on_error = False
         # Normally set by `InfrahubAdapter.__init__`, which this harness bypasses.
         self._peer_unique_ids = {}

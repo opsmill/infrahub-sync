@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from infrahub_sync.client.models import SCHEMA_CHANGED_NEXT_ACTION
+
 if TYPE_CHECKING:
     from infrahub_sync.plan.models import ApplyRecord
 
@@ -400,10 +402,8 @@ class PlanSchemaChangedError(PlanArtifactError):
     and never reaches this class.
     """
 
-    next_action = (
-        "Create a new plan for this configuration and review it: the recorded operations were "
-        "derived from schema semantics the destination no longer declares."
-    )
+    # The text the CLI prints as the failed apply's `hint:`.
+    next_action = SCHEMA_CHANGED_NEXT_ACTION
 
 
 class ReviewedPayloadFieldMissingError(PlanArtifactError):
@@ -411,6 +411,70 @@ class ReviewedPayloadFieldMissingError(PlanArtifactError):
 
     wrote = False
     next_action = "Create a new plan against the current destination schema and review it before applying."
+
+
+class PlanLineageMissingError(PlanArtifactError):
+    """The saved plan records no import account, so an apply cannot compare its own (FR-012).
+
+    A plan made before the import account was recorded. Raised before the first write.
+    """
+
+    wrote = False
+    next_action = (
+        "Create a new plan for this configuration and review it: the new plan records the import account "
+        "that apply compares with."
+    )
+
+
+class ImportAccountMismatchError(PlanArtifactError):
+    """The apply's import account is not the account the saved plan recorded (FR-012).
+
+    Raised before the first write. The message names both accounts.
+    """
+
+    wrote = False
+    next_action = (
+        "Apply with a token of the account the plan recorded, or create a new plan with this token and review it."
+    )
+
+
+class NamedLineageNodeNotFoundError(LookupError):
+    """The node a `source` or `owner` setting names does not exist in the destination (FR-004, FR-011).
+
+    Raised at the start of a plan, before the source system is read, and at the start of an
+    apply, before any write. The message names the setting, the kind and the name, and is the
+    same in both, so an apply records the cause a plan would have recorded. When the
+    destination schema has no such kind, the message says so as well.
+
+    A `LookupError` rather than a `PlanArtifactError`: the refusal is about the destination's
+    content, not about a plan artifact. It still carries `message` and `next_action`, which the
+    service records for the operator as it does for the import account refusals above.
+    """
+
+    wrote = False
+
+    def __init__(self, *, setting: str, kind: str, name: str, kind_missing: bool = False) -> None:
+        self.setting = setting
+        self.kind = kind
+        self.name = name
+        self.message = f"The setting `{setting}` names `{kind}` `{name}`, which does not exist."
+        if kind_missing:
+            self.message += f" The destination schema has no kind `{kind}`."
+        self.next_action = (
+            f"Create `{kind}` `{name}` in the destination, or change the setting `{setting}` to name a node "
+            "that exists and create a new plan."
+        )
+        super().__init__(self.message)
+
+
+# The refusals a run records with their message and next action, not only their class name: each
+# message is written by this repository and names only settings, kinds, node names, account names
+# and ids, never a token or a server response (FR-011, FR-012).
+LINEAGE_REFUSALS: tuple[type[PlanArtifactError | NamedLineageNodeNotFoundError], ...] = (
+    PlanLineageMissingError,
+    ImportAccountMismatchError,
+    NamedLineageNodeNotFoundError,
+)
 
 
 class OperationApplyFailedError(PlanArtifactError):
