@@ -20,7 +20,7 @@ numbers. US2 comes before US1, because US1 uses the `RecordedFailure` value that
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm the baseline: on branch `016-prefect-run-observability`, run `uv run invoke tests.tests-unit` and `uv run ruff check .`, and record the pass count in `dev/specs/016-prefect-run-observability/opsmill-implement-report.md` (create the file with a "Baseline" heading).
+- [X] T001 Confirm the baseline: on branch `016-prefect-run-observability`, run `uv run invoke tests.tests-unit` and `uv run ruff check .`, and record the pass count in `dev/specs/016-prefect-run-observability/opsmill-implement-report.md` (create the file with a "Baseline" heading).
 
 ## Phase 2: Foundational
 
