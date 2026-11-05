@@ -12,6 +12,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves this annotation at runtime.
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+# The largest registry version the store can allocate: the signed 64-bit integer limit.
+MAX_REGISTRY_VERSION = 2**63 - 1
+# Page size of the store's configuration, version and run lists when a caller gives none.
+# Equal to the Sync API's ``DEFAULT_LIMIT``; the store does not import the client package.
+DEFAULT_LIMIT = 50
 _INVALID_SERVICE_WORKER_ID = "service worker identity is invalid"
 _LEGAL_EXECUTION_VERDICTS = {
     ("completed", "succeeded"),
@@ -171,7 +176,7 @@ class ProductRun(BaseModel):
     operation: Operation
     configuration_reference: str = Field(min_length=1)
     config_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
-    registry_version: int | None = Field(default=None, ge=1, le=2**63 - 1)
+    registry_version: int | None = Field(default=None, ge=1, le=MAX_REGISTRY_VERSION)
     package_checksum: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     actor: str | None = None
     audit_links: tuple[str, ...] = ()
@@ -185,6 +190,9 @@ class ProductRun(BaseModel):
     # execution ended without proving what reached the destination, so an operator must
     # inspect it and plan again. Nothing sets it back to false.
     reconciliation_required: bool = False
+    # The effective Infrahub branch the run writes to, recorded when the run is created.
+    # ``None`` for runs created before the store recorded it.
+    destination_branch: str | None = None
     artifact_refs: tuple[ArtifactReference, ...] = ()
     prefect_executions: tuple[PrefectExecutionLink, ...] = ()
 
@@ -360,6 +368,12 @@ class ConfigurationSummary(BaseModel):
 
     config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
     created_at: datetime
+    # ``configuration.name`` of the latest version's package. Not unique; ``None`` when that
+    # package declares no name.
+    name: str | None = None
+    # The highest registered ``registry_version``. ``None`` only for a summary built without
+    # reading the versions.
+    latest_version: int | None = Field(default=None, ge=1)
 
     @field_validator("created_at")
     @classmethod
@@ -368,6 +382,73 @@ class ConfigurationSummary(BaseModel):
             msg = "configuration timestamps must include a timezone"
             raise ValueError(msg)
         return value
+
+
+PageItemT = TypeVar("PageItemT")
+
+
+class StorePage(BaseModel, Generic[PageItemT]):
+    """One page of a store listing, in the listing's order."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    items: tuple[PageItemT, ...]
+    # Whether more items match after the last item; the store reads one row past the page.
+    has_more: bool
+
+
+# One page of configurations, newest first.
+ConfigurationPage: TypeAlias = StorePage[ConfigurationSummary]
+
+
+class RunReference(BaseModel):
+    """The identity and state of one run, as a configuration version's latest run shows it."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    phase: str = Field(min_length=1)
+    outcome: str | None = None
+    started_at: datetime
+    # When the run last finished a stage; for an applied run, when its apply finished.
+    finished_at: datetime | None = None
+
+    @field_validator("started_at", "finished_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
+            msg = "run timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
+
+
+class ConfigurationVersionSummary(BaseModel):
+    """One configuration version without its package, with its latest run and most recently applied run."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    registry_version: int = Field(ge=1)
+    package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    created_at: datetime
+    # The actor and reason of the registration request; ``None`` for versions registered
+    # before the store recorded them.
+    registered_by: str | None = None
+    registration_reason: str | None = None
+    latest_run: RunReference | None = None
+    latest_applied_run: RunReference | None = None
+
+    @field_validator("created_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            msg = "configuration-version timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
+
+
+# One page of a configuration's versions, newest version first.
+ConfigurationVersionPage: TypeAlias = StorePage[ConfigurationVersionSummary]
 
 
 class ConfigurationVersion(BaseModel):
@@ -388,6 +469,26 @@ class ConfigurationVersion(BaseModel):
             msg = "configuration-version timestamps must include a timezone"
             raise ValueError(msg)
         return value
+
+
+class RunFilters(BaseModel):
+    """The configuration binding a run list is restricted to; no filter lists every run."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    config_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
+    registry_version: int | None = Field(default=None, ge=1, le=MAX_REGISTRY_VERSION)
+
+    @model_validator(mode="after")
+    def _require_configuration_for_version(self) -> RunFilters:
+        if self.registry_version is not None and self.config_id is None:
+            msg = "registry_version requires config_id"
+            raise ValueError(msg)
+        return self
+
+
+# One page of runs, newest first, without artifact references or execution links.
+RunPage: TypeAlias = StorePage[ProductRun]
 
 
 class AuditEvent(BaseModel):

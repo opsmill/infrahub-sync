@@ -384,7 +384,7 @@ apply.
 
     ```bash
     uv run infrahubctl branch create netbox-import
-    uv run infrahub-sync diff --config-id <config-id> --version 1 \
+    uv run infrahub-sync plan --config-id <config-id> --version 1 \
       --branch netbox-import --reason "plan local NetBox import"
     ```
 
@@ -405,7 +405,7 @@ apply.
    it takes depends on the destination: against Infrahub's own Compose file on 2026-10-05,
    an apply of 1,609 operations took 46 seconds. The CLI waits up to 30 minutes by default.
 
-9. Run the same `diff` again. After a successful apply, the new plan holds only the
+9. Run the same `plan` again. After a successful apply, the new plan holds only the
    recorded delete of the `default` namespace. Open `http://localhost:8000`, log in
    with `admin` and `infrahub`, and select the `netbox-import` branch to browse the
    imported objects.

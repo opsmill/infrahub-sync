@@ -155,7 +155,7 @@ the protocol statically without importing the Infrahub adapter. Making the resol
 adapter-neutral is a tracked follow-up: raise it before writing a second implementation rather
 than working around the Infrahub import.
 
-`infrahub-sync apply` replays a plan artifact that a previous `diff` saved. It does not load
+`infrahub-sync apply` replays a plan artifact that a previous `plan` saved. It does not load
 either side and does not re-compare, so it cannot go through the model's `create` / `update`.
 It goes through a surface on the **adapter** instead — `PlannedWriteDestination` in
 `infrahub_sync/plan/write_surface.py`, which has **two** members:
@@ -177,7 +177,7 @@ refused in the pre-write verification gate — **before any write reaches the de
 with an error naming the adapter class:
 
 ```text
-The destination adapter 'MysystemAdapter' cannot apply a saved plan. Use `infrahub-sync diff`
+The destination adapter 'MysystemAdapter' cannot apply a saved plan. Use `infrahub-sync plan`
 to review changes without writing, or choose a destination whose adapter implements the
 planned-write surface before running `sync` or `apply`.
 ```
@@ -424,11 +424,11 @@ earlier:
 uv run infrahub-sync configs validate CONFIG_ID 1
 ```
 
-**Create a plan run.** `diff` takes its identity as options. The audit reason is optional;
+**Create a plan run.** `plan` takes its identity as options. The audit reason is optional;
 when given, it is recorded in the audit history:
 
 ```bash
-uv run infrahub-sync diff --config-id CONFIG_ID --version 1 \
+uv run infrahub-sync plan --config-id CONFIG_ID --version 1 \
   --reason "review the new adapter"
 ```
 
@@ -457,7 +457,7 @@ uv run infrahub-sync apply RUN_ID \
 zero creates, zero updates and zero deletes. If it does not, inspect the worker's installed
 adapter, the destination schema and the source records before applying anything else.
 
-`configs register`, `configs validate` and `runs plan` write nothing to the destination; `diff`
+`configs register`, `configs validate` and `runs plan` write nothing to the destination; `plan`
 plans against both sides and writes nothing. Run `sync` or `apply` only with explicit approval
 against a known-safe target. [Run a sync](../../running-a-sync.mdx) covers wait, idempotency,
 delete and failure behavior.
@@ -553,12 +553,12 @@ For the development-time plugin loader and what it is and is not, see
 
 - [ ] Adapter inherits `DiffSyncMixin` / `DiffSyncModelMixin`, mixin first, with a `type`.
 - [ ] `model_loader` filters and transforms through the model mixin; `obj_to_diffsync` sets `local_id`.
-- [ ] Decided whether the adapter implements the planned-write surface — **both** `new_peer_resolver` and `apply_planned_operation`. A destination without both cannot write through registered `sync` or through saved-plan `apply`; if that is the intended position, confirmed the write gate refuses cleanly and that `diff` and plan review still work.
+- [ ] Decided whether the adapter implements the planned-write surface — **both** `new_peer_resolver` and `apply_planned_operation`. A destination without both cannot write through registered `sync` or through saved-plan `apply`; if that is the intended position, confirmed the write gate refuses cleanly and that `plan` and plan review still work.
 - [ ] An `AdapterConfigurationCapabilities` entry added to `BUILTIN_ADAPTER_CAPABILITIES`, with roles, allowed settings and credential paths that match the module.
 - [ ] `tests/configuration/test_contracts.py` expected set updated, and `tests/configuration/test_adapter_setting_conformance.py` satisfied.
 - [ ] Optional SDK imported with `# ty: ignore[unresolved-import]`; credentials from environment references; no secrets logged or committed.
 - [ ] `uv run invoke format` and `uv run invoke lint` are clean; `uv run ty check .` exits 0.
-- [ ] `configs register`, `configs validate` and `diff` succeed for the example, and the plan reviews as expected against a known destination state.
+- [ ] `configs register`, `configs validate` and `plan` succeed for the example, and the plan reviews as expected against a known destination state.
 - [ ] Unit tests added under `tests/adapters/`; `uv run invoke tests.tests-unit` passes offline.
 - [ ] Example added under `examples/` with both `config.yml` and `package.yml`; environment variables documented.
 - [ ] Documentation page added under `docs/docs/adapters/` and listed in `docs/sidebars.ts`.

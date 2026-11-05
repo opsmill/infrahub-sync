@@ -298,7 +298,7 @@ Use the returned `registry_version` as `VERSION`, then validate it again.
 Use the same `BRANCH_NAME` where you loaded the schema:
 
 ```sh
-infrahub-sync diff --config-id CONFIG_ID --version VERSION \
+infrahub-sync plan --config-id CONFIG_ID --version VERSION \
   --branch BRANCH_NAME --reason 'preview Nautobot locations and devices'
 ```
 

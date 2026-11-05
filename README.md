@@ -45,7 +45,7 @@ as part of the [Infrahub](https://github.com/opsmill/infrahub) ecosystem.
   network discovery tool (IP Fabric, Slurp'it) into Infrahub.
 - **Translate between data models.** Map fields in YAML with identifiers, references,
   static values, filters, and Jinja transforms.
-- **Review changes before they are written.** `infrahub-sync diff` saves a plan, and
+- **Review changes before they are written.** `infrahub-sync plan` saves a plan, and
   `infrahub-sync apply` writes exactly the plan you reviewed, bound to its checksum.
 
 ---
@@ -133,7 +133,7 @@ export INFRAHUB_SYNC_API_TOKEN=<token>
 
 uv run infrahub-sync configs register examples/netbox_to_infrahub/package.yml \
   --reason "register NetBox import"
-uv run infrahub-sync diff --config-id <config-id> --version <version> \
+uv run infrahub-sync plan --config-id <config-id> --version <version> \
   --branch netbox-import --reason "review NetBox import"
 uv run infrahub-sync runs plan <run-id> --detail
 uv run infrahub-sync apply <run-id> --expected-checksum <checksum> \

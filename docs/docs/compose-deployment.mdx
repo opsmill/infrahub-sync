@@ -556,7 +556,7 @@ same scoped environment:
 )
 ```
 
-Use this branch for the later `diff` and `apply`. Omit `--branch` from schema
+Use this branch for the later `plan` and `apply`. Omit `--branch` from schema
 load to target Infrahub's default branch. The destination schema is your
 Infrahub instance's responsibility; this deployment's CLI does not load it.
 
@@ -671,12 +671,12 @@ infrahub-sync configs show CONFIG_ID
 infrahub-sync configs versions CONFIG_ID
 infrahub-sync configs validate CONFIG_ID 1
 infrahub-sync configs show CONFIG_ID --version 1
-infrahub-sync diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'review initial sync'
+infrahub-sync plan --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'review initial sync'
 infrahub-sync runs plan RUN_ID --detail
 infrahub-sync apply RUN_ID --expected-checksum CHECKSUM --branch BRANCH_NAME --reason 'apply reviewed initial sync'
 infrahub-sync runs show RUN_ID
 infrahub-sync runs results RUN_ID
-infrahub-sync diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'verify unchanged source'
+infrahub-sync plan --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'verify unchanged source'
 # Versioning is explicit, and never rewrites a registered version:
 infrahub-sync configs version CONFIG_ID edited-package.yml --reason 'register edited configuration'
 ```
@@ -696,17 +696,17 @@ Unlike plain `configs show CONFIG_ID`, which prints only the summary
 (`config_id`, `created_at`), `configs show CONFIG_ID --version 1` prints the
 version's `declared_content`. Check its
 `configuration.destination.settings.branch` before planning: a declared branch
-there overrides `--branch` on both `diff` and `apply`, the run request's
+there overrides `--branch` on both `plan` and `apply`, the run request's
 `--branch` is used only when the package declares none, and the destination
 falls back to `main` when neither is set. If the declared branch is not the
 one you intend to write, register a new version with the intended branch
 before you plan.
 
 On a new deployment, `configs list` prints no command output and exits zero;
-any `Container … Creating/Created` lines are Compose progress. `diff` creates a
+any `Container … Creating/Created` lines are Compose progress. `plan` creates a
 run and persists product records, even though it does not write to the
 destination. The plan output does not repeat its branch: apply must use the same
-`--branch` supplied to `diff`. This release writes saved-plan format 3; it can
+`--branch` supplied to `plan`. This release writes saved-plan format 3; it can
 review format 2 but refuses to apply it, and does not support older formats.
 
 A null optional cardinality-one relationship in an update does not clear the

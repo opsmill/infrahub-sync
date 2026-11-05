@@ -89,7 +89,7 @@ def test_the_cli_admits_a_run_without_waiting_then_reviews_its_saved_plan(
 
     accepted = run_cli(
         preview_env,
-        "diff",
+        "plan",
         "--config-id",
         registered["config_id"],
         "--version",
@@ -194,7 +194,7 @@ def test_the_cli_bounded_wait_expires_without_cancelling_the_run(
     # command reports is the wait expiring, never the run failing.
     expired = run_cli_command(
         preview_env,
-        "diff",
+        "plan",
         "--config-id",
         registered["config_id"],
         "--version",

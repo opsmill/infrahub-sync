@@ -170,7 +170,7 @@ def from_netbox(env: dict[str, str]) -> None:
     run("uv", "run", "--no-sync", "infrahubctl", "branch", "create", "netbox-import", env=env)
     common = ("--config-id", config_id, "--version", version, "--branch", "netbox-import")
     plan_run_id = ""
-    for operation in ("diff", "sync"):
+    for operation in ("plan", "sync"):
         result = run(
             "uv",
             "run",
@@ -186,15 +186,15 @@ def from_netbox(env: dict[str, str]) -> None:
             capture=True,
         )
         fields = parsed_fields(result)
-        if operation == "diff" and fields.get("operations") != "1688":
+        if operation == "plan" and fields.get("operations") != "1688":
             msg = f"the local demo plan has {fields.get('operations', 'no')} operations, expected 1688"
             raise RuntimeError(msg)
-        if operation == "diff":
+        if operation == "plan":
             plan_run_id = fields["run_id"]
         completed = parsed_fields(
             run("uv", "run", "--no-sync", "infrahub-sync", "runs", "show", fields["run_id"], env=env, capture=True)
         )
-        expected_outcome = "planned" if operation == "diff" else "applied"
+        expected_outcome = "planned" if operation == "plan" else "applied"
         if completed.get("outcome") != expected_outcome:
             msg = f"the {operation} run ended with {completed.get('outcome', 'no outcome')}"
             raise RuntimeError(msg)

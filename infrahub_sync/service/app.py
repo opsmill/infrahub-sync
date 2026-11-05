@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, Request, Response
+from fastapi import Depends, FastAPI, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -16,7 +16,15 @@ from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUP
 
 from .auth import Principal, PrincipalResolver
 from .compatibility import API_STABILITY, API_VERSIONS, installed_server_version
-from .config_routes import ConfigurationAPIError, ConfigurationRoutes, configuration_router
+from .config_routes import (
+    CONFIG_ID_PATTERN,
+    MAX_REGISTRY_VERSION,
+    ConfigurationAPIError,
+    ConfigurationRoutes,
+    configuration_router,
+    parse_bounded_integer,
+    parse_page_limit,
+)
 from .liveness import RunLivenessReconciler
 from .models import (
     ApplyRunRequest,
@@ -28,12 +36,15 @@ from .models import (
     ErrorDetail,
     ErrorEnvelope,
     PlanResource,
+    PrincipalResource,
     ResultsResource,
+    RunPage,
     RunResource,
     ServiceStatusResource,
     VerifyRunRequest,
     VersionResource,
 )
+from .paging import InvalidCursorError
 from .service import RunService, ServiceAPIError
 
 logger = logging.getLogger(__name__)
@@ -82,10 +93,7 @@ def create_app(
         request: Request,
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_auth)],
     ) -> Principal:
-        if credentials is None:
-            service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
-            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
-        token = credentials.credentials.lstrip(" ")
+        token = credentials.credentials.lstrip(" ") if credentials is not None else ""
         if not token:
             service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
             raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
@@ -132,6 +140,12 @@ def create_app(
         )
         return JSONResponse(status_code=exc.status, content=envelope.model_dump(mode="json"))
 
+    @application.exception_handler(InvalidCursorError)
+    async def invalid_cursor(_request: Request, exc: InvalidCursorError) -> JSONResponse:  # noqa: RUF029
+        """Refuse a paging cursor that does not decode or was issued for other filters."""
+        envelope = ErrorEnvelope(error=ErrorDetail(code="invalid-cursor", message=exc.message, status=422))
+        return JSONResponse(status_code=422, content=envelope.model_dump(mode="json"))
+
     @application.exception_handler(RequestValidationError)
     async def validation_error(_request: Request, _exc: RequestValidationError) -> JSONResponse:  # noqa: RUF029
         envelope = ErrorEnvelope(
@@ -171,6 +185,11 @@ def create_app(
         )
         return JSONResponse(status_code=503, content=envelope.model_dump(mode="json"))
 
+    @application.get("/me", responses=ERROR_RESPONSES)
+    def get_me(principal: Annotated[Principal, Depends(authenticate)]) -> PrincipalResource:
+        """Return the caller's actor name and administrator flag; performs no other action."""
+        return PrincipalResource(actor=principal.actor, administrator=principal.administrator)
+
     @application.post("/runs", status_code=202, response_model=RunResource, responses=ERROR_RESPONSES)
     async def create_run(
         body: CreateRunRequest,
@@ -179,6 +198,24 @@ def create_app(
     ) -> JSONResponse:
         status, content = await service.create_run(body, principal, key)
         return JSONResponse(status_code=status, content=content)
+
+    @application.get("/runs", responses=ERROR_RESPONSES)
+    def list_runs(
+        _principal: Annotated[Principal, Depends(authenticate)],
+        config_id: Annotated[str | None, Query(pattern=CONFIG_ID_PATTERN)] = None,
+        registry_version: Annotated[str | None, Query()] = None,
+        limit: Annotated[str | None, Query()] = None,
+        cursor: Annotated[str | None, Query()] = None,
+    ) -> RunPage:
+        """Return one page of runs, newest first, optionally for one configuration or version."""
+        version = (
+            None
+            if registry_version is None
+            else parse_bounded_integer(registry_version, minimum=1, maximum=MAX_REGISTRY_VERSION)
+        )
+        return service.list_runs(
+            config_id=config_id, registry_version=version, cursor=cursor, limit=parse_page_limit(limit)
+        )
 
     @application.get("/runs/{run_id}", responses=ERROR_RESPONSES)
     async def get_run(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> RunResource:

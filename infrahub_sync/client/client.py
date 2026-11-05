@@ -25,21 +25,30 @@ from .errors import (
     TransportError,
 )
 from .models import (
+    MAX_LIMIT,
+    MIN_LIMIT,
     ApplyRunRequest,
     ArtifactContent,
     ArtifactListResource,
     CancelRunRequest,
     ConfigErrorEnvelope,
     ConfigMutationRequest,
+    ConfigurationPage,
     ConfigurationSummaryResource,
+    ConfigurationVersionPage,
     ConfigurationVersionResource,
+    ConfigurationVersionSummaryResource,
     CreateRunRequest,
     ErrorEnvelope,
+    ListPage,
     OrchestrationSummary,
     PlanResource,
+    PrincipalResource,
+    PublicRunResource,
     RegisteredConfigurationResource,
     RegisteredVersionResource,
     ResultsResource,
+    RunPage,
     RunResource,
     ServiceStatusResource,
     ValidationReportResource,
@@ -48,10 +57,12 @@ from .models import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from types import TracebackType
 
 _Model = TypeVar("_Model", bound=BaseModel)
+_Item = TypeVar("_Item")
+
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _DIGEST = re.compile(r"sha-256=(?P<digest>[0-9a-f]{64})")
 _ERROR_STATUSES = frozenset({401, 403, 404, 409, 410, 422, 503})
@@ -62,6 +73,12 @@ _TOKEN_ARG = "token"
 _TIMEOUT_ARG = "timeout"
 _OFFSET_ARG = "offset"
 _LIMIT_ARG = "limit"
+_CURSOR_ARG = "cursor"
+_NAME_ARG = "name"
+_CONFIG_ID_ARG = "config_id"
+_LIST_RUNS = "list_runs"
+_LIST_CONFIGS = "list_configs"
+_LIST_CONFIG_VERSIONS = "list_config_versions"
 _REQUEST_ARG = "request"
 _IDEMPOTENCY_KEY_ARG = "idempotency_key"
 _GET_ARTIFACT = "get_artifact"
@@ -194,10 +211,30 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             config_route=True,
         )
 
-    def list_configs(self) -> tuple[ConfigurationSummaryResource, ...]:
-        """Return the complete ordered configuration list."""
+    def list_configs(
+        self, name: str | None = None, limit: int | None = None, cursor: str | None = None
+    ) -> ConfigurationPage:
+        """Return one page of configurations, newest first, optionally only those named ``name``."""
 
-        return self._request_list("list_configs", "/configs", ConfigurationSummaryResource, config_route=True)
+        params = self._page_params(limit, cursor)
+        if name is not None:
+            if not isinstance(name, str) or not name:
+                raise ClientInputError(_NAME_ARG)
+            params = {_NAME_ARG: name, **params}
+        return self._request_model(
+            _LIST_CONFIGS,
+            "GET",
+            "/configs",
+            model=ConfigurationPage,
+            success={200},
+            params=params,
+            config_route=True,
+        )
+
+    def iter_configs(self, name: str | None = None, limit: int | None = None) -> Iterator[ConfigurationSummaryResource]:
+        """Yield every configuration, newest first, reading pages until ``next_cursor`` is null."""
+
+        return self._iterate(_LIST_CONFIGS, self.list_configs, name=name, limit=limit)
 
     def get_config(self, config_id: str) -> ConfigurationSummaryResource:
         """Return one registered configuration summary."""
@@ -212,13 +249,28 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             config_route=True,
         )
 
-    def list_config_versions(self, config_id: str) -> tuple[ConfigurationVersionResource, ...]:
-        """Return the complete ordered version list for a configuration."""
+    def list_config_versions(
+        self, config_id: str, limit: int | None = None, cursor: str | None = None
+    ) -> ConfigurationVersionPage:
+        """Return one page of a configuration's version summaries, newest version first."""
 
-        config_id = self._identifier(config_id, "config_id")
-        return self._request_list(
-            "list_config_versions", f"/configs/{config_id}/versions", ConfigurationVersionResource, config_route=True
+        config_id = self._identifier(config_id, _CONFIG_ID_ARG)
+        return self._request_model(
+            _LIST_CONFIG_VERSIONS,
+            "GET",
+            f"/configs/{config_id}/versions",
+            model=ConfigurationVersionPage,
+            success={200},
+            params=self._page_params(limit, cursor),
+            config_route=True,
         )
+
+    def iter_config_versions(
+        self, config_id: str, limit: int | None = None
+    ) -> Iterator[ConfigurationVersionSummaryResource]:
+        """Yield every version summary of one configuration, newest version first."""
+
+        return self._iterate(_LIST_CONFIG_VERSIONS, self.list_config_versions, config_id=config_id, limit=limit)
 
     def get_config_version(self, config_id: str, registry_version: int) -> ConfigurationVersionResource:
         """Return one immutable registered configuration version."""
@@ -281,6 +333,37 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         if request.operation != "sync" or not request.confirm_writes:
             raise ClientInputError(_REQUEST_ARG)
         return self.create_run(request, idempotency_key)
+
+    def list_runs(
+        self,
+        config_id: str | None = None,
+        registry_version: int | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> RunPage:
+        """Return one page of runs, newest first, optionally for one configuration or version."""
+
+        params: dict[str, str | int] = {}
+        if config_id is not None:
+            params[_CONFIG_ID_ARG] = self._identifier(config_id, _CONFIG_ID_ARG)
+        if registry_version is not None:
+            params["registry_version"] = self._positive_integer(registry_version, "registry_version")
+        params.update(self._page_params(limit, cursor))
+        return self._request_model(_LIST_RUNS, "GET", "/runs", model=RunPage, success={200}, params=params)
+
+    def iter_runs(
+        self, config_id: str | None = None, registry_version: int | None = None, limit: int | None = None
+    ) -> Iterator[PublicRunResource]:
+        """Yield every run that matches the filters, newest first, reading pages until ``next_cursor`` is null."""
+
+        return self._iterate(
+            _LIST_RUNS, self.list_runs, config_id=config_id, registry_version=registry_version, limit=limit
+        )
+
+    def me(self) -> PrincipalResource:
+        """Return the actor the token authenticates as and whether it is an administrator."""
+
+        return self._request_model("me", "GET", "/me", model=PrincipalResource, success={200})
 
     def get_run(self, run_id: str) -> RunResource:
         """Return one run and its orchestration history."""
@@ -462,20 +545,33 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             idempotency_key=idempotency_key,
         )
 
-    def _request_list(
-        self, operation: str, path: str, model: type[_Model], *, config_route: bool
-    ) -> tuple[_Model, ...]:
-        self._ensure_compatible()
-        response = self._send(operation, "GET", path)
-        if response.status_code != 200:
-            self._raise_response_error(response, operation, config_route=config_route)
-        payload = self._json(response, operation)
-        if not isinstance(payload, list):
-            raise ProtocolError(operation, response.status_code)
-        try:
-            return tuple(model.model_validate(item) for item in payload)
-        except (ValidationError, TypeError, ValueError):
-            raise ProtocolError(operation, response.status_code) from None
+    def _page_params(self, limit: int | None, cursor: str | None) -> dict[str, str | int]:
+        params: dict[str, str | int] = {}
+        if limit is not None:
+            if type(limit) is not int or not MIN_LIMIT <= limit <= MAX_LIMIT:  # pylint: disable=unidiomatic-typecheck
+                raise ClientInputError(_LIMIT_ARG)
+            params[_LIMIT_ARG] = limit
+        if cursor is not None:
+            if not isinstance(cursor, str) or not cursor:
+                raise ClientInputError(_CURSOR_ARG)
+            params[_CURSOR_ARG] = cursor
+        return params
+
+    @staticmethod
+    def _iterate(operation: str, read_page: Callable[..., ListPage[_Item]], **arguments: Any) -> Iterator[_Item]:
+        """Yield every item of ``read_page(**arguments, cursor=...)``, following ``next_cursor``."""
+        cursor: str | None = None
+        seen: set[str] = set()
+        while True:
+            page = read_page(**arguments, cursor=cursor)
+            yield from page.items
+            cursor = page.next_cursor
+            if cursor is None:
+                return
+            # A cursor the server already returned would repeat pages forever.
+            if cursor in seen:
+                raise ProtocolError(operation)
+            seen.add(cursor)
 
     def _request_model(
         self,
@@ -487,7 +583,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         success: set[int],
         body: BaseModel | None = None,
         idempotency_key: str | None = None,
-        params: dict[str, int] | None = None,
+        params: dict[str, str | int] | None = None,
         config_route: bool = False,
         request_timeout: float | None = None,
     ) -> _Model:
@@ -558,7 +654,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         authenticated: bool = True,
         headers: dict[str, str] | None = None,
         json: object = None,
-        params: dict[str, int] | None = None,
+        params: dict[str, str | int] | None = None,
         request_timeout: float | None = None,
     ) -> httpx.Response:
         request_headers = dict(headers or {})

@@ -520,7 +520,7 @@ def test_plan_write_refuses_a_corrupt_snapshot_with_the_taxonomy_error(tmp_path:
     assert "BuiltinTag.parquet" in message
     assert "not a readable Parquet table" in message
     assert "Next action:" in message
-    assert "Re-run `diff`" in message
+    assert "Re-run `plan`" in message
 
 
 def test_plan_write_refuses_a_read_denied_snapshot_with_the_taxonomy_error(
@@ -542,5 +542,5 @@ def test_plan_write_refuses_a_read_denied_snapshot_with_the_taxonomy_error(
     assert "could not be read" in message, message
     assert "Permission denied" in message, message
     assert "Next action:" in message, message
-    assert "Re-run `diff`" not in message, f"re-running would meet the same denial: {message}"
+    assert "Re-run `plan`" not in message, f"re-running would meet the same denial: {message}"
     assert "permissions" in message.lower(), message

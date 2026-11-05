@@ -26,7 +26,7 @@ review, and apply:
 ```bash
 uv run infrahub-sync configs register examples/netbox_to_infrahub/package.yml \
   --reason "register NetBox demo import"
-uv run infrahub-sync diff --config-id <config-id> --version <version> \
+uv run infrahub-sync plan --config-id <config-id> --version <version> \
   --branch netbox-import --reason "review NetBox demo import"
 uv run infrahub-sync runs plan <run-id> --detail
 uv run infrahub-sync apply <run-id> \

@@ -94,7 +94,7 @@ def test_an_apply_refuses_a_plan_whose_destination_schema_changed(  # noqa: PLR0
     )
     planned = run_cli(
         preview_env,
-        "diff",
+        "plan",
         "--config-id",
         registered["config_id"],
         "--version",

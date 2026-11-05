@@ -460,7 +460,7 @@ def test_a_review_of_a_run_whose_snapshot_is_absent_notes_the_tear(tmp_path: Pat
     # Which part is torn, expected and found, and the next action (FR-010).
     assert "A/BuiltinTag.parquet" in note
     assert "absent" in note
-    assert "Re-run `diff`" in note
+    assert "Re-run `plan`" in note
     # And it is still rendered rather than refused (AD031).
     assert plan.summary().total == 1
     assert plan.operations()
@@ -486,7 +486,7 @@ def test_a_review_of_a_run_whose_snapshot_was_truncated_notes_both_values(tmp_pa
     assert "A/BuiltinTag.parquet" in note
     assert f"{len(SNAPSHOT_ROWS)} row(s)" in note, f"the recorded row count is missing from: {note}"
     assert "1 row(s)" in note, f"the found row count is missing from: {note}"
-    assert "Re-run `diff`" in note
+    assert "Re-run `plan`" in note
 
 
 def test_the_review_note_and_the_apply_refusal_report_the_same_binding(tmp_path: Path) -> None:
@@ -685,7 +685,7 @@ def test_a_review_of_a_run_whose_snapshot_bytes_are_corrupt_notes_it(tmp_path: P
     note = " ".join(plan.verification_notes)
     assert "A/BuiltinTag.parquet" in note
     assert "not a readable Parquet snapshot" in note
-    assert "Re-run `diff`" in note
+    assert "Re-run `plan`" in note
     # And it is still rendered rather than refused (AD031).
     assert plan.summary().total == 1
     assert plan.operations()

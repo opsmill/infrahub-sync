@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -43,6 +44,7 @@ from infrahub_sync.product_store import (
     PrefectExecutionLink,
     ProductProjection,
     ProductRun,
+    RunFilters,
     RunNotFoundError,
     WriteAdmissionConflictError,
     local_product_projection,
@@ -66,9 +68,12 @@ EXPECTED_PUBLIC_NAMES = {
     "BaselineWriteback",
     "ConfigurationBaseline",
     "ConfigurationNotFoundError",
+    "ConfigurationPage",
     "ConfigurationSummary",
     "ConfigurationVersion",
     "ConfigurationVersionAllocationError",
+    "ConfigurationVersionPage",
+    "ConfigurationVersionSummary",
     "DBAPIConnection",
     "DuplicateArtifactError",
     "DuplicateConfigurationError",
@@ -83,7 +88,10 @@ EXPECTED_PUBLIC_NAMES = {
     "ProductProjection",
     "ProductStoreProviderError",
     "ProductRun",
+    "RunFilters",
     "RunNotFoundError",
+    "RunPage",
+    "RunReference",
     "S3Client",
     "WriteAdmissionConflictError",
     "local_product_projection",
@@ -315,7 +323,7 @@ class _AlwaysConflictingConfigurationVersionStore(SQLiteRunStore):
     """Forces every configuration-version insert to lose the race, deterministically
     exhausting ``_CONFIGURATION_VERSION_ATTEMPTS`` without needing real concurrency."""
 
-    def _insert_configuration_version_row(self, cursor, version):  # noqa: ARG002, PLR6301
+    def _insert_configuration_version_row(self, cursor, version, **_registration: object):  # noqa: ARG002, PLR6301
         error = _FakeSQLiteIntegrityError("synthetic version race")
         error.sqlite_errorcode = 2067
         raise error
@@ -330,9 +338,9 @@ class _RoundCountingSQLiteStore(SQLiteRunStore):
         self.version_insert_rounds = local()
         super().__init__(database)
 
-    def _insert_configuration_version_row(self, cursor, version) -> None:
+    def _insert_configuration_version_row(self, cursor, version, **registration: str | None) -> None:
         self.version_insert_rounds.count = getattr(self.version_insert_rounds, "count", 0) + 1
-        super()._insert_configuration_version_row(cursor, version)
+        super()._insert_configuration_version_row(cursor, version, **registration)
 
 
 class _RoundCountingPostgreSQLRunStore(PostgreSQLRunStore):
@@ -342,9 +350,9 @@ class _RoundCountingPostgreSQLRunStore(PostgreSQLRunStore):
         self.version_insert_rounds = local()
         super().__init__(connect)
 
-    def _insert_configuration_version_row(self, cursor, version) -> None:
+    def _insert_configuration_version_row(self, cursor, version, **registration: str | None) -> None:
         self.version_insert_rounds.count = getattr(self.version_insert_rounds, "count", 0) + 1
-        super()._insert_configuration_version_row(cursor, version)
+        super()._insert_configuration_version_row(cursor, version, **registration)
 
 
 class _DeleteBeforeFinishSQLiteStore(SQLiteRunStore):
@@ -705,23 +713,37 @@ def provider(request, tmp_path: Path) -> ProductProjection:
     )
 
 
-@pytest.fixture(params=("local", "postgresql-emulated", pytest.param("postgresql", marks=pytest.mark.integration)))
+_PROFILES_WITH_POSTGRESQL = ("local", "postgresql-emulated", pytest.param("postgresql", marks=pytest.mark.integration))
+
+
+@pytest.fixture(params=_PROFILES_WITH_POSTGRESQL)
 def redaction_provider(request, tmp_path: Path) -> Iterator[ProductProjection]:
     """The ``provider`` profiles plus a real PostgreSQL server, for the redaction boundary.
 
     The ``postgresql`` parameter needs ``PRODUCT_STORE_TEST_POSTGRESQL_DSN`` and runs each case
     in its own generated schema, dropped afterwards.
     """
-    if request.param == "local":
+    yield from _projection_profile(request.param, tmp_path, "the redaction contract's PostgreSQL parameter")
+
+
+@pytest.fixture(params=_PROFILES_WITH_POSTGRESQL)
+def listing_provider(request, tmp_path: Path) -> Iterator[ProductProjection]:
+    """The ``provider`` profiles plus a real PostgreSQL server, for the run list's SQL."""
+    yield from _projection_profile(request.param, tmp_path, "the run list's PostgreSQL parameter")
+
+
+def _projection_profile(profile: str, tmp_path: Path, purpose: str) -> Iterator[ProductProjection]:
+    """Yield one projection profile; a real PostgreSQL case runs in its own dropped schema."""
+    if profile == "local":
         yield ProductProjection(SQLiteRunStore(tmp_path / "local.sqlite3"), FileArtifactStore(tmp_path / "objects"))
         return
-    if request.param == "postgresql-emulated":
+    if profile == "postgresql-emulated":
         yield ProductProjection(
             PostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3")),
             S3ArtifactStore(_FakeS3(), bucket="product-artifacts", prefix="contract"),
         )
         return
-    schema = isolated_schema(dsn_or_skip("the redaction contract's PostgreSQL parameter"))
+    schema = isolated_schema(dsn_or_skip(purpose))
     schema.create()
     # pylint: disable-next=import-outside-toplevel,import-error
     import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
@@ -3812,8 +3834,11 @@ _ALLOWED_STORE_CONFIGURATION_METHODS = frozenset(
         "add_configuration_version",
         "lookup_configuration",
         "lookup_configuration_version",
+        "configuration_version_exists",
         "list_configurations",
         "list_configuration_versions",
+        "list_configuration_page",
+        "list_configuration_version_page",
         "lookup_configuration_baseline",
     }
 )
@@ -3823,8 +3848,11 @@ _ALLOWED_PROJECTION_CONFIGURATION_METHODS = frozenset(
         "add_configuration_version",
         "lookup_configuration",
         "lookup_configuration_version",
+        "configuration_version_exists",
         "list_configurations",
         "list_configuration_versions",
+        "list_configuration_page",
+        "list_configuration_version_page",
         "lookup_configuration_baseline",
     }
 )
@@ -3890,7 +3918,7 @@ def test_insert_configuration_version_row_rejects_a_checksum_content_mismatch(tm
     try:
         cursor = connection.cursor()
         with pytest.raises(AssertionError, match="does not digest"):
-            store._insert_configuration_version_row(cursor, mismatched)
+            store._insert_configuration_version_row(cursor, mismatched, name=None)
     finally:
         connection.close()
 
@@ -3945,9 +3973,24 @@ def test_list_configurations_orders_by_created_at_then_config_id_on_sqlite_and_e
     listed = provider.list_configurations()
 
     assert listed == (
-        ConfigurationSummary(config_id="config-z", created_at=datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)),
-        ConfigurationSummary(config_id="config-a", created_at=datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
-        ConfigurationSummary(config_id="config-b", created_at=datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
+        ConfigurationSummary(
+            config_id="config-z",
+            created_at=datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc),
+            name=_configuration_package().configuration.name,
+            latest_version=1,
+        ),
+        ConfigurationSummary(
+            config_id="config-a",
+            created_at=datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc),
+            name=_configuration_package().configuration.name,
+            latest_version=1,
+        ),
+        ConfigurationSummary(
+            config_id="config-b",
+            created_at=datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc),
+            name=_configuration_package().configuration.name,
+            latest_version=1,
+        ),
     )
     assert provider.list_configurations() == listed
 
@@ -4279,6 +4322,192 @@ def test_existing_run_lifecycle_is_unaffected_by_the_new_binding_columns(provide
     assert set(_CONFIGURATION_BINDING_COLUMN_NAMES) <= set(ProductRun.model_fields)
 
 
+# Columns and indexes the run-discovery start-up migration adds, per table.
+_RUN_DISCOVERY_COLUMNS = {
+    "product_runs": frozenset({"destination_branch"}),
+    "configuration_versions": frozenset({"registered_by", "registration_reason"}),
+    "configurations": frozenset({"name"}),
+}
+_RUN_DISCOVERY_INDEXES = {
+    "product_runs_started": ["started_at", "run_id"],
+    "product_runs_config_started": ["config_id", "started_at", "run_id"],
+    "product_runs_binding_started": ["config_id", "registry_version", "started_at", "run_id"],
+    "product_runs_binding_applied": ["config_id", "registry_version", "finished_at", "run_id"],
+    "configurations_name": ["name"],
+    "configurations_created": ["created_at", "config_id"],
+}
+# The configuration tables as they were before the run-discovery columns existed.
+_LEGACY_CONFIGURATION_TABLES = (
+    "CREATE TABLE configurations (config_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)",
+    "CREATE TABLE configuration_versions (config_id TEXT NOT NULL, registry_version INTEGER NOT NULL, "
+    "package_checksum TEXT NOT NULL, declared_content TEXT NOT NULL, created_at TEXT NOT NULL, "
+    "PRIMARY KEY (config_id, registry_version), FOREIGN KEY (config_id) REFERENCES configurations(config_id))",
+)
+
+
+def _sqlite_columns(database: Path, table: str) -> list[str]:
+    with sqlite3.connect(database) as connection:
+        return [str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")]
+
+
+def _sqlite_index_columns(database: Path, index: str) -> list[str]:
+    with sqlite3.connect(database) as connection:
+        return [str(row[2]) for row in connection.execute(f"PRAGMA index_info({index})")]
+
+
+def _sqlite_schema(database: Path) -> list[tuple[str, str, str | None]]:
+    with sqlite3.connect(database) as connection:
+        return list(connection.execute("SELECT type, name, sql FROM sqlite_master ORDER BY type, name"))
+
+
+def test_fresh_sqlite_database_gains_the_run_discovery_columns_and_indexes(tmp_path: Path) -> None:
+    database = tmp_path / "records.sqlite3"
+    SQLiteRunStore(database)
+
+    for table, columns in _RUN_DISCOVERY_COLUMNS.items():
+        assert columns <= set(_sqlite_columns(database, table)), table
+    for index, columns in _RUN_DISCOVERY_INDEXES.items():
+        assert _sqlite_index_columns(database, index) == columns
+    definitions = {name: sql for kind, name, sql in _sqlite_schema(database) if kind == "index"}
+    assert str(definitions["product_runs_binding_applied"]).endswith("WHERE phase = 'applied'")
+
+
+def test_second_start_up_leaves_the_run_discovery_schema_unchanged(tmp_path: Path) -> None:
+    database = tmp_path / "records.sqlite3"
+    SQLiteRunStore(database)
+    first = _sqlite_schema(database)
+
+    SQLiteRunStore(database)
+
+    assert _sqlite_schema(database) == first
+    for table, columns in _RUN_DISCOVERY_COLUMNS.items():
+        present = _sqlite_columns(database, table)
+        for column in columns:
+            assert present.count(column) == 1, (table, column)
+
+
+def test_preexisting_database_without_run_discovery_columns_is_upgraded(tmp_path: Path) -> None:
+    database = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(_LEGACY_PRODUCT_RUNS_TABLE)
+        for statement in _LEGACY_CONFIGURATION_TABLES:
+            connection.execute(statement)
+        connection.execute(
+            "INSERT INTO product_runs (run_id, operation, configuration_reference, actor, audit_links, "
+            "started_at, finished_at, phase, outcome, summary, results) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "legacy-run-001",
+                "plan",
+                "sha256:legacy",
+                None,
+                "[]",
+                datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat(),
+                None,
+                "planning",
+                None,
+                "{}",
+                "{}",
+            ),
+        )
+
+    store = SQLiteRunStore(database)
+
+    for table, columns in _RUN_DISCOVERY_COLUMNS.items():
+        assert columns <= set(_sqlite_columns(database, table)), table
+    for index, columns in _RUN_DISCOVERY_INDEXES.items():
+        assert _sqlite_index_columns(database, index) == columns
+    loaded = store.lookup("legacy-run-001").value
+    assert loaded is not None
+    assert loaded.destination_branch is None
+
+
+def test_undecodable_legacy_package_logs_its_config_id_only(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    database = tmp_path / "legacy.sqlite3"
+    undecodable = "{not json secret-token-value"
+    with sqlite3.connect(database) as connection:
+        connection.execute(_LEGACY_PRODUCT_RUNS_TABLE)
+        for statement in _LEGACY_CONFIGURATION_TABLES:
+            connection.execute(statement)
+        connection.execute(
+            "INSERT INTO configurations (config_id, created_at) VALUES ('legacy-config', '2026-01-01T00:00:00+00:00')"
+        )
+        connection.execute(
+            "INSERT INTO configuration_versions (config_id, registry_version, package_checksum, declared_content, "
+            "created_at) VALUES ('legacy-config', 1, 'sha256:legacy', ?, '2026-01-01T00:00:00+00:00')",
+            (undecodable,),
+        )
+
+    with caplog.at_level(logging.WARNING, logger="infrahub_sync.product_store.store"):
+        SQLiteRunStore(database)
+
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert any("legacy-config" in message for message in warnings)
+    assert not any("secret-token-value" in message for message in warnings)
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT name FROM configurations").fetchone() == (None,)
+
+
+def test_run_destination_branch_round_trips(provider: ProductProjection) -> None:
+    expected = _run().model_copy(update={"destination_branch": "feature-x"})
+    provider.create_run(expected)
+
+    loaded = provider.lookup_run(expected.run_id).value
+
+    assert loaded is not None
+    assert loaded.destination_branch == "feature-x"
+
+
+def test_postgresql_start_up_adds_the_run_discovery_schema_once() -> None:
+    database = _FakePostgreSQLDatabase(
+        tables=_PARENT_TABLES,
+        columns={"product_runs": _PARENT_PRODUCT_RUNS_COLUMNS},
+    )
+
+    PostgreSQLRunStore(database.connect)
+
+    for table, columns in _RUN_DISCOVERY_COLUMNS.items():
+        assert columns <= database.columns.get(table, set()), table
+    index_statements = [statement for statement in database.statements if statement.startswith("CREATE INDEX")]
+    for index, columns in _RUN_DISCOVERY_INDEXES.items():
+        prefix = f"CREATE INDEX IF NOT EXISTS {index} ON "
+        issued = [statement for statement in index_statements if statement.startswith(prefix)]
+        assert len(issued) == 1, index
+        assert f"({', '.join(columns)})" in issued[0], issued[0]
+
+    already_issued = len(database.statements)
+    PostgreSQLRunStore(database.connect)
+
+    second_start_up = database.statements[already_issued:]
+    assert not [statement for statement in second_start_up if " ADD COLUMN " in statement]
+
+
+@pytest.mark.parametrize("dialect", ["sqlite", "postgresql-emulated"])
+def test_non_utc_started_at_is_stored_and_ordered_as_its_utc_instant(tmp_path: Path, dialect: str) -> None:
+    database = tmp_path / "records.sqlite3"
+    store = SQLiteRunStore(database) if dialect == "sqlite" else PostgreSQLRunStore(_connect(database))
+    # 01:00 at UTC+02:00 is 23:00 UTC the previous day: earlier than 23:30 UTC, although its
+    # local-time text sorts after it.
+    plus_two = timezone(timedelta(hours=2))
+    earlier = _run("run-earlier").model_copy(update={"started_at": datetime(2026, 1, 1, 1, tzinfo=plus_two)})
+    later = _run("run-later").model_copy(update={"started_at": datetime(2025, 12, 31, 23, 30, tzinfo=timezone.utc)})
+    store.create(earlier)
+    store.create(later)
+
+    with sqlite3.connect(database) as connection:
+        stored = dict(connection.execute("SELECT run_id, started_at FROM product_runs"))
+        newest_first = [
+            row[0]
+            for row in connection.execute("SELECT run_id FROM product_runs ORDER BY started_at DESC, run_id DESC")
+        ]
+
+    assert stored["run-earlier"] == "2025-12-31T23:00:00+00:00"
+    assert newest_first == ["run-later", "run-earlier"]
+    loaded = store.lookup("run-earlier").value
+    assert loaded is not None
+    assert loaded.started_at == earlier.started_at
+    assert loaded.started_at.utcoffset() == timedelta(0)
+
+
 class _FakePostgreSQLDatabase:
     """In-memory PostgreSQL catalog modelling the four semantics a literal SQLite file
     cannot: transactional DDL, transaction abort on error, ``ADD CONSTRAINT`` raising
@@ -4365,7 +4594,7 @@ class _FakePostgreSQLCursor:
             raise
         return self
 
-    def _dispatch(self, operation: str, parameters: Sequence[Any]) -> tuple[tuple[Any, ...], ...]:  # noqa: PLR0911
+    def _dispatch(self, operation: str, parameters: Sequence[Any]) -> tuple[tuple[Any, ...], ...]:  # noqa: PLR0911, PLR0912
         connection = self._connection
         database = connection.database
         if match := _FAKE_CREATE_TABLE.match(operation):
@@ -4389,6 +4618,9 @@ class _FakePostgreSQLCursor:
             connection.pending_columns.setdefault(table, set()).add(column)
             return ()
         if operation.startswith("UPDATE mutation_receipts SET resource_kind"):
+            return ()
+        if operation.startswith("SELECT configurations.config_id, versions.declared_content"):
+            # The configuration-name fill reads stored packages; this catalog holds no rows.
             return ()
         if match := _FAKE_ALTER_DROP_NOT_NULL.match(operation):
             table, column = match.groups()
@@ -4485,7 +4717,13 @@ def test_postgresql_repeated_initialization_skips_completed_mutation_receipt_nul
 
     def connect() -> MagicMock:
         connection = MagicMock()
+        # One catalog read per table, in migration order: product_runs, configuration_versions,
+        # configurations; the configuration-name fill's package read; prefect_executions; then
+        # the two nullability reads.
         connection.cursor.return_value.fetchall.side_effect = [
+            (),
+            (),
+            (),
             (),
             (),
             (
@@ -4575,7 +4813,10 @@ def test_postgresql_initialization_refuses_a_malformed_column_catalog_row(
     would ever repair.
     """
     connection = MagicMock()
-    connection.cursor.return_value.fetchall.side_effect = [(), (), catalog_rows]
+    # Empty catalogs for product_runs, configuration_versions and configurations, no package
+    # for the configuration-name fill, an empty prefect_executions catalog, then the
+    # mutation_receipts nullability read under test.
+    connection.cursor.return_value.fetchall.side_effect = [(), (), (), (), (), catalog_rows]
     connection.cursor.return_value.fetchone.return_value = (1,)
 
     with pytest.raises(product_store.ProductStoreProviderError):
@@ -4612,7 +4853,7 @@ def test_postgresql_dialect_reads_columns_via_information_schema_without_probing
     store._dialect = "postgresql"
     cursor = database.connect().cursor()
 
-    columns = store._read_product_run_columns(cursor)
+    columns = store._read_table_columns(cursor, "product_runs")
 
     assert columns == frozenset({"run_id", "operation"})
 
@@ -5334,3 +5575,265 @@ def test_sqlite_migration_writes_the_schema_table_only_while_a_reason_column_is_
     assert first == ["PRAGMA writable_schema = ON", "PRAGMA writable_schema = OFF"] * 2
     assert statements != []
     assert schema_writes() == []
+
+
+# The run list (US1): one store query over the binding columns, newest first, keyset paged.
+_LIST_T0 = datetime(2026, 11, 4, 9, tzinfo=timezone.utc)
+
+
+def _listed_run(
+    run_id: str, minutes: int, *, config_id: str | None = None, registry_version: int | None = None
+) -> ProductRun:
+    binding: dict[str, object] = {}
+    if config_id is not None:
+        binding = {
+            "configuration_reference": f"{config_id}@{registry_version}",
+            "config_id": config_id,
+            "registry_version": registry_version,
+            "package_checksum": "a" * 64,
+        }
+    return ProductRun.model_validate(
+        {
+            **_run(run_id).model_dump(),
+            "started_at": _LIST_T0 + timedelta(minutes=minutes),
+            **binding,
+        }
+    )
+
+
+def _seed_run_list(projection: ProductProjection) -> None:
+    for run in (
+        _listed_run("run-legacy", 0),
+        _listed_run("run-c1-a", 1, config_id="config-c", registry_version=1),
+        _listed_run("run-c1-b", 2, config_id="config-c", registry_version=1),
+        _listed_run("run-c2-a", 3, config_id="config-c", registry_version=2),
+        _listed_run("run-d1-a", 4, config_id="config-d", registry_version=1),
+    ):
+        projection.create_run(run)
+
+
+def _listed_ids(
+    projection: ProductProjection, filters: RunFilters, *, after: tuple[datetime, str] | None = None
+) -> list[str]:
+    return [run.run_id for run in projection.list_runs(filters, after=after).items]
+
+
+def test_run_list_is_newest_first_with_run_id_breaking_equal_start_times(
+    listing_provider: ProductProjection,
+) -> None:
+    for run_id, minutes in (("run-a", 0), ("run-b", 5), ("run-c", 5), ("run-d", 10)):
+        listing_provider.create_run(_listed_run(run_id, minutes))
+
+    assert _listed_ids(listing_provider, RunFilters()) == ["run-d", "run-c", "run-b", "run-a"]
+
+
+@pytest.mark.parametrize(
+    ("filters", "expected"),
+    [
+        (RunFilters(), ["run-d1-a", "run-c2-a", "run-c1-b", "run-c1-a", "run-legacy"]),
+        (RunFilters(config_id="config-c"), ["run-c2-a", "run-c1-b", "run-c1-a"]),
+        (RunFilters(config_id="config-c", registry_version=1), ["run-c1-b", "run-c1-a"]),
+        (RunFilters(config_id="config-unknown"), []),
+    ],
+    ids=["unfiltered-includes-legacy", "configuration", "configuration-version", "no-match"],
+)
+def test_run_list_filters_by_configuration_and_version(
+    listing_provider: ProductProjection, filters: RunFilters, expected: list[str]
+) -> None:
+    _seed_run_list(listing_provider)
+
+    assert _listed_ids(listing_provider, filters) == expected
+
+
+def test_run_filters_refuse_a_version_without_a_configuration() -> None:
+    with pytest.raises(ValidationError, match="registry_version requires config_id"):
+        RunFilters(registry_version=1)
+
+
+def test_run_list_after_key_excludes_the_key_and_every_newer_row(listing_provider: ProductProjection) -> None:
+    for run_id, minutes in (("run-a", 0), ("run-b", 5), ("run-c", 5), ("run-d", 10)):
+        listing_provider.create_run(_listed_run(run_id, minutes))
+    # The same instant as run-c's start, written at another offset: the store compares instants.
+    after = ((_LIST_T0 + timedelta(minutes=5)).astimezone(timezone(timedelta(hours=1))), "run-c")
+
+    assert _listed_ids(listing_provider, RunFilters(), after=after) == ["run-b", "run-a"]
+    _seed_run_list(listing_provider)
+    filtered = RunFilters(config_id="config-c", registry_version=1)
+    assert _listed_ids(listing_provider, filtered, after=(_LIST_T0 + timedelta(minutes=2), "run-c1-b")) == ["run-c1-a"]
+
+
+@pytest.mark.parametrize(("limit", "expected_more"), [(2, True), (4, True), (5, False), (6, False)])
+def test_run_list_respects_the_limit_and_reports_a_further_page(
+    listing_provider: ProductProjection, *, limit: int, expected_more: bool
+) -> None:
+    _seed_run_list(listing_provider)
+
+    page = listing_provider.list_runs(RunFilters(), limit=limit)
+
+    assert len(page.items) == min(limit, 5)
+    assert page.has_more is expected_more
+
+
+def test_run_list_items_omit_artifacts_and_executions_but_keep_every_other_field(
+    listing_provider: ProductProjection,
+) -> None:
+    listing_provider.create_run(_listed_run("run-001", 0, config_id="config-c", registry_version=1))
+    link = PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1)
+    _append_execution(listing_provider, "run-001", link)
+    listing_provider.record_audit(
+        AuditEvent(
+            event_id="audit-001",
+            run_id="run-001",
+            actor="operator@example.com",
+            operation="plan",
+            reason="review",
+            outcome="accepted",
+            created_at=_LIST_T0,
+        )
+    )
+    detail = listing_provider.lookup_run("run-001").value
+    assert detail is not None
+    assert detail.prefect_executions
+
+    (listed,) = listing_provider.list_runs(RunFilters()).items
+
+    assert listed == detail.model_copy(update={"artifact_refs": (), "prefect_executions": ()})
+    assert "audit-001" in listed.audit_links
+
+
+# The configuration and version lists (US2): keyset paged, with each version's latest runs.
+
+
+def _phased_run(run_id: str, minutes: int, config_id: str, registry_version: int, phase: str) -> ProductRun:
+    return _listed_run(run_id, minutes, config_id=config_id, registry_version=registry_version).model_copy(
+        update={"phase": phase}
+    )
+
+
+def test_version_page_reads_each_versions_latest_run_and_latest_applied_run(
+    listing_provider: ProductProjection,
+) -> None:
+    first = listing_provider.create_configuration(_configuration_package(), registered_by="admin", secrets=())
+    config_id = first.config_id
+    for url in ("https://second.netbox.test", "https://third.netbox.test"):
+        listing_provider.add_configuration_version(config_id, _configuration_package(url=url))
+    other = listing_provider.create_configuration(_configuration_package())
+    for run in (
+        # Version 1: applied, then planned again later; equal start times break on run_id.
+        _phased_run("run-v1-plan", 0, config_id, 1, "planned"),
+        _phased_run("run-v1-apply-a", 1, config_id, 1, "applied"),
+        _phased_run("run-v1-apply-b", 1, config_id, 1, "applied"),
+        _phased_run("run-v1-replan", 2, config_id, 1, "planned"),
+        # Version 2: planned only. Version 3: never run.
+        _phased_run("run-v2-plan", 3, config_id, 2, "planned"),
+        # Another configuration's newer runs must not leak into this one's versions.
+        _phased_run("run-other-apply", 9, other.config_id, 1, "applied"),
+    ):
+        listing_provider.create_run(run)
+
+    page = listing_provider.list_configuration_version_page(config_id)
+
+    assert page.has_more is False
+    assert [
+        (
+            item.registry_version,
+            item.registered_by,
+            None if item.latest_run is None else (item.latest_run.run_id, item.latest_run.phase),
+            None if item.latest_applied_run is None else item.latest_applied_run.run_id,
+        )
+        for item in page.items
+    ] == [
+        (3, None, None, None),
+        (2, None, ("run-v2-plan", "planned"), None),
+        (1, "admin", ("run-v1-replan", "planned"), "run-v1-apply-b"),
+    ]
+    assert page.items[2].latest_run is not None
+    assert page.items[2].latest_run.started_at == _LIST_T0 + timedelta(minutes=2)
+
+
+def test_version_page_reports_the_most_recently_applied_run_not_the_most_recently_planned(
+    listing_provider: ProductProjection,
+) -> None:
+    config_id = listing_provider.create_configuration(_configuration_package()).config_id
+    # P1 planned at t1, P2 planned at t2; P2 applied at t3, then P1 applied at t4. An apply
+    # advances the plan run in place, so P1 keeps the older start time but was applied last.
+    listing_provider.create_run(_listed_run("run-p1", 1, config_id=config_id, registry_version=1))
+    listing_provider.create_run(_listed_run("run-p2", 2, config_id=config_id, registry_version=1))
+    for run_id, minutes in (("run-p2", 3), ("run-p1", 4)):
+        listing_provider._records.finish(
+            run_id,
+            phase="applied",
+            outcome="succeeded",
+            finished_at=_LIST_T0 + timedelta(minutes=minutes),
+            summary={},
+            results={},
+        )
+
+    (item,) = listing_provider.list_configuration_version_page(config_id).items
+
+    assert item.latest_run is not None
+    assert item.latest_run.run_id == "run-p2"
+    assert item.latest_applied_run is not None
+    assert item.latest_applied_run.run_id == "run-p1"
+
+
+def test_most_recently_applied_run_is_ranked_by_utc_instant_under_a_non_utc_clock(
+    listing_provider: ProductProjection,
+) -> None:
+    config_id = listing_provider.create_configuration(_configuration_package()).config_id
+    listing_provider.create_run(_listed_run("run-p1", 1, config_id=config_id, registry_version=1))
+    listing_provider.create_run(_listed_run("run-p2", 2, config_id=config_id, registry_version=1))
+    # P2's apply finished first, on a UTC+05:00 clock whose local-time text sorts after P1's
+    # later UTC finish. Ranking by the stored text is correct only when both are stored in UTC.
+    plus_five = timezone(timedelta(hours=5))
+    for run_id, finished_at in (
+        ("run-p2", (_LIST_T0 + timedelta(minutes=3)).astimezone(plus_five)),
+        ("run-p1", _LIST_T0 + timedelta(minutes=4)),
+    ):
+        listing_provider._records.finish(
+            run_id, phase="applied", outcome="succeeded", finished_at=finished_at, summary={}, results={}
+        )
+
+    (item,) = listing_provider.list_configuration_version_page(config_id).items
+
+    assert item.latest_applied_run is not None
+    assert item.latest_applied_run.run_id == "run-p1"
+
+
+def test_version_page_respects_the_limit_and_continues_after_a_version(listing_provider: ProductProjection) -> None:
+    config_id = listing_provider.create_configuration(_configuration_package()).config_id
+    for url in ("https://second.netbox.test", "https://third.netbox.test"):
+        listing_provider.add_configuration_version(config_id, _configuration_package(url=url))
+
+    first = listing_provider.list_configuration_version_page(config_id, limit=2)
+    rest = listing_provider.list_configuration_version_page(config_id, after=2, limit=2)
+
+    assert ([item.registry_version for item in first.items], first.has_more) == ([3, 2], True)
+    assert ([item.registry_version for item in rest.items], rest.has_more) == ([1], False)
+
+
+def test_configuration_page_is_newest_first_filters_by_name_and_continues_after_a_key(
+    listing_provider: ProductProjection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registrations = (
+        ("config-a", datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)),
+        ("config-c", datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
+        ("config-b", datetime(2026, 8, 8, 12, 30, tzinfo=timezone.utc)),
+    )
+    ids = iter([config_id for config_id, _ in registrations])
+    clock = iter([created_at for _, created_at in registrations])
+    monkeypatch.setattr(product_store_store, "_generate_config_id", lambda: next(ids))
+    monkeypatch.setattr(product_store_store, "datetime", SimpleNamespace(now=lambda tz: next(clock)))  # noqa: ARG005
+    for _ in registrations:
+        listing_provider.create_configuration(_configuration_package())
+    monkeypatch.undo()
+
+    first = listing_provider.list_configuration_page(limit=2)
+    last = first.items[-1]
+    rest = listing_provider.list_configuration_page(after=(last.created_at, last.config_id), limit=2)
+
+    assert ([item.config_id for item in first.items], first.has_more) == (["config-c", "config-b"], True)
+    assert ([item.config_id for item in rest.items], rest.has_more) == (["config-a"], False)
+    assert {(item.name, item.latest_version) for item in first.items} == {("from-netbox", 1)}
+    assert len(listing_provider.list_configuration_page(name="from-netbox").items) == 3
+    assert listing_provider.list_configuration_page(name="another-name").items == ()

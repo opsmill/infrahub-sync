@@ -249,10 +249,10 @@ Register and validate the package before creating a plan:
 
 ```shell
 infrahub-sync configs validate <config-id> <version>
-infrahub-sync diff --config-id <config-id> --version <version> --reason "review mapping"
+infrahub-sync plan --config-id <config-id> --version <version> --reason "review mapping"
 ```
 
-When the plan is ready, `diff` prints its summary: the operation counts by action and by
+When the plan is ready, `plan` prints its summary: the operation counts by action and by
 kind. To see each operation, review the saved plan:
 
 ```shell

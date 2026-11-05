@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 from threading import Event, Thread
@@ -17,8 +17,8 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
 from infrahub_sync.configuration.models import ValidationFinding
+from infrahub_sync.product_store import ConfigurationPage, ProductRun, local_product_projection
 from infrahub_sync.product_store import configs as configs_service
-from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.product_store.configs import ValidationReport
 from infrahub_sync.service import serve
 from infrahub_sync.service.app import create_app
@@ -143,7 +143,7 @@ def test_configuration_routes_use_the_injected_projection_for_services_receipts_
         "claim_mutation",
         "create_configuration",
         "complete_mutation",
-        "list_configurations",
+        "list_configuration_page",
         "lookup_configuration",
         "lookup_configuration_version",
         "record_audit",
@@ -203,7 +203,7 @@ def test_configuration_http_provider_errors_preserve_storage_and_internal_famili
 
     class StorageProjection:
         @staticmethod
-        def list_configurations() -> NoReturn:
+        def list_configuration_page(**_kwargs: object) -> NoReturn:
             raise ProductStoreProviderError(sqlstate="08006")
 
         @staticmethod
@@ -242,7 +242,7 @@ def test_configuration_http_provider_errors_preserve_storage_and_internal_famili
 
     class InternalProjection:
         @staticmethod
-        def list_configurations() -> NoReturn:
+        def list_configuration_page(**_kwargs: object) -> NoReturn:
             message = "projection-secret-canary"
             raise RuntimeError(message)
 
@@ -263,9 +263,9 @@ def test_configuration_http_provider_errors_preserve_storage_and_internal_famili
     "boundary",
     [
         "create_configuration",
-        "list_configurations",
+        "list_configuration_page",
         "lookup_configuration",
-        "list_configuration_versions",
+        "list_configuration_version_page",
         "lookup_configuration_version",
         "reserve_mutation",
         "claim_mutation",
@@ -331,11 +331,11 @@ def test_every_configuration_storage_boundary_has_a_value_free_http_family(
     reader_headers = {"Authorization": f"Bearer {reader_token}", "Idempotency-Key": f"failure-{boundary}"}
     valid_body = {"package": package_data(), "reason": "boundary evidence"}
 
-    if boundary == "list_configurations":
+    if boundary == "list_configuration_page":
         response = client.get("/configs", headers=admin_headers)
     elif boundary == "lookup_configuration":
         response = client.get(f"/configs/{version.config_id}", headers=admin_headers)
-    elif boundary == "list_configuration_versions":
+    elif boundary == "list_configuration_version_page":
         response = client.get(f"/configs/{version.config_id}/versions", headers=admin_headers)
     elif boundary == "lookup_configuration_version":
         response = client.get(f"/configs/{version.config_id}/versions/1", headers=admin_headers)
@@ -537,10 +537,12 @@ def test_post_commit_readback_failure_blocks_same_key_retry_without_a_second_con
         def __getattr__(self, name: str) -> object:
             return getattr(projection, name)
 
-        def create_configuration(self, package: ConfigurationPackage) -> ConfigurationVersion:  # noqa: PLR6301
+        def create_configuration(  # noqa: PLR6301
+            self, package: ConfigurationPackage, **registration: object
+        ) -> ConfigurationVersion:
             nonlocal writes
             writes += 1
-            return projection.create_configuration(package)
+            return projection.create_configuration(package, **registration)  # ty: ignore[invalid-argument-type]
 
         def lookup_configuration(self, _config_id: str) -> NoReturn:  # noqa: PLR6301
             message = "read-back failed after configuration commit"
@@ -781,13 +783,17 @@ def test_configuration_route_grammar_refuses_hostile_values_before_service_class
         ("post", "/configs", {"json": {"package": package_data(), "reason": "valid", "extra": True}}),
         ("post", "/configs", {"content": '{"package":{"nested":[NaN]},"reason":"valid"}'}),
         ("post", "/configs", {"json": {"package": package_data(), "reason": "invalid\nreason"}}),
-        ("get", "/configs?offset=true", {}),
-        ("get", "/configs?offset=1.0", {}),
-        ("get", "/configs?limit=257", {}),
+        ("get", "/configs?limit=true", {}),
+        ("get", "/configs?limit=1.0", {}),
+        ("get", "/configs?limit=0", {}),
+        ("get", "/configs?limit=201", {}),
+        ("get", "/configs/good/versions?limit=201", {}),
         ("get", "/configs/not%20an%20id", {}),
         ("get", "/configs/good/versions/true", {}),
         ("get", "/configs/good/versions/1.0", {}),
         ("get", "/configs/good/versions/0", {}),
+        ("get", "/configs/good/versions/" + "9" * 5000, {}),
+        ("get", "/configs?limit=" + "1" * 5000, {}),
         ("post", "/configs/good/versions/1/validate?limit=true", {}),
     ]
     for method, path, kwargs in probes:
@@ -863,55 +869,6 @@ def test_validation_pages_are_bounded_and_concatenate_to_the_single_snapshot(
         }
         for page in pages
     )
-
-
-def test_configuration_and_version_lists_return_every_service_result(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Only validation findings paginate; registry lists keep all service records."""
-    bearer = "admin-token-canary-0003"
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
-
-    class Service:
-        ConfigsRequestError = configs_service.ConfigsRequestError
-        ConfigsValidationError = configs_service.ConfigsValidationError
-        ConfigsNotFoundError = configs_service.ConfigsNotFoundError
-        ConfigsStorageError = configs_service.ConfigsStorageError
-        ConfigsInternalError = configs_service.ConfigsInternalError
-        ConfigsError = configs_service.ConfigsError
-
-        @staticmethod
-        def list_configs(**_kwargs: object) -> list[dict[str, object]]:
-            return [
-                {"config_id": f"cfg-{position}", "created_at": datetime.now().astimezone()} for position in range(300)
-            ]
-
-        @staticmethod
-        def list_versions(**_kwargs: object) -> list[dict[str, object]]:
-            return [
-                {
-                    "config_id": "cfg",
-                    "registry_version": position + 1,
-                    "package_checksum": f"{position:064x}",
-                    "declared_content": {},
-                    "created_at": datetime.now().astimezone(),
-                }
-                for position in range(300)
-            ]
-
-    client = TestClient(
-        create_app(
-            RunService(local_product_projection(tmp_path), _Orchestration(), secrets=resolver.secret_values),
-            resolver,
-            ConfigurationRoutes(
-                product_projection=local_product_projection(tmp_path), service=Service(), secrets=resolver.secret_values
-            ),
-        )
-    )
-    headers = {"Authorization": f"Bearer {bearer}"}
-    assert len(client.get("/configs", headers=headers).json()) == 300
-    assert len(client.get("/configs/cfg/versions", headers=headers).json()) == 300
 
 
 @pytest.mark.parametrize(
@@ -1074,9 +1031,9 @@ def test_create_app_keeps_run_and_configuration_dependencies_separate(tmp_path: 
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        def list_configs(self, **_kwargs: object) -> list[dict[str, str]]:
+        def list_configs(self, **_kwargs: object) -> ConfigurationPage:
             self.calls.append("list_configs")
-            return []
+            return ConfigurationPage(items=(), has_more=False)
 
     class Resolver:
         @staticmethod
@@ -1277,3 +1234,252 @@ def test_configuration_mutation_without_a_reason_replays_by_reason(
     assert receipt.reason is None
     accepted = [event for event in projection.audit_events() if event.outcome == "accepted"]
     assert [event.reason for event in accepted] == [None]
+
+
+# Discoverable configurations (US2): paged lists with names, versions and their latest runs.
+
+_DISCOVERY_T0 = datetime(2026, 11, 4, 9, tzinfo=timezone.utc)
+
+
+def _discovery_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, ProductProjection]:
+    """Return an administrator client and the one projection both route families use."""
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": ADMIN_TOKEN, "administrator": True}}))
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    projection = local_product_projection(tmp_path)
+    client = TestClient(
+        create_app(
+            RunService(projection, _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(product_projection=projection, secrets=resolver.secret_values),
+        )
+    )
+    client.headers.update({"Authorization": f"Bearer {ADMIN_TOKEN}"})
+    return client, projection
+
+
+def _named_package(name: str, url: str = "https://demo.netbox.dev") -> dict[str, object]:
+    data = package_data()
+    data["configuration"]["name"] = name
+    data["configuration"]["source"]["settings"]["url"] = url
+    return data
+
+
+def _register(client: TestClient, data: dict[str, object], key: str) -> str:
+    response = client.post("/configs", headers={"Idempotency-Key": key}, json={"package": data, "reason": key})
+    assert response.status_code == 201, response.text
+    return str(response.json()["configuration"]["config_id"])
+
+
+def _add_version(client: TestClient, config_id: str, data: dict[str, object], key: str) -> None:
+    response = client.post(
+        f"/configs/{config_id}/versions", headers={"Idempotency-Key": key}, json={"package": data, "reason": key}
+    )
+    assert response.status_code == 201, response.text
+
+
+def _bound_run(run_id: str, minutes: int, config_id: str, registry_version: int, phase: str) -> ProductRun:
+    return ProductRun(
+        run_id=run_id,
+        operation="plan",
+        configuration_reference=f"{config_id}@{registry_version}",
+        config_id=config_id,
+        registry_version=registry_version,
+        package_checksum="a" * 64,
+        started_at=_DISCOVERY_T0 + timedelta(minutes=minutes),
+        phase=phase,
+    )
+
+
+def test_configuration_list_is_a_page_newest_first_with_name_and_latest_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    netbox = _register(client, _named_package("netbox-inventory"), "register-netbox")
+    _add_version(client, netbox, _named_package("netbox-inventory", "https://second.netbox.test"), "version-2")
+    other = _register(client, _named_package("other-inventory"), "register-other")
+
+    response = client.get("/configs")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"items", "next_cursor"}
+    assert body["next_cursor"] is None
+    keys = [(item["created_at"], item["config_id"]) for item in body["items"]]
+    assert keys == sorted(keys, reverse=True)
+    assert {item["config_id"]: (item["name"], item["latest_version"]) for item in body["items"]} == {
+        netbox: ("netbox-inventory", 2),
+        other: ("other-inventory", 1),
+    }
+
+
+def test_name_filter_returns_every_configuration_that_shares_the_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    first = _register(client, _named_package("shared-name"), "register-first")
+    second = _register(client, _named_package("shared-name"), "register-second")
+    _register(client, _named_package("other-name"), "register-other")
+
+    response = client.get("/configs", params={"name": "shared-name"})
+
+    assert response.status_code == 200
+    assert {item["config_id"] for item in response.json()["items"]} == {first, second}
+
+
+def test_configuration_summary_includes_name_and_latest_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    config_id = _register(client, _named_package("netbox-inventory"), "register")
+    _add_version(client, config_id, _named_package("renamed-inventory", "https://second.netbox.test"), "version-2")
+
+    response = client.get(f"/configs/{config_id}")
+
+    assert response.status_code == 200
+    assert (response.json()["name"], response.json()["latest_version"]) == ("renamed-inventory", 2)
+
+
+def test_version_list_returns_summaries_with_each_versions_latest_run_and_latest_applied_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, projection = _discovery_client(tmp_path, monkeypatch)
+    config_id = _register(client, _named_package("netbox-inventory"), "register")
+    _add_version(client, config_id, _named_package("netbox-inventory", "https://second.netbox.test"), "version-2")
+    _add_version(client, config_id, _named_package("netbox-inventory", "https://third.netbox.test"), "version-3")
+    for run in (
+        _bound_run("run-v1-plan", 0, config_id, 1, "planned"),
+        _bound_run("run-v1-apply", 1, config_id, 1, "applied"),
+        _bound_run("run-v2-plan", 2, config_id, 2, "planned"),
+    ):
+        projection.create_run(run)
+
+    response = client.get(f"/configs/{config_id}/versions")
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert response.json()["next_cursor"] is None
+    assert [item["registry_version"] for item in items] == [3, 2, 1]
+    assert all("declared_content" not in item for item in items)
+    assert all(item["registered_by"] == "admin" for item in items)
+    assert [item["registration_reason"] for item in items] == ["version-3", "version-2", "register"]
+
+    def run_ids(item: dict[str, object]) -> tuple[object, object]:
+        latest, applied = item["latest_run"], item["latest_applied_run"]
+        return (
+            None if latest is None else cast("dict[str, object]", latest)["run_id"],
+            None if applied is None else cast("dict[str, object]", applied)["run_id"],
+        )
+
+    assert [run_ids(item) for item in items] == [
+        (None, None),
+        ("run-v2-plan", None),
+        ("run-v1-apply", "run-v1-apply"),
+    ]
+    assert items[2]["latest_applied_run"]["phase"] == "applied"
+
+
+def test_limit_limits_each_page_and_cursor_returns_the_next_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The paging parameters take effect on both lists; they were once accepted and ignored."""
+    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    config_ids = {_register(client, _named_package(f"config-{index}"), f"register-{index}") for index in range(3)}
+    config_id = next(iter(config_ids))
+    for index in (2, 3):
+        _add_version(client, config_id, _named_package("config-v", f"https://v{index}.netbox.test"), f"version-{index}")
+
+    first = client.get("/configs", params={"limit": 2}).json()
+    rest = client.get("/configs", params={"limit": 2, "cursor": first["next_cursor"]}).json()
+    first_versions = client.get(f"/configs/{config_id}/versions", params={"limit": 2}).json()
+    rest_versions = client.get(
+        f"/configs/{config_id}/versions", params={"limit": 2, "cursor": first_versions["next_cursor"]}
+    ).json()
+
+    assert len(first["items"]) == 2
+    assert first["next_cursor"] is not None
+    assert len(rest["items"]) == 1
+    assert rest["next_cursor"] is None
+    assert {item["config_id"] for item in first["items"] + rest["items"]} == config_ids
+    assert [item["registry_version"] for item in first_versions["items"]] == [3, 2]
+    assert [item["registry_version"] for item in rest_versions["items"]] == [1]
+    assert rest_versions["next_cursor"] is None
+
+
+def test_list_routes_declare_cursor_paging_and_no_offset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    paths = client.get("/openapi.json").json()["paths"]
+
+    def parameters(path: str) -> set[str]:
+        return {parameter["name"] for parameter in paths[path]["get"]["parameters"] if parameter["in"] == "query"}
+
+    assert parameters("/configs") == {"name", "limit", "cursor"}
+    assert parameters("/configs/{config_id}/versions") == {"limit", "cursor"}
+
+
+def test_version_list_of_an_unknown_configuration_is_404(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, _projection = _discovery_client(tmp_path, monkeypatch)
+
+    response = client.get("/configs/config-unknown/versions")
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "configs-not-found"
+    assert response.json()["error"]["reason"] == "configuration-not-found"
+
+
+def test_invalid_cursor_is_answered_with_422_in_the_error_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cursor that does not decode, or was issued for another list, is refused with 422."""
+    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    config_id = _register(client, _named_package("netbox-inventory"), "register")
+    _add_version(client, config_id, _named_package("netbox-inventory", "https://second.netbox.test"), "version-2")
+    version_cursor = client.get(f"/configs/{config_id}/versions", params={"limit": 1}).json()["next_cursor"]
+    expected = {
+        "error": {
+            "code": "invalid-cursor",
+            "message": "the cursor is not valid for this request",
+            "status": 422,
+            "run_id": None,
+            "mutation_id": None,
+        }
+    }
+
+    for response in (
+        client.get("/configs", params={"cursor": "garbage"}),
+        client.get("/configs", params={"cursor": version_cursor}),
+        client.get(f"/configs/{config_id}/versions", params={"cursor": "garbage"}),
+    ):
+        assert response.status_code == 422
+        assert response.json() == expected
+
+
+def test_a_cursor_is_refused_by_another_filter_configuration_or_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cursor is bound to its list and its filters, even when both lists are unfiltered."""
+    client, projection = _discovery_client(tmp_path, monkeypatch)
+    alpha = _register(client, _named_package("alpha"), "register-alpha-1")
+    _register(client, _named_package("alpha", "https://alpha-2.netbox.test"), "register-alpha-2")
+    beta = _register(client, _named_package("beta"), "register-beta-1")
+    _register(client, _named_package("beta", "https://beta-2.netbox.test"), "register-beta-2")
+    _add_version(client, alpha, _named_package("alpha", "https://alpha-v2.netbox.test"), "alpha-version-2")
+    for index in range(2):
+        projection.create_run(_bound_run(f"bound-run-{index:03d}", index, alpha, 1, "accepted"))
+
+    name_cursor = client.get("/configs", params={"name": "alpha", "limit": 1}).json()["next_cursor"]
+    version_cursor = client.get(f"/configs/{alpha}/versions", params={"limit": 1}).json()["next_cursor"]
+    configs_cursor = client.get("/configs", params={"limit": 1}).json()["next_cursor"]
+    runs_cursor = client.get("/runs", params={"limit": 1}).json()["next_cursor"]
+    assert None not in {name_cursor, version_cursor, configs_cursor, runs_cursor}
+    # Each cursor is still accepted by the request it was issued for.
+    assert client.get("/configs", params={"name": "alpha", "cursor": name_cursor}).status_code == 200
+    assert client.get("/runs", params={"cursor": runs_cursor}).status_code == 200
+
+    for response in (
+        client.get("/configs", params={"name": "beta", "cursor": name_cursor}),
+        client.get(f"/configs/{beta}/versions", params={"cursor": version_cursor}),
+        client.get("/runs", params={"cursor": configs_cursor}),
+        client.get("/configs", params={"cursor": runs_cursor}),
+    ):
+        assert response.status_code == 422, response.text
+        assert response.json()["error"]["code"] == "invalid-cursor"

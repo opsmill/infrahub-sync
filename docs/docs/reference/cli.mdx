@@ -25,25 +25,27 @@ $ infrahub-sync [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `diff`: Create a plan run and review its saved...
+* `plan`: Create a plan run and review its saved...
 * `sync`: Create a confirmed synchronization run.
 * `apply`: Apply a service-owned plan after binding...
+* `verify`: Start verification of the saved plan of...
+* `whoami`: Show the actor the API token authenticates...
 * `configs`: Register and inspect configuration packages.
 * `runs`: Inspect service-owned runs.
 
-## `infrahub-sync diff`
+## `infrahub-sync plan`
 
 Create a plan run and review its saved summary after completion.
 
 **Usage**:
 
 ```console
-$ infrahub-sync diff [OPTIONS]
+$ infrahub-sync plan [OPTIONS]
 ```
 
 **Options**:
 
-* `--config-id <str>`: Registered configuration identity.  [required]
+* `--config, --config-id <str>`: Configuration ID or name. The ID is tried first, then the name.  [required]
 * `--version <int>`: Registered configuration version.  [required]
 * `--reason <str>`: Optional audit reason for the plan.
 * `--branch <str>`: Destination branch admitted by the Sync API.
@@ -65,7 +67,7 @@ $ infrahub-sync sync [OPTIONS]
 
 **Options**:
 
-* `--config-id <str>`: Registered configuration identity.  [required]
+* `--config, --config-id <str>`: Configuration ID or name. The ID is tried first, then the name.  [required]
 * `--version <int>`: Registered configuration version.  [required]
 * `--reason <str>`: Optional audit reason for the synchronization.
 * `--branch <str>`: Destination branch admitted by the Sync API.
@@ -100,6 +102,43 @@ $ infrahub-sync apply [OPTIONS] {run_id}
 * `--poll-interval <float>`: Poll interval in seconds.  [default: 2.0]
 * `--help`: Show this message and exit.
 
+## `infrahub-sync verify`
+
+Start verification of the saved plan of the named run.
+
+**Usage**:
+
+```console
+$ infrahub-sync verify [OPTIONS] {run_id}
+```
+
+**Arguments**:
+
+* `run_id`: Service-issued run ID whose saved plan is verified.  [required]
+
+**Options**:
+
+* `--reason <str>`: Optional audit reason for the verification.
+* `--idempotency-key <str>`: Retry key.
+* `--wait / --no-wait`: Wait for this run&#x27;s verification.  [default: wait]
+* `--wait-timeout <float>`: Bounded wait in seconds.  [default: 1800.0]
+* `--poll-interval <float>`: Poll interval in seconds.  [default: 2.0]
+* `--help`: Show this message and exit.
+
+## `infrahub-sync whoami`
+
+Show the actor the API token authenticates as and whether it is an administrator.
+
+**Usage**:
+
+```console
+$ infrahub-sync whoami [OPTIONS]
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
 ## `infrahub-sync configs`
 
 Register and inspect configuration packages.
@@ -118,9 +157,9 @@ $ infrahub-sync configs [OPTIONS] COMMAND [ARGS]...
 
 * `register`: Register a JSON or YAML configuration...
 * `version`: Create the next immutable version of a...
-* `list`: List registered configurations.
+* `list`: List registered configurations, newest first.
 * `show`: Show a configuration or one of its versions.
-* `versions`: List immutable versions of a registered...
+* `versions`: List a configuration&#x27;s versions, newest...
 * `validate`: Validate a registered configuration version.
 
 ### `infrahub-sync configs register`
@@ -150,23 +189,23 @@ Create the next immutable version of a registered configuration.
 **Usage**:
 
 ```console
-$ infrahub-sync configs version [OPTIONS] {config_id} {package}
+$ infrahub-sync configs version [OPTIONS] {CONFIG} {package}
 ```
 
 **Arguments**:
 
-* `config_id`: [required]
+* `CONFIG`: Configuration ID or name. The ID is tried first, then the name.  [required]
 * `package`: [required]
 
 **Options**:
 
 * `--reason <str>`: Optional audit reason for the mutation.
-* `--idempotency-key <str>`: Retry key. A new key is generated and printed when omitted.
+* `--idempotency-key <str>`: Retry key. A new key is generated and printed when omitted. Retry with the printed configuration ID: the name follows the newest version, so it can change.
 * `--help`: Show this message and exit.
 
 ### `infrahub-sync configs list`
 
-List registered configurations.
+List registered configurations, newest first.
 
 **Usage**:
 
@@ -176,6 +215,9 @@ $ infrahub-sync configs list [OPTIONS]
 
 **Options**:
 
+* `--name <str>`: Only configurations with this exact name.
+* `--limit <int range>`: Items per page, 1-200. The server default applies when omitted.  [1&lt;=x&lt;=200]
+* `--all`: Read every page instead of only the first.
 * `--help`: Show this message and exit.
 
 ### `infrahub-sync configs show`
@@ -185,12 +227,12 @@ Show a configuration or one of its versions.
 **Usage**:
 
 ```console
-$ infrahub-sync configs show [OPTIONS] {config_id}
+$ infrahub-sync configs show [OPTIONS] {CONFIG}
 ```
 
 **Arguments**:
 
-* `config_id`: [required]
+* `CONFIG`: Configuration ID or name. The ID is tried first, then the name.  [required]
 
 **Options**:
 
@@ -199,20 +241,22 @@ $ infrahub-sync configs show [OPTIONS] {config_id}
 
 ### `infrahub-sync configs versions`
 
-List immutable versions of a registered configuration.
+List a configuration&#x27;s versions, newest first, with each version&#x27;s latest run and latest applied run.
 
 **Usage**:
 
 ```console
-$ infrahub-sync configs versions [OPTIONS] {config_id}
+$ infrahub-sync configs versions [OPTIONS] {CONFIG}
 ```
 
 **Arguments**:
 
-* `config_id`: [required]
+* `CONFIG`: Configuration ID or name. The ID is tried first, then the name.  [required]
 
 **Options**:
 
+* `--limit <int range>`: Items per page, 1-200. The server default applies when omitted.  [1&lt;=x&lt;=200]
+* `--all`: Read every page instead of only the first.
 * `--help`: Show this message and exit.
 
 ### `infrahub-sync configs validate`
@@ -222,12 +266,12 @@ Validate a registered configuration version.
 **Usage**:
 
 ```console
-$ infrahub-sync configs validate [OPTIONS] {config_id} {version}
+$ infrahub-sync configs validate [OPTIONS] {CONFIG} {version}
 ```
 
 **Arguments**:
 
-* `config_id`: [required]
+* `CONFIG`: Configuration ID or name. The ID is tried first, then the name.  [required]
 * `version`: [required]
 
 **Options**:
@@ -252,9 +296,69 @@ $ infrahub-sync runs [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
+* `list`: List runs, newest first: run,...
+* `artifacts`: List the artifacts one run recorded.
+* `cancel`: Request cancellation of a run.
 * `show`: Show one run&#x27;s service record and its...
 * `results`: Print the results the service recorded for...
 * `plan`: Review a saved plan summary, checksum, and...
+
+### `infrahub-sync runs list`
+
+List runs, newest first: run, configuration@version, branch, phase, outcome, actor, start time.
+
+**Usage**:
+
+```console
+$ infrahub-sync runs list [OPTIONS]
+```
+
+**Options**:
+
+* `--config, --config-id <str>`: Configuration ID or name. The ID is tried first, then the name.
+* `--version <int range>`: Only runs of this version; requires a configuration ID or name.  [x&gt;=1]
+* `--limit <int range>`: Items per page, 1-200. The server default applies when omitted.  [1&lt;=x&lt;=200]
+* `--all`: Read every page instead of only the first.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync runs artifacts`
+
+List the artifacts one run recorded.
+
+**Usage**:
+
+```console
+$ infrahub-sync runs artifacts [OPTIONS] {run_id}
+```
+
+**Arguments**:
+
+* `run_id`: Service-issued run ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `infrahub-sync runs cancel`
+
+Request cancellation of a run. Cancelling a write can leave its outcome ambiguous.
+
+**Usage**:
+
+```console
+$ infrahub-sync runs cancel [OPTIONS] {run_id}
+```
+
+**Arguments**:
+
+* `run_id`: Service-issued run ID.  [required]
+
+**Options**:
+
+* `--reason <str>`: Optional audit reason for the cancellation.
+* `--idempotency-key <str>`: Retry key.
+* `--yes`: Cancel without asking for confirmation.
+* `--help`: Show this message and exit.
 
 ### `infrahub-sync runs show`
 

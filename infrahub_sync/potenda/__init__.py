@@ -195,7 +195,7 @@ def _failure_reach_and_remedy(exc: Exception, *, record: ApplyRecord) -> tuple[s
     A uniqueness refusal is the one destination rejection re-applying cannot fix. The plan
     proposes a create, the destination already holds an object the constraint collides with,
     and applying the same plan again proposes the same create and is refused identically —
-    so "re-apply, it converges" is a loop, and the remedy is a fresh `diff`.
+    so "re-apply, it converges" is a loop, and the remedy is a fresh `plan`.
 
     Everything else has unknown reach and converges on re-apply (AD033), which is the
     unchanged majority and the default `next_action`.
@@ -629,7 +629,7 @@ class Potenda:
                 )
                 raise PlanVerificationError(
                     msg,
-                    next_action="Supply the parsed configuration, then re-run `diff`.",
+                    next_action="Supply the parsed configuration, then re-run `plan`.",
                 )
             logger.debug("Plan artifact: skipped, this run has no config")
             return None

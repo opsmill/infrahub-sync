@@ -85,7 +85,7 @@ from infrahub_sync.product_store import configs
 from infrahub_sync.service.storage import service_product_projection
 projection = service_product_projection()
 registry = []
-for summary in configs.list_configs(projection=projection):
+for summary in projection.list_configurations():
     for version in projection.list_configuration_versions(summary.config_id):
         registry.append(
             [

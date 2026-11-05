@@ -241,7 +241,7 @@ and scan the top-level keys under `configuration`:
 - `destination` configures the Infrahub adapter.
 - `schema_mapping` defines how NetBox API resources become Infrahub objects.
 
-This tutorial registers the package, uses `diff` to create a service plan, reviews that
+This tutorial registers the package, uses `plan` to create a service plan, reviews that
 plan, and then applies it by its checksum, so the writes are exactly what you reviewed. See
 [Run a sync](../running-a-sync.mdx) for the one-step `sync` alternative, which calculates
 and writes a new plan in the same run instead of applying a plan you already reviewed.
@@ -271,7 +271,7 @@ Infrahub tracks changes through branches, so you can review a batch of imported 
 uv run infrahubctl branch create netbox-import
 ```
 
-The rest of this tutorial runs `diff` and `apply` against this branch with
+The rest of this tutorial runs `plan` and `apply` against this branch with
 `--branch netbox-import`, so you can inspect the destination changes before merging the
 Infrahub branch. For more about branches and proposed changes, see
 [Infrahub version control](https://docs.infrahub.app/topics/version-control/).
@@ -281,7 +281,7 @@ Infrahub branch. For more about branches and proposed changes, see
 Run a dry-run diff against the `netbox-import` branch before writing any data to Infrahub.
 
 ```bash
-uv run infrahub-sync diff \
+uv run infrahub-sync plan \
   --config-id <config-id> \
   --version <version> \
   --branch netbox-import \
@@ -316,7 +316,7 @@ omits `order:`, Infrahub Sync derives the write order from the mapping reference
 same run, with no stop for review. Choose it once you trust the mapping and no longer need
 to review each plan before it writes.
 
-Run the same `diff` again to confirm the branch matches NetBox. After a successful import,
+Run the same `plan` again to confirm the branch matches NetBox. After a successful import,
 the plan lists no creates, apart from records that other users added to the demo in the
 meantime. It records one delete of the built-in `default` IP namespace, and `apply` never
 runs deletes.
@@ -354,7 +354,7 @@ is known not to have written, and with `phase: apply-interrupted` and `outcome: 
 when the service cannot tell, in which case the failed operation may have written part of its
 change.
 
-To finish the import, remove the cause, then run `diff` again on the same branch and apply
+To finish the import, remove the cause, then run `plan` again on the same branch and apply
 the new plan. The new plan compares NetBox with what the branch now holds, so it contains only
 what is still missing or different.
 
@@ -415,7 +415,7 @@ You used Infrahub Sync to move data from NetBox into Infrahub in a controlled se
 3. A branch isolated the import from `main` so it could be reviewed first.
 4. `package.yml` described the adapters, field mappings, references, filters, and Transformations.
 5. The Sync API registered the configuration and issued the run identity.
-6. `diff` asked the worker to compare the source and destination without writing changes.
+6. `plan` asked the worker to compare the source and destination without writing changes.
 7. `apply` wrote the exact reviewed plan, bound to its checksum, to the branch.
 
 The same pattern applies to larger migrations: start with a clear schema, map a small set of objects, condition source data where needed, review the diff inside a branch, and then apply the reviewed plan before opening a proposed change toward `main`.
@@ -493,7 +493,7 @@ ERROR | One or more models are not present in the schema - ['LocationSite', ...]
 
 The destination does not have the schema collection this configuration maps to. Download
 and load every file listed in [Load a schema into Infrahub](#load-a-schema-into-infrahub),
-then submit a new `diff` run. Use a fresh Infrahub instance or branch if an existing
+then submit a new `plan` run. Use a fresh Infrahub instance or branch if an existing
 `InfraDevice` or another overlapping kind prevents that collection from loading.
 
 The similarly named `models/examples/netbox/netbox.yml` file in the Infrahub source

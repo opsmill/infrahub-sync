@@ -6,7 +6,7 @@
 ## Agent Operating Principles
 
 1. **Plan → Ask → Act → Verify → Record** — plan briefly, ask for missing context, act with the smallest change, verify locally, then record with a concise commit or PR note.
-2. **Default to read-only and dry runs** — prefer `configs` inspection, `runs plan`, and `diff` before `sync`. Write/apply only with explicit instruction and human approval.
+2. **Default to read-only and dry runs** — prefer `configs` inspection, `runs plan`, and `plan` before `sync`. Write/apply only with explicit instruction and human approval.
 3. **Be specific and reversible** — small, scoped commits. Don't mix large refactors with behavior changes in one PR.
 4. **Match existing patterns** — keep CLI, adapters, examples, and directory structure consistent with the codebase.
 5. **Idempotency and safety** — favor operations safe to re-run. Never print or guess secrets. Handle timeouts, auth, and network errors explicitly.
@@ -102,10 +102,14 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 ## CLI Commands
 
 - `infrahub-sync configs` — register and inspect configuration packages (safe).
-- `infrahub-sync runs plan` — review a saved plan (safe).
-- `infrahub-sync diff` — create a plan run and review its summary (Sync API required).
+- `infrahub-sync runs list` — list runs, newest first, optionally for one configuration or version (safe).
+- `infrahub-sync runs show` / `runs plan` / `runs results` / `runs artifacts` — inspect one run, its saved plan, its results and its artifacts (safe).
+- `infrahub-sync whoami` — check which actor the API token belongs to (safe).
+- `infrahub-sync plan` — create a plan run and review its summary (Sync API required). `diff` is a hidden, deprecated alias.
+- `infrahub-sync verify` — check a run's saved plan against the destination without writing (Sync API required).
 - `infrahub-sync sync` — perform synchronization (Sync API and approval required).
 - `infrahub-sync apply` — apply a reviewed plan by checksum (Sync API and approval required).
+- `infrahub-sync runs cancel` — cancel a run; cancelling a write can leave an ambiguous outcome (approval required).
 
 ## Configuration and Examples
 
@@ -201,7 +205,7 @@ The container image is published to `registry.opsmill.io/opsmill/infrahub-sync` 
 ## Known Issues and Limitations
 
 - Optional dependencies (e.g. `pynetbox`, `pynautobot`) may be missing, producing import warnings.
-- `diff`, `sync`, and `apply` require a running Sync API and its destination servers.
+- `plan`, `verify`, `sync`, and `apply` require a running Sync API and its destination servers.
 - Docs npm audit may flag dev-only vulnerabilities; they do not affect the Python package.
 
 ## Git and PR Process

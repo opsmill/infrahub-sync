@@ -17,12 +17,12 @@ the principles below put safety, reproducibility, and connector consistency ahea
 
 The non-mutating path is the default path, and applying changes is always a deliberate act.
 
-- `configs` inspection, `runs plan`, and `diff` are non-applying and MUST stay safe to run
+- `configs` inspection, `runs plan`, and `plan` are non-applying and MUST stay safe to run
   at any time, against any environment, without approval.
 - `sync` and `apply` mutate a destination system and MUST require explicit user instruction,
   confirmed target servers, and human approval. They MUST NOT run as an implicit side
   effect of another command.
-- A `diff` SHOULD precede a `sync`: surface what would change before changing it.
+- A `plan` SHOULD precede a `sync`: surface what would change before changing it.
 - New mutating behavior MUST ship behind explicit flags, never as implicit defaults.
 
 **Rationale:** A sync writes to infrastructure systems of record. Making the safe path the
@@ -202,4 +202,4 @@ This constitution is the authoritative reference for development standards in th
   sets the principles those documents
   implement. Where they appear to conflict, the constitution governs.
 
-**Version**: 1.0.3 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-10-01
+**Version**: 1.0.4 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-11-05

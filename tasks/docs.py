@@ -13,17 +13,69 @@ DOCUMENTATION_DIRECTORY = CURRENT_DIRECTORY.parent / "docs"
 @task
 def generate(context: Context) -> None:
     """Generate documentation for the infrahub-sync cli."""
-    _generate_infrahubsync_documentation(context=context)
+    del context  # Generation runs in process; invoke still passes its context.
+    _generate_infrahubsync_documentation()
 
 
-def _generate_infrahubsync_documentation(context: Context) -> None:
-    """Generate the documentation for infrahub-sync using typer-cli."""
+def _generate_infrahubsync_documentation() -> None:
+    """Generate the infrahub-sync CLI reference with Typer's Markdown renderer.
+
+    This renders in process, as `typer infrahub_sync.cli utils docs` would, so hidden
+    commands, such as the deprecated `diff` alias, can be removed from the command tree
+    first: Typer documents hidden commands too, so the reference would otherwise teach a
+    command that `--help` does not show.
+    """
+    # Imported here so `invoke --list` does not load the CLI.
+    import typer  # noqa: PLC0415
+    from typer.cli import get_docs_for_click  # noqa: PLC0415
+    from typer.core import MARKUP_MODE_KEY  # noqa: PLC0415
+
+    from infrahub_sync.cli import app  # noqa: PLC0415
 
     print(" - Generate infrahub-sync CLI documentation")
-    exec_cmd = 'uv run typer infrahub_sync.cli utils docs --name "infrahub-sync"'
-    exec_cmd += " --output docs/docs/reference/cli.mdx"
-    with context.cd(ESCAPED_REPO_PATH):
-        context.run(exec_cmd)
+    command = typer.main.get_command(app)
+    _drop_hidden_commands(command)
+    context = typer.Context(command)
+    context.ensure_object(dict)[MARKUP_MODE_KEY] = app.rich_markup_mode
+    docs = get_docs_for_click(obj=command, ctx=context, name="infrahub-sync")
+    reference = DOCUMENTATION_DIRECTORY / "docs" / "reference" / "cli.mdx"
+    reference.write_text(f"{docs.strip()}\n", encoding="utf-8")
+    _insert_api_token_intro(reference)
+
+
+# Hand-written paragraph placed before the root command's first "**Usage**:" line. Typer has
+# no place for it, so generation inserts it after every run.
+_AUTHENTICATION_INTRO = (
+    "Set `INFRAHUB_SYNC_API_TOKEN` to the bearer token for your actor before running any\n"
+    "command; the CLI reads it from the environment and never accepts it as a flag. See\n"
+    "[Sync HTTP API — Configure principals](./sync-http-api.mdx#configure-principals) for how\n"
+    "tokens are issued.\n"
+)
+
+
+def _insert_api_token_intro(path: Path) -> None:
+    """Insert the `INFRAHUB_SYNC_API_TOKEN` paragraph before the root command's usage block."""
+    text = path.read_text(encoding="utf-8")
+    if _AUTHENTICATION_INTRO in text:
+        return
+    marker = "**Usage**:\n"
+    if marker not in text:
+        msg = f"{path} has no '**Usage**:' line to place the API token paragraph before"
+        raise ValueError(msg)
+    path.write_text(text.replace(marker, f"{_AUTHENTICATION_INTRO}\n{marker}", 1), encoding="utf-8")
+
+
+def _drop_hidden_commands(command: object) -> None:
+    """Remove every command registered as hidden from the click tree under ``command``."""
+    # Typer may build its commands on a click copy of its own, so groups are recognized by
+    # their `commands` mapping rather than by `isinstance(..., click.Group)`.
+    commands = getattr(command, "commands", None)
+    if not isinstance(commands, dict):
+        return
+    for name in [name for name, child in commands.items() if getattr(child, "hidden", False)]:
+        del commands[name]
+    for child in commands.values():
+        _drop_hidden_commands(child)
 
 
 @task

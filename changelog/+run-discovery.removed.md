@@ -1,0 +1,1 @@
+The `offset` query parameter is removed from `GET /configs` and `GET /configs/{config_id}/versions`; the service ignores it, so a client that pages with `offset` reads the first page again. Page through these lists with the `cursor` that the previous page returns as `next_cursor`.
