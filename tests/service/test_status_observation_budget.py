@@ -242,15 +242,18 @@ def test_terminal_executions_render_their_own_distinguished_verdicts_unobserved(
         (f"flow-{state}", attempt) for attempt, (state, _outcome) in zip(attempts, verdicts, strict=True)
     ]
     assert [(summary["terminal_state"], summary["terminal_outcome"]) for summary in summaries] == list(verdicts)
-    assert all(summary["state"] == "running" for summary in summaries)
+    # FR-019: the retained observation of every link is `running`; a finished execution reports its verdict.
+    assert [summary["state"] for summary in summaries] == [state for state, _outcome in verdicts]
     assert all(summary["detail_available"] is False for summary in summaries)
     assert all(summary["unavailable_reason"] == "live-detail-not-requested" for summary in summaries)
     assert orchestration.observed == []
     assert projection.observation_writes == 0
 
 
-def test_a_terminal_execution_without_an_observed_state_renders_null_without_observing(tmp_path: Path) -> None:
-    """A link created with no observed state keeps a null state rather than inventing one."""
+def test_a_terminal_execution_without_an_observed_state_renders_its_verdict_without_observing(
+    tmp_path: Path,
+) -> None:
+    """FR-019: a link that was never observed reports its verdict as its state, and nothing is observed."""
     link = _terminal("flow-unobserved", 1, last_observed_state=None)
     orchestration = _CountingOrchestration()
     client, projection = _client(tmp_path, _run("run-unobserved", (link,)), orchestration)
@@ -260,7 +263,7 @@ def test_a_terminal_execution_without_an_observed_state_renders_null_without_obs
     assert response.status_code == 200
     summary = response.json()["orchestration"][0]
     assert (summary["state"], summary["detail_available"], summary["unavailable_reason"]) == (
-        None,
+        "completed",
         False,
         "live-detail-not-requested",
     )
@@ -407,7 +410,7 @@ def test_a_secret_collected_from_the_environment_is_redacted_without_being_suppl
 
 
 def test_a_terminal_links_retained_state_is_redacted_in_both_places_it_is_rendered(tmp_path: Path) -> None:
-    """A terminal summary renders from the durable value, so that value is redacted too."""
+    """The durable observation is redacted where it is returned; FR-019 makes the summary's state the verdict."""
     link = _terminal("flow-terminal-secret", 1, last_observed_state=f"running-{CANARY}")
     orchestration = _CountingOrchestration()
     client, projection = _client(tmp_path, _run("run-terminal-secret", (link,)), orchestration, secrets=(CANARY,))
@@ -417,8 +420,8 @@ def test_a_terminal_links_retained_state_is_redacted_in_both_places_it_is_render
     assert response.status_code == 200
     body = response.json()
     assert body["run"]["prefect_executions"][0]["last_observed_state"] == "running-***"
-    assert body["orchestration"][0]["state"] == "running-***"
-    assert CANARY not in json.dumps(body["run"])
+    assert body["orchestration"][0]["state"] == "completed"
+    assert CANARY not in json.dumps(body)
     assert orchestration.observed == []
     assert projection.observation_writes == 0
 
@@ -538,3 +541,35 @@ def test_the_stores_redaction_pass_is_a_no_op_on_an_already_redacted_response_bo
 
     assert CANARY not in json.dumps(body)
     assert _redact_value(_normalize_mapping(body), (CANARY,)) == body
+
+
+def _summary_state(tmp_path: Path, link: PrefectExecutionLink, observation: Observation) -> str | None:
+    """Build one run's summaries from a scripted live observation, without a route or a reconciler."""
+    service = RunService(
+        _CountingProjection(local_product_projection(tmp_path)),
+        _CountingOrchestration(),
+        clock=lambda: NOW,
+    )
+    observations = {link.flow_run_id: observation}
+
+    resource = service._resource_with_observations(_run("run-state-rule", (link,)), observations)  # pylint: disable=protected-access
+
+    return resource.orchestration[0].state
+
+
+def test_a_terminal_execution_reports_its_verdict_over_an_available_live_observation(tmp_path: Path) -> None:
+    """FR-019: a recorded terminal state is the summary's state, even when Prefect still reports `Running`."""
+    link = _terminal("flow-finished", 1, terminal_state="completed")
+
+    state = _summary_state(tmp_path, link, Observation(available=True, state="Running"))
+
+    assert state == "completed"
+
+
+def test_an_execution_without_a_terminal_state_reports_its_available_live_observation(tmp_path: Path) -> None:
+    """FR-019 keeps today's rule for an execution with no verdict: the live observation is its state."""
+    link = _pending("flow-unfinished", 1)
+
+    state = _summary_state(tmp_path, link, Observation(available=True, state="Running"))
+
+    assert state == "Running"

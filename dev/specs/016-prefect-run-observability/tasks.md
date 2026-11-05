@@ -58,11 +58,11 @@ No shared foundation. Each story touches its own functions. US1 depends on US2 (
 
 ### Tests for User Story 5 (write first, must fail)
 
-- [ ] T005 [P] [US5] In `tests/service/test_status_observation_budget.py`, or in the test module that builds run summaries with live observations (find it with `grep -rn "live-detail-not-requested\|detail_available" tests/service`), add two tests. The first: an execution link with `terminal_state="completed"` and an available live observation of `Running` gives `state == "completed"`. The second: a link with no terminal state and an available live observation of `Running` gives `state == "Running"`, which pins today's rule.
+- [X] T005 [P] [US5] In `tests/service/test_status_observation_budget.py`, or in the test module that builds run summaries with live observations (find it with `grep -rn "live-detail-not-requested\|detail_available" tests/service`), add two tests. The first: an execution link with `terminal_state="completed"` and an available live observation of `Running` gives `state == "completed"`. The second: a link with no terminal state and an available live observation of `Running` gives `state == "Running"`, which pins today's rule.
 
 ### Implementation for User Story 5
 
-- [ ] T006 [US5] In `infrahub_sync/service/service.py`, in the loop that builds `OrchestrationSummary` (around lines 1005-1050), set `state` to `link.terminal_state` when it is not `None`, in both the observed and the unobserved branches. Otherwise keep the current rule. Redact as the retained value is redacted today. Make T005 pass without changing other expected values.
+- [X] T006 [US5] In `infrahub_sync/service/service.py`, in the loop that builds `OrchestrationSummary` (around lines 1005-1050), set `state` to `link.terminal_state` when it is not `None`, in both the observed and the unobserved branches. Otherwise keep the current rule. Redact as the retained value is redacted today. Make T005 pass without changing other expected values.
 
 **Checkpoint**: US5 is complete.
 

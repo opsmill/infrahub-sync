@@ -1006,13 +1006,16 @@ class RunService:
             observed = observations.get(link.flow_run_id)
             # Live and retained observation text is provider-supplied, so no summary is built from it raw.
             retained = None if link.last_observed_state is None else redact(link.last_observed_state, self._secrets)
+            # A finished execution reports its verdict as its state: a live or retained observation can
+            # predate the verdict, and a completed execution would otherwise read `Running`.
+            verdict = None if link.terminal_state is None else redact(link.terminal_state, self._secrets)
             if observed is None:
                 orchestration.append(
                     OrchestrationSummary(
                         flow_run_id=link.flow_run_id,
                         purpose=link.purpose,
                         attempt=link.attempt,
-                        state=retained,
+                        state=retained if verdict is None else verdict,
                         detail_available=False,
                         unavailable_reason="live-detail-not-requested",
                         submitted_at=link.submitted_at,
@@ -1034,7 +1037,7 @@ class RunService:
                     flow_run_id=link.flow_run_id,
                     purpose=link.purpose,
                     attempt=link.attempt,
-                    state=live if observed.available else retained,
+                    state=verdict if verdict is not None else (live if observed.available else retained),
                     detail_available=observed.available,
                     unavailable_reason=reason,
                     submitted_at=link.submitted_at,
