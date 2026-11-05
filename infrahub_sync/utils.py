@@ -409,7 +409,10 @@ class PlanApplier:
         if runtime_models is not None:
             bind_runtime_models(destination, runtime_models.destination.models)
 
-        top_level, tiers = sync_instance.compute_order_and_tiers(_generic_peers_for_order(destination, runtime_models))
+        # Apply executes the plan's operations in their stored order; the plan's run already logged this layout.
+        top_level, tiers = sync_instance.compute_order_and_tiers(
+            _generic_peers_for_order(destination, runtime_models), announce=False
+        )
 
         # Located, never created: the run being applied already exists, and an apply that
         # allocated directories could manufacture the very run whose absence it should report.
