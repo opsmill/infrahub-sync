@@ -1,0 +1,29 @@
+docs/docs/development/constitution.md
+  s_f718d35766c589::t_951d962bafe45f 205
+changelog/+run-discovery.changed.md
+  s_f718d35766c589::t_951d962bafe45f 1
+docs/docs/running-a-sync.mdx
+  s_f718d35766c589::t_3cb8a1d4ab9fc6 190-192
+docs/docs/reference/sync-http-api.mdx
+  s_f718d35766c589::t_b62e99768cc00a 355-358
+AGENTS.md
+  s_f718d35766c589::t_951d962bafe45f 106
+docs/docs/migrating-from-netbox-or-nautobot.mdx
+  s_f718d35766c589::t_87394cd0979660 182,189,209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5318f80cedecf67404f40d735a4f18a691acde1f",
+  "prompts": {},
+  "sessions": {
+    "s_f718d35766c589": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3abfa013-58d0-4a35-aa91-617e78043d5c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
