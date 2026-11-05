@@ -11,6 +11,7 @@ import logging
 import os
 from collections.abc import Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -538,7 +539,6 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     expected_checksum: str | None,
     *,
     confirm_writes: bool,
-    run_logger: RunLogger,
     secrets: list[str],
     config_directory: str | None,
     projection: ProductProjection,
@@ -735,7 +735,6 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             results=result,
             baseline=_baseline_writeback(verified.manifest),
         )
-    run_logger.info(redact(f"service run {run_id} stage={stage} outcome={result['outcome']}", secrets))
     return result, writeback
 
 
@@ -797,6 +796,35 @@ def effective_apply_record(exc: Exception, record: ApplyRecord | None) -> ApplyR
     return carried if isinstance(carried, ApplyRecord) else record
 
 
+@dataclass(frozen=True)
+class RecordedFailure:
+    """What `_record_failure` stored: the run's terminal outcome and the failure's next action."""
+
+    outcome: str
+    next_action: str | None
+
+
+def final_log_line(run_id: str, stage: str, outcome: str, next_action: str | None) -> str:
+    """The last log line of a stage: its outcome and the operator's next step.
+
+    Without a next action from the failure, the next step is to read the run's record.
+    """
+    action = next_action or f"`infrahub-sync runs show {run_id}`"
+    return f"service run {run_id} stage={stage} outcome={outcome}; next step: {action}"
+
+
+def result_next_action(result: dict[str, Any]) -> str | None:
+    """The next action a successful stage's result carries for its failure, if any.
+
+    The CLI reads the same `failure.next_action` field from the stored result.
+    """
+    failure = result.get("failure")
+    if not isinstance(failure, dict):
+        return None
+    next_action = failure.get("next_action")
+    return next_action if isinstance(next_action, str) and next_action else None
+
+
 def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     run_id: str,
     stage: Literal["plan", "verify", "apply", "sync"],
@@ -809,8 +837,10 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
     *,
     dispatch_started: bool,
     record: ApplyRecord | None,
-) -> None:
+) -> RecordedFailure | None:
     """Best-effort durable product evidence without masking the worker failure.
+
+    Returns the stored outcome and next action, or `None` when nothing was stored.
 
     `dispatch_started` is the one thing this boundary cannot re-derive: only the stage
     that ran knows whether it proved its hold and began a destination operation. Before
@@ -830,7 +860,7 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
     try:
         stored = projection.lookup_run(run_id).value
         if stored is None:
-            return
+            return None
         described = effective_apply_record(exc, record)
         if described is not None and described.failed_operation is not None:
             ambiguous = described.failed_operation_wrote is not False
@@ -877,6 +907,12 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
             "service failure evidence could not be persisted (%s)",
             type(persistence_error).__name__,
         )
+        return None
+    next_action = evidence.get("next_action")
+    return RecordedFailure(
+        outcome=terminal_outcome,
+        next_action=next_action if isinstance(next_action, str) and next_action else None,
+    )
 
 
 def _service_run_name() -> str:
@@ -935,7 +971,6 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 branch,
                 expected_checksum,
                 confirm_writes=confirm_writes,
-                run_logger=run_logger,
                 secrets=secrets,
                 config_directory=config_directory,
                 projection=projection,
@@ -960,8 +995,9 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
         # product commit that did not store its success — so all of them commit the same
         # ambiguous verdict, the same evidence, the record the scope kept, and
         # `reconciliation_required` together.
+        recorded = None
         if record_terminal:
-            _record_failure(
+            recorded = _record_failure(
                 run_id,
                 stage,
                 failure,
@@ -973,10 +1009,18 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 dispatch_started=tracker.dispatch_started,
                 record=tracker.applied_record,
             )
+        # After the record, before `secrets.clear()`: the line never announces an outcome
+        # the store does not hold, and it is redacted with this stage's secrets.
+        if recorded is None:
+            line = final_log_line(run_id, stage, "failed", None)
+        else:
+            line = final_log_line(run_id, stage, recorded.outcome, recorded.next_action)
+        run_logger.info(redact(line, secrets))
         # Rebuilt after the original exception context exits.
         sanitized = sanitize_exception_chain(failure, secrets)
         secrets.clear()
         raise sanitized
+    run_logger.info(redact(final_log_line(run_id, stage, str(result["outcome"]), result_next_action(result)), secrets))
     return result
 
 

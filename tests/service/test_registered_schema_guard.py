@@ -283,7 +283,6 @@ def _execute_apply_stage(harness: _Harness) -> tuple[dict[str, Any], Any]:
             None,
             harness.checksum,
             confirm_writes=True,
-            run_logger=service_flow.logger,
             secrets=[],
             config_directory=str(harness.run_dir.parents[2]),
             projection=harness.projection,
