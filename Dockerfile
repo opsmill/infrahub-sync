@@ -76,8 +76,13 @@ FROM base AS runtime
 ARG VERSION
 ARG REVISION
 ARG CREATED
+# The SHA-256 of `Dockerfile`, `pyproject.toml` and `uv.lock`, set only by the
+# development build. The development tasks compare it with the checkout to
+# decide whether the image needs a rebuild. Release builds leave it empty.
+ARG BUILD_INPUTS=""
 
-LABEL org.opencontainers.image.title="infrahub-sync" \
+LABEL org.opsmill.infrahub-sync.build-inputs="${BUILD_INPUTS}" \
+      org.opencontainers.image.title="infrahub-sync" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}" \
       org.opencontainers.image.source="https://github.com/opsmill/infrahub-sync" \

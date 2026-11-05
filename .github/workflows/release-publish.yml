@@ -158,7 +158,9 @@ jobs:
 
       # The root docker-compose.yml names the release's image by version. A tag
       # whose Compose file pins any other version would point operators at an
-      # image this release does not publish. The dev extra is what installs `invoke`.
+      # image this release does not publish. The task also refuses a packaged copy
+      # (infrahub_sync/testcontainers/docker-compose.yml) that differs from the root
+      # file. The dev extra is what installs `invoke`.
       - name: Refuse a Compose file pinned to another version
         if: steps.decide.outputs.publish == 'true'
         env:

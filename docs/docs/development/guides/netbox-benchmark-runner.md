@@ -7,7 +7,7 @@ title: "Run a NetBox benchmark cell"
 > Part of: Develop > Guides | Related: [NetBox benchmark tiers](netbox-benchmark-tiers.md)
 
 The manual benchmark compares v2 and v3 against the same local NetBox tier and a fresh
-Infrahub 1.11.3 destination. It runs outside CI. Tier L contains 87,815 mapped source
+Infrahub 1.11.9 destination. It runs outside CI. Tier L contains 87,815 mapped source
 objects; seeding and benchmark runs can take hours. Each repetition starts a shared
 six-hour budget when its stack manager is created. Stack lifecycle commands, including
 the NetBox restore, schema loading, the baseline sync, the change script, and the measured
@@ -43,7 +43,7 @@ database files private.
 Remove the local development Sync stack before a benchmark:
 
 ```bash
-uv run invoke destroy
+uv run invoke dev.destroy
 ```
 
 This command removes the development containers and their volumes. Any development
@@ -54,15 +54,29 @@ this checkout and uses the existing start tasks for its API and worker. v3 requi
 `INFRAHUB_SYNC_API_TOKEN` in your environment, matching the local stack's API principal.
 v2 uses its isolated release environment and does not require the Sync API or its token.
 Sync lifecycle commands explicitly select `infrahub-sync-dev` and this checkout's
-`compose.yaml`. The runner refuses to start a cell, before any Docker command or database
+`development/docker-compose.yml`. The runner refuses to start a cell, before any Docker command or database
 reset, when `COMPOSE_PROJECT_NAME` or `COMPOSE_FILE` in your environment names a different
 project or Compose file. Unset them before you run a cell.
 One host lock covers the shared Docker projects across checkouts, including cleanup.
 Starting another cell while that lock is held fails before any database reset.
-The runner creates an isolated destination stack from the preview Compose files, pinned to
-Infrahub 1.11.3. It uses the preview connection settings and local NetBox settings,
-including personal connection overrides. The runner enforces the OpsMill image repository
-and version, ignoring preview image overrides. Keep the preview stack stopped so its ports are available.
+The runner creates an isolated destination stack from the Infrahub services of
+`development/docker-compose.yml` (its `infrahub` profile) under the `infrahub-sync-benchmark`
+project, pinned to Infrahub 1.11.9. It uses the local NetBox settings, including personal
+connection overrides. The runner enforces the OpsMill image repository and version, ignoring
+`VERSION`, `INFRAHUB_DOCKER_IMAGE` and `INFRAHUB_DOCKER_IMAGE_DIGEST` from your shell. The
+destination publishes Infrahub on host port 8000 by default, so stop any other Infrahub that
+holds that port, or set `INFRAHUB_PORT`.
+
+The runner reads the destination's host address and initial admin token from the
+destination's own resolved Compose configuration, the development file's `infrahub`
+profile under the `infrahub-sync-benchmark` project. The address is the port that
+configuration publishes for `infrahub-server` (`INFRAHUB_PORT`, default `8000`).
+`INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`
+do not change the destination. When the host reaches Docker at another address, pass
+`--infrahub-url` or set `INFRAHUB_SYNC_DEV_INFRAHUB_HOST_URL`; `--infrahub-url` takes
+precedence over the variable. Either one changes only the host name. A URL that names
+another port fails before the runner restores NetBox or starts Infrahub, because the
+destination still publishes on `INFRAHUB_PORT`. To use another port, set `INFRAHUB_PORT`.
 
 ```bash
 uv run invoke bench.run --line v3 --tier S --scenario cold --repetitions 3
@@ -116,7 +130,7 @@ Each measured repetition appends one JSON object to the git-ignored
   uncommitted changes. `harness_commit` records the current checkout for both lines,
   separately from the installed release commit. `mapping_sha256` hashes the canonical
   mapping entries, including uncommitted edits. `infrahub_version` is read from the running server and
-  checked against 1.11.3. `infrahub_image_id` records its immutable Docker image ID;
+  checked against 1.11.9. `infrahub_image_id` records its immutable Docker image ID;
   `infrahub_image_digest` records the OpsMill repository digest when available.
   The Infrahub identity fields remain null if setup fails before verification.
 - `status` is `ok`, `failed`, or `timed_out`. `wall_seconds` is valid only for `ok`.

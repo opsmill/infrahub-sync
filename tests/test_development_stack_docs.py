@@ -1,4 +1,4 @@
-"""The local development stack page is reachable from the two entrypoints that lead to it.
+"""The local development stack page is reachable, and documents the `dev` tasks it describes.
 
 Neither link is covered by the documentation build. Docusaurus only warns on a broken
 Markdown link, and it never inspects the root README at all, so a page that exists but
@@ -7,6 +7,10 @@ is listed nowhere still builds clean while nobody can find it.
 
 import re
 from pathlib import Path
+
+import pytest
+
+from tasks import dev
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCUMENT_ID = "development-stack"
@@ -52,3 +56,40 @@ def test_the_root_readme_links_the_development_stack_page() -> None:
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
 
     assert README_LINK.search(readme) is not None
+
+
+PREVIEW_PAGE = REPO_ROOT / "docs" / "docs" / "development" / "guides" / "preview-stack.md"
+# A command a reader would copy: the top-level tasks the `dev` namespace replaces.
+TOP_LEVEL_COMMAND = re.compile(r"uv run invoke (?:build|start|destroy)\b(?!\.)")
+
+
+def test_the_development_stack_page_documents_every_dev_task() -> None:
+    """The page is the only document an engineer needs, so no `dev` task may be missing from it."""
+    text = PAGE.read_text(encoding="utf-8")
+    missing = sorted(name for name in dev.ns.task_names if f"`dev.{name}" not in text)
+
+    assert missing == [], f"{PAGE.name} does not document dev.{', dev.'.join(missing)}"
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    ["`dev.smoke`", "`dev.restart`", "--infrahub-network", "INFRAHUB_PORT", "uv.lock"],
+    ids=["smoke", "restart", "infrahub-network", "infrahub-port", "stale-image-inputs"],
+)
+def test_the_development_stack_page_covers_both_modes_and_their_settings(phrase: str) -> None:
+    assert phrase in PAGE.read_text(encoding="utf-8")
+
+
+def test_the_development_stack_page_runs_no_top_level_stack_task() -> None:
+    """The commands on the page use the `dev` namespace, not the top-level tasks it replaces."""
+    commands = TOP_LEVEL_COMMAND.findall(PAGE.read_text(encoding="utf-8"))
+
+    assert commands == [], f"{PAGE.name} still runs {commands}"
+
+
+def test_the_preview_stack_page_points_to_the_development_stack() -> None:
+    """The preview stack stays until it is removed; its page sends readers to the replacement."""
+    head = PREVIEW_PAGE.read_text(encoding="utf-8").split("### Commands", 1)[0]
+
+    assert "(../../development-stack.mdx)" in head
+    assert "will be removed" in head

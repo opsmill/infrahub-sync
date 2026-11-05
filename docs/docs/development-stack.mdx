@@ -2,26 +2,29 @@
 title: Local development stack
 ---
 
-The local development stack builds the Sync service image from your checkout and runs it in
-containers: the Sync API, the worker, Prefect, PostgreSQL, and object storage. Use it to try
-V3, test a fix, run a first sync, or run V3 on a Mac. Every credential it uses is a published
-local default. Never point any value on this page at a shared or internet-facing instance.
+The local development stack builds the Sync service image from your checkout and runs it
+with Docker Compose: PostgreSQL, an object store, the Prefect server, the Sync API, the Sync
+worker and a local Infrahub. Use it to work on Infrahub Sync, test a fix, run the smoke suite,
+run a first sync, or run V3 on a Mac. Every credential it uses is a published local default.
+Never point any value on this page at a shared or internet-facing instance.
 
-To work on `infrahub_sync/service/` with the Sync API and worker running as host processes,
-or to run the smoke suite, see [Run the preview stack](development/guides/preview-stack.md).
+The `dev` Invoke tasks drive the stack. They run
+[`development/docker-compose.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/development/docker-compose.yml),
+which builds the image from your checkout, not the root `docker-compose.yml`, which pulls a
+released image.
 
 ## Run from source
 
-Run from source builds the Sync service image from your checkout, for your host's own
-architecture, and starts the Sync API, the worker, Prefect, PostgreSQL, and object
-storage. It runs on any platform Docker supports, including Apple Silicon. A source
-build has passed the pull request checks, but not the release checks that each
-published image passes; see [Install Infrahub Sync](./installation.mdx#two-ways-to-run-v3).
+Run from source builds the image for your host's own architecture, so it runs on any platform
+Docker supports, including Apple Silicon. A source build has passed the pull request checks,
+but not the release checks that each published image passes; see
+[Install Infrahub Sync](./installation.mdx#two-ways-to-run-v3).
 
 ### Get the source
 
-You need Docker, Git, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13. Clone the V3
-branch and install the development environment once:
+You need Docker with Compose v2.20 or later and about 8 GB of memory for Docker, Git,
+[uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13. Clone the V3 branch and install the
+development environment once:
 
 ```bash
 git clone --branch feature/v3-develop https://github.com/opsmill/infrahub-sync.git
@@ -29,54 +32,254 @@ cd infrahub-sync
 uv sync --extra dev --extra prefect --extra service
 ```
 
-All three extras are required: `infrahubctl`, which the first sync below uses, comes with
-the `service` extra.
+All three extras are required. The `service` extra installs the Sync API and worker that
+`dev.api` and `dev.worker` run on the host, and `infrahubctl`, which `dev.seed` and the first
+sync below use.
 
-Run every command below from the `infrahub-sync` directory. If you already have a checkout,
-run `git switch feature/v3-develop` and `git pull` instead of cloning.
+Run every command on this page from the `infrahub-sync` directory. If you already have a
+checkout, run `git switch feature/v3-develop` and `git pull` instead of cloning.
 
-### Start the service
+### Choose a mode
+
+The stack runs in one of two modes. Both start the same PostgreSQL, object store, Prefect
+server and Infrahub containers, and both end with the same check, `dev.smoke`.
+
+- Everything in containers (`dev.start`): the Sync API and the worker also run in containers.
+  Use this mode to try a change the way an operator deployment runs it.
+- Sync API and worker on the host (`dev.deps`, then `dev.api` and `dev.worker`): the two Sync
+  processes run in your terminals, from your checkout's Python environment. Use this mode to
+  work on `infrahub_sync/service/` with a debugger or with log output in the foreground.
+
+Both modes publish the Sync API on the same port, so stop one mode before you start the
+other. To leave the container mode, run `uv run invoke dev.stop`. To leave the host mode, stop
+`dev.api` and `dev.worker` with Ctrl-C.
+
+## Run everything in containers
+
+Start the stack:
 
 ```bash
-uv run invoke build
-uv run invoke start
+uv run invoke dev.start
 ```
 
-Both tasks drive the development stack in `development/docker-compose.dev.yml`, which
-builds the image from your checkout, rather than the root `docker-compose.yml`, which
-pulls a released image. `start` builds the image only when no `infrahub-sync:dev` image
-exists. If you already
-built one from an older checkout, `start` reuses it without a warning, so run `build`
-first whenever you test a new revision. `build` always replaces the `infrahub-sync:dev`
-tag, including an image that another checkout built, so a second checkout that builds
-changes the image the first checkout starts.
+`dev.start` builds the `infrahub-sync:dev` image first when it does not exist or was built
+from other build inputs (see [When the image is rebuilt](#when-the-image-is-rebuilt)). The
+first start downloads the Infrahub images and builds the Sync image, which takes several
+minutes. `dev.start` then waits up to 420 seconds for every service to report healthy, and
+prints the addresses:
 
-| Service | Address |
-| --- | --- |
-| Sync API | `http://127.0.0.1:8030`, bearer token `infrahub-sync-dev-token` |
-| Prefect UI | `http://127.0.0.1:4230` |
-| PostgreSQL | `127.0.0.1:5440` |
+| Service | Default address | Set by |
+| --- | --- | --- |
+| Sync API | `http://127.0.0.1:8001`, bearer token `infrahub-sync-dev-token` | `SYNC_API_PORT` |
+| Prefect UI and API | `http://127.0.0.1:4230` | `PREFECT_PORT` |
+| Infrahub | `http://127.0.0.1:8000`, login `admin` / `infrahub` | `INFRAHUB_PORT`, `INFRAHUB_BIND_ADDRESS` |
+
+The Infrahub host port comes from `INFRAHUB_PORT` and defaults to 8000. If another program
+already uses port 8000, export another port before you start the stack, for example
+`export INFRAHUB_PORT=8090`. Every task reads the port from the resolved Compose file, so
+`dev.smoke` and `dev.seed` use the same value.
+
+The Sync API of this stack and of the [Compose deployment](./compose-deployment.mdx) both
+default to host port 8001, which leaves port 8000 to Infrahub. To run that deployment and this
+stack at the same time, export another `SYNC_API_PORT` here or set `INFRAHUB_SYNC_API_PORT` in
+the deployment's `.env`.
+
+Inside the stack, the worker reaches Infrahub at `http://infrahub-server:8000`. A package that
+the containerized worker runs names that address, not the host address. `dev.start` gives the
+worker the stack's Infrahub admin token as `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`,
+unless your shell already exports that variable.
+
+When the local NetBox from the `netbox` tasks is running, `dev.start` and `dev.restart` also
+connect the worker to NetBox's Docker network and print `it reads NetBox at
+http://netbox:8080`. This happens whenever that network exists, also when you do not plan to
+read NetBox. [Run a first sync](#run-a-first-sync) uses this connection.
 
 Check the service:
 
 ```bash
-curl -sf http://127.0.0.1:8030/version
-curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8030/status
+curl -sf http://127.0.0.1:8001/version
+curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8001/status
 ```
 
-The `status` response reports `"service": "ready"` when the worker is running. The
-service starts with an empty configuration registry and connects to no source or
-destination until you register a package.
+The `status` response reports `"service": "ready"` when the worker is running. The service
+starts with an empty configuration registry and connects to no source or destination until you
+register a package.
 
-After a code change, run `uv run invoke build && uv run invoke start`. The data volumes
-are kept. `uv run invoke destroy` stops the stack and deletes its data volumes; the image
-is kept.
+Run the smoke suite:
 
-### Run a first sync
+```bash
+uv run invoke dev.smoke
+```
 
-This path imports the official NetBox demo data from a local NetBox into a local
-Infrahub branch. It takes about 30 minutes, most of it the apply. Run every command
-from the repository root.
+`dev.smoke` loads the smoke dataset into the stack's Infrahub (a schema, one device on `main`
+and the `preview-smoke` branch), then runs `pytest -m preview tests/preview` against the
+running stack. The suite checks the Sync API, the CLI, the Python client and the Prefect server
+against that data. A test whose service does not answer skips instead of failing, so when the
+summary line reports skipped tests, run `uv run invoke dev.status` to find the service that is
+not running.
+
+### After a code change
+
+The Sync containers mount `infrahub_sync/` and `opsmill_prefect_extras/` from your checkout,
+read-only, over the copies installed in the image. A change to Python code therefore needs a
+restart, not a rebuild:
+
+```bash
+uv run invoke dev.restart
+```
+
+`dev.restart` recreates `sync-bootstrap`, `sync-api` and `sync-worker`, so they import the
+mounted code again. It does not rebuild the image, and it keeps the data volumes. To check that
+a change is running, read the service logs:
+
+```bash
+uv run invoke dev.logs -n sync-api -l 50
+```
+
+### When the image is rebuilt
+
+The image carries a label with a hash of the three files that shape it: `Dockerfile`,
+`pyproject.toml` and `uv.lock`. `dev.start` and `dev.deps` compare that label with the files in
+your checkout and rebuild the image when it is missing or the hash differs, for example after
+you pull a dependency update. A change to Python code alone never changes the hash.
+
+To rebuild by hand, for example after a failed build, run `uv run invoke dev.build`. Add
+`--no-cache` to rebuild every layer.
+
+The image tag is `infrahub-sync:dev`. A second checkout on the same machine builds the same
+tag, so it replaces the image the first checkout runs. To keep the two apart, export
+`SYNC_IMAGE` with another tag, such as `infrahub-sync:my-branch`, in each shell that runs the
+`dev` tasks.
+
+## Run the Sync API and worker on the host
+
+Start the containers the Sync processes depend on:
+
+```bash
+uv run invoke dev.deps
+```
+
+`dev.deps` rebuilds the image when its inputs changed, starts PostgreSQL, the object store, the
+Prefect server and Infrahub, and runs `sync-bootstrap` once to create the database, the bucket,
+the Prefect work pool and the deployment. It prints the addresses, including PostgreSQL on
+`127.0.0.1:5440` (`STORAGE_POSTGRES_PORT`) and the object store on `http://127.0.0.1:9010`
+(`MINIO_PORT`), and then returns.
+
+Run the Sync API and the worker, each in its own terminal. Both stay in the foreground until you
+stop them with Ctrl-C:
+
+```bash
+uv run invoke dev.api       # terminal 2
+uv run invoke dev.worker    # terminal 3
+```
+
+`dev.api` listens on `127.0.0.1` at the Sync API port, 8001 by default. Both processes take the
+settings that the `sync-api` and `sync-worker` containers would get, with the addresses of
+PostgreSQL, the object store and the Prefect server moved to their loopback ports. No task
+starts a background process or writes a process ID file. After a code change, stop the process
+with Ctrl-C and run the task again.
+
+In the first terminal, run the smoke suite:
+
+```bash
+uv run invoke dev.smoke
+```
+
+When no `sync-api` container runs, `dev.smoke` first reads the `GET /status` route of the Sync API.
+If the Sync API does not answer, it fails and tells you to start `dev.api`. If the Sync API
+reports no available worker, it fails and tells you to start `dev.worker`. In this mode the
+worker runs on the host, so the smoke package names Infrahub by its host address,
+`http://127.0.0.1:8000` with the default `INFRAHUB_PORT`.
+
+## Use an Infrahub that already runs
+
+To sync into an Infrahub you started separately, for example with Infrahub's own Compose file,
+leave the stack's own Infrahub off and connect the worker to that Infrahub's Docker network:
+
+```bash
+export INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK=infrahub_default
+uv run invoke dev.start
+```
+
+`dev.start --infrahub-network infrahub_default` and `dev.deps --infrahub-network
+infrahub_default` have the same effect for that one command. The other `dev` tasks, such as
+`dev.restart`, read only the variable, so export it when you will use them: without it,
+`dev.restart` recreates the worker without connecting it to that network. In this mode:
+
+- The worker reaches Infrahub at `http://infrahub-server:8000`. If that Infrahub's server has
+  another service name, export `INFRAHUB_SYNC_DEV_INFRAHUB_URL` with its address on that
+  network.
+- The stack does not know that Infrahub's admin token. Export
+  `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` before `dev.start`.
+- `dev.seed` and `dev.smoke` refuse to run, because they write to the stack's own Infrahub and
+  do not know the other Infrahub's host address. To run the smoke suite, unset the variable and
+  start the stack with its own Infrahub.
+- With `dev.deps`, the worker runs on the host, so `INFRAHUB_SYNC_DEV_INFRAHUB_URL` must be an
+  address your host can resolve.
+
+## Stop and remove the stack
+
+| Task | What it does |
+| --- | --- |
+| `uv run invoke dev.status` | Shows the containers, their health and the addresses. |
+| `uv run invoke dev.stop` | Stops the containers and keeps the data volumes. `dev.start` starts them again with their data. |
+| `uv run invoke dev.destroy` | Removes the containers and the data volumes: the PostgreSQL databases, the object store's buckets and the Infrahub data. The image is kept. |
+
+## Change a port or a setting
+
+Every setting in `development/docker-compose.yml` reads `${NAME:-default}`, so exporting a
+shell variable of that name changes it, and a fresh checkout needs none. The tasks read the
+resolved Compose file, so they print and use the values you set.
+
+| Variable | Default | What it changes |
+| --- | --- | --- |
+| `SYNC_API_PORT` | `8001` | The host port of the Sync API |
+| `PREFECT_PORT` | `4230` | The Prefect server's host port |
+| `INFRAHUB_PORT` | `8000` | The stack's Infrahub host port |
+| `INFRAHUB_BIND_ADDRESS` | `127.0.0.1` | The address the stack's Infrahub is published on |
+| `STORAGE_POSTGRES_PORT` | `5440` | PostgreSQL's host port |
+| `MINIO_PORT` | `9010` | The object store's host port |
+| `SYNC_IMAGE` | `infrahub-sync:dev` | The image tag the stack builds and runs |
+
+Compose also reads a `.env` file from the `development/` directory. The repository ignores
+`*.env` files, so a forgotten `development/.env` changes the stack without any change in
+`git status`.
+
+Every port except Infrahub's is published on `127.0.0.1` only. Infrahub's port is published on
+`INFRAHUB_BIND_ADDRESS`.
+
+The stack's Infrahub starts with the initial admin token
+`06438eb2-8019-4776-878c-0941b1f1d1ec` unless `INFRAHUB_INITIAL_ADMIN_TOKEN` names another one.
+That default is public, so `dev.start` and `dev.deps` refuse to start when
+`INFRAHUB_BIND_ADDRESS` names an address other than loopback (`127.0.0.1`, any other
+127.0.0.0/8 address, `::1` or `localhost`) and `INFRAHUB_INITIAL_ADMIN_TOKEN` is unset, empty or
+equal to that default. To publish Infrahub on another address, export a token of your own, and
+use the same value as `INFRAHUB_API_TOKEN` for any client that connects to that Infrahub:
+
+```bash
+export INFRAHUB_BIND_ADDRESS=172.17.0.1
+export INFRAHUB_INITIAL_ADMIN_TOKEN=<a token of your own>
+export INFRAHUB_API_TOKEN="$INFRAHUB_INITIAL_ADMIN_TOKEN"
+```
+
+Infrahub applies `INFRAHUB_INITIAL_ADMIN_TOKEN` only when it first initialises its database. A
+stack that has already started with the public default keeps accepting that default after you
+export a new token, and the development tasks do not detect this. Before you start an existing
+stack on an address other than loopback with a new token, remove the stack and its data:
+
+```bash
+uv run invoke dev.destroy
+```
+
+Compose cannot make a variable required only when another one has a given value, so the
+development tasks check this before they start the containers. A plain `docker compose up`
+does not check it. The benchmark runner applies the same check to its Infrahub.
+
+## Run a first sync
+
+This path imports the official NetBox demo data from a local NetBox into a branch of a local
+Infrahub started from Infrahub's own Compose file. It takes about 30 minutes, most of it the
+apply.
 
 1. Start a local Infrahub with Infrahub's own Compose file. Put it in a directory outside
    the checkout, because the checkout's root already holds a `docker-compose.yml`, the Sync
@@ -132,28 +335,28 @@ from the repository root.
     uv run invoke netbox.seed --dataset demo
     ```
 
-5. Give the worker both tokens, then start the service again. `start` recreates the
-   API and worker with the new environment. Keep both exports, the Infrahub token from
-   step 2 and the NetBox token here, in the shell that runs `invoke start`. If you use
-   another shell, export both again there:
+5. Give the worker both tokens, then start the Sync stack on Infrahub's network. Keep the
+   three exports in the shell that runs the `dev` tasks. If you use another shell, export all
+   three again there:
 
     ```bash
     export INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN=nbt_devnetboxkey.devnetboxseedtoken0000000000000000000000
     export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="${INFRAHUB_API_TOKEN:?export INFRAHUB_API_TOKEN from step 2 first}"
-    uv run invoke start
+    export INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK=infrahub_default
+    uv run invoke dev.start
     ```
 
-   The worker joins NetBox's and Infrahub's Docker networks, and `start` prints
+   The worker joins NetBox's and Infrahub's Docker networks, and `dev.start` prints
    `it reads NetBox at http://netbox:8080` and `it reaches Infrahub at http://infrahub-server:8000`.
-   `start` connects the worker again each time the worker is recreated, and the NetBox
-   tasks do the same when NetBox is recreated. If Infrahub's project has another name, set
-   `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` to its network before `start`.
+   `dev.start` and `dev.restart` connect the worker again each time they recreate it, and the
+   NetBox tasks do the same when NetBox is recreated. If you change a credential later, export
+   the new value and run `uv run invoke dev.start` again.
 
 6. Write a copy of the example package for this stack, and register it:
 
     ```bash
     uv run invoke netbox.demo-package --dev-stack
-    export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8030
+    export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
     export INFRAHUB_SYNC_API_TOKEN=infrahub-sync-dev-token
     uv run infrahub-sync configs register .netbox/from-netbox.local.yml \
       --reason "register local NetBox import"
@@ -199,22 +402,20 @@ from the repository root.
     ```
 
    The apply writes only the reviewed operations to the `netbox-import` branch. How long
-   it takes depends on the destination: against the preview stack's Infrahub on
-   2026-09-29 it took 11 to 14 minutes, and against Infrahub's own Compose file on
-   2026-10-05 an apply of 1,609 operations took 46 seconds. The CLI waits up to 30
-   minutes by default.
+   it takes depends on the destination: against Infrahub's own Compose file on 2026-10-05,
+   an apply of 1,609 operations took 46 seconds. The CLI waits up to 30 minutes by default.
 
 9. Run the same `plan` again. After a successful apply, the new plan holds only the
    recorded delete of the `default` namespace. Open `http://localhost:8000`, log in
    with `admin` and `infrahub`, and select the `netbox-import` branch to browse the
    imported objects.
 
-To stop everything and delete its data, stop the Sync stack first. While the worker is
+To stop everything and delete its data, remove the Sync stack first. While the worker is
 connected to Infrahub's network, `docker compose -p infrahub down` cannot remove that
 network and reports `Resource is still in use`.
 
 ```bash
-uv run invoke destroy
+uv run invoke dev.destroy
 uv run invoke netbox.down
 cd ~/infrahub-local && docker compose -p infrahub down --volumes
 ```
@@ -224,3 +425,24 @@ Without `--volumes`, `docker compose -p infrahub down` stops Infrahub and keeps 
 To register your own package instead of the example, continue with
 [Create a sync project](./creating-a-sync-project.mdx) and [Run a sync](./running-a-sync.mdx).
 Use the addresses the worker container can reach, as in step 6.
+
+## Task reference
+
+| Task | What it does |
+| --- | --- |
+| `dev.build [--no-cache]` | Builds the image from your checkout and labels it with the hash of its build inputs. |
+| `dev.start [--infrahub-network NAME]` | Rebuilds the image when its inputs changed, then starts every container and waits until they are healthy. |
+| `dev.restart` | Recreates the Sync containers so they run the mounted code. No rebuild. |
+| `dev.deps [--infrahub-network NAME]` | Rebuilds the image when its inputs changed, starts the containers the Sync processes depend on, prints the addresses and returns. |
+| `dev.api` | Runs the Sync API on the host, in the foreground. |
+| `dev.worker` | Runs the Sync worker on the host, in the foreground. |
+| `dev.seed` | Loads the smoke dataset into the stack's Infrahub. |
+| `dev.smoke` | Loads the smoke dataset, then runs the smoke suite. In host mode, it first checks `dev.api` and `dev.worker` through the `GET /status` route of the Sync API. |
+| `dev.status` | Shows the containers, their health and the addresses. |
+| `dev.logs [-n SERVICE] [-l LINES]` | Shows the last lines of one service's logs, `sync-api` and 50 lines by default. |
+| `dev.stop` | Stops the containers and keeps the data volumes. |
+| `dev.destroy` | Removes the containers and the data volumes and keeps the image. |
+
+The top-level `build`, `start` and `destroy` tasks still exist and will be removed. `start` runs
+only the Sync containers and connects the worker to `infrahub_default` when that network
+exists. Use the `dev` tasks instead.

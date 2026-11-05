@@ -24,14 +24,14 @@ The CLI reads the Sync API URL and the bearer token from two environment variabl
 them before the first command. For the local development stack, these are:
 
 ```bash
-export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8030
+export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
 export INFRAHUB_SYNC_API_TOKEN=infrahub-sync-dev-token
 ```
 
 The token has no command-line option, so it does not appear in shell history or in
 process arguments. `--api-url` overrides the URL for one command. For a
 [Compose deployment](./compose-deployment.mdx) with the default port, the URL is
-`http://127.0.0.1:8000`, and the token is the `INFRAHUB_SYNC_API_TOKEN` value in its `.env`.
+`http://127.0.0.1:8001`, and the token is the `INFRAHUB_SYNC_API_TOKEN` value in its `.env`.
 
 The same commands also run from the `cli` service of a
 [Compose deployment](./compose-deployment.mdx#use-it), as
@@ -221,12 +221,13 @@ recorded on the run's Prefect flow run:
 1. Run `runs show RUN_ID`. The output includes `flow_run_id`. You can also filter flow runs
    in the Prefect UI by the tag `run:RUN_ID`.
 2. Open `<prefect-ui>/runs/flow-run/FLOW_RUN_ID` in a browser. The state message of the failed
-   flow run contains the error. The Prefect UI is at `http://127.0.0.1:4200` on a Compose
-   deployment with the default port, and at `http://127.0.0.1:4230` on the
-   [local development stack](./development-stack.mdx).
+   flow run contains the error. A Compose deployment serves no Prefect UI until you add the
+   override snippet in [Open the Prefect UI](./compose-deployment.mdx#open-the-prefect-ui);
+   with it, the UI is at `http://127.0.0.1:4200` with the default port. The
+   [local development stack](./development-stack.mdx) serves it at `http://127.0.0.1:4230`.
 
 The same error is in the worker's log: `docker compose logs sync-worker` from the deployment
-directory, or `docker compose -f development/docker-compose.dev.yml logs sync-worker` from a
+directory, or `docker compose -f development/docker-compose.yml logs sync-worker` from a
 checkout running the local development stack.
 
 ### Recover from an interrupted apply
