@@ -2198,6 +2198,9 @@ def test_the_run_list_filters_by_configuration_and_version_without_execution_det
         ({"config_id": "missing-config", "registry_version": str(2**63)}, 422, "request-invalid"),
         ({"config_id": "missing-config", "registry_version": "9" * 5000}, 422, "request-invalid"),
         ({"limit": "1" * 5000}, 422, "request-invalid"),
+        ({"config_id": "not an id"}, 422, "request-invalid"),
+        ({"config_id": "-leading-dash"}, 422, "request-invalid"),
+        ({"config_id": "x" * 129}, 422, "request-invalid"),
     ],
     ids=[
         "unknown-configuration",
@@ -2215,6 +2218,9 @@ def test_the_run_list_filters_by_configuration_and_version_without_execution_det
         "version-above-64-bit",
         "version-past-integer-digit-limit",
         "limit-past-integer-digit-limit",
+        "configuration-id-with-space",
+        "configuration-id-leading-dash",
+        "configuration-id-too-long",
     ],
 )
 def test_the_run_list_refuses_unknown_filters_and_out_of_range_parameters(

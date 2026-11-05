@@ -17,6 +17,7 @@ from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUP
 from .auth import Principal, PrincipalResolver
 from .compatibility import API_STABILITY, API_VERSIONS, installed_server_version
 from .config_routes import (
+    CONFIG_ID_PATTERN,
     MAX_REGISTRY_VERSION,
     ConfigurationAPIError,
     ConfigurationRoutes,
@@ -201,7 +202,7 @@ def create_app(
     @application.get("/runs", responses=ERROR_RESPONSES)
     def list_runs(
         _principal: Annotated[Principal, Depends(authenticate)],
-        config_id: Annotated[str | None, Query()] = None,
+        config_id: Annotated[str | None, Query(pattern=CONFIG_ID_PATTERN)] = None,
         registry_version: Annotated[str | None, Query()] = None,
         limit: Annotated[str | None, Query()] = None,
         cursor: Annotated[str | None, Query()] = None,

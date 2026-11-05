@@ -47,7 +47,7 @@ from .paging import (
 )
 from .service import ServiceAPIError
 
-_CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 # Most findings one validation-report page returns, and the default page size.
 _MAX_VALIDATION_FINDINGS_PAGE = 256
 
@@ -355,7 +355,7 @@ class ConfigurationRoutes:
 def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempotency_key: Any) -> APIRouter:
     """Create the seven authenticated configuration resources."""
     router = APIRouter()
-    config_id_parameter = APIPath(pattern=_CONFIG_ID_PATTERN)
+    config_id_parameter = APIPath(pattern=CONFIG_ID_PATTERN)
     registry_version_parameter = APIPath()
     page_offset = Query()
     page_limit = Query()

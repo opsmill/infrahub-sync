@@ -10,7 +10,7 @@ Query parameters:
 
 | Name | Type | Default | Rule |
 | --- | --- | --- | --- |
-| `config_id` | identifier | none | Filter. Unknown → `404 configuration-not-found`. |
+| `config_id` | identifier | none | Filter. Malformed (not matching the configuration ID pattern) → `422 request-invalid`. Unknown → `404 configuration-not-found`. |
 | `registry_version` | integer ≥ 1 | none | Requires `config_id` (else `422 request-invalid`). Unknown → `404 configuration-version-not-found`. |
 | `limit` | integer 1–200 | 50 | Out of range → `422`. |
 | `cursor` | string | none | From a previous `next_cursor` with the same filters, else `422 invalid-cursor`. |

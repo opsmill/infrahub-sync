@@ -346,7 +346,7 @@ in the same envelope:
 | --- | --- | --- |
 | `limit` | all three lists | Items per page, from 1 to 200. Defaults to 50. A value outside that range returns `422 request-invalid`. |
 | `cursor` | all three lists | The `next_cursor` of the previous page, sent with the same filters. Any other value returns `422 invalid-cursor`. |
-| `config_id` | `GET /runs` | Only runs of this configuration. An unknown configuration returns `404 configuration-not-found`. |
+| `config_id` | `GET /runs` | Only runs of this configuration. A malformed configuration ID returns `422 request-invalid`; an unknown configuration returns `404 configuration-not-found`. |
 | `registry_version` | `GET /runs` | Only runs of this configuration version. Requires `config_id`, otherwise `422 request-invalid`. An unknown version returns `404 configuration-version-not-found`. |
 | `name` | `GET /configs` | Only configurations with exactly this name. |
 
