@@ -19,7 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from tests.compose.lifecycle import api_client, probe_json, register, run_bootstrap, smoke_package
+from tests.compose.conftest import PROJECT_LABEL
+from tests.compose.lifecycle import api_client, docker, probe_json, register, run_bootstrap, smoke_package
 
 if TYPE_CHECKING:
     from tests.compose.lifecycle import Deployment
@@ -46,6 +47,24 @@ client = boto3.client(
 )
 print(json.dumps(sorted(bucket["Name"] for bucket in client.list_buckets()["Buckets"])))
 """
+
+# The bucket as an S3 client sees it: its creation time and every key in it. A
+# repeat that recreated or emptied the bucket would change one or the other.
+BUCKET = """
+import json, os, boto3
+client = boto3.client(
+    "s3",
+    endpoint_url=os.environ["INFRAHUB_SYNC_S3_ENDPOINT_URL"],
+    region_name=os.environ["INFRAHUB_SYNC_S3_REGION"],
+)
+name = os.environ["INFRAHUB_SYNC_S3_BUCKET"]
+created = {bucket["Name"]: bucket["CreationDate"].isoformat() for bucket in client.list_buckets()["Buckets"]}
+keys = sorted(item["Key"] for item in client.list_objects_v2(Bucket=name).get("Contents", []))
+print(json.dumps({"name": name, "created": created.get(name), "keys": keys}))
+"""
+
+# The object store's data volume, created empty by this project's first start.
+OBJECT_STORE_VOLUME = "object-store-data"
 
 PREFECT = """
 import base64, json, os, httpx
@@ -151,6 +170,28 @@ def test_the_sync_bootstrap_repeats_without_duplicating_any_durable_object(
     assert repeated.returncode == 0, repeated.output
     assert probe_json(deployment, BUCKETS) == converged["buckets"]
     assert probe_json(deployment, PREFECT) == converged["prefect"]
+
+
+def test_on_an_empty_silo_volume_the_bootstrap_creates_the_bucket_and_a_repeat_keeps_it(
+    deployment: Deployment,
+) -> None:
+    """The bucket exists after the first bootstrap, and a second one succeeds and leaves it as it was.
+
+    The volume belongs to this deployment's own project, so the object store
+    started on an empty volume. Only the outcome is checked: which S3 calls the
+    bootstrap makes to reach it is not part of this contract.
+    """
+    volume = f"{deployment.project}_{OBJECT_STORE_VOLUME}"
+    owner = docker(["volume", "inspect", "--format", f'{{{{index .Labels "{PROJECT_LABEL}"}}}}', volume])
+    assert owner.returncode == 0, owner.output
+    assert owner.stdout.strip() == deployment.project, owner.output
+
+    first = probe_json(deployment, BUCKET)
+    repeated = run_bootstrap(deployment)
+
+    assert first["created"] is not None, f"the bucket {first['name']} does not exist after the first bootstrap"
+    assert repeated.returncode == 0, repeated.output
+    assert probe_json(deployment, BUCKET) == first
 
 
 def test_a_repeated_bootstrap_leaves_an_explicitly_registered_package_alone(

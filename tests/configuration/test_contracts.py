@@ -2099,7 +2099,12 @@ def test_no_service_setting_uses_the_credential_namespace() -> None:
     root = Path(__file__).resolve().parents[2]
     prefix = configuration_credentials.ENV_CREDENTIAL_PREFIX
     owner = root / "infrahub_sync" / "configuration" / "credentials.py"
-    readers = [path for path in (root / "infrahub_sync").rglob("*.py") if path != owner]
+    # The end-to-end test class writes a test deployment's `.env`, as an operator does; it
+    # supplies a credential to the deployment and is not a setting the service reads.
+    test_deployment = root / "infrahub_sync" / "testcontainers"
+    readers = [
+        path for path in (root / "infrahub_sync").rglob("*.py") if path != owner and test_deployment not in path.parents
+    ]
 
     assert [str(path.relative_to(root)) for path in readers if prefix in path.read_text(encoding="utf-8")] == []
 

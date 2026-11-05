@@ -56,3 +56,17 @@ Prefect is an internal component of Sync, not an external dependency that Sync s
   neither project then fully manages.
 - **Run Sync's own Prefect server, with its databases on `task-manager-db`.** Rejected. It still
   depends on Infrahub's deployment for Sync's PostgreSQL server.
+
+### Amendment, 2026-10-23: the Prefect API behind the Sync API
+
+The Prefect server now runs from the Sync image, through the
+`infrahub_sync.service.prefect_server:create_prefect_app` factory, so Sync ships the Prefect
+client and server as one version, as the decision above requires.
+
+Later, the Prefect API will be reachable only through the Sync API. Whether the Sync API and
+the Prefect server become one process, or the Sync API proxies requests to a separate Prefect
+server, is not decided yet.
+
+In the root deployment file, the Prefect database password reaches only `prefect-server` and
+`db-bootstrap`, never `sync-api`. This is an extra layer of protection, not a principle of this
+decision.

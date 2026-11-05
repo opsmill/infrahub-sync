@@ -1,6 +1,6 @@
 """The local development stack's Compose file is valid on its own.
 
-`development/docker-compose.dev.yml` is the zero-ceremony local stack: it builds the
+`development/docker-compose.yml` is the zero-ceremony local stack: it builds the
 image from the working tree and runs it. Nothing else checks it, because the Compose
 contract suite in `tests/compose` asserts the operator file's properties -- the
 registry image reference, required credentials, no host mounts -- and this file
@@ -22,7 +22,10 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-COMPOSE_FILE = REPO_ROOT / "development" / "docker-compose.dev.yml"
+COMPOSE_FILE = REPO_ROOT / "development" / "docker-compose.yml"
+# The profile sets the tasks start: core alone, core with the Sync services, core with
+# the included Infrahub, and everything.
+PROFILE_SETS = ((), ("sync",), ("infrahub",), ("sync", "infrahub"))
 
 # The settings the file reads from the environment, all optional. Removed from the
 # caller's own environment rather than merely left alone, so a developer who exports one
@@ -36,7 +39,7 @@ OPTIONAL_SETTINGS = (
 _NO_COMPOSE_PLUGIN = "is not a docker command"
 
 
-def _resolve() -> subprocess.CompletedProcess[str]:
+def _resolve(profiles: tuple[str, ...] = ("sync", "infrahub")) -> subprocess.CompletedProcess[str]:
     """Resolve the development stack with none of its optional settings supplied."""
     if shutil.which("docker") is None:
         pytest.skip("docker is not installed; the development stack's Compose file cannot be resolved")
@@ -45,8 +48,9 @@ def _resolve() -> subprocess.CompletedProcess[str]:
         environment.pop(setting, None)
     # A `.env` beside the file would supply values a clean checkout does not have.
     environment["COMPOSE_DISABLE_ENV_FILE"] = "1"
+    profile_arguments = [argument for profile in profiles for argument in ("--profile", profile)]
     return subprocess.run(  # noqa: S603
-        ["docker", "compose", "--file", str(COMPOSE_FILE), "config"],  # noqa: S607 -- resolved on PATH above
+        ["docker", "compose", "--file", str(COMPOSE_FILE), *profile_arguments, "config"],  # noqa: S607 -- resolved on PATH above
         capture_output=True,
         text=True,
         check=False,
@@ -55,22 +59,23 @@ def _resolve() -> subprocess.CompletedProcess[str]:
     )
 
 
-def _resolved_or_skip() -> subprocess.CompletedProcess[str]:
+def _resolved_or_skip(profiles: tuple[str, ...] = ("sync", "infrahub")) -> subprocess.CompletedProcess[str]:
     """Return a successful resolution, skipping when the Compose CLI is unavailable."""
-    resolved = _resolve()
+    resolved = _resolve(profiles)
     if _NO_COMPOSE_PLUGIN in resolved.stderr:
         pytest.skip("the docker CLI has no compose plugin; the development stack cannot be resolved")
     return resolved
 
 
 def test_compose_file_is_present() -> None:
-    """The root Compose file exists, which is what `invoke start` runs."""
+    """The development Compose file exists, which is what `invoke start` runs."""
     assert COMPOSE_FILE.is_file(), f"{COMPOSE_FILE} is missing"
 
 
-def test_resolves_without_its_optional_settings() -> None:
+@pytest.mark.parametrize("profiles", PROFILE_SETS, ids=lambda profiles: "+".join(profiles) or "core")
+def test_resolves_without_its_optional_settings(profiles: tuple[str, ...]) -> None:
     """Every setting is inlined or defaulted, so a clean checkout can start the stack."""
-    resolved = _resolved_or_skip()
+    resolved = _resolved_or_skip(profiles)
     assert resolved.returncode == 0, f"`docker compose config` failed:\n{resolved.stderr}"
 
 

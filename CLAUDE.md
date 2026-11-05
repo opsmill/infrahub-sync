@@ -3,8 +3,9 @@
 @AGENTS.md
 
 <!-- SPECKIT START -->
-No spec is currently active. Completed specs are archived under `dev/specs/archive/`; their
-durable output lives in `docs/docs/development/knowledge/`, `docs/docs/development/guidelines/`,
-`docs/docs/development/guides/`, and `dev/adr/`. When a spec is active, read its `plan.md` for
-technologies, project structure, and shell commands.
+Active spec: `dev/specs/010-prefect-from-sync-image/` (Compose stacks run the Prefect server
+from the Sync image). Read its `plan.md` for technologies, project structure, and shell
+commands. Completed specs are archived under `dev/specs/archive/`; their durable output lives in
+`docs/docs/development/knowledge/`, `docs/docs/development/guidelines/`,
+`docs/docs/development/guides/`, and `dev/adr/`.
 <!-- SPECKIT END -->

@@ -533,6 +533,85 @@ image you built, and tears it down. The nightly workflow runs the same command; 
 job runs it. Run it by hand when a change touches the Compose deployment. It keeps the
 ordinary Docker and platform skips, so confirm what ran before claiming it passed.
 
+The suite includes `tests/compose/test_testcontainers_fixture.py`, which needs the
+`testcontainers` extra described below. Install it before you run the suite:
+`uv sync --extra dev --extra prefect --extra service --extra testcontainers`.
+
+#### End-to-end tests with `infrahub_sync.testcontainers` (experimental)
+
+`infrahub_sync.testcontainers` is experimental: its fixture names and settings can change in
+any release. It gives a test class a running Infrahub and a running Sync deployment, so a
+test can register a configuration package, plan it and apply it against a real Infrahub.
+
+Install the `testcontainers` extra, on Python 3.11 or later:
+
+```bash
+pip install "infrahub-sync[testcontainers]"
+```
+
+A test class inherits `TestInfrahubSyncDocker`. For each class, it starts Infrahub through
+`infrahub-testcontainers`, then the Sync deployment from the root `docker-compose.yml` that
+the package ships. It connects `sync-worker` to the Infrahub network, so a package reaches
+Infrahub at `http://infrahub-server:8000`. After the class, it stops both deployments and
+removes their volumes. When a test of the class fails, it reports the Sync services' logs
+as a warning.
+
+```python
+from pathlib import Path
+
+import httpx
+import pytest
+
+from infrahub_sync.testcontainers import TestInfrahubSyncDocker
+
+
+class TestMyPackage(TestInfrahubSyncDocker):
+    @pytest.fixture(scope="class")
+    @classmethod
+    def infrahub_sync_compose_files(cls) -> list[Path]:
+        # Optional: extra Compose files for the Sync deployment, passed with `-f`
+        # after the root file, in order. The default is an empty list.
+        return [Path(__file__).parent / "sync.override.yml"]
+
+    def test_the_api_answers(self, sync_api_url: str, sync_api_token: str) -> None:
+        headers = {"Authorization": f"Bearer {sync_api_token}"}
+        assert httpx.get(f"{sync_api_url}/configs", headers=headers).status_code == 200
+```
+
+The class adds these fixtures to the ones `TestInfrahubDocker` provides, such as
+`infrahub_port`:
+
+- `infrahub_sync_image`: the Sync image that every Sync service runs.
+- `infrahub_sync_compose_files`: the extra Compose files for the Sync deployment.
+- `infrahub_sync_compose`: the Sync deployment, written to disk and not started.
+- `infrahub_sync_app`: the started Sync deployment.
+- `sync_api_url`: the Sync API address on `127.0.0.1`, at the port Docker published.
+- `sync_api_token`: the token of the test deployment's administrator principal.
+
+Two variables select the Sync image, the same two the root file reads:
+
+- `INFRAHUB_SYNC_DOCKER_IMAGE` sets the repository. The default is
+  `registry.opsmill.io/opsmill/infrahub-sync`.
+- `VERSION` sets the tag. The default is the installed `infrahub-sync` version.
+
+To test the image built from your checkout, build it and name it with both variables:
+
+```bash
+docker build -t infrahub-sync:my-test .
+INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=my-test uv run pytest -m compose tests/compose/test_testcontainers_fixture.py
+```
+
+Each other variable the root file reads takes its value from the environment of the test
+process when it is set there, and a test value otherwise. Export a variable before the class
+starts to change it. For example, `INFRAHUB_SYNC_API_PORT` defaults to `0`, so Docker
+publishes the Sync API on a free loopback port; export a port number to choose the port
+yourself. The test values are not real credentials.
+
+The Infrahub version comes from `infrahub-testcontainers`: by default it is the version of
+the installed `infrahub-testcontainers` package. The `testcontainers` extra requires
+`infrahub-testcontainers` 1.11.9 or later, and `uv.lock` pins 1.11.9, so the fixture runs
+Infrahub 1.11.9. Set `INFRAHUB_TESTING_IMAGE_VER` to run another Infrahub version.
+
 ### `check-310`
 
 ```bash

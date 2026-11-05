@@ -1,0 +1,1 @@
+Updated the locked dependencies to their latest allowed versions. Prefect and the Prefect client stay at 3.8.6, FastAPI is pinned to 0.141.1 because FastAPI 0.159 breaks the Prefect server import, Pydantic stays below 2.13 because 2.13 changes how float exponents are written and breaks secret masking of numeric values, and ujson stays in the 5.x series.

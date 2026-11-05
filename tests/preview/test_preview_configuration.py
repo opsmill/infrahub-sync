@@ -10,7 +10,7 @@ import infrahub_sdk
 import pytest
 from invoke import Context, Result, UnexpectedExit
 
-from tasks import preview
+from tasks import preview, smoke_dataset
 from tasks.preview import (
     COMPOSE_FILES,
     DEV_DIR,
@@ -144,7 +144,7 @@ def test_preview_ignores_unrelated_shell_version(monkeypatch: pytest.MonkeyPatch
 
     values = preview.load_preview_env()
 
-    assert values["VERSION"] == "1.10.6"
+    assert values["VERSION"] == "1.11.9"
 
 
 def test_preview_routes_prefect_ui_to_the_published_host_port() -> None:
@@ -285,7 +285,7 @@ def test_bringing_the_preview_up_writes_nothing_to_infrahub(monkeypatch: pytest.
     """
     started: list[str] = []
     commands: list[str] = []
-    seeded: list[dict[str, str]] = []
+    seeded: list[str] = []
     context = Context()
 
     monkeypatch.setattr(preview, "STATE_DIR", tmp_path / ".preview")
@@ -306,7 +306,7 @@ def test_bringing_the_preview_up_writes_nothing_to_infrahub(monkeypatch: pytest.
     monkeypatch.setattr(preview, "assert_no_legacy_state", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(preview, "_start_process", lambda name, _argv, _env, **_kwargs: started.append(name))
     monkeypatch.setattr(preview, "_project_interpreter", lambda _context: "/preview/venv/bin/python")
-    monkeypatch.setattr(preview, "ensure_smoke_branch", seeded.append)
+    monkeypatch.setattr(smoke_dataset, "ensure_smoke_branch", lambda address, _token: seeded.append(address))
     monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
     monkeypatch.setattr(context, "run", lambda command, **_kwargs: commands.append(command))
 
@@ -455,7 +455,9 @@ def test_the_smoke_task_seeds_before_it_checks(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(preview, "load_preview_env", lambda: values)
     monkeypatch.setattr(preview, "_runtime_env", lambda _values: environment)
     monkeypatch.setattr(preview, "_infrahub_reachable", lambda _address: True)
-    monkeypatch.setattr(preview, "ensure_smoke_branch", lambda env: events.append(("branch", env)))
+    monkeypatch.setattr(
+        smoke_dataset, "ensure_smoke_branch", lambda address, token: events.append(("branch", address, token))
+    )
     monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
     monkeypatch.setattr(
         context,
@@ -471,7 +473,7 @@ def test_the_smoke_task_seeds_before_it_checks(monkeypatch: pytest.MonkeyPatch) 
             f"uv run infrahubctl schema load --wait {preview.SCHEMA_CONVERGE_SECONDS} {preview.SCHEMA_FILE}",
             environment,
         ),
-        ("branch", environment),
+        ("branch", environment["INFRAHUB_ADDRESS"], environment["INFRAHUB_API_TOKEN"]),
         ("run", "uv run pytest -m preview tests/preview -q", environment),
     ]
 
@@ -485,7 +487,9 @@ def test_the_seed_task_loads_the_schema_before_it_creates_the_device(monkeypatch
 
     monkeypatch.setattr(preview, "load_preview_env", lambda: values)
     monkeypatch.setattr(preview, "_runtime_env", lambda _values: environment)
-    monkeypatch.setattr(preview, "ensure_smoke_branch", lambda env: events.append(("branch", env)))
+    monkeypatch.setattr(
+        smoke_dataset, "ensure_smoke_branch", lambda address, token: events.append(("branch", address, token))
+    )
     monkeypatch.setattr(
         context,
         "run",
@@ -500,7 +504,7 @@ def test_the_seed_task_loads_the_schema_before_it_creates_the_device(monkeypatch
             f"uv run infrahubctl schema load --wait {preview.SCHEMA_CONVERGE_SECONDS} {preview.SCHEMA_FILE}",
             environment,
         ),
-        ("branch", environment),
+        ("branch", environment["INFRAHUB_ADDRESS"], environment["INFRAHUB_API_TOKEN"]),
     ]
 
 
@@ -525,7 +529,7 @@ def test_the_smoke_task_does_not_run_the_suite_when_the_seed_fails(monkeypatch: 
     monkeypatch.setattr(preview, "load_preview_env", lambda: values)
     monkeypatch.setattr(preview, "_runtime_env", lambda _values: environment)
     monkeypatch.setattr(preview, "_infrahub_reachable", lambda _address: True)
-    monkeypatch.setattr(preview, "ensure_smoke_branch", lambda _env: commands.append("branch"))
+    monkeypatch.setattr(smoke_dataset, "ensure_smoke_branch", lambda _address, _token: commands.append("branch"))
     monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
     monkeypatch.setattr(context, "run", _refuse_the_schema_load)
 
@@ -558,7 +562,7 @@ def test_actual_smoke_path_receives_the_preview_aws_credential_chain(monkeypatch
 
     monkeypatch.setattr(preview, "load_preview_env", lambda: values)
     monkeypatch.setattr(preview, "_infrahub_reachable", lambda _address: True)
-    monkeypatch.setattr(preview, "ensure_smoke_branch", lambda _env: None)
+    monkeypatch.setattr(smoke_dataset, "ensure_smoke_branch", lambda _address, _token: None)
     monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
     monkeypatch.setattr(context, "run", lambda command, *, env: events.append((command, env.copy())))
 
@@ -580,7 +584,9 @@ def test_the_smoke_task_leaves_an_unreachable_environment_to_pytest(monkeypatch:
     monkeypatch.setattr(preview, "load_preview_env", lambda: values)
     monkeypatch.setattr(preview, "_runtime_env", lambda _values: environment)
     monkeypatch.setattr(preview, "_infrahub_reachable", lambda _address: False)
-    monkeypatch.setattr(preview, "ensure_smoke_branch", lambda env: events.append(("branch", env)))
+    monkeypatch.setattr(
+        smoke_dataset, "ensure_smoke_branch", lambda address, token: events.append(("branch", address, token))
+    )
     monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
     monkeypatch.setattr(
         context,

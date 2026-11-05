@@ -240,7 +240,7 @@ Recreate services whose environment changed, then check readiness:
 
 ```sh
 docker compose up -d --wait
-curl -s http://127.0.0.1:8000/status
+curl -s http://127.0.0.1:8001/status
 ```
 
 Continue only when the `/status` response shows `worker.state` as `ready`.
@@ -252,7 +252,7 @@ The commands below use the `infrahub-sync` CLI on your machine; see
 Point it at this deployment, from the directory that holds `.env`:
 
 ```sh
-export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8000
+export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8001
 export INFRAHUB_SYNC_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_API_TOKEN=//p' .env)"
 ```
 

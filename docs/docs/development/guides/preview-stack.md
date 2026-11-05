@@ -4,6 +4,11 @@ title: "Run the preview stack"
 
 ## Run the preview stack
 
+The [local development stack](../../development-stack.mdx) (`uv run invoke dev.*`) replaces
+the preview stack. It runs the Sync API and the worker either in containers or on your host,
+and runs the same smoke suite with `uv run invoke dev.smoke`. The preview stack, its
+`preview.*` tasks and its files will be removed; use the development stack for new work.
+
 The preview stack runs Infrahub, PostgreSQL and MinIO for the service's own records and
 artifacts, and a dedicated Prefect server in containers. The Sync HTTP API and its Prefect
 worker run on your host, from your checkout. Use it to work on `infrahub_sync/service/`

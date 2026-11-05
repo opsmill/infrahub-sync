@@ -47,8 +47,9 @@ The `prefect` extra is not optional for development: without it `ty` cannot reso
 `infrahub_sync/orchestration/`'s imports and `tests/orchestration/test_flow.py` skips
 itself whole. On Python 3.11–3.13, the `service` extra is required too; otherwise `ty`
 cannot resolve the Sync service's FastAPI and Prefect imports. On Python 3.10,
-`invoke linter.lint-ty` and `invoke linter.lint-pylint` exclude `infrahub_sync/service`
-(ty also excludes `tests/service`), matching CI's direct Prefect gate. CI also runs a base-install job that keeps the Prefect-free
+`invoke linter.lint-ty` and `invoke linter.lint-pylint` exclude `infrahub_sync/service` and
+`infrahub_sync/testcontainers` (ty also excludes `tests/service` and `tests/testcontainers`),
+matching CI's direct Prefect gate. CI also runs a base-install job that keeps the Prefect-free
 guarantee honest.
 
 **CLI sanity after changes:**
@@ -73,7 +74,7 @@ uv run invoke docs.docusaurus
 **Policy:**
 
 - New or changed code is Ruff-clean and typed where touched (docstrings, specific exceptions).
-- The codebase is clean under ty with no `[[tool.ty.overrides]]` blocks in `pyproject.toml`. Don't reintroduce overrides to mask type errors — fix the underlying issue, or use a targeted `# ty: ignore[<rule>]` with a short TODO at the call site. Run `uv run ty check .` in the full Python 3.11–3.13 profile (the frozen vendored upstream tests are excluded via `[tool.ty.src]` in `pyproject.toml`; the vendored package itself stays checked). On Python 3.10, run `uv run ty check --exclude infrahub_sync/service --exclude tests/service .`.
+- The codebase is clean under ty with no `[[tool.ty.overrides]]` blocks in `pyproject.toml`. Don't reintroduce overrides to mask type errors — fix the underlying issue, or use a targeted `# ty: ignore[<rule>]` with a short TODO at the call site. Run `uv run ty check .` in the full Python 3.11–3.13 profile (the frozen vendored upstream tests are excluded via `[tool.ty.src]` in `pyproject.toml`; the vendored package itself stays checked). On Python 3.10, run `uv run ty check --exclude infrahub_sync/service --exclude tests/service --exclude infrahub_sync/testcontainers --exclude tests/testcontainers .`.
 - If you add tests, run `uv run invoke tests.tests-unit`.
 
 ## Repository Structure
@@ -186,7 +187,7 @@ Every normal pull request into `main` must also carry exactly one release-intent
 
 **Versions and `CHANGELOG.md` are never edited manually.** For a V2 release from `main`, merging does not prepare the release: dispatch `trigger-push-stable.yml` from Actions with `main` selected, which opens a `chore(release)` pull request carrying the version bump and the changelog assembled from the fragments it consumes. Merging that pull request creates the tag and publishes the GitHub Release. Do not bump `pyproject.toml`, edit `CHANGELOG.md`, or create tags yourself. See [RELEASING.md](RELEASING.md).
 
-The container image is published to `registry.opsmill.io/opsmill/infrahub-sync` by `ci-docker-image.yml`, for linux/amd64 and linux/arm64, signed and with SBOMs attached. A release publishes it, and a maintainer can dispatch it by hand; see [`development/guides/publishing-an-image.md`](docs/docs/development/guides/publishing-an-image.md). The operator deployment is the root `docker-compose.yml`; the development stack is `development/docker-compose.dev.yml`.
+The container image is published to `registry.opsmill.io/opsmill/infrahub-sync` by `ci-docker-image.yml`, for linux/amd64 and linux/arm64, signed and with SBOMs attached. A release publishes it, and a maintainer can dispatch it by hand; see [`development/guides/publishing-an-image.md`](docs/docs/development/guides/publishing-an-image.md). The operator deployment is the root `docker-compose.yml`; the development stack is `development/docker-compose.yml`.
 
 ## Invoke Tasks (reference)
 

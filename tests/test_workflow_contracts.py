@@ -733,13 +733,19 @@ def test_nightly_runs_the_compose_suite_against_an_image_it_builds() -> None:
     assert ANCESTRY_CHECK in guard
     assert HEAD_READBACK in guard
     runs = [str(step.get("run", "")) for step in steps]
+    # The `testcontainers` extra, so `TestInfrahubSyncDocker` runs with the rest of the suite.
+    install = next(
+        index
+        for index, run in enumerate(runs)
+        if run == "uv sync --frozen --extra dev --extra prefect --extra service --extra testcontainers"
+    )
     build = next(index for index, run in enumerate(runs) if run == "docker build -t infrahub-sync:compose-test .")
     suite = next(
         index
         for index, run in enumerate(runs)
         if run == "uv run --no-sync pytest -m compose tests/compose -x --compose-zero-skip"
     )
-    assert build < suite
+    assert install < build < suite
     assert steps[suite]["env"] == {"INFRAHUB_SYNC_DOCKER_IMAGE": "infrahub-sync", "VERSION": "compose-test"}
 
 
@@ -1776,10 +1782,12 @@ def test_the_release_pull_request_commits_the_pinned_compose_file() -> None:
     _index, step = _step_running(
         prepare_release_steps(), "open the release pull request", lambda s: "git commit" in str(s.get("run"))
     )
-    added = RELEASE_PR_GIT_ADD.findall(str(step["run"]))
+    # A backslash at the end of a line continues the command; join it before reading the paths.
+    added = RELEASE_PR_GIT_ADD.findall(re.sub(r"\\\n\s*", " ", str(step["run"])))
 
     assert len(added) == 1
     assert "docker-compose.yml" in added[0].split()
+    assert "infrahub_sync/testcontainers/docker-compose.yml" in added[0].split()
 
 
 def test_the_tag_is_refused_for_a_compose_file_pinned_to_another_version() -> None:

@@ -17,6 +17,7 @@ import json
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -32,6 +33,7 @@ from tests.compose.conftest import (
     resolve_privately,
     service,
 )
+from tests.compose.stacks import image_references
 from tests.docker_image import DEFAULT_IMAGE_REPOSITORY, IMAGE_REPOSITORY_ENV, IMAGE_VERSION_ENV
 
 if TYPE_CHECKING:
@@ -62,13 +64,16 @@ CREDENTIALS = (
 BOOTSTRAP_CONFIG = "db-bootstrap-script"
 BOOTSTRAP_TARGET = "/usr/local/bin/databases.sh"
 TAGGED_INDEX_REFERENCE = re.compile(r"^(?:[^\s/@]+/)*[^/\s@:]+:[^/\s@:]+@sha256:[0-9a-f]{64}$")
-MINIO_IMAGE = (
-    "cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba"
+SILO_IMAGE = (
+    "pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc4155d9a7e41ff58cdb65ddd13ba9304e67184e13c25bc5cb34016269d7"
 )
 DEVELOPMENT_COMPOSE = Path(__file__).resolve().parents[2] / "development"
 DESTINATION_COMPOSE = DEVELOPMENT_COMPOSE / "docker-compose.infrahub.yml"
 PREVIEW_COMPOSE = DEVELOPMENT_COMPOSE / "docker-compose.preview.yml"
 PREVIEW_ENV = DEVELOPMENT_COMPOSE / "preview.env"
+# Every service of the destination file is under this profile. `preview.env` selects it
+# through COMPOSE_PROFILES; a resolution without that file has to name it.
+INFRAHUB_PROFILE = ("--profile", "infrahub")
 
 # The two durable volumes and the services allowed to mount them. The short-lived
 # owner repair shares the object store's volume before the server starts.
@@ -113,6 +118,41 @@ PREFECT_CREDENTIAL_SETTING = "INFRAHUB_SYNC_PREFECT_AUTH_STRING"
 PREFECT_SERVER_CREDENTIAL = "PREFECT_SERVER_API_AUTH_STRING"
 PREFECT_CLIENT_CREDENTIAL = "PREFECT_API_AUTH_STRING"
 PREFECT_CREDENTIAL_RECEIVERS = {"sync-bootstrap", "sync-api", "sync-worker"}
+
+# The Prefect server runs from the Sync image, so it is a Sync-image service:
+# it shares the reference the other Sync services use and is exempt from the
+# digest rule for third-party images.
+PREFECT_SERVER = "prefect-server"
+SYNC_IMAGE_SERVICES = (PREFECT_SERVER, *ALL_SYNC_SERVICES)
+PREFECT_SERVER_COMMAND = [
+    "uvicorn",
+    "--host",
+    "0.0.0.0",  # noqa: S104 -- the container's own interface; the root file publishes no Prefect port
+    "--port",
+    "4200",
+    "--factory",
+    "infrahub_sync.service.prefect_server:create_prefect_app",
+]
+PREFECT_HEALTH_URL = "http://127.0.0.1:4200/api/health"
+# Every setting that reaches or opens the Prefect API: its address and the
+# credential on both sides of it.
+PREFECT_API_SETTINGS = (
+    "PREFECT_API_URL",
+    PREFECT_CLIENT_CREDENTIAL,
+    PREFECT_SERVER_CREDENTIAL,
+    PREFECT_CREDENTIAL_SETTING,
+)
+# The Prefect database password, and the two services allowed to hold it:
+# the server that connects with it and the job that creates the role.
+PREFECT_DATABASE_CREDENTIAL = "INFRAHUB_SYNC_PREFECT_PASSWORD"
+PREFECT_DATABASE_URL = "PREFECT_SERVER_DATABASE_CONNECTION_URL"
+PREFECT_DATABASE_PASSWORD_RECEIVERS = {PREFECT_SERVER, "db-bootstrap"}
+# PostgreSQL, the object store, and the Sync image.
+ROOT_IMAGE_COUNT = 3
+# The documented override snippet that turns the Prefect UI on, and the Sync
+# scratch tmpfs its UI files must go to.
+PREFECT_UI_SNIPPET = Path(__file__).resolve().parents[2] / "docs" / "docs" / "snippets" / "prefect-ui.override.yml"
+SYNC_SCRATCH_ROOT = "/tmp/infrahub-sync"  # noqa: S108 -- the image's own fixed scratch root, not a shared /tmp path
 
 
 def services(model: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -184,11 +224,13 @@ def test_only_postgresql_and_the_object_store_keep_a_named_volume(model: dict[st
 def test_prefect_keeps_no_state_of_its_own(model: dict[str, Any]) -> None:
     """Its records live in PostgreSQL, so a replacement container resumes from them.
 
-    Prefect defaults to a SQLite file inside its container. Left that way the
+    The server runs from the Sync image, whose Prefect home is a tmpfs scratch
+    root. Prefect defaults to a SQLite file under that home: left that way the
     server would hold deployment and work-pool state no other service could see,
-    and a restart that replaced the container would silently lose it.
+    and every restart would lose it. So it mounts nothing and connects to
+    PostgreSQL, like the other Sync-image services keep no state of their own.
     """
-    definition = service(model, "prefect-server")
+    definition = service(model, PREFECT_SERVER)
     connection = definition["environment"]["PREFECT_SERVER_DATABASE_CONNECTION_URL"]
 
     assert definition.get("volumes") in (None, []), f"prefect-server mounts {definition.get('volumes')}"
@@ -301,11 +343,15 @@ def test_a_missing_credential_stops_compose_naming_it(compose_version: str, name
 # ---------------------------------------------------------------------------
 
 
-def test_only_the_api_and_prefect_publish_a_host_port(model: dict[str, Any]) -> None:
-    """PostgreSQL, the object store, the worker, and every job stay on the private network."""
+def test_only_the_api_publishes_a_host_port(model: dict[str, Any]) -> None:
+    """One host port: Prefect, PostgreSQL, the object store, the worker, and every job stay private.
+
+    The Prefect port opens only through the documented override snippet, which
+    this default resolve does not include.
+    """
     publishers = {name for name, definition in services(model).items() if published(definition)}
 
-    assert publishers == {"sync-api", "prefect-server"}, f"host ports are published by {sorted(publishers)}"
+    assert publishers == {"sync-api"}, f"host ports are published by {sorted(publishers)}"
 
 
 def test_every_published_address_is_loopback(model: dict[str, Any]) -> None:
@@ -320,6 +366,16 @@ def test_every_published_address_is_loopback(model: dict[str, Any]) -> None:
     external = sorted(name for name, host_ip in addresses if host_ip != "127.0.0.1")
 
     assert external == [], f"{external} publish to an address other than loopback"
+
+
+def test_the_api_publishes_on_host_port_8001_by_default(model: dict[str, Any]) -> None:
+    """Host port 8000 is Infrahub's, so the Sync API takes 8001 and both run on one machine.
+
+    Inside the container the API still listens on 8000; only the host side moves.
+    """
+    ports = [(str(entry.get("published")), entry.get("target")) for entry in published(service(model, "sync-api"))]
+
+    assert ports == [("8001", 8000)]
 
 
 def test_prefect_telemetry_is_off(model: dict[str, Any]) -> None:
@@ -387,16 +443,180 @@ def test_the_bundle_refuses_to_resolve_without_the_prefect_credential(
 
 
 # ---------------------------------------------------------------------------
+# The Prefect server runs from the Sync image
+# ---------------------------------------------------------------------------
+
+
+def sync_image_services(resolved: Mapping[str, Any]) -> set[str]:
+    """The services that run the image `sync-api` runs."""
+    reference = service(resolved, "sync-api")["image"]
+    return {name for name, definition in services(resolved).items() if definition.get("image") == reference}
+
+
+def test_the_prefect_server_runs_the_image_the_sync_services_run(model: dict[str, Any]) -> None:
+    """One image reference, so the server and its clients always run the same Prefect version."""
+    images = {name: service(model, name)["image"] for name in (PREFECT_SERVER, "sync-api", "sync-worker")}
+
+    assert len(set(images.values())) == 1, f"the Prefect server and the Sync services run different images: {images}"
+
+
+def test_nothing_outside_the_sync_image_reaches_the_prefect_api(
+    cli_model: dict[str, Any], contract_environment: dict[str, str]
+) -> None:
+    """Only processes of the Sync image hold the Prefect API address or its credential.
+
+    Two equalities over every service: by setting name, the opt-in CLI included,
+    and by the credential's value, read from raw output and compared privately
+    because the credential is redacted by name.
+    """
+    outside = set(services(cli_model)) - sync_image_services(cli_model)
+    by_name = sorted(
+        f"{name}: {setting}"
+        for name in outside
+        for setting in PREFECT_API_SETTINGS
+        if setting in (service(cli_model, name).get("environment") or {})
+    )
+    resolved = resolve_privately(contract_environment)
+    credential = contract_environment[PREFECT_CREDENTIAL_SETTING]
+    by_value = sorted(
+        name
+        for name in set(services(resolved)) - sync_image_services(resolved)
+        if any(credential in str(value) for value in (service(resolved, name).get("environment") or {}).values())
+    )
+
+    assert by_name == [], f"services outside the Sync image hold Prefect API settings: {by_name}"
+    assert by_value == [], f"services outside the Sync image hold the Prefect API credential: {by_value}"
+
+
+def test_the_prefect_server_starts_the_sync_package_factory(model: dict[str, Any]) -> None:
+    """uvicorn serves the server application the Sync package builds, not the `prefect` CLI."""
+    assert service(model, PREFECT_SERVER)["command"] == PREFECT_SERVER_COMMAND
+
+
+def test_the_prefect_server_health_check_calls_the_api_with_httpx(model: dict[str, Any]) -> None:
+    """The check uses the image's own Python and `httpx`, on the loopback address."""
+    test = service(model, PREFECT_SERVER)["healthcheck"]["test"]
+
+    assert test[:3] == ["CMD", "python", "-c"], test
+    assert len(test) == 4, test
+    assert "import httpx" in test[3], test
+    assert PREFECT_HEALTH_URL in test[3], test
+
+
+def test_the_prefect_database_password_reaches_only_the_server_and_the_role_bootstrap(
+    cli_model: dict[str, Any], contract_environment: dict[str, str]
+) -> None:
+    """The server connects with it and `db-bootstrap` creates the role with it; nothing else holds it.
+
+    An equality over every service, by setting name and by value, read from raw
+    output and compared privately because the password is redacted by name. The
+    CLI reaches the Sync API alone, so it holds no Prefect setting at all.
+    """
+    resolved = resolve_privately(contract_environment)
+    password = contract_environment[PREFECT_DATABASE_CREDENTIAL]
+    holders = {
+        name
+        for name, definition in services(resolved).items()
+        if PREFECT_DATABASE_CREDENTIAL in (environment := definition.get("environment") or {})
+        or PREFECT_DATABASE_URL in environment
+        or any(password in str(value) for value in environment.values())
+    }
+    cli_settings = sorted(
+        setting
+        for setting in service(cli_model, CLI_SERVICE).get("environment") or {}
+        if setting.startswith(("PREFECT_", "INFRAHUB_SYNC_PREFECT_"))
+    )
+
+    assert holders == PREFECT_DATABASE_PASSWORD_RECEIVERS, f"the Prefect database password reaches {sorted(holders)}"
+    assert cli_settings == [], f"the CLI service holds Prefect settings: {cli_settings}"
+
+
+def test_the_prefect_ui_is_off_by_default(model: dict[str, Any]) -> None:
+    """The UI turns on only through the documented override snippet."""
+    assert service(model, PREFECT_SERVER)["environment"].get("PREFECT_UI_ENABLED") == "false"
+
+
+def test_the_prefect_ui_api_address_is_loopback(model: dict[str, Any]) -> None:
+    """Set even with the UI off, so the override snippet only has to turn the UI on."""
+    address = service(model, PREFECT_SERVER)["environment"].get("PREFECT_SERVER_UI_API_URL")
+
+    assert address, "prefect-server does not set PREFECT_SERVER_UI_API_URL"
+    assert urlsplit(address).hostname == "127.0.0.1", f"the Prefect UI calls the API on {address}"
+
+
+def test_the_prefect_ui_api_address_stays_loopback_with_another_bind_address(
+    contract_environment: dict[str, str],
+) -> None:
+    """The snippet publishes the Prefect port on 127.0.0.1 only, so the UI must call the API there."""
+    environment = {**contract_environment, "INFRAHUB_SYNC_BIND_ADDRESS": "0.0.0.0"}  # noqa: S104
+    address = service(resolve(environment), PREFECT_SERVER)["environment"]["PREFECT_SERVER_UI_API_URL"]
+
+    assert urlsplit(address).hostname == "127.0.0.1", f"the Prefect UI calls the API on {address}"
+
+
+def test_the_prefect_ui_snippet_turns_the_ui_on_and_publishes_it_on_loopback_only(
+    contract_environment: dict[str, str],
+) -> None:
+    """The documented override snippet opens the UI on one loopback port, and changes nothing else.
+
+    The UI files go to the Sync scratch tmpfs, because the server's root
+    filesystem is read-only. The comparison with the default resolve proves the
+    snippet adds no other service publication.
+    """
+    overridden = resolve(contract_environment, files=(COMPOSE_FILE, PREFECT_UI_SNIPPET))
+    definition = service(overridden, PREFECT_SERVER)
+    environment = definition["environment"]
+    ports = published(definition)
+
+    assert environment.get("PREFECT_UI_ENABLED") == "true"
+    static = environment.get("PREFECT_UI_STATIC_DIRECTORY", "")
+    assert static.startswith(f"{SYNC_SCRATCH_ROOT}/"), f"the Prefect UI files go to {static!r}"
+    assert len(ports) == 1, f"prefect-server publishes {ports}"
+    assert ports[0].get("host_ip") == "127.0.0.1", f"prefect-server publishes on {ports[0].get('host_ip')}"
+    assert str(ports[0].get("target")) == "4200"
+    assert str(ports[0].get("published")) == "4200"
+    others = {name for name, entry in services(overridden).items() if published(entry)} - {PREFECT_SERVER}
+    assert others == {"sync-api"}, f"with the snippet, host ports are also published by {sorted(others)}"
+
+
+def test_the_prefect_ui_snippet_publishes_the_configured_port(contract_environment: dict[str, str]) -> None:
+    """`INFRAHUB_SYNC_PREFECT_PORT` takes effect through the snippet, as the release notes say."""
+    environment = {**contract_environment, "INFRAHUB_SYNC_PREFECT_PORT": "4299"}
+    overridden = resolve(environment, files=(COMPOSE_FILE, PREFECT_UI_SNIPPET))
+    ports = published(service(overridden, PREFECT_SERVER))
+
+    assert [str(entry.get("published")) for entry in ports] == ["4299"]
+    address = service(overridden, PREFECT_SERVER)["environment"]["PREFECT_SERVER_UI_API_URL"]
+    assert urlsplit(address).port == 4299, f"the Prefect UI calls the API on {address}"
+
+
+def test_the_prefect_server_runs_read_only_over_the_sync_scratch(model: dict[str, Any]) -> None:
+    """The same tmpfs roots as every Sync-image service, and nothing else writable."""
+    definition = service(model, PREFECT_SERVER)
+    expected = [f"{root}:{SCRATCH_OPTIONS}" for root in SYNC_SCRATCH_ROOTS]
+
+    assert definition.get("read_only") is True, "prefect-server does not run on a read-only root filesystem"
+    assert definition.get("tmpfs") == expected, f"prefect-server declares scratch {definition.get('tmpfs')}"
+
+
+def test_the_root_file_names_three_images(cli_model: dict[str, Any]) -> None:
+    """PostgreSQL, Silo and Sync: a deployment pulls three images, the opt-in CLI included."""
+    images = image_references(cli_model)
+
+    assert len(images) == ROOT_IMAGE_COUNT, f"the root file names {len(images)} images: {images}"
+
+
+# ---------------------------------------------------------------------------
 # Immutable image identity
 # ---------------------------------------------------------------------------
 
 
-def test_object_store_uses_the_pinned_minio_build_and_migrates_existing_data(model: dict[str, Any]) -> None:
+def test_object_store_uses_the_pinned_silo_release_and_migrates_existing_data(model: dict[str, Any]) -> None:
     """Ownership repair completes before the server starts without root privileges."""
     init = service(model, "object-store-init")
     object_store = service(model, "object-store")
 
-    assert init["image"] == MINIO_IMAGE
+    assert init["image"] == SILO_IMAGE
     assert init["user"] == "0"
     assert init["entrypoint"] == ["/bin/sh", "-ec"]
     assert 'if [ "$$(stat -c %u:%g /data)" != "65532:65532" ]; then' in init["command"][0]
@@ -407,7 +627,7 @@ def test_object_store_uses_the_pinned_minio_build_and_migrates_existing_data(mod
     assert init["cap_drop"] == ["ALL"]
     assert init["cap_add"] == ["CHOWN"]
     assert {mount["source"] for mount in init["volumes"]} == {"object-store-data"}
-    assert object_store["image"] == MINIO_IMAGE
+    assert object_store["image"] == SILO_IMAGE
     assert object_store["user"] == "65532:65532"
     assert object_store["command"] == ["server", "/data"]
     assert object_store["depends_on"]["object-store-init"]["condition"] == "service_completed_successfully"
@@ -418,12 +638,13 @@ def test_every_image_other_than_sync_is_named_by_digest(cli_model: dict[str, Any
 
     One assertion over every service, so a service added later is covered by
     having been added rather than by somebody remembering to extend a list. The
-    Sync image is the one deliberate exception: it is selected by release tag.
+    Sync image is the one deliberate exception: it is selected by release tag,
+    and every service that runs it, `prefect-server` included, is exempt.
     """
     mutable = sorted(
         f"{name}: {definition['image']}"
         for name, definition in services(cli_model).items()
-        if name not in ALL_SYNC_SERVICES and not IMMUTABLE_REFERENCE.fullmatch(str(definition["image"]))
+        if name not in SYNC_IMAGE_SERVICES and not IMMUTABLE_REFERENCE.fullmatch(str(definition["image"]))
     )
 
     assert mutable == [], f"these services are not pinned to a digest: {mutable}"
@@ -437,7 +658,7 @@ def sync_image_lines() -> dict[str, str]:
         heading = re.fullmatch(r"  ([a-z][a-z0-9-]*):\s*", line)
         if heading:
             current = heading.group(1)
-        elif current in ALL_SYNC_SERVICES and line.lstrip().startswith("image:"):
+        elif current in SYNC_IMAGE_SERVICES and line.lstrip().startswith("image:"):
             found[current] = line
     return found
 
@@ -455,14 +676,14 @@ def test_every_sync_service_names_the_registry_image_and_the_release_version() -
     """`${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-X}`, verbatim.
 
     Read from the text, because the model only shows what the defaults resolved
-    to. Every Sync service carries the same reference, so one `VERSION` moves
-    all four together.
+    to. Every Sync-image service carries the same reference, so one `VERSION`
+    moves all five together.
     """
     lines = sync_image_lines()
     versions = pinned_versions()
 
-    assert set(lines) == set(ALL_SYNC_SERVICES), f"Sync services with an image line: {sorted(lines)}"
-    assert set(versions) == set(ALL_SYNC_SERVICES), (
+    assert set(lines) == set(SYNC_IMAGE_SERVICES), f"Sync services with an image line: {sorted(lines)}"
+    assert set(versions) == set(SYNC_IMAGE_SERVICES), (
         f"services off the reference form: {sorted(set(lines) - set(versions))}"
     )
     assert len(set(versions.values())) == 1, f"the Sync services name different versions: {versions}"
@@ -473,7 +694,7 @@ def test_the_sync_image_defaults_to_the_registry_at_the_pinned_version(cli_model
     (pinned,) = set(pinned_versions().values())
     expected = f"{DEFAULT_IMAGE_REPOSITORY}:{pinned}"
 
-    resolved = {name: service(cli_model, name)["image"] for name in ALL_SYNC_SERVICES}
+    resolved = {name: service(cli_model, name)["image"] for name in SYNC_IMAGE_SERVICES}
 
     assert set(resolved.values()) == {expected}, resolved
 
@@ -500,11 +721,11 @@ def test_the_operator_selects_another_sync_image_with_two_settings(
     assert result.returncode == 0, result.stderr
     resolved = services(json.loads(result.stdout))
 
-    assert {resolved[name]["image"] for name in ALL_SYNC_SERVICES} == {expected}
+    assert {resolved[name]["image"] for name in SYNC_IMAGE_SERVICES} == {expected}
     assert all(
         IMMUTABLE_REFERENCE.fullmatch(str(definition["image"]))
         for name, definition in resolved.items()
-        if name not in ALL_SYNC_SERVICES
+        if name not in SYNC_IMAGE_SERVICES
     )
 
 
@@ -515,7 +736,9 @@ def test_destination_and_preview_default_images_are_tagged_indexes(
 ) -> None:
     """Compose's resolved defaults must retain readable tags and immutable digests."""
     del compose_version
-    result = compose(["config", "--format", "json"], files=files, env_files=env_files, inherit_environment=False)
+    result = compose(
+        [*INFRAHUB_PROFILE, "config", "--format", "json"], files=files, env_files=env_files, inherit_environment=False
+    )
     assert result.returncode == 0, result.stderr
     configured = json.loads(result.stdout)
     mutable = sorted(
@@ -532,7 +755,7 @@ def test_preview_env_tags_match_compose_pin_defaults(compose_version: str) -> No
     models = []
     for env_files in ((), (PREVIEW_ENV,)):
         result = compose(
-            ["config", "--format", "json"],
+            [*INFRAHUB_PROFILE, "config", "--format", "json"],
             files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
             env_files=env_files,
             inherit_environment=False,
@@ -557,7 +780,7 @@ def test_image_overrides_keep_their_matching_digests(compose_version: str) -> No
     infrahub_digest = "@sha256:" + "a" * 64
     prefect_digest = "@sha256:" + "b" * 64
     result = compose(
-        ["config", "--format", "json"],
+        [*INFRAHUB_PROFILE, "config", "--format", "json"],
         files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
         env_files=(PREVIEW_ENV,),
         inherit_environment=False,
@@ -582,7 +805,7 @@ def test_local_image_override_can_drop_the_digest(compose_version: str) -> None:
     """An empty digest keeps the preexisting local image override usable."""
     del compose_version
     result = compose(
-        ["config", "--format", "json"],
+        [*INFRAHUB_PROFILE, "config", "--format", "json"],
         files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
         env_files=(PREVIEW_ENV,),
         inherit_environment=False,
@@ -608,7 +831,7 @@ def test_direct_compose_local_image_override_drops_the_digest(
     """An image-name override cannot retain the shipped digest without an env file."""
     del compose_version
     result = compose(
-        ["config", "--format", "json"],
+        [*INFRAHUB_PROFILE, "config", "--format", "json"],
         files=(DESTINATION_COMPOSE,),
         inherit_environment=False,
         environment={"INFRAHUB_DOCKER_IMAGE": "local-infrahub", **digest_override},
@@ -616,7 +839,7 @@ def test_direct_compose_local_image_override_drops_the_digest(
     assert result.returncode == 0, result.stderr
     configured = services(json.loads(result.stdout))
     for name in ("task-manager", "infrahub-server", "task-worker"):
-        assert configured[name]["image"] == "local-infrahub:1.10.6"
+        assert configured[name]["image"] == "local-infrahub:1.11.9"
 
 
 def test_direct_compose_digest_override_replaces_the_shipped_digest(compose_version: str) -> None:
@@ -624,14 +847,14 @@ def test_direct_compose_digest_override_replaces_the_shipped_digest(compose_vers
     del compose_version
     digest = "@sha256:" + "a" * 64
     result = compose(
-        ["config", "--format", "json"],
+        [*INFRAHUB_PROFILE, "config", "--format", "json"],
         files=(DESTINATION_COMPOSE,),
         inherit_environment=False,
         environment={"INFRAHUB_DOCKER_IMAGE_DIGEST": digest},
     )
     assert result.returncode == 0, result.stderr
     configured = services(json.loads(result.stdout))
-    expected = f"registry.opsmill.io/opsmill/infrahub:1.10.6{digest}"
+    expected = f"registry.opsmill.io/opsmill/infrahub:1.11.9{digest}"
     for name in ("task-manager", "infrahub-server", "task-worker"):
         assert configured[name]["image"] == expected
         assert TAGGED_INDEX_REFERENCE.fullmatch(configured[name]["image"])
@@ -641,7 +864,7 @@ def test_standalone_version_override_drops_the_shipped_digest(compose_version: s
     """Direct Compose use must not pair a new tag with the shipped digest."""
     del compose_version
     result = compose(
-        ["config", "--format", "json"],
+        [*INFRAHUB_PROFILE, "config", "--format", "json"],
         files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
         inherit_environment=False,
         environment={"VERSION": "custom", "PREVIEW_PREFECT_IMAGE_TAG": "custom"},

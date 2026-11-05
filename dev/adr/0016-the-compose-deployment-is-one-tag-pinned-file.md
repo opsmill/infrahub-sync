@@ -30,6 +30,8 @@ no wrapper, no mounted scripts and no secret files.
   supply them in a `.env` beside the file.
 - **Development stack.** The development stack moves to `development/docker-compose.dev.yml`,
   because Compose prefers `compose.yaml` over `docker-compose.yml` in the same directory.
+    - Later change: the development stack was then moved to `development/docker-compose.yml`.
+      That name works because `development/` holds no `compose.yaml`.
 
 ## Consequences
 
@@ -57,3 +59,30 @@ no wrapper, no mounted scripts and no secret files.
 - **A root `docker-compose.override.yml` for development.** Rejected. A developer running
   `docker compose up` in a checkout would silently merge development credentials into the
   operator file.
+
+## Note: the Prefect UI override snippet and the packaged copy of the file
+
+**Date**: 2026-10-23
+
+Two later changes extend this decision without changing it.
+
+- **Prefect UI override snippet.** The root file publishes only the Sync API port and runs the
+  Prefect server with its UI off. The operator documentation ships one override snippet,
+  `docs/docs/snippets/prefect-ui.override.yml`, that an operator saves as
+  `docker-compose.override.yml` beside the file. It turns the Prefect UI on, points the UI's
+  static files at the Sync scratch tmpfs because the root filesystem is read-only, and publishes
+  the Prefect port on `127.0.0.1` only, at `INFRAHUB_SYNC_PREFECT_PORT`. Removing it and running
+  `docker compose up -d` closes the port again. The snippet is an override and not a second
+  shipped file, so the deployment stays one file, and the UI is opened only on request. The
+  compose contract tests resolve the root file with the snippet, and the documentation page
+  renders the snippet file itself, so the documented text is the tested text.
+- **Root file shipped as package data.** The `infrahub-sync[testcontainers]` extra starts Sync
+  from the root `docker-compose.yml` for end-to-end tests, so the Python package ships that file
+  as package data, byte-equal to the repository file. The root file stays the one source; a test
+  fails when the packaged copy differs from it. The release pin of this decision applies to both.
+  The copy is committed at `infrahub_sync/testcontainers/docker-compose.yml`, not copied in at
+  build time with hatch's `force-include`, because an editable install reads the package from
+  the source tree and a build-time copy would be missing there. `release.update-docker-compose`
+  writes the pinned root file over the copy, and `release.validate-docker-compose` refuses a
+  copy that differs from the root file. A unit test compares the two files byte for byte, and
+  another builds the wheel and compares the file it ships.

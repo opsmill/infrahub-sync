@@ -161,7 +161,7 @@ The repository has two local stacks. Both use development credentials and are di
 
 | Stack | Commands | Sync API | Use it to |
 | --- | --- | --- | --- |
-| Source-built containers | `uv run invoke start`, `build`, `destroy` | `http://127.0.0.1:8030` | Run the API and worker as containers built from your working tree |
+| Source-built containers | `uv run invoke start`, `build`, `destroy` | `http://127.0.0.1:8001` | Run the API and worker as containers built from your working tree |
 | Preview | `uv run invoke preview.up`, `preview.down` | `http://localhost:8010` | Run the preview smoke suite and the `from-netbox` check against a disposable Infrahub on port 8080 |
 
 Neither stack reloads code automatically. After a code change, run `uv run invoke build` for the

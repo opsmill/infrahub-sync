@@ -191,7 +191,7 @@ name comes from the project name `infrahub` you gave `docker compose -p` in
 3. Point the CLI at the Sync API and check the service:
 
 ```bash
-export INFRAHUB_SYNC_API_URL="http://127.0.0.1:8030"
+export INFRAHUB_SYNC_API_URL="http://127.0.0.1:8001"
 export INFRAHUB_SYNC_API_TOKEN="infrahub-sync-dev-token"
 curl -sf -H "Authorization: Bearer ${INFRAHUB_SYNC_API_TOKEN}" "${INFRAHUB_SYNC_API_URL}/status"
 ```
@@ -340,7 +340,7 @@ uv run infrahub-sync runs show <run-id>
 The same error is in the worker's log:
 
 ```bash
-docker compose -f development/docker-compose.dev.yml logs sync-worker
+docker compose -f development/docker-compose.yml logs sync-worker
 ```
 
 [Troubleshooting](#troubleshooting) lists the errors the public demo data produces and what

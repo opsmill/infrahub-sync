@@ -13,7 +13,7 @@ Run `docker compose ps` to see each container and the health of PostgreSQL, the 
 store, and Prefect. Then ask the Sync API whether a worker is live:
 
 ```sh
-curl -s http://127.0.0.1:8000/status
+curl -s http://127.0.0.1:8001/status
 ```
 
 The response's `worker.state` is one of three values:
