@@ -1,0 +1,234 @@
+dev/specs/015-run-discovery-api/quickstart.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1-189
+docs/docs/readme.mdx
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 57,135
+docs/docs/reference/schema-mapping.mdx
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 252,255
+infrahub_sync/client/__init__.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 23,25,27,38,44-45,67,69,71,82,89-90
+infrahub_sync/service/models.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 33,37,46-47,64,68,76,138,146,153-157,159-160,162-165,167,181,188-189,192,195-206
+  s_cbe6f0cb4dfc5f::t_54a5f7670875e0 207
+infrahub_sync/product_store/store.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 8,34,39,42-43,51-53,56-57,152,154-157,163-187,307-311,314-333,335-355,358,369-384,601-607,610-615,624-625,630-641,688-691,714-715,720-721,724,731,735-779,783,901,987-990,996,1412,1654,1724,1786,1911,2250-2256,2271-2277,2293-2307,2317-2318,2321-2324,2327-2332,2334-2338,2356-2362,2413,2430-2442,2455,2470-2591,2687,3235-3247,3249-3250,3253-3259,3261-3265,3270-3273,3283-3286,3295-3312,3543-3551,3595,3745-3795
+  s_cbe6f0cb4dfc5f::t_215246078322d2 3796-3797
+infrahub_sync/potenda/__init__.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 205,649
+changelog/+run-discovery.removed.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1
+dev/specs/015-run-discovery-api/data-model.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1-124
+tests/compose/test_documentation.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 54,59
+docs/docs/development/knowledge/repository-tour.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 39
+docs/docs/reference/cli.mdx
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 28,31-32,36,43,48,70,105-141,160,162,192,197,203,208,218-220,230,235,244,249,254,258-259,269,274,299-301,306-361
+  s_cbe6f0cb4dfc5f::t_1985f9fdcf409e 362
+tests/client/test_client.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 8,23-24,26,28,34-36,151,154-155,216,218,590-779
+tests/compose/lifecycle.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 502
+dev/specs/015-run-discovery-api/contracts/http-api.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1-97
+infrahub_sync/product_store/configs.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 56,67,69-74,657,670-671,744-746,754-755,759-761,779-781,787-788,793-795,806-820,822,844-847,849-850,852-854,858
+infrahub_sync/service/config_routes.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 15,17,19,33,37-47,50-52,82,86-91,97-101,135-142,144,147-154,156-163,166-171,173-183,191-196,198-211,220,308,311,358,407-412,424-428,437,446,450-452
+infrahub_sync/service/service.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 18,30,32,45,50,54,59-60,127-138,185-189,211,244,271,621-664
+  s_cbe6f0cb4dfc5f::t_7cd74f500f83ce 665
+tests/cli/test_parity_and_closure.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 8,13,22-30,32,34-41,54,56-58,62-64,92-94,98-100,104,112-116,127,154,190-191,214,219-237
+  s_cbe6f0cb4dfc5f::t_83b05d76a1c1b8 238-239
+infrahub_sync/plan/errors.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 88,94,101,118,132,163-165,188,190,232,347,370,384,497,508,518,549
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 108,345
+tests/compose/test_bootstrap_idempotence.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 88
+tests/preview/test_config_lifecycle.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 227,232-233,303,305-306
+dev/specs/015-run-discovery-api/research.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1-237
+infrahub_sync/service/orchestration.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 8,28-29,158-159,161-236,250-254,256,259,261-264,266-273
+tests/product_store/test_postgresql_isolation.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 168-252
+tests/service/test_run_titles.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 13,16-54,66,68-75,79-80,110,113,118-119,122,125-183,185-187,189-190
+infrahub_sync/product_store/models.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 15-19,179,193-195,371-376,387-453,474-491
+  s_cbe6f0cb4dfc5f::t_8d4c18888f1a40 492-493
+examples/netbox_to_infrahub/config.yml
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 15,23
+dev/specs/015-run-discovery-api/alignment-check.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1-52
+tests/service/test_registered_plan_apply.py
+  s_cbe6f0cb4dfc5f::t_53e45e0d26aadb 252
+docs/docs/development/knowledge/execution-surface.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 24
+tests/test_nightly_e2e.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 125,133-134,138,144,170
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 244,274,284,319,357,418,496
+docs/docs/reference/prefect-remote-run.mdx
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 103
+docs/docs/tutorials/netbox-to-existing-infrahub.mdx
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 302
+README.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 48,136
+docs/docs/development/guidelines/testing-tiers.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 312,382,387
+infrahub_sync/service/paging.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1-170
+tests/cli/test_client_commands.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 10,22-24,29,31,33,40,47-48,56,79-94,180-187,214-216,289-291,293,303,306-307,456,458,986,990,1208,1220,1234-1236,1269-1279,1399-1835
+  s_cbe6f0cb4dfc5f::t_eba4bfea1fd6ba 1836
+tests/plan/test_review.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 463,489,688
+infrahub_sync/adapters/infrahub.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 638
+docs/docs/using-netbox-or-nautobot-with-infrahub.mdx
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 78
+docs/docs/development/knowledge/schema-mapping.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 118
+infrahub_sync/client/models.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 7,30,32,37-55,234-236,352-358,366-377,499-503,513-571,573
+  s_cbe6f0cb4dfc5f::t_7101c75c6a454c 572
+infrahub_sync/plan/keying.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 52
+changelog/+run-discovery.added.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1
+tests/integration/test_service_prefect_idempotency.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 50-53,61-74
+docs/docs/running-a-sync.mdx
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 45-54,56-59,98,102-103,129-137,140,165-215,218-219,246-247,270,297,303,330-331,337-338
+examples/netbox_to_infrahub/package.yml
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 16,24
+tests/plan/test_checksum.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 523,545
+tests/compose/test_configuration_free_startup.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 64
+tests/integration/test_infrahub_lineage_integration.py
+  s_cbe6f0cb4dfc5f::t_53e45e0d26aadb 1266
+dev/specs/015-run-discovery-api/tasks.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1-169
+infrahub_sync/cli.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 3-5,11,15,18,28,45,49,52,57,60,63,66,68,71-72,84-88,312-389,394-418,420-423,497,503-506,515-527,532-538,540-547,553,558,560,562,566-572,574-582,588,595,826-849,854,863-875,877,879-880,891-892,895,909,922-933,938,952,981-995,997-998,1000-1001,1014-1129,1131,1135-1138,1140
+  s_cbe6f0cb4dfc5f::t_6118c752d47b09 1130
+  s_cbe6f0cb4dfc5f::t_7599efb8923448 1132-1134
+  s_cbe6f0cb4dfc5f::t_18097b80537011 1139
+tests/plan/test_reader.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 92,461,537
+tests/cache/test_apply_plan.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 165
+tests/service/test_flow_and_prefect.py
+  s_cbe6f0cb4dfc5f::t_53e45e0d26aadb 1605,1612,1620,1622
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 879,888,900-901,906-908,947-955
+docs/docs/compose-deployment.mdx
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 559,674,679,699,706,709
+docs/docs/migrating-from-netbox-or-nautobot.mdx
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 79,125,127,135,145,148,169,174,182,189,196,209
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 301
+dev/specs/015-run-discovery-api/spec.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1-341
+tests/client/test_public_surface.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 57-72
+tests/preview/test_run_review.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 92,197
+infrahub_sync/product_store/__init__.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 8,11-12,20-22,49,53-54,69,71-72
+dev/specs/015-run-discovery-api/plan.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1-135
+docs/docs/development-stack.mdx
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 387,408
+docs/docs/v2-to-v3.mdx
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 26
+tests/adapters/test_infrahub_planned_write.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1820,1845,1987
+tests/plan/test_destination_binding.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 185-186,188,200-210
+  s_cbe6f0cb4dfc5f::t_f5bcd76d48b984 298
+infrahub_sync/plan/verify.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 66,68,177,429,451-460,483-497
+  s_cbe6f0cb4dfc5f::t_f90cedfb495711 498-500
+  s_cbe6f0cb4dfc5f::t_31f961953a4cfe 506
+dev/specs/015-run-discovery-api/contracts/cli.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1-59
+infrahub_sync/plan/checksum.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 133
+tasks/docs.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 16-17,20-33,36-78
+tests/plan/test_verify.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 507,561
+dev/specs/015-run-discovery-api/critiques/critique-20261104.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1-126
+.github/scripts/nightly_e2e.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 173,189,192,197
+tests/service/test_config_routes.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 7,20,146,206,245,266,268,334,338,540-542,545,786-790,795-796,1034,1036,1237-1485
+docs/docs/development/guidelines/secret-redaction.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 23
+AGENTS.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 9,105-109,112,208
+infrahub_sync/service/app.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 10,19-27,39,41,47,96,143-148,188-192,202-218
+  s_cbe6f0cb4dfc5f::t_e1f02a94d733b5 219
+examples/netbox_to_infrahub/README.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 29
+tests/preview/test_cli_client.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 158
+tests/preview/test_schema_drift.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 97
+tests/service/test_paging.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1-182
+dev/specs/015-run-discovery-api/opsmill-implement-report.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1-215
+changelog/+run-discovery.changed.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1
+docs/docs/development/constitution.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 20,25,205
+tests/product_store/test_configs_service.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 273,282,284-285,287,293,318-324,1271,1704-1799
+tests/product_store/test_contract.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 7,47,71,75-76,91,93-94,326,341,343,353,355,716-719,726-737,740,746,3837,3840-3841,3851,3854-3855,3921,3976-3993,4325-4510,4597,4622-4624,4720-4722,4724-4726,4816-4819,4856,5578-5839
+tests/service/test_http_api.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 36,38,1807,2082-2444
+docs/docs/development/guides/adding-an-adapter.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 158,180,427,431,460,556,561
+dev/specs/015-run-discovery-api/checklists/requirements.md
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 1-43
+docs/docs/adapters/infrahub.mdx
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 115
+  s_cbe6f0cb4dfc5f::t_53e45e0d26aadb 314
+infrahub_sync/client/client.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 28-29,36,38,40,43,46-47,51,60,64-65,76-81,214-232,234-237,252-255,257-265,268-274,337-367,548-574,586,657
+docs/docs/contributing.mdx
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 349
+tests/plan/test_plan_format_3.py
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 93,247
+changelog/+import-lineage.changed.md
+  s_cbe6f0cb4dfc5f::t_53e45e0d26aadb 1
+docs/docs/configuration-package.mdx
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 152-155
+docs/docs/reference/sync-http-api.mdx
+  s_cbe6f0cb4dfc5f::t_0117d99ebb4ab6 16-29,288-292,294,305-402,548,572,575
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c255f558124aec1ebee4d60b92ee0a196ffe3ea5",
+  "prompts": {},
+  "sessions": {
+    "s_cbe6f0cb4dfc5f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d5e80e17-8181-4000-b060-139613942c05",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
