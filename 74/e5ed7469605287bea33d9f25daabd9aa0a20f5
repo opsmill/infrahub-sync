@@ -1,0 +1,24 @@
+tests/service/test_http_api.py
+  s_f718d35766c589::t_9acbba25463cbe 2199-2200
+  s_f718d35766c589::t_942ddae01ff6b1 2216-2217
+infrahub_sync/service/config_routes.py
+  s_f718d35766c589::t_a7b6d481b88e13 86-91
+tests/service/test_config_routes.py
+  s_f718d35766c589::t_21d3625be0d1e9 795-796
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "74e5ed7469605287bea33d9f25daabd9aa0a20f5",
+  "prompts": {},
+  "sessions": {
+    "s_f718d35766c589": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3abfa013-58d0-4a35-aa91-617e78043d5c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
