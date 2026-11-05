@@ -317,3 +317,131 @@ def test_the_line_is_redacted(monkeypatch: pytest.MonkeyPatch, flow_calls: list[
     service_sync_run.fn("run-secret", "plan", "config-001", 1, "a" * 64)
 
     assert "s3cr3t-token" not in _info_lines(flow_calls)[-1]
+
+
+# --- the run summary artifact at each exit of service_sync_run (T018) -------------------------
+
+_REDACTION_PROBE = "s3cr3t-token"
+
+
+class _StoredRun:
+    """A projection whose run record holds a secret value as a kind name."""
+
+    @staticmethod
+    def lookup_run(run_id: str) -> object:
+        run = ProductRun(
+            run_id=run_id,
+            operation="plan",
+            configuration_reference="config-001@1",
+            config_id="config-001",
+            registry_version=1,
+            package_checksum="a" * 64,
+            started_at=datetime.now(timezone.utc),
+            phase="accepted",
+            summary={"by_kind": {_REDACTION_PROBE: 1}},
+        )
+        return type("Lookup", (), {"value": run})()
+
+
+@pytest.fixture
+def published(
+    monkeypatch: pytest.MonkeyPatch, flow_calls: list[tuple[Any, ...]]
+) -> tuple[list[tuple[Any, ...]], list[dict[str, Any]]]:
+    """Run the flow inside a Prefect context, with a secret, and record every published artifact."""
+    created: list[dict[str, Any]] = []
+    logger = _RecordingLogger(flow_calls)
+    monkeypatch.setattr(service_flow, "_run_logger", lambda: (logger, True))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: (None, _StoredRun()))
+    monkeypatch.setattr(service_flow, "collect_secret_values", lambda: [_REDACTION_PROBE])
+
+    def create(**kwargs: object) -> None:
+        flow_calls.append(("artifact",))
+        created.append(kwargs)
+
+    monkeypatch.setattr(service_flow, "create_markdown_artifact", create)
+    return flow_calls, created
+
+
+def _assert_published_after_the_last_line(calls: list[tuple[Any, ...]], created: list[dict[str, Any]]) -> None:
+    assert len(created) == 1
+    assert _REDACTION_PROBE not in created[0]["markdown"]
+    last_line = max(index for index, call in enumerate(calls) if call[0] == "info")
+    assert calls.index(("artifact",)) == last_line + 1
+
+
+def test_success_publishes_the_artifact_after_the_last_line(
+    monkeypatch: pytest.MonkeyPatch, published: tuple[list[tuple[Any, ...]], list[dict[str, Any]]]
+) -> None:
+    calls, created = published
+    _stage_returns(monkeypatch, {"outcome": "planned"})
+
+    service_sync_run.fn("run-ok", "plan", "config-001", 1, "a" * 64)
+
+    _assert_published_after_the_last_line(calls, created)
+    assert "- Outcome: planned\n" in created[0]["markdown"]
+    assert created[0]["key"] == "sync-run-run-ok-plan"
+
+
+def test_recorded_failure_publishes_its_outcome_and_next_action(
+    monkeypatch: pytest.MonkeyPatch, published: tuple[list[tuple[Any, ...]], list[dict[str, Any]]]
+) -> None:
+    calls, created = published
+    _stage_raises(monkeypatch)
+    monkeypatch.setattr(
+        service_flow, "_record_failure", lambda *_args, **_kwargs: RecordedFailure("ambiguous", "Do X.")
+    )
+
+    with pytest.raises(RuntimeError, match="stage failed"):
+        service_sync_run.fn("run-bad", "apply", "config-001", 1, "a" * 64)
+
+    _assert_published_after_the_last_line(calls, created)
+    assert "- Outcome: ambiguous\n" in created[0]["markdown"]
+    assert created[0]["markdown"].endswith("- Do X.\n")
+
+
+def test_unrecorded_failure_publishes_outcome_failed(
+    monkeypatch: pytest.MonkeyPatch, published: tuple[list[tuple[Any, ...]], list[dict[str, Any]]]
+) -> None:
+    calls, created = published
+    _stage_raises(monkeypatch)
+    monkeypatch.setattr(service_flow, "_record_failure", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(RuntimeError, match="stage failed"):
+        service_sync_run.fn("run-lost", "apply", "config-001", 1, "a" * 64)
+
+    _assert_published_after_the_last_line(calls, created)
+    assert "- Outcome: failed\n" in created[0]["markdown"]
+
+
+def test_outside_a_prefect_run_nothing_is_published(
+    monkeypatch: pytest.MonkeyPatch, flow_calls: list[tuple[Any, ...]]
+) -> None:
+    _stage_returns(monkeypatch, {"outcome": "planned"})
+    monkeypatch.setattr(service_flow, "_runtime", lambda: (None, _StoredRun()))
+
+    def create_is_forbidden(**_kwargs: object) -> None:
+        msg = "nothing is published outside a Prefect flow run"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(service_flow, "create_markdown_artifact", create_is_forbidden)
+
+    service_sync_run.fn("run-local", "plan", "config-001", 1, "a" * 64)
+
+    assert all(call[0] != "log" for call in flow_calls)
+
+
+def test_a_refused_claim_publishes_nothing(
+    monkeypatch: pytest.MonkeyPatch, published: tuple[list[tuple[Any, ...]], list[dict[str, Any]]]
+) -> None:
+    calls, created = published
+
+    def refuse(_projection: object, run_id: str) -> tuple[str, str]:
+        raise service_flow.ExecutionClaimRefusedError(run_id)
+
+    monkeypatch.setattr(service_flow, "_claim_current_execution", refuse)
+
+    with pytest.raises(service_flow.ExecutionClaimRefusedError):
+        service_sync_run.fn("run-refused", "plan", "config-001", 1, "a" * 64)
+
+    assert created == []
+    assert ("artifact",) not in calls

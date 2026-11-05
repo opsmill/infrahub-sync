@@ -19,6 +19,7 @@ from uuid import UUID
 
 import httpx
 from prefect import flow, get_run_logger
+from prefect.artifacts import create_markdown_artifact
 from prefect.client.orchestration import get_client
 from prefect.client.schemas.objects import WorkerStatus
 from prefect.exceptions import MissingContextError, ObjectNotFound
@@ -75,6 +76,7 @@ from .failure_cause import operator_cause
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME, run_name
+from .run_artifact import publish_run_artifact
 from .scratch import StageScratch, stage_scratch
 from .service import PLAN_ARTIFACT_ID
 from .storage import service_guard_secrets, service_guard_session, service_product_projection
@@ -915,6 +917,35 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
     )
 
 
+def _publish_run_summary(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    projection: ProductProjection,
+    run_id: str,
+    stage: str,
+    outcome: str,
+    next_action: str | None,
+    secrets: Sequence[str],
+    run_logger: RunLogger,
+    *,
+    prefect_context: bool,
+) -> None:
+    """Publish the stage's run summary artifact, with the outcome and next action of its last line.
+
+    Only a real Prefect flow run has a place to publish it; elsewhere this does nothing.
+    """
+    if not prefect_context:
+        return
+    publish_run_artifact(
+        projection,
+        run_id,
+        stage,
+        outcome=outcome,
+        next_action=next_action,
+        secrets=secrets,
+        run_logger=run_logger,
+        create=create_markdown_artifact,
+    )
+
+
 def _service_run_name() -> str:
     """The run's title, set by Prefect when the run starts."""
     parameters = current_flow_run.parameters
@@ -1009,18 +1040,26 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 dispatch_started=tracker.dispatch_started,
                 record=tracker.applied_record,
             )
-        # After the record, before `secrets.clear()`: the line never announces an outcome
-        # the store does not hold, and it is redacted with this stage's secrets.
+        # After the record, before `secrets.clear()`: the line and the artifact never
+        # announce an outcome the store does not hold, and both are redacted with this
+        # stage's secrets.
         if recorded is None:
-            line = final_log_line(run_id, stage, "failed", None)
+            outcome, next_action = "failed", None
         else:
-            line = final_log_line(run_id, stage, recorded.outcome, recorded.next_action)
-        run_logger.info(redact(line, secrets))
+            outcome, next_action = recorded.outcome, recorded.next_action
+        run_logger.info(redact(final_log_line(run_id, stage, outcome, next_action), secrets))
+        _publish_run_summary(
+            projection, run_id, stage, outcome, next_action, secrets, run_logger, prefect_context=prefect_context
+        )
         # Rebuilt after the original exception context exits.
         sanitized = sanitize_exception_chain(failure, secrets)
         secrets.clear()
         raise sanitized
-    run_logger.info(redact(final_log_line(run_id, stage, str(result["outcome"]), result_next_action(result)), secrets))
+    outcome, next_action = str(result["outcome"]), result_next_action(result)
+    run_logger.info(redact(final_log_line(run_id, stage, outcome, next_action), secrets))
+    _publish_run_summary(
+        projection, run_id, stage, outcome, next_action, secrets, run_logger, prefect_context=prefect_context
+    )
     return result
 
 

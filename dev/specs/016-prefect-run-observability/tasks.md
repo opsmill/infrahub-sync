@@ -129,24 +129,24 @@ contract. A raising `create` leaves the outcome unchanged and logs one WARNING.
 
 ### Tests for User Story 1 (write first, must fail)
 
-- [ ] T015 [P] [US1] Create `tests/service/test_run_artifact.py` with tests for `artifact_key(run_id, stage)` in `infrahub_sync/service/run_artifact.py`. `artifact_key("20261105T1514-f62dfb83", "plan") == "sync-run-20261105t1514-f62dfb83-plan"`. Characters other than `a-z0-9-` become `-`, repeated dashes collapse, and leading or trailing dashes are stripped.
-- [ ] T016 [P] [US1] In `tests/service/test_run_artifact.py`, add tests for `run_markdown(run, stage, outcome, next_action)` with `ProductRun` objects built from `infrahub_sync.product_store.models`:
+- [X] T015 [P] [US1] Create `tests/service/test_run_artifact.py` with tests for `artifact_key(run_id, stage)` in `infrahub_sync/service/run_artifact.py`. `artifact_key("20261105T1514-f62dfb83", "plan") == "sync-run-20261105t1514-f62dfb83-plan"`. Characters other than `a-z0-9-` become `-`, repeated dashes collapse, and leading or trailing dashes are stripped.
+- [X] T016 [P] [US1] In `tests/service/test_run_artifact.py`, add tests for `run_markdown(run, stage, outcome, next_action)` with `ProductRun` objects built from `infrahub_sync.product_store.models`:
   - a plan run with `summary={"by_action": {"create": 2, "delete": 1}, "by_kind": {"B": 1, "A": 2}}`, `config_id`, `registry_version=1` and `destination_branch="b1"` shows `- Configuration: <config_id>@1`, `- Destination branch: b1`, `- Operations by action: create 2, delete 1` and `- Operations by kind: A 2, B 1` (sorted);
   - an apply run with per-action counts (`ACTION_KEYS`) shows them;
   - a run with no counts shows no counts line;
   - a run with a saved plan review artifact reference (`kind == "saved-plan-review"`) lists `` `infrahub-sync runs plan <id> --detail` `` after `` `infrahub-sync runs show <id>` ``;
   - a `next_action` is the last next step;
   - a failure `cause` in `run.results` never appears in the markdown.
-- [ ] T017 [P] [US1] In `tests/service/test_run_artifact.py`, add tests for `publish_run_artifact(projection, run_id, stage, *, outcome, next_action, secrets, run_logger, create)`. It calls `create(markdown=..., key=..., description=f"Sync run {run_id}, stage {stage}")` once. A secret value placed in `summary` (for example in `by_kind` as a kind name) is redacted in the markdown. When `create` raises `RuntimeError("boom")`, the function returns normally and logs exactly one WARNING, `run summary artifact could not be published (RuntimeError)`, without `boom`. When `lookup_run` returns `None`, it logs one WARNING and calls nothing.
-- [ ] T018 [P] [US1] In `tests/service/test_run_log_next_step.py` (the flow-level harness from T012), add tests:
+- [X] T017 [P] [US1] In `tests/service/test_run_artifact.py`, add tests for `publish_run_artifact(projection, run_id, stage, *, outcome, next_action, secrets, run_logger, create)`. It calls `create(markdown=..., key=..., description=f"Sync run {run_id}, stage {stage}")` once. A secret value placed in `summary` (for example in `by_kind` as a kind name) is redacted in the markdown. When `create` raises `RuntimeError("boom")`, the function returns normally and logs exactly one WARNING, `run summary artifact could not be published (RuntimeError)`, without `boom`. When `lookup_run` returns `None`, it logs one WARNING and calls nothing.
+- [X] T018 [P] [US1] In `tests/service/test_run_log_next_step.py` (the flow-level harness from T012), add tests:
   - With `_run_logger` returning `prefect_context=True` and `create_markdown_artifact` patched in `infrahub_sync.service.flow`, each of the three exits calls the publisher once, after the last log line and before `secrets.clear()`. Check this with a secret value that must be redacted.
   - With `prefect_context=False`, nothing is published.
   - A refused claim publishes nothing.
 
 ### Implementation for User Story 1
 
-- [ ] T019 [US1] Create `infrahub_sync/service/run_artifact.py`, using `git show 43986fa9:infrahub_sync/service/run_artifact.py` as reference only. The module provides `artifact_key`, `run_markdown` and `publish_run_artifact` per data-model.md and research R4. It lists only commands that exist on this branch (`runs show`, `runs plan --detail`), reads `config_id`, `registry_version` and `destination_branch` from `ProductRun`, sorts kinds, never reads `cause`, and passes the markdown through `infrahub_sync`'s `redact` with the given secrets. Write a module docstring that cites ADR 0021. Make T015–T017 pass.
-- [ ] T020 [US1] In `infrahub_sync/service/flow.py`, import `create_markdown_artifact` from `prefect.artifacts` and add `_publish_run_summary(projection, run_id, stage, outcome, next_action, secrets, run_logger, *, prefect_context)`. It returns at once when `prefect_context` is false. Call it at each of the three exits, right after the last log line (T014) and before `secrets.clear()`. Make T018 pass.
+- [X] T019 [US1] Create `infrahub_sync/service/run_artifact.py`, using `git show 43986fa9:infrahub_sync/service/run_artifact.py` as reference only. The module provides `artifact_key`, `run_markdown` and `publish_run_artifact` per data-model.md and research R4. It lists only commands that exist on this branch (`runs show`, `runs plan --detail`), reads `config_id`, `registry_version` and `destination_branch` from `ProductRun`, sorts kinds, never reads `cause`, and passes the markdown through `infrahub_sync`'s `redact` with the given secrets. Write a module docstring that cites ADR 0021. Make T015–T017 pass.
+- [X] T020 [US1] In `infrahub_sync/service/flow.py`, import `create_markdown_artifact` from `prefect.artifacts` and add `_publish_run_summary(projection, run_id, stage, outcome, next_action, secrets, run_logger, *, prefect_context)`. It returns at once when `prefect_context` is false. Call it at each of the three exits, right after the last log line (T014) and before `secrets.clear()`. Make T018 pass.
 
 **Checkpoint**: US1 and US2 are complete.
 
