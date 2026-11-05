@@ -3,3 +3,25 @@ allowBuilds:
   lightningcss: true
 packages:
   - .
+  # Infrahub design system, from the frontend/vendor/infrahub Git submodule.
+  - vendor/infrahub/frontend/packages/ui
+
+# @infrahub/ui declares its dependencies as `catalog:`. These entries mirror the catalog in
+# vendor/infrahub/frontend/pnpm-workspace.yaml; update them together when the submodule moves.
+# The app uses the same entries for react, react-dom and tailwindcss so that both packages
+# resolve a single copy of each.
+catalog:
+  "@tailwindcss/vite": ^4.3.3
+  "@types/node": ^26.6.5
+  "@types/react": ^19.3.0
+  "@types/react-dom": ^19.3.0
+  "@vitejs/plugin-react": ^6.1.2
+  babel-plugin-react-compiler: ^1.0.0
+  lucide-react: ^1.61.0
+  react: ^19.3.1
+  react-aria-components: ^1.22.1
+  react-dom: ^19.3.1
+  tailwind-merge: ^3.7.0
+  tailwindcss: ^4.3.3
+  typescript: ^6.0.3
+  vite: ^8.3.5

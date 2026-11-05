@@ -2,12 +2,31 @@ Welcome to your new TanStack Start app!
 
 # Getting Started
 
+The Infrahub design system, `@infrahub/ui`, comes from the `opsmill/infrahub` repository, which
+is checked out as a Git submodule at `vendor/infrahub` (branch `develop`). Fetch it before you
+install:
+
+```bash
+git submodule update --init frontend/vendor/infrahub   # from the repository root
+```
+
 To run this application:
 
 ```bash
 pnpm install
 pnpm dev
 ```
+
+Import components from the package name:
+
+```tsx
+import { Button } from "@infrahub/ui";
+```
+
+To move to a newer Infrahub `develop`, run `git submodule update --remote frontend/vendor/infrahub`
+from the repository root. Then compare the `catalog:` section of
+`vendor/infrahub/frontend/pnpm-workspace.yaml` with the one in `pnpm-workspace.yaml` and copy any
+version changes before you run `pnpm install`.
 
 # Building For Production
 

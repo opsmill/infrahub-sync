@@ -15,13 +15,14 @@
     "check": "biome check"
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.1.18",
+    "@infrahub/ui": "workspace:*",
+    "@tailwindcss/vite": "catalog:",
     "@tanstack/react-devtools": "0.10.14",
     "@tanstack/react-router": "1.170.46",
     "@tanstack/react-router-devtools": "1.167.2",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "tailwindcss": "^4.1.18"
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "tailwindcss": "catalog:"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.5",
@@ -29,11 +30,11 @@
     "@tanstack/router-cli": "^1.132.0",
     "@tanstack/router-plugin": "1.168.48",
     "@types/node": "^22.10.2",
-    "@types/react": "^19.2.0",
-    "@types/react-dom": "^19.2.0",
-    "@vitejs/plugin-react": "^6.0.1",
-    "typescript": "^6.0.2",
-    "vite": "^8.0.0"
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

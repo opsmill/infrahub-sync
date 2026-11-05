@@ -1,5 +1,11 @@
 
-@import "tailwindcss";
+/* Tailwind, the Infrahub theme tokens and the Inter font come from @infrahub/ui.
+   source(none) turns off automatic class detection, which would otherwise scan the whole
+   Infrahub repository under vendor/. The two @source lines list what to scan instead:
+   this app and the design-system components. */
+@import "@infrahub/ui/styles.css" source(none);
+@source "./";
+@source "../vendor/infrahub/frontend/packages/ui/src";
 
 * {
   box-sizing: border-box;
