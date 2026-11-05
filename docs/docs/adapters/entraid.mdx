@@ -51,6 +51,7 @@ The adapter reads the directory as an application, so the tenant needs an applic
 2. Under **API permissions**, add these Microsoft Graph permissions of type **Application** (not Delegated):
     - `User.Read.All`, to read users.
     - `Group.Read.All`, to read groups and their members. `GroupMember.Read.All` can replace `Group.Read.All`: it also allows the adapter to read groups and their members, with access to fewer group properties.
+    - `Member.Read.Hidden`, only when the configuration maps group members and the tenant has groups with hidden membership. Without it, Graph refuses the member read of such a group with HTTP 403 and the sync stops.
 3. Grant admin consent for the tenant. Application permissions have no effect until an administrator grants consent.
 4. For `auth: client_secret`, create a client secret under **Certificates & secrets**. Note the **Directory (tenant) ID** and the **Application (client) ID** shown on the overview page of the application.
 
@@ -83,7 +84,7 @@ source:
     graph_url: "https://graph.microsoft.com/v1.0"       # default
     page_size: 999                 # 1 to 999
     timeout: 60                    # seconds per request
-    max_retries: 5                 # 0 to 10, after HTTP 429 and 503
+    max_retries: 5                 # 0 to 10, after HTTP 429, 502, 503 and 504
     membership: direct             # direct (default) or transitive
     select:                        # extra Graph properties per resource
       users: [department]
@@ -131,7 +132,7 @@ auth 'client_secret' is missing values. Set the environment variable(s): ENTRAID
 | `graph_url` | string | `https://graph.microsoft.com/v1.0` | An `https://` URL | Microsoft Graph endpoint and version. The token scope is derived from its scheme and host (`https://<host>/.default`), and the token is sent to that host only. A `graph_url` of a Microsoft cloud other than the public one is not tested: the credential still signs in through the default (public cloud) authority. |
 | `page_size` | integer | `999` | 1 to 999 | Records per page, sent as `$top` on every request. |
 | `timeout` | number | `60` | Greater than 0 | Seconds to wait for each request. A request that times out is not retried. |
-| `max_retries` | integer | `5` | 0 to 10 | Retries of one request after HTTP 429 or 503. Each request has its own count. |
+| `max_retries` | integer | `5` | 0 to 10 | Retries of one request after HTTP 429, 502, 503 or 504. Each request has its own count. |
 | `membership` | string | `direct` | `direct`, `transitive` | Which group members the adapter reads. See [Group membership](#group-membership). |
 | `select` | mapping | none | Keys `users` and `groups`; each value a property name or a list of names | Extra Graph properties to request, for properties used only in transforms. |
 | `collections` | mapping | none | Collection names mapped to definitions | Named, optionally filtered reads of users or groups. See [Collections and advanced queries](#collections-and-advanced-queries). |
@@ -414,6 +415,8 @@ Microsoft Graph refused /v1.0/groups/.../members?$select=id&$top=999 with HTTP 4
 
 With `auth: default`, the last sentence says that the signed-in identity (user, managed identity or workload identity) needs read access to users and groups.
 
+When Graph refuses a member read, the message also says that reading the members of a group with hidden membership needs `Member.Read.Hidden`.
+
 Check that the permissions are of type Application, not Delegated, and that an administrator granted consent for the tenant. See [Application registration and Microsoft Graph permissions](#application-registration-and-microsoft-graph-permissions).
 
 <!-- vale off -->
@@ -437,10 +440,10 @@ schema_mapping 'IdentityServiceAccount', field 'owner': the Graph property 'owne
 ```
 
 <!-- vale off -->
-### Throttling: HTTP 429 or 503
+### Throttling and gateway errors: HTTP 429, 502, 503 or 504
 <!-- vale on -->
 
-Microsoft Graph limits the request rate of each application and tenant. On HTTP 429 or 503, the adapter waits for the number of seconds in the `Retry-After` header (5 seconds when the header is missing, 120 seconds at most), then sends the same request again. It logs one warning per wait:
+Microsoft Graph limits the request rate of each application and tenant. On HTTP 429, 502, 503 or 504, the adapter waits for the number of seconds in the `Retry-After` header, then sends the same request again. When the header is missing, the wait starts at 5 seconds and doubles at each retry, up to 60 seconds. It logs one warning per wait:
 
 ```text
 WARNING | infrahub_sync.adapters.entraid | event='graph request throttled, waiting before retry' status=429 path='/v1.0/groups/.../members?$select=id&$top=999' wait_seconds=2.0 retry=1 max_retries=5
@@ -450,6 +453,12 @@ WARNING | infrahub_sync.adapters.entraid | event='graph request throttled, waiti
 
 ```text
 Microsoft Graph returned HTTP 429 for /v1.0/groups/.../members?$select=id&$top=999 after 5 retries (<code>: <message>). Run the sync again later, or raise the setting 'max_retries'.
+```
+
+When `Retry-After` asks for more than 300 seconds, the adapter does not retry earlier than Graph allows. It stops instead:
+
+```text
+Microsoft Graph returned HTTP 429 for /v1.0/users?$select=id,...&$top=999 and asked to wait 900 seconds before the next request, more than the adapter waits (300 seconds). Run the sync again later.
 ```
 
 Member reads send the most requests. Run the sync again later, raise `max_retries`, or reduce the number of groups with a filter.

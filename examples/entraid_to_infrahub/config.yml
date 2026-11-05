@@ -15,7 +15,8 @@
 # managed or workload identity, or the Azure CLI login instead.
 # The application needs the Microsoft Graph application permissions
 # User.Read.All and Group.Read.All (or GroupMember.Read.All instead of
-# Group.Read.All), with admin consent. With `auth: default`, the signed-in
+# Group.Read.All), with admin consent. Groups with hidden membership also
+# need Member.Read.Hidden. With `auth: default`, the signed-in
 # identity needs read access to users and groups instead.
 # HTTP 401 from Graph means the token was rejected (check the tenant, the
 # credential and graph_url); HTTP 403 means a permission is missing.

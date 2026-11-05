@@ -146,6 +146,31 @@ def test_select_built_from_fields_filters_id_and_settings_without_transform_keys
     assert (user.name, user.email) == ("alice@example.com", "alice.mail@example.com")
 
 
+def test_filter_property_is_selected_when_a_transform_writes_the_same_key() -> None:
+    # Filters run before transforms: dropping the filtered property from $select would filter out every record.
+    entry = {
+        "name": "IdentityEmployee",
+        "mapping": "users",
+        "identifiers": ["entra_id"],
+        "fields": [
+            {"name": "entra_id", "mapping": "id"},
+            {"name": "name", "mapping": "userPrincipalName"},
+            {"name": "enabled", "mapping": "accountEnabled"},
+        ],
+        "filters": [{"field": "accountEnabled", "operation": "==", "value": True}],
+        "transforms": [{"field": "accountEnabled", "expression": "{{ accountEnabled }}"}],
+    }
+    router = GraphRouter(honor_select=True)
+    router.add_records("/users", [user_record(1, "alice@example.com", accountEnabled=True)])
+    adapter = make_adapter(make_config([entry]), router)
+
+    adapter.load()
+
+    select = router.requests_for("/users")[0].url.params["$select"].split(",")
+    assert "accountEnabled" in select
+    assert set(loaded(adapter, IdentityEmployee)) == {graph_id(1)}
+
+
 def test_empty_tenant_loads_zero_objects() -> None:
     router = GraphRouter()
     router.add_pages("/users", [[]])

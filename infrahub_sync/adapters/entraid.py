@@ -87,6 +87,8 @@ RESERVED_COLLECTION_NAMES = frozenset(RESOURCES)
 MEMBERS_KEY = "members"
 USER_ODATA_TYPE = "#microsoft.graph.user"
 REQUIRED_PERMISSIONS = ("User.Read.All", "Group.Read.All", "GroupMember.Read.All")
+# Graph also requires this permission to list the members of a group with hidden membership.
+HIDDEN_MEMBERSHIP_PERMISSION = "Member.Read.Hidden"
 
 DEFAULT_GRAPH_URL = "https://graph.microsoft.com/v1.0"
 DEFAULT_PAGE_SIZE = 999
@@ -94,10 +96,13 @@ MAX_PAGE_SIZE = 999
 DEFAULT_TIMEOUT_SECONDS = 60.0
 DEFAULT_MAX_RETRIES = 5
 MAX_RETRIES_LIMIT = 10
+# Without a `Retry-After` header, retry n waits FALLBACK_RETRY_SECONDS * 2**(n-1) seconds, at most MAX_BACKOFF_SECONDS.
 FALLBACK_RETRY_SECONDS = 5.0
-MAX_RETRY_WAIT_SECONDS = 120.0
+MAX_BACKOFF_SECONDS = 60.0
+# A `Retry-After` above this limit stops the read: retrying earlier than Graph allows only prolongs the throttling.
+MAX_RETRY_WAIT_SECONDS = 300.0
 MEMBER_CONCURRENCY = 4
-RETRY_STATUSES = frozenset({429, 503})
+RETRY_STATUSES = frozenset({429, 502, 503, 504})
 # 401: Graph rejected the access token. 403: the token is valid but lacks a Graph permission.
 PERMISSION_STATUSES = frozenset({401, 403})
 # A page read as zero records would make the diff plan to delete every synced node, so such reads stop.
@@ -405,8 +410,8 @@ class EntraidGraphClient:
     """Read-only access to the Microsoft Graph endpoints the adapter needs.
 
     Use it as an async context manager: leaving it closes the HTTP client and the credential.
-    `requests` counts every request sent (retries included), `retries` the waits after HTTP 429
-    or 503, and `member_requests` the requests sent to read group members.
+    `requests` counts every request sent (retries included), `retries` the waits after HTTP 429,
+    502, 503 or 504, and `member_requests` the requests sent to read group members.
     """
 
     def __init__(
@@ -503,7 +508,7 @@ class EntraidGraphClient:
             info = builder.with_url(next_link).to_get_request_information()
 
     async def _send(self, info: RequestInformation, *, member: bool = False) -> dict[str, Any]:
-        """Send one GET request and return the JSON body, retrying HTTP 429 and 503 up to `max_retries` times.
+        """Send one GET request and return the JSON body, retrying HTTP 429, 502, 503 and 504 up to `max_retries` times.
 
         `member` marks a request that reads group members: each attempt also counts in `member_requests`. The
         counters stay exact while member reads run concurrently because all reads run on one asyncio thread and
@@ -524,8 +529,15 @@ class EntraidGraphClient:
                 status = exc.response_status_code
                 if status in RETRY_STATUSES and attempt < self.settings.max_retries:
                     attempt += 1
+                    wait = _retry_wait(exc.response_headers, attempt)
+                    if wait > MAX_RETRY_WAIT_SECONDS:
+                        msg = (
+                            f"Microsoft Graph returned HTTP {status} for {path} and asked to wait {wait:g} seconds "
+                            f"before the next request, more than the adapter waits ({MAX_RETRY_WAIT_SECONDS:g} "
+                            "seconds). Run the sync again later."
+                        )
+                        raise EntraidGraphError(msg, status=status, path=path) from exc
                     self.retries += 1
-                    wait = _retry_wait(exc.response_headers)
                     log.warning(
                         "graph request throttled, waiting before retry",
                         status=status,
@@ -536,7 +548,7 @@ class EntraidGraphClient:
                     )
                     await _sleep(wait)
                     continue
-                raise self._api_error(exc, path, retried=attempt) from exc
+                raise self._api_error(exc, path, retried=attempt, member=member) from exc
             except httpx.TimeoutException as exc:
                 path = _request_path(info)
                 msg = (
@@ -553,7 +565,7 @@ class EntraidGraphClient:
                 raise self._authentication_error(exc, _request_path(info)) from exc
             return _parse_body(body, _request_path(info))
 
-    def _api_error(self, exc: APIError, path: str, *, retried: int) -> EntraidGraphError:
+    def _api_error(self, exc: APIError, path: str, *, retried: int, member: bool = False) -> EntraidGraphError:
         status = exc.response_status_code
         error = exc.error if isinstance(exc, ODataError) else None
         code = getattr(error, "code", None)
@@ -561,6 +573,10 @@ class EntraidGraphClient:
         graph_says = f" ({code}: {detail})" if code or detail else ""
         if status in PERMISSION_STATUSES:
             msg = f"Microsoft Graph refused {path} with HTTP {status}{graph_says}. {self._permission_guidance()}"
+            if member:
+                msg += (
+                    f" Reading the members of a group with hidden membership also needs {HIDDEN_MEMBERSHIP_PERMISSION}."
+                )
             return EntraidPermissionError(msg, status=status, code=code, path=path)
         if status in RETRY_STATUSES:
             msg = (
@@ -629,17 +645,19 @@ def _request_path(info: RequestInformation) -> str:
     return f"{path}?{unquote(parts.query)}" if parts.query else path
 
 
-def _retry_wait(headers: Mapping[str, str] | None) -> float:
-    """Seconds to wait before a retry: `Retry-After`, else the fallback, capped."""
-    wait = FALLBACK_RETRY_SECONDS
+def _retry_wait(headers: Mapping[str, str] | None, attempt: int) -> float:
+    """Seconds to wait before retry number `attempt` (from 1).
+
+    A valid `Retry-After` header is honored in full, as Microsoft Graph requires. Without one, the wait doubles at
+    each retry from `FALLBACK_RETRY_SECONDS`, up to `MAX_BACKOFF_SECONDS`.
+    """
     for key, value in (headers or {}).items():
         if key.lower() == "retry-after":
             try:
-                wait = max(0.0, float(value))
+                return max(0.0, float(value))
             except ValueError:
-                wait = FALLBACK_RETRY_SECONDS
-            break
-    return min(wait, MAX_RETRY_WAIT_SECONDS)
+                break
+    return min(FALLBACK_RETRY_SECONDS * 2 ** (attempt - 1), MAX_BACKOFF_SECONDS)
 
 
 def _parse_body(body: bytes | None, path: str) -> dict[str, Any]:
@@ -723,16 +741,17 @@ def _append_new(names: list[str], new: Sequence[str]) -> None:
 def _entry_properties(entry: SchemaMappingModel, collection: Collection) -> list[str]:
     """Top-level Graph properties that one entry reads through plain field mappings and filters.
 
-    Keys produced by the entry's transforms are not Graph properties, and neither is `members` on groups: the
-    adapter adds it to the group records.
+    `members` on groups is not a Graph property: the adapter adds it to the group records. Filters run before the
+    transforms, so every property a filter reads is selected. A field mapping that names a transform output reads
+    the transformed key, which is not a Graph property, so it is not selected.
     """
-    skip = {transform.field for transform in entry.transforms or []}
-    if collection.resource == GROUPS:
-        skip.add(MEMBERS_KEY)
-    paths = [field_map.mapping for field_map in entry.fields if field_map.mapping and not field_map.reference]
-    paths += [filter_map.field for filter_map in entry.filters or []]
-    tops = [path.split(".", 1)[0] for path in paths]
-    return [top for top in tops if top not in skip]
+    synthetic = {MEMBERS_KEY} if collection.resource == GROUPS else set()
+    transform_outputs = {transform.field for transform in entry.transforms or []}
+    field_paths = [field_map.mapping for field_map in entry.fields if field_map.mapping and not field_map.reference]
+    filter_paths = [filter_map.field for filter_map in entry.filters or []]
+    tops = [top for top in (path.split(".", 1)[0] for path in field_paths) if top not in transform_outputs]
+    tops += [path.split(".", 1)[0] for path in filter_paths]
+    return [top for top in tops if top not in synthetic]
 
 
 def _maps_members(entry: SchemaMappingModel, collection: Collection) -> bool:

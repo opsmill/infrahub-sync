@@ -17,6 +17,8 @@ from azure.core.exceptions import AzureError, ServiceRequestError, ServiceRespon
 from infrahub_sync.adapters import entraid
 from infrahub_sync.adapters.entraid import (
     FALLBACK_RETRY_SECONDS,
+    HIDDEN_MEMBERSHIP_PERMISSION,
+    MAX_BACKOFF_SECONDS,
     MAX_RETRY_WAIT_SECONDS,
     Collection,
     EntraidAuthenticationError,
@@ -188,13 +190,50 @@ def test_retry_after_503_without_header_waits_the_fallback(sleeps: SleepRecorder
     assert len(router.requests_for("/users")) == 2
 
 
-def test_retry_after_above_the_cap_waits_the_cap(sleeps: SleepRecorder) -> None:
+def test_retry_after_is_honored_in_full_up_to_the_limit(sleeps: SleepRecorder) -> None:
     router = GraphRouter()
-    router.add_error("/users", 429, headers={"Retry-After": str(int(MAX_RETRY_WAIT_SECONDS) * 10)})
+    router.add_error("/users", 429, headers={"Retry-After": str(int(MAX_RETRY_WAIT_SECONDS))})
 
     list_collection(router, USERS)
 
     assert sleeps.waits == [MAX_RETRY_WAIT_SECONDS]
+
+
+def test_retry_after_above_the_limit_stops_without_retrying_early(sleeps: SleepRecorder) -> None:
+    wait = int(MAX_RETRY_WAIT_SECONDS) * 3
+    router = GraphRouter()
+    router.add_error("/users", 429, headers={"Retry-After": str(wait)})
+
+    with pytest.raises(EntraidGraphError) as excinfo:
+        list_collection(router, USERS)
+
+    assert excinfo.value.status == 429
+    assert str(wait) in str(excinfo.value)
+    assert "/users" in str(excinfo.value)
+    assert sleeps.waits == []
+    assert len(router.requests_for("/users")) == 1
+
+
+def test_retry_without_header_backs_off_exponentially(sleeps: SleepRecorder) -> None:
+    router = GraphRouter()
+    for _ in range(5):
+        router.add_error("/users", 503)
+
+    list_collection(router, USERS)
+
+    assert sleeps.waits == [5.0, 10.0, 20.0, 40.0, MAX_BACKOFF_SECONDS]
+    assert len(router.requests_for("/users")) == 6
+
+
+@pytest.mark.parametrize("status", [502, 504])
+def test_retry_on_gateway_errors(sleeps: SleepRecorder, status: int) -> None:
+    router = GraphRouter()
+    router.add_error("/users", status)
+
+    list_collection(router, USERS)
+
+    assert sleeps.waits == [FALLBACK_RETRY_SECONDS]
+    assert len(router.requests_for("/users")) == 2
 
 
 @pytest.mark.parametrize("max_retries", [0, 2])
@@ -229,6 +268,19 @@ def test_permission_status_raises_permission_error_naming_the_permissions(sleeps
     assert excinfo.value.status == status
     assert excinfo.value.code == "Authorization_RequestDenied"
     assert len(router.requests_for("/users")) == 1
+    assert sleeps.waits == []
+    assert HIDDEN_MEMBERSHIP_PERMISSION not in message
+
+
+def test_member_read_refused_names_the_hidden_membership_permission(sleeps: SleepRecorder) -> None:
+    group_path = GraphRouter.members_path(graph_id(11))
+    router = GraphRouter()
+    router.add_error(group_path, 403, code="Authorization_RequestDenied")
+
+    with pytest.raises(EntraidPermissionError) as excinfo:
+        read_members(router, graph_id(11))
+
+    assert HIDDEN_MEMBERSHIP_PERMISSION in str(excinfo.value)
     assert sleeps.waits == []
 
 

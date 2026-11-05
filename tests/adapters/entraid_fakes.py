@@ -126,10 +126,12 @@ class GraphRouter:
     `@odata.nextLink` that keeps the query string of the request and adds `$skiptoken=<page>`.
     Queued errors and timeouts of a path are answered first, in order. A path without
     registered pages answers one empty page. Every `httpx.Request` is kept in `requests`.
+    With `honor_select`, each record keeps only the `$select` properties, as Graph does.
     """
 
-    def __init__(self, base_url: str = GRAPH_URL) -> None:
+    def __init__(self, base_url: str = GRAPH_URL, *, honor_select: bool = False) -> None:
         self.base_url = base_url.rstrip("/")
+        self.honor_select = honor_select
         self.base_path = httpx.URL(self.base_url).path.rstrip("/")
         self.requests: list[httpx.Request] = []
         self._pages: dict[str, list[list[dict[str, Any]]]] = {}
@@ -221,10 +223,23 @@ class GraphRouter:
         index = int(token) if token else 0
         if index >= len(pages):
             return httpx.Response(400, json={"error": {"code": "BadSkipToken", "message": f"No page {index}."}})
-        body: dict[str, Any] = {"value": pages[index]}
+        records = pages[index]
+        if self.honor_select:
+            records = _project(records, request.url.params.get("$select"))
+        body: dict[str, Any] = {"value": records}
         if index + 1 < len(pages):
             body["@odata.nextLink"] = str(request.url.copy_set_param("$skiptoken", str(index + 1)))
         return httpx.Response(200, json=body)
+
+
+def _project(records: Sequence[dict[str, Any]], select: str | None) -> list[dict[str, Any]]:
+    """Keep only the `$select` properties and the `@odata` annotations, as Microsoft Graph does."""
+    if not select:
+        return list(records)
+    names = set(select.split(","))
+    return [
+        {key: value for key, value in record.items() if key in names or key.startswith("@odata")} for record in records
+    ]
 
 
 class IdentityEmployee(EntraidModel):
