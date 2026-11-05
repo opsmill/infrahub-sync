@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Any, Union
 
 import yaml
 from diffsync.store.local import LocalStore
@@ -281,17 +282,48 @@ def get_potenda_from_instance(
     )
 
 
-def get_infrahub_config(settings: dict[str, str | None], branch: str | None) -> Config:
-    """Creates and returns a Config object for infrahub if settings are valid.
+def resolve_infrahub_connection(settings: dict[str, str | None]) -> tuple[str | None, str | None]:
+    """Resolve the Infrahub address and token for `settings`, preferring the environment.
+
+    The address comes from `INFRAHUB_ADDRESS`, then `INFRAHUB_URL`, then `settings["url"]`.
+    The token comes from `INFRAHUB_API_TOKEN`, then `settings["token"]`. This is the same
+    precedence the runtime Infrahub adapter applies.
 
     Args:
-        settings (Dict[str, Optional[str]]): The settings dictionary containing `url`, `token`, and `branch`.
-        branch (Optional[str]): The default branch to use if none is provided in settings.
+        settings (Dict[str, Optional[str]]): The settings dictionary containing `url` and `token`.
 
     Returns:
-        Optional[Config]: A Config instance if `token` is available, otherwise None.
+        Tuple[Optional[str], Optional[str]]: The resolved address and token, each None when unset.
     """
-    infrahub_token = settings.get("token") or None
-    infrahub_branch = settings.get("branch") or branch or "main"
+    address = os.environ.get("INFRAHUB_ADDRESS") or os.environ.get("INFRAHUB_URL") or settings.get("url")
+    token = os.environ.get("INFRAHUB_API_TOKEN") or settings.get("token")
 
-    return Config(default_branch=infrahub_branch, api_token=infrahub_token)
+    return address, token
+
+
+def build_infrahub_config(*, token: str | None, branch: str | None, verify_ssl: bool | None) -> Config:
+    """Build the SDK configuration shared by generation and the runtime adapter."""
+    sdk_config: dict[str, Any] = {"timeout": 60}
+    if token:
+        sdk_config["api_token"] = token
+    if branch:
+        sdk_config["default_branch"] = branch
+    if verify_ssl is not None:
+        sdk_config["tls_insecure"] = not verify_ssl
+    return Config(**sdk_config)
+
+
+def get_infrahub_config(settings: dict[str, Any], branch: str | None) -> Config:
+    """Create the SDK configuration for generation with runtime TLS and timeout settings.
+
+    Args:
+        settings: Infrahub connection settings, including token, branch, and verify_ssl.
+        branch: The CLI branch used when no configured branch is provided.
+
+    Returns:
+        Config: A Config instance. `api_token` is omitted when neither the environment nor the
+            settings supply one, so the SDK falls back to its own settings sources.
+    """
+    _, infrahub_token = resolve_infrahub_connection(settings=settings)
+    infrahub_branch = settings.get("branch") or branch or os.environ.get("INFRAHUB_DEFAULT_BRANCH") or "main"
+    return build_infrahub_config(token=infrahub_token, branch=infrahub_branch, verify_ssl=settings.get("verify_ssl"))
