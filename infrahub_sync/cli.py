@@ -199,10 +199,19 @@ def _echo_fields(fields: tuple[tuple[str, object], ...], *, err: bool = False) -
         typer.echo(f"{name}: {_display(rendered)}", err=err)
 
 
+_CLIENT_INPUT_HINTS = {
+    "service_url": "set INFRAHUB_SYNC_API_URL or pass --api-url to an absolute http or https URL of the Sync API",
+    "token": "set INFRAHUB_SYNC_API_TOKEN to a Sync API bearer token",
+}
+
+
 def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object], ...]]:
-    """Render bounded error fields and the fixed store-refusal guidance."""
+    """Render bounded error fields and the fixed store-refusal and address guidance."""
     if isinstance(error, ClientInputError):
-        result = "client-input", (("argument", error.argument),)
+        fields: tuple[tuple[str, object], ...] = (("argument", error.argument),)
+        if error.argument in _CLIENT_INPUT_HINTS:
+            fields = (*fields, ("hint", _CLIENT_INPUT_HINTS[error.argument]))
+        result = "client-input", fields
     elif isinstance(error, CompatibilityError):
         result = (
             "compatibility",

@@ -1834,3 +1834,51 @@ def test_configuration_lookup_errors_other_than_not_found_are_reported(client: M
     assert result.exit_code == 1
     assert "status: 403" in result.output
     client.iter_configs.assert_not_called()
+
+
+# `_client_errors` in `infrahub_sync/cli.py` exits with 2 for every `client-input` error.
+CLIENT_INPUT_EXIT = 2
+SERVICE_URL_HINT = "hint: set INFRAHUB_SYNC_API_URL or pass --api-url to an absolute http or https URL of the Sync API"
+BEARER_HINT = "hint: set INFRAHUB_SYNC_API_TOKEN to a Sync API bearer token"
+
+
+@pytest.mark.parametrize(
+    ("api_url", "token", "argument", "hint"),
+    [
+        (None, "token-1", "service_url", SERVICE_URL_HINT),
+        ("ftp://x", "token-1", "service_url", SERVICE_URL_HINT),
+        ("http://user:pw@h", "token-1", "service_url", SERVICE_URL_HINT),
+        ("http://sync.example", None, "token", BEARER_HINT),
+    ],
+    ids=["url-unset", "url-not-http", "url-with-credentials", "token-unset"],
+)
+def test_a_missing_or_invalid_address_prints_how_to_set_it(
+    api_url: str | None, token: str | None, argument: str, hint: str
+) -> None:
+    result = RUNNER.invoke(
+        app,
+        ["configs", "list"],
+        env={"INFRAHUB_SYNC_API_URL": api_url, "INFRAHUB_SYNC_API_TOKEN": token},
+    )
+
+    assert result.exit_code == CLIENT_INPUT_EXIT
+    assert result.output.splitlines()[:3] == ["error: client-input", f"argument: {argument}", hint]
+
+
+def test_a_client_input_error_for_another_argument_prints_no_hint(client: MagicMock) -> None:
+    result = _invoke(
+        client,
+        "sync",
+        "--config-id",
+        "edge-sync",
+        "--version",
+        "1",
+        "--reason",
+        "wait for sync",
+        "--wait-timeout",
+        "0",
+    )
+
+    assert result.exit_code == CLIENT_INPUT_EXIT
+    assert "argument: wait_timeout" in result.output
+    assert "hint:" not in result.output

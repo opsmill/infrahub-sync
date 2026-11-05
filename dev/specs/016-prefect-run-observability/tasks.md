@@ -38,12 +38,12 @@ No shared foundation. Each story touches its own functions. US1 depends on US2 (
 
 ### Tests for User Story 6 (write first, must fail)
 
-- [ ] T002 [P] [US6] In `tests/cli/test_client_commands.py`, add parametrized tests that run the Typer app through `CliRunner` with `INFRAHUB_SYNC_API_URL` unset, then set to `ftp://x`, then set to `http://user:pw@h` (each case expects `argument: service_url` followed by `hint: set INFRAHUB_SYNC_API_URL or pass --api-url to an absolute http or https URL of the Sync API`), and with the URL set and `INFRAHUB_SYNC_API_TOKEN` unset (expects `argument: token` followed by `hint: set INFRAHUB_SYNC_API_TOKEN to a Sync API bearer token`). Assert that the `error` and `argument` lines come first, in that order, and that the exit code equals the one the command returns today for `client-input`. Read that exit code from the existing code, do not hard-code a new one.
-- [ ] T003 [P] [US6] In `tests/cli/test_client_commands.py`, add a test that a `client-input` error for another argument, such as `limit` from `runs list --limit 0` or the closest existing path that raises `ClientInputError` for a non-address argument, prints no `hint:` line.
+- [X] T002 [P] [US6] In `tests/cli/test_client_commands.py`, add parametrized tests that run the Typer app through `CliRunner` with `INFRAHUB_SYNC_API_URL` unset, then set to `ftp://x`, then set to `http://user:pw@h` (each case expects `argument: service_url` followed by `hint: set INFRAHUB_SYNC_API_URL or pass --api-url to an absolute http or https URL of the Sync API`), and with the URL set and `INFRAHUB_SYNC_API_TOKEN` unset (expects `argument: token` followed by `hint: set INFRAHUB_SYNC_API_TOKEN to a Sync API bearer token`). Assert that the `error` and `argument` lines come first, in that order, and that the exit code equals the one the command returns today for `client-input`. Read that exit code from the existing code, do not hard-code a new one.
+- [X] T003 [P] [US6] In `tests/cli/test_client_commands.py`, add a test that a `client-input` error for another argument, such as `limit` from `runs list --limit 0` or the closest existing path that raises `ClientInputError` for a non-address argument, prints no `hint:` line.
 
 ### Implementation for User Story 6
 
-- [ ] T004 [US6] In `infrahub_sync/cli.py` `_error_fields` (around line 202), add a module-level fixed mapping `_CLIENT_INPUT_HINTS = {"service_url": ..., "token": ...}` with the texts from the contract, and append `("hint", text)` after `("argument", ...)` only when `error.argument` is a key. Do not change the exit code or other fields. Make T002 and T003 pass.
+- [X] T004 [US6] In `infrahub_sync/cli.py` `_error_fields` (around line 202), add a module-level fixed mapping `_CLIENT_INPUT_HINTS = {"service_url": ..., "token": ...}` with the texts from the contract, and append `("hint", text)` after `("argument", ...)` only when `error.argument` is a key. Do not change the exit code or other fields. Make T002 and T003 pass.
 
 **Checkpoint**: US6 is complete and testable on its own.
 
