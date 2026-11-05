@@ -1,7 +1,7 @@
 """The dev stack's worker joins the local NetBox's network, so it can read NetBox.
 
 NetBox publishes its port on the host's loopback address only, which a container cannot
-reach. The tasks connect the worker (`development/docker-compose.dev.yml`, service
+reach. The tasks connect the worker (`development/docker-compose.yml`, service
 `sync-worker`) to NetBox's Compose network instead, where NetBox answers at
 `http://netbox:8080`. These cases check the Docker commands the tasks run, with a fake
 runner and no daemon.

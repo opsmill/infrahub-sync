@@ -1,0 +1,8 @@
+---
+# The extra Compose file `tests/compose/test_testcontainers_fixture.py` passes through the
+# `infrahub_sync_compose_files` hook. It sets one variable on `sync-worker`, so the test can
+# read it back from the running container.
+services:
+  sync-worker:
+    environment:
+      INFRAHUB_SYNC_TESTCONTAINERS_OVERRIDE: "set-by-the-override-file"

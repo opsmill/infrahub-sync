@@ -1,0 +1,13 @@
+---
+# Save as docker-compose.override.yml beside docker-compose.yml, then run
+# `docker compose up -d`. Remove it and run `docker compose up -d` again to
+# turn the Prefect UI off and close the port.
+services:
+  prefect-server:
+    environment:
+      PREFECT_UI_ENABLED: "true"
+      # The container's root filesystem is read-only, so Prefect writes the UI
+      # files it serves to the Sync scratch directory, which is a tmpfs.
+      PREFECT_UI_STATIC_DIRECTORY: "/tmp/infrahub-sync/prefect-ui"
+    ports:
+      - "127.0.0.1:${INFRAHUB_SYNC_PREFECT_PORT:-4200}:4200"

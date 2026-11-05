@@ -16,20 +16,28 @@ PYLINT_BASELINE_MAX_COUNTS: dict[str, int] = {}
 
 
 def _ty_check_command(python_major: int, python_minor: int) -> str:
-    """Return the type-check command for the active supported runtime profile."""
+    """Return the type-check command for the active supported runtime profile.
+
+    The service and testcontainers trees import dependencies that only install on
+    Python 3.11+, so the 3.10 profile excludes them and their tests.
+    """
     if (python_major, python_minor) == (3, 10):
-        return "uv run ty check --exclude infrahub_sync/service --exclude tests/service ."
+        return (
+            "uv run ty check --exclude infrahub_sync/service --exclude tests/service "
+            "--exclude infrahub_sync/testcontainers --exclude tests/testcontainers ."
+        )
     return "uv run ty check ."
 
 
 def _pylint_command(python_major: int, python_minor: int) -> str:
     """Return the Pylint command for the active supported runtime profile.
 
-    The service tree imports optional dependencies that only install on Python
-    3.11+, so the documented 3.10 profile excludes it, mirroring the ty exclusion.
+    The service and testcontainers trees import optional dependencies that only
+    install on Python 3.11+, so the documented 3.10 profile excludes them,
+    mirroring the ty exclusion.
     """
     if (python_major, python_minor) == (3, 10):
-        return "pylint --output-format=json2 --ignore-paths='^infrahub_sync/service/' infrahub_sync/"
+        return "pylint --output-format=json2 --ignore-paths='^infrahub_sync/(service|testcontainers)/' infrahub_sync/"
     return "pylint --output-format=json2 infrahub_sync/"
 
 
@@ -148,8 +156,10 @@ def lint_ruff(context: Context) -> None:
     """Run Ruff checks."""
 
     print(f" - [{NAMESPACE}] Check code with ruff")
-    exec_cmd = f"ruff format --check --diff {MAIN_DIRECTORY} &&"
-    exec_cmd += f"ruff check --diff {MAIN_DIRECTORY}"
+    exec_cmd = f"ruff format --check --diff {MAIN_DIRECTORY} && "
+    # `ruff check --diff` implies `--fix-only`, which ignores every violation Ruff cannot
+    # fix; the plain check reports them all, as CI's `ruff check .` does.
+    exec_cmd += f"ruff check {MAIN_DIRECTORY}"
     with context.cd(ESCAPED_REPO_PATH):
         context.run(exec_cmd)
 
