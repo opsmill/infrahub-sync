@@ -1,0 +1,19 @@
+changelog/+run-discovery.changed.md
+  s_f718d35766c589::t_6003fa345e2e70 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "697c5c3bbc98b677c1bd4e542cbfda50a342e81a",
+  "prompts": {},
+  "sessions": {
+    "s_f718d35766c589": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3abfa013-58d0-4a35-aa91-617e78043d5c",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
