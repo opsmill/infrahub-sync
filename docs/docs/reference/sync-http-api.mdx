@@ -265,11 +265,20 @@ terminally cancelled first.
 
 A terminal execution is immutable, so its summary is served from the retained record
 and carries no live provider detail: `detail_available` is `false` and
-`unavailable_reason` is `live-detail-not-requested`. Its `state` is the last state
-observed before the verdict, so a completed execution can report `running` there;
+`unavailable_reason` is `live-detail-not-requested`. Once an execution has a recorded
+`terminal_state`, its `state` is that terminal state, in every response, even when a live
+or retained Prefect observation reports an earlier state such as `running`.
 `terminal_state` and `terminal_outcome` are the authoritative fields for how an
 execution ended. Only the response that records an execution's terminal
 verdict still carries that execution's live detail.
+
+Each orchestration entry also carries `prefect_flow_run_url`: the address of the flow
+run's page in the Prefect UI, `<INFRAHUB_SYNC_PREFECT_UI_URL>/runs/flow-run/<flow_run_id>`.
+It is `null` when `INFRAHUB_SYNC_PREFECT_UI_URL` is unset or empty. The Sync API reads that
+setting at start-up and refuses to start when it is not an absolute `http` or `https` URL
+with a host, or when it holds credentials, a query or a fragment. The refusal message names
+the setting and does not repeat its value. A client from an earlier release accepts a
+response that holds the field.
 
 ## Routes
 

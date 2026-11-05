@@ -187,18 +187,18 @@ contract. A raising `create` leaves the outcome unchanged and logs one WARNING.
 
 ## Phase 9: Polish & cross-cutting
 
-- [ ] T030 [P] Update `docs/docs/orchestration.mdx`: the run summary artifact (key, content, the case where publishing fails), the last log line, and the refused claim with its message. Update `docs/docs/running-a-sync.mdx` only where it describes what the Prefect UI shows.
-- [ ] T031 [P] Update `docs/docs/compose-deployment.mdx` with `INFRAHUB_SYNC_PREFECT_UI_URL`: what it does, valid values, and the refusal at start-up. Add the start-up refusal to `docs/docs/operations/compose-troubleshooting.mdx`.
-- [ ] T032 [P] Update `docs/docs/reference/sync-http-api.mdx`: `prefect_flow_run_url` on orchestration entries, and the rule that a recorded terminal state is the entry's state. Update `docs/docs/reference/cli.mdx`: the `hint` field on `client-input` errors, and `prefect_flow_run_url` in `runs show`. Regenerate generated CLI docs with `uv run invoke docs.generate` if the help text changed.
-- [ ] T033 [P] Add news fragments with `uv run --extra dev towncrier create -c "<text>" +<slug>.<type>.md`:
+- [X] T030 [P] Update `docs/docs/orchestration.mdx`: the run summary artifact (key, content, the case where publishing fails), the last log line, and the refused claim with its message. Update `docs/docs/running-a-sync.mdx` only where it describes what the Prefect UI shows.
+- [X] T031 [P] Update `docs/docs/compose-deployment.mdx` with `INFRAHUB_SYNC_PREFECT_UI_URL`: what it does, valid values, and the refusal at start-up. Add the start-up refusal to `docs/docs/operations/compose-troubleshooting.mdx`.
+- [X] T032 [P] Update `docs/docs/reference/sync-http-api.mdx`: `prefect_flow_run_url` on orchestration entries, and the rule that a recorded terminal state is the entry's state. Update `docs/docs/reference/cli.mdx`: the `hint` field on `client-input` errors, and `prefect_flow_run_url` in `runs show`. Regenerate generated CLI docs with `uv run invoke docs.generate` if the help text changed.
+- [X] T033 [P] Add news fragments with `uv run --extra dev towncrier create -c "<text>" +<slug>.<type>.md`:
   - `+prefect-run-summary-artifact.added.md`;
   - `+worker-log-next-step.added.md`;
   - `+prefect-flow-run-url.added.md`;
   - `+refused-claim-guidance.changed.md`;
   - `+terminal-state-as-state.fixed.md`;
   - `+cli-api-address-hint.changed.md`.
-- [ ] T034 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .` and `uv run invoke tests.tests-unit`. Fix every finding, then record the results in `opsmill-implement-report.md`.
-- [ ] T035 Validate on the running development stack per [quickstart.md](./quickstart.md), steps 1–4. Record these in `opsmill-implement-report.md`:
+- [X] T034 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .` and `uv run invoke tests.tests-unit`. Fix every finding, then record the results in `opsmill-implement-report.md`.
+- [X] T035 Validate on the running development stack per [quickstart.md](./quickstart.md), steps 1–4. Record these in `opsmill-implement-report.md`:
   - the plan's run ID;
   - the `prefect_flow_run_url` printed by `runs show`, and whether the Prefect UI opens it;
   - the artifact key and its markdown, from `POST /api/artifacts/filter`;

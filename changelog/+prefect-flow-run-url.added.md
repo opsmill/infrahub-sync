@@ -1,0 +1,1 @@
+Add `prefect_flow_run_url` to each orchestration entry of a run response and to `infrahub-sync runs show`, when `INFRAHUB_SYNC_PREFECT_UI_URL` is set. The Sync API refuses to start when that setting is not an absolute http or https URL without credentials, query or fragment.

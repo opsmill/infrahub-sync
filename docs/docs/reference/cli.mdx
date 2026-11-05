@@ -7,6 +7,11 @@ command; the CLI reads it from the environment and never accepts it as a flag. S
 [Sync HTTP API — Configure principals](./sync-http-api.mdx#configure-principals) for how
 tokens are issued.
 
+When the Sync API address or the token is missing, a command prints `error: client-input`
+and `argument: service_url` or `argument: token` on standard error, then a `hint:` line:
+set `INFRAHUB_SYNC_API_URL` or pass `--api-url` for the address, and set
+`INFRAHUB_SYNC_API_TOKEN` for the token. Other `client-input` errors print no `hint:` line.
+
 **Usage**:
 
 ```console
@@ -363,6 +368,8 @@ $ infrahub-sync runs cancel [OPTIONS] {run_id}
 ### `infrahub-sync runs show`
 
 Show one run&#x27;s service record and its selected execution.
+
+`prefect_flow_run_url` links the flow run in the Prefect UI; it reads &lt;none&gt; when the Sync API has no UI address.
 
 **Usage**:
 

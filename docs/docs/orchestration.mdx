@@ -67,6 +67,52 @@ Use the Sync API for the supported worker-backed run lifecycle. For schedules, r
 policies, triggers, or composing several syncs into a larger workflow, configure Prefect
 around either packaged surface or wrap the CLI in a flow you own.
 
+#### What a service flow run shows in Prefect
+
+Each stage of a Sync run (`plan`, `verify`, `apply` or `sync`) runs as one Prefect flow run.
+When the stage ends, the worker writes its last INFO line to the flow run's log. Prefect then
+adds its own line with the flow run's final state, such as `Finished in state Completed()`.
+
+```text
+service run <run_id> stage=<stage> outcome=<outcome>; next step: <action>
+```
+
+The next step is the next action that the run recorded for its failure, when there is one.
+Otherwise it is `` `infrahub-sync runs show <run_id>` ``. A stage that fails without a recorded
+outcome reports `outcome=failed`.
+
+After that line, the worker publishes a markdown artifact on the flow run, in the flow run's
+Artifacts tab. Its key is `sync-run-<run_id>-<stage>`, in lowercase, for example
+`sync-run-20261105t1514-f62dfb83-plan`. A later flow run of the same stage adds a version to the
+same key. The artifact holds:
+
+- the Sync run ID, the stage and the outcome;
+- the configuration and its version, and the destination branch, when the run has them;
+- the operation counts by action and by kind, when the run has them;
+- the next steps: `infrahub-sync runs show <run_id>`, then `infrahub-sync runs plan <run_id> --detail`
+  when the run saved a plan review, then the run's recorded next action, when there is one.
+
+The artifact is built from the run record's named fields and fixed text only, and the stage's
+secrets are removed from it. It never holds an error message. If the artifact cannot be
+published, the worker logs one WARNING line, `run summary artifact could not be published
+(<ErrorType>)`, and the run's outcome does not change.
+
+A Sync run is not replayed from Prefect. The worker refuses a flow run that the Sync API did not
+submit and is not waiting for: a Prefect Retry, a run started by hand from the deployment, or an
+execution whose admission expired. The refused flow run reads and writes nothing, logs one ERROR
+line, then fails. The line reads, on one line in the log:
+
+```text
+service worker execution claim was refused: this Prefect flow run is not an execution the Sync API submitted
+for run <run_id> and is waiting for. A Prefect Retry, a run started by hand from the deployment, and an
+execution whose admission expired are refused. Nothing was read or written. A Sync run is not replayed from
+Prefect: check it with `infrahub-sync runs show <run_id>`, then start a new run with `infrahub-sync plan` or
+`infrahub-sync sync`, or apply a reviewed plan with
+`infrahub-sync apply <run_id> --expected-checksum <checksum>`.
+```
+
+A refused flow run gets no artifact and no `service run ... next step:` line.
+
 ### Dagster, Airflow, and other workflow engines
 
 Any workflow engine that can run a CLI command works the same way as Prefect. Pick based on what you already use and what other workloads share the orchestration platform.

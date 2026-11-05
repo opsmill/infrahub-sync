@@ -1154,7 +1154,10 @@ def runs_show(
     ctx: typer.Context,
     run_id: str = typer.Argument(..., help="Service-issued run ID."),
 ) -> None:
-    """Show one run's service record and its selected execution."""
+    """Show one run's service record and its selected execution.
+
+    `prefect_flow_run_url` links the flow run in the Prefect UI; it reads <none> when the Sync API has no UI address.
+    """
     with _client_errors():
         _echo_run(_client(ctx).get_run(run_id))
 
