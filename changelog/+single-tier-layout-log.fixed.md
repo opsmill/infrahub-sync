@@ -1,0 +1,1 @@
+A run log, including the Prefect flow run log, now shows the computed write order (`tier N (size): [...]`) once per plan instead of repeating it, and the `Potenda tier N` line is removed. Applying a saved plan logs the layout, and any optional edges dropped to break a cycle, at DEBUG.

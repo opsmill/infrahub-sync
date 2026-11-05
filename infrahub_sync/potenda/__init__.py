@@ -269,9 +269,6 @@ class Potenda:
         self.tiers: list[set[str]] | None = tiers
         self.continue_on_error = continue_on_error
         self.concurrent_load = concurrent_load
-        if self.tiers:
-            for idx, tier in enumerate(self.tiers):
-                logger.info("Potenda tier %d (%d): %s", idx, len(tier), sorted(tier))
         # Cache/run identity — passed at construction so the object is fully
         # valid on return rather than mutated into shape by the caller.
         self.run_dir: Path | None = run_dir

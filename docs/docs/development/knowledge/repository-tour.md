@@ -78,7 +78,12 @@ credential references and the connection-free capability declaration in full.
 (`app.py`, `serve.py`, `config_routes.py`), authentication (`auth.py`), the Prefect worker and
 deployment (`worker.py`, `deploy.py`, `orchestration.py`, `flow.py`), liveness and checkpoint
 policy (`liveness.py`, `checkpoints.py`), per-stage scratch directories (`scratch.py`), the
-write guard (`apply_guard.py`) and artifact storage (`storage.py`).
+write guard (`apply_guard.py`) and artifact storage (`storage.py`). `prefect_server.py` holds
+`create_prefect_app`, the application factory that the root `docker-compose.yml`, the
+development stack's `development/docker-compose.yml` and the copy that
+`infrahub_sync.testcontainers` ships (`infrahub_sync/testcontainers/docker-compose.yml`) pass to uvicorn. These stacks run the Prefect server from the Sync image, so they need no
+separate Prefect image. The preview stack still runs the upstream `prefecthq/prefect` image
+with `prefect server start`.
 
 Two facts about it are often missed:
 
@@ -190,6 +195,14 @@ For the service components and registered-run lifecycle, see
 writes use the service integration. See [Prefect orchestration](orchestration-prefect.md)
 for the two integrations, their inputs and their result locations.
 
+### The end-to-end test class
+
+`infrahub_sync/testcontainers/` is the optional, experimental `testcontainers` extra, for
+Python 3.11 or later. `helpers.py` holds `TestInfrahubSyncDocker`, a pytest base class that
+starts Infrahub through `infrahub-testcontainers` and the Sync service from
+`docker-compose.yml`, a byte-equal copy of the root deployment file shipped with the package.
+Importing the module without the extra raises an `ImportError` that names the extra.
+
 ### Vendored extras
 
 [`opsmill_prefect_extras/`][src-opsmill-prefect-extras] is a frozen, byte-identical copy of a private upstream package,
@@ -206,8 +219,9 @@ records the upstream commit and the local additions.
 | `__init__.py` | The `format`, `lint`, `tests-*` aggregates and `check-310` |
 | `linter.py`, `docs.py` | The individual lint and documentation legs |
 | `tests.py` | `tests.tests-unit` and `tests.tests-integration` |
-| `dev.py` | The local development stack: `build`, `start`, `destroy` |
-| `preview.py` | The disposable preview environment |
+| `dev.py` | The local development stack: the `dev` namespace (`dev.start`, `dev.deps`, `dev.api`, `dev.worker`, `dev.restart`, `dev.smoke` and the rest), and the earlier top-level `build`, `start` and `destroy` |
+| `smoke_dataset.py` | The smoke dataset that `dev.seed`, `dev.smoke`, `preview.seed` and `preview.smoke` load; no task of its own |
+| `preview.py` | The disposable preview environment, which the development stack replaces |
 | `release.py` | Keeping the image pin in `docker-compose.yml` in step with the package version |
 
 [Quality gates](quality-gates.md) explains what the aggregates really run, and
@@ -215,13 +229,19 @@ records the upstream commit and the local additions.
 
 ### The development stack and the deployment file
 
-- [`development/`][src-development] holds the local stack: the compose files, the shipped `preview.env` defaults
-  and `preview.local.env`, which Git ignores. Runtime state lives under `.preview/`.
+- [`development/`][src-development] holds the local stacks. `docker-compose.yml` is the
+  development stack the `dev` tasks run, formerly `docker-compose.dev.yml`; it includes the
+  Infrahub services from `docker-compose.infrahub.yml`, with `docker-compose.infrahub-ports.yml`
+  as the override file of that include, which changes only their host ports. `docker-compose.preview.yml`, the shipped
+  `preview.env` defaults and `preview.local.env`, which Git ignores, belong to the preview stack,
+  whose runtime state lives under `.preview/`.
   [Local development stack](../../development-stack.mdx) and
   [Run the preview stack](../guides/preview-stack.md) are the procedures.
 - The root `docker-compose.yml` is the operator deployment. It pulls the released image from
   `registry.opsmill.io/opsmill/infrahub-sync` and carries its own database bootstrap script;
-  the development stack in `development/docker-compose.dev.yml` builds from the checkout instead.
+  the development stack in `development/docker-compose.yml` builds from the checkout instead.
+  `infrahub_sync/testcontainers/docker-compose.yml` is a copy of it that a contract test keeps
+  byte-equal.
   [Compose deployment](../../compose-deployment.mdx) is the operator page.
 - [`examples/`][src-examples] holds fifteen directories, and they are not uniform. Four —
   `aci_to_infrahub`, `custom_adapter`, `netbox_to_infrahub` and
@@ -235,8 +255,9 @@ records the upstream commit and the local additions.
 
 [`tests/`][src-tests] mirrors the source tree: `adapters/`, `api/`, `cache/`, `cli/`, `client/`,
 `configuration/`, `conformance/`, `plan/`, `product_store/`, `runtime_schema/`, `service/`,
-`orchestration/` and `release/`, plus the opt-in `integration/`, `preview/`, `image/` and
-`compose/` suites and the frozen `vendored_prefect_extras/` copy.
+`orchestration/`, `release/` and `testcontainers/`, plus `dev_stack/` for the development
+stack's tasks and Compose file, the opt-in `integration/`, `preview/`, `image/` and `compose/`
+suites, and the frozen `vendored_prefect_extras/` copy.
 
 Which of these the default gate runs, and which need something live, is
 [Testing tiers](../guidelines/testing-tiers.md).

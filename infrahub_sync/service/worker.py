@@ -209,7 +209,9 @@ class _IdentityLeaseTaskStatus:
             self._lock.release()
 
 
-class ServiceProcessWorker(ProcessWorker):
+# Prefect's `BaseWorker._initiate_run` and `kill_infrastructure` raise NotImplementedError as
+# optional hooks; `ProcessWorker` does not override them either, and this worker does not use them.
+class ServiceProcessWorker(ProcessWorker):  # pylint: disable=abstract-method
     """Resolve this process worker's server record before Prefect can poll runs."""
 
     job_configuration: type[ServiceProcessJobConfiguration] = ServiceProcessJobConfiguration

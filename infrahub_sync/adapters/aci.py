@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import requests
 import urllib3
@@ -25,6 +25,9 @@ from infrahub_sync import (
 from infrahub_sync.configuration.credentials import is_registered_context, select_runtime_credential
 
 from .utils import get_value
+
+if TYPE_CHECKING:
+    from requests.cookies import RequestsCookieJar
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +77,7 @@ class AciApiClient:
         self.username = username
         self.password = password
         self.base_url = base_url
-        self.cookies = ""
+        self.cookies: RequestsCookieJar | None = None
         self.last_login: datetime | None = None
         self.refresh_timeout: int | None = None
         # Suppress TLS warnings only when verification is disabled

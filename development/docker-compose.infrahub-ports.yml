@@ -1,0 +1,25 @@
+---
+# Override file of the development stack's include of `docker-compose.infrahub.yml`.
+# Only the host publications of the Infrahub services change: Infrahub keeps its
+# usual host port 8000, which no other service of the development stack uses (the
+# Sync API is on 8001), and the ports the development stack does not need are not
+# published.
+services:
+  infrahub-server:
+    # Loopback unless INFRAHUB_BIND_ADDRESS names another address. A worker that
+    # runs in a container on Linux and is not on this stack's network reaches the
+    # port through the Docker bridge gateway, never through loopback.
+    # Off loopback, the public default INFRAHUB_INITIAL_ADMIN_TOKEN of
+    # docker-compose.infrahub.yml would let any host that reaches the port log in as
+    # admin. Compose cannot require a variable only under a condition, so
+    # `invoke dev.start`, `dev.deps` and the benchmark runner refuse a non-loopback
+    # INFRAHUB_BIND_ADDRESS unless INFRAHUB_INITIAL_ADMIN_TOKEN is set to another
+    # value; clients then use that value as INFRAHUB_API_TOKEN.
+    ports: !override
+      - "${INFRAHUB_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_PORT:-8000}:8000"
+
+  message-queue:
+    ports: !reset []
+
+  database:
+    ports: !reset []

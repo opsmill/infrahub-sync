@@ -40,6 +40,7 @@ import httpx
 import pytest
 
 from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
+from tests.preview.conftest import infrahub_host_url
 from tests.preview.evidence import canary_leaks, transcript_hooks
 
 if TYPE_CHECKING:
@@ -202,7 +203,7 @@ def infrahub_client(preview_env: dict[str, Any]) -> Any:  # noqa: ANN401 — the
     from infrahub_sdk import InfrahubClientSync
 
     return InfrahubClientSync(
-        address=preview_env["urls"]["infrahub"], config={"api_token": preview_env["infrahub_token"]}
+        address=infrahub_host_url(preview_env), config={"api_token": preview_env["infrahub_token"]}
     )
 
 

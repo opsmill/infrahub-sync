@@ -2,8 +2,10 @@
 
 Infrahub's own Compose file, started with `docker compose -p infrahub`, creates the
 `infrahub_default` network, where Infrahub answers at `http://infrahub-server:8000`.
-`invoke start` connects the worker (`development/docker-compose.dev.yml`, service
-`sync-worker`) to that network, so the same address works on every platform. These cases
+`invoke start` connects the worker (`development/docker-compose.yml`, service
+`sync-worker`) to that network, so the same address works on every platform. This is
+the path for an Infrahub outside the development stack, which is started without the
+`infrahub` profile; with the profile the worker already shares Infrahub's network. These cases
 check the Docker commands the task runs, with a fake runner and no daemon.
 """
 

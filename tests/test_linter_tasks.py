@@ -41,7 +41,7 @@ def test_lint_yaml_runs_from_the_repository_root(monkeypatch: pytest.MonkeyPatch
     [
         (
             linter.lint_ruff,
-            f"cd {ESCAPED_REPO_PATH} && ruff format --check --diff . &&ruff check --diff .",
+            f"cd {ESCAPED_REPO_PATH} && ruff format --check --diff . && ruff check .",
         ),
         (
             linter.format_ruff,
@@ -61,7 +61,8 @@ def test_ruff_tasks_run_from_the_repository_root(
 
 def test_ty_check_command_excludes_service_on_python_310() -> None:
     assert linter._ty_check_command(3, 10) == (
-        "uv run ty check --exclude infrahub_sync/service --exclude tests/service ."
+        "uv run ty check --exclude infrahub_sync/service --exclude tests/service "
+        "--exclude infrahub_sync/testcontainers --exclude tests/testcontainers ."
     )
 
 
@@ -72,7 +73,7 @@ def test_ty_check_command_checks_service_on_supported_python() -> None:
 
 def test_pylint_command_excludes_service_on_python_310() -> None:
     assert linter._pylint_command(3, 10) == (
-        "pylint --output-format=json2 --ignore-paths='^infrahub_sync/service/' infrahub_sync/"
+        "pylint --output-format=json2 --ignore-paths='^infrahub_sync/(service|testcontainers)/' infrahub_sync/"
     )
 
 

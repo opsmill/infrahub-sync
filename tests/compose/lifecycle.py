@@ -18,7 +18,7 @@ import httpx
 import pytest
 
 from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
-from tests.compose.conftest import COMPOSE_FILE, compose, start_command
+from tests.compose.conftest import COMPOSE_FILE, PROJECT_PREFIX, compose, start_command
 from tests.compose.redaction import SECRETS, Captured, capture
 
 if TYPE_CHECKING:
@@ -26,9 +26,11 @@ if TYPE_CHECKING:
 
 FIXTURE_OVERRIDE = Path(__file__).resolve().parent / "fixture-override.yaml"
 
-# Every published surface the suite drives is on loopback, and the two ports
-# below are deliberately not the file's own defaults: a developer's stack must
-# be able to keep running while this suite has one of its own.
+# Every published surface the suite drives is on loopback, and the API port
+# below is deliberately not the file's own default: a developer's stack must be
+# able to keep running while this suite has one of its own. The root file
+# publishes no Prefect port; the Prefect port only sets the address the Prefect
+# UI would call, which the override snippet publishes.
 API_PORT = 8061
 PREFECT_PORT = 4261
 
@@ -95,11 +97,12 @@ class Deployment:
         prefect_port: int = PREFECT_PORT,
     ) -> None:
         self.instance = instance
-        self.project = f"infrahub-sync-{instance}"
+        self.project = f"{PROJECT_PREFIX}-{instance}"
         # The address its declared configuration names.
         self.destination = destination
-        # Each deployment publishes on its own loopback ports, so more than one
-        # can be up at a time and no probe can reach the wrong one.
+        # Each deployment publishes the API on its own loopback port, so more
+        # than one can be up at a time and no probe can reach the wrong one. The
+        # Prefect port is not published; it only names the UI's API address.
         self.api_port = api_port
         self.prefect_port = prefect_port
         self.environment_file = environment_file
@@ -194,10 +197,6 @@ class Deployment:
     @property
     def api(self) -> str:
         return f"http://127.0.0.1:{self.api_port}"
-
-    @property
-    def prefect(self) -> str:
-        return f"http://127.0.0.1:{self.prefect_port}"
 
 
 # The dependencies whose health is an answer from the service -- a PostgreSQL

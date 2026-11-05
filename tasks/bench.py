@@ -13,6 +13,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import structlog
@@ -55,16 +56,78 @@ from infrahub_sync.client import (
     SyncClientError,
 )
 
-from . import dev, netbox, preview
+from . import dev, netbox
 
 ROOT = netbox.REPO_ROOT
 STATE = netbox.STATE_DIR / "bench"
 RESULTS = netbox.STATE_DIR / "benchmarks" / "results.jsonl"
-INFRAHUB_VERSION = "1.11.3"
+INFRAHUB_VERSION = "1.11.9"
 INFRAHUB_IMAGE = "registry.opsmill.io/opsmill/infrahub"
 # Fixed outside any checkout: every runner mutates the same Docker projects.
+# The pinned destination's Compose project, apart from the development stack's own.
+DESTINATION_PROJECT = "infrahub-sync-benchmark"
 RUNNER_LOCK = Path("/tmp/infrahub-sync-benchmark-infrahub-sync-dev-netbox.lock")  # noqa: S108 -- machine-wide lock
+# Another address the host reaches the destination's published port at, such as a Docker
+# host on another address. `--infrahub-url` wins. The port must stay the published one.
+INFRAHUB_HOST_URL_VARIABLE = "INFRAHUB_SYNC_DEV_INFRAHUB_HOST_URL"
+_DEFAULT_PORTS = {"http": 80, "https": 443}
 log = structlog.get_logger()
+
+
+def infrahub_host_url(publication: dev.Publication, option: str = "") -> str:
+    """Return the URL the host reaches the benchmark destination's Infrahub at.
+
+    `publication` is the host port the destination's own Compose configuration publishes
+    for `infrahub-server` (`INFRAHUB_PORT`, default 8000). `--infrahub-url`, else
+    `INFRAHUB_SYNC_DEV_INFRAHUB_HOST_URL`, replaces only the host name: Compose publishes
+    the destination on that port whatever the URL says, so a URL naming another port would
+    reach another Infrahub, or none.
+
+    Raises:
+        BenchmarkError: when the chosen URL has no host name or names another port.
+    """
+    chosen = (option or os.environ.get(INFRAHUB_HOST_URL_VARIABLE, "")).rstrip("/")
+    if not chosen:
+        return publication.url
+    parts = urlsplit(chosen)
+    try:
+        port = parts.port or _DEFAULT_PORTS.get(parts.scheme)
+    except ValueError:
+        port = None
+    if parts.scheme not in _DEFAULT_PORTS or not parts.hostname or port is None:
+        msg = f"--infrahub-url or {INFRAHUB_HOST_URL_VARIABLE} needs an http(s) URL with a host name"
+        raise BenchmarkError(msg)
+    if str(port) != publication.port:
+        msg = (
+            f"--infrahub-url or {INFRAHUB_HOST_URL_VARIABLE} names port {port}, but the benchmark destination"
+            f" publishes infrahub-server on host port {publication.port}; use port {publication.port},"
+            " or set INFRAHUB_PORT to publish the destination on another port"
+        )
+        raise BenchmarkError(msg)
+    return chosen
+
+
+def destination_infrahub(context: Context, target: dev.ComposeTarget) -> tuple[dev.Publication, str]:
+    """Return the destination's `infrahub-server` host publication and initial admin token.
+
+    Both come from the destination's own resolved Compose configuration, never from the
+    development settings, which follow the Infrahub network selection.
+
+    Raises:
+        BenchmarkError: when Compose cannot resolve the destination, it publishes no Infrahub
+            port, or it publishes Infrahub beyond loopback with the public development admin token.
+    """
+    try:
+        resolved = dev.resolved_compose(context, target)
+        publication, token = dev.infrahub_server(resolved.get("services") or {})
+    except (dev.DevStackError, KeyError):
+        msg = "cannot resolve the benchmark destination's infrahub-server publication from its Compose configuration"
+        raise BenchmarkError(msg) from None
+    try:
+        dev.require_private_infrahub(publication, token)
+    except dev.DevStackError as exc:
+        raise BenchmarkError(str(exc)) from None
+    return publication, token
 
 
 def cell_options(  # noqa: PLR0913, PLR0917 -- cell coordinates
@@ -91,20 +154,22 @@ def cell_options(  # noqa: PLR0913, PLR0917 -- cell coordinates
 class CellStack:
     """Manage only disposable benchmark stacks, with quiet legacy task calls."""
 
-    def __init__(self) -> None:
+    def __init__(self, infrahub_url: str = "") -> None:
         self.context = QuietContext()
         self.netbox_env = netbox.load_netbox_env()
-        self.preview_env = preview.load_preview_env() | {
+        # The destination is the development file's Infrahub services under their own
+        # project, pinned to the benchmark's Infrahub image whatever the shell selects.
+        self.destination_project = DESTINATION_PROJECT
+        self.destination_env = {
             "VERSION": INFRAHUB_VERSION,
             "INFRAHUB_DOCKER_IMAGE": INFRAHUB_IMAGE,
             "INFRAHUB_DOCKER_IMAGE_DIGEST": "",
-            "COMPOSE_PROJECT_NAME": "infrahub-sync-benchmark",
         }
-        self.infrahub_url = preview.preview_urls(self.preview_env)["infrahub"]
-        self.infrahub_token = self.preview_env["INFRAHUB_INITIAL_ADMIN_TOKEN"]
-        self.worker = ""
         self.deadline = time.monotonic() + LIMIT_SECONDS
         self.context.deadline = self.deadline
+        publication, self.infrahub_token = destination_infrahub(self.context, self.destination_target)
+        self.infrahub_url = infrahub_host_url(publication, infrahub_url)
+        self.worker = ""
         self.started_sync = False
         self.started_netbox = False
         self.started_destination = False
@@ -122,8 +187,13 @@ class CellStack:
         return remaining
 
     def compose(self, arguments: str) -> None:
-        """Use the existing preview files for the isolated pinned destination."""
-        preview._compose(self.context, arguments, self.preview_env)  # noqa: SLF001 -- reuse the existing stack lifecycle
+        """Run the development file's `infrahub` profile as the isolated pinned destination."""
+        dev.compose(self.context, arguments, target=self.destination_target)
+
+    @property
+    def destination_target(self) -> dev.ComposeTarget:
+        """The pinned destination: the development file's `infrahub` profile under its own project."""
+        return dev.ComposeTarget(project=self.destination_project, profiles=("infrahub",), env=self.destination_env)
 
     def reset(self, tier: str) -> None:
         """Restore NetBox and recreate an empty pinned destination before each repetition."""
@@ -133,9 +203,7 @@ class CellStack:
             netbox.restore(self.context, tier=tier)
             self.started_destination = True
             self.compose("down --volumes --remove-orphans")
-            services = yaml.safe_load((preview.DEV_DIR / "docker-compose.infrahub.yml").read_text(encoding="utf-8"))[
-                "services"
-            ]
+            services = yaml.safe_load(dev.INFRAHUB_COMPOSE_FILE.read_text(encoding="utf-8"))["services"]
             # Schema loading needs the Infrahub workers, which are not server dependencies.
             selected = " ".join(shlex.quote(name) for name in services)
             self.compose(f"up --detach --wait --wait-timeout {netbox.WAIT_TIMEOUT_SECONDS} {selected}")
@@ -168,7 +236,7 @@ class CellStack:
             containers = engine.containers.list(
                 filters={
                     "label": [
-                        "com.docker.compose.project=" + self.preview_env["COMPOSE_PROJECT_NAME"],
+                        "com.docker.compose.project=" + self.destination_project,
                         "com.docker.compose.service=infrahub-server",
                     ]
                 }
@@ -189,12 +257,12 @@ class CellStack:
         if project and project != netbox.DEV_STACK_PROJECT:
             msg = "unset conflicting COMPOSE_PROJECT_NAME before benchmarking"
             raise BenchmarkError(msg)
-        if compose_file and (ROOT / compose_file).resolve() != ROOT / "compose.yaml":
+        if compose_file and (ROOT / compose_file).resolve() != ROOT / dev.DEV_COMPOSE_FILE:
             msg = "unset conflicting COMPOSE_FILE before benchmarking"
             raise BenchmarkError(msg)
         # The existing dev task owns its fixed project. Refuse another caller's stack.
         if self.sync_containers():
-            msg = "the development Sync stack has existing containers; run uv run invoke destroy before benchmarking (removes volumes)"
+            msg = "the development Sync stack has existing containers; run uv run invoke dev.destroy before benchmarking (removes volumes)"
             raise BenchmarkError(msg)
 
     def sync_containers(self) -> str:
@@ -212,12 +280,10 @@ class CellStack:
         }
         self.context.config.run.env = env
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            dev._build(  # noqa: SLF001 -- pinned project is private to the runner
-                self.context, project=netbox.DEV_STACK_PROJECT, compose_file=str(ROOT / "compose.yaml")
-            )
+            dev._build(self.context, project=netbox.DEV_STACK_PROJECT)  # noqa: SLF001 -- pinned project is private to the runner
             try:
                 dev._start(  # noqa: SLF001 -- pinned project is private to the runner
-                    self.context, project=netbox.DEV_STACK_PROJECT, compose_file=str(ROOT / "compose.yaml")
+                    self.context, project=netbox.DEV_STACK_PROJECT, attach_infrahub=False
                 )
             finally:
                 # A failed up may still have created containers; a failed build owns none.
@@ -233,7 +299,7 @@ class CellStack:
             raise BenchmarkError(msg)
         self.worker = workers[0]
         self.context.run(
-            f"docker network connect {shlex.quote(self.preview_env['COMPOSE_PROJECT_NAME'] + '_default')} {shlex.quote(self.worker)}"
+            f"docker network connect {shlex.quote(self.destination_project + '_default')} {shlex.quote(self.worker)}"
         )
 
     def package(self, *, worker: bool) -> dict:
@@ -241,9 +307,7 @@ class CellStack:
         destination = self.infrahub_url
         if worker:
             # Resolve the server's network alias from the existing Compose service name.
-            services = yaml.safe_load((preview.DEV_DIR / "docker-compose.infrahub.yml").read_text(encoding="utf-8"))[
-                "services"
-            ]
+            services = yaml.safe_load(dev.INFRAHUB_COMPOSE_FILE.read_text(encoding="utf-8"))["services"]
             # The source file lists infrastructure ports too; choose the HTTP server by its healthcheck.
             server = next(
                 name for name, service in services.items() if "api/config" in str(service.get("healthcheck", ""))
@@ -286,9 +350,7 @@ class CellStack:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             try:
                 if self.started_sync:
-                    dev._destroy(  # noqa: SLF001 -- pinned project is private to the runner
-                        self.context, project=netbox.DEV_STACK_PROJECT, compose_file=str(ROOT / "compose.yaml")
-                    )
+                    dev._destroy(self.context, project=netbox.DEV_STACK_PROJECT)  # noqa: SLF001 -- pinned project
             finally:
                 try:
                     if self.started_destination:
@@ -440,7 +502,15 @@ def v3_sync(stack: CellStack, registered: tuple[str, int], record: ResultRecord,
         )
 
 
-@task(name="run")
+@task(
+    name="run",
+    help={
+        "infrahub-url": (
+            f"The benchmark destination's URL from the host; default {INFRAHUB_HOST_URL_VARIABLE}, else"
+            " the address the destination publishes. Changes only the host; the port must match"
+        )
+    },
+)
 def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record per repetition
     _context: Context,
     line: str = "v3",
@@ -449,6 +519,7 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record
     variant: str = "full",
     repetitions: int = 1,
     v2_ref: str = "",
+    infrahub_url: str = "",
 ) -> None:
     """Run a destructive, manual cell, restoring both databases for every repetition."""
     if sys.version_info < (3, 11):
@@ -498,7 +569,7 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record
                 harness_commit=harness_commit,
                 mapping_sha256=mapping_sha256,
             )
-            stack = CellStack()
+            stack = CellStack(infrahub_url=infrahub_url)
             mapping = None
             try:
                 if line == "v2":
