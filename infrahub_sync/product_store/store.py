@@ -974,8 +974,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 _json(run.audit_links),
                 # Stored as UTC so that text order equals time order when runs are listed,
                 # even when an injected service clock is not UTC.
-                run.started_at.astimezone(timezone.utc).isoformat(),
-                _iso(run.finished_at),
+                _utc_iso(run.started_at),
+                None if run.finished_at is None else _utc_iso(run.finished_at),
                 run.phase,
                 run.outcome,
                 _json(run.summary),
@@ -1397,7 +1397,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         (
                             writeback.phase,
                             writeback.outcome,
-                            writeback.finished_at.isoformat(),
+                            _utc_iso(writeback.finished_at),
                             _json(writeback.summary),
                             _json(writeback.results),
                             run_id,
@@ -1639,7 +1639,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         return False
                     cursor.execute(
                         self._sql(_UPDATE_LATEST_EXECUTION_TERMINAL),
-                        (phase, outcome, acknowledged_at.isoformat(), run_id, flow_run_id),
+                        (phase, outcome, _utc_iso(acknowledged_at), run_id, flow_run_id),
                     )
                     self._record_write_ambiguity(
                         cursor, run_id, flow_run_id, terminal_state=state, terminal_outcome=outcome
@@ -1709,7 +1709,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     return False
                 cursor.execute(
                     self._sql(_UPDATE_LATEST_EXECUTION_CANCELLED),
-                    (terminal_at.isoformat(), run_id, flow_run_id),
+                    (_utc_iso(terminal_at), run_id, flow_run_id),
                 )
                 connection.commit()
             except Exception:
@@ -1771,7 +1771,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     return False
                 cursor.execute(
                     self._sql(_UPDATE_LATEST_EXECUTION_TERMINAL),
-                    (phase, outcome, terminal_at.isoformat(), run_id, flow_run_id),
+                    (phase, outcome, _utc_iso(terminal_at), run_id, flow_run_id),
                 )
                 self._record_write_ambiguity(
                     cursor, run_id, flow_run_id, terminal_state=state, terminal_outcome=outcome
@@ -1896,7 +1896,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     return False
                 cursor.execute(
                     self._sql(_UPDATE_LATEST_EXECUTION_TERMINAL),
-                    (phase, outcome, terminal_at.isoformat(), run_id, flow_run_id),
+                    (phase, outcome, _utc_iso(terminal_at), run_id, flow_run_id),
                 )
                 self._record_write_ambiguity(
                     cursor,
@@ -2657,7 +2657,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         "UPDATE product_runs SET phase = ?, outcome = ?, finished_at = ?, summary = ?, results = ? "
                         "WHERE run_id = ?"
                     ),
-                    (phase, outcome, finished_at.isoformat(), _json(summary), _json(results), run_id),
+                    (phase, outcome, _utc_iso(finished_at), _json(summary), _json(results), run_id),
                 )
                 _require_run_finished(cursor, run_id)
                 connection.commit()
@@ -3505,6 +3505,15 @@ def _json(value: Any) -> str:
 
 def _iso(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat()
+
+
+def _utc_iso(value: datetime) -> str:
+    """Format an aware timestamp in UTC, so that stored text order equals time order.
+
+    ``started_at`` and ``finished_at`` are ranked as text (run lists, the most recently
+    applied run). An injected clock that is not UTC would otherwise break that order.
+    """
+    return value.astimezone(timezone.utc).isoformat()
 
 
 def _execution_timestamp_microseconds(value: str) -> int:
