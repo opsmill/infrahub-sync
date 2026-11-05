@@ -17,7 +17,7 @@
 | `infrahub-sync runs cancel RUN_ID [--reason R] [--idempotency-key K] [--yes]` | `POST /runs/{id}/cancel` | New. Without `--yes`, prompts for confirmation when interactive and refuses (exit 2) when not, because cancelling a write can leave an `ambiguous` outcome. |
 | `infrahub-sync whoami` | `GET /me` | New |
 | `infrahub-sync configs list [--name N] [--limit L] [--all]` | `GET /configs` | Adds name column, filter, paging |
-| `infrahub-sync configs versions CONFIG [--limit L] [--all]` | `GET /configs/{id}/versions` | Adds latest run and latest applied run columns, paging |
+| `infrahub-sync configs versions CONFIG [--limit L] [--all]` | `GET /configs/{id}/versions` | Adds `registered_by`, `registration_reason`, latest run (with `started_at`) and latest applied run (with the apply's `finished_at`) fields, paging |
 
 `--config-id` stays accepted as an alias of `--config` on `plan`, `diff` and `sync`.
 

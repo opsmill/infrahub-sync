@@ -7,7 +7,7 @@ import logging
 import re
 import sys
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 from unittest.mock import MagicMock
@@ -1370,9 +1370,13 @@ def test_configs_list_all_follows_cursors(client: MagicMock) -> None:
 
 def test_configs_versions_prints_latest_run_columns_and_pages(client: MagicMock) -> None:
     latest = RunReference(run_id="run-2", phase="planned", outcome=None, started_at=NOW)
-    applied = RunReference(run_id="run-1", phase="finished", outcome="applied", started_at=NOW)
+    applied_at = NOW + timedelta(hours=1)
+    applied = RunReference(run_id="run-1", phase="applied", outcome="succeeded", started_at=NOW, finished_at=applied_at)
+    registered = _version_summary(2, latest_run=latest, latest_applied_run=applied).model_copy(
+        update={"registered_by": "admin@example.com", "registration_reason": "first import"}
+    )
     client.list_config_versions.return_value = ConfigurationVersionPage(
-        items=(_version_summary(2, latest_run=latest, latest_applied_run=applied), _version_summary(1)),
+        items=(registered, _version_summary(1)),
         next_cursor="c1",
     )
 
@@ -1381,8 +1385,12 @@ def test_configs_versions_prints_latest_run_columns_and_pages(client: MagicMock)
     assert result.exit_code == 0, result.output
     client.list_config_versions.assert_called_once_with("edge-sync", limit=2)
     lines = result.stdout.splitlines()
+    assert "registered_by: admin@example.com" in lines
+    assert "registration_reason: first import" in lines
+    assert "registered_by: <none>" in lines
     assert f"latest_run: run-2 phase=planned outcome=- started_at={NOW.isoformat()}" in lines
-    assert f"latest_applied_run: run-1 phase=finished outcome=applied started_at={NOW.isoformat()}" in lines
+    # The applied run shows when its apply finished, not when its plan was created.
+    assert f"latest_applied_run: run-1 phase=applied outcome=succeeded finished_at={applied_at.isoformat()}" in lines
     assert "latest_run: <none>" in lines
     assert "more versions: rerun with --all, or --limit up to 200" in result.stderr
 

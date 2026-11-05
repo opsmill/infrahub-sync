@@ -84,6 +84,7 @@ time the plan was created, and `finished_at` is the time the apply finished (res
 | `phase` | string |
 | `outcome` | string or `null` |
 | `started_at` | timezone-aware timestamp |
+| `finished_at` | timezone-aware timestamp or `null`; for `latest_applied_run`, the time the apply finished |
 
 ### `ConfigurationPage` and `ConfigurationVersionPage` (new)
 

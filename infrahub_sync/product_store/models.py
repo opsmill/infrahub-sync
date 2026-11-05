@@ -407,11 +407,13 @@ class RunReference(BaseModel):
     phase: str = Field(min_length=1)
     outcome: str | None = None
     started_at: datetime
+    # When the run last finished a stage; for an applied run, when its apply finished.
+    finished_at: datetime | None = None
 
-    @field_validator("started_at")
+    @field_validator("started_at", "finished_at")
     @classmethod
-    def _require_timezone(cls, value: datetime) -> datetime:
-        if value.utcoffset() is None:
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
             msg = "run timestamps must include a timezone"
             raise ValueError(msg)
         return value

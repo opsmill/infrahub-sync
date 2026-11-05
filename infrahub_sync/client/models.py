@@ -436,6 +436,8 @@ class RunReference(_ResourceModel):
     phase: str
     outcome: str | None = None
     started_at: datetime
+    # When the run last finished a stage; for an applied run, when its apply finished.
+    finished_at: datetime | None = None
 
     @field_validator("started_at")
     @classmethod
@@ -443,6 +445,11 @@ class RunReference(_ResourceModel):
         checked = _timezone(value, "run timestamps must include a timezone")
         assert checked is not None
         return checked
+
+    @field_validator("finished_at")
+    @classmethod
+    def _require_finished_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone(value, "run timestamps must include a timezone")
 
 
 class ConfigurationVersionSummaryResource(_ResourceModel):

@@ -365,7 +365,9 @@ in the same envelope:
   package content. `latest_run` is the version's newest run by `started_at`.
   `latest_applied_run` is the most recently applied run, ordered by the time its apply
   finished. An apply updates the plan run, so its `started_at` is the time the plan was
-  created. `registered_by` and `registration_reason` are `null` for versions
+  created and its `finished_at` is the time the apply finished. Each run reference carries
+  `run_id`, `phase`, `outcome`, `started_at` and `finished_at`; `finished_at` is `null` for a
+  run that has not finished. `registered_by` and `registration_reason` are `null` for versions
   registered before they were recorded. Read
   `GET /configs/{config_id}/versions/{registry_version}` for the package content.
 

@@ -187,10 +187,12 @@ To find the latest run of each version of a configuration, run:
 infrahub-sync configs versions CONFIG_ID
 ```
 
-For each version, newest first, it prints the `latest_run` and the `latest_applied_run`, each
-with its `run_id`, phase, outcome, and start time. `latest_run` is the run created most
-recently. `latest_applied_run` is the run applied most recently, which can be an older plan
-that you applied after a newer one. Its start time is the time the plan was created.
+For each version, newest first, it prints who registered the version and why
+(`registered_by` and `registration_reason`), then the `latest_run` and the
+`latest_applied_run`, each with its `run_id`, phase and outcome. `latest_run` is the run
+created most recently, shown with its start time (`started_at`). `latest_applied_run` is the
+run applied most recently, which can be an older plan that you applied after a newer one. It
+is shown with the time its apply finished (`finished_at`).
 
 `runs artifacts RUN_ID` lists the files that the service kept for a run.
 `runs cancel RUN_ID` cancels a run that has not finished. It asks for confirmation, or

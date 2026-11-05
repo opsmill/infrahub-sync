@@ -342,17 +342,18 @@ _CONFIGURATION_VERSION_LIST_ORDER = " ORDER BY registry_version DESC LIMIT ?"
 # so ``started_at`` is when the plan was created, while ``finished_at`` is written with
 # ``phase = 'applied'`` when the apply stage finishes. Each branch keeps its first row;
 # ``ROW_NUMBER`` is available on SQLite 3.25+ and PostgreSQL. ``{0}`` is a list of ``?``.
-_SELECT_LATEST_VERSION_RUNS = """SELECT registry_version, kind, run_id, phase, outcome, started_at FROM (
-SELECT registry_version, 'latest' AS kind, run_id, phase, outcome, started_at,
+_SELECT_LATEST_VERSION_RUNS = """SELECT registry_version, kind, run_id, phase, outcome, started_at, finished_at FROM (
+SELECT registry_version, 'latest' AS kind, run_id, phase, outcome, started_at, finished_at,
 ROW_NUMBER() OVER (PARTITION BY registry_version ORDER BY started_at DESC, run_id DESC) AS position
 FROM product_runs WHERE config_id = ? AND registry_version IN ({0})
 UNION ALL
-SELECT registry_version, 'applied' AS kind, run_id, phase, outcome, started_at,
+SELECT registry_version, 'applied' AS kind, run_id, phase, outcome, started_at, finished_at,
 ROW_NUMBER() OVER (PARTITION BY registry_version ORDER BY finished_at DESC, run_id DESC) AS position
 FROM product_runs WHERE config_id = ? AND registry_version IN ({0}) AND phase = 'applied'
 ) ranked WHERE position = 1"""
 _SELECT_CONFIGURATION_VERSION = """SELECT config_id, registry_version, package_checksum, declared_content, created_at
 FROM configuration_versions WHERE config_id = ? AND registry_version = ?"""
+_CONFIGURATION_VERSION_EXISTS = "SELECT 1 FROM configuration_versions WHERE config_id = ? AND registry_version = ?"
 _SELECT_CONFIGURATION_VERSION_BY_CHECKSUM = """SELECT config_id, registry_version, package_checksum, declared_content,
 created_at FROM configuration_versions WHERE config_id = ? AND package_checksum = ?"""
 _SELECT_CONFIGURATION_VERSIONS = """SELECT config_id, registry_version, package_checksum, declared_content, created_at
@@ -2520,9 +2521,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 self._sql(_SELECT_LATEST_VERSION_RUNS.format(placeholders)),
                 (config_id, *versions, config_id, *versions),
             )
-            for registry_version, kind, run_id, phase, outcome, started_at in cursor.fetchall():
+            for registry_version, kind, run_id, phase, outcome, started_at, finished_at in cursor.fetchall():
                 latest[int(registry_version), str(kind)] = RunReference(
-                    run_id=run_id, phase=phase, outcome=outcome, started_at=started_at
+                    run_id=run_id, phase=phase, outcome=outcome, started_at=started_at, finished_at=finished_at
                 )
 
         rows, has_more = self._read_page(statement, parameters, limit, read_latest_runs)

@@ -397,13 +397,16 @@ def _echo_config_summary(resource: ConfigurationSummaryResource) -> None:
     )
 
 
-def _run_reference(reference: RunReference | None) -> str | None:
+def _run_reference(reference: RunReference | None, *, applied: bool = False) -> str | None:
+    """Describe one run reference; an applied run shows when its apply finished, not when it was planned."""
     if reference is None:
         return None
-    return (
-        f"{reference.run_id} phase={reference.phase} outcome={reference.outcome or '-'} "
-        f"started_at={reference.started_at.isoformat()}"
-    )
+    if applied:
+        when = "-" if reference.finished_at is None else reference.finished_at.isoformat()
+        timestamp = f"finished_at={when}"
+    else:
+        timestamp = f"started_at={reference.started_at.isoformat()}"
+    return f"{reference.run_id} phase={reference.phase} outcome={reference.outcome or '-'} {timestamp}"
 
 
 def _echo_config_version_summary(resource: ConfigurationVersionSummaryResource) -> None:
@@ -413,8 +416,10 @@ def _echo_config_version_summary(resource: ConfigurationVersionSummaryResource) 
             ("registry_version", resource.registry_version),
             ("package_checksum", resource.package_checksum),
             ("created_at", resource.created_at.isoformat()),
+            ("registered_by", resource.registered_by),
+            ("registration_reason", resource.registration_reason),
             ("latest_run", _run_reference(resource.latest_run)),
-            ("latest_applied_run", _run_reference(resource.latest_applied_run)),
+            ("latest_applied_run", _run_reference(resource.latest_applied_run, applied=True)),
         )
     )
 
