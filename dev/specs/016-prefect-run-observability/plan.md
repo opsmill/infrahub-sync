@@ -121,6 +121,25 @@ changelog/                       # one fragment per user-visible change
 **Structure Decision**: The single package layout stays as it is. The two new modules sit in
 `infrahub_sync/service/` next to `failure_cause.py`, which plays the same role for failure text.
 
+## Stage exits
+
+`service_sync_run` ends a claimed stage through one of three exits. The last log line and the artifact are
+produced at each exit, in this order: store the record, write the log line, publish the artifact. Both are
+redacted with the stage's `secrets`, so on the failure exits both happen before `secrets.clear()`
+(`flow.py:948`).
+
+| Exit | When | `<outcome>` | `<action>` |
+| --- | --- | --- | --- |
+| Success | `_commit_success` returned | `result["outcome"]` | `result["failure"]["next_action"]` when present, else `` `infrahub-sync runs show <id>` `` |
+| Recorded failure | `_record_failure` returned a `RecordedFailure` | its `outcome` | its `next_action`, else `` `infrahub-sync runs show <id>` `` |
+| Unrecorded failure | `record_terminal` is false, or `_record_failure` returned `None` | `failed` | `` `infrahub-sync runs show <id>` `` |
+
+The line is written with `run_logger` directly, outside `_remote_log_bridge`. A refused claim happens before any
+exit, so it gets no artifact and no last line, only its ERROR line.
+
+`_ResourceModel` uses `extra="allow"` (`client/models.py:91`), so a CLI from before this change accepts a
+response that holds `prefect_flow_run_url`.
+
 ## Test-first order
 
 Each requirement group is one red-green cycle, in this order, because the later groups use the earlier ones:

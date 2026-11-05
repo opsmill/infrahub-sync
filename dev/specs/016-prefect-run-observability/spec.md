@@ -237,8 +237,9 @@ the code that makes it pass.
   - the outcome;
   - the configuration ID and registry version;
   - the destination branch, when the run has one;
-  - the plan's operation counts by action and by kind, when a saved plan exists;
-  - the next CLI command.
+  - the plan's operation counts by action, and by kind sorted by kind name, when the run summary holds them;
+  - the next CLI commands, ending with the recorded failure's next action when there is one. The failure's
+    `cause` text is never shown.
 - **FR-003**: The artifact MUST be built only from fixed templates and from values that the product records
   hold: identifiers, counts, outcomes and fixed next actions. It MUST pass through the run's redaction before
   it is published (ADR 0021,
@@ -256,6 +257,9 @@ the code that makes it pass.
 - **FR-008**: `<action>` MUST be the next action of the failure that the stage recorded, when one exists.
   Otherwise it MUST be the next action of a failure that the stage's result carries. Otherwise it MUST be
   `` `infrahub-sync runs show <run_id>` ``.
+- **FR-008a**: When a stage fails and the worker records nothing, `<outcome>` MUST be `failed` and `<action>` MUST
+  be `` `infrahub-sync runs show <run_id>` ``. This happens when a read stage's success commit fails, or when the
+  failure record cannot be stored. The artifact uses the same values.
 - **FR-009**: A stage that ends through the worker's failure-recording path MUST also end with that line.
 
 #### Link to the Prefect flow run
@@ -272,7 +276,8 @@ the code that makes it pass.
 - **FR-014**: `infrahub-sync runs show` MUST print `prefect_flow_run_url` for the selected orchestration entry,
   next to `flow_run_id`.
 - **FR-015**: `development/docker-compose.yml` MUST set the setting on `sync-api` to
-  `http://127.0.0.1:${PREFECT_PORT:-4230}`. The root `docker-compose.yml` MUST document the setting.
+  `http://127.0.0.1:${PREFECT_PORT:-4230}`. The root `docker-compose.yml` MUST pass the setting through to
+  `sync-api` with an empty default, which turns the link off, and MUST document it with an example value.
 
 #### Refused claim
 
@@ -330,8 +335,9 @@ the code that makes it pass.
   opens the run's flow run page in the Prefect UI.
 - **SC-004**: An operator without `INFRAHUB_SYNC_API_URL` set reads the variable's name in the first error the
   CLI prints.
-- **SC-005**: No existing test of the run response, of `runs show` or of `client-input` errors needs an
-  edited expected value, other than the added `prefect_flow_run_url` and `hint` lines.
+- **SC-005**: Existing assertions on run responses, on `runs show` output and on `client-input` errors keep their
+  expected values. The only additions are the `prefect_flow_run_url` and `hint` lines. Tests of the refused
+  claim and of the last log line may be tightened to the new error type and the new line.
 - **SC-006**: `uv run invoke tests.tests-unit`, `uv run ruff check .` and `uv run invoke lint` pass.
 
 ## Assumptions
