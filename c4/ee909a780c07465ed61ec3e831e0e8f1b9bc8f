@@ -1,0 +1,21 @@
+dev/specs/016-prefect-run-observability/opsmill-implement-report.md
+  s_01f3e2b1e0dad4::t_b7ebf9ea3f8b4d 1-9
+dev/specs/016-prefect-run-observability/tasks.md
+  s_01f3e2b1e0dad4::t_fb269267722d9a 23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c4ee909a780c07465ed61ec3e831e0e8f1b9bc8f",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
