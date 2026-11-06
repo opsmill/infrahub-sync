@@ -250,6 +250,13 @@ releases did. `runs results RUN_ID`
 prints the same fields, as `cause`, `next_action` and `infrahub_error`, under `plan_failure`,
 `sync_failure` or `apply_failure`.
 
+When the destination branch does not exist, the `cause:` line names the branch, and the
+`hint:` line says to create it or to start the run with `--branch <existing branch>`. A
+failure to read the destination schema also prints a `cause:` and a `hint:` line.
+
+`infrahub-sync runs logs RUN_ID` prints the lines that Sync wrote during the run, including
+the ERROR line that holds the cause and the next step. It reads them through the Sync API.
+
 For any other failure, the error message is recorded on the run's Prefect flow run:
 
 1. Run `runs show RUN_ID`. The output includes `flow_run_id`, and `prefect_flow_run_url` when

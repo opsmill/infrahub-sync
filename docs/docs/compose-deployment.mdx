@@ -878,6 +878,56 @@ docker compose logs --no-color --tail 200 sync-worker
 Credentials do not appear in the logs: run failures cross one redaction boundary
 before anything is rendered.
 
+To read the lines that Sync wrote during one run, without access to the containers, use the
+Sync API:
+
+```bash
+docker compose run --rm --no-deps -T cli runs logs RUN_ID
+docker compose run --rm --no-deps -T cli runs logs RUN_ID --follow
+docker compose run --rm --no-deps -T cli events --run-id RUN_ID
+```
+
+`runs logs` prints one line per log line: time, stage, level and message. `events` prints
+what happened to the run: each request the Sync API accepted or refused, and each stage
+result. See [Read a run's log](./reference/sync-http-api.mdx#read-a-runs-log) and
+[List events](./reference/sync-http-api.mdx#list-events).
+
+### How long run logs are kept {#how-long-run-logs-are-kept}
+
+The Sync API reads a run's log from the Prefect flow runs that ran its stages. Prefect keeps
+those flow runs, and their logs, until its database vacuum service deletes them. Two Prefect
+server settings control this:
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `PREFECT_SERVER_SERVICES_DB_VACUUM_ENABLED` | `events` | The kinds of record the vacuum service deletes. Flow runs are deleted only when the value includes `flow_runs`. |
+| `PREFECT_SERVER_SERVICES_DB_VACUUM_RETENTION_PERIOD` | 90 days | How long after a flow run ends it can be deleted, in seconds. The minimum is 1 hour. |
+
+The Compose file sets neither setting, so this deployment keeps every flow run and its log.
+Sync itself never deletes a flow run. To delete old flow runs, set both settings on the
+`prefect-server` service in `docker-compose.override.yml`, for example to keep flow runs for 30
+days:
+
+```yaml
+services:
+  prefect-server:
+    environment:
+      PREFECT_SERVER_SERVICES_DB_VACUUM_ENABLED: "events,flow_runs"
+      PREFECT_SERVER_SERVICES_DB_VACUUM_RETENTION_PERIOD: "2592000"
+```
+
+After Prefect deletes a flow run, `runs logs` for that run fails with `log-expired`. The run
+record, its results, its artifacts and its events are stored by Sync and stay readable.
+
+### Event order and container clocks
+
+The Sync API records an event for each request it decides, and the worker records an event for
+each stage result. `GET /events` orders events by the time each container recorded them. If
+the clocks of the `sync-api` and `sync-worker` containers do not agree, event order can be
+wrong, for example a stage result listed before the request that started it. Containers on one
+Docker host share the host's clock. When you run the API and the worker on different hosts,
+synchronize their clocks, for example with NTP.
+
 ## Stop, restart, and reset
 
 Before planned maintenance, coordinate with everyone submitting work to this

@@ -35,6 +35,7 @@ $ infrahub-sync [OPTIONS] COMMAND [ARGS]...
 * `apply`: Apply a service-owned plan after binding...
 * `verify`: Start verification of the saved plan of...
 * `whoami`: Show the actor the API token authenticates...
+* `events`: List typed events, oldest first: time,...
 * `configs`: Register and inspect configuration packages.
 * `runs`: Inspect service-owned runs.
 
@@ -142,6 +143,24 @@ $ infrahub-sync whoami [OPTIONS]
 
 **Options**:
 
+* `--help`: Show this message and exit.
+
+## `infrahub-sync events`
+
+List typed events, oldest first: time, type, resource, actor, outcome.
+
+**Usage**:
+
+```console
+$ infrahub-sync events [OPTIONS]
+```
+
+**Options**:
+
+* `--run-id <str>`: Only events about this run.
+* `--config-id, --config <str>`: Configuration ID or name. The ID is tried first, then the name.
+* `--type <str>`: Only events of this type, such as infrahub_sync.run.planned. Repeat for several.
+* `--follow`: Read new events every 2 seconds until interrupted.
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync configs`
@@ -307,6 +326,7 @@ $ infrahub-sync runs [OPTIONS] COMMAND [ARGS]...
 * `show`: Show one run&#x27;s service record and its...
 * `results`: Print the results the service recorded for...
 * `plan`: Review a saved plan summary, checksum, and...
+* `logs`: Print the lines Sync wrote during one run,...
 
 ### `infrahub-sync runs list`
 
@@ -421,4 +441,24 @@ $ infrahub-sync runs plan [OPTIONS] {run_id}
 
 * `--detail`: Render every saved operation.
 * `--kind <str>`: Filter the detailed operation list by destination kind; requires --detail.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync runs logs`
+
+Print the lines Sync wrote during one run, oldest first: time, stage, level, message.
+
+**Usage**:
+
+```console
+$ infrahub-sync runs logs [OPTIONS] {run_id}
+```
+
+**Arguments**:
+
+* `run_id`: Service-issued run ID.  [required]
+
+**Options**:
+
+* `--stage <str>`: Only lines of this stage: plan, verify, apply, sync.
+* `--follow`: Read new lines every 2 seconds until the run ends.
 * `--help`: Show this message and exit.

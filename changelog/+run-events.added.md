@@ -1,0 +1,1 @@
+Added `GET /events` and the `infrahub-sync events` command. They list typed events about runs and configurations, such as `infrahub_sync.run.planned` and `infrahub_sync.run.failed`, with their related account, configuration version and branch. Filter by run, configuration, event type, related resource and time; `--follow` prints new events as they are recorded.

@@ -70,11 +70,24 @@ around either packaged surface or wrap the CLI in a flow you own.
 #### What a service flow run shows in Prefect
 
 Each stage of a Sync run (`plan`, `verify`, `apply` or `sync`) runs as one Prefect flow run.
+Each line that Sync writes to the flow run's log starts with the name of the Sync logger that
+wrote it, then ` | `, for example `infrahub_sync.service.flow | `. Lines that Prefect writes,
+such as `Finished in state Completed()`, have no such prefix.
+
+You do not need access to Prefect to read these lines. `infrahub-sync runs logs <run_id>` and
+`GET /runs/{run_id}/logs` read them through the Sync API and leave out Prefect's own lines;
+`--follow` prints new lines until the run ends. See
+[Read a run's log](./reference/sync-http-api.mdx#read-a-runs-log).
+
+When a stage fails with an error that Sync knows, such as a destination branch that does not
+exist, the worker writes one ERROR line with the cause and the next step, without a Python
+traceback, and the flow run ends `Failed` with the same text as its state message.
+
 When the stage ends, the worker writes its last INFO line to the flow run's log. Prefect then
-adds its own line with the flow run's final state, such as `Finished in state Completed()`.
+adds its own line with the flow run's final state.
 
 ```text
-service run <run_id> stage=<stage> outcome=<outcome>; next step: <action>
+infrahub_sync.service.flow | service run <run_id> stage=<stage> outcome=<outcome>; next step: <action>
 ```
 
 The next step is the next action that the run recorded for its failure, when there is one.
@@ -140,8 +153,9 @@ Whatever scheduling tool you use, plan for these operational concerns:
 
 - **Logging.** Adapter and lifecycle logs come from the Sync worker that runs the request
   (`docker compose logs sync-worker` on a Compose deployment); the CLI itself reports
-  the run ID, the final state, and the exit code. Forward the worker's logs to the logging
-  system used by the scheduler.
+  the run ID, the final state, and the exit code. `infrahub-sync runs logs <run_id>` prints one
+  run's lines and `infrahub-sync events --run-id <run_id>` prints what happened to it, both
+  through the Sync API. Forward the worker's logs to the logging system used by the scheduler.
 - **Failure detection.** The CLI returns a non-zero exit code on failure. Wire the scheduling tool to catch this and alert the appropriate channel.
 - **Failure recovery.** Inspect the run record and destination after a failed write, then
   calculate a fresh plan. A failed operation can have written part of its change, unless the
