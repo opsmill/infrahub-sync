@@ -159,6 +159,7 @@ exclude = [
     "build",
     "dist",
     "examples",
+    ".specify",
 ]
 
 
@@ -194,6 +195,9 @@ max-line-length = 150
 max-complexity = 33
 
 [tool.ruff.lint.per-file-ignores]
+
+# Agent hooks are standalone scripts run by Claude Code and Codex, outside the project's code.
+".agents/hooks/*.py" = ["ALL"]
 
 "examples/**.py" = [
     "FIX002",    # Line contains TODO, consider resolving the issue
@@ -322,7 +326,7 @@ max-complexity = 33
 [tool.ty]
 
 [tool.ty.src]
-exclude = ["examples/**"]
+exclude = ["examples/**", ".specify/**"]
 
 [tool.ty.environment]
 python-version = "3.10"
