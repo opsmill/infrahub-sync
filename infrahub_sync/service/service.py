@@ -31,6 +31,7 @@ from infrahub_sync.product_store import (
 )
 from infrahub_sync.product_store.configs import CONFIGURATION_NOT_FOUND_REASON, CONFIGURATION_VERSION_NOT_FOUND_REASON
 
+from .events import run_decision_type, run_event
 from .liveness import CancellationSelectionUnavailableError, select_cancellable_execution
 from .models import (
     ApplyRunRequest,
@@ -197,6 +198,9 @@ class RunService:
                 operation="sync",
                 reason=request.reason,
                 outcome="refused-confirmation",
+                config_id=request.config_id,
+                registry_version=request.registry_version,
+                branch=destination_branch,
             )
             raise self._error(409, "confirmation-required", "confirm_writes=true is required for sync")
 
@@ -368,7 +372,7 @@ class RunService:
         )
         return await self._resume_or_replay(receipt, parameters, principal, request.reason)
 
-    async def cancel_run(  # noqa: PLR0911  # pylint: disable=too-many-branches,too-many-return-statements,too-many-statements
+    async def cancel_run(  # pylint: disable=too-many-branches,too-many-return-statements,too-many-statements
         self, run_id: str, request: CancelRunRequest, principal: Principal, idempotency_key: str
     ) -> tuple[int, dict[str, Any]]:
         """Request cancellation of only the latest active service execution."""
@@ -501,14 +505,14 @@ class RunService:
                     mutation_id=receipt.receipt_id,
                 ),
                 flow_run_id=link.flow_run_id,
+                event=self._event(
+                    run_id,
+                    actor=principal.actor,
+                    operation="cancel",
+                    reason=request.reason,
+                    outcome="refused-terminal",
+                ),
                 secrets=self._secrets,
-            )
-            self._audit(
-                run_id,
-                actor=principal.actor,
-                operation="cancel",
-                reason=request.reason,
-                outcome="refused-terminal",
             )
             return self._stored_response(completed)
         try:
@@ -540,6 +544,9 @@ class RunService:
             acknowledged_at=self._clock(),
             response_status=202,
             response_body=body,
+            event=self._event(
+                run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="accepted"
+            ),
             secrets=self._secrets,
         )
         completed = self._projection.lookup_mutation(receipt.actor, receipt.key_digest).value
@@ -567,8 +574,7 @@ class RunService:
                 reason=request.reason,
                 outcome="refused-terminal" if completed.response_status == 409 else "unavailable",
             )
-            return self._stored_response(completed)
-        self._audit(run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="accepted")
+        # An acknowledged cancellation wrote its accepted event with the 202 it stored.
         return self._stored_response(completed)
 
     def _raise_cancel_unavailable(
@@ -762,14 +768,14 @@ class RunService:
             response_status=202,
             response_body=body,
             flow_run_id=submission.flow_run_id,
+            event=self._event(
+                receipt.run_id,
+                actor=principal.actor,
+                operation=receipt.operation,
+                reason=reason,
+                outcome="accepted",
+            ),
             secrets=self._secrets,
-        )
-        self._audit(
-            receipt.run_id,
-            actor=principal.actor,
-            operation=receipt.operation,
-            reason=reason,
-            outcome="accepted",
         )
         return self._stored_response(completed)
 
@@ -1060,6 +1066,38 @@ class RunService:
             )
         return RunResource(run=public_run_resource(run), orchestration=tuple(orchestration))
 
+    def _event(
+        self,
+        run_id: str | None,
+        *,
+        actor: str,
+        operation: str,
+        reason: str | None,
+        outcome: str,
+        config_id: str | None = None,
+        registry_version: int | None = None,
+        branch: str | None = None,
+    ) -> AuditEvent:
+        """Build the typed event of one request decision.
+
+        The type comes from the outcome. The configuration, version and branch come from the
+        stored run when there is one, else from the arguments, for a request refused before
+        its run exists.
+        """
+        run = None if run_id is None else self._projection.lookup_run(run_id).value
+        return run_event(
+            run_id,
+            run,
+            event_type=run_decision_type(outcome),
+            actor=actor,
+            operation=operation,
+            reason=reason,
+            outcome=outcome,
+            config_id=config_id,
+            registry_version=registry_version,
+            branch=branch,
+        )
+
     def _audit(
         self,
         run_id: str | None,
@@ -1068,20 +1106,25 @@ class RunService:
         operation: str,
         reason: str | None,
         outcome: str,
+        config_id: str | None = None,
+        registry_version: int | None = None,
+        branch: str | None = None,
     ) -> None:
-        event = AuditEvent(
-            event_id=f"a-{uuid4().hex}",
-            run_id=run_id,
+        """Record the event of a decision that saves nothing else, such as a refusal or a replay."""
+        event = self._event(
+            run_id,
             actor=actor,
             operation=operation,
             reason=reason,
             outcome=outcome,
-            created_at=datetime.now(timezone.utc),
+            config_id=config_id,
+            registry_version=registry_version,
+            branch=branch,
         )
         self._projection.record_audit(event, secrets=self._secrets)
 
     def record_authentication_refusal(self, operation: str, reason: str) -> None:
-        """Persist anonymous authentication refusal evidence without token material."""
+        """Persist anonymous authentication refusal evidence without token material or an event type."""
         self._audit(
             None,
             actor="unauthenticated",

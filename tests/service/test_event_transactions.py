@@ -247,3 +247,72 @@ def test_event_written_with_a_decision_is_redacted(projection: ProductProjection
     (stored,) = projection.list_events(EventFilters(), limit=50, offset=0).items
     assert stored.reason is not None
     assert _SECRET not in stored.reason
+
+
+def _requested_cancellation(projection: ProductProjection) -> str:
+    receipt = _receipt(operation="cancel", target_run_id="run-001")
+    projection.create_run(_run())
+    _append_execution(
+        projection,
+        "run-001",
+        PrefectExecutionLink(flow_run_id="flow-001", purpose="plan", attempt=1, submitted_at=_NOW),
+    )
+    projection.reserve_mutation(receipt)
+    assert projection.claim_mutation(receipt.receipt_id)
+    assert projection.request_execution_cancellation(
+        "run-001",
+        "flow-001",
+        requested_at=_NOW,
+        recovery_deadline_at=_NOW + timedelta(seconds=30),
+        recovery_seconds=30,
+        expected_latest_position=0,
+        receipt_id=receipt.receipt_id,
+    )
+    return receipt.receipt_id
+
+
+def _acknowledge(projection: ProductProjection, event: AuditEvent, *, seconds: int = 1) -> bool:
+    return projection.acknowledge_execution_cancellation(
+        "run-001",
+        "flow-001",
+        acknowledged_at=_NOW + timedelta(seconds=seconds),
+        response_status=202,
+        response_body={"run": {"run_id": "run-001"}, "orchestration": []},
+        event=event,
+    )
+
+
+def test_failed_event_insert_leaves_the_cancel_request_unanswered(projection: ProductProjection) -> None:
+    _requested_cancellation(projection)
+    taken = _taken_event_id(projection)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        _acknowledge(projection, _event(taken, "infrahub_sync.run.accepted"))
+
+    receipt = _receipt(operation="cancel", target_run_id="run-001")
+    stored = projection.lookup_mutation(receipt.actor, receipt.key_digest).value
+    assert stored is not None
+    assert stored.response_status is None
+    run = projection.lookup_run("run-001").value
+    assert run is not None
+    assert run.prefect_executions[0].cancellation_acknowledged_at is None
+
+
+def test_cancel_acknowledgement_and_its_event_are_saved_together(projection: ProductProjection) -> None:
+    _requested_cancellation(projection)
+
+    assert _acknowledge(projection, _event("a-cancel-accepted", "infrahub_sync.run.accepted"))
+
+    assert _typed_ids(projection) == ["a-cancel-accepted"]
+    found = projection.lookup_mutation_for_execution("run-001", "flow-001", "cancel").value
+    assert found is not None
+    assert found.operation == "cancel"
+    assert projection.lookup_mutation_for_execution("run-001", "flow-001", "plan").value is None
+
+
+def test_cancel_acknowledged_too_late_saves_no_accepted_event(projection: ProductProjection) -> None:
+    _requested_cancellation(projection)
+
+    assert not _acknowledge(projection, _event("a-cancel-accepted", "infrahub_sync.run.accepted"), seconds=31)
+
+    assert _typed_ids(projection) == []

@@ -425,6 +425,11 @@ flow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 _SELECT_MUTATION_RECEIPT = """SELECT receipt_id, actor, key_digest, operation, target_run_id,
 request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body, flow_run_id,
 created_at, updated_at FROM mutation_receipts WHERE actor = ? AND key_digest = ?"""
+# The receipt of one operation that holds a flow run ID; the oldest wins if two ever do.
+_SELECT_MUTATION_RECEIPT_FOR_EXECUTION = """SELECT receipt_id, actor, key_digest, operation, target_run_id,
+request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body, flow_run_id,
+created_at, updated_at FROM mutation_receipts WHERE run_id = ? AND flow_run_id = ? AND operation = ?
+ORDER BY created_at, receipt_id"""
 _INSERT_AUDIT_EVENT = """INSERT INTO audit_events (event_id, run_id, actor, operation, reason, outcome, created_at,
 event_type, config_id, registry_version, branch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _INSERT_AUDIT_EVENT_RESOURCE = "INSERT INTO audit_event_resources (event_id, kind, resource_id) VALUES (?, ?, ?)"
@@ -615,6 +620,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         acknowledged_at: datetime,
         response_status: int,
         response_body: Mapping[str, Any],
+        event: AuditEvent | None = None,
     ) -> bool: ...
 
     def cancel_execution(
@@ -630,6 +636,10 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     ) -> tuple[MutationReceipt, bool]: ...
 
     def lookup_mutation(self, actor: str, key_digest: str) -> LookupResult[MutationReceipt]: ...
+
+    def lookup_mutation_for_execution(
+        self, run_id: str, flow_run_id: str, operation: str
+    ) -> LookupResult[MutationReceipt]: ...
 
     def complete_mutation(
         self,
@@ -1675,8 +1685,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         acknowledged_at: datetime,
         response_status: int,
         response_body: Mapping[str, Any],
+        event: AuditEvent | None = None,
     ) -> bool:
-        """Persist remote acknowledgement and the replay result in one transaction."""
+        """Persist remote acknowledgement, the replay result and the accepted event in one transaction.
+
+        ``event`` is written only when the acknowledgement is accepted, not when it is turned
+        into an ambiguous or unconfirmed refusal.
+        """
         connection = self._connect()
         try:
             cursor = connection.cursor()
@@ -1767,6 +1782,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     flow_run_id=flow_run_id,
                     updated_at=acknowledged_at,
                 )
+                if event is not None:
+                    self._insert_event(cursor, event)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -2123,6 +2140,23 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             cursor = connection.cursor()
             try:
                 cursor.execute(self._sql(_SELECT_MUTATION_RECEIPT), (actor, key_digest))
+                row = cursor.fetchone()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        if row is None:
+            return LookupResult(value=None, reason="mutation-receipt-not-found")
+        return LookupResult(value=_receipt_from_row(row))
+
+    def lookup_mutation_for_execution(
+        self, run_id: str, flow_run_id: str, operation: str
+    ) -> LookupResult[MutationReceipt]:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_MUTATION_RECEIPT_FOR_EXECUTION), (run_id, flow_run_id, operation))
                 row = cursor.fetchone()
             finally:
                 cursor.close()
@@ -3285,9 +3319,10 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         acknowledged_at: datetime,
         response_status: int,
         response_body: Mapping[str, Any],
+        event: AuditEvent | None = None,
         secrets: Sequence[str] = (),
     ) -> bool:
-        """Commit acknowledgement and the accepted replay response together."""
+        """Commit acknowledgement, the accepted replay response and the accepted event together."""
         _require_execution_timestamp(acknowledged_at)
         sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(response_body), secrets))
         return self._records.acknowledge_execution_cancellation(
@@ -3296,6 +3331,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             acknowledged_at=acknowledged_at,
             response_status=response_status,
             response_body=sanitized,
+            event=_redacted_event(event, secrets),
         )
 
     def cancel_execution(
@@ -3361,6 +3397,12 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
     def lookup_mutation(self, actor: str, key_digest: str) -> LookupResult[MutationReceipt]:
         """Look up the durable receipt for an actor and hashed client key."""
         return self._records.lookup_mutation(actor, key_digest)
+
+    def lookup_mutation_for_execution(
+        self, run_id: str, flow_run_id: str, operation: str
+    ) -> LookupResult[MutationReceipt]:
+        """Look up the receipt of ``operation`` that holds a run's flow run ID, such as the request that started it."""
+        return self._records.lookup_mutation_for_execution(run_id, flow_run_id, operation)
 
     def complete_mutation(
         self,

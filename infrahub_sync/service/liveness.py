@@ -9,11 +9,13 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 from infrahub_sync.product_store import (  # noqa: TC001 - runtime protocol boundary.
+    AuditEvent,
     PrefectExecutionLink,
     ProductProjection,
     ProductRun,
 )
 
+from .events import RUN_CANCELLED, run_event
 from .orchestration import (
     Observation,
     PoolStatus,
@@ -197,7 +199,12 @@ class RunLivenessReconciler:
             if (
                 link.cancellation_acknowledged_at is not None
                 and link.last_observed_state == "cancelled"
-                and self._projection.cancel_execution(run_id, link.flow_run_id, terminal_at=now)
+                and self._projection.cancel_execution(
+                    run_id,
+                    link.flow_run_id,
+                    terminal_at=now,
+                    event=self._cancelled_event(refreshed_run, link.flow_run_id),
+                )
             ):
                 return observed
             assert link.cancellation_recovery_deadline_at is not None
@@ -223,6 +230,20 @@ class RunLivenessReconciler:
         if pool.detail_available and not _owner_is_fresh(link.claiming_worker_id, pool, now):
             self._projection.interrupt_execution(run_id, link.flow_run_id, terminal_at=now)
         return observed
+
+    def _cancelled_event(self, run: ProductRun, flow_run_id: str) -> AuditEvent:
+        """Build the `run.cancelled` event: the actor and reason of the cancel request, else the run's actor."""
+        request = self._projection.lookup_mutation_for_execution(run.run_id, flow_run_id, "cancel").value
+        actor = request.actor if request is not None else run.actor
+        return run_event(
+            run.run_id,
+            run,
+            event_type=RUN_CANCELLED,
+            actor=actor or "unknown",
+            operation="cancel",
+            reason=None if request is None else request.reason,
+            outcome="cancelled",
+        )
 
 
 def _owner_is_fresh(worker_id: str | None, pool: PoolStatus, now: datetime) -> bool:

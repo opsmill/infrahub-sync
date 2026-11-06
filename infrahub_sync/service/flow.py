@@ -62,16 +62,19 @@ from infrahub_sync.plan.verify import (
     verify_plan,
 )
 from infrahub_sync.product_store import (
+    AuditEvent,
     BaselineWriteback,
     ExecutionFinishWriteback,
     ExecutionMergeWriteback,
     ExecutionWriteback,
     ProductProjection,
+    ProductRun,
 )
 from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, RuntimeModelPlan, build_runtime_model_plan
 
 from .apply_guard import ApplyGuard, hold_apply_guard
 from .checkpoints import publish_final_checkpoint, publish_plan_checkpoint, rehydrate_plan_checkpoint
+from .events import run_event, stage_result_type
 from .failure_cause import operator_cause
 from .liveness import LivenessPolicy
 from .models import PlanResource
@@ -901,6 +904,7 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
             terminal_state=terminal_state,
             terminal_outcome=terminal_outcome,
             writeback=writeback,
+            event=_stage_event(projection, stored, flow_run_id, stage, terminal_outcome),
             secrets=secrets,
         )
     except Exception as persistence_error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
@@ -1013,7 +1017,15 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     record_terminal = True
     if failure is None:
         try:
-            _commit_success(projection, run_id, flow_run_id, worker_id=worker_id, writeback=writeback, secrets=secrets)
+            _commit_success(
+                projection,
+                run_id,
+                flow_run_id,
+                stage=stage,
+                worker_id=worker_id,
+                writeback=writeback,
+                secrets=secrets,
+            )
         except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             failure = exc
             # A read stage whose success did not store stays nonterminal on purpose: it
@@ -1075,11 +1087,34 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     return result
 
 
-def _commit_success(
+def _stage_event(
+    projection: ProductProjection, run: ProductRun, flow_run_id: str, stage: str, outcome: str
+) -> AuditEvent:
+    """Build the event of one stage result (spec 017 data model).
+
+    The actor and reason are those of the request whose receipt holds this flow run ID, so an
+    apply an administrator requested names the administrator; when no receipt holds it, the
+    event names the run's actor.
+    """
+    request = projection.lookup_mutation_for_execution(run.run_id, flow_run_id, stage).value
+    actor = request.actor if request is not None else run.actor
+    return run_event(
+        run.run_id,
+        run,
+        event_type=stage_result_type(stage, outcome),
+        actor=actor or "unknown",
+        operation=stage,
+        reason=None if request is None else request.reason,
+        outcome=outcome,
+    )
+
+
+def _commit_success(  # pylint: disable=too-many-arguments
     projection: ProductProjection,
     run_id: str,
     flow_run_id: str,
     *,
+    stage: str,
     worker_id: str,
     writeback: ExecutionWriteback,
     secrets: Sequence[str],
@@ -1091,7 +1126,8 @@ def _commit_success(
     anything else is a failure the scope's one exit path has to handle.
     """
     try:
-        if not projection.commit_claimed_execution(
+        stored = projection.lookup_run(run_id).value
+        if stored is None or not projection.commit_claimed_execution(
             run_id,
             flow_run_id,
             worker_id=worker_id,
@@ -1099,6 +1135,7 @@ def _commit_success(
             terminal_state="completed",
             terminal_outcome="succeeded",
             writeback=writeback,
+            event=_stage_event(projection, stored, flow_run_id, stage, "succeeded"),
             secrets=secrets,
         ):
             _raise_writeback_refused()

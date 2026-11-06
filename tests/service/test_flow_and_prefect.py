@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import logging
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 from threading import Event, Thread, current_thread
 from types import SimpleNamespace
@@ -44,7 +45,14 @@ from infrahub_sync.plan.errors import (
 )
 from infrahub_sync.plan.models import ApplyRecord, PlanManifest
 from infrahub_sync.plan.review import SavedPlan
-from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
+from infrahub_sync.product_store import (
+    ExecutionFinishWriteback,
+    ExecutionMergeWriteback,
+    MutationReceipt,
+    PrefectExecutionLink,
+    ProductRun,
+    local_product_projection,
+)
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.deploy import CATALOGUE
 from infrahub_sync.service.flow import service_sync_run
@@ -812,11 +820,13 @@ def test_service_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.M
     after = projection.lookup_run(run_id).value
     assert after is not None
     assert before is not None
-    assert after.model_dump(exclude={"results", "prefect_executions"}) == before.model_dump(
-        exclude={"results", "prefect_executions"}
+    # The verify result's event (spec 017, FR-012a) is evidence, not a lifecycle change.
+    assert after.model_dump(exclude={"results", "prefect_executions", "audit_links"}) == before.model_dump(
+        exclude={"results", "prefect_executions", "audit_links"}
     )
     assert after.results == {"verification": result}
     assert after.prefect_executions[0].terminal_state == "completed"
+    assert [event.event_type for event in projection.audit_events(run_id)] == ["infrahub_sync.run.verified"]
 
 
 @pytest.mark.usefixtures("_claimed_worker_execution")
@@ -1635,3 +1645,140 @@ def test_an_apply_records_the_next_action_its_error_declares_and_not_its_message
     assert evidence.get("next_action") == expected_next_action
     assert "cause" not in evidence
     assert LINEAGE_TOKEN not in stored.model_dump_json()
+
+
+_EVENT_WORKER_ID = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+
+
+def _stage_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: Literal["plan", "verify", "apply", "sync"],
+    *,
+    requester: str | None,
+) -> tuple[Any, str, str]:
+    """Return a projection holding one claimed ``stage`` execution of a run ``initiator`` started.
+
+    With ``requester``, that actor's accepted receipt holds the execution's flow run ID;
+    without, no receipt holds it.
+    """
+    run_id = f"run-events-{stage}"
+    flow_run_id = f"flow-events-{stage}"
+    projection = local_product_projection(tmp_path)
+    version = projection.create_configuration(package())
+    projection.create_run(
+        ProductRun(
+            run_id=run_id,
+            operation=stage,
+            configuration_reference=f"{version.config_id}@{version.registry_version}",
+            config_id=version.config_id,
+            registry_version=version.registry_version,
+            package_checksum=version.package_checksum,
+            actor="initiator",
+            started_at=datetime.now(timezone.utc),
+            phase="accepted",
+            summary={"sync_name": "inventory"},
+        )
+    )
+    link = PrefectExecutionLink(flow_run_id=flow_run_id, purpose=stage, attempt=1)
+    if requester is None:
+        append_execution(projection, run_id, link)
+    else:
+        now = datetime.now(timezone.utc)
+        receipt = MutationReceipt(
+            receipt_id=f"m-{uuid4().hex}",
+            actor=requester,
+            key_digest=sha256(stage.encode()).hexdigest(),
+            operation=stage,
+            target_run_id=run_id,
+            request_fingerprint=sha256(f"{stage}-request".encode()).hexdigest(),
+            reason=f"{stage} requested",
+            resource_id=run_id,
+            run_id=run_id,
+            prefect_key=sha256(f"{stage}-prefect".encode()).hexdigest(),
+            created_at=now,
+            updated_at=now,
+        )
+        projection.reserve_mutation(receipt, admit_write=stage in {"apply", "sync"})
+        projection.add_prefect_execution(run_id, link, receipt_id=receipt.receipt_id)
+        projection.complete_mutation(
+            receipt.receipt_id, response_status=202, response_body={"run": {"run_id": run_id}}, flow_run_id=flow_run_id
+        )
+    assert projection.claim_execution(run_id, flow_run_id, worker_id=_EVENT_WORKER_ID)
+
+    def outside_the_result(*_args: object, **_kwargs: object) -> NoReturn:
+        msg = "a stage-result event must be written with the result"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(projection, "record_audit", outside_the_result)
+    return projection, run_id, flow_run_id
+
+
+@pytest.mark.parametrize(
+    ("stage", "event_type"),
+    [
+        ("plan", "infrahub_sync.run.planned"),
+        ("verify", "infrahub_sync.run.verified"),
+        ("apply", "infrahub_sync.run.applied"),
+        ("sync", "infrahub_sync.run.synced"),
+    ],
+)
+def test_a_successful_stage_records_its_result_event_with_the_requesting_actor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: Literal["plan", "verify", "apply", "sync"], event_type: str
+) -> None:
+    """FR-012a and FR-014: the success and its event commit together, naming who requested the stage."""
+    projection, run_id, flow_run_id = _stage_execution(tmp_path, monkeypatch, stage, requester="admin")
+    writeback = (
+        ExecutionMergeWriteback(results={})
+        if stage == "verify"
+        else ExecutionFinishWriteback(
+            phase="planned", outcome="planned", finished_at=datetime.now(timezone.utc), summary={}, results={}
+        )
+    )
+
+    service_flow._commit_success(
+        projection, run_id, flow_run_id, stage=stage, worker_id=_EVENT_WORKER_ID, writeback=writeback, secrets=()
+    )
+
+    (event,) = projection.audit_events(run_id)
+    assert (event.event_type, event.operation, event.outcome, event.actor, event.reason) == (
+        event_type,
+        stage,
+        "succeeded",
+        "admin",
+        f"{stage} requested",
+    )
+    config_id, registry_version, _checksum = _binding(projection, run_id)
+    assert (event.config_id, event.registry_version) == (config_id, registry_version)
+    assert [related.kind for related in event.related] == ["account", "config", "config_version"]
+
+
+@pytest.mark.parametrize(("dispatch_started", "outcome"), [(False, "failed"), (True, "ambiguous")])
+def test_a_failed_or_interrupted_stage_records_a_run_failed_event_with_the_runs_actor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, dispatch_started: bool, outcome: str
+) -> None:
+    """FR-012a: with no receipt holding the flow run ID, the event names the run's actor."""
+    projection, run_id, flow_run_id = _stage_execution(tmp_path, monkeypatch, "apply", requester=None)
+
+    recorded = service_flow._record_failure(
+        run_id,
+        "apply",
+        RuntimeError("apply failed"),
+        _RecordingRunLogger(),
+        (),
+        projection,
+        flow_run_id,
+        _EVENT_WORKER_ID,
+        dispatch_started=dispatch_started,
+        record=None,
+    )
+
+    assert recorded is not None
+    assert recorded.outcome == outcome
+    (event,) = projection.audit_events(run_id)
+    assert (event.event_type, event.operation, event.outcome, event.actor) == (
+        "infrahub_sync.run.failed",
+        "apply",
+        outcome,
+        "initiator",
+    )
