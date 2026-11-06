@@ -144,6 +144,38 @@ changelog/                          # one fragment per user-visible change
 The result dictionary that a successful stage returns does not change. `secrets.clear()` still runs after the
 line is written.
 
+Callers and tests that see the change (critique E3): a caller that runs the flow and waits for its result receives
+an exception that Prefect raises from the `Failed` state, not Sync's sanitized error (research R1). Sixteen files
+in `tests/service/` call `service_sync_run`; those with the most `pytest.raises` checks are:
+
+- `tests/service/test_flow_and_prefect.py` (12)
+- `tests/service/test_run_log_next_step.py` (9)
+- `tests/service/test_service_worker.py` (1)
+
+Which of these checks use a known error class was not checked. The first task of that group lists them by running
+the unit tier against the new behaviour, and each one is updated to assert the returned `Failed` state. The
+unknown-class path and the refused claim keep their tests unchanged.
+
+## Messages that name Prefect today (FR-006)
+
+The Sync API returns three error messages that name Prefect. Each is reworded to name "the orchestrator", and a
+test pins the new text:
+
+- `infrahub_sync/service/service.py:521` and `service.py:529`: "Prefect could not confirm the cancellation request";
+- `infrahub_sync/service/service.py:726`: "Prefect could not confirm service submission (...)".
+
+The refused-claim line (`infrahub_sync/service/flow.py:101-103`) stays, as FR-006 allows. The FR-006 test scans the
+responses and CLI output of the unit tier's scenarios for the Prefect API address (`PREFECT_API_URL`'s host and
+port) and for the words "open Prefect", "in Prefect" and "Prefect flow run".
+
+## Store migration
+
+The change adds nullable columns to `audit_events` and one table, on SQLite and PostgreSQL, through the store's
+existing migration step (`_migrate_audit_events`, `infrahub_sync/product_store/store.py:837`). The existing insert
+names its columns (`store.py:417`), so a release from before this change can still write events into a migrated
+store; rolling back needs no reverse migration. Event order depends on the clocks of the `sync-api` and worker
+containers agreeing (critique E2); the deployment page says so.
+
 ## Log reader
 
 `GET /runs/{run_id}/logs` → `RunService.read_run_logs(run_id, stage, limit, offset)`:

@@ -25,14 +25,15 @@ uv run invoke lint
 
 1. Run a plan that succeeds, then `infrahub-sync apply <run_id> --checksum <checksum>`.
 2. `infrahub-sync events --run-id <run_id>`: `run.accepted`, `run.planned`, `run.accepted`, `run.applied`, in order.
-3. `curl`-free check from the frontend's view: `GET /events?run_id=<run_id>` returns the same four events with
-   related resources.
+3. As the frontend: `GET /events?run_id=<run_id>` returns the same four events with their related resources.
 
 ## Scenario 3: polling (User Story 2 and SC-003)
 
 1. Start a plan and, at once, `infrahub-sync runs logs <run_id> --follow`.
 2. Each line appears once; the command exits when the run ends.
 3. Compare each line's `timestamp` with the time it was printed: the gap is under 5 seconds.
+4. For the largest available sync (for example the `from-netbox` example), record the number of lines that
+   `GET /runs/<run_id>/logs` reads from Prefect and the time one request takes (critique E6).
 
 ## Scenario 4: Prefect cannot be reached (SC-006)
 

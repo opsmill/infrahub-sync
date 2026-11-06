@@ -43,8 +43,10 @@ Storage, for both SQLite and PostgreSQL:
 | `infrahub_sync.config.refused` | Sync API | A configuration request is refused (`refused-authorization`, `refused-idempotency*`). |
 | `infrahub_sync.config.replayed` / `.unavailable` | Sync API | As for runs. |
 
-No source says which actor a worker event names. This plan uses the run's initiating actor, read from the stored
-run, and sets `operation` to the stage.
+No source says which actor a worker event names. This plan uses the actor of the accepted request whose mutation
+receipt holds the stage's flow run ID (`complete_mutation` stores it, `infrahub_sync/product_store/store.py:2054`),
+so an apply that an administrator requested shows the administrator. When no receipt holds the flow run ID, the
+event names the run's initiating actor. `operation` is the stage.
 
 ## Run log line (view; not stored)
 
@@ -57,7 +59,7 @@ run, and sets `operation` to the stage.
 | `source` | The logger name before ` \| ` (for example `infrahub_sync.service.flow`). |
 | `message` | The text after ` \| `. Already redacted by the writer. |
 
-Order: orchestration entries in attempt order, then lines by timestamp. Lines whose message does not start with the
+Order: orchestration entries in attempt order, then lines by timestamp, then Prefect's log ID. Lines whose message does not start with the
 Sync prefix are left out (research R3).
 
 ## Run failure (stored; extends `{stage}_failure` in run results, `infrahub_sync/service/flow.py:743`)

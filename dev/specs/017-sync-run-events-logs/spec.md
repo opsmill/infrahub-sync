@@ -172,9 +172,13 @@ that makes it pass.
   `--branch <existing branch>`.
 - **FR-003**: A stage that fails with a known error class MUST NOT write a Python traceback to the lines that Sync
   writes. It MUST write one ERROR line that holds the cause and the next step.
-- **FR-006**: No message that the Sync API returns, that the CLI prints, or that Sync writes to a run's log MUST tell
-  the reader to open Prefect or name the Prefect address. Field names that already exist, such as
-  `prefect_flow_run_url` (spec 016) and `prefect_executions`, are not messages and stay as they are.
+- **FR-006**: No error message that the Sync API returns, no message that the CLI prints, and no line that Sync
+  writes to a run's log MUST tell the reader to open, read or retry anything in Prefect, or hold the Prefect API
+  address. The Sync API's error messages MUST NOT name Prefect; they name "the orchestrator". These stay as they
+  are, because they are not messages or because they answer an action taken in Prefect:
+  - field names that already exist, such as `prefect_executions` and `prefect_flow_run_url` (spec 016);
+  - the value of `prefect_flow_run_url`, a link that the operator chooses to configure;
+  - the refused-claim line, written when someone selects Retry on a flow run in Prefect (spec 016).
 
 #### Run log, read from Prefect through the Sync API
 
