@@ -1198,9 +1198,12 @@ def runs_plan(
         _echo_plan(_client(ctx).get_plan(run_id), detail=detail, kind=kind)
 
 
-# A run's phase while its execution has not ended. A verify run keeps it after its execution
-# ends, because a verification records results without a new phase.
+# A run's phase while its first execution is submitted and has not ended.
 _UNFINISHED_RUN_PHASE = "accepted"
+# Empty reads, one poll interval apart, after which `runs logs --follow` stops once the run has
+# ended. The orchestrator stores the last lines of an execution in batches after it ends, so the
+# first empty read after the end can come before them (spec 017 quickstart, scenario 3).
+_FINAL_EMPTY_READS = 3
 # Client operation names a protocol error reports.
 _READ_RUN_LOGS = "read_run_logs"
 _LIST_EVENTS = "list_events"
@@ -1216,11 +1219,16 @@ def _log_row(line: RunLogLine) -> str:
 
 
 def _run_ended(client: SyncClient, page: RunLogPage) -> bool:
-    """Report whether the run whose log page this is can write no further line."""
-    if page.run_phase != _UNFINISHED_RUN_PHASE:
-        return True
+    """Report whether the run whose log page this is can write no further line.
+
+    The verdict of the run's latest execution decides, not the phase: an apply or a verify of a
+    planned run keeps the phase `planned` while it runs. A run with no execution yet has ended
+    only when its phase is no longer `accepted`.
+    """
     orchestration = client.get_run(page.run_id).orchestration
-    return bool(orchestration) and orchestration[-1].terminal_state is not None
+    if not orchestration:
+        return page.run_phase != _UNFINISHED_RUN_PHASE
+    return orchestration[-1].terminal_state is not None
 
 
 @runs_app.command("logs")
@@ -1238,6 +1246,8 @@ def runs_logs(
     with _client_errors():
         client = _client(ctx)
         offset = 0
+        # Consecutive empty reads since the run ended; `None` until it has ended.
+        empty_after_end: int | None = None
         try:
             while True:
                 page = client.read_run_logs(run_id, stage=stage, offset=offset)
@@ -1248,9 +1258,16 @@ def runs_logs(
                     if not page.items:
                         raise ProtocolError(_READ_RUN_LOGS)
                     continue
-                # The run's last lines may land after its phase changes, so stop only on an empty read.
-                if not follow or (not page.items and _run_ended(client, page)):
+                if not follow:
                     return
+                # The orchestrator stores a run's last lines a moment after its execution ends, so
+                # stop only after `_FINAL_EMPTY_READS` empty reads once the run has ended.
+                if page.items:
+                    empty_after_end = None if empty_after_end is None else 0
+                elif empty_after_end is not None or _run_ended(client, page):
+                    empty_after_end = 1 if empty_after_end is None else empty_after_end + 1
+                    if empty_after_end >= _FINAL_EMPTY_READS:
+                        return
                 sleep(DEFAULT_POLL_INTERVAL)
         except KeyboardInterrupt:
             raise typer.Exit(130) from None

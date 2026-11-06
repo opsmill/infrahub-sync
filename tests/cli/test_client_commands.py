@@ -1990,14 +1990,63 @@ def test_runs_logs_follow_prints_each_line_once_and_stops_after_the_run_ends(
         _log_page(offset=2, run_phase="accepted"),
         _log_page(_log_line("three"), offset=2, run_phase="applied"),
         _log_page(offset=3, run_phase="applied"),
+        _log_page(offset=3, run_phase="applied"),
+        _log_page(offset=3, run_phase="applied"),
     ]
+    client.get_run.side_effect = [_run(operation="apply"), _run(operation="apply", terminal=("completed", "succeeded"))]
 
     result = _invoke(client, "runs", "logs", "service-run-1", "--follow")
 
     assert result.exit_code == 0, result.output
-    assert [call.kwargs["offset"] for call in client.read_run_logs.call_args_list] == [0, 2, 2, 3]
+    assert [call.kwargs["offset"] for call in client.read_run_logs.call_args_list] == [0, 2, 2, 3, 3, 3]
     assert [line.split("\t")[-1] for line in result.stdout.splitlines()] == ["one", "two", "three"]
-    assert poll_sleeps == [2.0, 2.0, 2.0]
+    # Once the run has ended, three empty reads one interval apart stop the command.
+    assert poll_sleeps == [2.0] * 5
+
+
+def test_runs_logs_follow_prints_a_line_stored_after_the_run_ended(client: MagicMock, poll_sleeps: list[float]) -> None:
+    # The orchestrator stores an execution's last lines in batches, after Sync records that it ended.
+    client.read_run_logs.side_effect = [
+        _log_page(_log_line("applying"), run_phase="planned"),
+        _log_page(offset=1, run_phase="applied"),
+        _log_page(_log_line("service run service-run-1 stage=apply outcome=applied"), offset=1, run_phase="applied"),
+        _log_page(offset=2, run_phase="applied"),
+        _log_page(offset=2, run_phase="applied"),
+        _log_page(offset=2, run_phase="applied"),
+    ]
+    client.get_run.return_value = _run(operation="apply", terminal=("completed", "succeeded"))
+
+    result = _invoke(client, "runs", "logs", "service-run-1", "--follow")
+
+    assert result.exit_code == 0, result.output
+    assert [line.split("\t")[-1] for line in result.stdout.splitlines()] == [
+        "applying",
+        "service run service-run-1 stage=apply outcome=applied",
+    ]
+    client.get_run.assert_called_once_with("service-run-1")
+    assert poll_sleeps == [2.0] * 5
+
+
+def test_runs_logs_follow_keeps_reading_while_an_apply_of_a_planned_run_runs(
+    client: MagicMock, poll_sleeps: list[float]
+) -> None:
+    # An apply keeps the run's phase `planned` until it ends; the apply execution's verdict decides.
+    client.read_run_logs.side_effect = [
+        _log_page(_log_line("planned 3 changes", stage="plan"), run_phase="planned"),
+        _log_page(offset=1, run_phase="planned"),
+        _log_page(_log_line("wrote 3 changes"), offset=1, run_phase="planned"),
+        _log_page(offset=2, run_phase="applied"),
+        _log_page(offset=2, run_phase="applied"),
+        _log_page(offset=2, run_phase="applied"),
+    ]
+    client.get_run.side_effect = [_run(operation="apply"), _run(operation="apply", terminal=("completed", "succeeded"))]
+
+    result = _invoke(client, "runs", "logs", "service-run-1", "--follow")
+
+    assert result.exit_code == 0, result.output
+    assert [line.split("\t")[-1] for line in result.stdout.splitlines()] == ["planned 3 changes", "wrote 3 changes"]
+    assert client.get_run.call_count == 2
+    assert poll_sleeps == [2.0] * 5
 
 
 def test_runs_logs_follow_stops_when_the_execution_ended_without_a_new_phase(
@@ -2007,6 +2056,8 @@ def test_runs_logs_follow_stops_when_the_execution_ended_without_a_new_phase(
     client.read_run_logs.side_effect = [
         _log_page(_log_line("checked"), run_phase="accepted"),
         _log_page(offset=1, run_phase="accepted"),
+        _log_page(offset=1, run_phase="accepted"),
+        _log_page(offset=1, run_phase="accepted"),
     ]
     client.get_run.return_value = _run(terminal=("completed", "succeeded"))
 
@@ -2015,7 +2066,7 @@ def test_runs_logs_follow_stops_when_the_execution_ended_without_a_new_phase(
     assert result.exit_code == 0, result.output
     assert [line.split("\t")[-1] for line in result.stdout.splitlines()] == ["checked"]
     client.get_run.assert_called_once_with("service-run-1")
-    assert poll_sleeps == [2.0]
+    assert poll_sleeps == [2.0] * 3
 
 
 @pytest.mark.parametrize(("status", "code"), [(410, "log-expired"), (503, "log-unavailable")])
