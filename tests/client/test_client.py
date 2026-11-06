@@ -27,6 +27,8 @@ from infrahub_sync.client import (
     EventResource,
     PrincipalResource,
     ProtocolError,
+    RunLogLine,
+    RunLogPage,
     RunPage,
     SyncClient,
     TransportError,
@@ -907,6 +909,111 @@ def test_event_list_arguments_are_refused_before_any_request(
 ) -> None:
     requests: list[httpx.Request] = []
     client = _events_client({}, requests)
+
+    with pytest.raises(ClientInputError) as raised:
+        call(client)
+    assert raised.value.argument == argument
+    assert requests == []
+
+
+def _log_page(**extra: object) -> dict[str, object]:
+    return {
+        "run_id": "run-1",
+        "items": [
+            {
+                "stage": "plan",
+                "attempt": 1,
+                "timestamp": NOW,
+                "level": "ERROR",
+                "source": "infrahub_sync.service.flow",
+                "message": "Branch `demo` does not exist in Infrahub.",
+            }
+        ],
+        "limit": 50,
+        "offset": 3,
+        "has_more": False,
+        "run_phase": "plan-failed",
+        **extra,
+    }
+
+
+def _logs_client(response: httpx.Response, requests: list[httpx.Request]) -> SyncClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        requests.append(request)
+        return response
+
+    return SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+
+
+def test_read_run_logs_sends_the_contract_query_and_parses_the_page() -> None:
+    requests: list[httpx.Request] = []
+    client = _logs_client(httpx.Response(200, json=_log_page()), requests)
+
+    page = client.read_run_logs("run-1", stage="plan", limit=50, offset=3)
+
+    assert isinstance(page, RunLogPage)
+    assert (page.run_id, page.limit, page.offset, page.has_more, page.run_phase) == (
+        "run-1",
+        50,
+        3,
+        False,
+        "plan-failed",
+    )
+    (line,) = page.items
+    assert isinstance(line, RunLogLine)
+    assert (line.stage, line.attempt, line.level, line.source) == ("plan", 1, "ERROR", "infrahub_sync.service.flow")
+    assert line.timestamp == datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
+    assert requests[0].url.path == "/runs/run-1/logs"
+    assert requests[0].url.params.multi_items() == [("stage", "plan"), ("limit", "50"), ("offset", "3")]
+
+
+def test_read_run_logs_without_arguments_sends_no_query() -> None:
+    requests: list[httpx.Request] = []
+    client = _logs_client(httpx.Response(200, json=_log_page(items=[], offset=0, limit=200)), requests)
+
+    page = client.read_run_logs("run-1")
+
+    assert page.items == ()
+    assert requests[0].url.query == b""
+
+
+@pytest.mark.parametrize(("status", "code"), [(410, "log-expired"), (503, "log-unavailable"), (404, "run-not-found")])
+def test_read_run_logs_maps_refusals_to_api_errors(status: int, code: str) -> None:
+    body = {
+        "error": {
+            "code": code,
+            "message": "the log of this run has expired",
+            "status": status,
+            "run_id": "run-1",
+            "mutation_id": None,
+        }
+    }
+    client = _logs_client(httpx.Response(status, json=body), [])
+
+    with pytest.raises(APIError) as raised:
+        client.read_run_logs("run-1")
+
+    assert (raised.value.status, raised.value.code, raised.value.run_id) == (status, code, "run-1")
+
+
+@pytest.mark.parametrize(
+    ("call", "argument"),
+    [
+        (lambda client: client.read_run_logs("bad id"), "run_id"),
+        (lambda client: client.read_run_logs("run-1", stage="deploy"), "stage"),
+        (lambda client: client.read_run_logs("run-1", limit=0), "limit"),
+        (lambda client: client.read_run_logs("run-1", limit=1001), "limit"),
+        (lambda client: client.read_run_logs("run-1", offset=-1), "offset"),
+        (lambda client: client.read_run_logs("run-1", offset=True), "offset"),
+    ],
+)
+def test_read_run_logs_arguments_are_refused_before_any_request(
+    call: Callable[[SyncClient], object], argument: str
+) -> None:
+    requests: list[httpx.Request] = []
+    client = _logs_client(httpx.Response(200, json=_log_page()), requests)
 
     with pytest.raises(ClientInputError) as raised:
         call(client)

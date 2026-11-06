@@ -28,10 +28,12 @@ from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
-from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, Submission
+from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from httpx import Response
 
 OWNER_TOKEN = "events-owner-token-canary-0001"  # noqa: S105 - deliberate non-secret boundary canary.
@@ -63,6 +65,10 @@ class _FakeOrchestration:
     async def cancel(self, flow_run_id: str) -> CancellationResult:  # noqa: PLR6301
         del flow_run_id
         return CancellationResult(acknowledged=True)
+
+    async def read_logs(self, flow_run_ids: Sequence[str]) -> RunLogRead:  # noqa: PLR6301
+        del flow_run_ids
+        return RunLogRead(expired=False)
 
 
 def _package() -> ConfigurationPackage:

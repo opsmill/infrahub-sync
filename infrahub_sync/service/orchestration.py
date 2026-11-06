@@ -15,6 +15,7 @@ from opsmill_prefect_extras.executors import (
     RemoteWorkflowExecutor,
 )
 from opsmill_prefect_extras.workflows import WorkflowDefinition
+from prefect.client.schemas.filters import LogFilter, LogFilterFlowRunId
 from prefect.client.schemas.objects import State, StateType, WorkerStatus
 from prefect.client.schemas.responses import (
     OrchestrationResult,
@@ -22,11 +23,12 @@ from prefect.client.schemas.responses import (
     StateAcceptDetails,
     T,
 )
+from prefect.client.schemas.sorting import LogSort
 from prefect.exceptions import ObjectNotFound
 from prefect.states import Cancelling
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
 SERVICE_FLOW_NAME = "infrahub-sync-service"
 SERVICE_DEPLOYMENT_NAME = "run"
@@ -64,6 +66,37 @@ _RUN_NAMES: Final = {
     "apply": "Apply sync plan of {configuration}",
     "sync": "Sync {configuration}",
 }
+# Lines read per Prefect log request (spec 017, research R4). Prefect's own default page size;
+# a page shorter than this is the last one.
+LOG_PAGE_SIZE: Final = 200
+
+
+class OrchestrationUnavailableError(RuntimeError):
+    """The orchestrator could not be reached or did not answer in time.
+
+    The message names no provider and no address: it can reach an API error.
+    """
+
+
+@dataclass(frozen=True)
+class FlowRunLog:
+    """One log line of a flow run, as the orchestrator stores it."""
+
+    log_id: str
+    flow_run_id: str
+    timestamp: datetime
+    level: int
+    message: str
+
+
+@dataclass(frozen=True)
+class RunLogRead:
+    """The log lines of a run's flow runs, or that one of them is no longer held."""
+
+    expired: bool
+    logs: tuple[FlowRunLog, ...] = ()
+
+
 _UNNAMED_RUNS: Final = {"plan": "Plan sync", "verify": "Verify sync plan", "apply": "Apply sync plan", "sync": "Sync"}
 
 
@@ -154,6 +187,8 @@ class ServiceOrchestration(Protocol):
 
     async def cancel(self, flow_run_id: str) -> CancellationResult: ...
 
+    async def read_logs(self, flow_run_ids: Sequence[str]) -> RunLogRead: ...
+
 
 def run_tags(parameters: dict[str, object]) -> frozenset[str]:
     """Return the Prefect tags that identify one run, its stage and its configuration version.
@@ -236,6 +271,20 @@ class _LabelledCreationClient:
         return await self._client.set_flow_run_state(flow_run_id, state)
 
 
+class _LogClient(Protocol):
+    """Pinned Prefect client methods used only by the log reader."""
+
+    async def read_flow_run(self, flow_run_id: UUID) -> Any: ...
+
+    async def read_logs(
+        self,
+        log_filter: LogFilter | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        sort: LogSort | None = None,
+    ) -> list[Any]: ...
+
+
 class _PoolClient(Protocol):
     """Pinned Prefect client methods used only by the service liveness adapter."""
 
@@ -307,6 +356,51 @@ class PrefectOrchestration:
         if not _cancellation_acknowledged(result, requested_state):
             return CancellationResult(acknowledged=False, reason="prefect-cancellation-unavailable")
         return CancellationResult(acknowledged=True)
+
+    async def read_logs(self, flow_run_ids: Sequence[str]) -> RunLogRead:
+        """Read every log line of the given flow runs, oldest first.
+
+        Each flow run is read first, so a flow run the orchestrator no longer holds is told
+        apart from one that has written no line yet. Lines are read in pages of
+        ``LOG_PAGE_SIZE`` until a short page.
+
+        Raises:
+            OrchestrationUnavailableError: a request failed or timed out.
+        """
+        if not flow_run_ids:
+            return RunLogRead(expired=False)
+        client = cast("_LogClient", self._client)
+        identifiers = [UUID(flow_run_id) for flow_run_id in flow_run_ids]
+        try:
+            for identifier in identifiers:
+                try:
+                    await client.read_flow_run(identifier)
+                except ObjectNotFound:
+                    return RunLogRead(expired=True)
+            log_filter = LogFilter(flow_run_id=LogFilterFlowRunId(any_=identifiers))
+            logs: list[FlowRunLog] = []
+            while True:
+                batch = await client.read_logs(
+                    log_filter, limit=LOG_PAGE_SIZE, offset=len(logs), sort=LogSort.TIMESTAMP_ASC
+                )
+                logs.extend(_flow_run_log(entry) for entry in batch)
+                if len(batch) < LOG_PAGE_SIZE:
+                    break
+        except (httpx.HTTPError, TimeoutError):
+            msg = "the orchestrator could not be reached"
+            raise OrchestrationUnavailableError(msg) from None
+        return RunLogRead(expired=False, logs=tuple(logs))
+
+
+def _flow_run_log(entry: Any) -> FlowRunLog:
+    """Copy the fields the log reader uses from one orchestrator log line."""
+    return FlowRunLog(
+        log_id=str(entry.id),
+        flow_run_id=str(entry.flow_run_id),
+        timestamp=entry.timestamp,
+        level=int(entry.level),
+        message=str(entry.message),
+    )
 
 
 def _pinned_list(value: object) -> list[Any]:

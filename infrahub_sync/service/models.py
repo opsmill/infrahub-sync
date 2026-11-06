@@ -38,6 +38,8 @@ from infrahub_sync.client.models import (
     PublicExecutionLink,
     PublicRunResource,
     ResultsResource,
+    RunLogLine,
+    RunLogPage,
     RunPage,
     RunResource,
     ServiceStatusResource,
@@ -73,6 +75,8 @@ __all__ = [
     "PublicExecutionLink",
     "PublicRunResource",
     "ResultsResource",
+    "RunLogLine",
+    "RunLogPage",
     "RunPage",
     "RunResource",
     "ServiceStatusResource",
@@ -82,6 +86,7 @@ __all__ = [
     "bounded_emitted_model",
     "public_event_page",
     "public_execution_link",
+    "public_run_log_page",
     "public_run_page",
     "public_run_resource",
 ]
@@ -146,6 +151,7 @@ EmittedPlanResource = cast("type[PlanResource]", bounded_emitted_model(PlanResou
 EmittedArtifactListResource = cast("type[ArtifactListResource]", bounded_emitted_model(ArtifactListResource))
 EmittedRunPage = cast("type[RunPage]", bounded_emitted_model(RunPage))
 EmittedEventPage = cast("type[EventPage]", bounded_emitted_model(EventPage))
+EmittedRunLogPage = cast("type[RunLogPage]", bounded_emitted_model(RunLogPage))
 
 # What the server builds out of data it did not write literally, and therefore what the
 # boundedness check in the test suite walks.
@@ -155,6 +161,7 @@ EMITTED_RESOURCES: tuple[type[BaseModel], ...] = (
     EmittedArtifactListResource,
     EmittedRunPage,
     EmittedEventPage,
+    EmittedRunLogPage,
 )
 # The run resource declares its executions as bounded, so the projection has to build them
 # that way; a parent-class instance is not one of these.
@@ -242,3 +249,19 @@ def public_event_page(events: Iterable[AuditEvent], *, limit: int, offset: int, 
             }
         )
     return EmittedEventPage.model_validate({"items": items, "limit": limit, "offset": offset, "has_more": has_more})
+
+
+def public_run_log_page(
+    run_id: str, lines: Iterable[RunLogLine], *, limit: int, offset: int, has_more: bool, run_phase: str
+) -> RunLogPage:
+    """Project one page of a run's Sync log lines into the bounded public log page."""
+    return EmittedRunLogPage.model_validate(
+        {
+            "run_id": run_id,
+            "items": tuple(line.model_dump() for line in lines),
+            "limit": limit,
+            "offset": offset,
+            "has_more": has_more,
+            "run_phase": run_phase,
+        }
+    )

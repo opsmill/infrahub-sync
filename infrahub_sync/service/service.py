@@ -14,6 +14,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
+from infrahub_sync.client.models import DEFAULT_LOG_LIMIT
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
@@ -46,18 +47,29 @@ from .models import (
     OrchestrationSummary,
     PlanResource,
     ResultsResource,
+    RunLogLine,
+    RunLogPage,
     RunPage,
     RunResource,
     ServiceStatusResource,
     VerifyRunRequest,
     WorkerStatusResource,
     public_event_page,
+    public_run_log_page,
     public_run_page,
     public_run_resource,
 )
-from .orchestration import Observation, PoolStatus, ServiceOrchestration, normalized_pool_status
+from .orchestration import (
+    Observation,
+    OrchestrationUnavailableError,
+    PoolStatus,
+    ServiceOrchestration,
+    normalized_pool_status,
+)
 from .paging import FilterValue, decode_cursor, timestamp_cursor, timestamp_key, validate_limit
 from .prefect_ui import flow_run_url
+from .run_log import page as log_page
+from .run_log import sync_lines
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -145,6 +157,9 @@ def page_size_or_refuse(limit: int | None, *, secrets: tuple[str, ...] = ()) -> 
 _SCHEMA_MISMATCH_MESSAGE = "the request does not match the API schema"
 # The largest event-list ``offset`` accepted: a signed 64-bit integer, which every store's OFFSET takes.
 MAX_EVENT_OFFSET = 2**63 - 1
+# The messages of a log the API cannot serve (contracts/logs-route.md). Neither names the orchestrator.
+LOG_EXPIRED_MESSAGE = "the log of this run has expired"
+LOG_UNAVAILABLE_MESSAGE = "the log of this run cannot be read now; retry later"
 
 
 def parse_event_time(value: str) -> datetime:
@@ -740,6 +755,39 @@ class RunService:
             raise self._error(422, "request-invalid", _SCHEMA_MISMATCH_MESSAGE) from None
         page = self._projection.list_events(filters, limit=page_size, offset=offset)
         return public_event_page(page.items, limit=page_size, offset=offset, has_more=page.has_more)
+
+    async def read_run_logs(
+        self, run_id: str, *, stage: str | None = None, limit: int = DEFAULT_LOG_LIMIT, offset: int = 0
+    ) -> RunLogPage:
+        """Return one page of the lines Sync's own code wrote during a run, oldest first.
+
+        The lines of every flow run of the run, or of ``stage``'s flow runs, are read, the
+        orchestration engine's lines are left out, and ``offset`` counts Sync lines only, so a
+        poller that passes the number of lines it already holds receives only newer ones
+        (spec 017, FR-004, FR-005). ``stage``, ``limit`` and ``offset`` are already bounded by
+        the route.
+
+        Raises:
+            ServiceAPIError: ``404 run-not-found``; ``410 log-expired`` when the orchestrator
+                no longer holds a flow run the record names (FR-010); ``503 log-unavailable``
+                when the orchestrator cannot be reached (FR-013).
+        """
+        run = self._required_run(run_id)
+        entries = tuple(link for link in run.prefect_executions if stage is None or link.purpose == stage)
+        lines: tuple[RunLogLine, ...] = ()
+        if entries:
+            try:
+                read = await self._orchestration.read_logs(tuple(link.flow_run_id for link in entries))
+            except OrchestrationUnavailableError:
+                raise self._error(503, "log-unavailable", LOG_UNAVAILABLE_MESSAGE, run_id=run_id) from None
+            if read.expired:
+                raise self._error(410, "log-expired", LOG_EXPIRED_MESSAGE, run_id=run_id)
+            lines = tuple(
+                line.model_copy(update={"message": redact(line.message, self._secrets)})
+                for line in sync_lines(entries, read.logs)
+            )
+        items, has_more = log_page(lines, offset, limit)
+        return public_run_log_page(run_id, items, limit=limit, offset=offset, has_more=has_more, run_phase=run.phase)
 
     def _require_configuration_filter(self, config_id: str, registry_version: int | None) -> None:
         """Refuse a run-list filter naming a configuration or version that was never registered."""

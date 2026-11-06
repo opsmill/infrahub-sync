@@ -40,6 +40,11 @@ DEFAULT_LIMIT = 50
 MIN_LIMIT = 1
 MAX_LIMIT = 200
 
+# Page sizes of a run's log (spec 017, contracts/logs-route.md), and the stages it filters by.
+DEFAULT_LOG_LIMIT = 200
+MAX_LOG_LIMIT = 1000
+LOG_STAGES: tuple[str, ...] = ("plan", "verify", "apply", "sync")
+
 _Item_co = TypeVar("_Item_co", covariant=True)
 
 
@@ -420,6 +425,37 @@ class EventPage(_ResourceModel):
     limit: int = Field(ge=MIN_LIMIT, le=MAX_LIMIT)
     offset: int = Field(ge=0)
     has_more: bool
+
+
+class RunLogLine(_ResourceModel):
+    """One log line that Sync's own code wrote during a run, tagged with its stage.
+
+    ``stage`` and ``level`` are plain strings so the client still reads a value a newer
+    server adds.
+    """
+
+    stage: str
+    attempt: int = Field(ge=1)
+    timestamp: datetime
+    level: str
+    source: str
+    message: str
+
+    @field_validator("timestamp")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime | None:
+        return _timezone(value, "log timestamps must include a timezone")
+
+
+class RunLogPage(_ResourceModel):
+    """One page of a run's log, oldest first, with the run's phase so a poller knows when to stop."""
+
+    run_id: str
+    items: tuple[RunLogLine, ...]
+    limit: int = Field(ge=MIN_LIMIT, le=MAX_LOG_LIMIT)
+    offset: int = Field(ge=0)
+    has_more: bool
+    run_phase: str
 
 
 class PlanSummaryResource(_ResourceModel):

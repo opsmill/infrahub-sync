@@ -13,6 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from infrahub_sync.client.models import DEFAULT_LOG_LIMIT, LOG_STAGES, MAX_LOG_LIMIT, MIN_LIMIT
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 
 from .auth import Principal, PrincipalResolver
@@ -40,6 +41,7 @@ from .models import (
     PlanResource,
     PrincipalResource,
     ResultsResource,
+    RunLogPage,
     RunPage,
     RunResource,
     ServiceStatusResource,
@@ -69,6 +71,40 @@ def _optional_time(value: str | None) -> datetime | None:
 def _event_offset(value: str | None) -> int:
     """Parse the event list's ``offset`` without FastAPI's coercions; zero when absent."""
     return 0 if value is None else parse_bounded_integer(value, minimum=0, maximum=MAX_EVENT_OFFSET)
+
+
+def _log_stage(value: str | None) -> str | None:
+    """Parse the run log's ``stage`` filter; none when it is absent."""
+    if value is not None and value not in LOG_STAGES:
+        raise ServiceAPIError(422, "request-invalid", "the request does not match the API schema")
+    return value
+
+
+def _log_limit(value: str | None) -> int:
+    """Parse the run log's ``limit`` without FastAPI's coercions; the default when absent."""
+    if value is None:
+        return DEFAULT_LOG_LIMIT
+    return parse_bounded_integer(value, minimum=MIN_LIMIT, maximum=MAX_LOG_LIMIT)
+
+
+def run_logs_router(service: RunService, authenticate: Callable[..., Principal]) -> APIRouter:
+    """Return the authenticated ``GET /runs/{run_id}/logs`` route (spec 017, contracts/logs-route.md)."""
+    router = APIRouter()
+
+    @router.get("/runs/{run_id}/logs", responses=ERROR_RESPONSES)
+    async def read_run_logs(
+        run_id: str,
+        _principal: Annotated[Principal, Depends(authenticate)],
+        stage: Annotated[str | None, Query()] = None,
+        limit: Annotated[str | None, Query()] = None,
+        offset: Annotated[str | None, Query()] = None,
+    ) -> RunLogPage:
+        """Return one page of the lines Sync wrote during the run, oldest first."""
+        return await service.read_run_logs(
+            run_id, stage=_log_stage(stage), limit=_log_limit(limit), offset=_event_offset(offset)
+        )
+
+    return router
 
 
 def events_router(service: RunService, authenticate: Callable[..., Principal]) -> APIRouter:
@@ -325,5 +361,6 @@ def create_app(
     if configuration_routes is not None:
         application.include_router(configuration_router(configuration_routes, authenticate, idempotency_key))
     application.include_router(events_router(service, authenticate))
+    application.include_router(run_logs_router(service, authenticate))
 
     return application

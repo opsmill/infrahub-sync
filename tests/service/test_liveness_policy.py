@@ -17,9 +17,18 @@ from prefect.states import Cancelled, Completed, Crashed, Failed, Running
 
 from infrahub_sync.product_store import MutationReceipt, PrefectExecutionLink, ProductRun, local_product_projection
 from infrahub_sync.service.liveness import LivenessPolicy, RunLivenessReconciler, select_cancellable_execution
-from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, PoolWorker, Submission
+from infrahub_sync.service.orchestration import (
+    CancellationResult,
+    Observation,
+    PoolStatus,
+    PoolWorker,
+    RunLogRead,
+    Submission,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from opsmill_prefect_extras.executors import RemoteExecutionClient
 
 
@@ -83,6 +92,10 @@ class _Orchestration:
     async def cancel(self, flow_run_id: str) -> CancellationResult:  # noqa: PLR6301
         del flow_run_id
         return CancellationResult(acknowledged=True)
+
+    async def read_logs(self, flow_run_ids: Sequence[str]) -> RunLogRead:  # noqa: PLR6301
+        del flow_run_ids
+        return RunLogRead(expired=False)
 
 
 def _run(run_id: str, link: PrefectExecutionLink) -> ProductRun:

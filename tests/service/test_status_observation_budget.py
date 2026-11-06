@@ -34,7 +34,7 @@ from infrahub_sync.product_store import (
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import Principal
 from infrahub_sync.service.liveness import LivenessPolicy, RunLivenessReconciler
-from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, Submission
+from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import RunService
 
 if TYPE_CHECKING:
@@ -104,6 +104,10 @@ class _CountingOrchestration:
         """Never used: cancellation intent is seeded durably."""
         del flow_run_id
         return CancellationResult(acknowledged=True)
+
+    async def read_logs(self, flow_run_ids: Sequence[str]) -> RunLogRead:  # noqa: PLR6301
+        del flow_run_ids
+        return RunLogRead(expired=False)
 
 
 class _Resolver:

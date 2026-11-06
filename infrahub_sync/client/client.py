@@ -26,7 +26,9 @@ from .errors import (
     TransportError,
 )
 from .models import (
+    LOG_STAGES,
     MAX_LIMIT,
+    MAX_LOG_LIMIT,
     MIN_LIMIT,
     ApplyRunRequest,
     ArtifactContent,
@@ -51,6 +53,7 @@ from .models import (
     RegisteredConfigurationResource,
     RegisteredVersionResource,
     ResultsResource,
+    RunLogPage,
     RunPage,
     RunResource,
     ServiceStatusResource,
@@ -91,6 +94,7 @@ _GET_ARTIFACT = "get_artifact"
 _CLOSE = "close"
 _WAIT_FOR_RUN = "wait_for_run"
 _POLL_INTERVAL_ARG = "poll_interval"
+_STAGE_ARG = "stage"
 
 
 class SyncClient:  # pylint: disable=too-many-public-methods
@@ -456,6 +460,35 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             model=RunResource,
             success={200},
             request_timeout=request_timeout,
+        )
+
+    def read_run_logs(
+        self, run_id: str, stage: str | None = None, limit: int | None = None, offset: int = 0
+    ) -> RunLogPage:
+        """Return one page of the lines Sync wrote during a run, oldest first.
+
+        ``offset`` counts the lines already read, so passing that count returns only newer
+        lines. A log the server no longer holds raises ``APIError`` with status 410
+        (``log-expired``); a log it cannot read now raises ``APIError`` with status 503
+        (``log-unavailable``).
+        """
+
+        run_id = self._identifier(run_id, "run_id")
+        params: list[tuple[str, str | int]] = []
+        if stage is not None:
+            if stage not in LOG_STAGES:
+                raise ClientInputError(_STAGE_ARG)
+            params.append((_STAGE_ARG, stage))
+        if limit is not None:
+            if type(limit) is not int or not MIN_LIMIT <= limit <= MAX_LOG_LIMIT:  # pylint: disable=unidiomatic-typecheck
+                raise ClientInputError(_LIMIT_ARG)
+            params.append((_LIMIT_ARG, limit))
+        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_OFFSET_ARG)
+        if offset:
+            params.append((_OFFSET_ARG, offset))
+        return self._request_model(
+            "read_run_logs", "GET", f"/runs/{run_id}/logs", model=RunLogPage, success={200}, params=tuple(params)
         )
 
     def get_plan(self, run_id: str) -> PlanResource:

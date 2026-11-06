@@ -70,12 +70,15 @@ from infrahub_sync.service.orchestration import (
     Observation,
     PoolStatus,
     PrefectOrchestration,
+    RunLogRead,
     Submission,
 )
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService, ServiceAPIError
 from tests.service.execution_fixtures import append_execution
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from httpx import Response
     from opsmill_prefect_extras.executors import RemoteExecutionClient
     from prefect.client.schemas.objects import State
@@ -171,6 +174,10 @@ class _FakeOrchestration:
             msg = "response lost after Prefect accepted cancellation token-canary"
             raise TimeoutError(msg)
         return CancellationResult(acknowledged=True)
+
+    async def read_logs(self, flow_run_ids: Sequence[str]) -> RunLogRead:  # noqa: PLR6301
+        del flow_run_ids
+        return RunLogRead(expired=False)
 
 
 @pytest.fixture
@@ -1814,6 +1821,7 @@ def test_confirmation_schema_errors_and_openapi_contract(
         "/runs/{run_id}",
         "/runs/{run_id}/plan",
         "/runs/{run_id}/results",
+        "/runs/{run_id}/logs",
         "/runs/{run_id}/artifacts",
         "/runs/{run_id}/artifacts/{artifact_id}",
         "/runs/{run_id}/verify",

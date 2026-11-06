@@ -30,7 +30,7 @@ from infrahub_sync.service import serve
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.config_routes import ConfigurationAPIError, ConfigurationRoutes
-from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, Submission
+from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.serve import build_app
 from infrahub_sync.service.service import RunService, ServiceAPIError
 from tests.configuration.validation_packages import package, package_data
@@ -39,7 +39,7 @@ ADMIN_TOKEN = "admin-token-canary-0003"  # noqa: S105 - deliberate non-secret bo
 OTHER_TOKEN = "reader-token-canary-0004"  # noqa: S105 - deliberate non-secret boundary canary.
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
     from typing import NoReturn
 
     from infrahub_sync.configuration.models import ConfigurationPackage
@@ -61,6 +61,10 @@ class _Orchestration:  # pylint: disable=too-few-public-methods
 
     async def cancel(self, flow_run_id: str) -> CancellationResult:  # noqa: ARG002, PLR6301
         return CancellationResult(acknowledged=True)
+
+    async def read_logs(self, flow_run_ids: Sequence[str]) -> RunLogRead:  # noqa: PLR6301
+        del flow_run_ids
+        return RunLogRead(expired=False)
 
 
 class _UnknownConfigsError(configs_service.ConfigsError):

@@ -14,12 +14,21 @@ from .app import create_app
 from .auth import EnvironmentPrincipalResolver
 from .config_routes import ConfigurationRoutes
 from .liveness import LivenessPolicy, RunLivenessReconciler
-from .orchestration import CancellationResult, Observation, PoolStatus, PrefectOrchestration, Submission
+from .orchestration import (
+    CancellationResult,
+    Observation,
+    PoolStatus,
+    PrefectOrchestration,
+    RunLogRead,
+    Submission,
+)
 from .prefect_ui import prefect_ui_url_from_environment
 from .service import RunService
 from .storage import service_product_projection
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from fastapi import FastAPI
 
 
@@ -41,6 +50,10 @@ class _ClientPerCallOrchestration:
     async def cancel(self, flow_run_id: str) -> CancellationResult:
         async with get_client() as client:
             return await PrefectOrchestration(client).cancel(flow_run_id)
+
+    async def read_logs(self, flow_run_ids: Sequence[str]) -> RunLogRead:
+        async with get_client() as client:
+            return await PrefectOrchestration(client).read_logs(flow_run_ids)
 
 
 def build_app(
