@@ -1,0 +1,19 @@
+dev/specs/017-sync-run-events-logs/alignment-check.md
+  s_01f3e2b1e0dad4::t_61bcd6539429d8 1-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a76be45264498a70160f7f0031d3ea6743fa8a5a",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
