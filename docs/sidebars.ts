@@ -48,6 +48,7 @@ const sidebars: SidebarsConfig = {
         'adapters/peeringdb',
         'adapters/prometheus',
         'adapters/slurpit',
+        'adapters/webex',
       ],
     },
     {

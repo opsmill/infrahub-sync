@@ -1,0 +1,58 @@
+{
+  "invented-org-a": {
+    "/v1/locations": {
+      "items": [
+        {
+          "id": "invented-org-a-location",
+          "name": "Example site a"
+        }
+      ]
+    },
+    "/v1/workspaces": {
+      "items": [
+        {
+          "id": "invented-org-a-workspace",
+          "displayName": "Example room a",
+          "locationId": "invented-org-a-location"
+        }
+      ]
+    },
+    "/v1/devices": {
+      "items": [
+        {
+          "id": "invented-org-a-device",
+          "displayName": "Example device a",
+          "workspaceId": "invented-org-a-workspace"
+        }
+      ]
+    }
+  },
+  "invented-org-b": {
+    "/v1/locations": {
+      "items": [
+        {
+          "id": "invented-org-b-location",
+          "name": "Example site b"
+        }
+      ]
+    },
+    "/v1/workspaces": {
+      "items": [
+        {
+          "id": "invented-org-b-workspace",
+          "displayName": "Example room b",
+          "locationId": "invented-org-b-location"
+        }
+      ]
+    },
+    "/v1/devices": {
+      "items": [
+        {
+          "id": "invented-org-b-device",
+          "displayName": "Example device b",
+          "workspaceId": "invented-org-b-workspace"
+        }
+      ]
+    }
+  }
+}

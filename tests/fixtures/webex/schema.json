@@ -1,0 +1,105 @@
+{
+  "nodes": [
+    {
+      "name": "Location",
+      "namespace": "Webex",
+      "attributes": [
+        {
+          "name": "webex_id",
+          "kind": "Text",
+          "unique": true,
+          "optional": false
+        },
+        {
+          "name": "name",
+          "kind": "Text",
+          "unique": false,
+          "optional": false
+        }
+      ],
+      "relationships": []
+    },
+    {
+      "name": "Workspace",
+      "namespace": "Webex",
+      "attributes": [
+        {
+          "name": "webex_id",
+          "kind": "Text",
+          "unique": true,
+          "optional": false
+        },
+        {
+          "name": "name",
+          "kind": "Text",
+          "unique": false,
+          "optional": false
+        }
+      ],
+      "relationships": [
+        {
+          "name": "location",
+          "peer": "WebexLocation",
+          "cardinality": "one",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "name": "Device",
+      "namespace": "Webex",
+      "attributes": [
+        {
+          "name": "webex_id",
+          "kind": "Text",
+          "unique": true,
+          "optional": false
+        },
+        {
+          "name": "name",
+          "kind": "Text",
+          "unique": false,
+          "optional": false
+        },
+        {
+          "name": "serial_number",
+          "kind": "Text",
+          "unique": false,
+          "optional": true
+        },
+        {
+          "name": "model",
+          "kind": "Text",
+          "unique": false,
+          "optional": true
+        },
+        {
+          "name": "software",
+          "kind": "Text",
+          "unique": false,
+          "optional": true
+        },
+        {
+          "name": "ip_address",
+          "kind": "Text",
+          "unique": false,
+          "optional": true
+        },
+        {
+          "name": "connection_status",
+          "kind": "Text",
+          "unique": false,
+          "optional": true
+        }
+      ],
+      "relationships": [
+        {
+          "name": "workspace",
+          "peer": "WebexWorkspace",
+          "cardinality": "one",
+          "optional": true
+        }
+      ]
+    }
+  ]
+}
