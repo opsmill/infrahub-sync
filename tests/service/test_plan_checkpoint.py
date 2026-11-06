@@ -471,6 +471,7 @@ def test_the_verify_stage_reads_the_checkpoint_it_rehydrated(monkeypatch: pytest
 
     result = service_sync_run.fn(run_id, "verify", *_binding(projection, run_id))
 
+    assert isinstance(result, dict)
     assert result["outcome"] == "verified"
     assert len(seen) == 1
     assert not seen[0].exists(), "the rehydrated plan is scratch, released with the stage"

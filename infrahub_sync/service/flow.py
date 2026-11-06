@@ -24,6 +24,7 @@ from prefect.client.orchestration import get_client
 from prefect.client.schemas.objects import WorkerStatus
 from prefect.exceptions import MissingContextError, ObjectNotFound
 from prefect.runtime import flow_run as current_flow_run
+from prefect.states import Failed, State
 
 from infrahub_sync.client.models import RECOVERY_NEXT_ACTIONS, RecoveryAction
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
@@ -166,6 +167,30 @@ def _run_logger() -> tuple[RunLogger, bool]:
         return get_run_logger(), True
     except MissingContextError:
         return logger, False
+
+
+class SyncFlowLines:
+    """Write the service flow's own lines through the run logger, as Sync lines.
+
+    Each line starts with `infrahub_sync.service.flow | `, the form `RunLoggerBridge` gives every
+    bridged line, so the log reader can tell every line Sync writes from Prefect's own lines. Each
+    line is redacted with the stage's secrets as they are when the line is written.
+    """
+
+    def __init__(self, run_logger: RunLogger, secrets: Sequence[str]) -> None:
+        self._run_logger = run_logger
+        self._secrets = secrets
+
+    def _text(self, msg: str, args: tuple[object, ...]) -> str:
+        return redact(msg % args if args else msg, self._secrets)
+
+    def log(self, level: int, msg: str, *args: object) -> None:
+        """Write one line at `level`."""
+        self._run_logger.log(level, "%s | %s", __name__, self._text(msg, args))
+
+    def info(self, msg: str, *args: object) -> None:
+        """Write one INFO line."""
+        self._run_logger.info("%s | %s", __name__, self._text(msg, args))
 
 
 @contextmanager
@@ -803,10 +828,14 @@ def effective_apply_record(exc: Exception, record: ApplyRecord | None) -> ApplyR
 
 @dataclass(frozen=True)
 class RecordedFailure:
-    """What `_record_failure` stored: the run's terminal outcome and the failure's next action."""
+    """What `_record_failure` stored: the run's terminal outcome and the failure's next action.
+
+    `cause` is the operator cause the evidence holds, for a known error class only.
+    """
 
     outcome: Literal["failed", "ambiguous"]
     next_action: str | None
+    cause: str | None = None
 
 
 def final_log_line(run_id: str, stage: str, outcome: str, next_action: str | None) -> str:
@@ -915,10 +944,24 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
         )
         return None
     next_action = evidence.get("next_action")
+    cause = evidence.get("cause")
     return RecordedFailure(
         outcome=terminal_outcome,
         next_action=next_action if isinstance(next_action, str) and next_action else None,
+        cause=cause if isinstance(cause, str) and cause else None,
     )
+
+
+def known_failure_line(run_id: str, recorded: RecordedFailure | None) -> str | None:
+    """The one ERROR line for a failure whose recorded evidence has a cause, else `None`.
+
+    The same text is the message of the `Failed` state the flow returns. Without a next action
+    from the failure, the next step is to read the run's record, as in the last log line.
+    """
+    if recorded is None or recorded.cause is None:
+        return None
+    action = recorded.next_action or f"`infrahub-sync runs show {run_id}`"
+    return f"{recorded.cause} Next step: {action}"
 
 
 def _publish_run_summary(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -950,6 +993,52 @@ def _publish_run_summary(  # pylint: disable=too-many-arguments,too-many-positio
     )
 
 
+def _failure_exit(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    run_id: str,
+    stage: str,
+    failure: Exception,
+    recorded: RecordedFailure | None,
+    lines: SyncFlowLines,
+    secrets: list[str],
+    projection: ProductProjection,
+    *,
+    prefect_context: bool,
+) -> State[Any]:
+    """End a failed stage: write its lines and artifact, clear the secrets, then fail the flow run.
+
+    A failure whose recorded evidence has a cause writes one ERROR line, `<cause> Next step:
+    <next_action>`, and returns `Failed` with the same text, so no traceback passes through
+    Prefect's engine. Any other failure writes its class name as the ERROR line and raises its
+    sanitized copy.
+
+    The lines and the artifact are written before `secrets.clear()`, so they are redacted with
+    this stage's secrets. A recorded failure reports the outcome the store holds. An unrecorded
+    failure reports `failed` and points at `runs show`, while the store keeps the run
+    nonterminal for reconciliation to decide.
+    """
+    if recorded is None:
+        outcome, next_action = "failed", None
+    else:
+        outcome, next_action = recorded.outcome, recorded.next_action
+    known = known_failure_line(run_id, recorded)
+    try:
+        # Best-effort: neither the lines nor the artifact may replace the stage's failure.
+        with suppress(Exception):
+            lines.log(logging.ERROR, "%s", type(failure).__name__ if known is None else known)
+        with suppress(Exception):
+            lines.info(final_log_line(run_id, stage, outcome, next_action))
+            _publish_run_summary(
+                projection, run_id, stage, outcome, next_action, secrets, lines, prefect_context=prefect_context
+            )
+        if known is not None:
+            return Failed(message=redact(known, secrets))
+        # Rebuilt after the original exception context exits.
+        sanitized = sanitize_exception_chain(failure, secrets)
+    finally:
+        secrets.clear()
+    raise sanitized
+
+
 def _service_run_name() -> str:
     """The run's title, set by Prefect when the run starts."""
     parameters = current_flow_run.parameters
@@ -967,15 +1056,22 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     expected_checksum: str | None = None,
     confirm_writes: bool = False,
     configuration_name: str | None = None,
-) -> dict[str, Any]:
+) -> dict[str, Any] | State[Any]:
     """Execute one API-reserved stage and publish its durable product data.
 
     `configuration_name` is the configuration's readable name, used only for the run's
     title; the configuration is identified by `config_id`.
+
+    A failure whose recorded evidence has a cause ends the flow run with a returned `Failed`
+    state, so no traceback passes through Prefect's engine; any other failure raises its
+    sanitized copy (plan.md, "Failure exit for known error classes").
     """
     del configuration_name
     run_logger, prefect_context = _run_logger()
     secrets: list[str] = []
+    # Every line this function writes itself goes through `lines`; the bridge below forwards
+    # the `infrahub_sync` logger tree with the same prefix.
+    lines = SyncFlowLines(run_logger, secrets)
     failure: Exception | None = None
     config_directory, projection = _runtime()
     try:
@@ -983,7 +1079,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     except ExecutionClaimRefusedError as refused:
         # Put the recovery guidance in the flow run log, where an operator who
         # pressed Retry looks for it, then fail the flow run as before.
-        run_logger.log(logging.ERROR, "%s", refused)
+        lines.log(logging.ERROR, "%s", refused)
         raise
     secrets[:] = collect_secret_values()
     # Owned here rather than by the stage, so the failure boundary can read it however the
@@ -1044,7 +1140,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 run_id,
                 stage,
                 failure,
-                run_logger,
+                lines,
                 secrets,
                 projection,
                 flow_run_id,
@@ -1052,37 +1148,20 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 dispatch_started=tracker.dispatch_started,
                 record=tracker.applied_record,
             )
-        # After the record, before `secrets.clear()`, so both the line and the artifact are
-        # redacted with this stage's secrets. A recorded failure reports the outcome the store
-        # holds. An unrecorded failure reports `failed` and points at `runs show`, while the
-        # store keeps the run nonterminal for reconciliation to decide.
-        if recorded is None:
-            outcome, next_action = "failed", None
-        else:
-            outcome, next_action = recorded.outcome, recorded.next_action
-        try:
-            # Best-effort: neither the line nor the artifact may replace the stage's failure.
-            with suppress(Exception):
-                run_logger.info(redact(final_log_line(run_id, stage, outcome, next_action), secrets))
-                _publish_run_summary(
-                    projection,
-                    run_id,
-                    stage,
-                    outcome,
-                    next_action,
-                    secrets,
-                    run_logger,
-                    prefect_context=prefect_context,
-                )
-            # Rebuilt after the original exception context exits.
-            sanitized = sanitize_exception_chain(failure, secrets)
-        finally:
-            secrets.clear()
-        raise sanitized
+        return _failure_exit(
+            run_id,
+            stage,
+            failure,
+            recorded,
+            lines,
+            secrets,
+            projection,
+            prefect_context=prefect_context,
+        )
     outcome, next_action = str(result["outcome"]), result_next_action(result)
-    run_logger.info(redact(final_log_line(run_id, stage, outcome, next_action), secrets))
+    lines.info(final_log_line(run_id, stage, outcome, next_action))
     _publish_run_summary(
-        projection, run_id, stage, outcome, next_action, secrets, run_logger, prefect_context=prefect_context
+        projection, run_id, stage, outcome, next_action, secrets, lines, prefect_context=prefect_context
     )
     return result
 

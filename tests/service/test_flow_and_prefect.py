@@ -701,6 +701,7 @@ def test_success_writeback_commit_error_preserves_reread_committed_result(
 
     stored = projection.lookup_run(run_id).value
     assert stored is not None
+    assert isinstance(result, dict)
     assert result["outcome"] == "no-change"
     assert (stored.phase, stored.outcome) == ("planned", "no-change")
     assert stored.prefect_executions[0].terminal_state == "completed"
@@ -744,6 +745,7 @@ def test_service_confirmed_sync_retains_the_semantic_sync_operation(
         confirm_writes=True,
     )
 
+    assert isinstance(result, dict)
     assert result["operation"] == "sync"
     stored = projection.lookup_run(run_id).value
     assert stored is not None
@@ -781,6 +783,7 @@ def test_service_plan_worker_updates_the_api_created_run_and_publishes_review(
     )
 
     assert seen == [run_id]
+    assert isinstance(result, dict)
     assert result["run_id"] == run_id
     stored = projection.lookup_run(run_id).value
     assert stored is not None
@@ -1425,8 +1428,23 @@ def _plan_load_failure(tmp_path: Path, *, resolve: Exception | None = None, load
     return caught.value
 
 
-def _record_plan_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: str, failure: Exception):
-    """Run the plan stage so it fails with `failure`, and return the stored run."""
+def _assert_ends_failed_with_its_cause(state: object, stored: ProductRun, stage: str) -> None:
+    """A known failure returns a `Failed` state whose message is the recorded cause and next step (T026)."""
+    assert isinstance(state, State)
+    assert state.is_failed()
+    evidence = stored.results[f"{stage}_failure"]
+    next_step = evidence.get("next_action") or f"`infrahub-sync runs show {stored.run_id}`"
+    assert state.message == f"{evidence['cause']} Next step: {next_step}"
+
+
+def _record_plan_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: str, failure: Exception, *, known: bool = False
+):
+    """Run the plan stage so it fails with `failure`, and return the stored run.
+
+    A `known` failure (one with a recorded cause) ends with a returned `Failed` state; any other
+    raises its sanitized copy.
+    """
     projection = _create_product_run(tmp_path.resolve(), run_id)
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
     bind_granting_guard(monkeypatch, service_flow)
@@ -1438,22 +1456,32 @@ def _record_plan_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id
         raise failure
 
     monkeypatch.setattr(service_flow, "_plan", fail_plan)
-    with pytest.raises(RuntimeError):
-        service_sync_run.fn(run_id, "plan", *_binding(projection, run_id))
+    if known:
+        state = service_sync_run.fn(run_id, "plan", *_binding(projection, run_id))
+    else:
+        with pytest.raises(RuntimeError):
+            service_sync_run.fn(run_id, "plan", *_binding(projection, run_id))
     stored = projection.lookup_run(run_id).value
     assert stored is not None
+    if known:
+        _assert_ends_failed_with_its_cause(state, stored, "plan")
     return stored
 
 
-def _record_apply_failure(
+def _record_apply_failure(  # noqa: PLR0913 - the stage inputs, its secrets and whether its failure is known
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     run_id: str,
     failure: Exception,
     *,
     secrets: tuple[str, ...] = (),
+    known: bool = False,
 ):
-    """Run the apply stage so the engine fails with `failure`, and return the stored run."""
+    """Run the apply stage so the engine fails with `failure`, and return the stored run.
+
+    A `known` failure (one with a recorded cause) ends with a returned `Failed` state; any other
+    raises its sanitized copy.
+    """
     projection = _create_product_run(tmp_path.resolve(), run_id)
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
     bind_granting_guard(monkeypatch, service_flow)
@@ -1467,12 +1495,16 @@ def _record_apply_failure(
         raise failure
 
     monkeypatch.setattr(service_flow, "execute_run", fail_apply)
-    with pytest.raises(RuntimeError):
-        service_sync_run.fn(
-            run_id, "apply", *_binding(projection, run_id), expected_checksum="a" * 64, confirm_writes=True
-        )
+    binding = _binding(projection, run_id)
+    if known:
+        state = service_sync_run.fn(run_id, "apply", *binding, expected_checksum="a" * 64, confirm_writes=True)
+    else:
+        with pytest.raises(RuntimeError):
+            service_sync_run.fn(run_id, "apply", *binding, expected_checksum="a" * 64, confirm_writes=True)
     stored = projection.lookup_run(run_id).value
     assert stored is not None
+    if known:
+        _assert_ends_failed_with_its_cause(state, stored, "apply")
     return stored
 
 
@@ -1498,7 +1530,7 @@ def test_a_plan_records_a_403_as_a_missing_permission(
         else _plan_load_failure(tmp_path, resolve=sdk_error)
     )
 
-    stored = _record_plan_failure(monkeypatch, tmp_path, f"run-plan-403-{where}", failure)
+    stored = _record_plan_failure(monkeypatch, tmp_path, f"run-plan-403-{where}", failure, known=True)
 
     evidence = stored.results["plan_failure"]
     assert evidence["error_type"] == "ValueError"
@@ -1512,7 +1544,7 @@ def test_an_apply_records_a_403_during_lineage_resolution_as_a_missing_permissio
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The lineage is resolved outside the operation loop, and its 403 is still classified."""
-    stored = _record_apply_failure(monkeypatch, tmp_path, "run-apply-403-lineage", _sdk_403())
+    stored = _record_apply_failure(monkeypatch, tmp_path, "run-apply-403-lineage", _sdk_403(), known=True)
 
     evidence = stored.results["apply_failure"]
     assert evidence["error_type"] == "AuthenticationError"
@@ -1530,7 +1562,7 @@ def test_a_plan_records_a_missing_named_node_with_its_cause_and_next_action(
     refusal = NamedLineageNodeNotFoundError(setting="owner", kind="CoreAccountGroup", name="network-team")
     failure = _plan_load_failure(tmp_path, resolve=refusal)
 
-    stored = _record_plan_failure(monkeypatch, tmp_path, "run-plan-missing-owner", failure)
+    stored = _record_plan_failure(monkeypatch, tmp_path, "run-plan-missing-owner", failure, known=True)
 
     evidence = stored.results["plan_failure"]
     assert evidence["cause"] == "The setting `owner` names `CoreAccountGroup` `network-team`, which does not exist."
@@ -1550,7 +1582,12 @@ def test_an_apply_records_an_account_mismatch_with_both_accounts_and_its_next_ac
         f"with the import account 'other\x1b[2J' (id a-2). {LINEAGE_TOKEN}"
     )
     stored = _record_apply_failure(
-        monkeypatch, tmp_path, "run-apply-mismatch", ImportAccountMismatchError(message), secrets=(LINEAGE_TOKEN,)
+        monkeypatch,
+        tmp_path,
+        "run-apply-mismatch",
+        ImportAccountMismatchError(message),
+        secrets=(LINEAGE_TOKEN,),
+        known=True,
     )
 
     evidence = stored.results["apply_failure"]

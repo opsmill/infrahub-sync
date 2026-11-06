@@ -2590,3 +2590,43 @@ def test_an_accepted_cancel_and_the_recorded_cancellation_record_their_events(
     assert RelatedResource(kind="config_version", id=f"{version.config_id}@{version.registry_version}") in (
         cancelled.related
     )
+
+
+# --- FR-006: the 503 messages name the orchestrator, not Prefect (T025) ----------------------
+
+
+def test_an_unconfirmed_submission_names_the_orchestrator(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, _projection, orchestration = service_api
+    orchestration.fail_after_accept_once = True
+
+    response = _create(client, key="unconfirmed-submission")
+
+    assert response.status_code == 503
+    message = response.json()["error"]["message"]
+    assert message == "the orchestrator could not confirm service submission (TimeoutError)"
+    assert "Prefect" not in message
+
+
+@pytest.mark.parametrize("failure", ["not-acknowledged", "transport-error"])
+def test_an_unconfirmed_cancellation_names_the_orchestrator(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration], failure: str
+) -> None:
+    client, _projection, orchestration = service_api
+    run_id = _create(client).json()["run"]["run_id"]
+    if failure == "not-acknowledged":
+        orchestration.cancel_failure = True
+    else:
+        orchestration.cancel_exception = True
+
+    response = client.post(
+        f"/runs/{run_id}/cancel",
+        headers={**AUTH, "Idempotency-Key": f"unconfirmed-cancel-{failure}"},
+        json={"reason": "stop the run"},
+    )
+
+    assert response.status_code == 503
+    message = response.json()["error"]["message"]
+    assert message == "the orchestrator could not confirm the cancellation request"
+    assert "Prefect" not in message

@@ -278,7 +278,7 @@ def test_claim_refusal_is_logged_at_error_before_the_flow_fails(
         service_flow.service_sync_run.fn(run_id, "plan")
 
     assert raised.value is refused
-    assert run_logger.records == [(logging.ERROR, str(refused))]
+    assert run_logger.records == [(logging.ERROR, f"infrahub_sync.service.flow | {refused}")]
 
 
 @pytest.mark.parametrize("value", [None, "not-a-uuid", FLOW_ID.upper()])

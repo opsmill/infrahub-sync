@@ -562,7 +562,7 @@ class RunService:
                 receipt,
                 principal,
                 request.reason,
-                "Prefect could not confirm the cancellation request",
+                "the orchestrator could not confirm the cancellation request",
                 exc=exc,
             )
         if not cancelled.acknowledged:
@@ -570,7 +570,7 @@ class RunService:
                 receipt,
                 principal,
                 request.reason,
-                "Prefect could not confirm the cancellation request",
+                "the orchestrator could not confirm the cancellation request",
             )
         accepted_observation = Observation(available=True, state="cancelling")
         resource = self._resource_with_observations(
@@ -809,7 +809,7 @@ class RunService:
             error = self._error(
                 503,
                 "orchestration-unavailable",
-                f"Prefect could not confirm service submission ({type(exc).__name__})",
+                f"the orchestrator could not confirm service submission ({type(exc).__name__})",
                 run_id=receipt.run_id,
                 mutation_id=receipt.receipt_id,
             )

@@ -250,13 +250,15 @@ def harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Harness:
 
 
 def _apply(harness: _Harness) -> dict[str, Any]:
-    return service_sync_run.fn(
+    result = service_sync_run.fn(
         harness.run_id,
         "apply",
         *harness.binding,
         expected_checksum=harness.checksum,
         confirm_writes=True,
     )
+    assert isinstance(result, dict)
+    return result
 
 
 def test_apply_reads_its_plan_from_the_checkpoint_and_writes_the_reviewed_operation(harness: _Harness) -> None:

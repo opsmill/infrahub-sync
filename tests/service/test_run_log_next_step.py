@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 
 _WORKER_ID = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
 _SHOW = "next step: `infrahub-sync runs show {run_id}`"
+_PREFIX = "infrahub_sync.service.flow | "
 
 
 class _ActionableRefusalError(PlanArtifactError):
@@ -226,8 +227,16 @@ def _stage_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(service_flow, "_execute_stage", fail)
 
 
+def _messages(calls: list[tuple[Any, ...]]) -> list[str]:
+    """Every line written through the run logger, in order, as the logger rendered it."""
+    return [call[-1] for call in calls if call[0] in {"info", "log"}]
+
+
 def _info_lines(calls: list[tuple[Any, ...]]) -> list[str]:
-    return [call[1] for call in calls if call[0] == "info"]
+    """The INFO lines, each checked for the Sync prefix and returned without it."""
+    lines = [call[1] for call in calls if call[0] == "info"]
+    assert all(line.startswith(_PREFIX) for line in lines), lines
+    return [line.removeprefix(_PREFIX) for line in lines]
 
 
 def test_success_line_points_at_runs_show_after_the_commit(
@@ -239,7 +248,7 @@ def test_success_line_points_at_runs_show_after_the_commit(
 
     line = "service run run-ok stage=plan outcome=planned; next step: `infrahub-sync runs show run-ok`"
     assert _info_lines(flow_calls)[-1] == line
-    assert flow_calls.index(("commit",)) < flow_calls.index(("info", line))
+    assert flow_calls.index(("commit",)) < flow_calls.index(("info", _PREFIX + line))
 
 
 def test_success_line_uses_the_result_failure_next_action(
@@ -269,7 +278,7 @@ def test_recorded_failure_line_uses_the_recorded_outcome_and_next_action(
 
     line = "service run run-bad stage=plan outcome=failed; next step: Do X."
     assert _info_lines(flow_calls) == [line]
-    assert flow_calls.index(("record",)) < flow_calls.index(("info", line))
+    assert flow_calls.index(("record",)) < flow_calls.index(("info", _PREFIX + line))
 
 
 def test_unrecorded_failure_line_reads_failed_and_points_at_runs_show(
@@ -360,7 +369,8 @@ def test_a_failing_last_line_still_raises_the_original_sanitized_failure(
     monkeypatch.setattr(service_flow, "_record_failure", lambda *_args, **_kwargs: RecordedFailure("failed", None))
 
     class _BrokenLogger(_RecordingLogger):
-        def info(self, *_args: object) -> None:
+        def info(self, message: str, *args: object) -> None:
+            del message, args
             self.calls.append(("info-failed",))
             msg = "log handler unavailable"
             raise OSError(msg)
@@ -540,3 +550,91 @@ def test_a_failed_publish_leaves_the_stage_failure_unchanged(
 
     assert _REDACTION_PROBE not in str(raised.value)
     assert any(call[0] == "log" and call[1] == logging.WARNING for call in calls)
+
+
+# --- every line the service flow writes directly carries the Sync prefix (T024, FR-006) -------
+
+
+def test_the_success_line_carries_the_sync_prefix(
+    monkeypatch: pytest.MonkeyPatch, flow_calls: list[tuple[Any, ...]]
+) -> None:
+    _stage_returns(monkeypatch, {"outcome": "planned"})
+
+    service_sync_run.fn("run-ok", "plan", "config-001", 1, "a" * 64)
+
+    messages = _messages(flow_calls)
+    assert messages
+    assert all(message.startswith(_PREFIX) for message in messages), messages
+
+
+def test_the_failure_line_carries_the_sync_prefix(
+    monkeypatch: pytest.MonkeyPatch, flow_calls: list[tuple[Any, ...]]
+) -> None:
+    _stage_raises(monkeypatch)
+    monkeypatch.setattr(service_flow, "_record_failure", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(RuntimeError, match="stage failed"):
+        service_sync_run.fn("run-lost", "apply", "config-001", 1, "a" * 64)
+
+    messages = _messages(flow_calls)
+    assert messages
+    assert all(message.startswith(_PREFIX) for message in messages), messages
+
+
+def test_the_refused_claim_line_carries_the_sync_prefix(
+    monkeypatch: pytest.MonkeyPatch, flow_calls: list[tuple[Any, ...]]
+) -> None:
+    def refuse(_projection: object, run_id: str) -> tuple[str, str]:
+        raise service_flow.ExecutionClaimRefusedError(run_id)
+
+    monkeypatch.setattr(service_flow, "_claim_current_execution", refuse)
+
+    with pytest.raises(service_flow.ExecutionClaimRefusedError):
+        service_sync_run.fn("run-refused", "plan", "config-001", 1, "a" * 64)
+
+    errors = [call[2] for call in flow_calls if call[0] == "log" and call[1] == logging.ERROR]
+    assert len(errors) == 1
+    assert errors[0].startswith(_PREFIX + "service worker execution claim was refused")
+
+
+def test_the_unpersisted_evidence_warning_carries_the_sync_prefix(
+    monkeypatch: pytest.MonkeyPatch, flow_calls: list[tuple[Any, ...]], tmp_path: Path
+) -> None:
+    projection, flow_run_id = _claimed_run(tmp_path, "run-unpersisted", "plan")
+
+    class _FailingCommit:
+        @staticmethod
+        def lookup_run(run_id: str) -> object:
+            return projection.lookup_run(run_id)
+
+        @staticmethod
+        def commit_claimed_execution(*_args: object, **_kwargs: object) -> bool:
+            msg = "store unavailable"
+            raise OSError(msg)
+
+    monkeypatch.setattr(service_flow, "_runtime", lambda: (None, _FailingCommit()))
+    monkeypatch.setattr(
+        service_flow, "_claim_current_execution", lambda _projection, _run_id: (flow_run_id, _WORKER_ID)
+    )
+    _stage_raises(monkeypatch)
+
+    with pytest.raises(RuntimeError, match="stage failed"):
+        service_sync_run.fn("run-unpersisted", "plan", "config-001", 1, "a" * 64)
+
+    warnings = [call[2] for call in flow_calls if call[0] == "log" and call[1] == logging.WARNING]
+    assert len(warnings) == 1
+    assert warnings[0].startswith(_PREFIX + "service failure evidence could not be persisted (")
+
+
+def test_the_unpublished_artifact_warning_carries_the_sync_prefix(
+    monkeypatch: pytest.MonkeyPatch, published: tuple[list[tuple[Any, ...]], list[dict[str, Any]]]
+) -> None:
+    calls, _created = published
+    _stage_returns(monkeypatch, {"outcome": "planned"})
+    _publish_raises(monkeypatch)
+
+    service_sync_run.fn("run-ok", "plan", "config-001", 1, "a" * 64)
+
+    warnings = [call[2] for call in calls if call[0] == "log" and call[1] == logging.WARNING]
+    assert len(warnings) == 1
+    assert warnings[0].startswith(_PREFIX + "run summary artifact for run run-ok")
