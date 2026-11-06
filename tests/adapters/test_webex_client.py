@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import traceback
 from unittest.mock import Mock
+from urllib.parse import quote, quote_plus
 
 import pytest
 import requests
 from rich.console import Console
 from rich.traceback import Traceback
+from structlog.testing import capture_logs
 
 from infrahub_sync.adapters import webex_client
 from infrahub_sync.adapters.webex_client import WebexClient, WebexHTTPError
@@ -46,7 +48,7 @@ def test_get_and_pagination_through_empty_page(http: Mock) -> None:
         response({"items": []}, Link='</v1/locations?max=100&after=two>; rel="next"'),
         response({"items": [{"id": "2"}]}),
     ]
-    pages = WebexClient({}).pages("/v1/locations", {"max": 100, "orgId": "example-org"})
+    pages = WebexClient({"org_id": "example-org"}).pages("/v1/locations", {"max": 100, "orgId": "example-org"})
     assert [obj["id"] for page in pages for obj in page["items"]] == ["1", "2"]
     assert http.call_count == 3
     assert http.call_args_list[1].kwargs["params"] == {"orgId": "example-org"}
@@ -188,7 +190,6 @@ def test_missing_parameter_environment_fails_before_oauth(
         {"retries": -1},
         {"page_size": 0},
         {"token": "invented-secret-value"},
-        {"params": {"after": "cursor"}},
     ],
 )
 def test_invalid_settings(settings: dict, http: Mock) -> None:
@@ -233,3 +234,177 @@ def test_invalid_refresh_payload_hides_credentials_with_traceback_locals(http: M
     assert "refresh response lacks" in output
     assert "invented-new-access" not in output
     assert "invented-secret-value" not in output
+
+
+@pytest.mark.parametrize("cursor", ["before", "after"])
+@pytest.mark.parametrize("placement", ["params", "endpoint"])
+def test_start_cursor_still_loads_all_pages(cursor: str, placement: str, http: Mock) -> None:
+    http.side_effect = [
+        response({"items": [{"id": "first"}]}, Link='</v1/devices?after=next>; rel="next"'),
+        response({"items": [{"id": "last"}]}),
+    ]
+    endpoint = f"/v1/devices?{cursor}=invented-start&max=1" if placement == "endpoint" else "/v1/devices"
+    params = {cursor: "invented-start", "max": 1} if placement == "params" else {}
+    pages = WebexClient({"params": {cursor: "invented-start"}}).pages(endpoint, params)
+    assert [record["id"] for page in pages for record in page["items"]] == ["first", "last"]
+    assert "invented-start" not in str(http.call_args_list)
+    assert "after=next" in http.call_args_list[1].args[1]
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"org_id": "invented-org-a", "params": {"orgId": "invented-org-b"}},
+        {"org_id": "invented-org-a", "resources": {"Device": {"params": {"orgId": "invented-org-b"}}}},
+        {"params": {"orgId": "invented-org-a"}, "resources": {"Device": {"params": {"orgId": "invented-org-b"}}}},
+        {"resources": {"Device": {"params": {"orgId": {"parent": "org"}}}}},
+        {"resources": {"Device": {"params": {"orgId": ""}}}},
+    ],
+)
+def test_conflicting_organizations_fail_before_http(settings: dict, http: Mock) -> None:
+    with pytest.raises(ValueError, match="organization"):
+        WebexClient(settings)
+    http.assert_not_called()
+
+
+@pytest.mark.parametrize("endpoint", ["/v1/devices?orgId=invented-org-b", "/v1/devices?orgId="])
+def test_endpoint_organization_cannot_change_project_scope(endpoint: str, http: Mock) -> None:
+    with pytest.raises(ValueError, match="organization"):
+        WebexClient({"org_id": "invented-org-a"}).pages(endpoint, {})
+    http.assert_not_called()
+
+
+def test_pagination_cannot_switch_organizations(http: Mock) -> None:
+    http.return_value = response(Link='</v1/devices?orgId=invented-org-b>; rel="next"')
+    with pytest.raises(ValueError, match="organization"):
+        WebexClient({"org_id": "invented-org-a"}).pages("/v1/devices", {"orgId": "invented-org-a"})
+    assert http.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "authentication",
+        "permission",
+        "timeout",
+        "connection",
+        "rate_limit",
+        "server",
+        "refresh_denied",
+        "refresh_invalid",
+        "refresh_timeout",
+        "refresh_rate_limit",
+    ],
+)
+def test_failure_matrix_names_source_resource_and_hides_credentials(
+    failure: str, http: Mock, service: dict[str, str]
+) -> None:
+    failures = {
+        "authentication": response({"message": "invented-access-value"}, 401),
+        "permission": response({"message": "invented-secret-value"}, 403),
+        "timeout": requests.Timeout("invented-access-value"),
+        "connection": requests.ConnectionError("invented-access-value"),
+        "rate_limit": response({"message": "invented-refresh-value"}, 429),
+        "server": response({"message": "invented-secret-value"}, 503),
+        "refresh_denied": response({"message": "invented-refresh-value"}, 400),
+        "refresh_invalid": response({"access_token": "invented-new-access", "expires_in": "invented-secret-value"}),
+        "refresh_timeout": requests.Timeout("invented-refresh-value"),
+        "refresh_rate_limit": response({"message": "invented-secret-value"}, 429),
+    }
+    settings: dict[str, int | str] = {"retries": 0}
+    if failure.startswith("refresh_"):
+        settings.update(service)
+        http.side_effect = [
+            response({"access_token": "invented-new-access", "expires_in": 3600}),
+            response(status=401),
+            failures[failure],
+        ]
+    else:
+        http.side_effect = [failures[failure]]
+    with capture_logs() as logs:
+        output = _render_failure(WebexClient(settings))
+    assert "Webex" in output
+    assert "/v1/locations" in output
+    if failure.startswith("refresh_"):
+        assert "token refresh failed" in output
+        assert http.call_count == 3
+    for credential in [
+        "invented-access-value",
+        "invented-new-access",
+        "invented-client-value",
+        "invented-secret-value",
+        "invented-refresh-value",
+    ]:
+        assert credential not in output
+        assert credential not in str(logs)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Invalid workspaceType: expected room or desk",
+        "Invalid workspaceType; token=invented-access-value",
+        "Invalid workspaceType; Authorization: Bearer unknown-bearer-value",
+        "Invalid workspaceType; Authorization: Basic unknown-basic-value",
+        "Invalid workspaceType; refresh_token=unknown-refresh-value; client_secret=unknown-secret-value",
+        "Invalid workspaceType; https://user:unknown-password@host.example/path?token=unknown-url-value",
+        "Invalid workspaceType; encoded=" + quote("invented-access-value", safe=""),
+    ],
+)
+def test_query_400_repeats_safe_webex_message(message: str, http: Mock) -> None:
+    http.return_value = response({"message": message, "other": "invented-access-value"}, 400)
+    with capture_logs() as logs:
+        output = _render_failure(WebexClient({}))
+    assert "Webex" in output
+    assert "/v1/locations" in output
+    assert "HTTP 400" in output
+    assert "Invalid workspaceType" in output
+    for secret in [
+        "invented-access-value",
+        "unknown-bearer-value",
+        "unknown-basic-value",
+        "unknown-refresh-value",
+        "unknown-secret-value",
+        "unknown-password",
+        "unknown-url-value",
+    ]:
+        assert secret not in output
+        assert secret not in str(logs)
+
+
+def test_query_400_redacts_prior_and_rotated_service_credentials(http: Mock, service: dict[str, str]) -> None:
+    http.side_effect = [
+        response({"access_token": "invented-old-access", "expires_in": 3600, "refresh_token": "invented-rotated"}),
+        response(status=401),
+        response({"access_token": "invented-new-access", "expires_in": 3600}),
+        response(
+            {
+                "message": (
+                    "Invalid query: invented-old-access invented-new-access invented-refresh-value "
+                    "invented-rotated invented-client-value invented-secret-value"
+                )
+            },
+            400,
+        ),
+    ]
+    output = _render_failure(WebexClient(service))
+    assert "Invalid query" in output
+    assert "invented-" not in output
+
+
+@pytest.mark.parametrize("encoding", ["plain", "percent", "form"])
+def test_query_400_redacts_credentials_with_special_characters(
+    encoding: str, http: Mock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("WEBEX_TOKEN", "invented-token/with space+value")
+    encodings = {
+        "plain": "invented-token/with space+value",
+        "percent": quote("invented-token/with space+value", safe=""),
+        "form": quote_plus("invented-token/with space+value"),
+    }
+    http.return_value = response({"message": f"Invalid query; echoed value {encodings[encoding]}"}, 400)
+    with capture_logs() as logs:
+        output = _render_failure(WebexClient({}))
+    assert "Invalid query" in output
+    assert "invented-token" not in output
+    assert "invented-token" not in str(logs)

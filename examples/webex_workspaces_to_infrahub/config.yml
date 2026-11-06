@@ -6,44 +6,58 @@ source:
     auth_method: token
     token_env: WEBEX_TOKEN
     resources:
-      LocationSite:
+      WebexLocation:
         page_size: 100
-        read_only: true
-      LocationMeetingRoom:
+      WebexWorkspace:
         page_size: 1000
+      WebexDevice:
+        page_size: 100
 destination:
   name: infrahub
   settings:
     url: http://localhost:8000
-diffsync_flags:
-  - SKIP_UNMATCHED_DST
 order:
-  - LocationSite
-  - LocationMeetingRoom
+  - WebexLocation
+  - WebexWorkspace
+  - WebexDevice
 schema_mapping:
-  - name: LocationSite
+  - name: WebexLocation
     mapping: /v1/locations
-    identifiers: [webex_location_id]
+    identifiers: [webex_id]
     fields:
-      - name: webex_location_id
+      - name: webex_id
         mapping: id
-  - name: LocationMeetingRoom
+      - name: name
+        mapping: name
+  - name: WebexWorkspace
     mapping: /v1/workspaces
-    identifiers: [name]
-    filters:
-      - field: type
-        operation: '=='
-        value: meetingRoom
-      - field: locationId
-        operation: is_not_empty
-    transforms:
-      - field: room_number
-        expression: "{{ displayName.split('/')[-1] }}"
+    identifiers: [webex_id]
     fields:
+      - name: webex_id
+        mapping: id
       - name: name
         mapping: displayName
-      - name: room_number
-        mapping: room_number
-      - name: parent
+      - name: location
         mapping: locationId
-        reference: LocationSite
+        reference: WebexLocation
+  - name: WebexDevice
+    mapping: /v1/devices
+    identifiers: [webex_id]
+    fields:
+      - name: webex_id
+        mapping: id
+      - name: name
+        mapping: displayName
+      - name: serial_number
+        mapping: serial
+      - name: model
+        mapping: product
+      - name: software
+        mapping: software
+      - name: ip_address
+        mapping: ip
+      - name: connection_status
+        mapping: connectionStatus
+      - name: workspace
+        mapping: workspaceId
+        reference: WebexWorkspace
