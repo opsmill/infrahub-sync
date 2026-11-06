@@ -10,33 +10,63 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ConfigsConfigIdRouteImport } from './routes/configs.$configId'
+import { Route as RunsIndexRouteImport } from './routes/runs.index'
+import { Route as RunsRunIdRouteImport } from './routes/runs.$runId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConfigsConfigIdRoute = ConfigsConfigIdRouteImport.update({
+  id: '/configs/$configId',
+  path: '/configs/$configId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RunsIndexRoute = RunsIndexRouteImport.update({
+  id: '/runs/',
+  path: '/runs/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RunsRunIdRoute = RunsRunIdRouteImport.update({
+  id: '/runs/$runId',
+  path: '/runs/$runId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/configs/$configId': typeof ConfigsConfigIdRoute
+  '/runs/$runId': typeof RunsRunIdRoute
+  '/runs/': typeof RunsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/configs/$configId': typeof ConfigsConfigIdRoute
+  '/runs/$runId': typeof RunsRunIdRoute
+  '/runs': typeof RunsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/configs/$configId': typeof ConfigsConfigIdRoute
+  '/runs/$runId': typeof RunsRunIdRoute
+  '/runs/': typeof RunsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/configs/$configId' | '/runs/$runId' | '/runs/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/configs/$configId' | '/runs/$runId' | '/runs'
+  id: '__root__' | '/' | '/configs/$configId' | '/runs/$runId' | '/runs/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ConfigsConfigIdRoute: typeof ConfigsConfigIdRoute
+  RunsRunIdRoute: typeof RunsRunIdRoute
+  RunsIndexRoute: typeof RunsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +78,35 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/configs/$configId': {
+      id: '/configs/$configId'
+      path: '/configs/$configId'
+      fullPath: '/configs/$configId'
+      preLoaderRoute: typeof ConfigsConfigIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/runs/': {
+      id: '/runs/'
+      path: '/runs'
+      fullPath: '/runs/'
+      preLoaderRoute: typeof RunsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/runs/$runId': {
+      id: '/runs/$runId'
+      path: '/runs/$runId'
+      fullPath: '/runs/$runId'
+      preLoaderRoute: typeof RunsRunIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ConfigsConfigIdRoute: ConfigsConfigIdRoute,
+  RunsRunIdRoute: RunsRunIdRoute,
+  RunsIndexRoute: RunsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

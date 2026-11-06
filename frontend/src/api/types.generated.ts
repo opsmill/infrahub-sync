@@ -44,6 +44,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Me
+         * @description Return the caller's actor name and administrator flag; performs no other action.
+         */
+        get: operations["get_me_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs": {
         parameters: {
             query?: never;
@@ -51,7 +71,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Runs
+         * @description Return one page of runs, newest first, optionally for one configuration or version.
+         */
+        get: operations["list_runs_runs_get"];
         put?: never;
         /** Create Run */
         post: operations["create_run_runs_post"];
@@ -204,7 +228,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Configs */
+        /**
+         * List Configs
+         * @description Return one page of configurations, newest first, optionally only those named ``name``.
+         */
         get: operations["list_configs_configs_get"];
         put?: never;
         /** Register */
@@ -222,7 +249,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Versions */
+        /**
+         * List Versions
+         * @description Return one page of a configuration's version summaries, newest version first.
+         */
         get: operations["list_versions_configs__config_id__versions_get"];
         put?: never;
         /** Create Version */
@@ -369,6 +399,76 @@ export interface components {
             reason?: string | null;
         };
         /**
+         * ConfigurationPage
+         * @description One page of the configuration list, newest first; ``next_cursor`` is ``None`` on the last page.
+         */
+        ConfigurationPage: {
+            /** Items */
+            items: components["schemas"]["ConfigurationSummaryResource"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ConfigurationSummaryResource
+         * @description Identify one registered configuration.
+         */
+        ConfigurationSummaryResource: {
+            /** Config Id */
+            config_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Name */
+            name?: string | null;
+            /** Latest Version */
+            latest_version?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ConfigurationVersionPage
+         * @description One page of a configuration's versions, newest version first.
+         */
+        ConfigurationVersionPage: {
+            /** Items */
+            items: components["schemas"]["ConfigurationVersionSummaryResource"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ConfigurationVersionSummaryResource
+         * @description One configuration version without its package, with its latest run and most recently applied run.
+         *
+         *     ``GET /configs/{config_id}/versions/{registry_version}`` returns the full version.
+         */
+        ConfigurationVersionSummaryResource: {
+            /** Config Id */
+            config_id: string;
+            /** Registry Version */
+            registry_version: number;
+            /** Package Checksum */
+            package_checksum: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Registered By */
+            registered_by?: string | null;
+            /** Registration Reason */
+            registration_reason?: string | null;
+            latest_run?: components["schemas"]["RunReference"] | null;
+            latest_applied_run?: components["schemas"]["RunReference"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * CreateRunRequest
          * @description Request creation of a plan or confirmed synchronization run.
          */
@@ -464,6 +564,80 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * PlanLastChangeAccountResource
+         * @description The account Infrahub recorded as `updated_by` for a value, by id and display label.
+         */
+        PlanLastChangeAccountResource: {
+            /** Id */
+            id: string;
+            /** Display Label */
+            display_label?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PlanLastChangeResource
+         * @description Who last changed one field an update proposes to change, and when.
+         *
+         *     `updated_by` or `updated_at` is `None` when Infrahub holds no value for it, or when the
+         *     plan did not read metadata; review shows such a value as "not recorded".
+         */
+        PlanLastChangeResource: {
+            /** Operation Id */
+            operation_id: string;
+            /** Field */
+            field: string;
+            /**
+             * Field Type
+             * @enum {string}
+             */
+            field_type: "attribute" | "relationship";
+            updated_by?: components["schemas"]["PlanLastChangeAccountResource"] | null;
+            /** Updated At */
+            updated_at?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PlanLineageAccountResource
+         * @description The import account a saved plan was computed with.
+         */
+        PlanLineageAccountResource: {
+            /** Name */
+            name: string;
+            /** Id */
+            id: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PlanLineageNodeResource
+         * @description A source or owner node, by kind and name, as the saved plan recorded it.
+         */
+        PlanLineageNodeResource: {
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PlanLineageResource
+         * @description The lineage a saved plan writes: import account, source, owner and protection.
+         *
+         *     `owner` is `None` when the package names no owner.
+         */
+        PlanLineageResource: {
+            import_account: components["schemas"]["PlanLineageAccountResource"];
+            source: components["schemas"]["PlanLineageNodeResource"];
+            owner?: components["schemas"]["PlanLineageNodeResource"] | null;
+            /** Protect */
+            protect: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * PlanOperationResource
          * @description One validated operation returned by the saved-plan route.
          */
@@ -516,6 +690,9 @@ export interface components {
             schema_fingerprint?: string | null;
             /** Destination Branch */
             destination_branch?: string | null;
+            lineage?: components["schemas"]["PlanLineageResource"] | null;
+            /** Last Changes */
+            last_changes?: components["schemas"]["PlanLastChangeResource"][] | null;
         } & {
             [key: string]: unknown;
         };
@@ -538,6 +715,18 @@ export interface components {
             delete_operations_computed: boolean;
             /** Deletes Not Executed */
             deletes_not_executed: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PrincipalResource
+         * @description Name the authenticated caller and whether it is an administrator.
+         */
+        PrincipalResource: {
+            /** Actor */
+            actor: string;
+            /** Administrator */
+            administrator: boolean;
         } & {
             [key: string]: unknown;
         };
@@ -612,6 +801,8 @@ export interface components {
              * @default false
              */
             reconciliation_required: boolean;
+            /** Destination Branch */
+            destination_branch?: string | null;
             /**
              * Artifact Refs
              * @default []
@@ -636,6 +827,43 @@ export interface components {
             results: {
                 [key: string]: unknown;
             };
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RunPage
+         * @description One page of the run list, newest first.
+         *
+         *     Items carry the public run fields with empty ``artifact_refs`` and
+         *     ``prefect_executions``; ``GET /runs/{run_id}`` returns them. ``next_cursor`` is ``None``
+         *     on the last page.
+         */
+        RunPage: {
+            /** Items */
+            items: components["schemas"]["PublicRunResource"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RunReference
+         * @description The identity and state of one run, as a configuration version's latest run shows it.
+         */
+        RunReference: {
+            /** Run Id */
+            run_id: string;
+            /** Phase */
+            phase: string;
+            /** Outcome */
+            outcome?: string | null;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Finished At */
+            finished_at?: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -765,6 +993,177 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ServiceStatusResource"];
+                };
+            };
+        };
+    };
+    get_me_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrincipalResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_runs_runs_get: {
+        parameters: {
+            query?: {
+                config_id?: string | null;
+                registry_version?: string | null;
+                limit?: string | null;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunPage"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -1560,8 +1959,9 @@ export interface operations {
     list_configs_configs_get: {
         parameters: {
             query?: {
-                offset?: string;
-                limit?: string;
+                name?: string | null;
+                limit?: string | null;
+                cursor?: string | null;
             };
             header?: never;
             path?: never;
@@ -1575,7 +1975,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConfigurationPage"];
                 };
             };
             /** @description Validation Error */
@@ -1627,8 +2027,8 @@ export interface operations {
     list_versions_configs__config_id__versions_get: {
         parameters: {
             query?: {
-                offset?: string;
-                limit?: string;
+                limit?: string | null;
+                cursor?: string | null;
             };
             header?: never;
             path: {
@@ -1644,7 +2044,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ConfigurationVersionPage"];
                 };
             };
             /** @description Validation Error */

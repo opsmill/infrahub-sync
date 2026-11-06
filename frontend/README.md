@@ -44,22 +44,31 @@ from the `/openapi.json` of the running Sync API. Regenerate it after the API ch
 pnpm codegen:openapi
 ```
 
-A route loads its data in its `loader` and reads it in its component with the same query
-options, so the page renders with the data already in the cache:
+A route starts its requests in its `loader` with `prefetchQuery`, and its component reads them
+with `useQuery` and the same query options from `src/api/queries.ts`. `prefetchQuery` never
+throws, so each page shows its own loading, error and empty states:
 
 ```tsx
-const versionQuery = $api.queryOptions("get", "/version");
-
-export const Route = createFileRoute("/")({
-  loader: ({ context }) => context.queryClient.ensureQueryData(versionQuery),
-  component: Home,
+export const Route = createFileRoute("/runs/$runId")({
+  loader: ({ context: { queryClient }, params }) => queryClient.prefetchQuery(runQuery(params.runId)),
+  component: RunRoute,
 });
-
-function Home() {
-  const { data } = useSuspenseQuery(versionQuery);
-  // ...
-}
 ```
+
+### Pages
+
+| Page | What it shows | Sync API routes |
+| --- | --- | --- |
+| `/` | Every configuration, grouped by the state of its latest run: failed or waiting for review, running, no current plan, in sync. | `GET /configs`, `GET /runs`, and `GET /configs/{config_id}/versions/{registry_version}` for each latest version |
+| `/configs/{config_id}` | The latest run, then tabs for the configuration's runs, its versions with who registered them and why, and the declared source, destination and mapping. **Start run** creates a plan or a sync. | `GET /configs/{config_id}`, `GET /configs/{config_id}/versions`, `GET /runs?config_id=`, `POST /runs` |
+| `/runs` | Every run, newest first, with filters and older pages. | `GET /runs` |
+| `/runs/{run_id}` | The plan, verify and apply steps with their timings, the failure detail, the planned changes by kind, the run's files and its executions. **Verify**, **Apply** and **Cancel run** act on the run. | `GET /runs/{run_id}`, `GET /runs/{run_id}/plan`, `GET /runs/{run_id}/artifacts`, `POST /runs/{run_id}/verify`, `POST /runs/{run_id}/apply`, `POST /runs/{run_id}/cancel` |
+
+The top bar reads `GET /status` for the worker state and `GET /me` for the actor the token
+authenticates as. A run in progress is read again every 2 seconds; lists every 10 seconds.
+
+Each write sends an `Idempotency-Key`. A dialog keeps its key until a field changes, so sending
+again after a lost response retries the same request instead of creating a second run.
 
 ### Updating the Infrahub design system
 
