@@ -1,0 +1,25 @@
+.agents/hooks/speckit-codex.py
+  s_e2176ce2fba659::t_995893239b035e 1-52
+.agents/hooks/speckit-python-run.sh
+  s_e2176ce2fba659::t_995893239b035e 1-35
+.codex/hooks.json
+  s_e2176ce2fba659::t_995893239b035e 1-15
+pyproject.toml
+  s_e2176ce2fba659::t_0ecbad7d0fd437 199-201
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ac938d8fa0f1c3ef805fbc89833118e7eb1e501d",
+  "prompts": {},
+  "sessions": {
+    "s_e2176ce2fba659": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "99127975-a76f-4076-b6b1-bf6678ebabae",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Pol Michel <polmichel29@gmail.com>"
+    }
+  }
+}
