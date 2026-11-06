@@ -493,7 +493,9 @@ other. An event that records a refusal is saved on its own.
 A value outside these rules returns `422 request-invalid`. Events are ordered by
 `occurred_at`, then `event_id`, oldest first. To read new events, send `offset` equal to the
 number of events already read; `infrahub-sync events --follow` reads every 2 seconds this way
-until you stop it.
+until you stop it. An event saved late with an earlier `occurred_at` than events already read
+takes a position among them and moves the later events down by one, so a reader that pages
+this way can skip one event or read one event twice.
 
 ```json
 {
@@ -521,13 +523,14 @@ until you stop it.
 }
 ```
 
-`primary_resource` is the run or the configuration that the event is about. `related` holds
+`primary_resource` is the run or the configuration that the event is about. It is `null`
+when the event names neither a run nor a configuration. `related` holds
 the actor's account and, when they are known, the configuration, its version and the
 destination branch. The event types are:
 
 | Event type | Recorded when |
 | --- | --- |
-| `infrahub_sync.run.accepted` | The Sync API accepted a plan, sync, verify or apply request. |
+| `infrahub_sync.run.accepted` | The Sync API accepted a plan, sync, verify or apply request, or a cancel request. For a cancel request, `operation` is `cancel`. |
 | `infrahub_sync.run.replayed` | A retry with the same idempotency key received the stored answer. |
 | `infrahub_sync.run.refused` | The Sync API refused a run request. `outcome` names the reason, for example `refused-checksum`. |
 | `infrahub_sync.run.unavailable` | The orchestrator could not confirm a submission or a cancellation request. |
@@ -535,14 +538,18 @@ destination branch. The event types are:
 | `infrahub_sync.run.verified` | A verify stage succeeded. |
 | `infrahub_sync.run.applied` | An apply stage succeeded. |
 | `infrahub_sync.run.synced` | A sync stage succeeded. |
-| `infrahub_sync.run.failed` | A stage failed or was interrupted. `outcome` is the stage's outcome. |
+| `infrahub_sync.run.failed` | A stage failed, or was interrupted. `outcome` is `failed`, or `ambiguous` when the stage may have written to the destination. The Sync API records this event, with `outcome` `ambiguous`, when it ends an execution whose worker stopped without recording a result. |
 | `infrahub_sync.run.cancelled` | An execution that a cancel request stopped ended cancelled. `actor` and `reason` come from the cancel request. |
 | `infrahub_sync.config.registered` | A configuration was registered as version 1. |
 | `infrahub_sync.config.version_registered` | A new version of a configuration was registered. |
 | `infrahub_sync.config.refused`, `.replayed`, `.unavailable` | The same decisions as for a run, on a configuration request. |
 
 A request refused for a missing or invalid token is not an event, and `GET /events` never
-returns it. Events recorded before this release have no type and are not listed.
+returns it. Events recorded before this release get a type when the Sync API first starts on
+this release, from their operation and outcome. They name the account of their actor, but no
+configuration, version or branch, because the earlier record did not hold them. A request
+refused for a missing or invalid token that an earlier release recorded gets no type and is
+not listed.
 
 ### Read why a stage failed
 

@@ -271,6 +271,19 @@ def test_opening_a_migrated_store_again_changes_nothing(database: _Database) -> 
     assert _snapshot(database) == first
 
 
+def test_opening_a_store_whose_columns_were_added_but_not_filled_types_its_events(database: _Database) -> None:
+    """SQLite commits ALTER TABLE at once, so a start-up that failed after it left rows untyped."""
+    _create_legacy_store(database)
+    for column in ("event_type TEXT", "config_id TEXT", "registry_version INTEGER", "branch TEXT"):
+        database.execute(f"ALTER TABLE audit_events ADD COLUMN {column}")
+
+    database.open_store()
+
+    events, resources = _snapshot(database)
+    assert [(row[0], row[7]) for row in events] == [(row[0], row[5]) for row in _LEGACY_ROWS]
+    assert resources == [(event_id, "account", actor) for event_id, _, actor, *_ in _LEGACY_ROWS]
+
+
 def test_migrated_events_read_back_with_their_type_and_account(database: _Database, tmp_path: Path) -> None:
     _create_legacy_store(database)
     projection = ProductProjection(database.open_store(), FileArtifactStore(tmp_path / "objects"))

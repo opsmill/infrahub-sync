@@ -14,7 +14,7 @@ from contextlib import AbstractContextManager, contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 from uuid import UUID
 
 import httpx
@@ -157,7 +157,7 @@ class ExecutionClaimRefusedError(RuntimeError):
         self.run_id = run_id
 
 
-def _raise_writeback_refused() -> None:
+def _raise_writeback_refused() -> NoReturn:
     raise RuntimeError(_WORKER_EXECUTION_WRITEBACK_REFUSED)
 
 
@@ -925,7 +925,10 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
                 summary={**stored.summary, "failed_stage": stage, **partial},
                 results={**stored.results, **results},
             )
-        projection.commit_claimed_execution(
+        # Built before the commit: a receipt lookup error falls back to the run's actor
+        # rather than losing the failure evidence.
+        event = _stage_event(projection, stored, flow_run_id, stage, terminal_outcome, run_logger)
+        committed = projection.commit_claimed_execution(
             run_id,
             flow_run_id,
             worker_id=worker_id,
@@ -933,7 +936,7 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
             terminal_state=terminal_state,
             terminal_outcome=terminal_outcome,
             writeback=writeback,
-            event=_stage_event(projection, stored, flow_run_id, stage, terminal_outcome),
+            event=event,
             secrets=secrets,
         )
     except Exception as persistence_error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
@@ -941,6 +944,13 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
             logging.WARNING,
             "service failure evidence could not be persisted (%s)",
             type(persistence_error).__name__,
+        )
+        return None
+    if not committed:
+        # The store refused the commit because this worker no longer holds the execution, so
+        # nothing was recorded and the failure takes the unrecorded path.
+        run_logger.log(
+            logging.WARNING, "service failure evidence was not recorded: this worker no longer holds the execution"
         )
         return None
     next_action = evidence.get("next_action")
@@ -1121,6 +1131,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 worker_id=worker_id,
                 writeback=writeback,
                 secrets=secrets,
+                run_logger=lines,
             )
         except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             failure = exc
@@ -1166,16 +1177,31 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     return result
 
 
-def _stage_event(
-    projection: ProductProjection, run: ProductRun, flow_run_id: str, stage: str, outcome: str
+def _stage_event(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    projection: ProductProjection,
+    run: ProductRun,
+    flow_run_id: str,
+    stage: str,
+    outcome: str,
+    run_logger: RunLogger,
 ) -> AuditEvent:
     """Build the event of one stage result (spec 017 data model).
 
     The actor and reason are those of the request whose receipt holds this flow run ID, so an
     apply an administrator requested names the administrator; when no receipt holds it, the
-    event names the run's actor.
+    event names the run's actor. When the receipt cannot be read, the event names the run's
+    actor too and a WARNING line names the error class, so a lookup error neither loses a
+    failure's evidence nor turns a success into a failure.
     """
-    request = projection.lookup_mutation_for_execution(run.run_id, flow_run_id, stage).value
+    try:
+        request = projection.lookup_mutation_for_execution(run.run_id, flow_run_id, stage).value
+    except Exception as lookup_error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        run_logger.log(
+            logging.WARNING,
+            "the request that started this execution could not be read (%s)",
+            type(lookup_error).__name__,
+        )
+        request = None
     actor = request.actor if request is not None else run.actor
     return run_event(
         run.run_id,
@@ -1197,6 +1223,7 @@ def _commit_success(  # pylint: disable=too-many-arguments
     worker_id: str,
     writeback: ExecutionWriteback,
     secrets: Sequence[str],
+    run_logger: RunLogger,
 ) -> None:
     """Commit this stage's success, tolerating only a commit that actually landed.
 
@@ -1206,7 +1233,10 @@ def _commit_success(  # pylint: disable=too-many-arguments
     """
     try:
         stored = projection.lookup_run(run_id).value
-        if stored is None or not projection.commit_claimed_execution(
+        if stored is None:
+            _raise_writeback_refused()
+        event = _stage_event(projection, stored, flow_run_id, stage, "succeeded", run_logger)
+        if not projection.commit_claimed_execution(
             run_id,
             flow_run_id,
             worker_id=worker_id,
@@ -1214,7 +1244,7 @@ def _commit_success(  # pylint: disable=too-many-arguments
             terminal_state="completed",
             terminal_outcome="succeeded",
             writeback=writeback,
-            event=_stage_event(projection, stored, flow_run_id, stage, "succeeded"),
+            event=event,
             secrets=secrets,
         ):
             _raise_writeback_refused()

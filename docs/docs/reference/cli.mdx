@@ -390,6 +390,7 @@ $ infrahub-sync runs cancel [OPTIONS] {run_id}
 Show one run&#x27;s service record and its selected execution.
 
 `prefect_flow_run_url` links the flow run in the Prefect UI; it reads &lt;none&gt; when the Sync API has no UI address.
+A failed stage adds its error type and, when the run recorded them, a `cause:` and a `hint:` line.
 
 **Usage**:
 

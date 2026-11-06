@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -337,7 +338,14 @@ def _finish_open_execution(projection: ProductProjection, run_id: str, stage: st
         )
     )
     service_flow._commit_success(
-        projection, run_id, link.flow_run_id, stage=stage, worker_id=_WORKER_ID, writeback=writeback, secrets=()
+        projection,
+        run_id,
+        link.flow_run_id,
+        stage=stage,
+        worker_id=_WORKER_ID,
+        writeback=writeback,
+        secrets=(),
+        run_logger=logging.getLogger("test-service"),
     )
 
 

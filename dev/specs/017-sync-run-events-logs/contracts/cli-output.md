@@ -33,4 +33,6 @@ One line per event, tab-separated, in the same row style:
 ## `infrahub-sync runs show <run_id>`
 
 Unchanged fields. A failed stage's `cause` and `next_action` are printed where the run results already hold them;
-for a missing branch they name the branch and the fix (FR-002).
+for a missing branch they name the branch and the fix (FR-002). They follow the run fields on stdout, for each
+`<stage>_failure` in the run's results, in the lines that `sync`, `plan` and `apply` print to stderr:
+`<stage> failed: <error type>`, `cause: <cause>`, `hint: <next action>`.

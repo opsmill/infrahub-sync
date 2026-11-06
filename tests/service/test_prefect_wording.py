@@ -3,7 +3,7 @@
 FR-006: a failed run (missing branch), an expired log and an unreachable orchestrator are served
 through the Sync API and printed by `runs show`, `runs logs` and `events`. No response message,
 no printed line and no served log line holds the Prefect API address, "open Prefect",
-"in Prefect" or "Prefect flow run". Field names such as `prefect_executions` and the configured
+"in Prefect" or "Prefect flow run", and no API `message` value holds the word "Prefect". Field names such as `prefect_executions` and the configured
 `prefect_flow_run_url` value are allowed (spec FR-006).
 
 FR-011: no module under `infrahub_sync/` calls a Prefect flow run delete.
@@ -178,6 +178,21 @@ def _messages(payload: object) -> list[str]:
     return []
 
 
+def _api_messages_naming_prefect(responses: dict[str, httpx.Response]) -> list[str]:
+    """Every API `message` value that holds the word "Prefect", in any case.
+
+    Field names and the `prefect_flow_run_url` value are not `message` values. The served log
+    lines of `/runs/{id}/logs` are Sync's own lines and are checked against the phrases only,
+    so only that route's error message is read here.
+    """
+    return [
+        f"{path} message {message!r}"
+        for path, response in responses.items()
+        for message in _messages(response.json().get("error", {}) if path.endswith("/logs") else response.json())
+        if "prefect" in message.lower()
+    ]
+
+
 @pytest.mark.parametrize("mode", ["read", "expired", "unavailable"])
 def test_no_message_line_or_output_points_at_prefect(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, prefect_api_address: str, mode: str
@@ -228,6 +243,7 @@ def test_no_message_line_or_output_points_at_prefect(
         {f"{' '.join(command)} output": _forbidden(result.output, addresses) for command, result in outputs.items()}
     )
     assert {where: found for where, found in findings.items() if found} == {}
+    assert _api_messages_naming_prefect(responses) == []
 
 
 def _delete_calls(source_root: Path) -> list[str]:

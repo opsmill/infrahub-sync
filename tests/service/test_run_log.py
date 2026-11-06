@@ -108,6 +108,19 @@ def test_control_characters_are_removed_and_the_message_is_capped() -> None:
     assert len(long.message) == MAX_MESSAGE_CHARACTERS
 
 
+def test_a_secret_across_the_cap_is_redacted_before_the_message_is_capped() -> None:
+    """Capping first would leave the secret's first characters, which redaction no longer matches."""
+    secret = "s3cr3t-token-value-crossing-the-cap"  # noqa: S105 - a fake secret the redaction must remove.
+    prefix = "x" * (MAX_MESSAGE_CHARACTERS - 10)
+    logs = [_log("a", PLAN_RUN, 0, f"infrahub_sync | {prefix}{secret} tail")]
+
+    (line,) = sync_lines([_Entry(PLAN_RUN, "plan", 1)], logs, secrets=(secret,))
+
+    assert len(line.message) <= MAX_MESSAGE_CHARACTERS
+    assert secret[:10] not in line.message
+    assert line.message.startswith(prefix)
+
+
 def test_page_with_offset_equal_to_lines_read_returns_only_newer_lines() -> None:
     entries = [_Entry(PLAN_RUN, "plan", 1)]
     first = [_log(f"l{index}", PLAN_RUN, index, f"infrahub_sync | line {index}") for index in range(5)]

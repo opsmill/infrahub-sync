@@ -807,6 +807,35 @@ def test_runs_show_reports_whether_the_run_needs_reconciling(
     assert rendered in result.output
 
 
+def test_runs_show_prints_the_recorded_cause_and_next_action_of_a_failed_stage(client: MagicMock) -> None:
+    """FR-002: a run that failed on a missing branch names the branch and the fix in `runs show`."""
+    resource = _run(operation="sync", phase="failed", outcome="failed")
+    cause = "Branch `demo-test` does not exist in Infrahub."
+    next_action = "Create the branch `demo-test` in Infrahub, or set the run's destination branch, then run again."
+    failed_run = resource.run.model_copy(
+        update={
+            "results": {
+                "sync_failure": {
+                    "stage": "sync",
+                    "error_type": "BranchNotFoundError",
+                    "cause": cause,
+                    "next_action": next_action,
+                }
+            }
+        }
+    )
+    client.get_run.return_value = resource.model_copy(update={"run": failed_run})
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert "sync failed: BranchNotFoundError" in lines
+    assert f"cause: {cause}" in lines
+    assert f"hint: {next_action}" in lines
+    client.get_results.assert_not_called()
+
+
 def test_runs_results_renders_the_typed_response_as_parseable_json(client: MagicMock) -> None:
     """The API owns what a result says; this renders it without inventing structure."""
     client.get_results.return_value = ResultsResource(

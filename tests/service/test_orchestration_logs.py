@@ -154,3 +154,5 @@ async def test_a_client_error_or_timeout_raises_orchestration_unavailable(failur
         await _orchestration(client).read_logs((str(uuid4()),))
 
     assert "prefect" not in str(raised.value).lower()
+    # The class name alone is carried for the server log; the address stays out.
+    assert raised.value.error_class == type(failure).__name__

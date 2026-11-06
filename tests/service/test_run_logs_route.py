@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
@@ -82,7 +83,7 @@ class _FakeOrchestration:
         self.requested.append(tuple(flow_run_ids))
         if self.mode == "unavailable":
             msg = "the orchestrator cannot be reached"
-            raise OrchestrationUnavailableError(msg)
+            raise OrchestrationUnavailableError(msg, error_class="ConnectError")
         if self.mode == "expired":
             return RunLogRead(expired=True)
         return RunLogRead(expired=False, logs=tuple(log for log in self.logs if log.flow_run_id in flow_run_ids))
@@ -226,12 +227,17 @@ def test_an_expired_log_answers_410(logs_api: tuple[TestClient, _FakeOrchestrati
 
 
 def test_an_unreachable_orchestrator_answers_503_while_record_and_timeline_stay_readable(
-    logs_api: tuple[TestClient, _FakeOrchestration],
+    logs_api: tuple[TestClient, _FakeOrchestration], caplog: pytest.LogCaptureFixture
 ) -> None:
     client, orchestration = logs_api
     orchestration.mode = "unavailable"
 
-    logs = client.get(f"/runs/{RUN_ID}/logs", headers=READ)
+    with caplog.at_level(logging.WARNING, logger="infrahub_sync.service.service"):
+        logs = client.get(f"/runs/{RUN_ID}/logs", headers=READ)
+    # The server log names the error class, so an operator can tell a timeout from a refusal.
+    assert [record.getMessage() for record in caplog.records if record.name == "infrahub_sync.service.service"] == [
+        f"the log of run {RUN_ID} could not be read from the orchestrator (ConnectError)"
+    ]
     run = client.get(f"/runs/{RUN_ID}", headers=READ)
     events = client.get("/events", params={"run_id": RUN_ID}, headers=READ)
 

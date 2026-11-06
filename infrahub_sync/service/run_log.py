@@ -15,6 +15,7 @@ from operator import itemgetter
 from typing import TYPE_CHECKING, Final, Protocol
 
 from infrahub_sync.client.models import RunLogLine
+from infrahub_sync.execution import redact_ordered, redaction_order
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -47,13 +48,17 @@ class LogEntry(Protocol):
     def attempt(self) -> int: ...
 
 
-def sync_lines(entries: Sequence[LogEntry], logs: Iterable[FlowRunLog]) -> tuple[RunLogLine, ...]:
+def sync_lines(
+    entries: Sequence[LogEntry], logs: Iterable[FlowRunLog], *, secrets: Sequence[str] = ()
+) -> tuple[RunLogLine, ...]:
     """Return the Sync lines of ``logs``, tagged with the stage and attempt of their entry.
 
     Lines follow the order of ``entries`` (the run record's order, which is attempt order
     within each stage), then their timestamp, then their log ID. A line of a flow run that no
-    entry names is left out.
+    entry names is left out. Each message is redacted with ``secrets`` before it is capped,
+    so a secret that crosses the cap cannot leave its first characters behind.
     """
+    ordered = redaction_order(secrets)
     positions = {entry.flow_run_id: position for position, entry in enumerate(entries)}
     kept: list[tuple[tuple[int, object, str], RunLogLine]] = []
     for log in logs:
@@ -70,7 +75,7 @@ def sync_lines(entries: Sequence[LogEntry], logs: Iterable[FlowRunLog]) -> tuple
             timestamp=log.timestamp,
             level=level_name(log.level),
             source=match.group(1),
-            message=_clean(log.message[match.end() :]),
+            message=_clean(log.message[match.end() :], ordered),
         )
         kept.append(((position, log.timestamp, log.log_id), line))
     kept.sort(key=itemgetter(0))
@@ -90,11 +95,14 @@ def level_name(level: int) -> str:
     return "DEBUG"
 
 
-def _clean(message: str) -> str:
-    """Remove control characters other than line breaks and tabs, then cap the length."""
+def _clean(message: str, ordered_secrets: Sequence[str]) -> str:
+    """Redact, remove control characters other than line breaks and tabs, then cap the length.
+
+    Redaction runs again after the removal, for a secret a control character had split.
+    """
     cleaned = "".join(
         character
-        for character in message
+        for character in redact_ordered(message, ordered_secrets)
         if character in _KEPT_CONTROL_CHARACTERS or unicodedata.category(character) != "Cc"
     )
-    return cleaned[:MAX_MESSAGE_CHARACTERS]
+    return redact_ordered(cleaned, ordered_secrets)[:MAX_MESSAGE_CHARACTERS]

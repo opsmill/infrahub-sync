@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 - Pydantic resolves resource annotations at runtime.
 from math import isfinite
-from typing import Any, Literal, Protocol, TypeVar, cast
+from typing import Annotated, Any, Literal, Protocol, TypeVar, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 Operation = Literal["plan", "verify", "apply", "sync"]
 TerminalState = Literal["completed", "failed", "cancelled", "abandoned", "interrupted"]
@@ -439,7 +439,9 @@ class RunLogLine(_ResourceModel):
     timestamp: datetime
     level: str
     source: str
-    message: str
+    # Kept as written: the resource models strip text, which would drop a table's or a
+    # traceback's indentation.
+    message: Annotated[str, StringConstraints(strip_whitespace=False)]
 
     @field_validator("timestamp")
     @classmethod

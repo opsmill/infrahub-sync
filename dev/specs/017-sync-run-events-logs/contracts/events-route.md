@@ -47,3 +47,6 @@ A value that fails validation gets HTTP 422 with the existing error body.
 ```
 
 Order: `occurred_at`, then `event_id`, oldest first.
+
+`primary_resource` is the run, else the configuration, that the event is about. It is `null` when the event names
+neither a run nor a configuration.

@@ -74,8 +74,13 @@ LOG_PAGE_SIZE: Final = 200
 class OrchestrationUnavailableError(RuntimeError):
     """The orchestrator could not be reached or did not answer in time.
 
-    The message names no provider and no address: it can reach an API error.
+    The message names no provider and no address: it can reach an API error. ``error_class``
+    is the class name of the client error behind it, for the server log only.
     """
+
+    def __init__(self, message: str, *, error_class: str | None = None) -> None:
+        super().__init__(message)
+        self.error_class = error_class
 
 
 @dataclass(frozen=True)
@@ -386,9 +391,9 @@ class PrefectOrchestration:
                 logs.extend(_flow_run_log(entry) for entry in batch)
                 if len(batch) < LOG_PAGE_SIZE:
                     break
-        except (httpx.HTTPError, TimeoutError):
+        except (httpx.HTTPError, TimeoutError) as exc:
             msg = "the orchestrator could not be reached"
-            raise OrchestrationUnavailableError(msg) from None
+            raise OrchestrationUnavailableError(msg, error_class=type(exc).__name__) from None
         return RunLogRead(expired=False, logs=tuple(logs))
 
 

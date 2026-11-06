@@ -271,7 +271,13 @@ def _requested_cancellation(projection: ProductProjection) -> str:
     return receipt.receipt_id
 
 
-def _acknowledge(projection: ProductProjection, event: AuditEvent, *, seconds: int = 1) -> bool:
+def _acknowledge(
+    projection: ProductProjection,
+    event: AuditEvent,
+    *,
+    seconds: int = 1,
+    refusal_events: dict[int, AuditEvent] | None = None,
+) -> bool:
     return projection.acknowledge_execution_cancellation(
         "run-001",
         "flow-001",
@@ -279,7 +285,15 @@ def _acknowledge(projection: ProductProjection, event: AuditEvent, *, seconds: i
         response_status=202,
         response_body={"run": {"run_id": "run-001"}, "orchestration": []},
         event=event,
+        refusal_events=refusal_events or {},
     )
+
+
+def _refusal_events(*, unavailable_id: str = "a-cancel-unavailable") -> dict[int, AuditEvent]:
+    return {
+        409: _event("a-cancel-refused", "infrahub_sync.run.refused"),
+        503: _event(unavailable_id, "infrahub_sync.run.unavailable"),
+    }
 
 
 def test_failed_event_insert_leaves_the_cancel_request_unanswered(projection: ProductProjection) -> None:
@@ -316,3 +330,42 @@ def test_cancel_acknowledged_too_late_saves_no_accepted_event(projection: Produc
     assert not _acknowledge(projection, _event("a-cancel-accepted", "infrahub_sync.run.accepted"), seconds=31)
 
     assert _typed_ids(projection) == []
+
+
+def test_cancel_acknowledged_too_late_saves_its_refusal_event_with_the_refusal(projection: ProductProjection) -> None:
+    """FR-014: the terminal state, the 503 receipt answer and the refusal event commit together."""
+    _requested_cancellation(projection)
+
+    assert not _acknowledge(
+        projection,
+        _event("a-cancel-accepted", "infrahub_sync.run.accepted"),
+        seconds=31,
+        refusal_events=_refusal_events(),
+    )
+
+    assert _typed_ids(projection) == ["a-cancel-unavailable"]
+    receipt = _receipt(operation="cancel", target_run_id="run-001")
+    stored = projection.lookup_mutation(receipt.actor, receipt.key_digest).value
+    assert stored is not None
+    assert stored.response_status == 503
+
+
+def test_failed_refusal_event_insert_leaves_the_late_cancellation_unsaved(projection: ProductProjection) -> None:
+    _requested_cancellation(projection)
+    taken = _taken_event_id(projection)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        _acknowledge(
+            projection,
+            _event("a-cancel-accepted", "infrahub_sync.run.accepted"),
+            seconds=31,
+            refusal_events=_refusal_events(unavailable_id=taken),
+        )
+
+    receipt = _receipt(operation="cancel", target_run_id="run-001")
+    stored = projection.lookup_mutation(receipt.actor, receipt.key_digest).value
+    assert stored is not None
+    assert stored.response_status is None
+    run = projection.lookup_run("run-001").value
+    assert run is not None
+    assert run.prefect_executions[0].terminal_at is None

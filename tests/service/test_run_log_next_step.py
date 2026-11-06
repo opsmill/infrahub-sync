@@ -196,6 +196,100 @@ def test_record_failure_returns_none_when_the_commit_raises(tmp_path: Path) -> N
     assert recorded is None
 
 
+def test_record_failure_returns_none_and_warns_when_the_claim_is_lost(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A commit that answers False stored nothing, so the failure takes the unrecorded path."""
+    projection, flow_run_id = _claimed_run(tmp_path, "run-claim-lost", "plan")
+
+    class _LostClaim:
+        @staticmethod
+        def lookup_run(run_id: str) -> object:
+            return projection.lookup_run(run_id)
+
+        @staticmethod
+        def lookup_mutation_for_execution(run_id: str, flow_run_id: str, purpose: str) -> object:
+            return projection.lookup_mutation_for_execution(run_id, flow_run_id, purpose)
+
+        @staticmethod
+        def commit_claimed_execution(*_args: object, **_kwargs: object) -> bool:
+            return False
+
+    with caplog.at_level(logging.WARNING, logger="test-service"):
+        recorded = _record(
+            cast("ProductProjection", _LostClaim()),
+            ("run-claim-lost", flow_run_id),
+            "plan",
+            RuntimeError("boom"),
+            dispatch_started=False,
+        )
+
+    assert recorded is None
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert warnings == ["service failure evidence was not recorded: this worker no longer holds the execution"]
+    assert all("prefect" not in message.lower() for message in warnings)
+
+
+class _LookupFailsError(RuntimeError):
+    """The receipt lookup's failure, named by class only."""
+
+
+def _failing_lookup(*_args: object) -> object:
+    msg = "receipt lookup secret-detail"
+    raise _LookupFailsError(msg)
+
+
+def test_record_failure_keeps_the_evidence_when_the_receipt_lookup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The event falls back to the run's actor; the failure evidence still commits."""
+    projection, flow_run_id = _claimed_run(tmp_path, "run-lookup-fails", "plan")
+    monkeypatch.setattr(projection, "lookup_mutation_for_execution", _failing_lookup)
+
+    with caplog.at_level(logging.WARNING, logger="test-service"):
+        recorded = _record(
+            projection, ("run-lookup-fails", flow_run_id), "plan", RuntimeError("boom"), dispatch_started=False
+        )
+
+    assert recorded == RecordedFailure(outcome="failed", next_action=None)
+    events = projection.audit_events("run-lookup-fails")
+    assert [event.actor for event in events if event.event_type == "infrahub_sync.run.failed"] == ["owner"]
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert warnings == ["the request that started this execution could not be read (_LookupFailsError)"]
+
+
+def test_commit_success_still_commits_when_the_receipt_lookup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A lookup error must not turn a stored success into a failure."""
+    projection, flow_run_id = _claimed_run(tmp_path, "run-success-lookup", "plan")
+    monkeypatch.setattr(projection, "lookup_mutation_for_execution", _failing_lookup)
+
+    with caplog.at_level(logging.WARNING, logger="test-service"):
+        service_flow._commit_success(
+            projection,
+            "run-success-lookup",
+            flow_run_id,
+            stage="plan",
+            worker_id=_WORKER_ID,
+            writeback=service_flow.ExecutionFinishWriteback(
+                phase="planned",
+                outcome="succeeded",
+                finished_at=datetime.now(timezone.utc),
+                summary={},
+                results={},
+            ),
+            secrets=[],
+            run_logger=logging.getLogger("test-service"),
+        )
+
+    assert service_flow._stored_success(projection, "run-success-lookup", flow_run_id)
+    events = projection.audit_events("run-success-lookup")
+    assert [event.actor for event in events if event.outcome == "succeeded"] == ["owner"]
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert warnings == ["the request that started this execution could not be read (_LookupFailsError)"]
+
+
 # --- the line at each exit of service_sync_run (T012) -----------------------------------------
 
 
@@ -606,6 +700,10 @@ def test_the_unpersisted_evidence_warning_carries_the_sync_prefix(
         @staticmethod
         def lookup_run(run_id: str) -> object:
             return projection.lookup_run(run_id)
+
+        @staticmethod
+        def lookup_mutation_for_execution(run_id: str, flow_run_id: str, purpose: str) -> object:
+            return projection.lookup_mutation_for_execution(run_id, flow_run_id, purpose)
 
         @staticmethod
         def commit_claimed_execution(*_args: object, **_kwargs: object) -> bool:

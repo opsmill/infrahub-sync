@@ -585,7 +585,9 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def abandon_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
 
-    def interrupt_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
+    def interrupt_execution(
+        self, run_id: str, flow_run_id: str, *, terminal_at: datetime, event: AuditEvent | None = None
+    ) -> bool: ...
 
     def commit_claimed_execution(
         self,
@@ -621,6 +623,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         response_status: int,
         response_body: Mapping[str, Any],
         event: AuditEvent | None = None,
+        refusal_events: Mapping[int, AuditEvent] | None = None,
     ) -> bool: ...
 
     def cancel_execution(
@@ -904,18 +907,21 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         """Bring legacy audit events up to the typed event, preserving every event in place.
 
         Spec 017 adds the nullable ``event_type``, ``config_id``, ``registry_version`` and
-        ``branch`` columns. The start-up that adds ``event_type`` fills it from each row's
-        ``(operation, outcome)`` pair and writes one ``account`` resource per event, so a
-        later start-up changes nothing. A legacy row names no configuration or branch,
-        because the old record did not hold them.
+        ``branch`` columns, fills ``event_type`` from each row's ``(operation, outcome)`` pair
+        and writes one ``account`` resource per event. A legacy row names no configuration or
+        branch, because the old record did not hold them.
+
+        Both fills run on every start-up, not only the one that adds the columns: SQLite
+        commits ``ALTER TABLE`` at once, so a start-up that failed after adding the columns
+        would otherwise leave the rows untyped for good. Each fill touches only rows it has
+        not filled yet, so a later start-up changes nothing.
         """
         existing = self._read_table_columns(cursor, "audit_events")
         for column, sql_type in _AUDIT_EVENT_ADDED_COLUMNS:
             if column not in existing:
                 cursor.execute(f"ALTER TABLE audit_events ADD COLUMN {column} {sql_type}")
-        if "event_type" not in existing:
-            cursor.execute(_BACKFILL_AUDIT_EVENT_TYPES)
-            cursor.execute(_BACKFILL_AUDIT_EVENT_ACCOUNTS)
+        cursor.execute(_BACKFILL_AUDIT_EVENT_TYPES)
+        cursor.execute(_BACKFILL_AUDIT_EVENT_ACCOUNTS)
         self._allow_audit_events_without_reason(cursor)
 
     def _allow_audit_events_without_reason(self, cursor: _Cursor) -> None:
@@ -1440,8 +1446,10 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             outcome="abandoned",
         )
 
-    def interrupt_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool:
-        """Atomically terminalize an orphaned claimed execution and its product run."""
+    def interrupt_execution(
+        self, run_id: str, flow_run_id: str, *, terminal_at: datetime, event: AuditEvent | None = None
+    ) -> bool:
+        """Atomically terminalize an orphaned claimed execution and its product run, with its event."""
         return self._terminalize_execution(
             run_id,
             flow_run_id,
@@ -1451,6 +1459,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             terminal_outcome="ambiguous",
             phase="interrupted",
             outcome="ambiguous",
+            event=event,
         )
 
     def commit_claimed_execution(
@@ -1686,11 +1695,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         response_status: int,
         response_body: Mapping[str, Any],
         event: AuditEvent | None = None,
+        refusal_events: Mapping[int, AuditEvent] | None = None,
     ) -> bool:
-        """Persist remote acknowledgement, the replay result and the accepted event in one transaction.
+        """Persist remote acknowledgement, the replay result and its event in one transaction.
 
-        ``event`` is written only when the acknowledgement is accepted, not when it is turned
-        into an ambiguous or unconfirmed refusal.
+        ``event`` is written only when the acknowledgement is accepted. When it is turned into
+        an ambiguous (409) or unconfirmed (503) refusal, the event of ``refusal_events`` for
+        that status is written instead, in the transaction that stores the refusal (FR-014).
         """
         connection = self._connect()
         try:
@@ -1753,14 +1764,18 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         if claimed_write
                         else _cancellation_unconfirmed_response(run_id, receipt_id)
                     )
+                    refusal_status = int(refusal["error"]["status"])
                     self._complete_receipt_row(
                         cursor,
                         receipt_id,
-                        response_status=int(refusal["error"]["status"]),
+                        response_status=refusal_status,
                         response_body=refusal,
                         flow_run_id=flow_run_id,
                         updated_at=acknowledged_at,
                     )
+                    refusal_event = (refusal_events or {}).get(refusal_status)
+                    if refusal_event is not None:
+                        self._insert_event(cursor, refusal_event)
                     connection.commit()
                     return False
                 cursor.execute(
@@ -1983,6 +1998,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         terminal_outcome: str,
         phase: str,
         outcome: str,
+        event: AuditEvent | None = None,
     ) -> bool:
         connection = self._connect()
         try:
@@ -2015,6 +2031,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     terminal_state=terminal_state,
                     terminal_outcome=terminal_outcome,
                 )
+                if event is not None:
+                    self._insert_event(cursor, event)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -3213,11 +3231,21 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         _require_execution_timestamp(effective_terminal_at)
         return self._records.abandon_execution(run_id, flow_run_id, terminal_at=effective_terminal_at)
 
-    def interrupt_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime | None = None) -> bool:
-        """CAS a claimed execution into the terminal interrupted/ambiguous verdict."""
+    def interrupt_execution(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        terminal_at: datetime | None = None,
+        event: AuditEvent | None = None,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """CAS a claimed execution into the terminal interrupted/ambiguous verdict, with its event."""
         effective_terminal_at = terminal_at if terminal_at is not None else datetime.now(timezone.utc)
         _require_execution_timestamp(effective_terminal_at)
-        return self._records.interrupt_execution(run_id, flow_run_id, terminal_at=effective_terminal_at)
+        return self._records.interrupt_execution(
+            run_id, flow_run_id, terminal_at=effective_terminal_at, event=_redacted_event(event, secrets)
+        )
 
     def commit_claimed_execution(
         self,
@@ -3320,9 +3348,14 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         response_status: int,
         response_body: Mapping[str, Any],
         event: AuditEvent | None = None,
+        refusal_events: Mapping[int, AuditEvent] | None = None,
         secrets: Sequence[str] = (),
     ) -> bool:
-        """Commit acknowledgement, the accepted replay response and the accepted event together."""
+        """Commit acknowledgement, its replay response and its event together.
+
+        ``refusal_events`` maps the status of a late or claimed-write refusal (409 or 503) to
+        the event saved with it.
+        """
         _require_execution_timestamp(acknowledged_at)
         sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(response_body), secrets))
         return self._records.acknowledge_execution_cancellation(
@@ -3332,6 +3365,9 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             response_status=response_status,
             response_body=sanitized,
             event=_redacted_event(event, secrets),
+            refusal_events={
+                status: _redact_event(refusal, secrets) for status, refusal in (refusal_events or {}).items()
+            },
         )
 
     def cancel_execution(

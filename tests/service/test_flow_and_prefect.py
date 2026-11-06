@@ -1774,7 +1774,14 @@ def test_a_successful_stage_records_its_result_event_with_the_requesting_actor(
     )
 
     service_flow._commit_success(
-        projection, run_id, flow_run_id, stage=stage, worker_id=_EVENT_WORKER_ID, writeback=writeback, secrets=()
+        projection,
+        run_id,
+        flow_run_id,
+        stage=stage,
+        worker_id=_EVENT_WORKER_ID,
+        writeback=writeback,
+        secrets=(),
+        run_logger=logging.getLogger("test-service"),
     )
 
     (event,) = projection.audit_events(run_id)

@@ -1862,6 +1862,7 @@ def test_version_is_unauthenticated_and_declares_the_unstable_api(
 
 def test_cancelling_a_claimed_write_answers_with_durable_ambiguity(
     service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A worker already holding the write may have reached the destination.
 
@@ -1882,6 +1883,7 @@ def test_cancelling_a_claimed_write_answers_with_durable_ambiguity(
     apply_flow_run_id = applied.json()["orchestration"][-1]["flow_run_id"]
     assert projection.claim_execution(run_id, apply_flow_run_id, worker_id=_PLAN_WORKER_ID)
     orchestration.observations[apply_flow_run_id] = Observation(available=True, state="running")
+    _refuse_record_audit_for(monkeypatch, projection, "refused-terminal")
 
     cancelled = client.post(
         f"/runs/{run_id}/cancel",
@@ -1895,6 +1897,11 @@ def test_cancelling_a_claimed_write_answers_with_durable_ambiguity(
     resource = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {OWNER_TOKEN}"}).json()
     assert resource["run"]["reconciliation_required"] is True
     assert resource["run"]["outcome"] == "ambiguous"
+    # FR-014: the refusal event is saved once, with the refusal it records.
+    cancel_events = [event for event in projection.audit_events(run_id) if event.operation == "cancel"]
+    assert [(event.event_type, event.outcome) for event in cancel_events] == [
+        ("infrahub_sync.run.refused", "refused-terminal")
+    ]
 
 
 def test_a_run_that_never_wrote_reports_no_reconciliation_requirement(
@@ -2598,6 +2605,32 @@ def test_an_accepted_cancel_and_the_recorded_cancellation_record_their_events(
     assert RelatedResource(kind="config_version", id=f"{version.config_id}@{version.registry_version}") in (
         cancelled.related
     )
+
+
+def test_an_interrupted_execution_records_a_run_failed_event_with_its_verdict(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FR-012a and FR-014: a claimed execution that ended without its worker records `run.failed`."""
+    client, projection, orchestration = service_api
+    run_id = _create(client).json()["run"]["run_id"]
+    run = projection.lookup_run(run_id).value
+    assert run is not None
+    flow_run_id = run.prefect_executions[-1].flow_run_id
+    assert projection.claim_execution(run_id, flow_run_id, worker_id=_PLAN_WORKER_ID)
+    orchestration.observations[flow_run_id] = Observation(available=True, state="crashed")
+    _refuse_record_audit_for(monkeypatch, projection, "ambiguous")
+    reconciler = RunLivenessReconciler(projection, orchestration, LivenessPolicy(300, 30, 5), "pool")
+
+    asyncio.run(reconciler.reconcile_run(run_id))
+
+    assert _typed(projection, run_id) == [
+        ("infrahub_sync.run.accepted", "plan", "accepted", "owner"),
+        ("infrahub_sync.run.failed", "plan", "ambiguous", "owner"),
+    ]
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert stored.prefect_executions[-1].terminal_state == "interrupted"
 
 
 # --- FR-006: the 503 messages name the orchestrator, not Prefect (T025) ----------------------

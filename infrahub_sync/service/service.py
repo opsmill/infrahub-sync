@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -78,6 +79,7 @@ if TYPE_CHECKING:
 
     from .auth import Principal
 
+logger = logging.getLogger(__name__)
 PLAN_ARTIFACT_ID = "plan-review"
 
 
@@ -593,6 +595,14 @@ class RunService:
             {link.flow_run_id: accepted_observation},
         )
         body = resource.model_dump(mode="json")
+        # A late acknowledgement, or one for a claimed write, is stored as a 409 or 503 refusal;
+        # its event is saved in that refusal's transaction (FR-014).
+        refusal_events = {
+            status: self._event(
+                run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome=outcome
+            )
+            for status, outcome in ((409, "refused-terminal"), (503, "unavailable"))
+        }
         acknowledged = self._projection.acknowledge_execution_cancellation(
             run_id,
             link.flow_run_id,
@@ -602,6 +612,7 @@ class RunService:
             event=self._event(
                 run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="accepted"
             ),
+            refusal_events=refusal_events,
             secrets=self._secrets,
         )
         completed = self._projection.lookup_mutation(receipt.actor, receipt.key_digest).value
@@ -622,13 +633,17 @@ class RunService:
                     run_id=run_id,
                     mutation_id=receipt.receipt_id,
                 )
-            self._audit(
-                run_id,
-                actor=principal.actor,
-                operation="cancel",
-                reason=request.reason,
-                outcome="refused-terminal" if completed.response_status == 409 else "unavailable",
-            )
+            stored_ids = {event.event_id for event in self._projection.audit_events(run_id)}
+            if not any(event.event_id in stored_ids for event in refusal_events.values()):
+                # Another writer (the worker's result or the recovery deadline) answered the
+                # request first, so its refusal has no event yet.
+                self._audit(
+                    run_id,
+                    actor=principal.actor,
+                    operation="cancel",
+                    reason=request.reason,
+                    outcome="refused-terminal" if completed.response_status == 409 else "unavailable",
+                )
         # An acknowledged cancellation wrote its accepted event with the 202 it stored.
         return self._stored_response(completed)
 
@@ -778,14 +793,18 @@ class RunService:
         if entries:
             try:
                 read = await self._orchestration.read_logs(tuple(link.flow_run_id for link in entries))
-            except OrchestrationUnavailableError:
+            except OrchestrationUnavailableError as exc:
+                # The class name tells a timeout from a refusal; the address and provider stay out.
+                logger.warning(
+                    "the log of run %s could not be read from the orchestrator (%s)",
+                    run_id,
+                    exc.error_class or type(exc).__name__,
+                )
                 raise self._error(503, "log-unavailable", LOG_UNAVAILABLE_MESSAGE, run_id=run_id) from None
             if read.expired:
                 raise self._error(410, "log-expired", LOG_EXPIRED_MESSAGE, run_id=run_id)
-            lines = tuple(
-                line.model_copy(update={"message": redact(line.message, self._secrets)})
-                for line in sync_lines(entries, read.logs)
-            )
+            # Redacted before the cap, inside `sync_lines`.
+            lines = sync_lines(entries, read.logs, secrets=self._secrets)
         items, has_more = log_page(lines, offset, limit)
         return public_run_log_page(run_id, items, limit=limit, offset=offset, has_more=has_more, run_phase=run.phase)
 

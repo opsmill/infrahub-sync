@@ -969,6 +969,30 @@ def test_read_run_logs_sends_the_contract_query_and_parses_the_page() -> None:
     assert requests[0].url.params.multi_items() == [("stage", "plan"), ("limit", "50"), ("offset", "3")]
 
 
+def test_a_log_line_keeps_the_indentation_of_its_message() -> None:
+    """A table or traceback line the service served keeps its leading and trailing spaces."""
+    message = "    | Device | created |  "
+    item = {**cast("list[dict[str, object]]", _log_page()["items"])[0], "message": message}
+    client = _logs_client(httpx.Response(200, json=_log_page(items=[item])), [])
+
+    (line,) = client.read_run_logs("run-1").items
+
+    assert line.message == message
+
+
+def test_the_service_emits_a_log_line_with_its_indentation() -> None:
+    pytest.importorskip("fastapi")
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.service.models import public_run_log_page
+
+    message = "    | Device | created |  "
+    line = RunLogLine.model_validate({**cast("list[dict[str, object]]", _log_page()["items"])[0], "message": message})
+
+    page = public_run_log_page("run-1", (line,), limit=50, offset=0, has_more=False, run_phase="planned")
+
+    assert page.items[0].message == message
+
+
 def test_read_run_logs_without_arguments_sends_no_query() -> None:
     requests: list[httpx.Request] = []
     client = _logs_client(httpx.Response(200, json=_log_page(items=[], offset=0, limit=200)), requests)
