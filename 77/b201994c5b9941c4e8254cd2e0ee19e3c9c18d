@@ -1,0 +1,45 @@
+tests/product_store/test_contract.py
+  s_01f3e2b1e0dad4::t_e4785026f9afa8 82-83,90,94
+  s_01f3e2b1e0dad4::t_a58955490cd87d 4733-4735,4749
+  s_01f3e2b1e0dad4::t_7b8f3d2fe3a0e5 4610-4614,4631-4632
+  s_01f3e2b1e0dad4::t_0a9dd70227d0d9 4633
+tests/product_store/test_audit_event_migration.py
+  s_01f3e2b1e0dad4::t_f413c231b5db28 120-121,127,129-131
+  s_01f3e2b1e0dad4::t_e2751f0b5617c6 1-26,28-119,122-126,128,132-480
+  s_01f3e2b1e0dad4::t_e4785026f9afa8 27
+dev/specs/017-sync-run-events-logs/tasks.md
+  s_01f3e2b1e0dad4::t_acb30a2f7d5fde 36-38,42-46
+infrahub_sync/product_store/__init__.py
+  s_01f3e2b1e0dad4::t_e4785026f9afa8 13-14,21,23,64-65,72,76
+infrahub_sync/product_store/models.py
+  s_01f3e2b1e0dad4::t_8be8333fadbdd9 494-518,520-525,536-540,550-587,592-595
+  s_01f3e2b1e0dad4::t_53b277aa840987 588-591
+  s_01f3e2b1e0dad4::t_b4bfdc899a869f 596
+infrahub_sync/product_store/store.py
+  s_01f3e2b1e0dad4::t_b34dbdedab56c3 434,2301
+  s_01f3e2b1e0dad4::t_1a4d57adb81f98 654,2347
+  s_01f3e2b1e0dad4::t_514107b94986a5 44-45,107-108,112-119,428-433,435-470,595,620-622,642,653,894-911,1456,1458,1539-1540,1781-1784,1805-1806,2143,2157-2158,2276-2300,2302-2312,2318,2334,2338,2343-2346,2348-2387,2649-2650,2654-2656,2669,3198,3301-3310,3317,3372,3375,3383,3395-3396,3402-3409,3896-3905,3915-3919
+  s_01f3e2b1e0dad4::t_17938e8fb93dcb 3250
+tests/service/test_event_transactions.py
+  s_01f3e2b1e0dad4::t_f90af48a0b1174 32
+  s_01f3e2b1e0dad4::t_d4c4f80b1578c0 22,54
+  s_01f3e2b1e0dad4::t_546ededab65503 1-21,23,25-31,33-53,55-72,76-98,102-189,193-205,210-249
+  s_01f3e2b1e0dad4::t_e4785026f9afa8 24
+  s_01f3e2b1e0dad4::t_9ce63f1fba8413 73-75,99-101,190-192,206-209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "77b201994c5b9941c4e8254cd2e0ee19e3c9c18d",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
