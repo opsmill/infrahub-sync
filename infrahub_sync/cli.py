@@ -15,6 +15,7 @@ from enum import Enum
 from functools import wraps
 from math import isfinite
 from pathlib import Path  # noqa: TC003 - Typer resolves command annotations at runtime.
+from time import sleep
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import uuid4
 
@@ -45,6 +46,7 @@ from infrahub_sync.client import (
     VerifyRunRequest,
 )
 from infrahub_sync.client.models import (
+    LOG_STAGES,
     MAX_FAILURE_CAUSE_TEXT,
     MAX_LIMIT,
     RECOVERY_NEXT_ACTIONS,
@@ -61,10 +63,13 @@ if TYPE_CHECKING:
         ConfigurationSummaryResource,
         ConfigurationVersionResource,
         ConfigurationVersionSummaryResource,
+        EventResource,
         PlanLastChangeResource,
         PlanOperationResource,
         PublicRunResource,
         RecoveryAction,
+        RunLogLine,
+        RunLogPage,
         RunReference,
     )
 
@@ -1191,3 +1196,111 @@ def runs_plan(
     """Review a saved plan summary, checksum, and operations."""
     with _client_errors():
         _echo_plan(_client(ctx).get_plan(run_id), detail=detail, kind=kind)
+
+
+# A run's phase while its execution has not ended. A verify run keeps it after its execution
+# ends, because a verification records results without a new phase.
+_UNFINISHED_RUN_PHASE = "accepted"
+# Client operation names a protocol error reports.
+_READ_RUN_LOGS = "read_run_logs"
+_LIST_EVENTS = "list_events"
+
+
+def _row(*columns: str) -> str:
+    """Join columns with tabs, each made safe for a terminal so no value adds a column."""
+    return "\t".join(_display(column) for column in columns)
+
+
+def _log_row(line: RunLogLine) -> str:
+    return _row(line.timestamp.isoformat(), line.stage, line.level, line.message)
+
+
+def _run_ended(client: SyncClient, page: RunLogPage) -> bool:
+    """Report whether the run whose log page this is can write no further line."""
+    if page.run_phase != _UNFINISHED_RUN_PHASE:
+        return True
+    orchestration = client.get_run(page.run_id).orchestration
+    return bool(orchestration) and orchestration[-1].terminal_state is not None
+
+
+@runs_app.command("logs")
+def runs_logs(
+    ctx: typer.Context,
+    run_id: str = typer.Argument(..., help="Service-issued run ID."),
+    stage: str | None = typer.Option(None, "--stage", help=f"Only lines of this stage: {', '.join(LOG_STAGES)}."),
+    follow: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--follow",
+        help=f"Read new lines every {DEFAULT_POLL_INTERVAL:g} seconds until the run ends.",
+    ),
+) -> None:
+    """Print the lines Sync wrote during one run, oldest first: time, stage, level, message."""
+    with _client_errors():
+        client = _client(ctx)
+        offset = 0
+        try:
+            while True:
+                page = client.read_run_logs(run_id, stage=stage, offset=offset)
+                _echo_rows(page.items, _log_row)
+                offset += len(page.items)
+                if page.has_more:
+                    # A page that says more follow but holds none would repeat forever.
+                    if not page.items:
+                        raise ProtocolError(_READ_RUN_LOGS)
+                    continue
+                # The run's last lines may land after its phase changes, so stop only on an empty read.
+                if not follow or (not page.items and _run_ended(client, page)):
+                    return
+                sleep(DEFAULT_POLL_INTERVAL)
+        except KeyboardInterrupt:
+            raise typer.Exit(130) from None
+
+
+def _event_row(event: EventResource) -> str:
+    primary = event.primary_resource
+    return _row(
+        event.occurred_at.isoformat(),
+        event.event_type,
+        f"{primary.kind}:{primary.id}" if primary is not None else "-",
+        event.actor,
+        event.outcome,
+    )
+
+
+@app.command("events")
+def events_cmd(
+    ctx: typer.Context,
+    run_id: str | None = typer.Option(None, "--run-id", help="Only events about this run."),
+    config: str | None = typer.Option(None, "--config-id", "--config", help=_CONFIG_HELP),
+    event_types: list[str] | None = typer.Option(
+        None, "--type", help="Only events of this type, such as infrahub_sync.run.planned. Repeat for several."
+    ),
+    follow: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--follow",
+        help=f"Read new events every {DEFAULT_POLL_INTERVAL:g} seconds until interrupted.",
+    ),
+) -> None:
+    """List typed events, oldest first: time, type, resource, actor, outcome."""
+    with _client_errors():
+        client = _client(ctx)
+        config_id = _config_id(ctx, config) if config is not None else None
+        types = tuple(event_types or ())
+        if not follow:
+            _echo_rows(client.iter_events(run_id=run_id, config_id=config_id, event_types=types), _event_row)
+            return
+        # Events are listed oldest first and never removed, so the count printed so far is the
+        # offset of the first event not yet printed.
+        offset = 0
+        try:
+            while True:
+                page = client.list_events(run_id=run_id, config_id=config_id, event_types=types, offset=offset)
+                _echo_rows(page.items, _event_row)
+                offset += len(page.items)
+                if page.has_more:
+                    if not page.items:
+                        raise ProtocolError(_LIST_EVENTS)
+                    continue
+                sleep(DEFAULT_POLL_INTERVAL)
+        except KeyboardInterrupt:
+            raise typer.Exit(130) from None

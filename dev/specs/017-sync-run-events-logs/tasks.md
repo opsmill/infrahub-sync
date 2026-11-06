@@ -146,14 +146,14 @@ for an expired log and an unreachable Prefect (FR-004, FR-005, FR-008, FR-010, F
 
 ### Tests for User Story 4 (write first, must fail)
 
-- [ ] T041 [P] [US4] Write failing tests in `tests/cli/test_client_commands.py` (FR-015): `runs logs <run_id>` prints one tab-separated row per line; `--stage apply` passes the stage; `--follow` polls with `offset` equal to the lines printed, prints each line once, and exits 0 when `run_phase` is terminal and a last read is empty; 410 and 503 print the existing `error:` fields and exit non-zero.
-- [ ] T042 [P] [US4] Write failing tests in `tests/cli/test_client_commands.py` (FR-016): `events` with `--run-id`, `--config-id` (a name resolves to an ID as in `runs list`) and `--type` prints one row per event in the contract's column order; `--follow` prints each new event once (stop the loop in the test after two polls).
+- [X] T041 [P] [US4] Write failing tests in `tests/cli/test_client_commands.py` (FR-015): `runs logs <run_id>` prints one tab-separated row per line; `--stage apply` passes the stage; `--follow` polls with `offset` equal to the lines printed, prints each line once, and exits 0 when `run_phase` is terminal and a last read is empty; 410 and 503 print the existing `error:` fields and exit non-zero.
+- [X] T042 [P] [US4] Write failing tests in `tests/cli/test_client_commands.py` (FR-016): `events` with `--run-id`, `--config-id` (a name resolves to an ID as in `runs list`) and `--type` prints one row per event in the contract's column order; `--follow` prints each new event once (stop the loop in the test after two polls).
 
 ### Implementation for User Story 4
 
-- [ ] T043 [US4] Add the `runs logs` command to `infrahub_sync/cli.py`, using `_echo_rows` and a 2-second poll interval. T041 passes.
-- [ ] T044 [US4] Add the `events` command to `infrahub_sync/cli.py`. T042 passes.
-- [ ] T045 [US4] Check `uv run infrahub-sync --help`, `uv run infrahub-sync runs --help` and `uv run infrahub-sync events --help`.
+- [X] T043 [US4] Add the `runs logs` command to `infrahub_sync/cli.py`, using `_echo_rows` and a 2-second poll interval. T041 passes.
+- [X] T044 [US4] Add the `events` command to `infrahub_sync/cli.py`. T042 passes.
+- [X] T045 [US4] Check `uv run infrahub-sync --help`, `uv run infrahub-sync runs --help` and `uv run infrahub-sync events --help`.
 
 **Checkpoint**: Operators read logs and events from the CLI.
 
