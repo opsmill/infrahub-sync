@@ -631,7 +631,8 @@ def test_a_failed_schema_read_refuses_with_only_its_short_reason(
         _apply(harness)
 
     message = str(caught.value)
-    assert "unauthorized" in message
+    # The reason reaches the operator as its fixed cause (spec 017, FR-001).
+    assert "Infrahub refused the destination token" in message
     assert INFRAHUB_CANARY not in message
     assert "https://destination.invalid" not in message
     assert harness.calls == []
