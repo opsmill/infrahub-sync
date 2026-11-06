@@ -10,7 +10,7 @@ from .sync_models import (
 
 # Load adapter class dynamically at runtime
 
-_AdapterBaseClass = PluginLoader().resolve("entraid")
+_AdapterBaseClass = PluginLoader().resolve("msgraphsync")
 
 
 # -------------------------------------------------------
@@ -18,7 +18,7 @@ _AdapterBaseClass = PluginLoader().resolve("entraid")
 #  This file has been generated with the command `infrahub-sync generate`
 #  All modifications will be lost the next time you reexecute this command
 # -------------------------------------------------------
-class EntraidSync(_AdapterBaseClass):
+class MsgraphsyncSync(_AdapterBaseClass):
     IdentityEmployee = IdentityEmployee
     IdentityServiceAccount = IdentityServiceAccount
     IdentityGroup = IdentityGroup

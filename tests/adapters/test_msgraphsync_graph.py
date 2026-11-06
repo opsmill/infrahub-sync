@@ -1,4 +1,4 @@
-"""Tests of `EntraidGraphClient` against a mocked Microsoft Graph: paging, query parameters, retries and errors."""
+"""Tests of `MsgraphClient` against a mocked Microsoft Graph: paging, query parameters, retries and errors."""
 
 from __future__ import annotations
 
@@ -14,22 +14,22 @@ pytest.importorskip("msgraph")
 
 from azure.core.exceptions import AzureError, ServiceRequestError, ServiceResponseError  # ty: ignore[unresolved-import]
 
-from infrahub_sync.adapters import entraid
-from infrahub_sync.adapters.entraid import (
+from infrahub_sync.adapters import msgraphsync
+from infrahub_sync.adapters.msgraphsync import (
     FALLBACK_RETRY_SECONDS,
     HIDDEN_MEMBERSHIP_PERMISSION,
     MAX_BACKOFF_SECONDS,
     MAX_RETRY_WAIT_SECONDS,
     Collection,
-    EntraidAuthenticationError,
-    EntraidGraphClient,
-    EntraidGraphError,
-    EntraidPermissionError,
-    EntraidSettings,
+    MsgraphAuthenticationError,
+    MsgraphClient,
+    MsgraphPermissionError,
+    MsgraphRequestError,
+    MsgraphSettings,
 )
-from tests.adapters.entraid_fakes import (
+from tests.adapters.msgraphsync_fakes import (
     CLIENT_SECRET,
-    ENTRAID_ENV,
+    MSGRAPH_ENV,
     TOKEN,
     FakeCredential,
     GraphRouter,
@@ -50,12 +50,12 @@ US_GRAPH_URL = "https://graph.microsoft.us/v1.0"
 def sleeps(monkeypatch: pytest.MonkeyPatch) -> SleepRecorder:
     """Record retry waits instead of sleeping."""
     recorder = SleepRecorder()
-    monkeypatch.setattr(entraid, "_sleep", recorder)
+    monkeypatch.setattr(msgraphsync, "_sleep", recorder)
     return recorder
 
 
-def make_settings(**raw: object) -> EntraidSettings:
-    return EntraidSettings.from_settings(raw, environ=ENTRAID_ENV)
+def make_settings(**raw: object) -> MsgraphSettings:
+    return MsgraphSettings.from_settings(raw, environ=MSGRAPH_ENV)
 
 
 def list_collection(
@@ -66,7 +66,7 @@ def list_collection(
     credential: FakeCredential | None = None,
 ) -> list[dict[str, Any]]:
     async def read() -> list[dict[str, Any]]:
-        async with EntraidGraphClient(
+        async with MsgraphClient(
             make_settings(**(settings or {})), transport=router.transport, credential=credential or FakeCredential()
         ) as graph:
             return await graph.list_collection(collection, select)
@@ -204,7 +204,7 @@ def test_retry_after_above_the_limit_stops_without_retrying_early(sleeps: SleepR
     router = GraphRouter()
     router.add_error("/users", 429, headers={"Retry-After": str(wait)})
 
-    with pytest.raises(EntraidGraphError) as excinfo:
+    with pytest.raises(MsgraphRequestError) as excinfo:
         list_collection(router, USERS)
 
     assert excinfo.value.status == 429
@@ -242,10 +242,10 @@ def test_retry_429_on_every_attempt_raises_after_max_retries(sleeps: SleepRecord
     for _ in range(max_retries + 1):
         router.add_error("/users", 429, headers={"Retry-After": "1"})
 
-    with pytest.raises(EntraidGraphError) as excinfo:
+    with pytest.raises(MsgraphRequestError) as excinfo:
         list_collection(router, USERS, settings={"max_retries": max_retries})
 
-    assert type(excinfo.value) is EntraidGraphError
+    assert type(excinfo.value) is MsgraphRequestError
     assert excinfo.value.status == 429
     assert "429" in str(excinfo.value)
     assert "/users" in str(excinfo.value)
@@ -258,7 +258,7 @@ def test_permission_status_raises_permission_error_naming_the_permissions(sleeps
     router = GraphRouter()
     router.add_error("/users", status, code="Authorization_RequestDenied")
 
-    with pytest.raises(EntraidPermissionError) as excinfo:
+    with pytest.raises(MsgraphPermissionError) as excinfo:
         list_collection(router, USERS)
 
     message = str(excinfo.value)
@@ -277,7 +277,7 @@ def test_member_read_refused_names_the_hidden_membership_permission(sleeps: Slee
     router = GraphRouter()
     router.add_error(group_path, 403, code="Authorization_RequestDenied")
 
-    with pytest.raises(EntraidPermissionError) as excinfo:
+    with pytest.raises(MsgraphPermissionError) as excinfo:
         read_members(router, graph_id(11))
 
     assert HIDDEN_MEMBERSHIP_PERMISSION in str(excinfo.value)
@@ -288,7 +288,7 @@ def test_timeout_raises_graph_error_naming_the_path(sleeps: SleepRecorder) -> No
     router = GraphRouter()
     router.add_timeout("/users")
 
-    with pytest.raises(EntraidGraphError) as excinfo:
+    with pytest.raises(MsgraphRequestError) as excinfo:
         list_collection(router, USERS, settings={"timeout": 7})
 
     message = str(excinfo.value)
@@ -302,7 +302,7 @@ def test_timeout_raises_graph_error_naming_the_path(sleeps: SleepRecorder) -> No
 
 
 AUTH_GUIDANCE = {
-    "client_secret": ["ENTRAID_TENANT_ID", "ENTRAID_CLIENT_ID", "ENTRAID_CLIENT_SECRET"],
+    "client_secret": ["MSGRAPH_TENANT_ID", "MSGRAPH_CLIENT_ID", "MSGRAPH_CLIENT_SECRET"],
     "default": ["Azure CLI login (az login)", "DefaultAzureCredential"],
 }
 
@@ -311,7 +311,7 @@ AUTH_GUIDANCE = {
 def test_credential_failure_raises_authentication_error_naming_the_auth_mode(auth: str) -> None:
     router = GraphRouter()
 
-    with pytest.raises(EntraidAuthenticationError) as excinfo:
+    with pytest.raises(MsgraphAuthenticationError) as excinfo:
         list_collection(router, USERS, settings={"auth": auth}, credential=FakeCredential(fail=True))
 
     message = str(excinfo.value)
@@ -329,7 +329,7 @@ def test_unreachable_token_endpoint_raises_authentication_error(auth: str, error
     router = GraphRouter()
     credential = FakeCredential(error=error_cls("fake: connection refused by the token endpoint"))
 
-    with pytest.raises(EntraidAuthenticationError) as excinfo:
+    with pytest.raises(MsgraphAuthenticationError) as excinfo:
         list_collection(router, USERS, settings={"auth": auth}, credential=credential)
 
     message = str(excinfo.value)
@@ -350,10 +350,10 @@ def test_request_error_after_the_response_raises_graph_error_naming_the_path(
     router = GraphRouter()
     router.add_request_error("/users", error_cls)
 
-    with pytest.raises(EntraidGraphError) as excinfo:
+    with pytest.raises(MsgraphRequestError) as excinfo:
         list_collection(router, USERS)
 
-    assert type(excinfo.value) is EntraidGraphError
+    assert type(excinfo.value) is MsgraphRequestError
     assert excinfo.value.path is not None
     assert excinfo.value.path.split("?", 1)[0].endswith("/users")
     assert excinfo.value.path in str(excinfo.value)
@@ -363,9 +363,7 @@ def test_request_error_after_the_response_raises_graph_error_naming_the_path(
 
 def read_members(router: GraphRouter, group_id: str) -> list[str]:
     async def read() -> list[str]:
-        async with EntraidGraphClient(
-            make_settings(), transport=router.transport, credential=FakeCredential()
-        ) as graph:
+        async with MsgraphClient(make_settings(), transport=router.transport, credential=FakeCredential()) as graph:
             return await graph.user_member_ids(group_id, transitive=False)
 
     return asyncio.run(read())
@@ -404,10 +402,10 @@ def test_page_without_value_list_raises_instead_of_reading_zero_records(
     router = GraphRouter()
     router.add_body(path, body)
 
-    with pytest.raises(EntraidGraphError) as excinfo:
+    with pytest.raises(MsgraphRequestError) as excinfo:
         read(router)
 
-    assert type(excinfo.value) is EntraidGraphError
+    assert type(excinfo.value) is MsgraphRequestError
     assert expected in str(excinfo.value)
     assert excinfo.value.path is not None
     assert excinfo.value.path.split("?", 1)[0].endswith(path)
@@ -497,7 +495,7 @@ def test_error_messages_and_logs_never_contain_the_token(
     router = GraphRouter()
     options = scenario(router)
 
-    with caplog.at_level(logging.DEBUG), pytest.raises(EntraidGraphError) as excinfo:
+    with caplog.at_level(logging.DEBUG), pytest.raises(MsgraphRequestError) as excinfo:
         list_collection(router, USERS, **options)
 
     # The token did travel in the Authorization header whenever a request was sent, so its absence below is meaningful.

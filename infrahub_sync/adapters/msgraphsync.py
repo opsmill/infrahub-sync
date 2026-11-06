@@ -115,9 +115,9 @@ MEMBERSHIP_DIRECT = "direct"
 MEMBERSHIP_TRANSITIVE = "transitive"
 MEMBERSHIP_MODES = (MEMBERSHIP_DIRECT, MEMBERSHIP_TRANSITIVE)
 
-ENV_TENANT_ID = "ENTRAID_TENANT_ID"
-ENV_CLIENT_ID = "ENTRAID_CLIENT_ID"
-ENV_CLIENT_SECRET = "ENTRAID_CLIENT_SECRET"
+ENV_TENANT_ID = "MSGRAPH_TENANT_ID"
+ENV_CLIENT_ID = "MSGRAPH_CLIENT_ID"
+ENV_CLIENT_SECRET = "MSGRAPH_CLIENT_SECRET"
 
 ALLOWED_SETTINGS = (
     "auth",
@@ -140,11 +140,11 @@ _sleep = asyncio.sleep
 T = TypeVar("T")
 
 
-class EntraidConfigError(ValueError):
+class MsgraphConfigError(ValueError):
     """The adapter settings or the schema mapping contain a missing or invalid value."""
 
 
-class EntraidGraphError(RuntimeError):
+class MsgraphRequestError(RuntimeError):
     """A Microsoft Graph request failed.
 
     `status` is the HTTP status (None when no response arrived), `code` the Graph error code and
@@ -165,11 +165,11 @@ class EntraidGraphError(RuntimeError):
         self.path = path
 
 
-class EntraidPermissionError(EntraidGraphError):
+class MsgraphPermissionError(MsgraphRequestError):
     """Microsoft Graph answered HTTP 401 (it rejected the access token) or 403 (a Graph permission is missing)."""
 
 
-class EntraidAuthenticationError(EntraidGraphError):
+class MsgraphAuthenticationError(MsgraphRequestError):
     """The credential could not get an access token: the token endpoint refused the request or was not reached."""
 
 
@@ -184,8 +184,8 @@ class Collection:
 
 
 @dataclass(frozen=True)
-class EntraidSettings:
-    """Validated settings of the `entraid` source, built with `from_settings`."""
+class MsgraphSettings:
+    """Validated settings of the `msgraphsync` source, built with `from_settings`."""
 
     auth: str = AUTH_CLIENT_SECRET
     tenant_id: str | None = None
@@ -204,17 +204,17 @@ class EntraidSettings:
         cls,
         raw: Mapping[str, Any] | None,
         environ: Mapping[str, str] | None = None,
-    ) -> EntraidSettings:
+    ) -> MsgraphSettings:
         """Validate the `source.settings` block and read the credentials from the environment.
 
-        `ENTRAID_TENANT_ID` and `ENTRAID_CLIENT_ID` win over the `tenant_id` and `client_id`
-        settings. The client secret comes only from `ENTRAID_CLIENT_SECRET`.
+        `MSGRAPH_TENANT_ID` and `MSGRAPH_CLIENT_ID` win over the `tenant_id` and `client_id`
+        settings. The client secret comes only from `MSGRAPH_CLIENT_SECRET`.
         """
         if raw is None:
             raw = {}
         if not isinstance(raw, Mapping):
-            msg = f"The entraid settings must be a mapping, got {type(raw).__name__}."
-            raise EntraidConfigError(msg)
+            msg = f"The msgraphsync settings must be a mapping, got {type(raw).__name__}."
+            raise MsgraphConfigError(msg)
         env: Mapping[str, str] = os.environ if environ is None else environ
 
         if AUTH_CLIENT_SECRET in raw:
@@ -222,11 +222,11 @@ class EntraidSettings:
                 "Setting 'client_secret' is not accepted in the configuration file. "
                 f"Set the environment variable {ENV_CLIENT_SECRET} instead."
             )
-            raise EntraidConfigError(msg)
+            raise MsgraphConfigError(msg)
         unknown = sorted(str(key) for key in raw if key not in ALLOWED_SETTINGS)
         if unknown:
-            msg = f"Unknown entraid setting(s): {', '.join(unknown)}. Allowed settings: {', '.join(ALLOWED_SETTINGS)}."
-            raise EntraidConfigError(msg)
+            msg = f"Unknown msgraphsync setting(s): {', '.join(unknown)}. Allowed settings: {', '.join(ALLOWED_SETTINGS)}."
+            raise MsgraphConfigError(msg)
 
         auth = _choice(raw, "auth", AUTH_MODES, AUTH_CLIENT_SECRET)
         tenant_id = env.get(ENV_TENANT_ID) or _optional_str(raw, "tenant_id")
@@ -247,7 +247,7 @@ class EntraidSettings:
                     f"auth 'client_secret' is missing values. Set the environment variable(s): {', '.join(missing)}. "
                     "The tenant and client IDs can also come from the 'tenant_id' and 'client_id' settings."
                 )
-                raise EntraidConfigError(msg)
+                raise MsgraphConfigError(msg)
 
         return cls(
             auth=auth,
@@ -281,15 +281,15 @@ class EntraidSettings:
         if name in RESOURCES:
             return Collection(name=name, resource=name)
         valid = [*sorted(self.collections), *RESOURCES]
-        msg = f"Unknown Entra ID collection '{name}'. Valid names: {', '.join(valid)}."
-        raise EntraidConfigError(msg)
+        msg = f"Unknown Microsoft Graph collection '{name}'. Valid names: {', '.join(valid)}."
+        raise MsgraphConfigError(msg)
 
 
 def _choice(raw: Mapping[str, Any], key: str, allowed: Sequence[str], default: str) -> str:
     value = raw.get(key, default)
     if value not in allowed:
         msg = f"Setting '{key}' must be one of {', '.join(allowed)}, got {value!r}."
-        raise EntraidConfigError(msg)
+        raise MsgraphConfigError(msg)
     return value
 
 
@@ -299,7 +299,7 @@ def _optional_str(raw: Mapping[str, Any], key: str) -> str | None:
         return None
     if not isinstance(value, str):
         msg = f"Setting '{key}' must be a string, got {value!r}."
-        raise EntraidConfigError(msg)
+        raise MsgraphConfigError(msg)
     return value or None
 
 
@@ -307,7 +307,7 @@ def _int_in_range(raw: Mapping[str, Any], key: str, default: int, low: int, high
     value = raw.get(key, default)
     if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
         msg = f"Setting '{key}' must be an integer from {low} to {high}, got {value!r}."
-        raise EntraidConfigError(msg)
+        raise MsgraphConfigError(msg)
     return value
 
 
@@ -315,7 +315,7 @@ def _timeout(raw: Mapping[str, Any]) -> float:
     value = raw.get("timeout", DEFAULT_TIMEOUT_SECONDS)
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         msg = f"Setting 'timeout' must be a number of seconds greater than 0, got {value!r}."
-        raise EntraidConfigError(msg)
+        raise MsgraphConfigError(msg)
     return float(value)
 
 
@@ -326,7 +326,7 @@ def _graph_url(raw: Mapping[str, Any]) -> str:
             f"Setting 'graph_url' must be an https:// URL, got {value!r}. "
             "The Azure authentication provider sends tokens over HTTPS only."
         )
-        raise EntraidConfigError(msg)
+        raise MsgraphConfigError(msg)
     return value.rstrip("/")
 
 
@@ -336,7 +336,7 @@ def _str_tuple(value: Any, key: str) -> tuple[str, ...]:
     if isinstance(value, (list, tuple)) and all(isinstance(item, str) for item in value):
         return tuple(value)
     msg = f"Setting '{key}' must be a string or a list of strings, got {value!r}."
-    raise EntraidConfigError(msg)
+    raise MsgraphConfigError(msg)
 
 
 def _select(value: Any) -> dict[str, tuple[str, ...]]:
@@ -344,12 +344,12 @@ def _select(value: Any) -> dict[str, tuple[str, ...]]:
         return {}
     if not isinstance(value, Mapping):
         msg = f"Setting 'select' must be a mapping of {' or '.join(RESOURCES)} to property names, got {value!r}."
-        raise EntraidConfigError(msg)
+        raise MsgraphConfigError(msg)
     select: dict[str, tuple[str, ...]] = {}
     for resource, names in value.items():
         if resource not in RESOURCES:
             msg = f"Setting 'select' has key {resource!r}; allowed keys: {', '.join(RESOURCES)}."
-            raise EntraidConfigError(msg)
+            raise MsgraphConfigError(msg)
         select[resource] = _str_tuple(names, f"select.{resource}")
     return select
 
@@ -359,54 +359,54 @@ def _collections(value: Any) -> dict[str, Collection]:
         return {}
     if not isinstance(value, Mapping):
         msg = f"Setting 'collections' must be a mapping of collection names to definitions, got {value!r}."
-        raise EntraidConfigError(msg)
+        raise MsgraphConfigError(msg)
     return {name: _collection(name, body) for name, body in value.items()}
 
 
 def _collection(name: Any, body: Any) -> Collection:
     if not isinstance(name, str) or not name:
         msg = f"Setting 'collections' has an invalid collection name {name!r}; names must be non-empty strings."
-        raise EntraidConfigError(msg)
+        raise MsgraphConfigError(msg)
     where = f"collections.{name}"
     if name in RESERVED_COLLECTION_NAMES:
         msg = (
             f"Setting '{where}': the name '{name}' is reserved for the unfiltered read of the resource. "
             "Choose another collection name."
         )
-        raise EntraidConfigError(msg)
+        raise MsgraphConfigError(msg)
     if not isinstance(body, Mapping):
         msg = f"Setting '{where}' must be a mapping with the keys {', '.join(COLLECTION_KEYS)}, got {body!r}."
-        raise EntraidConfigError(msg)
+        raise MsgraphConfigError(msg)
     unknown = sorted(str(key) for key in body if key not in COLLECTION_KEYS)
     if unknown:
         msg = f"Setting '{where}' has unknown key(s): {', '.join(unknown)}. Allowed keys: {', '.join(COLLECTION_KEYS)}."
-        raise EntraidConfigError(msg)
+        raise MsgraphConfigError(msg)
     resource = body.get("resource")
     if resource not in RESOURCES:
         msg = f"Setting '{where}.resource' must be one of {', '.join(RESOURCES)}, got {resource!r}."
-        raise EntraidConfigError(msg)
+        raise MsgraphConfigError(msg)
     query_filter = body.get("filter")
     if query_filter is not None and not isinstance(query_filter, str):
         msg = f"Setting '{where}.filter' must be a string (an OData $filter expression), got {query_filter!r}."
-        raise EntraidConfigError(msg)
+        raise MsgraphConfigError(msg)
     advanced_query = body.get("advanced_query", False)
     if not isinstance(advanced_query, bool):
         msg = f"Setting '{where}.advanced_query' must be true or false, got {advanced_query!r}."
-        raise EntraidConfigError(msg)
+        raise MsgraphConfigError(msg)
     return Collection(name=name, resource=resource, filter=query_filter or None, advanced_query=advanced_query)
 
 
-def build_credential(settings: EntraidSettings) -> Any:
+def build_credential(settings: MsgraphSettings) -> Any:
     """Return the async Azure credential for the `auth` mode. Constructing it does not contact Azure."""
     if settings.auth == AUTH_CLIENT_SECRET:
         if not (settings.tenant_id and settings.client_id and settings.client_secret):
             msg = f"auth 'client_secret' needs {ENV_TENANT_ID}, {ENV_CLIENT_ID} and {ENV_CLIENT_SECRET}."
-            raise EntraidConfigError(msg)
+            raise MsgraphConfigError(msg)
         return ClientSecretCredential(settings.tenant_id, settings.client_id, settings.client_secret)
     return DefaultAzureCredential()
 
 
-class EntraidGraphClient:
+class MsgraphClient:
     """Read-only access to the Microsoft Graph endpoints the adapter needs.
 
     Use it as an async context manager: leaving it closes the HTTP client and the credential.
@@ -416,7 +416,7 @@ class EntraidGraphClient:
 
     def __init__(
         self,
-        settings: EntraidSettings,
+        settings: MsgraphSettings,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         credential: Any | None = None,
@@ -500,7 +500,7 @@ class EntraidGraphClient:
             if not isinstance(values, list):
                 path = _request_path(info)
                 msg = f"Microsoft Graph returned a page without a 'value' list for {path}. {NO_RECORDS_NOTE}"
-                raise EntraidGraphError(msg, path=path)
+                raise MsgraphRequestError(msg, path=path)
             items.extend(values)
             next_link = page.get("@odata.nextLink")
             if not next_link:
@@ -536,7 +536,7 @@ class EntraidGraphClient:
                             f"before the next request, more than the adapter waits ({MAX_RETRY_WAIT_SECONDS:g} "
                             "seconds). Run the sync again later."
                         )
-                        raise EntraidGraphError(msg, status=status, path=path) from exc
+                        raise MsgraphRequestError(msg, status=status, path=path) from exc
                     self.retries += 1
                     log.warning(
                         "graph request throttled, waiting before retry",
@@ -555,17 +555,17 @@ class EntraidGraphClient:
                     f"Microsoft Graph request {path} timed out after {self.settings.timeout:g} seconds "
                     "(setting 'timeout')."
                 )
-                raise EntraidGraphError(msg, path=path) from exc
+                raise MsgraphRequestError(msg, path=path) from exc
             except httpx.RequestError as exc:
                 path = _request_path(info)
                 msg = f"Microsoft Graph request {path} failed: {type(exc).__name__}."
-                raise EntraidGraphError(msg, path=path) from exc
+                raise MsgraphRequestError(msg, path=path) from exc
             except AzureError as exc:
                 # Raised by the credential while it gets the token; Graph HTTP errors are `APIError`, handled above.
                 raise self._authentication_error(exc, _request_path(info)) from exc
             return _parse_body(body, _request_path(info))
 
-    def _api_error(self, exc: APIError, path: str, *, retried: int, member: bool = False) -> EntraidGraphError:
+    def _api_error(self, exc: APIError, path: str, *, retried: int, member: bool = False) -> MsgraphRequestError:
         status = exc.response_status_code
         error = exc.error if isinstance(exc, ODataError) else None
         code = getattr(error, "code", None)
@@ -577,7 +577,7 @@ class EntraidGraphClient:
                 msg += (
                     f" Reading the members of a group with hidden membership also needs {HIDDEN_MEMBERSHIP_PERMISSION}."
                 )
-            return EntraidPermissionError(msg, status=status, code=code, path=path)
+            return MsgraphPermissionError(msg, status=status, code=code, path=path)
         if status in RETRY_STATUSES:
             msg = (
                 f"Microsoft Graph returned HTTP {status} for {path} after {retried} retries{graph_says}. "
@@ -585,7 +585,7 @@ class EntraidGraphClient:
             )
         else:
             msg = f"Microsoft Graph returned HTTP {status} for {path}{graph_says}."
-        return EntraidGraphError(msg, status=status, code=code, path=path)
+        return MsgraphRequestError(msg, status=status, code=code, path=path)
 
     def _permission_guidance(self) -> str:
         """What HTTP 401 and 403 mean, and which permissions the identity of the `auth` mode needs."""
@@ -605,7 +605,7 @@ class EntraidGraphClient:
             f"'graph_url' matches the token audience. HTTP 403 means a permission is missing. {needs}"
         )
 
-    def _authentication_error(self, exc: AzureError, path: str) -> EntraidAuthenticationError:
+    def _authentication_error(self, exc: AzureError, path: str) -> MsgraphAuthenticationError:
         if self.settings.auth == AUTH_CLIENT_SECRET:
             check = f"Check the environment variables {ENV_TENANT_ID}, {ENV_CLIENT_ID} and {ENV_CLIENT_SECRET}."
         else:
@@ -622,7 +622,7 @@ class EntraidGraphClient:
             f"Could not get an access token for Microsoft Graph (auth '{self.settings.auth}') "
             f"while requesting {path}. {check} Details: {exc.message}"
         )
-        return EntraidAuthenticationError(msg, path=path)
+        return MsgraphAuthenticationError(msg, path=path)
 
 
 def _request_configuration(builder: Any, **query: Any) -> RequestConfiguration:
@@ -664,35 +664,35 @@ def _parse_body(body: bytes | None, path: str) -> dict[str, Any]:
     """The JSON object of a Graph response body. Every request reads a list, so an empty body is an error."""
     if not body:
         msg = f"Microsoft Graph returned an empty body for {path}. {NO_RECORDS_NOTE}"
-        raise EntraidGraphError(msg, path=path)
+        raise MsgraphRequestError(msg, path=path)
     try:
         page = json.loads(body)
     except ValueError as exc:
         msg = f"Microsoft Graph returned a body that is not JSON for {path}."
-        raise EntraidGraphError(msg, path=path) from exc
+        raise MsgraphRequestError(msg, path=path) from exc
     if not isinstance(page, dict):
         msg = f"Microsoft Graph returned a JSON {type(page).__name__} instead of an object for {path}."
-        raise EntraidGraphError(msg, path=path)
+        raise MsgraphRequestError(msg, path=path)
     return page
 
 
-class EntraidModel(DiffSyncModelMixin, DiffSyncModel):
-    """Base class of the models generated for the `entraid` source.
+class MsgraphsyncModel(DiffSyncModelMixin, DiffSyncModel):
+    """Base class of the models generated for the `msgraphsync` source.
 
     The adapter is read-only, so creating, updating or deleting through it is refused.
     """
 
     @classmethod
-    def create(cls, adapter: Adapter, ids: dict[Any, Any], attrs: dict[Any, Any]) -> EntraidModel | None:
-        msg = "The Entra ID adapter is read-only: it cannot create objects in Microsoft Entra ID."
+    def create(cls, adapter: Adapter, ids: dict[Any, Any], attrs: dict[Any, Any]) -> MsgraphsyncModel | None:
+        msg = "The Microsoft Graph adapter is read-only: it cannot create objects in Microsoft Entra ID."
         raise NotImplementedError(msg)
 
-    def update(self, attrs: dict[Any, Any]) -> EntraidModel | None:
-        msg = "The Entra ID adapter is read-only: it cannot update objects in Microsoft Entra ID."
+    def update(self, attrs: dict[Any, Any]) -> MsgraphsyncModel | None:
+        msg = "The Microsoft Graph adapter is read-only: it cannot update objects in Microsoft Entra ID."
         raise NotImplementedError(msg)
 
-    def delete(self) -> EntraidModel | None:
-        msg = "The Entra ID adapter is read-only: it cannot delete objects in Microsoft Entra ID."
+    def delete(self) -> MsgraphsyncModel | None:
+        msg = "The Microsoft Graph adapter is read-only: it cannot delete objects in Microsoft Entra ID."
         raise NotImplementedError(msg)
 
 
@@ -710,7 +710,7 @@ class CollectionPlan:
 
 
 def build_request_plan(
-    settings: EntraidSettings,
+    settings: MsgraphSettings,
     entries: Sequence[tuple[SchemaMappingModel, Collection]],
 ) -> dict[str, CollectionPlan]:
     """Return one `CollectionPlan` per collection that at least one `schema_mapping` entry reads.
@@ -770,7 +770,7 @@ def _check_members_reference(entry: SchemaMappingModel, collection: Collection) 
                 f"schema_mapping '{entry.name}', field '{field_map.name}': 'mapping: {MEMBERS_KEY}' holds the IDs "
                 "of the group's user members and needs a 'reference' to the kind that loads those users."
             )
-            raise EntraidConfigError(msg)
+            raise MsgraphConfigError(msg)
 
 
 def _peer_ids(value: Any, index: Mapping[str, str]) -> tuple[list[str], int]:
@@ -792,7 +792,7 @@ def _peer_ids(value: Any, index: Mapping[str, str]) -> tuple[list[str], int]:
     return sorted(found), missing
 
 
-class EntraidAdapter(DiffSyncMixin, Adapter):
+class MsgraphsyncAdapter(DiffSyncMixin, Adapter):
     """Load users and groups from Microsoft Entra ID. Source only: it sends GET requests to Graph and never writes.
 
     Each `schema_mapping` entry names a collection in `mapping` (`users`, `groups` or a name defined in
@@ -800,7 +800,7 @@ class EntraidAdapter(DiffSyncMixin, Adapter):
     keeps the records for the rest of the run.
     """
 
-    type = "Entraid"
+    type = "Msgraphsync"
 
     def __init__(
         self,
@@ -814,14 +814,14 @@ class EntraidAdapter(DiffSyncMixin, Adapter):
     ) -> None:
         if target != "source":
             msg = (
-                f"The Entra ID adapter can only be the source of a sync, but it is configured as the {target}. "
-                "Move 'entraid' to the 'source' block of the configuration."
+                f"The Microsoft Graph adapter can only be the source of a sync, but it is configured as the {target}. "
+                "Move 'msgraphsync' to the 'source' block of the configuration."
             )
-            raise EntraidConfigError(msg)
+            raise MsgraphConfigError(msg)
         super().__init__(*args, **kwargs)
         self.target = target
         self.config = config
-        self.settings = EntraidSettings.from_settings(adapter.settings)
+        self.settings = MsgraphSettings.from_settings(adapter.settings)
         # `transport` and `credential` let tests replace Microsoft Graph and Azure; both are None in a real run.
         self._transport = transport
         self._credential = credential
@@ -837,9 +837,9 @@ class EntraidAdapter(DiffSyncMixin, Adapter):
     def _resolve_entry_collection(self, entry_name: str, collection_name: str) -> Collection:
         try:
             return self.settings.resolve_collection(collection_name)
-        except EntraidConfigError as exc:
+        except MsgraphConfigError as exc:
             msg = f"schema_mapping '{entry_name}': {exc}"
-            raise EntraidConfigError(msg) from exc
+            raise MsgraphConfigError(msg) from exc
 
     @staticmethod
     def _run(coro: Coroutine[Any, Any, T]) -> T:
@@ -862,7 +862,7 @@ class EntraidAdapter(DiffSyncMixin, Adapter):
     async def _read_all(self) -> dict[str, list[dict[str, Any]]]:
         """Read every planned collection with one Graph client and return the records by collection name."""
         records: dict[str, list[dict[str, Any]]] = {}
-        async with EntraidGraphClient(self.settings, transport=self._transport, credential=self._credential) as graph:
+        async with MsgraphClient(self.settings, transport=self._transport, credential=self._credential) as graph:
             for name, plan in self.request_plan.items():
                 requests_before, retries_before = graph.requests, graph.retries
                 member_requests_before = graph.member_requests
@@ -887,12 +887,12 @@ class EntraidAdapter(DiffSyncMixin, Adapter):
             )
         return records
 
-    async def _add_members(self, graph: EntraidGraphClient, groups: list[dict[str, Any]]) -> None:
+    async def _add_members(self, graph: MsgraphClient, groups: list[dict[str, Any]]) -> None:
         """Store the sorted user member IDs of every group under `members`.
 
         At most `MEMBER_CONCURRENCY` groups are read at once. `membership: transitive` reads the members of nested
         groups too. Groups without an `id` are left alone; the conversion to a model refuses them later with an
-        `EntraidConfigError` that names the entry. When one read fails, the other reads are cancelled and awaited
+        `MsgraphConfigError` that names the entry. When one read fails, the other reads are cancelled and awaited
         before the error propagates, so none of them still uses the Graph client after it closes.
         """
         transitive = self.settings.membership == MEMBERSHIP_TRANSITIVE
@@ -920,7 +920,7 @@ class EntraidAdapter(DiffSyncMixin, Adapter):
             self._records_by_collection = self._run(self._read_all())
         return self._records_by_collection
 
-    def model_loader(self, model_name: str, model: type[EntraidModel]) -> None:
+    def model_loader(self, model_name: str, model: type[MsgraphsyncModel]) -> None:
         """Load the objects of one kind from the records of the collection its `schema_mapping` entry reads."""
         for entry, collection in self._entries:
             if entry.name != model_name:
@@ -964,7 +964,7 @@ class EntraidAdapter(DiffSyncMixin, Adapter):
         self,
         record: dict[str, Any],
         mapping: SchemaMappingModel,
-        model: type[EntraidModel],
+        model: type[MsgraphsyncModel],
         *,
         peers: Mapping[str, Mapping[str, str]],
         dropped: Counter[str],
@@ -980,7 +980,7 @@ class EntraidAdapter(DiffSyncMixin, Adapter):
                 f"schema_mapping '{mapping.name}': a Microsoft Graph record has no 'id'. "
                 "Check that no transform of this entry sets 'id'."
             )
-            raise EntraidConfigError(msg)
+            raise MsgraphConfigError(msg)
         data: dict[str, Any] = {"local_id": str(local_id)}
         for field_map in mapping.fields:
             if field_map.static is not None:
@@ -998,7 +998,7 @@ class EntraidAdapter(DiffSyncMixin, Adapter):
                         "but the relationship holds one peer. Map a property that holds one ID, or use a "
                         "relationship that holds many peers."
                     )
-                    raise EntraidConfigError(msg)
+                    raise MsgraphConfigError(msg)
                 elif found:
                     data[field_map.name] = found[0]
             elif field_map.mapping:
@@ -1009,7 +1009,7 @@ class EntraidAdapter(DiffSyncMixin, Adapter):
                         f"'{field_map.mapping}' is a list, but the attribute holds one value. "
                         "Turn the list into one value with a transform of this entry and map the transformed key."
                     )
-                    raise EntraidConfigError(msg)
+                    raise MsgraphConfigError(msg)
                 if value is not None:
                     data[field_map.name] = value
         return data

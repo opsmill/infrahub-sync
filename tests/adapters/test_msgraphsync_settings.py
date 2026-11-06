@@ -1,4 +1,4 @@
-"""Tests of the Entra ID credentials: where the tenant ID, client ID and secret come from, and which credential is built."""
+"""Tests of the Microsoft Graph adapter credentials: where the tenant ID, client ID and secret come from, and which credential is built."""
 
 from __future__ import annotations
 
@@ -11,17 +11,17 @@ pytest.importorskip("msgraph")
 
 from azure.identity.aio import ClientSecretCredential, DefaultAzureCredential  # ty: ignore[unresolved-import]
 
-from infrahub_sync.adapters import entraid
-from infrahub_sync.adapters.entraid import (
+from infrahub_sync.adapters import msgraphsync
+from infrahub_sync.adapters.msgraphsync import (
     ENV_CLIENT_ID,
     ENV_CLIENT_SECRET,
     ENV_TENANT_ID,
-    EntraidConfigError,
-    EntraidGraphClient,
-    EntraidSettings,
+    MsgraphClient,
+    MsgraphConfigError,
+    MsgraphSettings,
     build_credential,
 )
-from tests.adapters.entraid_fakes import FakeCredential, GraphRouter
+from tests.adapters.msgraphsync_fakes import FakeCredential, GraphRouter
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -58,15 +58,15 @@ class CredentialRecorder:
 
 @pytest.fixture
 def recorders(monkeypatch: pytest.MonkeyPatch) -> dict[str, CredentialRecorder]:
-    """Replace both Azure credential classes in `entraid` with recorders, keyed by `auth` mode."""
-    recorded = {entraid.AUTH_CLIENT_SECRET: CredentialRecorder(), entraid.AUTH_DEFAULT: CredentialRecorder()}
-    monkeypatch.setattr(entraid, "ClientSecretCredential", recorded[entraid.AUTH_CLIENT_SECRET])
-    monkeypatch.setattr(entraid, "DefaultAzureCredential", recorded[entraid.AUTH_DEFAULT])
+    """Replace both Azure credential classes in `msgraphsync` with recorders, keyed by `auth` mode."""
+    recorded = {msgraphsync.AUTH_CLIENT_SECRET: CredentialRecorder(), msgraphsync.AUTH_DEFAULT: CredentialRecorder()}
+    monkeypatch.setattr(msgraphsync, "ClientSecretCredential", recorded[msgraphsync.AUTH_CLIENT_SECRET])
+    monkeypatch.setattr(msgraphsync, "DefaultAzureCredential", recorded[msgraphsync.AUTH_DEFAULT])
     return recorded
 
 
-def make_settings(raw: Mapping[str, Any] | None, environ: Mapping[str, str]) -> EntraidSettings:
-    return EntraidSettings.from_settings(raw, environ=environ)
+def make_settings(raw: Mapping[str, Any] | None, environ: Mapping[str, str]) -> MsgraphSettings:
+    return MsgraphSettings.from_settings(raw, environ=environ)
 
 
 def test_client_secret_auth_builds_client_secret_credential_from_variables(
@@ -126,7 +126,7 @@ def test_tenant_and_client_ids_come_from_variables_then_settings(
 
 @pytest.mark.parametrize("auth", ["client_secret", "default"])
 def test_client_secret_setting_is_refused_naming_the_variable(auth: str) -> None:
-    with pytest.raises(EntraidConfigError, match=ENV_CLIENT_SECRET) as excinfo:
+    with pytest.raises(MsgraphConfigError, match=ENV_CLIENT_SECRET) as excinfo:
         make_settings({"auth": auth, "client_secret": SECRET}, FULL_ENV)
 
     assert SECRET not in str(excinfo.value)
@@ -143,7 +143,7 @@ def test_client_secret_setting_is_refused_naming_the_variable(auth: str) -> None
 def test_missing_secret_raises_naming_only_the_secret_variable(
     environ: Mapping[str, str], raw: Mapping[str, Any]
 ) -> None:
-    with pytest.raises(EntraidConfigError, match=ENV_CLIENT_SECRET) as excinfo:
+    with pytest.raises(MsgraphConfigError, match=ENV_CLIENT_SECRET) as excinfo:
         make_settings(raw, environ)
 
     message = str(excinfo.value)
@@ -152,7 +152,7 @@ def test_missing_secret_raises_naming_only_the_secret_variable(
 
 
 def test_missing_everything_raises_naming_the_three_variables() -> None:
-    with pytest.raises(EntraidConfigError) as excinfo:
+    with pytest.raises(MsgraphConfigError) as excinfo:
         make_settings({}, {})
 
     message = str(excinfo.value)
@@ -210,7 +210,7 @@ def test_built_credential_is_closed_when_graph_client_exits(
     recorders: dict[str, CredentialRecorder], auth: str
 ) -> None:
     async def open_and_exit() -> None:
-        async with EntraidGraphClient(make_settings({"auth": auth}, FULL_ENV), transport=GraphRouter().transport):
+        async with MsgraphClient(make_settings({"auth": auth}, FULL_ENV), transport=GraphRouter().transport):
             pass
 
     asyncio.run(open_and_exit())
@@ -255,7 +255,7 @@ def test_built_credential_is_closed_when_graph_client_exits(
     ],
 )
 def test_invalid_setting_raises_config_error_naming_the_setting(raw: Mapping[str, Any], setting: str) -> None:
-    with pytest.raises(EntraidConfigError) as excinfo:
+    with pytest.raises(MsgraphConfigError) as excinfo:
         make_settings(raw, FULL_ENV)
 
     assert setting in str(excinfo.value)
@@ -265,9 +265,7 @@ def test_given_credential_is_closed_when_graph_client_exits_on_error() -> None:
     credential = FakeCredential()
 
     async def open_and_fail() -> None:
-        async with EntraidGraphClient(
-            make_settings({}, FULL_ENV), transport=GraphRouter().transport, credential=credential
-        ):
+        async with MsgraphClient(make_settings({}, FULL_ENV), transport=GraphRouter().transport, credential=credential):
             msg = "fake failure inside the client block"
             raise RuntimeError(msg)
 

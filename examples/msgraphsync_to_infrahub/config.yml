@@ -1,6 +1,6 @@
 ---
 # Read users, security groups and group membership from Microsoft Entra ID
-# (through Microsoft Graph) and write them to Infrahub. The `entraid` adapter
+# (through Microsoft Graph) and write them to Infrahub. The `msgraphsync` adapter
 # is source-only: it sends GET requests to Graph and never writes to Entra ID.
 #
 # Install the optional SDK first: pip install msgraph-sdk azure-identity
@@ -8,9 +8,9 @@
 #
 # Credentials never go in this file. With `auth: client_secret` the adapter
 # reads these environment variables:
-#   ENTRAID_TENANT_ID      directory (tenant) ID
-#   ENTRAID_CLIENT_ID      application (client) ID
-#   ENTRAID_CLIENT_SECRET  client secret (the only accepted source of the secret)
+#   MSGRAPH_TENANT_ID      directory (tenant) ID
+#   MSGRAPH_CLIENT_ID      application (client) ID
+#   MSGRAPH_CLIENT_SECRET  client secret (the only accepted source of the secret)
 # With `auth: default`, DefaultAzureCredential reads the AZURE_* variables, a
 # managed or workload identity, or the Azure CLI login instead.
 # The application needs the Microsoft Graph application permissions
@@ -20,10 +20,10 @@
 # identity needs read access to users and groups instead.
 # HTTP 401 from Graph means the token was rejected (check the tenant, the
 # credential and graph_url); HTTP 403 means a permission is missing.
-name: from-entraid
+name: from-msgraphsync
 
 source:
-  name: entraid
+  name: msgraphsync
   settings:
     auth: client_secret
     # direct: the members of each group; transitive: also the members of

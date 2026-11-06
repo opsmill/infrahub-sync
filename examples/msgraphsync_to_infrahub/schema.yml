@@ -1,7 +1,7 @@
 ---
-# Infrahub schema for the `from-entraid` example.
+# Infrahub schema for the `from-msgraphsync` example.
 # Load it into Infrahub before running the sync:
-#   infrahubctl schema load examples/entraid_to_infrahub/schema.yml
+#   infrahubctl schema load examples/msgraphsync_to_infrahub/schema.yml
 version: "1.0"
 nodes:
   - name: Employee

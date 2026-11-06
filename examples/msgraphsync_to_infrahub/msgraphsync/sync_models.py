@@ -8,7 +8,7 @@ from infrahub_sync.plugin_loader import PluginLoader
 try:
     _loader = PluginLoader.from_env_and_args()
 
-    _spec = "entraid"
+    _spec = "msgraphsync"
 
     _ModelBaseClass = _loader.resolve(_spec, default_class_candidates=("Model",))
 except Exception:

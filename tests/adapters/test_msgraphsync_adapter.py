@@ -1,4 +1,4 @@
-"""Tests of `EntraidAdapter` against a mocked Microsoft Graph: loading, `$select`, membership and read-only behavior."""
+"""Tests of `MsgraphsyncAdapter` against a mocked Microsoft Graph: loading, `$select`, membership and read-only behavior."""
 
 from __future__ import annotations
 
@@ -12,16 +12,16 @@ import pytest
 
 pytest.importorskip("msgraph")
 
-from infrahub_sync.adapters import entraid
-from infrahub_sync.adapters.entraid import (
-    EntraidAdapter,
-    EntraidAuthenticationError,
-    EntraidConfigError,
-    EntraidModel,
-    EntraidPermissionError,
+from infrahub_sync.adapters import msgraphsync
+from infrahub_sync.adapters.msgraphsync import (
+    MsgraphAuthenticationError,
+    MsgraphConfigError,
+    MsgraphPermissionError,
+    MsgraphsyncAdapter,
+    MsgraphsyncModel,
 )
 from infrahub_sync.cache.cursors import CursorTier
-from tests.adapters.entraid_fakes import (
+from tests.adapters.msgraphsync_fakes import (
     TEST_MODELS,
     FakeCredential,
     GraphRouter,
@@ -33,7 +33,7 @@ from tests.adapters.entraid_fakes import (
     make_adapter,
     make_config,
     member_record,
-    set_entraid_env,
+    set_msgraphsync_env,
     user_record,
 )
 
@@ -56,15 +56,15 @@ GROUPS_ENTRY = {"name": "IdentityGroup", "mapping": "groups", "identifiers": ["e
 ACCOUNTS_COLLECTION = {"resource": "users", "filter": "accountEnabled eq true"}
 ACCOUNTS_SETTINGS = {"collections": {"accounts": ACCOUNTS_COLLECTION}}
 
-ModelT = TypeVar("ModelT", bound=EntraidModel)
+ModelT = TypeVar("ModelT", bound=MsgraphsyncModel)
 
 
 @pytest.fixture(autouse=True)
-def entraid_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    set_entraid_env(monkeypatch)
+def msgraphsync_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_msgraphsync_env(monkeypatch)
 
 
-def loaded(adapter: EntraidAdapter, model: type[ModelT]) -> dict[str | None, ModelT]:
+def loaded(adapter: MsgraphsyncAdapter, model: type[ModelT]) -> dict[str | None, ModelT]:
     """The loaded objects of a kind, by `local_id`."""
     return {obj.local_id: obj for obj in adapter.get_all(model) if isinstance(obj, model)}
 
@@ -186,7 +186,7 @@ def test_empty_tenant_loads_zero_objects() -> None:
 def test_destination_target_is_refused() -> None:
     router = GraphRouter()
 
-    with pytest.raises(EntraidConfigError, match="source"):
+    with pytest.raises(MsgraphConfigError, match="source"):
         make_adapter(make_config([USERS_ENTRY]), router, target="destination")
 
     assert router.requests == []
@@ -203,7 +203,7 @@ def test_load_list_property_mapped_to_single_attribute_asks_for_transform() -> N
     router.add_records("/users", [user_record(1, "alice@example.com", businessPhones=["+1 555 0100"])])
     adapter = make_adapter(make_config([entry]), router)
 
-    with pytest.raises(EntraidConfigError, match="transform") as excinfo:
+    with pytest.raises(MsgraphConfigError, match="transform") as excinfo:
         adapter.load()
 
     assert "email" in str(excinfo.value)
@@ -307,7 +307,7 @@ def test_unknown_collection_is_refused_at_construction_listing_valid_names() -> 
     contractors = {**accounts_entry("IdentityServiceAccount"), "mapping": "contractors"}
     config = make_config([accounts_entry("IdentityEmployee"), contractors], settings=ACCOUNTS_SETTINGS)
 
-    with pytest.raises(EntraidConfigError) as excinfo:
+    with pytest.raises(MsgraphConfigError) as excinfo:
         make_adapter(config, router)
 
     message = str(excinfo.value)
@@ -323,7 +323,7 @@ def test_collection_with_resource_name_is_refused(reserved: str) -> None:
     settings = {"collections": {reserved: {"resource": reserved, "filter": "displayName eq 'example'"}}}
     entry = {**USERS_ENTRY, "mapping": reserved}
 
-    with pytest.raises(EntraidConfigError, match="reserved"):
+    with pytest.raises(MsgraphConfigError, match="reserved"):
         make_adapter(make_config([entry], settings=settings), router)
 
     assert router.requests == []
@@ -347,16 +347,16 @@ def test_collection_not_named_by_any_entry_is_not_read() -> None:
     assert set(loaded(adapter, IdentityEmployee)) == {graph_id(1)}
 
 
-ENTRAID_LOGGER = "infrahub_sync.adapters.entraid"
+MSGRAPH_LOGGER = "infrahub_sync.adapters.msgraphsync"
 GROUP_ODATA_TYPE = "#microsoft.graph.group"
 DEVICE_ODATA_TYPE = "#microsoft.graph.device"
 MEMBERS_FIELD = {"name": "members", "mapping": "members", "reference": "IdentityEmployee"}
 GROUPS_WITH_MEMBERS_ENTRY = {**GROUPS_ENTRY, "fields": [*GROUP_FIELDS, MEMBERS_FIELD]}
 
 
-def entraid_records(caplog: pytest.LogCaptureFixture, level: int) -> list[logging.LogRecord]:
+def msgraphsync_records(caplog: pytest.LogCaptureFixture, level: int) -> list[logging.LogRecord]:
     """The records of the adapter's logger at exactly `level`."""
-    return [record for record in caplog.records if record.name == ENTRAID_LOGGER and record.levelno == level]
+    return [record for record in caplog.records if record.name == MSGRAPH_LOGGER and record.levelno == level]
 
 
 def member_paths(router: GraphRouter) -> list[str]:
@@ -439,7 +439,7 @@ def test_members_not_loaded_are_dropped_with_one_warning(caplog: pytest.LogCaptu
         settings=ACCOUNTS_SETTINGS,
     )
     adapter = make_adapter(config, router)
-    caplog.set_level(logging.WARNING, logger=ENTRAID_LOGGER)
+    caplog.set_level(logging.WARNING, logger=MSGRAPH_LOGGER)
 
     adapter.load()
 
@@ -447,7 +447,7 @@ def test_members_not_loaded_are_dropped_with_one_warning(caplog: pytest.LogCaptu
     assert groups[graph_id(11)].members == [graph_id(1)]
     assert groups[graph_id(12)].members == []
     assert set(loaded(adapter, IdentityServiceAccount)) == {graph_id(2)}
-    warnings = entraid_records(caplog, logging.WARNING)
+    warnings = msgraphsync_records(caplog, logging.WARNING)
     assert len(warnings) == 1
     message = warnings[0].getMessage()
     assert "IdentityGroup" in message
@@ -476,13 +476,13 @@ def test_summary_log_counts_member_requests(caplog: pytest.LogCaptureFixture) ->
     router.add_pages(router.members_path(graph_id(11)), [[member_record(graph_id(1))], []])
     router.add_members(graph_id(12), [member_record(graph_id(1))])
     adapter = make_adapter(make_config([USERS_ENTRY, GROUPS_WITH_MEMBERS_ENTRY]), router)
-    caplog.set_level(logging.INFO, logger=ENTRAID_LOGGER)
+    caplog.set_level(logging.INFO, logger=MSGRAPH_LOGGER)
 
     adapter.load()
 
     summaries = [
         record.getMessage()
-        for record in entraid_records(caplog, logging.INFO)
+        for record in msgraphsync_records(caplog, logging.INFO)
         if "graph reads finished" in record.getMessage()
     ]
     assert len(summaries) == 1
@@ -496,7 +496,7 @@ def test_members_mapping_without_reference_is_refused_naming_the_field() -> None
     member_users = {"name": "member_users", "mapping": "members"}
     entry = {**GROUPS_ENTRY, "fields": [*GROUP_FIELDS, member_users]}
 
-    with pytest.raises(EntraidConfigError, match="reference") as excinfo:
+    with pytest.raises(MsgraphConfigError, match="reference") as excinfo:
         make_adapter(make_config([USERS_ENTRY, entry]), router)
 
     assert "'member_users'" in str(excinfo.value)
@@ -518,7 +518,7 @@ def test_permission_refusal_during_load_raises_permission_error(refused_path: st
     router.add_error(refused_path, 403, code="Authorization_RequestDenied")
     adapter = make_adapter(make_config([USERS_ENTRY, GROUPS_WITH_MEMBERS_ENTRY]), router)
 
-    with pytest.raises(EntraidPermissionError) as excinfo:
+    with pytest.raises(MsgraphPermissionError) as excinfo:
         adapter.load()
 
     assert excinfo.value.status == 403
@@ -566,7 +566,7 @@ def test_failing_member_read_cancels_the_other_reads_before_the_client_closes(
             client_closed_when_cancelled.append(credential.closed)
             raise
 
-    monkeypatch.setattr(entraid, "_sleep", blocking_sleep)
+    monkeypatch.setattr(msgraphsync, "_sleep", blocking_sleep)
     router.add_records("/users", [user_record(1, "alice@example.com")])
     router.add_records("/groups", [group_record(11, "network-engineers"), group_record(12, "network-admins")])
     # Group 11 is throttled and waits; group 12 is refused once that wait has started.
@@ -576,7 +576,7 @@ def test_failing_member_read_cancels_the_other_reads_before_the_client_closes(
     # asyncio logs "Task was destroyed but it is pending" and "Task exception was never retrieved" as errors.
     caplog.set_level(logging.WARNING, logger="asyncio")
 
-    with pytest.raises(EntraidPermissionError) as excinfo:
+    with pytest.raises(MsgraphPermissionError) as excinfo:
         adapter.load()
     gc.collect()
 
@@ -589,7 +589,7 @@ def test_failing_member_read_cancels_the_other_reads_before_the_client_closes(
 OWNER_FIELD = {"name": "owner", "mapping": "ownerIds", "reference": "IdentityEmployee"}
 
 
-class OwnedServiceAccount(EntraidModel):
+class OwnedServiceAccount(MsgraphsyncModel):
     _modelname = "IdentityServiceAccount"
     _identifiers = ("entra_id",)
     _attributes = ("name", "owner")
@@ -624,7 +624,7 @@ def test_single_peer_relationship_takes_one_peer_and_refuses_several(
         adapter.load()
         assert loaded(adapter, OwnedServiceAccount)[graph_id(3)].owner == expected
         return
-    with pytest.raises(EntraidConfigError) as excinfo:
+    with pytest.raises(MsgraphConfigError) as excinfo:
         adapter.load()
     message = str(excinfo.value)
     assert "schema_mapping 'IdentityServiceAccount', field 'owner'" in message
@@ -650,7 +650,7 @@ def test_token_failure_during_load_raises_authentication_error_without_graph_req
     credential = FakeCredential(fail=True)
     adapter = make_adapter(make_config([USERS_ENTRY]), router, credential=credential)
 
-    with pytest.raises(EntraidAuthenticationError, match="auth 'client_secret'"):
+    with pytest.raises(MsgraphAuthenticationError, match="auth 'client_secret'"):
         adapter.load()
 
     assert router.requests == []

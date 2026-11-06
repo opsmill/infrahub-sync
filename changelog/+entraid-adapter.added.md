@@ -1,1 +1,0 @@
-Added the `entraid` source adapter, which reads users, groups and group membership from Microsoft Entra ID through Microsoft Graph and loads them into Infrahub. The adapter needs the optional packages `msgraph-sdk` and `azure-identity`: `pip install msgraph-sdk azure-identity`.

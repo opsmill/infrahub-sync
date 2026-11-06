@@ -1,4 +1,4 @@
-"""Shared helpers for the Entra ID adapter tests: a mocked Microsoft Graph, a fake credential and test models.
+"""Shared helpers for the Microsoft Graph adapter tests: a mocked Microsoft Graph, a fake credential and test models.
 
 pytest does not collect this module (its name does not start with `test_`). The test modules call
 `pytest.importorskip("msgraph")` before they import it; this module does the same, so it never
@@ -20,8 +20,8 @@ pytest.importorskip("msgraph")
 from azure.core.credentials import AccessToken  # ty: ignore[unresolved-import]
 from azure.core.exceptions import ClientAuthenticationError  # ty: ignore[unresolved-import]
 
-from infrahub_sync.adapters import entraid
-from infrahub_sync.adapters.entraid import EntraidAdapter, EntraidModel
+from infrahub_sync.adapters import msgraphsync
+from infrahub_sync.adapters.msgraphsync import MsgraphsyncAdapter, MsgraphsyncModel
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -29,10 +29,10 @@ if TYPE_CHECKING:
 GRAPH_URL = "https://graph.microsoft.com/v1.0"
 TOKEN = "fake-token"  # noqa: S105 - fake value, tests check that it never appears in messages
 CLIENT_SECRET = "fake-client-secret"  # noqa: S105 - fake value
-ENTRAID_ENV = {
-    entraid.ENV_TENANT_ID: "00000000-0000-0000-0000-000000000000",
-    entraid.ENV_CLIENT_ID: "11111111-1111-1111-1111-111111111111",
-    entraid.ENV_CLIENT_SECRET: CLIENT_SECRET,
+MSGRAPH_ENV = {
+    msgraphsync.ENV_TENANT_ID: "00000000-0000-0000-0000-000000000000",
+    msgraphsync.ENV_CLIENT_ID: "11111111-1111-1111-1111-111111111111",
+    msgraphsync.ENV_CLIENT_SECRET: CLIENT_SECRET,
 }
 ONE_YEAR_SECONDS = 365 * 24 * 3600
 
@@ -45,7 +45,7 @@ def graph_id(number: int) -> str:
 def user_record(number: int, upn: str, **properties: object) -> dict[str, Any]:
     """A Graph user record in the wire format. Use `example.com` user principal names."""
     return {
-        "@odata.type": entraid.USER_ODATA_TYPE,
+        "@odata.type": msgraphsync.USER_ODATA_TYPE,
         "id": graph_id(number),
         "userPrincipalName": upn,
         "displayName": upn.split("@", 1)[0],
@@ -58,14 +58,14 @@ def group_record(number: int, display_name: str, **properties: object) -> dict[s
     return {"id": graph_id(number), "displayName": display_name, **properties}
 
 
-def member_record(member_id: str, odata_type: str = entraid.USER_ODATA_TYPE) -> dict[str, Any]:
+def member_record(member_id: str, odata_type: str = msgraphsync.USER_ODATA_TYPE) -> dict[str, Any]:
     """An item of a `/members` or `/transitiveMembers` page."""
     return {"@odata.type": odata_type, "id": member_id}
 
 
-def set_entraid_env(monkeypatch: pytest.MonkeyPatch, **overrides: str | None) -> None:
-    """Set the three `ENTRAID_*` variables to fake values; an override of None removes the variable."""
-    values: dict[str, str | None] = {**ENTRAID_ENV, **overrides}
+def set_msgraphsync_env(monkeypatch: pytest.MonkeyPatch, **overrides: str | None) -> None:
+    """Set the three `MSGRAPH_*` variables to fake values; an override of None removes the variable."""
+    values: dict[str, str | None] = {**MSGRAPH_ENV, **overrides}
     for name, value in values.items():
         if value is None:
             monkeypatch.delenv(name, raising=False)
@@ -106,9 +106,9 @@ class FakeCredential:
 
 
 class SleepRecorder:
-    """Replacement for `entraid._sleep` that records each wait instead of sleeping.
+    """Replacement for `msgraphsync._sleep` that records each wait instead of sleeping.
 
-    Use it with `monkeypatch.setattr(entraid, "_sleep", recorder)`.
+    Use it with `monkeypatch.setattr(msgraphsync, "_sleep", recorder)`.
     """
 
     def __init__(self) -> None:
@@ -242,7 +242,7 @@ def _project(records: Sequence[dict[str, Any]], select: str | None) -> list[dict
     ]
 
 
-class IdentityEmployee(EntraidModel):
+class IdentityEmployee(MsgraphsyncModel):
     _modelname = "IdentityEmployee"
     _identifiers = ("entra_id",)
     _attributes = ("name", "display_name", "email", "enabled")
@@ -256,7 +256,7 @@ class IdentityEmployee(EntraidModel):
     local_data: Any | None = None
 
 
-class IdentityServiceAccount(EntraidModel):
+class IdentityServiceAccount(MsgraphsyncModel):
     _modelname = "IdentityServiceAccount"
     _identifiers = ("entra_id",)
     _attributes = ("name", "display_name", "email", "enabled")
@@ -270,7 +270,7 @@ class IdentityServiceAccount(EntraidModel):
     local_data: Any | None = None
 
 
-class IdentityGroup(EntraidModel):
+class IdentityGroup(MsgraphsyncModel):
     _modelname = "IdentityGroup"
     _identifiers = ("entra_id",)
     _attributes = ("name", "description", "members")
@@ -283,7 +283,7 @@ class IdentityGroup(EntraidModel):
     local_data: Any | None = None
 
 
-TEST_MODELS: dict[str, type[EntraidModel]] = {
+TEST_MODELS: dict[str, type[MsgraphsyncModel]] = {
     "IdentityEmployee": IdentityEmployee,
     "IdentityServiceAccount": IdentityServiceAccount,
     "IdentityGroup": IdentityGroup,
@@ -295,10 +295,10 @@ def make_config(
     settings: Mapping[str, Any] | None = None,
     order: Sequence[str] | None = None,
 ) -> SyncConfig:
-    """A sync configuration from an `entraid` source to an `infrahub` destination."""
+    """A sync configuration from an `msgraphsync` source to an `infrahub` destination."""
     return SyncConfig(
-        name="from-entraid-test",
-        source=SyncAdapter(name="entraid", settings=dict(settings or {})),
+        name="from-msgraphsync-test",
+        source=SyncAdapter(name="msgraphsync", settings=dict(settings or {})),
         destination=SyncAdapter(name="infrahub", settings={"url": "http://localhost:8000"}),
         order=list(order or []),
         schema_mapping=[SchemaMappingModel(**entry) for entry in schema_mapping],
@@ -310,10 +310,10 @@ def make_adapter(
     router: GraphRouter,
     *,
     credential: FakeCredential | None = None,
-    models: Mapping[str, type[EntraidModel]] | None = None,
+    models: Mapping[str, type[MsgraphsyncModel]] | None = None,
     target: str = "source",
-) -> EntraidAdapter:
-    """Build a subclass of `EntraidAdapter` with the test models and construct it against `router`.
+) -> MsgraphsyncAdapter:
+    """Build a subclass of `MsgraphsyncAdapter` with the test models and construct it against `router`.
 
     `top_level` follows `config.compute_order()`, so kinds load in reference order.
     """
@@ -322,7 +322,7 @@ def make_adapter(
     top_level = [name for name in config.compute_order() if name in names]
     attributes: dict[str, Any] = {"top_level": top_level}
     attributes.update({name: model_classes[name] for name in top_level})
-    adapter_cls = type("FakeEntraidAdapter", (EntraidAdapter,), attributes)
+    adapter_cls = type("FakeMsgraphsyncAdapter", (MsgraphsyncAdapter,), attributes)
     return adapter_cls(
         target=target,
         adapter=config.source,
