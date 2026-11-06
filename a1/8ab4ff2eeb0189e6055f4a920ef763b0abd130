@@ -1,0 +1,19 @@
+dev/specs/017-sync-run-events-logs/opsmill-implement-report.md
+  s_01f3e2b1e0dad4::t_43b208a6bf93cf 151-268
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a18ab4ff2eeb0189e6055f4a920ef763b0abd130",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
