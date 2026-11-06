@@ -22,7 +22,7 @@ flow's direct lines.
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm the baseline: on branch `017-sync-run-events-logs`, run `uv run invoke tests.tests-unit` and `uv run ruff check .`, and record the pass count under a "Baseline" heading in `dev/specs/017-sync-run-events-logs/opsmill-implement-report.md` (create the file).
+- [X] T001 Confirm the baseline: on branch `017-sync-run-events-logs`, run `uv run invoke tests.tests-unit` and `uv run ruff check .`, and record the pass count under a "Baseline" heading in `dev/specs/017-sync-run-events-logs/opsmill-implement-report.md` (create the file).
 
 ---
 
