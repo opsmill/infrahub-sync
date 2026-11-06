@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal
-from urllib.parse import parse_qs, urljoin, urlsplit
+from urllib.parse import parse_qs, parse_qsl, quote, quote_plus, urlencode, urljoin, urlsplit, urlunsplit
 
 import requests
 import structlog
@@ -104,11 +105,26 @@ class WebexClient(RestApiClient):
             self._client_id = environment_value(self.options.client_id_env)
             self._client_secret = environment_value(self.options.client_secret_env)
             self._refresh_token = environment_value(self.options.refresh_token_env)
-        # Validate every configured parameter before OAuth or data HTTP traffic.
-        for params in [self.options.params, *[item.params for item in self.options.resources.values()]]:
-            if {"before", "after"} & params.keys():
-                msg = "Webex: initial before/after pagination cursors would produce a partial inventory"
+        self.request_count = 0
+        self._credentials: set[str] = {self._token, self._client_id, self._client_secret, self._refresh_token} - {""}
+        self._validate_organization()
+
+    def _validate_organization(self) -> None:
+        """Resolve one project scope, allowing resources to omit unsupported orgId."""
+        candidates = [self.options.org_id, self.options.params.get("orgId")]
+        candidates.extend(item.params.get("orgId") for item in self.options.resources.values())
+        organizations = set()
+        for value in candidates:
+            if value is None:
+                continue
+            if not isinstance(value, str) or not value.strip():
+                msg = "Webex: orgId must be a fixed nonempty organization identifier or environment reference"
                 raise ValueError(msg)
+            organizations.add(value)
+        if len(organizations) > 1:
+            msg = "Webex: one organization per project; resource orgId cannot differ from the project organization"
+            raise ValueError(msg)
+        self.options.org_id = next(iter(organizations), None)
 
     def _url(self, endpoint: str) -> str:
         url = urljoin(self.base_url + "/", endpoint)
@@ -122,14 +138,30 @@ class WebexClient(RestApiClient):
         ):
             msg = "Webex: refused an endpoint, redirect or pagination link outside the configured HTTPS origin"
             raise ValueError(msg)
+        linked_orgs = parse_qs(parts.query, keep_blank_values=True).get("orgId", [])
+        if any(value != self.options.org_id for value in linked_orgs):
+            msg = "Webex: endpoint or pagination orgId differs from the project organization"
+            raise ValueError(msg)
         return url
 
+    def _redact(self, text: str) -> str:
+        for secret in sorted(self._credentials, key=lambda value: -len(value)):
+            for encoded in (secret, quote(secret, safe=""), quote_plus(secret)):
+                text = text.replace(encoded, "[redacted]")
+        # Upstream messages may echo arbitrary headers, URLs or credential parameters.
+        text = re.sub(r"https?://\S+", "[redacted URL]", text, flags=re.IGNORECASE)
+        text = re.sub(r"\b(Bearer|Basic)\s+\S+", r"\1 [redacted]", text, flags=re.IGNORECASE)
+        text = re.sub(
+            r"\b(authorization|(?:access|refresh)[_ -]?token|token|client[_ -]?(?:secret|id)|password|secret|api[_ -]?key)"
+            r"[\"']?\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+            r"\1=[redacted]",
+            text,
+            flags=re.IGNORECASE,
+        )
+        return " ".join(text.split())
+
     def _resource(self, endpoint: str) -> str:
-        resource = urlsplit(endpoint).path
-        for secret in (self._token, self._client_id, self._client_secret, self._refresh_token):
-            if secret:
-                resource = resource.replace(secret, "[redacted]")
-        return resource
+        return self._redact(urlsplit(endpoint).path)
 
     @staticmethod
     def _retry_delay(response: requests.Response, attempt: int) -> float:
@@ -167,6 +199,8 @@ class WebexClient(RestApiClient):
                 "client_secret": self._client_secret,
                 "refresh_token": self._refresh_token,
             }
+        self.request_count += 1
+        logger.info("Webex request", resource=self._resource(url), method=method, requests=self.request_count)
         return requests.request(
             method,
             url,
@@ -247,19 +281,40 @@ class WebexClient(RestApiClient):
             msg = "Webex: /v1/access_token: refresh response lacks a valid lifetime"
             raise ValueError(msg)
         self._token = payload["access_token"]
+        self._credentials.add(self._token)
         self._expires_at = time.monotonic() + lifetime
         if isinstance(payload.get("refresh_token"), str) and payload["refresh_token"]:
             self._refresh_token = payload["refresh_token"]
+            self._credentials.add(self._refresh_token)
+
+    def _refresh_for(self, resource: str) -> None:
+        try:
+            self._refresh()
+        except ValueError as exc:
+            msg = f"Webex: {resource}: token refresh failed: {exc}"
+            raise ValueError(msg) from None
+
+    def _query_error(self, response: requests.Response) -> str:
+        try:
+            payload = response.json()
+        except ValueError:
+            return "request rejected; check endpoint and query settings"
+        if isinstance(payload, dict) and isinstance(payload.get("message"), str):
+            return f"query rejected: {self._redact(payload['message'])}"
+        return "request rejected; check endpoint and query settings"
 
     def _get_response(self, endpoint: str, params: dict[str, Any] | None = None) -> requests.Response:
         url = self._url(endpoint)
+        resource = self._resource(endpoint)
+        if params and params.get("orgId") is not None and params["orgId"] != self.options.org_id:
+            msg = f"Webex: {resource}: query orgId differs from the project organization"
+            raise ValueError(msg)
         if self.options.auth_method == "service_app" and time.monotonic() >= self._expires_at:
-            self._refresh()
+            self._refresh_for(resource)
         response = self._send("GET", url, params=params)
         if response.status_code == 401 and self.options.auth_method == "service_app":
-            self._refresh()
+            self._refresh_for(resource)
             response = self._send("GET", url, params=params)
-        resource = self._resource(endpoint)
         if response.status_code == 401:
             raise WebexHTTPError(401, resource, "authentication failed")
         if response.status_code == 403:
@@ -268,6 +323,8 @@ class WebexClient(RestApiClient):
         if not isinstance(status, int):
             msg = f"Webex: {resource}: response lacks an HTTP status"
             raise TypeError(msg)
+        if status == 400:
+            raise WebexHTTPError(status, resource, self._query_error(response))
         if not 200 <= status < 300:
             raise WebexHTTPError(status, resource, "request rejected; check endpoint and query settings")
         return response
@@ -287,9 +344,17 @@ class WebexClient(RestApiClient):
 
     def pages(self, endpoint: str, params: dict[str, Any]) -> list[Any]:
         """Read all pages, including empty intermediate pages, without leaking credentials."""
-        if {"before", "after"} & parse_qs(urlsplit(endpoint).query, keep_blank_values=True).keys():
-            msg = "Webex: initial pagination cursors would produce a partial inventory"
-            raise ValueError(msg)
+        # Inventory reads start at the first page even when a start cursor is supplied.
+        # Continuation cursors from Webex are followed normally and never replayed.
+        parts = urlsplit(endpoint)
+        query = [
+            (key, value)
+            for key, value in parse_qsl(parts.query, keep_blank_values=True)
+            if key not in {"before", "after"}
+        ]
+        endpoint = urlunsplit(parts._replace(query=urlencode(query)))
+        params = {key: value for key, value in params.items() if key not in {"before", "after"}}
+        request_start = self.request_count
         pages: list[Any] = []
         seen: set[str] = set()
         next_url = self._url(endpoint)
@@ -308,5 +373,10 @@ class WebexClient(RestApiClient):
             # Link controls cursor values; retain configured scope/filters if omitted.
             linked_params = parse_qs(urlsplit(next_url).query, keep_blank_values=True)
             next_params = {key: value for key, value in params.items() if key not in linked_params} or None
-        logger.info("Webex resource fetched", resource=self._resource(endpoint), requests=len(pages))
+        logger.info(
+            "Webex resource fetched",
+            resource=self._resource(endpoint),
+            requests=self.request_count - request_start,
+            total_requests=self.request_count,
+        )
         return pages

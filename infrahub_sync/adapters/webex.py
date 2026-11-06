@@ -56,10 +56,14 @@ class WebexAdapter(GenericrestapiAdapter):
         return re.sub(r"\{([^{}]+)\}", lambda match: quote(str(cls._field(record, match[1])), safe=""), template)
 
     def _params(self, options: WebexResource, parent: dict[str, Any]) -> dict[str, str]:
+        self.client._validate_organization()
         values = dict(self.client.options.params)
         if self.client.options.org_id is not None:
             values["orgId"] = self.client.options.org_id
         values.update(options.params)
+        if values.get("orgId") is not None and values["orgId"] != self.client.options.org_id:
+            msg = "Webex: resource orgId differs from the project organization"
+            raise ValueError(msg)
         values.setdefault("max", options.page_size or self.client.options.page_size)
         if options.page_size is not None:
             values["max"] = options.page_size
@@ -90,10 +94,10 @@ class WebexAdapter(GenericrestapiAdapter):
         return str(value)
 
     @staticmethod
-    def _extract(payload: Any, response_key: str | None, name: str) -> list[dict[str, Any]]:
+    def _extract(payload: Any, response_key: str | None, name: str, endpoint: str) -> list[dict[str, Any]]:
         if response_key is not None:
             if not isinstance(payload, dict) or get_value(payload, response_key) is None:
-                msg = f"Webex: {name}: missing configured response key"
+                msg = f"Webex: {name}: {endpoint}: missing configured response key {response_key}"
                 raise ValueError(msg)
             payload = get_value(payload, response_key)
         if isinstance(payload, dict):
@@ -130,7 +134,7 @@ class WebexAdapter(GenericrestapiAdapter):
                     continue
                 raise
             for page in pages:
-                page_records = self._extract(page, options.response_key, element.name)
+                page_records = self._extract(page, options.response_key, element.name, self.client._resource(path))
                 for index, record in enumerate(page_records, start=len(records)):
                     if record.get("id") is None and not any(key.endswith("_id") for key in record):
                         # Singleton settings endpoints need not expose their own ID.
@@ -161,7 +165,16 @@ class WebexAdapter(GenericrestapiAdapter):
         """Fetch, filter and transform records, then use the shared field/peer mapping."""
         element = next(item for item in self.config.schema_mapping if item.name == model_name)
         options = self.client.options.resources.get(model_name, WebexResource())
-        records = self._fetch(element, options)
+        request_start = self.client.request_count
+        try:
+            records = self._fetch(element, options)
+        finally:
+            logger.info(
+                "Webex mapping requests",
+                model=model_name,
+                requests=self.client.request_count - request_start,
+                total_requests=self.client.request_count,
+            )
         filtered = model.filter_records(records=records, schema_mapping=element)
         transformed = model.transform_records(records=filtered, schema_mapping=element)
         self._records[model_name] = transformed
