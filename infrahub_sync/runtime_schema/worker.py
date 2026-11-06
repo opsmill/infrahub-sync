@@ -30,6 +30,7 @@ from infrahub_sync.plugin_loader import resolve_installed_adapter_class, resolve
 
 from .domain import normalize_destination_schema
 from .errors import (
+    DestinationBranchNotFoundError,
     DestinationSchemaUnavailableError,
     MissingMappedKindError,
     UnsupportedDestinationProfileError,
@@ -154,8 +155,9 @@ def build_runtime_model_plan(
     try:
         raw = read_destination_schema_snapshot(package, branch)
     except DestinationSchemaReadError as exc:
-        msg = f"destination schema for branch {branch!r} could not be read: {exc.describe()}"
-        raise DestinationSchemaUnavailableError(msg, reason=exc.reason) from None
+        if exc.reason == "nobranch":
+            raise DestinationBranchNotFoundError(branch=branch) from None
+        raise DestinationSchemaUnavailableError(reason=exc.reason, branch=branch, detail=exc.detail) from None
     snapshot = normalize_destination_schema(raw)
     schema_fingerprint = compute_consumed_schema_fingerprint(configuration=instance, snapshot=snapshot)
     if scope == "both":

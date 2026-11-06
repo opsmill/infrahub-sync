@@ -32,6 +32,9 @@ from infrahub_sync.client import (
     ConfigurationVersionResource,
     ConfigurationVersionSummaryResource,
     CreateRunRequest,
+    EventPage,
+    EventPrimaryResource,
+    EventResource,
     OrchestrationSummary,
     PlanLastChangeResource,
     PlanOperationResource,
@@ -44,6 +47,8 @@ from infrahub_sync.client import (
     RegisteredConfigurationResource,
     RegisteredVersionResource,
     ResultsResource,
+    RunLogLine,
+    RunLogPage,
     RunPage,
     RunReference,
     RunResource,
@@ -702,6 +707,46 @@ def test_runs_show_renders_the_service_record_and_its_selected_execution(client:
 
 
 @pytest.mark.parametrize(
+    ("link", "expected"),
+    [
+        ("http://127.0.0.1:4230/runs/flow-run/flow-service-1", "http://127.0.0.1:4230/runs/flow-run/flow-service-1"),
+        (None, "<none>"),
+    ],
+    ids=("linked", "null"),
+)
+def test_runs_show_prints_the_prefect_flow_run_link_right_after_the_flow_run_id(
+    client: MagicMock, link: str | None, expected: str
+) -> None:
+    """US3: the operator copies the Prefect UI link from the line under the flow run it opens."""
+    resource = _run()
+    execution = resource.orchestration[0].model_copy(update={"prefect_flow_run_url": link})
+    client.get_run.return_value = resource.model_copy(update={"orchestration": (execution,)})
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    flow_run_line = lines.index("flow_run_id: flow-service-1")
+    assert lines[flow_run_line + 1] == f"prefect_flow_run_url: {expected}"
+
+
+def test_runs_show_prints_no_prefect_flow_run_link_when_the_response_omits_it(client: MagicMock) -> None:
+    """A Sync API that predates the link sends no field, which reads as no link."""
+    payload = _run().orchestration[0].model_dump(mode="json")
+    del payload["prefect_flow_run_url"]
+    resource = _run()
+    client.get_run.return_value = resource.model_copy(
+        update={"orchestration": (OrchestrationSummary.model_validate(payload),)}
+    )
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert lines[lines.index("flow_run_id: flow-service-1") + 1] == "prefect_flow_run_url: <none>"
+
+
+@pytest.mark.parametrize(
     ("terminal", "expected_state"),
     [
         (None, "pending"),
@@ -760,6 +805,62 @@ def test_runs_show_reports_whether_the_run_needs_reconciling(
 
     assert result.exit_code == 0, result.output
     assert rendered in result.output
+
+
+def test_runs_show_prints_the_recorded_cause_and_next_action_of_a_failed_stage(client: MagicMock) -> None:
+    """FR-002: a run that failed on a missing branch names the branch and the fix in `runs show`."""
+    resource = _run(operation="sync", phase="failed", outcome="failed")
+    cause = "Branch `demo-test` does not exist in Infrahub."
+    next_action = "Create the branch `demo-test` in Infrahub, or set the run's destination branch, then run again."
+    failed_run = resource.run.model_copy(
+        update={
+            "results": {
+                "sync_failure": {
+                    "stage": "sync",
+                    "error_type": "BranchNotFoundError",
+                    "cause": cause,
+                    "next_action": next_action,
+                }
+            }
+        }
+    )
+    client.get_run.return_value = resource.model_copy(update={"run": failed_run})
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert "sync failed: BranchNotFoundError" in lines
+    assert f"cause: {cause}" in lines
+    assert f"hint: {next_action}" in lines
+    client.get_results.assert_not_called()
+
+
+def test_runs_show_leaves_out_a_stage_failure_that_a_later_attempt_of_the_stage_succeeded(
+    client: MagicMock,
+) -> None:
+    """A verify merges its result into the run's results, so a failed verify's record outlives a later success."""
+    resource = _run(phase="planned", terminal=("completed", "succeeded"))
+    verified = resource.orchestration[0].model_copy(update={"purpose": "verify"})
+    stale_run = resource.run.model_copy(
+        update={
+            "results": {
+                "verification": {"checksum_ok": True},
+                "verify_failure": {
+                    "stage": "verify",
+                    "error_type": "DestinationSchemaUnavailableError",
+                    "cause": "Infrahub did not answer in time.",
+                },
+            }
+        }
+    )
+    client.get_run.return_value = resource.model_copy(update={"run": stale_run, "orchestration": (verified,)})
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert "verify failed: DestinationSchemaUnavailableError" not in result.stdout.splitlines()
+    assert "cause: Infrahub did not answer in time." not in result.stdout.splitlines()
 
 
 def test_runs_results_renders_the_typed_response_as_parseable_json(client: MagicMock) -> None:
@@ -1834,3 +1935,281 @@ def test_configuration_lookup_errors_other_than_not_found_are_reported(client: M
     assert result.exit_code == 1
     assert "status: 403" in result.output
     client.iter_configs.assert_not_called()
+
+
+# `_client_errors` in `infrahub_sync/cli.py` exits with 2 for every `client-input` error.
+CLIENT_INPUT_EXIT = 2
+SERVICE_URL_HINT = "hint: set INFRAHUB_SYNC_API_URL or pass --api-url to an absolute http or https URL of the Sync API"
+BEARER_HINT = "hint: set INFRAHUB_SYNC_API_TOKEN to a Sync API bearer token"
+
+
+@pytest.mark.parametrize(
+    ("api_url", "token", "argument", "hint"),
+    [
+        (None, "token-1", "service_url", SERVICE_URL_HINT),
+        ("ftp://x", "token-1", "service_url", SERVICE_URL_HINT),
+        ("http://user:pw@h", "token-1", "service_url", SERVICE_URL_HINT),
+        ("http://sync.example", None, "token", BEARER_HINT),
+    ],
+    ids=["url-unset", "url-not-http", "url-with-credentials", "token-unset"],
+)
+def test_a_missing_or_invalid_address_prints_how_to_set_it(
+    api_url: str | None, token: str | None, argument: str, hint: str
+) -> None:
+    result = RUNNER.invoke(
+        app,
+        ["configs", "list"],
+        env={"INFRAHUB_SYNC_API_URL": api_url, "INFRAHUB_SYNC_API_TOKEN": token},
+    )
+
+    assert result.exit_code == CLIENT_INPUT_EXIT
+    assert result.output.splitlines()[:3] == ["error: client-input", f"argument: {argument}", hint]
+
+
+def test_a_client_input_error_for_another_argument_prints_no_hint(client: MagicMock) -> None:
+    result = _invoke(
+        client,
+        "sync",
+        "--config-id",
+        "edge-sync",
+        "--version",
+        "1",
+        "--reason",
+        "wait for sync",
+        "--wait-timeout",
+        "0",
+    )
+
+    assert result.exit_code == CLIENT_INPUT_EXIT
+    assert "argument: wait_timeout" in result.output
+    assert "hint:" not in result.output
+
+
+def _log_line(message: str, *, stage: str = "apply", level: str = "INFO") -> RunLogLine:
+    return RunLogLine(stage=stage, attempt=1, timestamp=NOW, level=level, source="infrahub_sync", message=message)
+
+
+def _log_page(*lines: RunLogLine, offset: int = 0, has_more: bool = False, run_phase: str = "applied") -> RunLogPage:
+    return RunLogPage(
+        run_id="service-run-1", items=lines, limit=500, offset=offset, has_more=has_more, run_phase=run_phase
+    )
+
+
+@pytest.fixture
+def poll_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Record each poll interval the CLI asks for instead of waiting it."""
+    sleeps: list[float] = []
+    monkeypatch.setattr("infrahub_sync.cli.sleep", sleeps.append)
+    return sleeps
+
+
+def test_runs_logs_prints_one_tab_separated_row_per_line(client: MagicMock, poll_sleeps: list[float]) -> None:
+    client.read_run_logs.return_value = _log_page(
+        _log_line("loaded 3 devices", stage="plan"),
+        _log_line("wrote\t1 device\x1b[2J", level="ERROR"),
+    )
+
+    result = _invoke(client, "runs", "logs", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    client.read_run_logs.assert_called_once_with("service-run-1", stage=None, offset=0)
+    assert result.stdout.splitlines() == [
+        f"{NOW.isoformat()}\tplan\tINFO\tloaded 3 devices",
+        f"{NOW.isoformat()}\tapply\tERROR\twrote\\t1 device\\x1b[2J",
+    ]
+    assert "prefect" not in result.output.lower()
+    assert not poll_sleeps
+
+
+def test_runs_logs_passes_the_stage_and_reads_every_page(client: MagicMock, poll_sleeps: list[float]) -> None:
+    client.read_run_logs.side_effect = [
+        _log_page(_log_line("first"), has_more=True),
+        _log_page(_log_line("second"), offset=1),
+    ]
+
+    result = _invoke(client, "runs", "logs", "service-run-1", "--stage", "apply")
+
+    assert result.exit_code == 0, result.output
+    assert [call.kwargs for call in client.read_run_logs.call_args_list] == [
+        {"stage": "apply", "offset": 0},
+        {"stage": "apply", "offset": 1},
+    ]
+    assert [line.split("\t")[-1] for line in result.stdout.splitlines()] == ["first", "second"]
+    assert not poll_sleeps
+
+
+def test_runs_logs_follow_prints_each_line_once_and_stops_after_the_run_ends(
+    client: MagicMock, poll_sleeps: list[float]
+) -> None:
+    client.read_run_logs.side_effect = [
+        _log_page(_log_line("one"), _log_line("two"), run_phase="accepted"),
+        _log_page(offset=2, run_phase="accepted"),
+        _log_page(_log_line("three"), offset=2, run_phase="applied"),
+        _log_page(offset=3, run_phase="applied"),
+        _log_page(offset=3, run_phase="applied"),
+        _log_page(offset=3, run_phase="applied"),
+    ]
+    client.get_run.side_effect = [_run(operation="apply"), _run(operation="apply", terminal=("completed", "succeeded"))]
+
+    result = _invoke(client, "runs", "logs", "service-run-1", "--follow")
+
+    assert result.exit_code == 0, result.output
+    assert [call.kwargs["offset"] for call in client.read_run_logs.call_args_list] == [0, 2, 2, 3, 3, 3]
+    assert [line.split("\t")[-1] for line in result.stdout.splitlines()] == ["one", "two", "three"]
+    # Once the run has ended, three empty reads one interval apart stop the command.
+    assert poll_sleeps == [2.0] * 5
+
+
+def test_runs_logs_follow_prints_a_line_stored_after_the_run_ended(client: MagicMock, poll_sleeps: list[float]) -> None:
+    # The orchestrator stores an execution's last lines in batches, after Sync records that it ended.
+    client.read_run_logs.side_effect = [
+        _log_page(_log_line("applying"), run_phase="planned"),
+        _log_page(offset=1, run_phase="applied"),
+        _log_page(_log_line("service run service-run-1 stage=apply outcome=applied"), offset=1, run_phase="applied"),
+        _log_page(offset=2, run_phase="applied"),
+        _log_page(offset=2, run_phase="applied"),
+        _log_page(offset=2, run_phase="applied"),
+    ]
+    client.get_run.return_value = _run(operation="apply", terminal=("completed", "succeeded"))
+
+    result = _invoke(client, "runs", "logs", "service-run-1", "--follow")
+
+    assert result.exit_code == 0, result.output
+    assert [line.split("\t")[-1] for line in result.stdout.splitlines()] == [
+        "applying",
+        "service run service-run-1 stage=apply outcome=applied",
+    ]
+    client.get_run.assert_called_once_with("service-run-1")
+    assert poll_sleeps == [2.0] * 5
+
+
+def test_runs_logs_follow_keeps_reading_while_an_apply_of_a_planned_run_runs(
+    client: MagicMock, poll_sleeps: list[float]
+) -> None:
+    # An apply keeps the run's phase `planned` until it ends; the apply execution's verdict decides.
+    client.read_run_logs.side_effect = [
+        _log_page(_log_line("planned 3 changes", stage="plan"), run_phase="planned"),
+        _log_page(offset=1, run_phase="planned"),
+        _log_page(_log_line("wrote 3 changes"), offset=1, run_phase="planned"),
+        _log_page(offset=2, run_phase="applied"),
+        _log_page(offset=2, run_phase="applied"),
+        _log_page(offset=2, run_phase="applied"),
+    ]
+    client.get_run.side_effect = [_run(operation="apply"), _run(operation="apply", terminal=("completed", "succeeded"))]
+
+    result = _invoke(client, "runs", "logs", "service-run-1", "--follow")
+
+    assert result.exit_code == 0, result.output
+    assert [line.split("\t")[-1] for line in result.stdout.splitlines()] == ["planned 3 changes", "wrote 3 changes"]
+    assert client.get_run.call_count == 2
+    assert poll_sleeps == [2.0] * 5
+
+
+def test_runs_logs_follow_stops_when_the_execution_ended_without_a_new_phase(
+    client: MagicMock, poll_sleeps: list[float]
+) -> None:
+    # A verify run keeps the phase `accepted` after it ends; its execution verdict says it ended.
+    client.read_run_logs.side_effect = [
+        _log_page(_log_line("checked"), run_phase="accepted"),
+        _log_page(offset=1, run_phase="accepted"),
+        _log_page(offset=1, run_phase="accepted"),
+        _log_page(offset=1, run_phase="accepted"),
+    ]
+    client.get_run.return_value = _run(terminal=("completed", "succeeded"))
+
+    result = _invoke(client, "runs", "logs", "service-run-1", "--follow")
+
+    assert result.exit_code == 0, result.output
+    assert [line.split("\t")[-1] for line in result.stdout.splitlines()] == ["checked"]
+    client.get_run.assert_called_once_with("service-run-1")
+    assert poll_sleeps == [2.0] * 3
+
+
+@pytest.mark.parametrize(("status", "code"), [(410, "log-expired"), (503, "log-unavailable")])
+def test_runs_logs_prints_an_unreadable_log_as_an_api_error(
+    client: MagicMock, poll_sleeps: list[float], status: int, code: str
+) -> None:
+    client.read_run_logs.side_effect = APIError(status, code, run_id="service-run-1")
+
+    result = _invoke(client, "runs", "logs", "service-run-1", "--follow")
+
+    assert result.exit_code == 1
+    assert result.stderr.splitlines()[:4] == [
+        "error: api",
+        f"status: {status}",
+        f"code: {code}",
+        "run_id: service-run-1",
+    ]
+    assert not result.stdout
+    assert not poll_sleeps
+
+
+def _event(event_id: str, *, primary: tuple[str, str] | None = ("run", "service-run-1")) -> EventResource:
+    return EventResource(
+        event_id=event_id,
+        event_type="infrahub_sync.run.planned",
+        occurred_at=NOW,
+        actor="operator",
+        operation="plan",
+        outcome="succeeded",
+        primary_resource=EventPrimaryResource(kind=primary[0], id=primary[1]) if primary is not None else None,
+    )
+
+
+def test_events_filters_by_run_configuration_name_and_type_and_prints_one_row_per_event(client: MagicMock) -> None:
+    client.get_config.side_effect = APIError(404, "not-found")
+    client.iter_configs.side_effect = lambda **_kwargs: iter(
+        (ConfigurationSummaryResource(config_id="cfg-1", created_at=NOW, name="from-netbox"),)
+    )
+    client.iter_events.return_value = iter((_event("event-1"), _event("event-2", primary=None)))
+
+    result = _invoke(
+        client,
+        "events",
+        "--run-id",
+        "service-run-1",
+        "--config-id",
+        "from-netbox",
+        "--type",
+        "infrahub_sync.run.planned",
+        "--type",
+        "infrahub_sync.run.failed",
+    )
+
+    assert result.exit_code == 0, result.output
+    client.iter_events.assert_called_once_with(
+        run_id="service-run-1",
+        config_id="cfg-1",
+        event_types=("infrahub_sync.run.planned", "infrahub_sync.run.failed"),
+    )
+    assert result.stdout.splitlines() == [
+        f"{NOW.isoformat()}\tinfrahub_sync.run.planned\trun:service-run-1\toperator\tsucceeded",
+        f"{NOW.isoformat()}\tinfrahub_sync.run.planned\t-\toperator\tsucceeded",
+    ]
+
+
+def test_events_follow_prints_each_new_event_once(client: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
+    polls: list[float] = []
+
+    def stop_after_two_polls(seconds: float) -> None:
+        polls.append(seconds)
+        if len(polls) == 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr("infrahub_sync.cli.sleep", stop_after_two_polls)
+    client.list_events.side_effect = [
+        EventPage(items=(_event("event-1"), _event("event-2")), limit=50, offset=0, has_more=False),
+        EventPage(items=(_event("event-3", primary=("config", "cfg-1")),), limit=50, offset=2, has_more=False),
+    ]
+
+    result = _invoke(client, "events", "--follow")
+
+    assert result.exit_code == 130
+    assert [call.kwargs["offset"] for call in client.list_events.call_args_list] == [0, 2]
+    assert [line.split("\t")[2] for line in result.stdout.splitlines()] == [
+        "run:service-run-1",
+        "run:service-run-1",
+        "config:cfg-1",
+    ]
+    assert polls == [2.0, 2.0]
+    client.iter_events.assert_not_called()

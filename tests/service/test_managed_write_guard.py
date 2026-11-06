@@ -303,13 +303,17 @@ def _drive(prepared: _ManagedStage, stage: str) -> dict[str, Any]:
     """Run whichever managed write stage this case prepared."""
     if stage == "apply":
         return _apply(prepared)
-    return service_sync_run.fn(prepared.run_id, "sync", *prepared.binding, confirm_writes=True)
+    result = service_sync_run.fn(prepared.run_id, "sync", *prepared.binding, confirm_writes=True)
+    assert isinstance(result, dict)
+    return result
 
 
 def _apply(prepared: _ManagedStage) -> dict[str, Any]:
-    return service_sync_run.fn(
+    result = service_sync_run.fn(
         prepared.run_id, "apply", *prepared.binding, expected_checksum=prepared.checksum, confirm_writes=True
     )
+    assert isinstance(result, dict)
+    return result
 
 
 def test_a_managed_apply_holds_the_guard_before_its_live_schema_read(

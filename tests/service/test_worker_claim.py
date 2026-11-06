@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ from prefect.workers.process import ProcessJobConfiguration, ProcessWorker
 
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from infrahub_sync.service import flow as service_flow
+from infrahub_sync.service.flow import ExecutionClaimRefusedError
 from tests.service.execution_fixtures import append_execution
 from tests.service.prefect_launch import LaunchRecorder
 
@@ -191,7 +193,7 @@ def test_expired_worker_claim_refusal_precedes_all_stage_runtime_construction(
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(service_flow, "_execute_stage", lambda *_args, **_kwargs: constructed.append(stage))
 
-    with pytest.raises(RuntimeError, match="service worker execution claim was refused"):
+    with pytest.raises(ExecutionClaimRefusedError, match="service worker execution claim was refused"):
         service_flow.service_sync_run.fn("run-worker-claim", stage)
 
     assert constructed == []
@@ -218,9 +220,65 @@ def test_claim_refusal_prevents_registry_and_adapter_construction(
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", lambda *_args, **_kwargs: constructed.append(True))
 
-    with pytest.raises(RuntimeError, match="service worker execution claim was refused"):
+    with pytest.raises(ExecutionClaimRefusedError, match="service worker execution claim was refused"):
         service_flow.service_sync_run.fn("run-worker-claim", "plan")
     assert constructed == []
+
+
+def test_claim_refusal_message_names_the_run_and_the_recovery_commands() -> None:
+    """The refusal says nothing was touched and which commands recover the run."""
+    run_id = "run-worker-claim"
+
+    message = str(ExecutionClaimRefusedError(run_id))
+
+    assert issubclass(ExecutionClaimRefusedError, RuntimeError)
+    assert message.startswith("service worker execution claim was refused: ")
+    assert "\n" not in message
+    assert run_id in message
+    assert "Nothing was read or written" in message
+    assert "Prefect Retry" in message
+    assert "admission expired" in message
+    assert "not replayed" in message
+    assert f"infrahub-sync runs show {run_id}" in message
+    assert "infrahub-sync plan" in message
+    assert "infrahub-sync sync" in message
+    assert f"infrahub-sync apply {run_id} --expected-checksum <checksum>" in message
+    assert "infrahub-sync diff" not in message
+
+
+class _LevelRecordingRunLogger:
+    """Records each log call's level and rendered message."""
+
+    def __init__(self) -> None:
+        self.records: list[tuple[int, str]] = []
+
+    def log(self, level: int, msg: str, *args: object) -> None:
+        self.records.append((level, msg % args))
+
+    def info(self, msg: str, *args: object) -> None:
+        self.records.append((logging.INFO, msg % args))
+
+
+def test_claim_refusal_is_logged_at_error_before_the_flow_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The flow run log holds the refusal at ERROR level, and the flow run still fails."""
+    run_id = "run-worker-claim"
+    run_logger = _LevelRecordingRunLogger()
+    refused = ExecutionClaimRefusedError(run_id)
+
+    def refuse(*_args: object) -> tuple[str, str]:
+        raise refused
+
+    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), _projection(tmp_path)))
+    monkeypatch.setattr(service_flow, "_run_logger", lambda: (run_logger, True))
+    monkeypatch.setattr(service_flow, "_claim_current_execution", refuse)
+
+    with pytest.raises(ExecutionClaimRefusedError) as raised:
+        service_flow.service_sync_run.fn(run_id, "plan")
+
+    assert raised.value is refused
+    assert run_logger.records == [(logging.ERROR, f"infrahub_sync.service.flow | {refused}")]
 
 
 @pytest.mark.parametrize("value", [None, "not-a-uuid", FLOW_ID.upper()])

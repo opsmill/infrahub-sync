@@ -15,6 +15,7 @@ from enum import Enum
 from functools import wraps
 from math import isfinite
 from pathlib import Path  # noqa: TC003 - Typer resolves command annotations at runtime.
+from time import sleep
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import uuid4
 
@@ -45,6 +46,7 @@ from infrahub_sync.client import (
     VerifyRunRequest,
 )
 from infrahub_sync.client.models import (
+    LOG_STAGES,
     MAX_FAILURE_CAUSE_TEXT,
     MAX_LIMIT,
     RECOVERY_NEXT_ACTIONS,
@@ -61,10 +63,13 @@ if TYPE_CHECKING:
         ConfigurationSummaryResource,
         ConfigurationVersionResource,
         ConfigurationVersionSummaryResource,
+        EventResource,
         PlanLastChangeResource,
         PlanOperationResource,
         PublicRunResource,
         RecoveryAction,
+        RunLogLine,
+        RunLogPage,
         RunReference,
     )
 
@@ -199,10 +204,19 @@ def _echo_fields(fields: tuple[tuple[str, object], ...], *, err: bool = False) -
         typer.echo(f"{name}: {_display(rendered)}", err=err)
 
 
+_CLIENT_INPUT_HINTS = {
+    "service_url": "set INFRAHUB_SYNC_API_URL or pass --api-url to an absolute http or https URL of the Sync API",
+    "token": "set INFRAHUB_SYNC_API_TOKEN to a Sync API bearer token",
+}
+
+
 def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object], ...]]:
-    """Render bounded error fields and the fixed store-refusal guidance."""
+    """Render bounded error fields and the fixed store-refusal and address guidance."""
     if isinstance(error, ClientInputError):
-        result = "client-input", (("argument", error.argument),)
+        fields: tuple[tuple[str, object], ...] = (("argument", error.argument),)
+        if error.argument in _CLIENT_INPUT_HINTS:
+            fields = (*fields, ("hint", _CLIENT_INPUT_HINTS[error.argument]))
+        result = "client-input", fields
     elif isinstance(error, CompatibilityError):
         result = (
             "compatibility",
@@ -618,6 +632,8 @@ def _echo_run(resource: RunResource) -> None:
             # The correlation an operator follows into Prefect, from the same
             # selected attempt the state above is read from.
             ("flow_run_id", selected.flow_run_id if selected is not None else None),
+            # The same flow run's page in the Prefect UI, when the Sync API knows where that UI is.
+            ("prefect_flow_run_url", selected.prefect_flow_run_url if selected is not None else None),
         )
     )
 
@@ -795,20 +811,26 @@ def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
         failure = client.get_results(run_id).results.get(f"{stage}_failure")
     except SyncClientError:
         return
-    if not isinstance(failure, dict) or failure.get("stage") != stage:
+    if isinstance(failure, dict):
+        _echo_failure_record(failure, stage=stage, err=True)
+
+
+def _echo_failure_record(failure: Mapping[str, Any], *, stage: str, err: bool) -> None:
+    """Print one recorded `<stage>_failure`: the error type, then `cause:` and `hint:` when recorded."""
+    if failure.get("stage") != stage:
         return
     error_type = failure.get("error_type")
     if not (
         isinstance(error_type, str) and len(error_type) <= 128 and error_type.isascii() and error_type.isidentifier()
     ):
         return
-    typer.echo(f"{stage} failed: {error_type}", err=True)
+    typer.echo(f"{stage} failed: {error_type}", err=err)
     cause = failure.get("cause")
     if isinstance(cause, str) and cause:
-        typer.echo(f"cause: {_display(cause[:MAX_FAILURE_CAUSE_TEXT])}", err=True)
+        typer.echo(f"cause: {_display(cause[:MAX_FAILURE_CAUSE_TEXT])}", err=err)
     next_action = failure.get("next_action")
     if isinstance(next_action, str) and next_action:
-        typer.echo(f"hint: {_display(next_action[:MAX_FAILURE_CAUSE_TEXT])}", err=True)
+        typer.echo(f"hint: {_display(next_action[:MAX_FAILURE_CAUSE_TEXT])}", err=err)
         return
     # A record written before the service recorded every next action (an older Sync API)
     # carries only the error type and, for a refused registered plan, its recovery signal.
@@ -820,7 +842,7 @@ def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
         if isinstance(recovery_action, str):
             hint = RECOVERY_NEXT_ACTIONS.get(cast("RecoveryAction", recovery_action))
     if hint is not None:
-        typer.echo(f"hint: {hint}", err=True)
+        typer.echo(f"hint: {hint}", err=err)
 
 
 def _waiting_client(ctx: typer.Context, *, wait_timeout: float, poll_interval: float) -> SyncClient:
@@ -1143,9 +1165,27 @@ def runs_show(
     ctx: typer.Context,
     run_id: str = typer.Argument(..., help="Service-issued run ID."),
 ) -> None:
-    """Show one run's service record and its selected execution."""
+    """Show one run's service record and its selected execution.
+
+    `prefect_flow_run_url` links the flow run in the Prefect UI; it reads <none> when the Sync API has no UI address.
+    A failed stage adds its error type and, when the run recorded them, a `cause:` and a `hint:` line.
+    """
     with _client_errors():
-        _echo_run(_client(ctx).get_run(run_id))
+        resource = _client(ctx).get_run(run_id)
+    _echo_run(resource)
+    # The latest execution of each stage; the orchestration list is in run order.
+    latest_by_stage = {execution.purpose: execution for execution in resource.orchestration}
+    # A failed stage's cause and next action, as the run's results recorded them (FR-002).
+    for key, failure in resource.run.results.items():
+        if not key.endswith("_failure") or not isinstance(failure, dict):
+            continue
+        stage = key.removesuffix("_failure")
+        latest = latest_by_stage.get(stage)
+        # A verify merges its result into the run's results, so a failed verify's record stays
+        # after a later verify succeeds; that record no longer describes the stage.
+        if latest is not None and latest.terminal_outcome == "succeeded":
+            continue
+        _echo_failure_record(failure, stage=stage, err=False)
 
 
 @runs_app.command("results")
@@ -1177,3 +1217,129 @@ def runs_plan(
     """Review a saved plan summary, checksum, and operations."""
     with _client_errors():
         _echo_plan(_client(ctx).get_plan(run_id), detail=detail, kind=kind)
+
+
+# A run's phase while its first execution is submitted and has not ended.
+_UNFINISHED_RUN_PHASE = "accepted"
+# Empty reads, one poll interval apart, after which `runs logs --follow` stops once the run has
+# ended. The orchestrator stores the last lines of an execution in batches after it ends, so the
+# first empty read after the end can come before them (spec 017 quickstart, scenario 3).
+_FINAL_EMPTY_READS = 3
+# Client operation names a protocol error reports.
+_READ_RUN_LOGS = "read_run_logs"
+_LIST_EVENTS = "list_events"
+
+
+def _row(*columns: str) -> str:
+    """Join columns with tabs, each made safe for a terminal so no value adds a column."""
+    return "\t".join(_display(column) for column in columns)
+
+
+def _log_row(line: RunLogLine) -> str:
+    return _row(line.timestamp.isoformat(), line.stage, line.level, line.message)
+
+
+def _run_ended(client: SyncClient, page: RunLogPage) -> bool:
+    """Report whether the run whose log page this is can write no further line.
+
+    The verdict of the run's latest execution decides, not the phase: an apply or a verify of a
+    planned run keeps the phase `planned` while it runs. A run with no execution yet has ended
+    only when its phase is no longer `accepted`.
+    """
+    orchestration = client.get_run(page.run_id).orchestration
+    if not orchestration:
+        return page.run_phase != _UNFINISHED_RUN_PHASE
+    return orchestration[-1].terminal_state is not None
+
+
+@runs_app.command("logs")
+def runs_logs(
+    ctx: typer.Context,
+    run_id: str = typer.Argument(..., help="Service-issued run ID."),
+    stage: str | None = typer.Option(None, "--stage", help=f"Only lines of this stage: {', '.join(LOG_STAGES)}."),
+    follow: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--follow",
+        help=f"Read new lines every {DEFAULT_POLL_INTERVAL:g} seconds until the run ends.",
+    ),
+) -> None:
+    """Print the lines Sync wrote during one run, oldest first: time, stage, level, message."""
+    with _client_errors():
+        client = _client(ctx)
+        offset = 0
+        # Consecutive empty reads since the run ended; `None` until it has ended.
+        empty_after_end: int | None = None
+        try:
+            while True:
+                page = client.read_run_logs(run_id, stage=stage, offset=offset)
+                _echo_rows(page.items, _log_row)
+                offset += len(page.items)
+                if page.has_more:
+                    # A page that says more follow but holds none would repeat forever.
+                    if not page.items:
+                        raise ProtocolError(_READ_RUN_LOGS)
+                    continue
+                if not follow:
+                    return
+                # The orchestrator stores a run's last lines a moment after its execution ends, so
+                # stop only after `_FINAL_EMPTY_READS` empty reads once the run has ended.
+                if page.items:
+                    empty_after_end = None if empty_after_end is None else 0
+                elif empty_after_end is not None or _run_ended(client, page):
+                    empty_after_end = 1 if empty_after_end is None else empty_after_end + 1
+                    if empty_after_end >= _FINAL_EMPTY_READS:
+                        return
+                sleep(DEFAULT_POLL_INTERVAL)
+        except KeyboardInterrupt:
+            raise typer.Exit(130) from None
+
+
+def _event_row(event: EventResource) -> str:
+    primary = event.primary_resource
+    return _row(
+        event.occurred_at.isoformat(),
+        event.event_type,
+        f"{primary.kind}:{primary.id}" if primary is not None else "-",
+        event.actor,
+        event.outcome,
+    )
+
+
+@app.command("events")
+def events_cmd(
+    ctx: typer.Context,
+    run_id: str | None = typer.Option(None, "--run-id", help="Only events about this run."),
+    config: str | None = typer.Option(None, "--config-id", "--config", help=_CONFIG_HELP),
+    event_types: list[str] | None = typer.Option(
+        None, "--type", help="Only events of this type, such as infrahub_sync.run.planned. Repeat for several."
+    ),
+    follow: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--follow",
+        help=f"Read new events every {DEFAULT_POLL_INTERVAL:g} seconds until interrupted.",
+    ),
+) -> None:
+    """List typed events, oldest first: time, type, resource, actor, outcome."""
+    with _client_errors():
+        client = _client(ctx)
+        config_id = _config_id(ctx, config) if config is not None else None
+        types = tuple(event_types or ())
+        if not follow:
+            _echo_rows(client.iter_events(run_id=run_id, config_id=config_id, event_types=types), _event_row)
+            return
+        # Events are listed oldest first and never removed, so the count printed so far is the
+        # offset of the first event not yet printed. An event saved late with an earlier time
+        # moves the later ones down by one, so this can skip or repeat one event.
+        offset = 0
+        try:
+            while True:
+                page = client.list_events(run_id=run_id, config_id=config_id, event_types=types, offset=offset)
+                _echo_rows(page.items, _event_row)
+                offset += len(page.items)
+                if page.has_more:
+                    if not page.items:
+                        raise ProtocolError(_LIST_EVENTS)
+                    continue
+                sleep(DEFAULT_POLL_INTERVAL)
+        except KeyboardInterrupt:
+            raise typer.Exit(130) from None

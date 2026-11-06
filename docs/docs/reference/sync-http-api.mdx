@@ -265,11 +265,20 @@ terminally cancelled first.
 
 A terminal execution is immutable, so its summary is served from the retained record
 and carries no live provider detail: `detail_available` is `false` and
-`unavailable_reason` is `live-detail-not-requested`. Its `state` is the last state
-observed before the verdict, so a completed execution can report `running` there;
+`unavailable_reason` is `live-detail-not-requested`. Once an execution has a recorded
+`terminal_state`, its `state` is that terminal state, in every response, even when a live
+or retained Prefect observation reports an earlier state such as `running`.
 `terminal_state` and `terminal_outcome` are the authoritative fields for how an
 execution ended. Only the response that records an execution's terminal
 verdict still carries that execution's live detail.
+
+Each orchestration entry also carries `prefect_flow_run_url`: the address of the flow
+run's page in the Prefect UI, `<INFRAHUB_SYNC_PREFECT_UI_URL>/runs/flow-run/<flow_run_id>`.
+It is `null` when `INFRAHUB_SYNC_PREFECT_UI_URL` is unset or empty. The Sync API reads that
+setting at start-up and refuses to start when it is not an absolute `http` or `https` URL
+with a host, or when it holds credentials, a query or a fragment. The refusal message names
+the setting and does not repeat its value. A client from an earlier release accepts a
+response that holds the field.
 
 ## Routes
 
@@ -298,6 +307,8 @@ an absent reason and a `null` reason are the same value, and both differ from an
 | `GET /runs/{run_id}/results` | Return retained results independently of Prefect result retention. |
 | `GET /runs/{run_id}/artifacts` | List immutable run-owned artifact references. |
 | `GET /runs/{run_id}/artifacts/{artifact_id}` | Return verified artifact bytes with their media type and `Digest` header. |
+| `GET /runs/{run_id}/logs` | Return the log lines that Sync wrote during the run's stages, oldest first, one page at a time. |
+| `GET /events` | List typed events about runs and configurations, oldest first, one page at a time. |
 | `POST /runs/{run_id}/verify` | Accept read-only saved-plan verification without changing product lifecycle state. |
 | `POST /runs/{run_id}/apply` | Accept a confirmed apply for the exact retained reviewed checksum. |
 | `POST /runs/{run_id}/cancel` | Ask Prefect to cancel only the latest active linked execution. |
@@ -327,6 +338,8 @@ lists their identifiers.
 | `infrahub-sync runs plan RUN_ID` | `GET /runs/{run_id}/plan` |
 | `infrahub-sync runs results RUN_ID` | `GET /runs/{run_id}/results` |
 | `infrahub-sync runs artifacts RUN_ID` | `GET /runs/{run_id}/artifacts` |
+| `infrahub-sync runs logs RUN_ID` | `GET /runs/{run_id}/logs` |
+| `infrahub-sync events` | `GET /events` |
 | `infrahub-sync runs cancel RUN_ID` | `POST /runs/{run_id}/cancel` |
 | `infrahub-sync whoami` | `GET /me` |
 
@@ -399,6 +412,160 @@ and Prefect adds the deployment's tags, including any tag you added to the deplo
 
 Filter flow runs by one of these tags in the Prefect UI or API to list every stage of one run,
 or every run of one configuration version.
+
+### Read a run's log
+
+`GET /runs/{run_id}/logs` returns the lines that Sync wrote while it ran the run's stages. The
+Sync API reads them from every flow run that the run record names, one or more per stage. It
+returns only the lines that Sync's own code wrote, and leaves out the lines that the engine
+and the worker of the orchestrator wrote, such as the flow run's final state.
+
+| Query parameter | Rule |
+| --- | --- |
+| `stage` | Only the lines of this stage: `plan`, `verify`, `apply` or `sync`. |
+| `limit` | Lines per page, from 1 to 1000. Defaults to 200. |
+| `offset` | The number of lines to skip. Defaults to 0. |
+
+A value outside these rules returns `422 request-invalid`.
+
+```json
+{
+  "run_id": "20261106T1015-0123abcd",
+  "items": [
+    {
+      "stage": "plan",
+      "attempt": 1,
+      "timestamp": "2026-11-06T10:15:01Z",
+      "level": "ERROR",
+      "source": "infrahub_sync.service.flow",
+      "message": "Branch `demo-test` does not exist in Infrahub. Next step: Create it, or start the run with `--branch <existing branch>`."
+    }
+  ],
+  "limit": 200,
+  "offset": 0,
+  "has_more": false,
+  "run_phase": "plan-failed"
+}
+```
+
+- `stage` and `attempt` name the flow run that wrote the line. `source` is the name of the
+  Sync logger that wrote it.
+- `level` is `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`.
+- Lines are ordered by flow run, in the order the run record lists them, then by time.
+- Control characters other than line breaks and tabs are removed from `message`, and a message
+  is cut at 4,096 characters.
+- `run_phase` is the run's phase when the page was read.
+- A run that has no flow run yet returns an empty `items` list.
+
+To read new lines while a run is in progress, send `offset` equal to the number of lines
+already read: the response holds only the newer lines. `run_phase` alone does not show that
+a stage ended: a verify or an apply of a planned run keeps the phase `planned` while it runs,
+and a verify does not change the phase when it ends. Read `GET /runs/{run_id}` and check the
+`terminal_state` of the latest `orchestration` entry instead. The orchestrator stores the
+last lines of a flow run a moment after it ends, so read again for a few seconds after that
+before you stop. `infrahub-sync runs logs RUN_ID --follow` reads every 2 seconds this way and
+exits after three reads in a row return no new line once the run has ended.
+
+The orchestrator keeps the log of a flow run for as long as it keeps the flow run. When it no
+longer holds a flow run that the run record names, the route returns `410 log-expired`. When
+it cannot be reached, the route returns `503 log-unavailable`; `GET /runs/{run_id}`,
+`GET /runs/{run_id}/results` and `GET /events` keep answering. The deployment page explains
+[how long Prefect keeps flow runs](../compose-deployment.mdx#how-long-run-logs-are-kept).
+
+### List events
+
+`GET /events` lists what happened to runs and configurations: each decision the Sync API made
+on a request, and each stage result the worker recorded. An event is saved in the same
+database transaction as the decision or result it records, so neither is saved without the
+other. An event that records a refusal is saved on its own.
+
+| Query parameter | Rule |
+| --- | --- |
+| `run_id` | Only events about this run. |
+| `config_id` | Only events about this configuration, or that name it as a related resource. |
+| `event_type` | Only events of this type. Repeat it for several types. |
+| `related` | Only events with this related resource, written `<kind>:<id>`, for example `account:alice` or `branch:main`. Repeat it for several. |
+| `since` | Only events at or after this time. A date and time with a time zone. |
+| `until` | Only events before this time. A date and time with a time zone. |
+| `limit` | Events per page, from 1 to 200. Defaults to 50. |
+| `offset` | The number of matching events to skip. Defaults to 0. |
+
+A value outside these rules returns `422 request-invalid`. Events are ordered by
+`occurred_at`, then `event_id`, oldest first. To read new events, send `offset` equal to the
+number of events already read; `infrahub-sync events --follow` reads every 2 seconds this way
+until you stop it. An event saved late with an earlier `occurred_at` than events already read
+takes a position among them and moves the later events down by one, so a reader that pages
+this way can skip one event or read one event twice.
+
+```json
+{
+  "items": [
+    {
+      "event_id": "a-3f0c9d2e5b7a4c1e8f6d0b2a4c6e8f01",
+      "event_type": "infrahub_sync.run.planned",
+      "occurred_at": "2026-11-06T10:15:02Z",
+      "actor": "alice",
+      "operation": "plan",
+      "outcome": "succeeded",
+      "reason": null,
+      "primary_resource": {"kind": "run", "id": "20261106T1015-0123abcd"},
+      "related": [
+        {"kind": "account", "id": "alice"},
+        {"kind": "config", "id": "cfg-netbox"},
+        {"kind": "config_version", "id": "cfg-netbox@3"},
+        {"kind": "branch", "id": "main"}
+      ]
+    }
+  ],
+  "limit": 50,
+  "offset": 0,
+  "has_more": false
+}
+```
+
+`primary_resource` is the run or the configuration that the event is about. It is `null`
+when the event names neither a run nor a configuration. `related` holds
+the actor's account and, when they are known, the configuration, its version and the
+destination branch. The event types are:
+
+| Event type | Recorded when |
+| --- | --- |
+| `infrahub_sync.run.accepted` | The Sync API accepted a plan, sync, verify or apply request, or a cancel request. For a cancel request, `operation` is `cancel`. |
+| `infrahub_sync.run.replayed` | A retry with the same idempotency key received the stored answer. |
+| `infrahub_sync.run.refused` | The Sync API refused a run request. `outcome` names the reason, for example `refused-checksum`. |
+| `infrahub_sync.run.unavailable` | The orchestrator could not confirm a submission or a cancellation request. |
+| `infrahub_sync.run.planned` | A plan stage succeeded. |
+| `infrahub_sync.run.verified` | A verify stage succeeded. |
+| `infrahub_sync.run.applied` | An apply stage succeeded. |
+| `infrahub_sync.run.synced` | A sync stage succeeded. |
+| `infrahub_sync.run.failed` | A stage failed, or was interrupted. `outcome` is `failed`, or `ambiguous` when the stage may have written to the destination. The Sync API records this event, with `outcome` `ambiguous`, when it ends an execution whose worker stopped without recording a result. |
+| `infrahub_sync.run.cancelled` | An execution that a cancel request stopped ended cancelled. `actor` and `reason` come from the cancel request. |
+| `infrahub_sync.config.registered` | A configuration was registered as version 1. |
+| `infrahub_sync.config.version_registered` | A new version of a configuration was registered. |
+| `infrahub_sync.config.refused`, `.replayed`, `.unavailable` | The same decisions as for a run, on a configuration request. |
+
+A request refused for a missing or invalid token is not an event, and `GET /events` never
+returns it. Events recorded before this release get a type when the Sync API first starts on
+this release, from their operation and outcome. They name the account of their actor, but no
+configuration, version or branch, because the earlier record did not hold them. A request
+refused for a missing or invalid token that an earlier release recorded gets no type and is
+not listed.
+
+### Read why a stage failed
+
+When a stage fails with an error that Sync knows, the run records a `cause` and a
+`next_action` under `plan_failure`, `verify_failure`, `apply_failure` or `sync_failure` in
+`GET /runs/{run_id}/results`. The worker writes one `ERROR` line to the run's log,
+`<cause> Next step: <next_action>`, without a Python traceback, and the stage ends failed. For
+example, when the destination branch does not exist:
+
+```text
+Branch `demo-test` does not exist in Infrahub. Next step: Create it, or start the run with `--branch <existing branch>`.
+```
+
+A failure to read the destination schema also records a cause and a next action, for example a
+refused token or a missing permission. An error that Sync does not know records its class name
+only.
 
 ### Create a plan
 
@@ -571,9 +738,11 @@ Every error uses the same envelope:
 | `403` | The actor does not own the mutation and is not an administrator. |
 | `404` | The Sync run or run-owned artifact does not exist, or a list filter names an unknown configuration (`configuration-not-found`) or configuration version (`configuration-version-not-found`). |
 | `409` | Idempotency conflict, missing confirmation, stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). |
-| `410` | The retained plan or artifact has expired. |
+| `410` | The retained plan or artifact has expired, or the orchestrator no longer holds a flow run whose log `GET /runs/{run_id}/logs` reads (`log-expired`). |
 | `422` | Invalid request schema or query parameter (`request-invalid`), a list cursor that does not decode or was issued for another list or other filters (`invalid-cursor`), missing idempotency key, or a secret-bearing flow parameter. |
-| `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved. |
+| `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved, or the orchestrator cannot be reached to read a run's log (`log-unavailable`). |
+
+Error messages name "the orchestrator", not Prefect, and never hold its address.
 
 Prefect detail can expire or become unavailable while the durable Sync record, results,
 and published artifacts remain readable. Cancellation never deletes the product record or

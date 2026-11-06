@@ -240,6 +240,7 @@ def main() -> None:  # noqa: PLR0915 - one linear worker script, kept readable a
             expected_checksum,
             confirm_writes,
         )
+        assert isinstance(result, dict), "the flow returned a state, not a result"
         _REPORT["outcome"] = result["outcome"]
         _REPORT["ok"] = True
     except BaseException as failure:  # noqa: BLE001 - the parent reads type/message for any child failure.

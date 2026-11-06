@@ -213,6 +213,15 @@ service tags each flow run so you can filter them in the Prefect UI or API:
 
 The `config:` and `config-version:` tags are set only on runs of a registered configuration.
 
+When the Sync API has a Prefect UI address (`INFRAHUB_SYNC_PREFECT_UI_URL`, see
+[Compose deployment](./compose-deployment.mdx)), `runs show RUN_ID` prints a
+`prefect_flow_run_url` line that opens the run's flow run in the Prefect UI. Without it, the
+line reads `prefect_flow_run_url: <none>`.
+
+In the Prefect UI, the worker's last line in each flow run's log names the stage, its outcome and the
+next step, and the flow run's Artifacts tab holds a summary of the Sync run. See
+[What a service flow run shows in Prefect](./orchestration.mdx#what-a-service-flow-run-shows-in-prefect).
+
 ## Find why a run failed
 
 `plan`, `verify`, `sync`, and `apply` print the final phase and outcome of a failed run, such
@@ -241,12 +250,24 @@ releases did. `runs results RUN_ID`
 prints the same fields, as `cause`, `next_action` and `infrahub_error`, under `plan_failure`,
 `sync_failure` or `apply_failure`.
 
-For any other failure, the error message is recorded on the run's Prefect flow run:
+When the destination branch does not exist, the `cause:` line names the branch, and the
+`hint:` line says to create it or to start the run with `--branch <existing branch>`. A
+failure to read the destination schema also prints a `cause:` and a `hint:` line.
 
-1. Run `runs show RUN_ID`. The output includes `flow_run_id`. You can also filter flow runs
-   in the Prefect UI by the tag `run:RUN_ID`.
-2. Open `<prefect-ui>/runs/flow-run/FLOW_RUN_ID` in a browser. The state message of the failed
-   flow run contains the error. A Compose deployment serves no Prefect UI until you add the
+`infrahub-sync runs logs RUN_ID` prints the lines that Sync wrote during the run, including
+the ERROR line that holds the cause and the next step. It reads them through the Sync API.
+
+For any other failure:
+
+1. Run `infrahub-sync runs show RUN_ID`. When the run recorded the failure, the output
+   ends with the failed stage's error type and, when they are known, a `cause:` and a
+   `hint:` line.
+2. Run `infrahub-sync runs logs RUN_ID`. The ERROR line names the error class of the failure.
+3. When these do not explain the failure, read the error on the run's Prefect flow run. The
+   `runs show` output includes `flow_run_id`, and `prefect_flow_run_url` when the Sync API has
+   a Prefect UI address. You can also filter flow runs in the Prefect UI by the tag
+   `run:RUN_ID`. Open `prefect_flow_run_url`, or `<prefect-ui>/runs/flow-run/FLOW_RUN_ID`, in a
+   browser. The state message of the failed flow run contains the error. A Compose deployment serves no Prefect UI until you add the
    override snippet in [Open the Prefect UI](./compose-deployment.mdx#open-the-prefect-ui);
    with it, the UI is at `http://127.0.0.1:4200` with the default port. The
    [local development stack](./development-stack.mdx) serves it at `http://127.0.0.1:4230`.

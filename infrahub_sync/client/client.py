@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import datetime
 from hashlib import sha256
 from math import isfinite
 from time import monotonic, sleep
@@ -25,7 +26,9 @@ from .errors import (
     TransportError,
 )
 from .models import (
+    LOG_STAGES,
     MAX_LIMIT,
+    MAX_LOG_LIMIT,
     MIN_LIMIT,
     ApplyRunRequest,
     ArtifactContent,
@@ -40,6 +43,8 @@ from .models import (
     ConfigurationVersionSummaryResource,
     CreateRunRequest,
     ErrorEnvelope,
+    EventPage,
+    EventResource,
     ListPage,
     OrchestrationSummary,
     PlanResource,
@@ -48,6 +53,7 @@ from .models import (
     RegisteredConfigurationResource,
     RegisteredVersionResource,
     ResultsResource,
+    RunLogPage,
     RunPage,
     RunResource,
     ServiceStatusResource,
@@ -57,7 +63,7 @@ from .models import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterator, Sequence
     from types import TracebackType
 
 _Model = TypeVar("_Model", bound=BaseModel)
@@ -77,6 +83,9 @@ _CURSOR_ARG = "cursor"
 _NAME_ARG = "name"
 _CONFIG_ID_ARG = "config_id"
 _LIST_RUNS = "list_runs"
+_LIST_EVENTS = "list_events"
+_EVENT_TYPES_ARG = "event_types"
+_RELATED_ARG = "related"
 _LIST_CONFIGS = "list_configs"
 _LIST_CONFIG_VERSIONS = "list_config_versions"
 _REQUEST_ARG = "request"
@@ -85,6 +94,7 @@ _GET_ARTIFACT = "get_artifact"
 _CLOSE = "close"
 _WAIT_FOR_RUN = "wait_for_run"
 _POLL_INTERVAL_ARG = "poll_interval"
+_STAGE_ARG = "stage"
 
 
 class SyncClient:  # pylint: disable=too-many-public-methods
@@ -360,6 +370,77 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             _LIST_RUNS, self.list_runs, config_id=config_id, registry_version=registry_version, limit=limit
         )
 
+    def list_events(  # pylint: disable=too-many-arguments
+        self,
+        *,
+        run_id: str | None = None,
+        config_id: str | None = None,
+        event_types: Sequence[str] = (),
+        related: Sequence[tuple[str, str]] = (),
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> EventPage:
+        """Return one page of typed events, oldest first.
+
+        Every given filter must match. ``event_types`` matches any of the types; ``related``
+        takes ``(kind, id)`` pairs, such as ``("account", "alice")``, and an event must name
+        each of them. ``since`` is inclusive and ``until`` exclusive; both need a timezone.
+        """
+
+        params: list[tuple[str, str | int]] = []
+        if run_id is not None:
+            params.append(("run_id", self._identifier(run_id, "run_id")))
+        if config_id is not None:
+            params.append((_CONFIG_ID_ARG, self._identifier(config_id, _CONFIG_ID_ARG)))
+        params.extend(
+            ("event_type", self._event_type(value)) for value in self._sequence(event_types, _EVENT_TYPES_ARG)
+        )
+        params.extend(("related", self._related(pair)) for pair in self._sequence(related, _RELATED_ARG))
+        for name, bound in (("since", since), ("until", until)):
+            if bound is not None:
+                params.append((name, self._aware_time(bound, name)))
+        params.extend(self._page_params(limit, None).items())
+        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_OFFSET_ARG)
+        if offset:
+            params.append((_OFFSET_ARG, offset))
+        return self._request_model(_LIST_EVENTS, "GET", "/events", model=EventPage, success={200}, params=tuple(params))
+
+    def iter_events(  # pylint: disable=too-many-arguments
+        self,
+        *,
+        run_id: str | None = None,
+        config_id: str | None = None,
+        event_types: Sequence[str] = (),
+        related: Sequence[tuple[str, str]] = (),
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int | None = None,
+    ) -> Iterator[EventResource]:
+        """Yield every event that matches the filters, oldest first, raising ``offset`` until ``has_more`` is false."""
+
+        offset = 0
+        while True:
+            page = self.list_events(
+                run_id=run_id,
+                config_id=config_id,
+                event_types=event_types,
+                related=related,
+                since=since,
+                until=until,
+                limit=limit,
+                offset=offset,
+            )
+            yield from page.items
+            if not page.has_more:
+                return
+            # A page that says more follow but holds none would repeat forever.
+            if not page.items:
+                raise ProtocolError(_LIST_EVENTS)
+            offset += len(page.items)
+
     def me(self) -> PrincipalResource:
         """Return the actor the token authenticates as and whether it is an administrator."""
 
@@ -379,6 +460,35 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             model=RunResource,
             success={200},
             request_timeout=request_timeout,
+        )
+
+    def read_run_logs(
+        self, run_id: str, stage: str | None = None, limit: int | None = None, offset: int = 0
+    ) -> RunLogPage:
+        """Return one page of the lines Sync wrote during a run, oldest first.
+
+        ``offset`` counts the lines already read, so passing that count returns only newer
+        lines. A log the server no longer holds raises ``APIError`` with status 410
+        (``log-expired``); a log it cannot read now raises ``APIError`` with status 503
+        (``log-unavailable``).
+        """
+
+        run_id = self._identifier(run_id, "run_id")
+        params: list[tuple[str, str | int]] = []
+        if stage is not None:
+            if stage not in LOG_STAGES:
+                raise ClientInputError(_STAGE_ARG)
+            params.append((_STAGE_ARG, stage))
+        if limit is not None:
+            if type(limit) is not int or not MIN_LIMIT <= limit <= MAX_LOG_LIMIT:  # pylint: disable=unidiomatic-typecheck
+                raise ClientInputError(_LIMIT_ARG)
+            params.append((_LIMIT_ARG, limit))
+        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_OFFSET_ARG)
+        if offset:
+            params.append((_OFFSET_ARG, offset))
+        return self._request_model(
+            "read_run_logs", "GET", f"/runs/{run_id}/logs", model=RunLogPage, success={200}, params=tuple(params)
         )
 
     def get_plan(self, run_id: str) -> PlanResource:
@@ -583,7 +693,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         success: set[int],
         body: BaseModel | None = None,
         idempotency_key: str | None = None,
-        params: dict[str, str | int] | None = None,
+        params: dict[str, str | int] | tuple[tuple[str, str | int], ...] | None = None,
         config_route: bool = False,
         request_timeout: float | None = None,
     ) -> _Model:
@@ -654,7 +764,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         authenticated: bool = True,
         headers: dict[str, str] | None = None,
         json: object = None,
-        params: dict[str, str | int] | None = None,
+        params: dict[str, str | int] | tuple[tuple[str, str | int], ...] | None = None,
         request_timeout: float | None = None,
     ) -> httpx.Response:
         request_headers = dict(headers or {})
@@ -723,6 +833,33 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         if not isinstance(value, str) or _IDENTIFIER.fullmatch(value) is None:
             raise ClientInputError(argument)
         return value
+
+    @staticmethod
+    def _sequence(value: object, argument: str) -> tuple[object, ...]:
+        if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+            raise ClientInputError(argument)
+        return tuple(value)
+
+    @staticmethod
+    def _event_type(value: object) -> str:
+        if not isinstance(value, str) or not value or value.strip() != value:
+            raise ClientInputError(_EVENT_TYPES_ARG)
+        return value
+
+    @staticmethod
+    def _related(value: object) -> str:
+        if not isinstance(value, tuple) or len(value) != 2:
+            raise ClientInputError(_RELATED_ARG)
+        kind, identifier = value
+        if not isinstance(kind, str) or not kind or ":" in kind or not isinstance(identifier, str) or not identifier:
+            raise ClientInputError(_RELATED_ARG)
+        return f"{kind}:{identifier}"
+
+    @staticmethod
+    def _aware_time(value: object, argument: str) -> str:
+        if not isinstance(value, datetime) or value.utcoffset() is None:
+            raise ClientInputError(argument)
+        return value.isoformat()
 
     @staticmethod
     def _positive_integer(value: object, argument: str) -> int:

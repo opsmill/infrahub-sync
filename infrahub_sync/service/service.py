@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -14,6 +15,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
+from infrahub_sync.client.models import DEFAULT_LOG_LIMIT
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
@@ -23,14 +25,17 @@ from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
     AuditEvent,
     DuplicatePrefectExecutionError,
+    EventFilters,
     MutationReceipt,
     PrefectExecutionLink,
     ProductProjection,
     ProductRun,
+    RelatedResource,
     RunFilters,
 )
 from infrahub_sync.product_store.configs import CONFIGURATION_NOT_FOUND_REASON, CONFIGURATION_VERSION_NOT_FOUND_REASON
 
+from .events import run_decision_type, run_event
 from .liveness import CancellationSelectionUnavailableError, select_cancellable_execution
 from .models import (
     ApplyRunRequest,
@@ -39,19 +44,33 @@ from .models import (
     CreateRunRequest,
     EmittedArtifactListResource,
     EmittedPlanResource,
+    EventPage,
     OrchestrationSummary,
     PlanResource,
     ResultsResource,
+    RunLogLine,
+    RunLogPage,
     RunPage,
     RunResource,
     ServiceStatusResource,
     VerifyRunRequest,
     WorkerStatusResource,
+    public_event_page,
+    public_run_log_page,
     public_run_page,
     public_run_resource,
 )
-from .orchestration import Observation, PoolStatus, ServiceOrchestration, normalized_pool_status
+from .orchestration import (
+    Observation,
+    OrchestrationUnavailableError,
+    PoolStatus,
+    ServiceOrchestration,
+    normalized_pool_status,
+)
 from .paging import FilterValue, decode_cursor, timestamp_cursor, timestamp_key, validate_limit
+from .prefect_ui import flow_run_url
+from .run_log import page as log_page
+from .run_log import sync_lines
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -60,6 +79,7 @@ if TYPE_CHECKING:
 
     from .auth import Principal
 
+logger = logging.getLogger(__name__)
 PLAN_ARTIFACT_ID = "plan-review"
 
 
@@ -136,6 +156,45 @@ def page_size_or_refuse(limit: int | None, *, secrets: tuple[str, ...] = ()) -> 
         raise ServiceAPIError(422, "request-invalid", str(exc), secrets=secrets) from None
 
 
+_SCHEMA_MISMATCH_MESSAGE = "the request does not match the API schema"
+# The largest event-list ``offset`` accepted: a signed 64-bit integer, which every store's OFFSET takes.
+MAX_EVENT_OFFSET = 2**63 - 1
+# The messages of a log the API cannot serve (contracts/logs-route.md). Neither names the orchestrator.
+LOG_EXPIRED_MESSAGE = "the log of this run has expired"
+LOG_UNAVAILABLE_MESSAGE = "the log of this run cannot be read now; retry later"
+
+
+def parse_event_time(value: str) -> datetime:
+    """Parse an event-list ``since`` or ``until`` value: an ISO 8601 time with a timezone.
+
+    A trailing ``Z`` is read as UTC.
+
+    Raises:
+        ServiceAPIError: ``422 request-invalid`` for a value that is not such a time.
+    """
+    text = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        raise ServiceAPIError(422, "request-invalid", _SCHEMA_MISMATCH_MESSAGE) from None
+    if parsed.utcoffset() is None:
+        raise ServiceAPIError(422, "request-invalid", _SCHEMA_MISMATCH_MESSAGE)
+    return parsed
+
+
+def _related_resource(value: str) -> RelatedResource:
+    """Parse one ``<kind>:<id>`` event-list filter; the kind is the text before the first colon.
+
+    Raises:
+        ValueError: ``value`` has no colon, or its kind or ID is not a related resource's.
+    """
+    kind, separator, identifier = value.partition(":")
+    if not separator:
+        msg = "a related resource is written <kind>:<id>"
+        raise ValueError(msg)
+    return RelatedResource.model_validate({"kind": kind, "id": identifier})
+
+
 class RunService:
     """Direct application service; Prefect owns all execution mechanics."""
 
@@ -147,8 +206,10 @@ class RunService:
         secrets: tuple[str, ...] = (),
         cancellation_recovery_seconds: float = 30.0,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        prefect_ui_url: str | None = None,
     ) -> None:
         self._projection = projection
+        self._prefect_ui_url = prefect_ui_url
         self._orchestration = orchestration
         self._secrets = tuple(dict.fromkeys((*collect_secret_values(), *secrets)))
         self._cancellation_recovery_seconds = cancellation_recovery_seconds
@@ -194,6 +255,9 @@ class RunService:
                 operation="sync",
                 reason=request.reason,
                 outcome="refused-confirmation",
+                config_id=request.config_id,
+                registry_version=request.registry_version,
+                branch=destination_branch,
             )
             raise self._error(409, "confirmation-required", "confirm_writes=true is required for sync")
 
@@ -365,7 +429,7 @@ class RunService:
         )
         return await self._resume_or_replay(receipt, parameters, principal, request.reason)
 
-    async def cancel_run(  # noqa: PLR0911  # pylint: disable=too-many-branches,too-many-return-statements,too-many-statements
+    async def cancel_run(  # pylint: disable=too-many-branches,too-many-return-statements,too-many-statements
         self, run_id: str, request: CancelRunRequest, principal: Principal, idempotency_key: str
     ) -> tuple[int, dict[str, Any]]:
         """Request cancellation of only the latest active service execution."""
@@ -498,14 +562,15 @@ class RunService:
                     mutation_id=receipt.receipt_id,
                 ),
                 flow_run_id=link.flow_run_id,
+                event=self._event(
+                    run_id,
+                    actor=principal.actor,
+                    operation="cancel",
+                    reason=request.reason,
+                    outcome="refused-terminal",
+                    run=run,
+                ),
                 secrets=self._secrets,
-            )
-            self._audit(
-                run_id,
-                actor=principal.actor,
-                operation="cancel",
-                reason=request.reason,
-                outcome="refused-terminal",
             )
             return self._stored_response(completed)
         try:
@@ -515,7 +580,7 @@ class RunService:
                 receipt,
                 principal,
                 request.reason,
-                "Prefect could not confirm the cancellation request",
+                "the orchestrator could not confirm the cancellation request",
                 exc=exc,
             )
         if not cancelled.acknowledged:
@@ -523,7 +588,7 @@ class RunService:
                 receipt,
                 principal,
                 request.reason,
-                "Prefect could not confirm the cancellation request",
+                "the orchestrator could not confirm the cancellation request",
             )
         accepted_observation = Observation(available=True, state="cancelling")
         resource = self._resource_with_observations(
@@ -531,12 +596,24 @@ class RunService:
             {link.flow_run_id: accepted_observation},
         )
         body = resource.model_dump(mode="json")
+        # A late acknowledgement, or one for a claimed write, is stored as a 409 or 503 refusal;
+        # its event is saved in that refusal's transaction (FR-014).
+        refusal_events = {
+            status: self._event(
+                run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome=outcome, run=run
+            )
+            for status, outcome in ((409, "refused-terminal"), (503, "unavailable"))
+        }
         acknowledged = self._projection.acknowledge_execution_cancellation(
             run_id,
             link.flow_run_id,
             acknowledged_at=self._clock(),
             response_status=202,
             response_body=body,
+            event=self._event(
+                run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="accepted", run=run
+            ),
+            refusal_events=refusal_events,
             secrets=self._secrets,
         )
         completed = self._projection.lookup_mutation(receipt.actor, receipt.key_digest).value
@@ -557,15 +634,18 @@ class RunService:
                     run_id=run_id,
                     mutation_id=receipt.receipt_id,
                 )
-            self._audit(
-                run_id,
-                actor=principal.actor,
-                operation="cancel",
-                reason=request.reason,
-                outcome="refused-terminal" if completed.response_status == 409 else "unavailable",
-            )
-            return self._stored_response(completed)
-        self._audit(run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="accepted")
+            stored_ids = {event.event_id for event in self._projection.audit_events(run_id)}
+            if not any(event.event_id in stored_ids for event in refusal_events.values()):
+                # Another writer (the worker's result or the recovery deadline) answered the
+                # request first, so its refusal has no event yet.
+                self._audit(
+                    run_id,
+                    actor=principal.actor,
+                    operation="cancel",
+                    reason=request.reason,
+                    outcome="refused-terminal" if completed.response_status == 409 else "unavailable",
+                )
+        # An acknowledged cancellation wrote its accepted event with the 202 it stored.
         return self._stored_response(completed)
 
     def _raise_cancel_unavailable(
@@ -652,6 +732,83 @@ class RunService:
         next_cursor = None if last is None else timestamp_cursor(last.started_at, last.run_id, filters)
         return public_run_page(page.items, next_cursor)
 
+    def list_events(  # pylint: disable=too-many-arguments
+        self,
+        *,
+        run_id: str | None = None,
+        config_id: str | None = None,
+        event_types: tuple[str, ...] = (),
+        related: tuple[str, ...] = (),
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> EventPage:
+        """Return one page of typed events, oldest first (spec 017, contracts/events-route.md).
+
+        ``related`` holds ``<kind>:<id>`` values; an event must name every one of them. An
+        unknown run or configuration matches no event rather than being refused.
+
+        Raises:
+            ServiceAPIError: ``422 request-invalid`` for a value outside the contract: a limit
+                outside 1-200, a negative offset, a malformed identifier, event type or related
+                resource, or a time without a timezone.
+        """
+        page_size = page_size_or_refuse(limit, secrets=self._secrets)
+        if offset < 0:
+            raise self._error(422, "request-invalid", _SCHEMA_MISMATCH_MESSAGE)
+        try:
+            filters = EventFilters(
+                run_id=run_id,
+                config_id=config_id,
+                event_types=event_types,
+                related=tuple(_related_resource(value) for value in related),
+                since=since,
+                until=until,
+            )
+        except ValueError:
+            # The message names no value: the query string is the caller's, not the server's.
+            raise self._error(422, "request-invalid", _SCHEMA_MISMATCH_MESSAGE) from None
+        page = self._projection.list_events(filters, limit=page_size, offset=offset)
+        return public_event_page(page.items, limit=page_size, offset=offset, has_more=page.has_more)
+
+    async def read_run_logs(
+        self, run_id: str, *, stage: str | None = None, limit: int = DEFAULT_LOG_LIMIT, offset: int = 0
+    ) -> RunLogPage:
+        """Return one page of the lines Sync's own code wrote during a run, oldest first.
+
+        The lines of every flow run of the run, or of ``stage``'s flow runs, are read, the
+        orchestration engine's lines are left out, and ``offset`` counts Sync lines only, so a
+        poller that passes the number of lines it already holds receives only newer ones
+        (spec 017, FR-004, FR-005). ``stage``, ``limit`` and ``offset`` are already bounded by
+        the route.
+
+        Raises:
+            ServiceAPIError: ``404 run-not-found``; ``410 log-expired`` when the orchestrator
+                no longer holds a flow run the record names (FR-010); ``503 log-unavailable``
+                when the orchestrator cannot be reached (FR-013).
+        """
+        run = self._required_run(run_id)
+        entries = tuple(link for link in run.prefect_executions if stage is None or link.purpose == stage)
+        lines: tuple[RunLogLine, ...] = ()
+        if entries:
+            try:
+                read = await self._orchestration.read_logs(tuple(link.flow_run_id for link in entries))
+            except OrchestrationUnavailableError as exc:
+                # The class name tells a timeout from a refusal; the address and provider stay out.
+                logger.warning(
+                    "the log of run %s could not be read from the orchestrator (%s)",
+                    run_id,
+                    exc.error_class or type(exc).__name__,
+                )
+                raise self._error(503, "log-unavailable", LOG_UNAVAILABLE_MESSAGE, run_id=run_id) from None
+            if read.expired:
+                raise self._error(410, "log-expired", LOG_EXPIRED_MESSAGE, run_id=run_id)
+            # Redacted before the cap, inside `sync_lines`.
+            lines = sync_lines(entries, read.logs, secrets=self._secrets)
+        items, has_more = log_page(lines, offset, limit)
+        return public_run_log_page(run_id, items, limit=limit, offset=offset, has_more=has_more, run_phase=run.phase)
+
     def _require_configuration_filter(self, config_id: str, registry_version: int | None) -> None:
         """Refuse a run-list filter naming a configuration or version that was never registered."""
         if not self._projection.lookup_configuration(config_id).available:
@@ -720,7 +877,7 @@ class RunService:
             error = self._error(
                 503,
                 "orchestration-unavailable",
-                f"Prefect could not confirm service submission ({type(exc).__name__})",
+                f"the orchestrator could not confirm service submission ({type(exc).__name__})",
                 run_id=receipt.run_id,
                 mutation_id=receipt.receipt_id,
             )
@@ -759,14 +916,14 @@ class RunService:
             response_status=202,
             response_body=body,
             flow_run_id=submission.flow_run_id,
+            event=self._event(
+                receipt.run_id,
+                actor=principal.actor,
+                operation=receipt.operation,
+                reason=reason,
+                outcome="accepted",
+            ),
             secrets=self._secrets,
-        )
-        self._audit(
-            receipt.run_id,
-            actor=principal.actor,
-            operation=receipt.operation,
-            reason=reason,
-            outcome="accepted",
         )
         return self._stored_response(completed)
 
@@ -1006,13 +1163,18 @@ class RunService:
             observed = observations.get(link.flow_run_id)
             # Live and retained observation text is provider-supplied, so no summary is built from it raw.
             retained = None if link.last_observed_state is None else redact(link.last_observed_state, self._secrets)
+            # A finished execution reports its verdict as its state: a live or retained observation can
+            # predate the verdict, and a completed execution would otherwise read `Running`. The verdict
+            # is a fixed enum, returned raw as terminal_state too, so it is not redacted.
+            verdict = link.terminal_state
+            link_url = None if self._prefect_ui_url is None else flow_run_url(self._prefect_ui_url, link.flow_run_id)
             if observed is None:
                 orchestration.append(
                     OrchestrationSummary(
                         flow_run_id=link.flow_run_id,
                         purpose=link.purpose,
                         attempt=link.attempt,
-                        state=retained,
+                        state=retained if verdict is None else verdict,
                         detail_available=False,
                         unavailable_reason="live-detail-not-requested",
                         submitted_at=link.submitted_at,
@@ -1024,6 +1186,7 @@ class RunService:
                         terminal_at=link.terminal_at,
                         terminal_state=link.terminal_state,
                         terminal_outcome=link.terminal_outcome,
+                        prefect_flow_run_url=link_url,
                     )
                 )
                 continue
@@ -1034,7 +1197,7 @@ class RunService:
                     flow_run_id=link.flow_run_id,
                     purpose=link.purpose,
                     attempt=link.attempt,
-                    state=live if observed.available else retained,
+                    state=verdict if verdict is not None else (live if observed.available else retained),
                     detail_available=observed.available,
                     unavailable_reason=reason,
                     submitted_at=link.submitted_at,
@@ -1046,9 +1209,45 @@ class RunService:
                     terminal_at=link.terminal_at,
                     terminal_state=link.terminal_state,
                     terminal_outcome=link.terminal_outcome,
+                    prefect_flow_run_url=link_url,
                 )
             )
         return RunResource(run=public_run_resource(run), orchestration=tuple(orchestration))
+
+    def _event(
+        self,
+        run_id: str | None,
+        *,
+        actor: str,
+        operation: str,
+        reason: str | None,
+        outcome: str,
+        config_id: str | None = None,
+        registry_version: int | None = None,
+        branch: str | None = None,
+        run: ProductRun | None = None,
+    ) -> AuditEvent:
+        """Build the typed event of one request decision.
+
+        The type comes from the outcome. The configuration, version and branch come from the
+        stored run when there is one, else from the arguments, for a request refused before
+        its run exists. A caller that already holds the run passes it as ``run``; those three
+        values never change during a run, so the run is not read again.
+        """
+        if run is None and run_id is not None:
+            run = self._projection.lookup_run(run_id).value
+        return run_event(
+            run_id,
+            run,
+            event_type=run_decision_type(outcome),
+            actor=actor,
+            operation=operation,
+            reason=reason,
+            outcome=outcome,
+            config_id=config_id,
+            registry_version=registry_version,
+            branch=branch,
+        )
 
     def _audit(
         self,
@@ -1058,20 +1257,25 @@ class RunService:
         operation: str,
         reason: str | None,
         outcome: str,
+        config_id: str | None = None,
+        registry_version: int | None = None,
+        branch: str | None = None,
     ) -> None:
-        event = AuditEvent(
-            event_id=f"a-{uuid4().hex}",
-            run_id=run_id,
+        """Record the event of a decision that saves nothing else, such as a refusal or a replay."""
+        event = self._event(
+            run_id,
             actor=actor,
             operation=operation,
             reason=reason,
             outcome=outcome,
-            created_at=datetime.now(timezone.utc),
+            config_id=config_id,
+            registry_version=registry_version,
+            branch=branch,
         )
         self._projection.record_audit(event, secrets=self._secrets)
 
     def record_authentication_refusal(self, operation: str, reason: str) -> None:
-        """Persist anonymous authentication refusal evidence without token material."""
+        """Persist anonymous authentication refusal evidence without token material or an event type."""
         self._audit(
             None,
             actor="unauthenticated",
