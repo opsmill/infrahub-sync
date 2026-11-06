@@ -1173,10 +1173,19 @@ def runs_show(
     with _client_errors():
         resource = _client(ctx).get_run(run_id)
     _echo_run(resource)
+    # The latest execution of each stage; the orchestration list is in run order.
+    latest_by_stage = {execution.purpose: execution for execution in resource.orchestration}
     # A failed stage's cause and next action, as the run's results recorded them (FR-002).
     for key, failure in resource.run.results.items():
-        if key.endswith("_failure") and isinstance(failure, dict):
-            _echo_failure_record(failure, stage=key.removesuffix("_failure"), err=False)
+        if not key.endswith("_failure") or not isinstance(failure, dict):
+            continue
+        stage = key.removesuffix("_failure")
+        latest = latest_by_stage.get(stage)
+        # A verify merges its result into the run's results, so a failed verify's record stays
+        # after a later verify succeeds; that record no longer describes the stage.
+        if latest is not None and latest.terminal_outcome == "succeeded":
+            continue
+        _echo_failure_record(failure, stage=stage, err=False)
 
 
 @runs_app.command("results")

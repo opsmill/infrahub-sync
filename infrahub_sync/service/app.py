@@ -68,8 +68,8 @@ def _optional_time(value: str | None) -> datetime | None:
     return None if value is None else parse_event_time(value)
 
 
-def _event_offset(value: str | None) -> int:
-    """Parse the event list's ``offset`` without FastAPI's coercions; zero when absent."""
+def _page_offset(value: str | None) -> int:
+    """Parse the ``offset`` of the event list or a run's log without FastAPI's coercions; zero when absent."""
     return 0 if value is None else parse_bounded_integer(value, minimum=0, maximum=MAX_EVENT_OFFSET)
 
 
@@ -101,7 +101,7 @@ def run_logs_router(service: RunService, authenticate: Callable[..., Principal])
     ) -> RunLogPage:
         """Return one page of the lines Sync wrote during the run, oldest first."""
         return await service.read_run_logs(
-            run_id, stage=_log_stage(stage), limit=_log_limit(limit), offset=_event_offset(offset)
+            run_id, stage=_log_stage(stage), limit=_log_limit(limit), offset=_page_offset(offset)
         )
 
     return router
@@ -132,7 +132,7 @@ def events_router(service: RunService, authenticate: Callable[..., Principal]) -
             since=_optional_time(since),
             until=_optional_time(until),
             limit=parse_page_limit(limit),
-            offset=_event_offset(offset),
+            offset=_page_offset(offset),
         )
 
     return router

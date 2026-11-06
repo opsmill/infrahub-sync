@@ -838,13 +838,17 @@ class RecordedFailure:
     cause: str | None = None
 
 
+def _next_step(run_id: str, next_action: str | None) -> str:
+    """The operator's next step: the failure's next action, else reading the run's record."""
+    return next_action or f"`infrahub-sync runs show {run_id}`"
+
+
 def final_log_line(run_id: str, stage: str, outcome: str, next_action: str | None) -> str:
     """The last log line of a stage: its outcome and the operator's next step.
 
     Without a next action from the failure, the next step is to read the run's record.
     """
-    action = next_action or f"`infrahub-sync runs show {run_id}`"
-    return f"service run {run_id} stage={stage} outcome={outcome}; next step: {action}"
+    return f"service run {run_id} stage={stage} outcome={outcome}; next step: {_next_step(run_id, next_action)}"
 
 
 def result_next_action(result: dict[str, Any]) -> str | None:
@@ -970,8 +974,7 @@ def known_failure_line(run_id: str, recorded: RecordedFailure | None) -> str | N
     """
     if recorded is None or recorded.cause is None:
         return None
-    action = recorded.next_action or f"`infrahub-sync runs show {run_id}`"
-    return f"{recorded.cause} Next step: {action}"
+    return f"{recorded.cause} Next step: {_next_step(run_id, recorded.next_action)}"
 
 
 def _publish_run_summary(  # pylint: disable=too-many-arguments,too-many-positional-arguments

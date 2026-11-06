@@ -491,3 +491,20 @@ def test_event_list_refuses_a_bad_limit_or_offset(recorded: ProductProjection, l
 def test_event_filters_refuse_malformed_values(filters: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
         EventFilters.model_validate(filters)
+
+
+def test_redaction_keeps_the_event_type_and_redacts_caller_text(projection: ProductProjection) -> None:
+    """A secret that is part of the fixed event type, such as `infrahub`, must not break the event."""
+    projection.record_audit(
+        _event(
+            event_type="infrahub_sync.run.planned",
+            actor="infrahub-admin",
+            related=({"kind": "account", "id": "infrahub-admin"},),
+        ),
+        secrets=("infrahub",),
+    )
+
+    (stored,) = projection.audit_events("run-1")
+    assert stored.event_type == "infrahub_sync.run.planned"
+    assert stored.actor == "***-admin"
+    assert stored.related == (RelatedResource(kind="account", id="***-admin"),)

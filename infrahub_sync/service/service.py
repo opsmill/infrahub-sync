@@ -568,6 +568,7 @@ class RunService:
                     operation="cancel",
                     reason=request.reason,
                     outcome="refused-terminal",
+                    run=run,
                 ),
                 secrets=self._secrets,
             )
@@ -599,7 +600,7 @@ class RunService:
         # its event is saved in that refusal's transaction (FR-014).
         refusal_events = {
             status: self._event(
-                run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome=outcome
+                run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome=outcome, run=run
             )
             for status, outcome in ((409, "refused-terminal"), (503, "unavailable"))
         }
@@ -610,7 +611,7 @@ class RunService:
             response_status=202,
             response_body=body,
             event=self._event(
-                run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="accepted"
+                run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="accepted", run=run
             ),
             refusal_events=refusal_events,
             secrets=self._secrets,
@@ -1224,14 +1225,17 @@ class RunService:
         config_id: str | None = None,
         registry_version: int | None = None,
         branch: str | None = None,
+        run: ProductRun | None = None,
     ) -> AuditEvent:
         """Build the typed event of one request decision.
 
         The type comes from the outcome. The configuration, version and branch come from the
         stored run when there is one, else from the arguments, for a request refused before
-        its run exists.
+        its run exists. A caller that already holds the run passes it as ``run``; those three
+        values never change during a run, so the run is not read again.
         """
-        run = None if run_id is None else self._projection.lookup_run(run_id).value
+        if run is None and run_id is not None:
+            run = self._projection.lookup_run(run_id).value
         return run_event(
             run_id,
             run,

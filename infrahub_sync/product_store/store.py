@@ -456,8 +456,9 @@ _AUDIT_EVENT_ADDED_COLUMNS = (
 _CONFIGURATION_OPERATIONS = "('register-config', 'create-config-version')"
 # The type of an event recorded before spec 017, from its (operation, outcome) pair (data-model.md, "Event types").
 # A request refused for a missing or invalid token keeps no type, so the event list never returns it (research R6).
+# Those rows are left out of the update: they stay NULL for good, and rewriting every one of them on
+# each start-up would cost more as refused requests accumulate.
 _BACKFILL_AUDIT_EVENT_TYPES = f"""UPDATE audit_events SET event_type = CASE
-WHEN outcome = 'refused-authentication' THEN NULL
 WHEN operation = 'register-config' AND outcome = 'accepted' THEN 'infrahub_sync.config.registered'
 WHEN operation = 'create-config-version' AND outcome = 'accepted' THEN 'infrahub_sync.config.version_registered'
 WHEN operation IN {_CONFIGURATION_OPERATIONS} AND substr(outcome, 1, 8) = 'refused-' THEN 'infrahub_sync.config.refused'
@@ -467,7 +468,7 @@ WHEN outcome = 'accepted' THEN 'infrahub_sync.run.accepted'
 WHEN outcome = 'replayed' THEN 'infrahub_sync.run.replayed'
 WHEN substr(outcome, 1, 8) = 'refused-' THEN 'infrahub_sync.run.refused'
 WHEN outcome = 'unavailable' THEN 'infrahub_sync.run.unavailable'
-END WHERE event_type IS NULL"""  # noqa: S608 - module-owned literals only.
+END WHERE event_type IS NULL AND outcome <> 'refused-authentication'"""  # noqa: S608 - module-owned literals only.
 # The actor's account is the one related resource an event recorded before spec 017 can name.
 _BACKFILL_AUDIT_EVENT_ACCOUNTS = """INSERT INTO audit_event_resources (event_id, kind, resource_id)
 SELECT event_id, 'account', actor FROM audit_events WHERE NOT EXISTS (
@@ -3971,9 +3972,21 @@ def _cancellation_unconfirmed_response(run_id: str, receipt_id: str) -> dict[str
     }
 
 
+# Event fields this module or the clock writes, never caller text, so no secret can be in them.
+# Redacting them could only break their validation: a secret such as `infrahub` would turn the
+# event type into text the type pattern refuses, and fail the decision the event is saved with.
+_EVENT_FIXED_FIELDS = frozenset({"event_id", "event_type", "created_at", "registry_version"})
+
+
 def _redact_event(event: AuditEvent, secrets: Sequence[str]) -> AuditEvent:
-    """Return ``event`` with every configured secret removed from its values."""
-    return AuditEvent.model_validate(_redact_value(event.model_dump(mode="json"), secrets))
+    """Return ``event`` with every configured secret removed from its caller-supplied values."""
+    ordered = redaction_order(secrets)
+    return AuditEvent.model_validate(
+        {
+            name: value if name in _EVENT_FIXED_FIELDS else _redact_ordered_value(value, ordered, numbers=False)
+            for name, value in event.model_dump(mode="json").items()
+        }
+    )
 
 
 def _redacted_event(event: AuditEvent | None, secrets: Sequence[str]) -> AuditEvent | None:

@@ -836,6 +836,33 @@ def test_runs_show_prints_the_recorded_cause_and_next_action_of_a_failed_stage(c
     client.get_results.assert_not_called()
 
 
+def test_runs_show_leaves_out_a_stage_failure_that_a_later_attempt_of_the_stage_succeeded(
+    client: MagicMock,
+) -> None:
+    """A verify merges its result into the run's results, so a failed verify's record outlives a later success."""
+    resource = _run(phase="planned", terminal=("completed", "succeeded"))
+    verified = resource.orchestration[0].model_copy(update={"purpose": "verify"})
+    stale_run = resource.run.model_copy(
+        update={
+            "results": {
+                "verification": {"checksum_ok": True},
+                "verify_failure": {
+                    "stage": "verify",
+                    "error_type": "DestinationSchemaUnavailableError",
+                    "cause": "Infrahub did not answer in time.",
+                },
+            }
+        }
+    )
+    client.get_run.return_value = resource.model_copy(update={"run": stale_run, "orchestration": (verified,)})
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert "verify failed: DestinationSchemaUnavailableError" not in result.stdout.splitlines()
+    assert "cause: Infrahub did not answer in time." not in result.stdout.splitlines()
+
+
 def test_runs_results_renders_the_typed_response_as_parseable_json(client: MagicMock) -> None:
     """The API owns what a result says; this renders it without inventing structure."""
     client.get_results.return_value = ResultsResource(
