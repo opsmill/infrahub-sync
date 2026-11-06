@@ -1808,6 +1808,7 @@ def test_confirmation_schema_errors_and_openapi_contract(
 
     paths = openapi["paths"]
     assert set(paths) == {
+        "/events",
         "/me",
         "/runs",
         "/runs/{run_id}",

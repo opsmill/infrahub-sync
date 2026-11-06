@@ -23,10 +23,12 @@ from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
     AuditEvent,
     DuplicatePrefectExecutionError,
+    EventFilters,
     MutationReceipt,
     PrefectExecutionLink,
     ProductProjection,
     ProductRun,
+    RelatedResource,
     RunFilters,
 )
 from infrahub_sync.product_store.configs import CONFIGURATION_NOT_FOUND_REASON, CONFIGURATION_VERSION_NOT_FOUND_REASON
@@ -40,6 +42,7 @@ from .models import (
     CreateRunRequest,
     EmittedArtifactListResource,
     EmittedPlanResource,
+    EventPage,
     OrchestrationSummary,
     PlanResource,
     ResultsResource,
@@ -48,6 +51,7 @@ from .models import (
     ServiceStatusResource,
     VerifyRunRequest,
     WorkerStatusResource,
+    public_event_page,
     public_run_page,
     public_run_resource,
 )
@@ -136,6 +140,42 @@ def page_size_or_refuse(limit: int | None, *, secrets: tuple[str, ...] = ()) -> 
         return validate_limit(limit)
     except ValueError as exc:
         raise ServiceAPIError(422, "request-invalid", str(exc), secrets=secrets) from None
+
+
+_SCHEMA_MISMATCH_MESSAGE = "the request does not match the API schema"
+# The largest event-list ``offset`` accepted: a signed 64-bit integer, which every store's OFFSET takes.
+MAX_EVENT_OFFSET = 2**63 - 1
+
+
+def parse_event_time(value: str) -> datetime:
+    """Parse an event-list ``since`` or ``until`` value: an ISO 8601 time with a timezone.
+
+    A trailing ``Z`` is read as UTC.
+
+    Raises:
+        ServiceAPIError: ``422 request-invalid`` for a value that is not such a time.
+    """
+    text = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        raise ServiceAPIError(422, "request-invalid", _SCHEMA_MISMATCH_MESSAGE) from None
+    if parsed.utcoffset() is None:
+        raise ServiceAPIError(422, "request-invalid", _SCHEMA_MISMATCH_MESSAGE)
+    return parsed
+
+
+def _related_resource(value: str) -> RelatedResource:
+    """Parse one ``<kind>:<id>`` event-list filter; the kind is the text before the first colon.
+
+    Raises:
+        ValueError: ``value`` has no colon, or its kind or ID is not a related resource's.
+    """
+    kind, separator, identifier = value.partition(":")
+    if not separator:
+        msg = "a related resource is written <kind>:<id>"
+        raise ValueError(msg)
+    return RelatedResource.model_validate({"kind": kind, "id": identifier})
 
 
 class RunService:
@@ -660,6 +700,46 @@ class RunService:
         last = page.items[-1] if page.has_more else None
         next_cursor = None if last is None else timestamp_cursor(last.started_at, last.run_id, filters)
         return public_run_page(page.items, next_cursor)
+
+    def list_events(  # pylint: disable=too-many-arguments
+        self,
+        *,
+        run_id: str | None = None,
+        config_id: str | None = None,
+        event_types: tuple[str, ...] = (),
+        related: tuple[str, ...] = (),
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> EventPage:
+        """Return one page of typed events, oldest first (spec 017, contracts/events-route.md).
+
+        ``related`` holds ``<kind>:<id>`` values; an event must name every one of them. An
+        unknown run or configuration matches no event rather than being refused.
+
+        Raises:
+            ServiceAPIError: ``422 request-invalid`` for a value outside the contract: a limit
+                outside 1-200, a negative offset, a malformed identifier, event type or related
+                resource, or a time without a timezone.
+        """
+        page_size = page_size_or_refuse(limit, secrets=self._secrets)
+        if offset < 0:
+            raise self._error(422, "request-invalid", _SCHEMA_MISMATCH_MESSAGE)
+        try:
+            filters = EventFilters(
+                run_id=run_id,
+                config_id=config_id,
+                event_types=event_types,
+                related=tuple(_related_resource(value) for value in related),
+                since=since,
+                until=until,
+            )
+        except ValueError:
+            # The message names no value: the query string is the caller's, not the server's.
+            raise self._error(422, "request-invalid", _SCHEMA_MISMATCH_MESSAGE) from None
+        page = self._projection.list_events(filters, limit=page_size, offset=offset)
+        return public_event_page(page.items, limit=page_size, offset=offset, has_more=page.has_more)
 
     def _require_configuration_filter(self, config_id: str, registry_version: int | None) -> None:
         """Refuse a run-list filter naming a configuration or version that was never registered."""

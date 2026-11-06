@@ -377,6 +377,51 @@ class RunPage(_ResourceModel):
     next_cursor: str | None = None
 
 
+class EventPrimaryResource(_ResourceModel):
+    """The resource an event is about: its run, or else its configuration.
+
+    ``kind`` is a plain string so the client still reads a kind a newer server adds.
+    """
+
+    kind: str
+    id: str
+
+
+class EventRelatedResource(_ResourceModel):
+    """One resource an event names besides its primary resource, such as ``account:alice`` or ``branch:main``."""
+
+    kind: str
+    id: str
+
+
+class EventResource(_ResourceModel):
+    """One typed event: a Sync API decision or a stage result, with the resources it names."""
+
+    event_id: str
+    event_type: str
+    occurred_at: datetime
+    actor: str
+    operation: str
+    outcome: str
+    reason: str | None = None
+    primary_resource: EventPrimaryResource | None = None
+    related: tuple[EventRelatedResource, ...] = ()
+
+    @field_validator("occurred_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime | None:
+        return _timezone(value, "event timestamps must include a timezone")
+
+
+class EventPage(_ResourceModel):
+    """One page of the event list, oldest first; ``has_more`` says whether events follow the page."""
+
+    items: tuple[EventResource, ...]
+    limit: int = Field(ge=MIN_LIMIT, le=MAX_LIMIT)
+    offset: int = Field(ge=0)
+    has_more: bool
+
+
 class PlanSummaryResource(_ResourceModel):
     """Validated saved-plan counts and delete-review disclosures."""
 

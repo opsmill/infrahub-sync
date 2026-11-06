@@ -26,6 +26,10 @@ from infrahub_sync.client.models import (
     CreateRunRequest,
     ErrorDetail,
     ErrorEnvelope,
+    EventPage,
+    EventPrimaryResource,
+    EventRelatedResource,
+    EventResource,
     OrchestrationSummary,
     PlanOperationResource,
     PlanResource,
@@ -45,7 +49,7 @@ from infrahub_sync.client.models import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from infrahub_sync.product_store import PrefectExecutionLink, ProductRun
+    from infrahub_sync.product_store import AuditEvent, PrefectExecutionLink, ProductRun
 
 __all__ = [
     "ApplyRunRequest",
@@ -57,6 +61,10 @@ __all__ = [
     "CreateRunRequest",
     "ErrorDetail",
     "ErrorEnvelope",
+    "EventPage",
+    "EventPrimaryResource",
+    "EventRelatedResource",
+    "EventResource",
     "OrchestrationSummary",
     "PlanOperationResource",
     "PlanResource",
@@ -72,6 +80,7 @@ __all__ = [
     "VersionResource",
     "WorkerStatusResource",
     "bounded_emitted_model",
+    "public_event_page",
     "public_execution_link",
     "public_run_page",
     "public_run_resource",
@@ -136,6 +145,7 @@ EmittedRunResource = cast("type[PublicRunResource]", bounded_emitted_model(Publi
 EmittedPlanResource = cast("type[PlanResource]", bounded_emitted_model(PlanResource))
 EmittedArtifactListResource = cast("type[ArtifactListResource]", bounded_emitted_model(ArtifactListResource))
 EmittedRunPage = cast("type[RunPage]", bounded_emitted_model(RunPage))
+EmittedEventPage = cast("type[EventPage]", bounded_emitted_model(EventPage))
 
 # What the server builds out of data it did not write literally, and therefore what the
 # boundedness check in the test suite walks.
@@ -144,6 +154,7 @@ EMITTED_RESOURCES: tuple[type[BaseModel], ...] = (
     EmittedPlanResource,
     EmittedArtifactListResource,
     EmittedRunPage,
+    EmittedEventPage,
 )
 # The run resource declares its executions as bounded, so the projection has to build them
 # that way; a parent-class instance is not one of these.
@@ -205,3 +216,29 @@ def public_run_page(runs: Iterable[ProductRun], next_cursor: str | None) -> RunP
     return EmittedRunPage.model_validate(
         {"items": tuple(public_run_resource(run, _EmittedRunPageItem) for run in runs), "next_cursor": next_cursor}
     )
+
+
+def public_event_page(events: Iterable[AuditEvent], *, limit: int, offset: int, has_more: bool) -> EventPage:
+    """Project one page of stored typed events into the bounded public event list.
+
+    Only the fields the event contract declares are copied: ``run_id``, ``config_id``,
+    ``registry_version`` and ``branch`` reach the reader as the primary and related
+    resources, not as fields of their own.
+    """
+    items = []
+    for event in events:
+        primary = event.primary_resource
+        items.append(
+            {
+                "event_id": event.event_id,
+                "event_type": event.event_type,
+                "occurred_at": event.created_at,
+                "actor": event.actor,
+                "operation": event.operation,
+                "outcome": event.outcome,
+                "reason": event.reason,
+                "primary_resource": None if primary is None else primary.model_dump(),
+                "related": tuple(resource.model_dump() for resource in event.related),
+            }
+        )
+    return EmittedEventPage.model_validate({"items": items, "limit": limit, "offset": offset, "has_more": has_more})
