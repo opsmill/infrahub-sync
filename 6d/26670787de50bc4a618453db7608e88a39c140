@@ -1,0 +1,23 @@
+CLAUDE.md
+  s_01f3e2b1e0dad4::t_d285d3fd81fea9 6
+dev/specs/017-sync-run-events-logs/checklists/requirements.md
+  s_01f3e2b1e0dad4::t_6f6a7889bcf3f4 1-36
+dev/specs/017-sync-run-events-logs/spec.md
+  s_01f3e2b1e0dad4::t_a5cb58cf352b6b 1-275
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6d26670787de50bc4a618453db7608e88a39c140",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
