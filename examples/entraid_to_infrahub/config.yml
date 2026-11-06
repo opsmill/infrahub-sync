@@ -61,7 +61,7 @@ schema_mapping:
     filters:
       - field: userPrincipalName
         operation: regex
-        value: "^(?!svc-)"
+        value: "(?i)^(?!svc-)"
     transforms:
       - field: name_lower
         expression: "{{ userPrincipalName | lower }}"
@@ -83,7 +83,7 @@ schema_mapping:
     filters:
       - field: userPrincipalName
         operation: regex
-        value: "^svc-"
+        value: "(?i)^svc-"
     fields:
       - name: entra_id
         mapping: id

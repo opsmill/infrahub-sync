@@ -163,7 +163,7 @@ The adapter reads each collection once per run, even when several `schema_mappin
 <!-- vale off -->
 Microsoft Graph accepts some filters only as advanced queries, for example a filter that uses `NOT`, `ne` or `endsWith`. For a collection with `advanced_query: true`, the adapter adds `$count=true` to the first request and sends the header `ConsistencyLevel: eventual` with the first request and with every next page.
 
-Advanced queries read an index that Microsoft Graph updates some time after each change in the directory (eventual consistency). A user or group that was created, changed or deleted shortly before a run can be missing from that run, or appear with its previous values. The next run reads the change. When a collection must show changes at once, use a filter that Graph accepts without `advanced_query`, and apply further selection with the `filters` of the `schema_mapping` entry.
+Advanced queries read an index that Microsoft Graph updates some time after each change in the directory (eventual consistency). A user or group that was created, changed or deleted shortly before a run can be missing from that run, or appear with its previous values. Later runs see the change after the index catches up. When a collection must show changes at once, use a filter that Graph accepts without `advanced_query`, and apply further selection with the `filters` of the `schema_mapping` entry.
 <!-- vale on -->
 
 ## Schema mapping
@@ -290,7 +290,7 @@ schema_mapping:
     filters:
       - field: userPrincipalName
         operation: regex
-        value: "^(?!svc-)"
+        value: "(?i)^(?!svc-)"
     transforms:
       - field: name_lower
         expression: "{{ userPrincipalName | lower }}"
@@ -312,7 +312,7 @@ schema_mapping:
     filters:
       - field: userPrincipalName
         operation: regex
-        value: "^svc-"
+        value: "(?i)^svc-"
     fields:
       - name: entra_id
         mapping: id
@@ -446,7 +446,7 @@ schema_mapping 'IdentityServiceAccount', field 'owner': the Graph property 'owne
 Microsoft Graph limits the request rate of each application and tenant. On HTTP 429, 502, 503 or 504, the adapter waits for the number of seconds in the `Retry-After` header, then sends the same request again. When the header is missing, the wait starts at 5 seconds and doubles at each retry, up to 60 seconds. It logs one warning per wait:
 
 ```text
-WARNING | infrahub_sync.adapters.entraid | event='graph request throttled, waiting before retry' status=429 path='/v1.0/groups/.../members?$select=id&$top=999' wait_seconds=2.0 retry=1 max_retries=5
+WARNING | infrahub_sync.adapters.entraid | event='graph request throttled, waiting before retry' status=429 path='/v1.0/groups/.../members?$select=id&$top=999' wait_seconds=5.0 retry=1 max_retries=5
 ```
 
 `max_retries` counts retries per request: each request starts with its own count, so a run can wait more times in total than `max_retries`. After the last retry of one request, the sync stops:
