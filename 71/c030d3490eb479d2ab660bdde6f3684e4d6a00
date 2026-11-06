@@ -1,0 +1,75 @@
+infrahub_sync/service/service.py
+  s_01f3e2b1e0dad4::t_cc9937b448294f 1069-1100,1109-1111,1113-1115,1120-1122,1127
+  s_01f3e2b1e0dad4::t_9a56277c7de81e 34
+  s_01f3e2b1e0dad4::t_87cfd12c8120af 771-777
+  s_01f3e2b1e0dad4::t_fa453aa7eb22b4 201-203
+  s_01f3e2b1e0dad4::t_cc871ceaad31d8 508-514
+  s_01f3e2b1e0dad4::t_3d3df10ff1b70b 547-549
+  s_01f3e2b1e0dad4::t_6b85762d9e6dcf 577
+  s_73ac5bcdd24e5d::t_76082cbf38f36f 375
+infrahub_sync/service/config_routes.py
+  s_01f3e2b1e0dad4::t_16b8dd21c58c6c 3
+  s_01f3e2b1e0dad4::t_48fc47f442bedd 36,295,302,305,317,320,326-334,342-343,345-359,361-362,367-368,378-393,430
+tests/service/test_http_api.py
+  s_01f3e2b1e0dad4::t_5628198202650f 2449-2591
+  s_01f3e2b1e0dad4::t_7753879ad06c05 43,47,50,57
+tests/service/test_config_routes.py
+  s_01f3e2b1e0dad4::t_65b04a1851c41b 42
+  s_01f3e2b1e0dad4::t_ba649f142b1e85 20-26,1547-1552,1554-1628,1630-1641,1643-1661,1663-1665
+  s_01f3e2b1e0dad4::t_dd7db1c8cff8e4 1662
+  s_01f3e2b1e0dad4::t_ca5bde1149ee45 1553,1629
+  s_01f3e2b1e0dad4::t_1a567578bb3c4b 1642
+infrahub_sync/service/events.py
+  s_01f3e2b1e0dad4::t_97b38047ca0905 1-110,112-138
+  s_01f3e2b1e0dad4::t_7cba94b9467b2c 111
+tests/service/test_event_transactions.py
+  s_01f3e2b1e0dad4::t_ed2dc473bb1b1f 250-318
+infrahub_sync/service/flow.py
+  s_01f3e2b1e0dad4::t_58393e19a1c677 65,71,77
+  s_01f3e2b1e0dad4::t_928560e5ae8de8 907,1020-1028,1090-1112,1117,1129,1138
+  s_01f3e2b1e0dad4::t_dd7db1c8cff8e4 1130
+tests/service/test_flow_and_prefect.py
+  s_01f3e2b1e0dad4::t_d66d2cf36b62b7 6,48-55,1648-1653,1659,1665-1666,1687-1701,1704-1712,1714-1726,1728-1729,1731-1757,1759-1760,1762-1782,1784
+  s_01f3e2b1e0dad4::t_dd7db1c8cff8e4 1654-1658,1713,1727,1730,1758,1761
+  s_01f3e2b1e0dad4::t_68d9829e5e2b0b 1702
+  s_01f3e2b1e0dad4::t_8688ca40c20737 1660-1664,1667-1686,1703,1783
+  s_01f3e2b1e0dad4::t_fc1519e1c5e4f8 823-825,829
+infrahub_sync/product_store/store.py
+  s_01f3e2b1e0dad4::t_accdbf7327c9c2 428-432
+  s_01f3e2b1e0dad4::t_e2571b24d7541f 1688,1690-1694
+  s_01f3e2b1e0dad4::t_3e3c375a71fa50 2152-2168
+  s_01f3e2b1e0dad4::t_be2021811655ee 623
+  s_01f3e2b1e0dad4::t_ef046b45331fa7 640-643
+  s_01f3e2b1e0dad4::t_c1e158a608774d 1785-1786
+  s_01f3e2b1e0dad4::t_5fba524b676a8d 3322,3325,3334
+  s_01f3e2b1e0dad4::t_d1794d861b4228 3401-3406
+dev/specs/017-sync-run-events-logs/tasks.md
+  s_01f3e2b1e0dad4::t_c4f9f4b7aa4165 62-64,70-72
+infrahub_sync/service/liveness.py
+  s_01f3e2b1e0dad4::t_82f6d5f7e36b17 12,18,202-207,234-246
+  s_01f3e2b1e0dad4::t_5fbaa2fe81e74d 247
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "71c030d3490eb479d2ab660bdde6f3684e4d6a00",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_73ac5bcdd24e5d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-abdf1f75a44752207",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
