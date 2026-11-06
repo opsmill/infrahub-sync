@@ -1,0 +1,503 @@
+---
+title: Microsoft Graph adapter
+---
+
+import ReferenceLink from "../../src/components/Card";
+
+<!-- vale off -->
+## What is Microsoft Graph?
+
+Microsoft Graph is the API that applications use to read data from Microsoft cloud services. Microsoft Entra ID, previously Azure Active Directory, is the Microsoft cloud directory of users, groups and applications, and one of the services that Graph serves.
+
+The `msgraphsync` adapter reads users, groups and group membership from Microsoft Entra ID through Microsoft Graph, and loads them as nodes of the kinds defined in your Infrahub schema. It sends `GET` requests only.
+
+The adapter does not:
+
+- Read devices or any Graph resource other than users and groups.
+- Read only the changes since the last run (Graph delta queries). Every run reads the full collections.
+- Write to Microsoft Entra ID. The adapter can only be the source of a sync.
+<!-- vale on -->
+
+## Requirements
+
+### Python packages
+
+<!-- vale off -->
+The adapter uses [msgraph-sdk](https://pypi.org/project/msgraph-sdk/) and [azure-identity](https://pypi.org/project/azure-identity/). Neither package is installed with Infrahub Sync. Install both in the environment that runs `infrahub-sync`:
+<!-- vale on -->
+
+```bash
+pip install msgraph-sdk azure-identity
+```
+
+With uv:
+
+```bash
+uv pip install msgraph-sdk azure-identity
+```
+
+The unit tests of the adapter ran with `msgraph-sdk` 1.65.0 and `azure-identity` 1.27.0, against a mocked Microsoft Graph.
+
+:::note
+In a development checkout of Infrahub Sync, `uv sync` removes both packages because they are not in `uv.lock`. Install them again after each `uv sync`.
+:::
+
+<!-- vale off -->
+### Application registration and Microsoft Graph permissions
+
+The adapter reads the directory as an application, so the tenant needs an application registration with Microsoft Graph application permissions:
+
+1. In the Microsoft Entra admin center, register an application.
+2. Under **API permissions**, add these Microsoft Graph permissions of type **Application** (not Delegated):
+    - `User.Read.All`, to read users.
+    - `Group.Read.All`, to read groups and their members. `GroupMember.Read.All` can replace `Group.Read.All`: it also allows the adapter to read groups and their members, with access to fewer group properties.
+    - `Member.Read.Hidden`, only when the configuration maps group members and the tenant has groups with hidden membership. Without it, Graph refuses the member read of such a group with HTTP 403 and the sync stops.
+3. Grant admin consent for the tenant. Application permissions have no effect until an administrator grants consent.
+4. For `auth: client_secret`, create a client secret under **Certificates & secrets**. Note the **Directory (tenant) ID** and the **Application (client) ID** shown on the overview page of the application.
+
+With `auth: default`, the identity that signs in (a user, a managed identity or a workload identity) needs read access to users and groups instead.
+
+When Microsoft Graph refuses a request, the error message explains the status. HTTP 401 means that Graph rejected the access token: the tenant or the credential is wrong, or `graph_url` does not match the audience of the token. HTTP 403 means that the token is valid but a permission is missing. See [HTTP 401 or 403 from Microsoft Graph](#http-401-or-403-from-microsoft-graph).
+<!-- vale on -->
+
+## Sync directions supported
+
+<!-- vale off -->
+- Microsoft Entra ID → Infrahub
+<!-- vale on -->
+
+:::note
+The adapter is source-only. When `msgraphsync` is set as the destination, the sync stops before any request with: `The Microsoft Graph adapter can only be the source of a sync, but it is configured as the destination. Move 'msgraphsync' to the 'source' block of the configuration.`
+:::
+
+## Configuration
+
+The `source` block selects the adapter with `name: msgraphsync`. Every setting is optional. This block shows each setting with its default value or an example:
+
+```yaml
+source:
+  name: msgraphsync
+  settings:
+    auth: client_secret            # client_secret (default) or default
+    tenant_id: "00000000-0000-0000-0000-000000000000"   # MSGRAPH_TENANT_ID overrides it
+    client_id: "11111111-1111-1111-1111-111111111111"   # MSGRAPH_CLIENT_ID overrides it
+    graph_url: "https://graph.microsoft.com/v1.0"       # default
+    page_size: 999                 # 1 to 999
+    timeout: 60                    # seconds per request
+    max_retries: 5                 # 0 to 10, after HTTP 429, 502, 503 and 504
+    membership: direct             # direct (default) or transitive
+    select:                        # extra Graph properties per resource
+      users: [department]
+    collections:
+      accounts:
+        resource: users
+        filter: "accountEnabled eq true"
+      security_groups:
+        resource: groups
+        filter: "securityEnabled eq true and NOT groupTypes/any(c:c eq 'Unified')"
+        advanced_query: true
+```
+
+### Authentication modes
+
+The `auth` setting selects how the adapter gets an access token for Microsoft Graph:
+
+- `client_secret` (default): the adapter authenticates as the registered application with its tenant ID, client ID and client secret. Use it in CI pipelines and on servers.
+- `default`: the adapter uses `DefaultAzureCredential` from `azure-identity`. It tries, in turn, the `AZURE_*` environment variables, a workload identity, a managed identity and the Azure CLI login (`az login`), among others. Use it on a laptop after `az login`, or on an Azure host with a managed identity. The identity that signs in needs read access to users and groups. The `tenant_id` and `client_id` settings and the `MSGRAPH_*` variables are ignored in this mode.
+
+The client secret is never read from the configuration file. A `client_secret` key in `settings` stops the sync with: `Setting 'client_secret' is not accepted in the configuration file. Set the environment variable MSGRAPH_CLIENT_SECRET instead.`
+
+### Environment variables
+
+| Variable | Used with | Content |
+| --- | --- | --- |
+| `MSGRAPH_TENANT_ID` | `auth: client_secret` | Directory (tenant) ID. Overrides the `tenant_id` setting. |
+| `MSGRAPH_CLIENT_ID` | `auth: client_secret` | Application (client) ID. Overrides the `client_id` setting. |
+| `MSGRAPH_CLIENT_SECRET` | `auth: client_secret` | Client secret. This variable is the only accepted source of the secret. |
+| `AZURE_*` and the Azure CLI login | `auth: default` | Read by `DefaultAzureCredential`, for example `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET`. |
+
+With `auth: client_secret`, a missing tenant ID, client ID or secret stops the sync before any request, and the message names the missing variables:
+
+```text
+auth 'client_secret' is missing values. Set the environment variable(s): MSGRAPH_CLIENT_SECRET. The tenant and client IDs can also come from the 'tenant_id' and 'client_id' settings.
+```
+
+### Settings reference
+
+| Setting | Type | Default | Allowed values | Description |
+| --- | --- | --- | --- | --- |
+| `auth` | string | `client_secret` | `client_secret`, `default` | How the adapter gets an access token. See [Authentication modes](#authentication-modes). |
+| `tenant_id` | string | none | Tenant ID | Directory (tenant) ID for `auth: client_secret`. `MSGRAPH_TENANT_ID` overrides it. Ignored with `auth: default`. |
+| `client_id` | string | none | Client ID | Application (client) ID for `auth: client_secret`. `MSGRAPH_CLIENT_ID` overrides it. Ignored with `auth: default`. |
+| `graph_url` | string | `https://graph.microsoft.com/v1.0` | An `https://` URL | Microsoft Graph endpoint and version. The token scope is derived from its scheme and host (`https://<host>/.default`), and the token is sent to that host only. A `graph_url` of a Microsoft cloud other than the public one is not tested: the credential still signs in through the default (public cloud) authority. |
+| `page_size` | integer | `999` | 1 to 999 | Records per page, sent as `$top` on every request. |
+| `timeout` | number | `60` | Greater than 0 | Seconds to wait for each request. A request that times out is not retried. |
+| `max_retries` | integer | `5` | 0 to 10 | Retries of one request after HTTP 429, 502, 503 or 504. Each request has its own count. |
+| `membership` | string | `direct` | `direct`, `transitive` | Which group members the adapter reads. See [Group membership](#group-membership). |
+| `select` | mapping | none | Keys `users` and `groups`; each value a property name or a list of names | Extra Graph properties to request, for properties used only in transforms. |
+| `collections` | mapping | none | Collection names mapped to definitions | Named, optionally filtered reads of users or groups. See [Collections and advanced queries](#collections-and-advanced-queries). |
+
+The adapter refuses any other key and lists the allowed settings in the message, for example: `Unknown msgraphsync setting(s): page-size. Allowed settings: auth, tenant_id, client_id, graph_url, page_size, timeout, max_retries, membership, select, collections.`
+
+## Collections and advanced queries
+
+The `mapping` of each `schema_mapping` entry names the collection the entry reads:
+
+- `users` or `groups`: every user or every group, without a filter.
+- A name defined under `settings.collections`: a read of users or groups with an optional filter.
+
+A collection definition accepts three keys:
+
+| Key | Required | Default | Content |
+| --- | --- | --- | --- |
+| `resource` | Yes | none | `users` or `groups`. |
+| `filter` | No | none | An OData `$filter` expression, sent to Microsoft Graph unchanged. |
+| `advanced_query` | No | `false` | `true` sends the request as a Graph advanced query. |
+
+A collection cannot be called `users` or `groups`: these names already mean a read of every user or every group.
+
+The adapter reads each collection once per run, even when several `schema_mapping` entries name it, and it does not read collections that no entry names. Each entry receives its own copy of the records, so the filters and transforms of one entry do not change the records of another entry. In the example below, one `accounts` collection feeds two kinds: employees and service accounts.
+
+### Advanced queries and their delay
+
+<!-- vale off -->
+Microsoft Graph accepts some filters only as advanced queries, for example a filter that uses `NOT`, `ne` or `endsWith`. For a collection with `advanced_query: true`, the adapter adds `$count=true` to the first request and sends the header `ConsistencyLevel: eventual` with the first request and with every next page.
+
+Advanced queries read an index that Microsoft Graph updates some time after each change in the directory (eventual consistency). A user or group that was created, changed or deleted shortly before a run can be missing from that run, or appear with its previous values. Later runs see the change after the index catches up. When a collection must show changes at once, use a filter that Graph accepts without `advanced_query`, and apply further selection with the `filters` of the `schema_mapping` entry.
+<!-- vale on -->
+
+## Schema mapping
+
+The adapter follows the schema mapping rules of every adapter (see the [schema mapping reference](../reference/schema-mapping.mdx)), with these conventions:
+
+- The `mapping` of a field names a Graph property as Graph returns it in JSON, for example `displayName`, `userPrincipalName` or `accountEnabled`.
+- Dots reach nested properties, for example `onPremisesExtensionAttributes.extensionAttribute1`.
+- `filters` and `transforms` apply to the records of the entry's collection, as with every adapter.
+- The Graph `id` is a stable identifier: it does not change when a user or group is renamed. The example maps it to an attribute `entra_id` and uses that attribute as the identifier of each kind. The adapter also uses `id` to resolve membership references.
+
+### Properties the adapter requests
+
+The adapter requests only the properties it needs, with `$select`. For each collection, the list contains `id`, the top-level property of every plain field mapping and every filter of the entries that read the collection, then the properties of `settings.select` for that resource. The list does not contain the properties of fields with a `reference`, nor `members`, which the adapter reads with separate requests.
+
+Add a property with `settings.select` when only a transform expression or a field with a `reference` reads it. Otherwise Graph does not return it, and the transform or the field reads an empty value:
+
+```yaml
+source:
+  name: msgraphsync
+  settings:
+    select:
+      users: [department, jobTitle]
+schema_mapping:
+  - name: IdentityEmployee
+    mapping: users
+    transforms:
+      - field: team
+        expression: "{{ department }} / {{ jobTitle }}"
+    fields:
+      - name: team
+        mapping: team
+```
+
+Some Graph properties hold a list, for example `businessPhones` or `proxyAddresses`. Mapping such a property to an attribute that holds one value stops the sync with: `schema_mapping 'IdentityEmployee', field 'phone': the Graph property 'businessPhones' is a list, but the attribute holds one value. Turn the list into one value with a transform of this entry and map the transformed key.`
+
+### Group membership
+
+To load the members of each group, add a field with `mapping: members` and a `reference` to the users kind on a groups entry:
+
+```yaml
+  - name: IdentityGroup
+    mapping: security_groups
+    identifiers: ["entra_id"]
+    fields:
+      - name: entra_id
+        mapping: id
+      - name: members
+        mapping: members
+        reference: IdentityEmployee
+```
+
+`members` is not a Graph property: the adapter reads the members of every group of the collection and stores their IDs under that key. The `membership` setting selects the Graph request:
+
+| `membership` | Request per group | Members kept |
+| --- | --- | --- |
+| `direct` (default) | `GET /groups/{id}/members` | Users that are members of the group. |
+| `transitive` | `GET /groups/{id}/transitiveMembers` | Users that are members of the group or of any group nested in it. |
+
+The adapter keeps only members that are users. Members of other types, such as groups, devices and service principals, are left out. A user reached through several nested groups appears once.
+
+The adapter sends these requests only when an entry maps `members`. It sends at least one request per group and reads four groups at a time, so on a tenant with many groups the member reads make up most of the requests of a run. A `filter` on the groups collection reduces their number.
+
+A `mapping: members` field without a `reference` stops the sync before any request: `schema_mapping 'IdentityGroup', field 'members': 'mapping: members' holds the IDs of the group's user members and needs a 'reference' to the kind that loads those users.`
+
+### Members that are not loaded
+
+The adapter resolves each member ID to a node of the referenced kind loaded earlier in the same run. It drops the member IDs that match no loaded node, for example:
+
+- Users that the filter of the users collection or the `filters` of the users entry leave out.
+- Users loaded as another users kind. In the example, a group member that is a service account loads as `IdentityServiceAccount`, while `IdentityGroup.members` references `IdentityEmployee`, so that member is dropped.
+
+After loading a kind, the adapter logs one warning per field with dropped references, with the count:
+
+```text
+WARNING | infrahub_sync.adapters.msgraphsync | event='references to objects that are not loaded were dropped' kind='IdentityGroup' field='members' dropped=3
+```
+
+To keep those members, reference a kind that loads them.
+
+### Load order
+
+When the configuration has no `order`, Infrahub Sync computes it from the `reference` fields, so the users kind loads before the groups kind that references it. When the configuration sets `order`, list every users kind before the groups kind that references it. If the groups kind loads first, every member reference is dropped and the warning shows the count.
+
+<!-- vale off -->
+## Example: Entra ID to Infrahub
+<!-- vale on -->
+
+<ReferenceLink title="Entra ID to Infrahub example" url="https://github.com/opsmill/infrahub-sync/tree/main/examples/msgraphsync_to_infrahub" openInNewTab />
+
+The example directory contains an Infrahub schema (`schema.yml`) with the kinds `IdentityEmployee`, `IdentityServiceAccount` and `IdentityGroup`, the sync configuration (`config.yml`) and the generated code. The configuration:
+
+- Reads enabled user accounts once, in the `accounts` collection, and splits them into employees and service accounts. User principal names that start with `svc-` load as `IdentityServiceAccount`; the others load as `IdentityEmployee`.
+- Reads security groups that are not Microsoft 365 groups, with a filter that needs `advanced_query: true`.
+- Loads the direct user members of each group as `IdentityGroup.members`, a relationship to `IdentityEmployee`.
+
+```yaml
+---
+name: from-msgraphsync
+
+source:
+  name: msgraphsync
+  settings:
+    auth: client_secret
+    membership: direct
+    collections:
+      accounts:
+        resource: users
+        filter: "accountEnabled eq true"
+      security_groups:
+        resource: groups
+        filter: "securityEnabled eq true and NOT groupTypes/any(c:c eq 'Unified')"
+        advanced_query: true
+
+destination:
+  name: infrahub
+  settings:
+    url: "http://localhost:8000"
+
+schema_mapping:
+  - name: IdentityEmployee
+    mapping: accounts
+    identifiers: ["entra_id"]
+    filters:
+      - field: userPrincipalName
+        operation: regex
+        value: "(?i)^(?!svc-)"
+    transforms:
+      - field: name_lower
+        expression: "{{ userPrincipalName | lower }}"
+    fields:
+      - name: entra_id
+        mapping: id
+      - name: name
+        mapping: name_lower
+      - name: display_name
+        mapping: displayName
+      - name: email
+        mapping: mail
+      - name: enabled
+        mapping: accountEnabled
+
+  - name: IdentityServiceAccount
+    mapping: accounts
+    identifiers: ["entra_id"]
+    filters:
+      - field: userPrincipalName
+        operation: regex
+        value: "(?i)^svc-"
+    fields:
+      - name: entra_id
+        mapping: id
+      - name: name
+        mapping: userPrincipalName
+      - name: display_name
+        mapping: displayName
+      - name: email
+        mapping: mail
+      - name: enabled
+        mapping: accountEnabled
+
+  - name: IdentityGroup
+    mapping: security_groups
+    identifiers: ["entra_id"]
+    fields:
+      - name: entra_id
+        mapping: id
+      - name: name
+        mapping: displayName
+      - name: description
+        mapping: description
+      - name: members
+        mapping: members
+        reference: IdentityEmployee
+```
+
+### Running the example
+
+1. Load the example schema into Infrahub:
+
+    ```bash
+    infrahubctl schema load examples/msgraphsync_to_infrahub/schema.yml
+    ```
+
+2. Set the credentials of the application registration:
+
+    ```bash
+    export MSGRAPH_TENANT_ID="00000000-0000-0000-0000-000000000000"
+    export MSGRAPH_CLIENT_ID="11111111-1111-1111-1111-111111111111"
+    export MSGRAPH_CLIENT_SECRET="<client secret>"
+    ```
+
+3. Generate the Python models from the configuration. The `generate` command reads the schema from the destination Infrahub, so Infrahub must be running with the schema loaded. Run it again after each change to `config.yml` or to the schema:
+
+    ```bash
+    infrahub-sync generate --name from-msgraphsync --directory examples/
+    ```
+
+4. View the differences, then run the sync:
+
+    ```bash
+    infrahub-sync diff --name from-msgraphsync --directory examples/
+    infrahub-sync sync --name from-msgraphsync --directory examples/
+    ```
+
+At the default log level, the adapter logs one line per collection read (records, requests, member requests and retries), one summary line after all reads, and one line per kind loaded (records loaded and records read).
+
+## Common issues and troubleshooting
+
+The adapter checks the settings, the collection names of the `schema_mapping` entries, the `members` fields and the sync direction when it starts, before any request. The CLI shows the errors of these checks prefixed with `Error initializing MsgraphsyncAdapter: `, followed by the message shown on this page. Errors found later, while the adapter reads Microsoft Graph or loads the records, have no prefix.
+
+### `ModuleNotFoundError` when the sync starts
+
+The optional packages are not installed. The missing module named in the message depends on which package is missing, for example:
+
+```text
+ModuleNotFoundError: No module named 'azure'
+ModuleNotFoundError: No module named 'kiota_abstractions'
+ModuleNotFoundError: No module named 'msgraph'
+```
+
+Install both packages with `pip install msgraph-sdk azure-identity` in the environment that runs `infrahub-sync`.
+
+### Access token request fails
+
+The credential could not get a token. The message names the `auth` mode, the request and what to check:
+
+```text
+Could not get an access token for Microsoft Graph (auth 'client_secret') while requesting /v1.0/users?$select=id,...&$top=999. Check the environment variables MSGRAPH_TENANT_ID, MSGRAPH_CLIENT_ID and MSGRAPH_CLIENT_SECRET. Details: ...
+```
+
+- With `auth: client_secret`, check the tenant ID, the client ID, and that the client secret is the secret value (not its ID) and has not expired.
+- With `auth: default`, the message asks to check that an Azure CLI login (`az login`), a managed identity or a workload identity is available to `DefaultAzureCredential`.
+
+When the token endpoint cannot be reached, for example because of a proxy or a firewall, the message adds `The token endpoint could not be reached or refused the request (ServiceRequestError)` and asks to check the network connection to the Microsoft sign-in service.
+
+<!-- vale off -->
+### HTTP 401 or 403 from Microsoft Graph
+<!-- vale on -->
+
+The adapter got a token, but Microsoft Graph refused the request:
+
+- HTTP 401: Graph rejected the token. Check the tenant and the credential, and that `graph_url` matches the audience of the token.
+- HTTP 403: the token is valid, but a permission is missing.
+
+```text
+Microsoft Graph refused /v1.0/groups/.../members?$select=id&$top=999 with HTTP 403 (<code>: <message>). HTTP 401 means Graph rejected the access token: check the tenant, the credential, and that 'graph_url' matches the token audience. HTTP 403 means a permission is missing. The application needs the Microsoft Graph application permissions User.Read.All and Group.Read.All (or GroupMember.Read.All instead of Group.Read.All), with admin consent.
+```
+
+With `auth: default`, the last sentence says that the signed-in identity (user, managed identity or workload identity) needs read access to users and groups.
+
+When Graph refuses a member read, the message also says that reading the members of a group with hidden membership needs `Member.Read.Hidden`.
+
+Check that the permissions are of type Application, not Delegated, and that an administrator granted consent for the tenant. See [Application registration and Microsoft Graph permissions](#application-registration-and-microsoft-graph-permissions).
+
+<!-- vale off -->
+### Page without a `value` list
+<!-- vale on -->
+
+Microsoft Graph returns each page of a list as a JSON object with a `value` list. When a response has an empty body, or a JSON object without `value`, the adapter stops instead of reading zero records, so that the sync does not plan to delete the nodes it did not read:
+
+```text
+Microsoft Graph returned a page without a 'value' list for /v1.0/users?$select=id,...&$top=999. The read stops so that the sync does not treat the missing records as deleted.
+```
+
+A proxy between the adapter and Microsoft Graph can cause such responses. A page with an empty `value` list is valid and reads zero records.
+
+### Several peers for a relationship that holds one peer
+
+A field with a `reference` to a relationship that holds one peer reads a Graph property that resolves to more than one loaded node. The adapter stops and names the entry and the field:
+
+```text
+schema_mapping 'IdentityServiceAccount', field 'owner': the Graph property 'ownerIds' resolves to 2 loaded 'IdentityEmployee' objects, but the relationship holds one peer. Map a property that holds one ID, or use a relationship that holds many peers.
+```
+
+<!-- vale off -->
+### Throttling and gateway errors: HTTP 429, 502, 503 or 504
+<!-- vale on -->
+
+Microsoft Graph limits the request rate of each application and tenant. On HTTP 429, 502, 503 or 504, the adapter waits for the number of seconds in the `Retry-After` header, then sends the same request again. When the header is missing, the wait starts at 5 seconds and doubles at each retry, up to 60 seconds. It logs one warning per wait:
+
+```text
+WARNING | infrahub_sync.adapters.msgraphsync | event='graph request throttled, waiting before retry' status=429 path='/v1.0/groups/.../members?$select=id&$top=999' wait_seconds=5.0 retry=1 max_retries=5
+```
+
+`max_retries` counts retries per request: each request starts with its own count, so a run can wait more times in total than `max_retries`. After the last retry of one request, the sync stops:
+
+```text
+Microsoft Graph returned HTTP 429 for /v1.0/groups/.../members?$select=id&$top=999 after 5 retries (<code>: <message>). Run the sync again later, or raise the setting 'max_retries'.
+```
+
+When `Retry-After` asks for more than 300 seconds, the adapter does not retry earlier than Graph allows. It stops instead:
+
+```text
+Microsoft Graph returned HTTP 429 for /v1.0/users?$select=id,...&$top=999 and asked to wait 900 seconds before the next request, more than the adapter waits (300 seconds). Run the sync again later.
+```
+
+Member reads send the most requests. Run the sync again later, raise `max_retries`, or reduce the number of groups with a filter.
+
+### Request timeout
+
+```text
+Microsoft Graph request /v1.0/users?$select=id,...&$top=999 timed out after 60 seconds (setting 'timeout').
+```
+
+The adapter does not retry a request that timed out. Raise `timeout`, or lower `page_size` so that each page takes less time.
+
+### Unknown collection
+
+An entry names a collection that is not defined under `settings.collections` and is not `users` or `groups`. The sync stops before any request, and the message lists the valid names:
+
+```text
+schema_mapping 'IdentityGroup': Unknown Microsoft Graph collection 'security-groups'. Valid names: accounts, security_groups, users, groups.
+```
+
+<!-- vale off -->
+### HTTP 400 for a filter that needs an advanced query
+<!-- vale on -->
+
+A filter that Microsoft Graph accepts only as an advanced query, sent from a collection without `advanced_query: true`, gets HTTP 400. The message carries the Graph error code and the Graph message, which names the unsupported query:
+
+```text
+Microsoft Graph returned HTTP 400 for /v1.0/groups?$filter=...&$select=id,...&$top=999 (<code>: <message>).
+```
+
+Set `advanced_query: true` on the collection. See [Advanced queries and their delay](#advanced-queries-and-their-delay).
+
+### Groups without some or all of their members
+
+The adapter dropped member references to users that are not loaded as the referenced kind, and logged the count in a warning. See [Members that are not loaded](#members-that-are-not-loaded) and [Load order](#load-order).
+
+## Related
+
+- [Choose an adapter](./choosing-an-adapter.mdx)
+- [Schema mapping reference](../reference/schema-mapping.mdx)
+- [Sync instance configuration](../reference/config.mdx)
+- [Run a sync](../running-a-sync.mdx)
