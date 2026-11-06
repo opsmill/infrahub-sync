@@ -1,0 +1,53 @@
+tests/service/test_http_api.py
+  s_01f3e2b1e0dad4::t_02292ae4a0c604 1811
+infrahub_sync/service/service.py
+  s_01f3e2b1e0dad4::t_2bd34f916d76cb 45
+  s_01f3e2b1e0dad4::t_7ac6d72a8597ce 146-147,150-167,738
+  s_01f3e2b1e0dad4::t_d81d9bd02ba434 26,31,54,145,148-149,168-180,704-737,739-742
+  s_01f3e2b1e0dad4::t_a63e283608f54d 743
+tests/client/test_models.py
+  s_01f3e2b1e0dad4::t_d83cdc30e3b914 18-21,191-238
+tests/client/test_client.py
+  s_01f3e2b1e0dad4::t_d83cdc30e3b914 26-27,782-914
+infrahub_sync/client/__init__.py
+  s_01f3e2b1e0dad4::t_927f3e6a4fdc1b 29-32,77-80
+dev/specs/017-sync-run-events-logs/tasks.md
+  s_01f3e2b1e0dad4::t_a06c5bdee99349 65-66,73-74
+tests/service/test_events_route.py
+  s_01f3e2b1e0dad4::t_d68973e838f099 258-263
+  s_01f3e2b1e0dad4::t_2bd34f916d76cb 7,112-114,300-304
+  s_01f3e2b1e0dad4::t_746563c6007d48 8,34-36,144-145
+  s_01f3e2b1e0dad4::t_bbd8fd4a0cce27 1-6,9-33,37-111,115-143,146-257,264-299,305-388
+infrahub_sync/service/models.py
+  s_01f3e2b1e0dad4::t_9e1a4fe73666ac 29-32,52,64-67,83,148,157,219-244
+infrahub_sync/service/app.py
+  s_01f3e2b1e0dad4::t_6da8363f332234 79
+  s_01f3e2b1e0dad4::t_1a342cdf3a500c 11,74-78,80-104,327
+  s_01f3e2b1e0dad4::t_d792cb63285a4a 8,59-73
+  s_01f3e2b1e0dad4::t_7ac6d72a8597ce 39,50
+infrahub_sync/client/client.py
+  s_01f3e2b1e0dad4::t_d792cb63285a4a 84-85,393-396,813,819,822
+  s_01f3e2b1e0dad4::t_21865446070b66 405,663,734
+  s_01f3e2b1e0dad4::t_28b84f6b2e9878 7,827
+  s_01f3e2b1e0dad4::t_c046ae86ef6744 44-45,63,83,369-392,397-404,406-439,804-812,815-817,820-821,823-826,828-829
+  s_01f3e2b1e0dad4::t_2bd34f916d76cb 818
+  s_01f3e2b1e0dad4::t_bac9988d2f8132 814,830
+infrahub_sync/client/models.py
+  s_01f3e2b1e0dad4::t_a2da335ba5fe7a 380-424
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f11829dfb6d77c701d6e552d765a7784e2a039c6",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
