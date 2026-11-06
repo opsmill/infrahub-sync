@@ -24,7 +24,7 @@ body {
   margin: 0;
 }
 
-/* Set for two frames while the system theme changes, so colours switch at once. */
+/* Set for two frames whenever the light or dark palette changes, so all colours switch in the same frame. */
 .no-transitions,
 .no-transitions * {
   transition: none !important;

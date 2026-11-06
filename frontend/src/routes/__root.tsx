@@ -18,6 +18,7 @@ import { FOCUS, FOCUS_RAC } from "#/components/classes";
 import { StateIcon } from "#/components/icons";
 import { Notice } from "#/components/page";
 import { When } from "#/components/run-status";
+import { ThemeMenu } from "#/components/theme-menu";
 import { fmt, NO_WORKER_SENTENCE, queueSentence, type RunState } from "#/domain/run-state";
 
 import "../styles.css";
@@ -412,8 +413,9 @@ function RootComponent() {
               Runs
             </Link>
           </nav>
-          <div className="ml-auto flex min-w-0 items-center">
+          <div className="ml-auto flex min-w-0 items-center gap-2">
             <StatusMenu />
+            <ThemeMenu />
           </div>
         </div>
       </header>

@@ -86,6 +86,29 @@ export const PlayIcon = ({ className = "size-3.5" }) => (
   </Icon>
 );
 
+export const SunIcon = ({ className = "size-4" }) => (
+  <Icon className={className}>
+    <circle cx="8" cy="8" r="2.75" {...stroke} />
+    <path
+      d="M8 1.75v1.25M8 13v1.25M1.75 8H3M13 8h1.25M3.58 3.58l.88.88M11.54 11.54l.88.88M3.58 12.42l.88-.88M11.54 4.46l.88-.88"
+      {...stroke}
+    />
+  </Icon>
+);
+
+export const MoonIcon = ({ className = "size-4" }) => (
+  <Icon className={className}>
+    <path d="M13.25 9.6A5.5 5.5 0 1 1 6.4 2.75a4.25 4.25 0 0 0 6.85 6.85Z" {...stroke} />
+  </Icon>
+);
+
+export const MonitorIcon = ({ className = "size-4" }) => (
+  <Icon className={className}>
+    <rect x="2" y="2.75" width="12" height="8.5" rx="1.5" {...stroke} />
+    <path d="M5.5 14h5M8 11.25V14" {...stroke} />
+  </Icon>
+);
+
 /** A caution a person reads before acting; not a run state. */
 export const WarningIcon = ({ className = "size-4" }) => (
   <Icon className={className}>
