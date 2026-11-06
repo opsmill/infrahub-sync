@@ -11,9 +11,6 @@ export type RunReference = Schemas["RunReference"];
 export type Plan = Schemas["PlanResource"];
 export type PlanOperation = Schemas["PlanOperationResource"];
 export type PlanLastChange = Schemas["PlanLastChangeResource"];
-export type Artifact = Schemas["ArtifactReferenceResource"];
-export type ServiceStatus = Schemas["ServiceStatusResource"];
-export type Principal = Schemas["PrincipalResource"];
 
 /** A source or destination as a registered package declares it. */
 export interface DeclaredAdapter {
@@ -21,13 +18,16 @@ export interface DeclaredAdapter {
   settings?: Record<string, unknown> | null;
 }
 
+/** One `schema_mapping` entry; the Sync API sends `null` for keys the package leaves out. */
 export interface DeclaredMapping {
   name: string;
   mapping: string;
-  identifiers?: string[];
-  fields?: { name: string; mapping?: string; reference?: string; static?: unknown }[];
-  filters?: unknown[];
-  transforms?: unknown[];
+  identifiers?: string[] | null;
+  fields?:
+    | { name: string; mapping?: string | null; reference?: string | null; static?: unknown }[]
+    | null;
+  filters?: { field: string; operation: string; value?: unknown }[] | null;
+  transforms?: { field: string; expression: string }[] | null;
 }
 
 export interface DeclaredConfiguration {
@@ -35,7 +35,7 @@ export interface DeclaredConfiguration {
   source: DeclaredAdapter;
   destination: DeclaredAdapter;
   schema_mapping?: DeclaredMapping[];
-  order?: string[];
+  order?: string[] | null;
 }
 
 /** `GET /configs/{config_id}/versions/{registry_version}`; the OpenAPI document types it as `any`. */
@@ -53,5 +53,11 @@ export interface ConfigurationVersion {
 
 /** The error envelope every Sync API error uses. */
 export interface ApiErrorBody {
-  error: { code: string; message: string; status: number; run_id?: string | null };
+  error: {
+    code: string;
+    message: string;
+    status: number;
+    run_id?: string | null;
+    reason?: string | null;
+  };
 }

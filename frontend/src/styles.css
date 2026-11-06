@@ -1,4 +1,3 @@
-
 /* source(none) stops Tailwind from scanning the whole Infrahub repository under vendor/. */
 @import "@infrahub/ui/styles.css" source(none);
 @source "./";
@@ -14,7 +13,28 @@ body,
   min-height: 100%;
 }
 
+/* The padding keeps an anchored or focused element clear of the 49px sticky header. */
+html {
+  background-color: var(--background);
+  scroll-padding-top: 3.5rem;
+  scroll-padding-bottom: 1.5rem;
+}
+
 body {
   margin: 0;
 }
 
+/* Set for two frames while the system theme changes, so colours switch at once. */
+.no-transitions,
+.no-transitions * {
+  transition: none !important;
+}
+
+/* Under reduced motion a modal fades without zooming. Unlayered, so it wins over the utilities. */
+@media (prefers-reduced-motion: reduce) {
+  [data-entering],
+  [data-exiting] {
+    --tw-enter-scale: 1;
+    --tw-exit-scale: 1;
+  }
+}

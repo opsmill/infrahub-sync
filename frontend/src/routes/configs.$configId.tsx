@@ -6,19 +6,23 @@ import { type ConfigTab, ConfigurationPage } from "#/features/configurations/Con
 const TABS: ConfigTab[] = ["runs", "versions", "mapping"];
 
 export const Route = createFileRoute("/configs/$configId")({
-  validateSearch: (search: Record<string, unknown>): { tab?: ConfigTab } =>
-    TABS.includes(search.tab as ConfigTab) ? { tab: search.tab as ConfigTab } : {},
-  loader: ({ context: { queryClient }, params: { configId } }) =>
-    Promise.all([
-      queryClient.prefetchQuery(configQuery(configId)),
-      queryClient.prefetchQuery(versionsQuery(configId)),
-      queryClient.prefetchQuery(runsQuery({ config_id: configId })),
-    ]),
+  validateSearch: (search: Record<string, unknown>): { tab?: ConfigTab; version?: number } => {
+    const version = Number(search.version);
+    return {
+      ...(TABS.includes(search.tab as ConfigTab) ? { tab: search.tab as ConfigTab } : {}),
+      ...(Number.isInteger(version) && version > 0 ? { version } : {}),
+    };
+  },
+  loader: ({ context: { queryClient }, params: { configId } }) => {
+    void queryClient.prefetchQuery(configQuery(configId));
+    void queryClient.prefetchQuery(versionsQuery(configId));
+    void queryClient.prefetchQuery(runsQuery({ config_id: configId }));
+  },
   component: ConfigurationRoute,
 });
 
 function ConfigurationRoute() {
   const { configId } = Route.useParams();
-  const { tab = "runs" } = Route.useSearch();
-  return <ConfigurationPage key={configId} configId={configId} tab={tab} />;
+  const { tab = "runs", version } = Route.useSearch();
+  return <ConfigurationPage key={configId} configId={configId} tab={tab} version={version} />;
 }

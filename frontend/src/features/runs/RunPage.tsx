@@ -1,694 +1,552 @@
-import { Button, Card } from "@infrahub/ui";
+import { Button, buttonVariants, Card } from "@infrahub/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
-  artifactsQuery,
   configQuery,
   configVersionQuery,
   describeError,
   isInProgress,
+  LIST_REFRESH_MS,
+  meQuery,
   planQuery,
   runQuery,
+  runsQuery,
 } from "#/api/queries";
-import type { Orchestration, Plan, Run, RunResource } from "#/api/types";
-import { DownloadIcon, STATE_TEXT, StateIcon } from "#/components/icons";
-import { Bar, CopyButton, ErrorPanel, SectionHeading } from "#/components/page";
-import { BranchCode, NODE, STEP_TONE, STEP_WORD, When } from "#/components/run-status";
+import type { Run, RunResource } from "#/api/types";
+import { ArrowRightIcon, BranchIcon, PlusIcon } from "#/components/icons";
 import {
-  countsSentence,
+  Bar,
+  CODE_CHIP,
+  CRUMB,
+  ErrorPanel,
+  FOCUS,
+  META_LIST,
+  StaleNotice,
+} from "#/components/page";
+import { BranchCode, StateLabel, When } from "#/components/run-status";
+import {
+  executableCount,
   failureDetail,
   fmt,
+  isDeleteOnlyPlan,
   isVerified,
+  laterWrite,
+  newerPlan,
   phaseLabel,
   type RunState,
   runCounts,
   runState,
-  runSteps,
-  STEP_NAMES,
-  type StepState,
 } from "#/domain/run-state";
-import { describeSystem } from "#/domain/systems";
-import { formatAbsolute, formatDuration } from "#/lib/time";
-
-import { PlanChanges, PlanFacts } from "./PlanReview";
+import { describeSystem, type System } from "#/domain/systems";
+import { useDocumentTitle } from "#/lib/title";
 import { ApplyButton, ApplyDialog, CancelDialog, VerifyDialog } from "./RunActions";
+import {
+  AbandonedNotice,
+  FailureNotice,
+  InFlightNotice,
+  LaterWriteNotice,
+  NewerPlanNotice,
+  NewerRunNotice,
+} from "./run-notices";
+import { Details, Executions, PLAN_ARTIFACT_ID, PlanSection, RunFiles } from "./run-sections";
+import { RunSteps } from "./run-steps";
 import { StartRunDialog } from "./StartRunDialog";
 
-const OPERATION_TITLE: Record<string, string> = {
-  plan: "Plan",
-  sync: "Sync",
-  verify: "Verify",
-  apply: "Apply",
+const LINK = `relative rounded-sm text-accent before:absolute before:inset-x-0 before:-inset-y-3 before:content-[''] hover:underline ${FOCUS}`;
+
+const EYEBROW: Record<string, string> = {
+  plan: "Run with a review step",
+  sync: "Sync without a review step",
 };
 
-/* ---------- steps ---------- */
-
-function lastExecution(orchestration: Orchestration[], purposes: string[]) {
-  return [...orchestration].reverse().find((o) => purposes.includes(o.purpose));
+/** True once `active` has stayed true for `ms`. */
+function useAfter(active: boolean, ms: number) {
+  const [passed, setPassed] = useState(false);
+  useEffect(() => {
+    setPassed(false);
+    if (!active) return;
+    const id = window.setTimeout(() => setPassed(true), ms);
+    return () => window.clearTimeout(id);
+  }, [active, ms]);
+  return active && passed;
 }
 
-function stepTiming(o: Orchestration | undefined): ReactNode {
-  if (!o) return null;
-  const start = o.claimed_at ?? o.submitted_at;
-  if (o.terminal_at && start) {
-    return (
-      <>
-        Finished <When iso={o.terminal_at} /> · ran {formatDuration(start, o.terminal_at)}
-      </>
-    );
-  }
-  if (start)
-    return (
-      <>
-        Started <When iso={start} />
-      </>
-    );
-  return null;
-}
-
-function StepCard({
-  index,
-  state,
-  title,
-  children,
-}: {
-  index: number;
-  state: StepState;
-  title: string;
-  children?: ReactNode;
-}) {
+function RunSkeleton({ slow }: { slow: boolean }) {
   return (
-    <li className="flex min-w-0 flex-col gap-1.5 px-4 py-3.5">
-      <div className="flex items-center gap-2.5">
-        <span className="flex size-3 items-center justify-center">
-          <span className={`block shrink-0 rounded-full ${NODE[state]}`} aria-hidden="true" />
-        </span>
-        <span className="font-medium">
-          <span className="sr-only">Step {index + 1}: </span>
-          {title}
-        </span>
-        <span className={`text-xs ${state === "done" ? "text-success" : STEP_TONE[state]}`}>
-          {STEP_WORD[state]}
-        </span>
-      </div>
-      <div className="flex flex-col gap-0.5 pl-[22px] text-foreground-muted text-xs">
-        {children}
-      </div>
-    </li>
-  );
-}
-
-function Steps({ resource, inFlight }: { resource: RunResource; inFlight?: string }) {
-  const { run, orchestration } = resource;
-  const steps = runSteps(run, { inFlight });
-  const plan = lastExecution(orchestration, run.operation === "sync" ? ["sync"] : ["plan"]);
-  const verify = lastExecution(orchestration, ["verify"]);
-  const apply = lastExecution(orchestration, run.operation === "sync" ? ["sync"] : ["apply"]);
-  const counts = runCounts(run);
-  const verification = run.results?.verification as
-    | { checksum_ok?: boolean; verification_notes?: string[] }
-    | undefined;
-  return (
-    <Card>
-      <ol
-        className="grid grid-cols-1 divide-y sm:grid-cols-3 sm:divide-x sm:divide-y-0"
-        aria-label="Steps of this run"
-      >
-        <StepCard index={0} state={steps[0]} title={STEP_NAMES[0]}>
-          {run.phase !== "accepted" && counts && steps[0] === "done" && (
-            <span>
-              {counts.total === 0
-                ? "No differences found"
-                : `${fmt(counts.total)} ${counts.total === 1 ? "change" : "changes"} found`}
-            </span>
-          )}
-          <span>{stepTiming(plan)}</span>
-        </StepCard>
-        <StepCard index={1} state={steps[1]} title={STEP_NAMES[1]}>
-          {verification ? (
-            <span>
-              {verification.checksum_ok
-                ? "The plan still matches the destination"
-                : "The checksum did not match"}
-            </span>
-          ) : steps[1] === "done" && !verify ? (
-            <span>Checked against the destination by the apply, before its first write</span>
-          ) : steps[1] === "skipped" ? (
-            <span>
-              {run.operation === "sync"
-                ? "A sync applies without a separate verification"
-                : "Not verified before the apply"}
-            </span>
-          ) : steps[1] === "waiting" ? (
-            <span>Optional. Checks the plan against the destination without writing</span>
-          ) : null}
-          {verification?.verification_notes?.map((n) => (
-            <span key={n}>{n}</span>
-          ))}
-          <span>{stepTiming(verify)}</span>
-        </StepCard>
-        <StepCard index={2} state={steps[2]} title={STEP_NAMES[2]}>
-          {run.phase === "applied" && counts && (
-            <span>
-              {counts.total === 0 ? "Nothing to write" : `${countsSentence(counts, "done")}`}
-            </span>
-          )}
-          {steps[2] === "waiting" && <span>Waiting for someone to apply the reviewed plan</span>}
-          {run.phase === "planned" && run.outcome === "no-change" && <span>Nothing to apply</span>}
-          <span>{stepTiming(apply)}</span>
-        </StepCard>
-      </ol>
-    </Card>
-  );
-}
-
-/* ---------- failure ---------- */
-
-function FailurePanel({ run }: { run: Run }) {
-  const f = failureDetail(run);
-  if (!f) return null;
-  return (
-    <Card className="border-danger/35">
-      <div className="flex flex-col gap-3 p-4" role="alert">
-        <div className="flex items-start gap-2.5">
-          <StateIcon state="failed" className="mt-0.5 size-4 shrink-0 text-danger" />
-          <div className="flex min-w-0 flex-col gap-1">
-            <p className="font-medium text-danger">
-              {f.ambiguous ? "The write may have reached the destination" : f.sentence}
-            </p>
-            {(f.nextAction || f.cause) && <p className="text-pretty">{f.nextAction ?? f.cause}</p>}
-            {f.ambiguous && (
-              <p className="text-pretty text-foreground-muted">
-                The service could not prove what was written. Inspect the destination, then create a
-                new plan: it proposes only what is still outstanding.
-              </p>
-            )}
+    <div aria-busy="true">
+      <output className="sr-only">Loading the run</output>
+      <div className="flex flex-col gap-4 pt-6 pb-6">
+        <div className="flex h-8 items-center pointer-coarse:h-11">
+          <Bar className="h-4 w-72 max-w-full" />
+        </div>
+        <div className="flex flex-col gap-2">
+          <div className="flex h-4 items-center">
+            <Bar className="h-3 w-32" />
+          </div>
+          <Bar className="h-8 w-[28rem] max-w-full max-sm:h-7" />
+          <div className="flex h-5 items-center">
+            <Bar className="h-4 w-96 max-w-full" />
+          </div>
+          <div className="-mt-1 flex h-5 items-center sm:hidden">
+            <Bar className="h-4 w-48" />
           </div>
         </div>
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 pl-[26px] text-[13px]">
-          <dt className="text-subtle">Stage</dt>
-          <dd className="capitalize">{f.stage}</dd>
-          {f.errorType && (
-            <>
-              <dt className="text-subtle">Error</dt>
-              <dd className="font-mono text-xs leading-5 [overflow-wrap:anywhere]">
-                {f.errorType}
-                {f.causeType && <span className="text-subtle"> caused by </span>}
-                {f.causeType}
-              </dd>
-            </>
-          )}
-          {f.appliedCount !== undefined && (
-            <>
-              <dt className="text-subtle">Written before</dt>
-              <dd>{fmt(f.appliedCount)} operations</dd>
-            </>
-          )}
-          {f.failedOperation && (
-            <>
-              <dt className="text-subtle">Failed on</dt>
-              <dd className="font-mono text-xs leading-5 [overflow-wrap:anywhere]">
-                {f.failedOperation}
-              </dd>
-            </>
-          )}
-          {run.reconciliation_required && (
-            <>
-              <dt className="text-subtle">Reconciliation</dt>
-              <dd>Required</dd>
-            </>
-          )}
-        </dl>
+        <Bar className="h-8 w-28 rounded-lg sm:hidden" />
       </div>
-    </Card>
+      <Card className="grid grid-cols-3 divide-x">
+        {["plan", "verify", "apply"].map((k) => (
+          <div key={k} className="flex flex-col gap-2 px-3 py-3 sm:px-4 sm:py-3.5">
+            <Bar className="h-4 w-20 max-w-full" />
+            <Bar className="h-3 w-32 max-w-full max-sm:hidden" />
+          </div>
+        ))}
+      </Card>
+      {slow && (
+        <output className="mt-4 block text-foreground-muted text-sm">
+          Waiting for the Sync API to answer.
+        </output>
+      )}
+    </div>
   );
 }
 
-/* ---------- plan, artifacts, history ---------- */
+function Breadcrumb({ run, name }: { run: Run; name: string }) {
+  const configId = run.config_id;
+  return (
+    <nav aria-label="Breadcrumb" className="text-foreground-muted text-sm">
+      <ol className="flex flex-wrap items-center gap-x-1.5 max-sm:hidden">
+        <li>
+          <Link to="/" className={CRUMB}>
+            Configurations
+          </Link>
+        </li>
+        <li aria-hidden="true" className="text-subtle-muted">
+          /
+        </li>
+        <li className="min-w-0">
+          {configId ? (
+            <Link
+              to="/configs/$configId"
+              params={{ configId }}
+              className={`${CRUMB} [overflow-wrap:anywhere]`}
+            >
+              {name}
+            </Link>
+          ) : (
+            <span className="[overflow-wrap:anywhere]">{name}</span>
+          )}
+        </li>
+        <li aria-hidden="true" className="text-subtle-muted">
+          /
+        </li>
+        <li aria-current="page">
+          Run <span className="font-mono text-[13px]">{run.run_id}</span>
+        </li>
+      </ol>
+      {configId ? (
+        <Link to="/configs/$configId" params={{ configId }} className={`${CRUMB} gap-1 sm:hidden`}>
+          <ArrowRightIcon className="size-3.5 shrink-0 rotate-180 text-subtle" />
+          <span className="[overflow-wrap:anywhere]">{name}</span>
+        </Link>
+      ) : (
+        <Link to="/" className={`${CRUMB} gap-1 sm:hidden`}>
+          <ArrowRightIcon className="size-3.5 shrink-0 rotate-180 text-subtle" />
+          Configurations
+        </Link>
+      )}
+    </nav>
+  );
+}
 
-function PlanSection({
+function MetaLine({
   run,
-  plan,
-  error,
-  isPending,
-  hasPlan,
+  state,
+  label,
+  source,
+  destination,
+  latestVersion,
 }: {
   run: Run;
-  plan?: Plan;
-  error: unknown;
-  isPending: boolean;
-  hasPlan: boolean;
+  state: RunState;
+  label: string;
+  source?: System;
+  destination?: System;
+  latestVersion?: number;
 }) {
-  const counts = runCounts(run);
-  if (!hasPlan) return null;
-  if (isPending) {
-    return (
-      <section className="flex flex-col gap-2">
-        <SectionHeading title="Changes" />
-        <Card className="p-4">
-          <Bar className="h-4 w-60" />
-        </Card>
-      </section>
-    );
-  }
-  if (!plan) {
-    const d = describeError(error);
-    return (
-      <section className="flex flex-col gap-2">
-        <SectionHeading title="Changes" />
-        <Card>
-          <p className="px-6 py-8 text-center text-foreground-muted">
-            {d.status === 404 || d.status === 503
-              ? "This run kept no plan to review."
-              : d.status === 410
-                ? "The retained plan expired."
-                : d.title}
-          </p>
-        </Card>
-      </section>
-    );
-  }
-  return (
-    <section aria-labelledby="changes" className="flex flex-col gap-3">
-      <SectionHeading id="changes" title="Changes" count={plan.operations.length}>
-        {counts && counts.total > 0
-          ? countsSentence(counts, run.phase === "applied" ? "done" : "plan")
-          : "No differences"}
-      </SectionHeading>
-      <Card className="p-4">
-        <PlanFacts plan={plan} />
-      </Card>
-      <PlanChanges plan={plan} />
-    </section>
-  );
-}
-
-function formatBytes(n: number) {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function Artifacts({ runId }: { runId: string }) {
-  const artifacts = useQuery(artifactsQuery(runId));
-  const items = artifacts.data?.artifacts ?? [];
-  if (!artifacts.data || items.length === 0) return null;
-  return (
-    <section aria-labelledby="artifacts" className="flex flex-col gap-2">
-      <SectionHeading id="artifacts" title="Files kept for this run" count={items.length} />
-      <Card className="overflow-hidden">
-        <ul className="divide-y">
-          {items.map((a) => (
-            <li
-              key={a.artifact_id}
-              className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 text-[13px]"
-            >
-              <span className="min-w-0 flex-1">
-                <span className="font-medium">{a.kind.replaceAll("-", " ")}</span>
-                <span className="block text-subtle text-xs">
-                  {a.media_type} · {formatBytes(a.size)} · <When iso={a.created_at} />
-                  {a.expires_at && (
-                    <>
-                      {" "}
-                      · expires <When iso={a.expires_at} />
-                    </>
-                  )}
-                </span>
-              </span>
-              <a
-                href={`/api/runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(a.artifact_id)}`}
-                download={`${runId}-${a.artifact_id}`}
-                className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 font-medium text-foreground-muted transition-colors duration-150 ease-out hover:bg-highlight hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring-halo"
-              >
-                <DownloadIcon />
-                Download
-              </a>
-            </li>
-          ))}
-        </ul>
-      </Card>
-    </section>
-  );
-}
-
-function History({ orchestration }: { orchestration: Orchestration[] }) {
-  if (orchestration.length === 0) return null;
-  return (
-    <section aria-labelledby="history" className="flex flex-col gap-2">
-      <SectionHeading id="history" title="Executions" count={orchestration.length}>
-        Each stage the worker ran, oldest first
-      </SectionHeading>
-      <Card className="overflow-hidden">
-        <table className="w-full border-collapse text-left text-[13px]">
-          <thead className="max-md:sr-only">
-            <tr className="border-b text-subtle text-xs">
-              <th scope="col" className="px-4 py-2 font-medium">
-                Stage
-              </th>
-              <th scope="col" className="px-4 py-2 font-medium">
-                Result
-              </th>
-              <th scope="col" className="px-4 py-2 font-medium">
-                Submitted
-              </th>
-              <th scope="col" className="px-4 py-2 font-medium">
-                Queued
-              </th>
-              <th scope="col" className="px-4 py-2 font-medium">
-                Ran
-              </th>
-              <th scope="col" className="px-4 py-2 font-medium">
-                Prefect flow run
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {orchestration.map((o) => (
-              <tr
-                key={o.flow_run_id}
-                className="max-md:flex max-md:flex-col max-md:gap-0.5 max-md:px-4 max-md:py-2.5"
-              >
-                <td className="px-4 py-2.5 capitalize max-md:p-0">
-                  {o.purpose}
-                  {o.attempt > 1 && (
-                    <span className="text-subtle normal-case"> · attempt {o.attempt}</span>
-                  )}
-                </td>
-                <td className="px-4 py-2.5 max-md:p-0">
-                  {o.terminal_state ? (
-                    <span
-                      className={
-                        o.terminal_outcome === "succeeded"
-                          ? "text-success"
-                          : o.terminal_outcome === "cancelled" || o.terminal_outcome === "abandoned"
-                            ? "text-foreground-muted"
-                            : "text-danger"
-                      }
-                    >
-                      {o.terminal_state}
-                      {o.terminal_outcome && o.terminal_outcome !== o.terminal_state && (
-                        <span className="text-subtle"> · {o.terminal_outcome}</span>
-                      )}
-                    </span>
-                  ) : (
-                    <span className="text-accent">
-                      {o.cancellation_requested_at ? "cancelling" : (o.state ?? "submitted")}
-                    </span>
-                  )}
-                </td>
-                <td className="px-4 py-2.5 text-foreground-muted max-md:p-0">
-                  {o.submitted_at ? <When iso={o.submitted_at} /> : "—"}
-                </td>
-                <td className="px-4 py-2.5 text-foreground-muted tabular-nums max-md:p-0">
-                  <span className="md:sr-only">Queued </span>
-                  {o.submitted_at && o.claimed_at
-                    ? formatDuration(o.submitted_at, o.claimed_at)
-                    : "—"}
-                </td>
-                <td className="px-4 py-2.5 text-foreground-muted tabular-nums max-md:p-0">
-                  <span className="md:sr-only">Ran </span>
-                  {o.claimed_at && o.terminal_at
-                    ? formatDuration(o.claimed_at, o.terminal_at)
-                    : "—"}
-                </td>
-                <td className="px-4 py-2.5 font-mono text-[11px] text-subtle max-md:p-0">
-                  {o.flow_run_id}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Card>
-    </section>
-  );
-}
-
-function Details({ run }: { run: Run }) {
-  const rows: [string, ReactNode][] = [
+  const items: [string, ReactNode][] = [
     [
-      "Run ID",
-      <span key="id" className="inline-flex items-center gap-1 font-mono text-xs">
-        {run.run_id}
-        <CopyButton value={run.run_id} label="Copy run ID" />
-      </span>,
+      "state",
+      <output aria-live="polite" aria-atomic="true">
+        <StateLabel state={state} label={label} />
+      </output>,
     ],
-    [
-      "Configuration",
-      <span key="ref" className="font-mono text-xs">
-        {run.configuration_reference}
-      </span>,
-    ],
-    [
-      "Package checksum",
-      <span
-        key="pc"
-        className="block truncate font-mono text-xs"
-        title={run.package_checksum ?? undefined}
-      >
-        {run.package_checksum ?? "—"}
-      </span>,
-    ],
-    ["Started by", run.actor ?? "—"],
-    [
-      "Started",
-      <span key="s" title={formatAbsolute(run.started_at)}>
-        {formatAbsolute(run.started_at)}
-      </span>,
-    ],
-    ["Finished", run.finished_at ? formatAbsolute(run.finished_at) : "Not finished"],
   ];
+  if (source && destination) {
+    items.push([
+      "systems",
+      <span className="inline-flex items-center gap-1 text-foreground">
+        {source.label}
+        <span className="sr-only"> to </span>
+        <ArrowRightIcon />
+        {destination.label}
+      </span>,
+    ]);
+  }
+  if (run.registry_version != null) {
+    const newer =
+      latestVersion !== undefined && latestVersion > run.registry_version && run.config_id;
+    items.push([
+      "version",
+      <span>
+        <span className="tabular-nums">Version {run.registry_version}</span>
+        {newer && (
+          <span className="text-subtle">
+            {" "}
+            (
+            <Link
+              to="/configs/$configId"
+              params={{ configId: newer }}
+              search={{ tab: "versions" }}
+              className={LINK}
+            >
+              version {latestVersion} is the latest
+            </Link>
+            )
+          </span>
+        )}
+      </span>,
+    ]);
+  }
+  if (run.destination_branch) {
+    items.push([
+      "branch",
+      <span className="inline-flex min-w-0 max-w-full items-center gap-1 [&>code]:whitespace-normal [&>code]:[overflow-wrap:anywhere]">
+        <BranchIcon className="size-3.5 shrink-0 text-subtle" />
+        <span className="sr-only">Branch </span>
+        <BranchCode branch={run.destination_branch} />
+      </span>,
+    ]);
+  }
+  items.push([
+    "started",
+    <span>
+      <When prefix="Started " iso={run.started_at} />
+      {run.actor && <> by {run.actor}</>}
+    </span>,
+  ]);
   return (
-    <section aria-labelledby="details" className="flex flex-col gap-2">
-      <SectionHeading id="details" title="Details" />
-      <Card className="p-4">
-        <dl className="grid grid-cols-1 gap-x-8 gap-y-3 text-[13px] sm:grid-cols-3">
-          {rows.map(([k, v]) => (
-            <div key={k} className="flex min-w-0 flex-col gap-0.5">
-              <dt className="text-subtle text-xs">{k}</dt>
-              <dd className="min-w-0">{v}</dd>
-            </div>
-          ))}
-        </dl>
-      </Card>
-    </section>
+    <ul className={META_LIST}>
+      {items.map(([key, node]) => (
+        <li key={key} className="flex min-w-0 max-w-full">
+          {node}
+        </li>
+      ))}
+    </ul>
   );
 }
-
-/* ---------- page ---------- */
 
 type Dialog = "verify" | "apply" | "cancel" | "plan" | null;
 
-function Header({
-  resource,
-  name,
-  state,
-  inFlight,
-  plan,
-  onOpen,
-}: {
-  resource: RunResource;
-  name: string;
-  state: RunState;
-  inFlight?: string;
-  plan?: Plan;
-  onOpen: (d: Dialog) => void;
-}) {
-  const { run } = resource;
-  const counts = runCounts(run);
-  const reviewable = run.phase === "planned" && run.outcome === "planned" && !inFlight;
-  const executable = counts && plan ? counts.total - plan.summary.deletes_not_executed : 0;
-  const running = isInProgress(resource);
-  return (
-    <header className="flex flex-col gap-4 pt-6 pb-6">
-      <nav aria-label="Breadcrumb" className="text-foreground-muted text-sm">
-        <ol className="flex flex-wrap items-center gap-1.5">
-          <li>
-            <Link to="/" className="rounded-sm hover:text-foreground hover:underline">
-              Configurations
-            </Link>
-          </li>
-          <li aria-hidden="true" className="text-border-strong">
-            /
-          </li>
-          <li>
-            {run.config_id ? (
-              <Link
-                to="/configs/$configId"
-                params={{ configId: run.config_id }}
-                className="rounded-sm [overflow-wrap:anywhere] hover:text-foreground hover:underline"
-              >
-                {name}
-              </Link>
-            ) : (
-              name
-            )}
-          </li>
-          <li aria-hidden="true" className="text-border-strong">
-            /
-          </li>
-          <li aria-current="page" className="font-mono text-xs">
-            {run.run_id}
-          </li>
-        </ol>
-      </nav>
-      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
-        <div className="flex min-w-0 flex-col gap-2">
-          <h1 className="text-balance font-semibold text-2xl tracking-tight [overflow-wrap:anywhere]">
-            {OPERATION_TITLE[run.operation] ?? run.operation} of {name}
-          </h1>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-foreground-muted">
-            <span className={`inline-flex items-center gap-1.5 font-medium ${STATE_TEXT[state]}`}>
-              <StateIcon state={state} className="size-3.5" />
-              {phaseLabel(run, { inFlight })}
-            </span>
-            {run.registry_version != null && <span>Version {run.registry_version}</span>}
-            {run.destination_branch && (
-              <span className="inline-flex items-center gap-1.5">
-                into <BranchCode branch={run.destination_branch} />
-              </span>
-            )}
-            <span>
-              started <When iso={run.started_at} />
-              {run.actor && <> by {run.actor}</>}
-            </span>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {running && (
-            <Button variant="danger-outline" size="sm" onPress={() => onOpen("cancel")}>
-              Cancel run
-            </Button>
-          )}
-          {reviewable && !isVerified(run) && (
-            <Button variant="outline" size="sm" onPress={() => onOpen("verify")}>
-              Verify
-            </Button>
-          )}
-          {reviewable && plan && executable > 0 && (
-            <ApplyButton
-              label={`Apply ${fmt(executable)} ${executable === 1 ? "change" : "changes"}`}
-              onPress={() => onOpen("apply")}
-            />
-          )}
-          {!running && !reviewable && run.config_id && (
-            <Button variant="outline" size="sm" onPress={() => onOpen("plan")}>
-              Plan again
-            </Button>
-          )}
-        </div>
-      </div>
-    </header>
-  );
-}
+const isWaitingPlan = (resource: RunResource | undefined) =>
+  resource?.run.phase === "planned" &&
+  resource.run.outcome === "planned" &&
+  !isInProgress(resource);
+
+const time = (iso: string) => new Date(iso).getTime();
 
 export function RunPage({ runId }: { runId: string }) {
-  const runQ = useQuery(runQuery(runId));
+  const baseRunQuery = runQuery(runId);
+  // A plan waiting for review can be verified, applied or cancelled from the command line or
+  // another tab, so it is re-read on the list interval as well.
+  const runQ = useQuery({
+    ...baseRunQuery,
+    refetchInterval: (query) =>
+      isWaitingPlan(query.state.data as RunResource | undefined)
+        ? LIST_REFRESH_MS
+        : typeof baseRunQuery.refetchInterval === "function"
+          ? baseRunQuery.refetchInterval(query)
+          : false,
+  });
   const resource = runQ.data;
   const run = resource?.run;
-  const config = useQuery({
-    ...configQuery(run?.config_id ?? ""),
-    enabled: Boolean(run?.config_id),
-  });
+  const configId = run?.config_id ?? undefined;
+  const registryVersion = run?.registry_version ?? undefined;
+  const config = useQuery({ ...configQuery(configId ?? ""), enabled: Boolean(configId) });
   const version = useQuery({
-    ...configVersionQuery(run?.config_id ?? "", run?.registry_version ?? 1),
-    enabled: Boolean(run?.config_id && run.registry_version),
+    ...configVersionQuery(configId ?? "", registryVersion ?? 0),
+    enabled: Boolean(configId) && registryVersion !== undefined,
   });
-  const hasPlan = Boolean(
-    run &&
-      (run.phase === "planned" ||
-        run.phase === "applied" ||
-        run.phase.startsWith("apply") ||
-        run.operation === "sync") &&
-      run.phase !== "accepted"
-  );
+  const hasPlan = Boolean(run?.artifact_refs.some((a) => a.artifact_id === PLAN_ARTIFACT_ID));
   const plan = useQuery({ ...planQuery(runId), enabled: hasPlan });
+  const me = useQuery(meQuery());
+  const running = isInProgress(resource);
+  const inFlight =
+    run?.phase === "accepted"
+      ? undefined
+      : resource?.orchestration.find((o) => o.terminal_at == null)?.purpose;
+  const waitingPlan = run?.phase === "planned" && run.outcome === "planned" && !inFlight;
+  const siblings = useQuery({
+    ...runsQuery({ config_id: configId ?? "" }),
+    enabled: Boolean(configId) && Boolean(run) && !running,
+  });
   const [dialog, setDialog] = useState<Dialog>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusInActions = useRef(false);
+  const slow = useAfter(runQ.isPending && runQ.fetchStatus === "fetching", 5_000);
 
-  if (runQ.isPending) {
-    return (
-      <div className="flex flex-col gap-4 pt-6" aria-busy="true">
-        <output className="sr-only">Loading the run</output>
-        <Bar className="h-4 w-64" />
-        <Bar className="h-8 w-96 max-w-full" />
-        <Bar className="h-4 w-80" />
-        <Bar className="mt-4 h-24 w-full" />
-      </div>
-    );
-  }
-  if (!resource || !run) {
-    return (
-      <div className="pt-8">
-        <ErrorPanel error={runQ.error} onRetry={() => runQ.refetch()} />
-      </div>
-    );
-  }
+  // A poll can remove the focused action (Cancel run once the run ends, Verify once it is verified).
+  // The browser then moves focus to the body, so it goes to the title instead, whose state label is
+  // announced.
+  useLayoutEffect(() => {
+    const active = document.activeElement;
+    if (focusInActions.current && (!active || active === document.body)) {
+      focusInActions.current = false;
+      headingRef.current?.focus();
+    }
+  });
 
-  const inFlight = resource.orchestration.find(
-    (o) => o.terminal_at == null && run.phase !== "accepted"
-  )?.purpose;
-  const latestVersion = config.data?.latest_version ?? undefined;
-  const state = runState(run, { inFlight });
+  const trackActionFocus = useCallback((row: HTMLDivElement) => {
+    const enter = () => {
+      focusInActions.current = true;
+    };
+    const leave = (e: FocusEvent) => {
+      if (row.contains(e.relatedTarget as Node | null)) return;
+      window.setTimeout(() => {
+        if (!row.contains(document.activeElement)) focusInActions.current = false;
+      });
+    };
+    row.addEventListener("focusin", enter);
+    row.addEventListener("focusout", leave);
+    return () => {
+      row.removeEventListener("focusin", enter);
+      row.removeEventListener("focusout", leave);
+    };
+  }, []);
+
+  const summaryName = run?.summary?.sync_name;
   const name =
     config.data?.name ??
-    (run.summary?.sync_name as string | undefined) ??
-    run.configuration_reference;
-  const destination = version.data
-    ? describeSystem(version.data.declared_content.configuration.destination)
-    : undefined;
+    (typeof summaryName === "string" ? summaryName : undefined) ??
+    run?.configuration_reference ??
+    runId;
+  const label = run ? phaseLabel(run, { inFlight }) : undefined;
+  const notFound = !resource && runQ.isError && describeError(runQ.error).notFound;
+  useDocumentTitle(...(label ? [label, name] : notFound ? ["Run not found"] : ["Runs"]));
+
+  if (runQ.isPending) return <RunSkeleton slow={slow} />;
+  if (!resource || !run || !label) {
+    return (
+      <>
+        <nav aria-label="Breadcrumb" className="pt-6 text-foreground-muted text-sm">
+          <Link to="/runs" className={CRUMB}>
+            Runs
+          </Link>
+        </nav>
+        <ErrorPanel
+          level="page"
+          error={runQ.error}
+          onRetry={() => runQ.refetch()}
+          action={
+            notFound ? (
+              <Link to="/runs" className={buttonVariants({ variant: "outline", size: "sm" })}>
+                View runs
+              </Link>
+            ) : undefined
+          }
+        >
+          {notFound && (
+            <p>
+              Run ID in the address: <code className={CODE_CHIP}>{runId}</code>
+            </p>
+          )}
+        </ErrorPanel>
+      </>
+    );
+  }
+
+  const { orchestration } = resource;
+  const declared = version.data?.declared_content.configuration;
+  const source = declared ? describeSystem(declared.source) : undefined;
+  const destination = declared ? describeSystem(declared.destination) : undefined;
+  const latestVersion = config.data?.latest_version ?? undefined;
+  const headerState = runState(run, { inFlight });
+  const refreshError = runQ.isError;
+  const open = orchestration.find((o) => o.terminal_at == null);
+  const f = failureDetail(run);
+  const siblingRuns = running ? [] : (siblings.data?.items ?? []);
+  const wrote = waitingPlan ? laterWrite(run, siblingRuns) : undefined;
+  const newer = waitingPlan && !wrote ? newerPlan(run, siblingRuns) : undefined;
+  // Runs are listed newest first, so the first later one is the newest run of the configuration.
+  const laterRun =
+    wrote || newer
+      ? undefined
+      : siblingRuns.find(
+          (r) => r.run_id !== run.run_id && time(r.started_at) > time(run.started_at)
+        );
+
+  const verifyFailed = Boolean(run.results?.verify_failure) && !isVerified(run);
+  const reviewable = waitingPlan && !refreshError && !verifyFailed;
+  const planExpired = plan.isError && describeError(plan.error).status === 410;
+  const executable = executableCount(run) ?? 0;
+  const deleteOnly = isDeleteOnlyPlan(run);
+  const deletes = runCounts(run)?.delete ?? 0;
+  const outdated =
+    latestVersion !== undefined && registryVersion !== undefined && latestVersion > registryVersion;
+  const canAct = !me.data || me.data.administrator || me.data.actor === run.actor;
+  const wouldCancel = Boolean(open) && !refreshError && !open?.cancellation_requested_at;
+  const wouldVerify = reviewable && !isVerified(run) && !planExpired;
+  const wouldApply =
+    reviewable && executable > 0 && hasPlan && !plan.isError && plan.data?.checksum_ok !== false;
+  const planVariant: "primary" | "outline" | undefined =
+    !configId || running || latestVersion === undefined
+      ? undefined
+      : reviewable
+        ? planExpired || wrote
+          ? "primary"
+          : outdated || deleteOnly || plan.isError || plan.data?.checksum_ok === false
+            ? "outline"
+            : undefined
+        : headerState === "insync" || laterRun
+          ? "outline"
+          : headerState === "failed" || headerState === "idle"
+            ? "primary"
+            : undefined;
+
+  const close = () => setDialog(null);
+  const focusHeading = () => requestAnimationFrame(() => headingRef.current?.focus());
 
   return (
     <>
-      <Header
-        resource={resource}
-        name={name}
-        state={state}
-        inFlight={inFlight}
-        plan={plan.data}
-        onOpen={setDialog}
-      />
+      <header className="flex flex-col gap-4 pt-6 pb-6">
+        <Breadcrumb run={run} name={name} />
+        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
+          <div className="flex min-w-0 flex-col gap-2">
+            {EYEBROW[run.operation] && (
+              <p className="font-medium text-subtle text-xs">{EYEBROW[run.operation]}</p>
+            )}
+            <h1
+              ref={headingRef}
+              tabIndex={-1}
+              className="hyphens-none text-balance font-semibold text-2xl tracking-tight outline-none [overflow-wrap:anywhere] max-sm:text-xl"
+            >
+              {name}
+            </h1>
+            <MetaLine
+              run={run}
+              state={headerState}
+              label={label}
+              source={source}
+              destination={destination}
+              latestVersion={latestVersion}
+            />
+          </div>
+          <div
+            ref={trackActionFocus}
+            className="flex flex-wrap items-center gap-2 pointer-coarse:[&>button]:h-11"
+          >
+            {run.phase === "accepted" && !open && (
+              <p className="text-foreground-muted text-sm">
+                Waiting for the Sync service to submit this run to Prefect.
+              </p>
+            )}
+            {open?.cancellation_requested_at && (
+              <p className="text-foreground-muted text-sm">
+                <output>Cancellation requested</output>{" "}
+                <When iso={open.cancellation_requested_at} />
+              </p>
+            )}
+            {me.data && !canAct && (wouldCancel || wouldVerify || wouldApply) && (
+              <p className="max-w-[40ch] text-foreground-muted text-xs">
+                Only {run.actor} or an administrator can verify, apply or cancel this run.
+              </p>
+            )}
+            {canAct && wouldCancel && (
+              <Button variant="danger-outline" size="sm" onPress={() => setDialog("cancel")}>
+                Cancel run
+              </Button>
+            )}
+            {reviewable && deleteOnly && (
+              <p className="max-w-[44ch] text-foreground-muted text-sm">
+                Nothing to apply. This plan lists only {fmt(deletes)}{" "}
+                {deletes === 1 ? "delete" : "deletes"}, and apply does not run deletes.
+              </p>
+            )}
+            {canAct && wouldVerify && (
+              <Button variant="outline" size="sm" onPress={() => setDialog("verify")}>
+                Verify
+              </Button>
+            )}
+            {canAct && wouldApply && (
+              <ApplyButton
+                label={`Apply ${fmt(executable)} ${executable === 1 ? "change" : "changes"}`}
+                isPending={plan.isPending}
+                variant={wrote ? "outline" : "primary"}
+                onPress={() => setDialog("apply")}
+              />
+            )}
+            {planVariant && (
+              <Button variant={planVariant} size="sm" onPress={() => setDialog("plan")}>
+                <PlusIcon />
+                {outdated ? `Plan version ${latestVersion}` : "Plan again"}
+              </Button>
+            )}
+          </div>
+        </div>
+      </header>
+      {refreshError && (
+        <StaleNotice
+          error={runQ.error}
+          updatedAt={runQ.dataUpdatedAt}
+          onRetry={() => runQ.refetch()}
+        />
+      )}
       <div className="flex flex-col gap-8">
-        {latestVersion !== undefined &&
-          run.registry_version != null &&
-          run.registry_version < latestVersion && (
-            <p className="rounded-xl bg-content-strong px-3 py-2 text-foreground-muted text-sm">
-              This run used version {run.registry_version}. Version {latestVersion} is the latest.
-            </p>
+        <div className="flex flex-col gap-3">
+          {f ? (
+            <FailureNotice
+              run={run}
+              f={f}
+              orchestration={orchestration}
+              plan={plan.data}
+              source={source}
+              destination={destination}
+            />
+          ) : (
+            run.phase === "abandoned" && <AbandonedNotice run={run} orchestration={orchestration} />
           )}
-        <Steps resource={resource} inFlight={inFlight} />
-        <FailurePanel run={run} />
-        <PlanSection
-          run={run}
-          plan={plan.data}
-          error={plan.error}
-          isPending={hasPlan && plan.isPending}
-          hasPlan={hasPlan}
-        />
-        <Artifacts runId={runId} />
-        <History orchestration={resource.orchestration} />
-        <Details run={run} />
+          {open && <InFlightNotice open={open} />}
+          {wrote ? (
+            <LaterWriteNotice run={run} other={wrote} deleteOnly={deleteOnly} />
+          ) : newer ? (
+            <NewerPlanNotice other={newer} />
+          ) : (
+            laterRun && <NewerRunNotice other={laterRun} />
+          )}
+          <RunSteps resource={resource} inFlight={inFlight} planExpired={planExpired} />
+        </div>
+        {hasPlan && <PlanSection run={run} plan={plan} />}
+        <RunFiles run={run} />
+        <Executions orchestration={orchestration} />
+        <Details run={run} name={name} source={source} destination={destination} />
       </div>
-      {dialog === "verify" && <VerifyDialog run={run} onClose={() => setDialog(null)} />}
+      {dialog === "verify" && <VerifyDialog run={run} onClose={close} onDone={focusHeading} />}
       {dialog === "apply" && plan.data && (
-        <ApplyDialog run={run} plan={plan.data} onClose={() => setDialog(null)} />
+        <ApplyDialog run={run} plan={plan.data} onClose={close} onDone={focusHeading} />
       )}
-      {dialog === "cancel" && (
-        <CancelDialog
-          run={run}
-          writing={inFlight === "apply" || run.operation === "sync"}
-          onClose={() => setDialog(null)}
-        />
-      )}
-      {dialog === "plan" && run.config_id && (
+      {dialog === "cancel" && <CancelDialog run={run} onClose={close} onDone={focusHeading} />}
+      {dialog === "plan" && configId && latestVersion !== undefined && (
         <StartRunDialog
           target={{
-            configId: run.config_id,
+            configId,
             name,
-            version: latestVersion ?? run.registry_version ?? 1,
-            branch: run.destination_branch ?? destination?.branch,
+            version: latestVersion,
+            ...((run.phase === "planned" || run.phase === "applied") && run.destination_branch
+              ? { branch: run.destination_branch, branchFromRunId: run.run_id }
+              : {}),
           }}
-          onClose={() => setDialog(null)}
+          onClose={close}
         />
       )}
     </>

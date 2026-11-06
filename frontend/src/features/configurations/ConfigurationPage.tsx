@@ -1,341 +1,94 @@
-import { Button, Card } from "@infrahub/ui";
+import { Button, buttonVariants } from "@infrahub/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
-import { configQuery, configVersionQuery, runsQuery, versionsQuery } from "#/api/queries";
-import type {
-  ConfigurationVersion,
-  DeclaredAdapter,
-  DeclaredMapping,
-  Run,
-  RunReference,
-  VersionSummary,
-} from "#/api/types";
 import {
-  ArrowRightIcon,
-  ChevronRightIcon,
-  PlusIcon,
-  STATE_TEXT,
-  StateIcon,
-} from "#/components/icons";
+  configQuery,
+  configVersionQuery,
+  describeError,
+  failedFirstRead,
+  isInProgress,
+  runQuery,
+  runsQuery,
+  versionsQuery,
+} from "#/api/queries";
+import type { VersionSummary } from "#/api/types";
+import { ArrowRightIcon, ChevronRightIcon, PlusIcon, StateIcon } from "#/components/icons";
 import {
   Bar,
+  CODE_CHIP,
+  COUNT_BADGE,
   CopyButton,
+  CRUMB,
   EmptyPanel,
   ErrorPanel,
+  FOCUS,
+  FOCUS_INSET,
+  META_LIST,
+  Notice,
   SectionHeading,
+  StaleNotice,
   textAction,
 } from "#/components/page";
-import { BranchCode, StateLabel, Stepper, When } from "#/components/run-status";
-import { explain, refLabel, refState, runState, runSteps } from "#/domain/run-state";
+import { branchPrefill, listRunStates } from "#/domain/run-state";
 import { describeSystem, mappedKinds } from "#/domain/systems";
-import { RunsTable } from "#/features/runs/RunsTable";
+import { RunsTable, RunsTableSkeleton } from "#/features/runs/RunsTable";
 import { StartRunDialog, type StartRunTarget } from "#/features/runs/StartRunDialog";
+import { useDocumentTitle } from "#/lib/title";
 
-import { KindsCount } from "./ConfigurationsPage";
+import { Mapping } from "./detail-mapping";
+import { Pipeline, PipelineSkeleton, pipelineModel } from "./detail-pipeline";
+import { Versions } from "./detail-versions";
 
 export type ConfigTab = "runs" | "versions" | "mapping";
 
-/* ---------- latest run ---------- */
+const RUNS_ACTIVE_MS = 2_000;
+const RUNS_IDLE_MS = 10_000;
 
-function LatestRun({
-  run,
-  latestVersion,
-  createdAt,
-  lastApplied,
-  onStart,
-}: {
-  run?: Run;
-  latestVersion: number;
-  createdAt: string;
-  lastApplied?: Run;
-  onStart: () => void;
-}) {
-  const state = runState(run, { latestVersion });
-  const e = explain(run, { latestVersion, createdAt, lastApplied });
-  return (
-    <Card>
-      <div className="grid grid-cols-1 items-center gap-x-8 gap-y-3 p-4 md:grid-cols-[140px_minmax(0,1fr)_auto]">
-        <Stepper
-          steps={runSteps(run, { latestVersion })}
-          quiet={state === "insync" || state === "idle"}
-        />
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <p className={`flex items-start gap-1.5 font-medium ${STATE_TEXT[state]}`}>
-            <StateIcon state={state} className="mt-[3px] size-3.5 shrink-0" />
-            <span className="text-pretty">{e.short}</span>
-          </p>
-          <p className="pl-5 text-subtle text-xs [overflow-wrap:anywhere]">
-            {e.note}
-            {e.note && e.at && <span aria-hidden="true"> · </span>}
-            {e.at && <When iso={e.at.iso} prefix={e.at.prefix} />}
-            {lastApplied?.finished_at && run?.run_id !== lastApplied.run_id && (
-              <>
-                <span aria-hidden="true"> · </span>last applied{" "}
-                <When iso={lastApplied.finished_at} />
-              </>
-            )}
-          </p>
-        </div>
-        <div className="md:justify-self-end">
-          {e.action?.target === "run" && run && (
-            <Link
-              to="/runs/$runId"
-              params={{ runId: run.run_id }}
-              className={textAction(e.action.primary)}
-            >
-              {e.action.label}
-              <ChevronRightIcon />
-            </Link>
-          )}
-          {e.action?.target === "plan" && (
-            <button type="button" onClick={onStart} className={textAction(false)}>
-              {e.action.label}
-              <ChevronRightIcon />
-            </button>
-          )}
-          {!e.action && run && (
-            <Link to="/runs/$runId" params={{ runId: run.run_id }} className={textAction(false)}>
-              View run
-              <ChevronRightIcon />
-            </Link>
-          )}
-        </div>
-      </div>
-    </Card>
-  );
-}
+/** The larger of the defined values: the configuration and its versions list can disagree for one refresh. */
+const maxDefined = (...values: (number | null | undefined)[]) => {
+  const defined = values.filter((v): v is number => typeof v === "number");
+  return defined.length ? Math.max(...defined) : undefined;
+};
 
-/* ---------- versions ---------- */
-
-function RunRef({ label, ref }: { label: string; ref?: RunReference | null }) {
-  if (!ref) {
-    return (
-      <span className="text-subtle">
-        {label}: <span>none</span>
-      </span>
-    );
+/** The newest `latest_applied_run` across the versions. */
+function newestApplied(items: VersionSummary[] | undefined) {
+  let best: { run_id: string; finished_at: string } | undefined;
+  for (const v of items ?? []) {
+    const r = v.latest_applied_run;
+    if (!r?.finished_at) continue;
+    if (!best || new Date(r.finished_at) > new Date(best.finished_at))
+      best = { run_id: r.run_id, finished_at: r.finished_at };
   }
-  return (
-    <span className="inline-flex flex-wrap items-center gap-x-1.5">
-      <span className="text-subtle">{label}:</span>
-      <Link to="/runs/$runId" params={{ runId: ref.run_id }} className="rounded-sm hover:underline">
-        <StateLabel state={refState(ref)} label={refLabel(ref)} className="font-normal" />
-      </Link>
-      <span className="text-subtle">
-        <When iso={ref.finished_at ?? ref.started_at} />
-      </span>
-    </span>
-  );
+  return best;
 }
 
-function Versions({
-  versions,
-  onStart,
-}: {
-  versions: VersionSummary[];
-  onStart: (version: number) => void;
-}) {
+const META_LINK = `relative rounded-sm tabular-nums before:absolute before:-inset-x-1 before:-inset-y-3 before:content-[''] underline decoration-dotted decoration-subtle-muted underline-offset-4 hover:text-foreground ${FOCUS}`;
+
+function Breadcrumb({ current }: { current?: string }) {
   return (
-    <Card className="overflow-hidden">
-      <ol className="divide-y">
-        {versions.map((v, i) => (
-          <li
-            key={v.registry_version}
-            className="grid grid-cols-1 gap-x-8 gap-y-2 px-4 py-3.5 md:grid-cols-[120px_minmax(0,1fr)_auto]"
-          >
-            <div className="flex items-baseline gap-2">
-              <span className="font-medium tabular-nums">Version {v.registry_version}</span>
-              {i === 0 && (
-                <span className="rounded-md bg-accent-surface px-1.5 font-medium text-accent text-xs leading-5">
-                  Latest
-                </span>
-              )}
-            </div>
-            <div className="flex min-w-0 flex-col gap-1 text-[13px]">
-              <p className="text-pretty">
-                {v.registration_reason ?? <span className="text-subtle">No reason recorded</span>}
-              </p>
-              <p className="text-subtle text-xs">
-                Registered <When iso={v.created_at} />
-                {v.registered_by && <> by {v.registered_by}</>}
-                <span aria-hidden="true"> · </span>
-                <span className="font-mono" title={v.package_checksum}>
-                  {v.package_checksum.slice(0, 12)}
-                </span>
-              </p>
-              <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs">
-                <RunRef label="Latest run" ref={v.latest_run} />
-                <RunRef label="Last applied" ref={v.latest_applied_run} />
-              </div>
-            </div>
-            <div className="md:justify-self-end">
-              <button
-                type="button"
-                onClick={() => onStart(v.registry_version)}
-                className={textAction(false)}
-              >
-                Plan this version
-                <ChevronRightIcon />
-              </button>
-            </div>
-          </li>
-        ))}
+    <nav aria-label="Breadcrumb" className="text-foreground-muted text-sm">
+      <ol className="flex flex-wrap items-center gap-x-1.5">
+        <li>
+          <Link to="/" className={CRUMB}>
+            Configurations
+          </Link>
+        </li>
+        {current && (
+          <>
+            <li aria-hidden="true" className="text-subtle-muted">
+              /
+            </li>
+            <li aria-current="page" className="min-w-0 [overflow-wrap:anywhere]">
+              {current}
+            </li>
+          </>
+        )}
       </ol>
-    </Card>
+    </nav>
   );
 }
-
-/* ---------- mapping ---------- */
-
-function credentialOf(adapter: DeclaredAdapter, version: ConfigurationVersion): string | undefined {
-  const token = adapter.settings?.token as { $credential?: string } | undefined;
-  const ref = token?.$credential;
-  if (!ref) return undefined;
-  const c = version.declared_content.credentials?.[ref];
-  return c ? `${ref} (${c.provider} ${c.identifier})` : ref;
-}
-
-function SystemCard({
-  side,
-  adapter,
-  version,
-}: {
-  side: string;
-  adapter: DeclaredAdapter;
-  version: ConfigurationVersion;
-}) {
-  const s = describeSystem(adapter);
-  const url = (adapter.settings?.url ?? adapter.settings?.base_url) as string | undefined;
-  const credential = credentialOf(adapter, version);
-  return (
-    <Card className="p-4">
-      <p className="text-subtle text-xs">{side}</p>
-      <p className="font-medium text-base">{s.label}</p>
-      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]">
-        <dt className="text-subtle">Adapter</dt>
-        <dd className="font-mono text-xs leading-5">{adapter.name}</dd>
-        {url && (
-          <>
-            <dt className="text-subtle">Address</dt>
-            <dd className="font-mono text-xs leading-5 [overflow-wrap:anywhere]">{url}</dd>
-          </>
-        )}
-        {s.branch && (
-          <>
-            <dt className="text-subtle">Branch</dt>
-            <dd>
-              <BranchCode branch={s.branch} />
-            </dd>
-          </>
-        )}
-        {credential && (
-          <>
-            <dt className="text-subtle">Credential</dt>
-            <dd className="font-mono text-xs leading-5 [overflow-wrap:anywhere]">{credential}</dd>
-          </>
-        )}
-      </dl>
-    </Card>
-  );
-}
-
-function MappingRow({ m }: { m: DeclaredMapping }) {
-  const [open, setOpen] = useState(false);
-  const fields = m.fields ?? [];
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="grid w-full cursor-pointer grid-cols-[16px_minmax(0,1fr)_auto] items-center gap-x-3 px-4 py-2.5 text-left text-[13px] transition-colors duration-150 ease-out hover:bg-content-muted focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring-halo focus-visible:ring-inset md:grid-cols-[16px_minmax(0,1fr)_minmax(0,1fr)_auto]"
-      >
-        <ChevronRightIcon
-          className={`size-3.5 text-subtle transition-transform duration-150 ease-out motion-reduce:transition-none ${open ? "rotate-90" : ""}`}
-        />
-        <span className="font-medium font-mono">{m.name}</span>
-        <span
-          className="hidden min-w-0 justify-self-start truncate text-left font-mono text-foreground-muted text-xs md:block"
-          title={m.mapping}
-        >
-          from {m.mapping}
-        </span>
-        <span className="text-subtle text-xs tabular-nums">
-          {fields.length} {fields.length === 1 ? "field" : "fields"}
-          {m.filters?.length
-            ? ` · ${m.filters.length} ${m.filters.length === 1 ? "filter" : "filters"}`
-            : ""}
-          {m.transforms?.length
-            ? ` · ${m.transforms.length} ${m.transforms.length === 1 ? "transform" : "transforms"}`
-            : ""}
-        </span>
-      </button>
-      {open && (
-        <div className="border-t bg-content-muted px-4 py-3 pl-11 text-[13px]">
-          <p className="mb-2 font-mono text-foreground-muted text-xs md:hidden">from {m.mapping}</p>
-          {m.identifiers?.length ? (
-            <p className="mb-2 text-xs">
-              <span className="text-subtle">Matched on </span>
-              <span className="font-mono">{m.identifiers.join(", ")}</span>
-            </p>
-          ) : null}
-          <table className="w-full text-left">
-            <thead className="sr-only">
-              <tr>
-                <th scope="col">Destination field</th>
-                <th scope="col">Source</th>
-              </tr>
-            </thead>
-            <tbody>
-              {fields.map((f) => (
-                <tr key={f.name} className="align-top">
-                  <td className="w-1/3 py-0.5 pr-4 font-mono text-xs leading-5">{f.name}</td>
-                  <td className="py-0.5 font-mono text-foreground-muted text-xs leading-5 [overflow-wrap:anywhere]">
-                    {f.mapping ??
-                      (f.static !== undefined ? `static ${JSON.stringify(f.static)}` : "")}
-                    {f.reference && <span className="text-subtle"> → {f.reference}</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </li>
-  );
-}
-
-function Mapping({ version }: { version: ConfigurationVersion }) {
-  const cfg = version.declared_content.configuration;
-  const mapping = cfg.schema_mapping ?? [];
-  return (
-    <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-1 items-stretch gap-3 md:grid-cols-[1fr_auto_1fr]">
-        <SystemCard side="Source" adapter={cfg.source} version={version} />
-        <div className="hidden items-center justify-center md:flex" aria-hidden="true">
-          <ArrowRightIcon className="size-5 text-subtle-muted" />
-        </div>
-        <SystemCard side="Destination" adapter={cfg.destination} version={version} />
-      </div>
-      <section aria-labelledby="mapping" className="flex flex-col gap-2">
-        <SectionHeading id="mapping" title="Mapped kinds" count={mapping.length}>
-          Version {version.registry_version}, in declaration order
-        </SectionHeading>
-        <Card className="overflow-hidden">
-          <ul className="divide-y">
-            {mapping.map((m, i) => (
-              <MappingRow key={`${m.name}-${i}`} m={m} />
-            ))}
-          </ul>
-        </Card>
-      </section>
-    </div>
-  );
-}
-
-/* ---------- page ---------- */
 
 function Tabs({
   tab,
@@ -343,7 +96,7 @@ function Tabs({
   configId,
 }: {
   tab: ConfigTab;
-  counts: Record<ConfigTab, ReactNode>;
+  counts: Record<ConfigTab, string | number | undefined>;
   configId: string;
 }) {
   const items: [ConfigTab, string][] = [
@@ -352,7 +105,7 @@ function Tabs({
     ["mapping", "Mapping"],
   ];
   return (
-    <nav aria-label="Configuration sections" className="flex gap-5 border-b">
+    <nav aria-label="Configuration sections" className="flex gap-4 border-b">
       {items.map(([id, label]) => (
         <Link
           key={id}
@@ -360,126 +113,451 @@ function Tabs({
           params={{ configId }}
           search={{ tab: id }}
           replace
+          resetScroll={false}
           aria-current={tab === id ? "page" : undefined}
-          className={`relative inline-flex h-10 items-center gap-1.5 text-sm transition-colors duration-150 ease-out focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring-halo ${
+          className={`relative -mx-2 inline-flex h-11 items-center gap-1.5 rounded-md px-2 text-sm transition-colors duration-150 ease-out motion-reduce:transition-none ${FOCUS_INSET} ${
             tab === id
-              ? "text-foreground after:absolute after:inset-x-0 after:bottom-[-1px] after:h-0.5 after:rounded-full after:bg-foreground"
+              ? "text-foreground after:absolute after:inset-x-2 after:bottom-[-1px] after:h-0.5 after:rounded-full after:bg-foreground"
               : "text-foreground-muted hover:text-foreground"
           }`}
         >
           {label}
-          <span className="text-subtle text-xs tabular-nums">{counts[id]}</span>
+          {counts[id] !== undefined && <span className={COUNT_BADGE}>{counts[id]}</span>}
         </Link>
       ))}
     </nav>
   );
 }
 
-export function ConfigurationPage({ configId, tab }: { configId: string; tab: ConfigTab }) {
+function PageSkeleton() {
+  return (
+    <div className="pt-6" aria-busy="true">
+      <output className="sr-only">Loading the configuration</output>
+      <div className="flex h-8 items-center pointer-coarse:h-11">
+        <Bar className="h-4 w-40" />
+      </div>
+      <div className="mt-4 flex items-start justify-between gap-6">
+        <Bar className="h-7 w-80 max-w-full" />
+        <Bar className="h-8 w-28 shrink-0 rounded-lg" />
+      </div>
+      <Bar className="mt-2 h-4 w-96 max-w-full" />
+      <div className="mt-6 flex flex-col gap-2">
+        <Bar className="h-4 w-20" />
+        <PipelineSkeleton />
+      </div>
+      <Bar className="mt-8 h-11 w-64" />
+      <Bar className="mt-4 h-64 w-full rounded-2xl" />
+    </div>
+  );
+}
+
+export function ConfigurationPage({
+  configId,
+  tab,
+  version: requestedVersion,
+}: {
+  configId: string;
+  tab: ConfigTab;
+  /** The version the Mapping tab shows; the latest when undefined. */
+  version?: number;
+}) {
   const config = useQuery(configQuery(configId));
   const versions = useQuery(versionsQuery(configId));
-  const runs = useQuery(runsQuery({ config_id: configId }));
-  const latestVersion = config.data?.latest_version ?? 1;
-  const version = useQuery({
-    ...configVersionQuery(configId, latestVersion),
-    enabled: Boolean(config.data),
+  const runs = useQuery({
+    ...runsQuery({ config_id: configId }),
+    refetchInterval: (q) =>
+      failedFirstRead(q)
+        ? false
+        : q.state.data?.items.some((r) => r.phase === "accepted")
+          ? RUNS_ACTIVE_MS
+          : RUNS_IDLE_MS,
   });
+  const latestVersion = maxDefined(
+    config.data?.latest_version,
+    ...(versions.data?.items.map((v) => v.registry_version) ?? [])
+  );
+  const version = useQuery({
+    ...configVersionQuery(configId, latestVersion ?? 0),
+    enabled: latestVersion !== undefined,
+  });
+  const mappingNumber = requestedVersion ?? latestVersion;
+  const mappingVersion = useQuery({
+    ...configVersionQuery(configId, mappingNumber ?? 0),
+    enabled: tab === "mapping" && mappingNumber !== undefined,
+  });
+  const runItems = runs.data?.items ?? [];
+  const latestRun = runItems[0];
+  const readDetail = latestRun?.phase === "planned" || latestRun?.phase === "abandoned";
+  const latestRunDetail = useQuery({
+    ...runQuery(latestRun?.run_id ?? ""),
+    enabled: readDetail,
+    // A verify or apply started elsewhere leaves the runs list at phase "planned"; only this record shows it.
+    refetchInterval: (q) =>
+      failedFirstRead(q)
+        ? false
+        : isInProgress(q.state.data)
+          ? RUNS_ACTIVE_MS
+          : latestRun?.phase === "planned"
+            ? RUNS_IDLE_MS
+            : false,
+  });
+  const openExecution = readDetail
+    ? latestRunDetail.data?.orchestration.find((o) => o.terminal_at == null)
+    : undefined;
+  const inFlight = openExecution?.purpose;
+  const lastInFlight = useRef(inFlight);
+  const refetchRuns = runs.refetch;
+  useEffect(() => {
+    // The runs list keeps the run's earlier phase until it is read again after a verify or apply ends.
+    if (lastInFlight.current && !inFlight) void refetchRuns();
+    lastInFlight.current = inFlight;
+  }, [inFlight, refetchRuns]);
   const [starting, setStarting] = useState<StartRunTarget | null>(null);
 
-  if (config.isPending) {
-    return (
-      <div className="flex flex-col gap-4 pt-6" aria-busy="true">
-        <output className="sr-only">Loading the configuration</output>
-        <Bar className="h-4 w-48" />
-        <Bar className="h-8 w-96 max-w-full" />
-        <Bar className="h-4 w-64" />
-        <Bar className="mt-4 h-20 w-full" />
-      </div>
-    );
-  }
+  const notFound = config.data === undefined && describeError(config.error).notFound;
+  useDocumentTitle(
+    ...(config.data
+      ? [config.data.name ?? configId, "Configurations"]
+      : notFound
+        ? ["Configuration not found"]
+        : config.isPending
+          ? ["Configurations"]
+          : [configId, "Configurations"])
+  );
+
+  if (config.isPending) return <PageSkeleton />;
   if (!config.data) {
     return (
-      <div className="pt-8">
-        <ErrorPanel error={config.error} onRetry={() => config.refetch()} />
-      </div>
+      <>
+        <div className="pt-6">
+          <Breadcrumb />
+        </div>
+        {notFound ? (
+          <ErrorPanel
+            level="page"
+            error={config.error}
+            action={
+              <Link to="/" className={buttonVariants({ variant: "outline", size: "sm" })}>
+                View configurations
+              </Link>
+            }
+          >
+            <p>
+              Configuration ID in the address: <code className={CODE_CHIP}>{configId}</code>
+            </p>
+          </ErrorPanel>
+        ) : (
+          <ErrorPanel level="page" error={config.error} onRetry={() => config.refetch()} />
+        )}
+      </>
     );
   }
 
   const name = config.data.name ?? configId;
-  const runItems = runs.data?.items ?? [];
-  const latestRun = runItems[0];
-  const lastApplied = runItems.find((r) => r.phase === "applied");
   const cfg = version.data?.declared_content.configuration;
+  /** The version the Mapping tab shows, which the tab count describes. */
+  const shownMapping =
+    requestedVersion === undefined ? cfg : mappingVersion.data?.declared_content.configuration;
   const source = cfg ? describeSystem(cfg.source) : undefined;
   const destination = cfg ? describeSystem(cfg.destination) : undefined;
-  const branch = latestRun?.destination_branch ?? destination?.branch;
-  const start = (v = latestVersion) =>
-    setStarting({ configId, name, version: v, branch: branch ?? undefined });
+  const kinds = cfg ? mappedKinds(cfg.schema_mapping) : undefined;
+  const versionPending = latestVersion !== undefined && version.isPending;
+  const versionFailed = latestVersion !== undefined && !version.data && version.isError;
+  const versionsFailed = !versions.data && versions.isError;
+  const systemsMissing = latestVersion === undefined ? "No version registered" : "Not loaded";
+
+  const detailRun = latestRunDetail.data?.run;
+  const currentRun =
+    latestRun &&
+    detailRun?.run_id === latestRun.run_id &&
+    latestRunDetail.dataUpdatedAt > runs.dataUpdatedAt
+      ? detailRun
+      : latestRun;
+  const shownRuns =
+    currentRun && currentRun !== latestRun ? [currentRun, ...runItems.slice(1)] : runItems;
+  const latestVersions =
+    latestVersion !== undefined ? new Map([[configId, latestVersion]]) : new Map<string, number>();
+  const runStates = listRunStates(shownRuns, {
+    latestVersions,
+    inFlight: currentRun && inFlight ? new Map([[currentRun.run_id, inFlight]]) : undefined,
+  });
+  const model = pipelineModel(currentRun, {
+    latestVersion,
+    inFlight: openExecution,
+    createdAt: config.data.created_at,
+    lastApplied: versions.data ? newestApplied(versions.data.items) : undefined,
+    latestRunDetail: currentRun?.phase === "abandoned" ? latestRunDetail.data : undefined,
+    sourceLabel: source?.label,
+    destinationLabel: destination?.label,
+  });
+
+  const prefill = branchPrefill(runItems, configId);
+  const start =
+    latestVersion === undefined
+      ? undefined
+      : (v: number = latestVersion) =>
+          setStarting({
+            configId,
+            name,
+            version: v,
+            branch: prefill?.branch,
+            branchFromRunId: prefill?.runId,
+          });
+
+  const stale = [config, runs, versions, version].filter((q) => q.data !== undefined && q.isError);
+  const readFailure = versionFailed
+    ? {
+        title: versionsFailed
+          ? "Could not read the versions of this configuration"
+          : `Could not read version ${latestVersion}`,
+        error: version.error,
+      }
+    : versionsFailed
+      ? { title: "Could not read the list of versions", error: versions.error }
+      : undefined;
+  const coveredLine = (text: string) => (
+    <p className="text-pretty text-foreground-muted text-sm">
+      {text} The reason is shown at the top of the page.
+    </p>
+  );
+
+  let runsTab: ReactNode = null;
+  if (tab === "runs") {
+    if (runs.data) {
+      runsTab =
+        runItems.length === 0 ? (
+          <EmptyPanel title="No runs yet">
+            <p className="max-w-[52ch] text-pretty text-foreground-muted">
+              A plan reads both systems and lists what would change. Nothing is written until you
+              apply it.
+            </p>
+            {start && (
+              <Button variant="outline" size="sm" onPress={() => start()}>
+                Create the first plan
+              </Button>
+            )}
+          </EmptyPanel>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <RunsTable runs={shownRuns} states={runStates} label={`Runs of ${name}`} />
+            {runs.data.next_cursor && (
+              <Link
+                to="/runs"
+                search={{ config: configId }}
+                className={`self-start ${textAction(false)}`}
+              >
+                View all runs of this configuration
+                <ChevronRightIcon />
+              </Link>
+            )}
+          </div>
+        );
+    } else if (runs.isPending) {
+      runsTab = <RunsTableSkeleton rows={4} withConfig={false} />;
+    } else {
+      runsTab = (
+        <p className="text-pretty text-foreground-muted text-sm">
+          The runs could not be read. The reason is shown under Latest run.
+        </p>
+      );
+    }
+  }
+
+  let versionsTab: ReactNode = null;
+  if (tab === "versions") {
+    if (versions.data) {
+      versionsTab = (
+        <Versions
+          configId={configId}
+          versions={versions.data.items}
+          latestVersion={latestVersion}
+          runStates={runStates}
+          onStart={start}
+        />
+      );
+    } else if (versions.isPending) {
+      versionsTab = <Bar className="h-64 w-full rounded-2xl" />;
+    } else {
+      versionsTab = coveredLine("The versions could not be read.");
+    }
+  }
+
+  let mappingTab: ReactNode = null;
+  if (tab === "mapping") {
+    if (mappingNumber === undefined) {
+      mappingTab = versions.isPending ? (
+        <Bar className="h-64 w-full rounded-2xl" />
+      ) : (
+        <EmptyPanel title="No version registered" />
+      );
+    } else if (mappingVersion.data) {
+      mappingTab = (
+        <Mapping
+          configId={configId}
+          version={mappingVersion.data}
+          versionNumbers={versions.data?.items.map((v) => v.registry_version) ?? []}
+          latestVersion={latestVersion}
+        />
+      );
+    } else if (mappingVersion.isPending) {
+      mappingTab = <Bar className="h-64 w-full rounded-2xl" />;
+    } else if (describeError(mappingVersion.error).notFound) {
+      mappingTab = (
+        <EmptyPanel title={`Version ${mappingNumber} is not registered`}>
+          <Link
+            to="/configs/$configId"
+            params={{ configId }}
+            search={{ tab: "mapping" }}
+            replace
+            resetScroll={false}
+            className={buttonVariants({ variant: "outline", size: "sm" })}
+          >
+            View the latest version
+          </Link>
+        </EmptyPanel>
+      );
+    } else if (mappingNumber === latestVersion && versionFailed) {
+      mappingTab = coveredLine(`Version ${mappingNumber} could not be read.`);
+    } else {
+      mappingTab = (
+        <ErrorPanel error={mappingVersion.error} onRetry={() => mappingVersion.refetch()} compact />
+      );
+    }
+  }
 
   return (
     <>
       <header className="flex flex-col gap-4 pt-6 pb-6">
-        <nav aria-label="Breadcrumb" className="text-foreground-muted text-sm">
-          <ol className="flex flex-wrap items-center gap-1.5">
-            <li>
-              <Link to="/" className="rounded-sm hover:text-foreground hover:underline">
-                Configurations
-              </Link>
-            </li>
-            <li aria-hidden="true" className="text-border-strong">
-              /
-            </li>
-            <li aria-current="page" className="[overflow-wrap:anywhere]">
-              {name}
-            </li>
-          </ol>
-        </nav>
+        <Breadcrumb current={name} />
         <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
           <div className="flex min-w-0 flex-col gap-2">
-            <h1 className="text-balance font-semibold text-2xl tracking-tight [overflow-wrap:anywhere]">
+            <h1 className="hyphens-none text-balance font-semibold text-2xl tracking-tight [overflow-wrap:anywhere] max-sm:text-xl">
               {name}
             </h1>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-foreground-muted">
-              {source && destination ? (
-                <span className="inline-flex items-center gap-1.5">
-                  {source.label}
-                  <ArrowRightIcon />
-                  <span className="sr-only">to</span>
-                  {destination.label}
-                </span>
-              ) : (
-                <Bar className="h-4 w-32" />
+            <ul className={META_LIST}>
+              {latestVersion !== undefined && !versionFailed && (
+                <li className="inline-flex items-center gap-1.5 text-foreground">
+                  {source && destination ? (
+                    <>
+                      {source.label}
+                      <ArrowRightIcon />
+                      <span className="sr-only">to</span>
+                      {destination.label}
+                    </>
+                  ) : (
+                    <Bar className="h-4 w-32" />
+                  )}
+                </li>
               )}
-              <span className="tabular-nums">Version {latestVersion}</span>
-              {cfg && <KindsCount kinds={mappedKinds(cfg.schema_mapping)} />}
-              <span className="inline-flex items-center gap-1 font-mono text-xs">
+              <li>
+                {latestVersion !== undefined ? (
+                  <Link
+                    to="/configs/$configId"
+                    params={{ configId }}
+                    search={{ tab: "versions" }}
+                    replace
+                    resetScroll={false}
+                    className={META_LINK}
+                  >
+                    Version {latestVersion}
+                  </Link>
+                ) : (
+                  "No version registered"
+                )}
+              </li>
+              {kinds && (
+                <li>
+                  <Link
+                    to="/configs/$configId"
+                    params={{ configId }}
+                    search={{ tab: "mapping" }}
+                    replace
+                    resetScroll={false}
+                    className={META_LINK}
+                  >
+                    {kinds.length} {kinds.length === 1 ? "kind" : "kinds"}
+                  </Link>
+                </li>
+              )}
+              <li className="inline-flex items-center gap-1 font-mono text-subtle text-xs">
                 {configId}
                 <CopyButton value={configId} label="Copy configuration ID" />
-              </span>
-            </div>
+              </li>
+            </ul>
           </div>
-          <Button variant="primary" size="sm" onPress={() => start()}>
-            <PlusIcon />
-            Start run
-          </Button>
+          <div className="flex flex-col items-start gap-1 sm:items-end">
+            <Button
+              variant={runs.data && model.action?.kind !== "review" ? "primary" : "outline"}
+              size="sm"
+              isDisabled={!start}
+              onPress={() => start?.()}
+            >
+              <PlusIcon />
+              Start run
+            </Button>
+            {!start && (
+              <p className="text-subtle text-xs">Register a version before starting a run.</p>
+            )}
+          </div>
         </div>
       </header>
+
+      {readFailure && (
+        <Notice
+          tone="neutral"
+          className="mb-4"
+          role="alert"
+          title={readFailure.title}
+          icon={<StateIcon state="failed" className="mt-0.5 size-4 shrink-0 text-danger" />}
+          action={
+            describeError(readFailure.error).retryable ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                className="-my-1"
+                onPress={() => {
+                  void version.refetch();
+                  void versions.refetch();
+                }}
+              >
+                Try again
+              </Button>
+            ) : undefined
+          }
+        >
+          <p>{describeError(readFailure.error).title}</p>
+        </Notice>
+      )}
+      {stale.length > 0 && (
+        <StaleNotice
+          error={stale[0].error}
+          updatedAt={Math.min(...stale.map((q) => q.dataUpdatedAt))}
+          onRetry={() => {
+            void config.refetch();
+            void runs.refetch();
+            void versions.refetch();
+          }}
+        />
+      )}
 
       <div className="flex flex-col gap-8">
         <section aria-labelledby="latest" className="flex flex-col gap-2">
           <SectionHeading id="latest" title="Latest run" />
-          {runs.isPending ? (
-            <Bar className="h-[72px] w-full" />
-          ) : runs.error ? (
-            <ErrorPanel error={runs.error} onRetry={() => runs.refetch()} compact />
-          ) : (
-            <LatestRun
-              run={latestRun}
-              latestVersion={latestVersion}
-              createdAt={config.data.created_at}
-              lastApplied={lastApplied}
-              onStart={() => start()}
+          {runs.data ? (
+            <Pipeline
+              model={model}
+              run={currentRun}
+              source={source}
+              destination={destination}
+              declaredBranch={destination?.branch}
+              versionPending={versionPending}
+              systemsMissing={systemsMissing}
+              onStart={start && (() => start())}
             />
+          ) : runs.isPending ? (
+            <PipelineSkeleton />
+          ) : (
+            <ErrorPanel error={runs.error} onRetry={() => runs.refetch()} compact />
           )}
         </section>
 
@@ -488,45 +566,14 @@ export function ConfigurationPage({ configId, tab }: { configId: string; tab: Co
             tab={tab}
             configId={configId}
             counts={{
-              runs: runs.data ? `${runItems.length}${runs.data.next_cursor ? "+" : ""}` : "",
-              versions: versions.data?.items.length ?? "",
-              mapping: cfg ? (cfg.schema_mapping ?? []).length : "",
+              runs: runs.data ? `${runItems.length}${runs.data.next_cursor ? "+" : ""}` : undefined,
+              versions: versions.data?.items.length,
+              mapping: shownMapping ? (shownMapping.schema_mapping ?? []).length : undefined,
             }}
           />
-          {tab === "runs" &&
-            (runs.error ? (
-              <ErrorPanel error={runs.error} onRetry={() => runs.refetch()} compact />
-            ) : runs.isPending ? (
-              <Bar className="h-40 w-full" />
-            ) : runItems.length === 0 ? (
-              <EmptyPanel title="No runs yet">
-                <p className="max-w-[52ch] text-pretty text-foreground-muted">
-                  A plan reads both systems and lists what would change. Nothing is written until
-                  you apply it.
-                </p>
-                <Button variant="outline" size="sm" onPress={() => start()}>
-                  Create the first plan
-                </Button>
-              </EmptyPanel>
-            ) : (
-              <RunsTable runs={runItems} />
-            ))}
-          {tab === "versions" &&
-            (versions.error ? (
-              <ErrorPanel error={versions.error} onRetry={() => versions.refetch()} compact />
-            ) : versions.data ? (
-              <Versions versions={versions.data.items} onStart={start} />
-            ) : (
-              <Bar className="h-40 w-full" />
-            ))}
-          {tab === "mapping" &&
-            (version.error ? (
-              <ErrorPanel error={version.error} onRetry={() => version.refetch()} compact />
-            ) : version.data ? (
-              <Mapping version={version.data} />
-            ) : (
-              <Bar className="h-40 w-full" />
-            ))}
+          {runsTab}
+          {versionsTab}
+          {mappingTab}
         </div>
       </div>
       {starting && <StartRunDialog target={starting} onClose={() => setStarting(null)} />}
