@@ -1,0 +1,76 @@
+infrahub_sync/service/serve.py
+  s_01f3e2b1e0dad4::t_958bfa2372bd77 17-24,30-31,54-56
+  s_01f3e2b1e0dad4::t_02f26f20eaa430 57
+tests/service/test_run_logs_route.py
+  s_01f3e2b1e0dad4::t_181bd021e2a050 65
+  s_01f3e2b1e0dad4::t_3e698538e294d4 1-64,66-264
+infrahub_sync/client/client.py
+  s_01f3e2b1e0dad4::t_8d0adfafad3402 29,31,56,465-479,482-491
+  s_01f3e2b1e0dad4::t_181bd021e2a050 97,480-481
+  s_01f3e2b1e0dad4::t_b00d22bb36647d 492-493
+dev/specs/017-sync-run-events-logs/tasks.md
+  s_01f3e2b1e0dad4::t_cff946d8ff1025 123-126,130-133
+tests/service/test_orchestration_logs.py
+  s_01f3e2b1e0dad4::t_b4350521363411 1-156
+tests/service/test_status_observation_budget.py
+  s_01f3e2b1e0dad4::t_67e33d17f0c89c 37,108-110
+  s_01f3e2b1e0dad4::t_84e32d83a37d83 111
+tests/service/test_run_log.py
+  s_01f3e2b1e0dad4::t_849d4d0c4a9e95 1-134
+tests/service/test_config_routes.py
+  s_01f3e2b1e0dad4::t_67e33d17f0c89c 33,42,65-67
+  s_01f3e2b1e0dad4::t_d745dd870ef530 68
+infrahub_sync/service/app.py
+  s_01f3e2b1e0dad4::t_bb23e52a65ecaf 16,44,76-109,364
+infrahub_sync/service/models.py
+  s_01f3e2b1e0dad4::t_848914ad87e8e3 41-42,78-79,89,154,164,252-267
+tests/client/test_client.py
+  s_01f3e2b1e0dad4::t_822c1306ee2f88 30-31,917-956,964-981,983-1016
+  s_01f3e2b1e0dad4::t_02cc3e0879d103 957-963,982
+  s_01f3e2b1e0dad4::t_1b6c030c786703 1017-1021
+tests/service/test_events_route.py
+  s_01f3e2b1e0dad4::t_67e33d17f0c89c 31,35-36,69-71
+  s_01f3e2b1e0dad4::t_f7107eff46d324 72
+tests/service/test_http_api.py
+  s_01f3e2b1e0dad4::t_871bee0b4a1cab 73,80-81,178-180
+  s_01f3e2b1e0dad4::t_822c1306ee2f88 1824
+  s_01f3e2b1e0dad4::t_af293b95e7f84e 181
+tests/service/test_artifact_confidentiality.py
+  s_01f3e2b1e0dad4::t_67e33d17f0c89c 25,33,63-64
+  s_01f3e2b1e0dad4::t_6fb62c58e1bc6c 65
+tests/service/test_liveness_policy.py
+  s_01f3e2b1e0dad4::t_67e33d17f0c89c 20-27,30-31,96-98
+  s_01f3e2b1e0dad4::t_63832fcdeb7f05 99
+infrahub_sync/client/models.py
+  s_01f3e2b1e0dad4::t_63b6742a0eea46 43-47,430-458
+  s_01f3e2b1e0dad4::t_7264b9cbdefd7b 459-460
+infrahub_sync/service/service.py
+  s_01f3e2b1e0dad4::t_fb70f890329987 51,58,62-68,160-162,759-788
+  s_01f3e2b1e0dad4::t_7d20c26f894ab3 17,50
+  s_01f3e2b1e0dad4::t_02cc3e0879d103 790
+  s_01f3e2b1e0dad4::t_1733ad9f3a01fc 71-72,789,791
+infrahub_sync/service/orchestration.py
+  s_01f3e2b1e0dad4::t_4e3628dc383e19 18,26,31,69-99,190-191,274-287,360-403
+  s_01f3e2b1e0dad4::t_83a3dc146deb80 404
+infrahub_sync/client/__init__.py
+  s_01f3e2b1e0dad4::t_63b6742a0eea46 48-49,99-100
+infrahub_sync/service/run_log.py
+  s_01f3e2b1e0dad4::t_181bd021e2a050 14,76
+  s_01f3e2b1e0dad4::t_86751cbc1d037b 1-13,15-75,77-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0a61dbe2c139198d33cb19c6ea65ac16342c838d",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
