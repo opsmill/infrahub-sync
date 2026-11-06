@@ -1,0 +1,49 @@
+---
+name: webex-workspaces-to-infrahub
+source:
+  name: webex
+  settings:
+    auth_method: token
+    token_env: WEBEX_TOKEN
+    resources:
+      LocationSite:
+        page_size: 100
+        read_only: true
+      LocationMeetingRoom:
+        page_size: 1000
+destination:
+  name: infrahub
+  settings:
+    url: http://localhost:8000
+diffsync_flags:
+  - SKIP_UNMATCHED_DST
+order:
+  - LocationSite
+  - LocationMeetingRoom
+schema_mapping:
+  - name: LocationSite
+    mapping: /v1/locations
+    identifiers: [webex_location_id]
+    fields:
+      - name: webex_location_id
+        mapping: id
+  - name: LocationMeetingRoom
+    mapping: /v1/workspaces
+    identifiers: [name]
+    filters:
+      - field: type
+        operation: '=='
+        value: meetingRoom
+      - field: locationId
+        operation: is_not_empty
+    transforms:
+      - field: room_number
+        expression: "{{ displayName.split('/')[-1] }}"
+    fields:
+      - name: name
+        mapping: displayName
+      - name: room_number
+        mapping: room_number
+      - name: parent
+        mapping: locationId
+        reference: LocationSite

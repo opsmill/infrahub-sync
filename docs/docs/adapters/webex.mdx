@@ -1,0 +1,145 @@
+---
+title: Webex adapter
+---
+
+The Webex adapter reads locations, workspaces and other JSON API resources into a sync project. Use it to sync meeting rooms into an existing Infrahub location hierarchy, or configure other GET endpoints and field mappings for your destination.
+
+Webex is supported as a **source only**. Every data request uses GET. Service App authentication may POST to `/v1/access_token` to refresh credentials; the adapter never changes data in Webex. Requests must stay within the configured HTTPS origin, and redirects are rejected.
+
+## Authentication and permissions
+
+Choose a fixed access token for short runs, or an authorized Service App for scheduled runs. Credentials are read exclusively from environment variables. Provide them through your shell or secret manager; do not put their values in YAML.
+
+| Authentication | Required environment variables | Behavior |
+| --- | --- | --- |
+| `token` (default) | `WEBEX_TOKEN` | Uses the supplied bearer token without renewal. |
+| `service_app` | `WEBEX_CLIENT_ID`, `WEBEX_CLIENT_SECRET`, `WEBEX_REFRESH_TOKEN` | Obtains access at the start of the run, refreshes on expiry and retries once after HTTP 401. |
+
+For a Service App, change the source settings to:
+
+```yaml
+source:
+  name: webex
+  settings:
+    auth_method: service_app
+```
+
+An administrator must authorize the app before it can run. The [Webex Service Apps documentation](https://developer.webex.com/create/docs/service-apps) describes typical access-token and refresh-token lifetimes of 14 and 90 days. The adapter retains renewed credentials only in memory for the current process. Maintain valid credentials in your secret manager between scheduled runs; it does not persist rotated refresh tokens. An expired or revoked refresh token requires authorization again.
+
+The meeting-room example needs administrator access with `spark-admin:locations_read` and `spark-admin:workspaces_read`. Other endpoints need their own read scopes. Check the [Webex scope reference](https://developer.webex.com/admin/docs/integration-scopes) and the [workspace API permissions](https://developer.webex.com/devices/docs/api/v1/workspaces) before adding resources.
+
+## Sync meeting rooms into existing sites
+
+The [meeting-room example](https://github.com/opsmill/infrahub-sync/blob/main/examples/webex_workspaces_to_infrahub/config.yml) assumes countries, cities and sites already exist in Infrahub, with a country → city → site → meeting-room hierarchy. Add the optional Text attribute `LocationSite.webex_location_id` in your schema repository and use a separate workflow to write each Webex location ID onto its matching existing site. Site preparation and its matching rules are outside this example.
+
+The project reads `/v1/workspaces`, keeps only `type == meetingRoom` with a nonempty `locationId`, and maps:
+
+| Infrahub field | Webex value |
+| --- | --- |
+| `LocationMeetingRoom.name` (identifier) | Complete `displayName`, such as `DE/Berlin/HQ1/A1.01`. |
+| `LocationMeetingRoom.room_number` | Final slash-separated segment, such as `A1.01`. |
+| `LocationMeetingRoom.parent` | Existing site whose `webex_location_id` equals `locationId`. |
+
+The project also loads `/v1/locations` as reference-only site models identified by `webex_location_id`. The Webex resource option `read_only: true` excludes these models from diff operations while retaining them for references. The project creates or updates rooms without creating, updating, renaming or deleting sites. The existing `SKIP_UNMATCHED_DST` flag preserves destination-only sites and rooms.
+
+```bash
+infrahub-sync generate --config-file examples/webex_workspaces_to_infrahub/config.yml
+infrahub-sync diff --config-file examples/webex_workspaces_to_infrahub/config.yml
+```
+
+Review the destination and diff before approving `sync` with the same configuration. Every room requires an existing site with a populated, unique Webex location ID. Schema changes and the separate site-preparation workflow are not performed by this adapter.
+
+### Known destination limitation
+
+Sites without `webex_location_id` are not handled by this change. The existing Infrahub adapter can load optional null or blank identifiers as empty identities, potentially collapsing unrelated sites or producing invalid parent matches. The existing `sync --continue-on-error` option does not reliably skip optional empty identifiers, and `diff` has no such flag. This adapter does not alter either behavior.
+
+The example tests use populated, unique destination site IDs. If your destination contains sites without those IDs, resolving the destination-loading limitation is follow-up work before relying on this example. General cross-side parent validation is also a follow-up; verify every intended room's parent before approving writes.
+
+### Room identity and retention
+
+The complete name identifies a room. Renaming a workspace therefore creates a new room and preserves the old room. Removing a workspace also preserves its destination room under the example deletion policy. Rename/removal reconciliation is a follow-up. Workspace IDs, capacity, device platform and other workspace types are not mapped by this example.
+
+## Connection settings
+
+Set `source.name: webex` and configure the connection under `source.settings`.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `url` | `https://webexapis.com` | HTTPS origin; no path, query, fragment or embedded credentials. |
+| `auth_method` | `token` | `token` or `service_app`. |
+| `token_env` | `WEBEX_TOKEN` | Fixed-token environment variable name. |
+| `client_id_env` | `WEBEX_CLIENT_ID` | Service App client-ID variable name. |
+| `client_secret_env` | `WEBEX_CLIENT_SECRET` | Service App client-secret variable name. |
+| `refresh_token_env` | `WEBEX_REFRESH_TOKEN` | Service App refresh-token variable name. |
+| `timeout` | `30` | Positive timeout in seconds for each request. |
+| `retries` | `3` | Retries per request for rate limits, server errors, timeouts and connection failures. |
+| `page_size` | `100` | Initial `max` value unless overridden by a resource or parameter. |
+| `org_id` | Unset | Organization identifier, or an environment reference; omit to use the credential's organization. |
+| `params` | `{}` | Query parameters applied across resources. |
+| `resources` | `{}` | Extraction options keyed by schema-mapping model name. |
+
+For an organization ID from the environment:
+
+```yaml
+source:
+  name: webex
+  settings:
+    org_id:
+      env: WEBEX_ORG_ID
+```
+
+Parameter names are unrestricted. Values can be strings, numbers, booleans, lists, `{env: VARIABLE_NAME}` or, for dependent resources, `{parent: field.path}`. Booleans serialize as `true` or `false`, and lists as comma-separated values. Query encoding preserves spaces and special characters. A resource parameter overrides a source parameter; `null` omits it. For endpoints that reject `orgId` or `max`, omit those parameters in the resource with `orgId: null` or `max: null`.
+
+Missing environment variables fail before any request, including token refresh. Pagination follows Webex `Link` headers until no next page remains, including empty intermediate pages. The adapter retains configured query parameters when a next-page link omits them. Initial `before` and `after` cursors are rejected because they could omit records. See [Webex pagination](https://developer.webex.com/meeting/docs/basics) for the response-header format.
+
+Locations use `page_size: 100`; that endpoint rejects `max=1000`. The workspace example uses `page_size: 1000`. Choose an accepted size for each endpoint; a page-size setting never limits the total number of records loaded.
+
+## Resource settings and other endpoints
+
+Each schema mapping's `mapping` is its GET path, including `/v1/`. Fields, filters, Jinja2 transforms, identifiers and references follow the [schema-mapping configuration](../reference/config.mdx).
+
+| Resource option | Default | Meaning |
+| --- | --- | --- |
+| `response_key` | `items` | Dotted JSON key containing records; `null` selects a bare object or list. |
+| `params` | `{}` | Overrides for source query parameters. |
+| `page_size` | Connection default | Overrides the initial `max` value. |
+| `parent` | Unset | Previously loaded mapping used to expand requests. |
+| `details` | Unset | GET path expanded once per record; returned fields overwrite list fields. |
+| `read_only` | `false` | Excludes source models from diff operations while keeping them available for references. |
+
+For example, a location-dependent request can retrieve workspaces once per location and then request each workspace's details. The destination kinds and fields must exist in your schema. Replace the workspace resource options in a project that already loads the site mapping:
+
+```yaml
+source:
+  name: webex
+  settings:
+    resources:
+      LocationMeetingRoom:
+        parent: LocationSite
+        params:
+          locationId:
+            parent: id
+        details: /v1/workspaces/{id}
+        page_size: 1000
+```
+
+Set `order: [LocationSite, LocationMeetingRoom]` when using `parent`. Parent request dependencies are not inferred from these resource options. The parent fields are the loaded Webex record fields, so `id` is the Webex location ID. Path placeholders such as `{id}` or `{address.country}` are URL-escaped; a `mapping` path can use them to address a resource under each parent. Per-parent 404 responses skip that absent resource, while empty parent fields skip the request with a warning.
+
+For an endpoint returning one object, set `response_key: null` and `params: {max: null}`. Records without their own ID receive an internal source identifier; map the destination identifiers explicitly. Details load before the shared filters and transforms.
+
+A scalar reference value is already the peer's sync identifier, as in the room project's `locationId`. A native dict such as `{{ {'id': locationId} }}` instead resolves the peer by its source `local_id`; an absent dict reference raises an error. Choose the form that matches the peer mapping's identifiers.
+
+## Failure handling
+
+| Failure | Result and action |
+| --- | --- |
+| HTTP 401 | Fixed-token authentication fails; Service App authentication refreshes once, then fails if still unauthorized. |
+| HTTP 403 | Reports insufficient permission for the resource; check read scopes and administrator authorization. |
+| HTTP 400 or other rejected response | Reports the resource and status; check endpoint and query settings. Raw response bodies are excluded. |
+| HTTP 429 | Waits for `Retry-After`, then retries up to `retries`; persistent limits stop the run. |
+| Timeout, connection failure or HTTP 5xx | Retries with bounded attempts, then stops with resource context. |
+| Missing response key or malformed JSON | Stops rather than treating the resource as empty. |
+| Redirect, external pagination link or pagination cycle | Stops; credentials are never forwarded to another origin. |
+| Missing destination parent | Prepare and validate the existing site's Webex ID in your separate workflow before approving room writes. |
+
+Errors and logs exclude credentials, raw response bodies and underlying request-exception text. Keep the default full extraction for this example; incremental change tracking is not implemented for Webex.
