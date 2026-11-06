@@ -682,3 +682,31 @@ def test_entries_sharing_a_collection_send_one_request_selecting_both_properties
     assert {"jobTitle", "mail"} <= set(select)
     assert loaded(adapter, IdentityEmployee)[graph_id(1)].display_name == "Engineer"
     assert loaded(adapter, IdentityServiceAccount)[graph_id(2)].email == "svc-backup@example.com"
+
+
+@pytest.mark.parametrize("membership", ["direct", "transitive"])
+def test_member_of_collection_loads_mapped_users_and_plans_members_path(membership: str) -> None:
+    router = GraphRouter(honor_select=True)
+    path = router.members_path(graph_id(11), transitive=membership == "transitive") + "/microsoft.graph.user"
+    router.add_records(path, [user_record(1, "room1@example.com", accountEnabled=True)])
+    entry = {**USERS_ENTRY, "mapping": "room_accounts"}
+    settings = {
+        "membership": membership,
+        "collections": {
+            "room_accounts": {
+                "resource": "users",
+                "member_of": graph_id(11),
+                "filter": "startswith(userPrincipalName,'room')",
+            }
+        },
+    }
+    adapter = make_adapter(make_config([entry], settings=settings), router)
+
+    assert adapter.request_plan["room_accounts"].path == path
+    adapter.load()
+
+    users = loaded(adapter, IdentityEmployee)
+    assert set(users) == {graph_id(1)}
+    assert users[graph_id(1)].name == "room1@example.com"
+    assert users[graph_id(1)].enabled is True
+    assert router.paths() == [path]

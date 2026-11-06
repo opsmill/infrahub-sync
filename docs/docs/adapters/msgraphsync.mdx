@@ -146,15 +146,30 @@ The `mapping` of each `schema_mapping` entry names the collection the entry read
 - `users` or `groups`: every user or every group, without a filter.
 - A name defined under `settings.collections`: a read of users or groups with an optional filter.
 
-A collection definition accepts three keys:
+A collection definition accepts four keys:
 
 | Key | Required | Default | Content |
 | --- | --- | --- | --- |
 | `resource` | Yes | none | `users` or `groups`. |
 | `filter` | No | none | An OData `$filter` expression, sent to Microsoft Graph unchanged. |
 | `advanced_query` | No | `false` | `true` sends the request as a Graph advanced query. |
+| `member_of` | No | none | A non-empty group object ID. Only valid with `resource: users`; reads the users that belong to this group. |
 
 A collection cannot be called `users` or `groups`: these names already mean a read of every user or every group.
+
+Use `member_of` to read only a group's users, optionally narrowed with an OData filter:
+
+```yaml
+collections:
+  room_accounts:
+    resource: users
+    member_of: 00000000-0000-0000-0000-000000000000
+    filter: "startswith(userPrincipalName,'room')"
+```
+
+With `membership: direct` (the default), this collection reads `GET /groups/{member_of}/members/microsoft.graph.user`. With `membership: transitive`, it reads `GET /groups/{member_of}/transitiveMembers/microsoft.graph.user`, including users in nested groups. Both reads use the collection's `$select`, `$filter` and page size, and follow every page. They require `GroupMember.Read.All` (or `Group.Read.All`); hidden membership also requires `Member.Read.Hidden`.
+
+When both `member_of` and `filter` are set, the adapter automatically adds `$count=true` and sends `ConsistencyLevel: eventual` on every page, even with `advanced_query: false`. The eventual-consistency delay described below applies. If the group does not exist, the sync stops with an error naming the collection and group ID.
 
 The adapter reads each collection once per run, even when several `schema_mapping` entries name it, and it does not read collections that no entry names. Each entry receives its own copy of the records, so the filters and transforms of one entry do not change the records of another entry. In the example below, one `accounts` collection feeds two kinds: employees and service accounts.
 

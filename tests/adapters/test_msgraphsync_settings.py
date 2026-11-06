@@ -273,3 +273,29 @@ def test_given_credential_is_closed_when_graph_client_exits_on_error() -> None:
         asyncio.run(open_and_fail())
 
     assert credential.closed is True
+
+
+def test_member_of_users_collection_is_accepted() -> None:
+    settings = make_settings(
+        {"collections": {"room_accounts": {"resource": "users", "member_of": SETTINGS_TENANT}}}, FULL_ENV
+    )
+
+    assert settings.collections["room_accounts"].member_of == SETTINGS_TENANT
+
+
+@pytest.mark.parametrize("member_of", ["", "   ", None, 42, False, []])
+def test_member_of_requires_a_non_empty_string(member_of: object) -> None:
+    with pytest.raises(MsgraphConfigError, match=r"collections\.room_accounts\.member_of.*non-empty string"):
+        make_settings({"collections": {"room_accounts": {"resource": "users", "member_of": member_of}}}, FULL_ENV)
+
+
+def test_member_of_groups_collection_is_refused() -> None:
+    with pytest.raises(MsgraphConfigError, match=r"member_of.*only with resource 'users'"):
+        make_settings(
+            {"collections": {"room_accounts": {"resource": "groups", "member_of": SETTINGS_TENANT}}}, FULL_ENV
+        )
+
+
+def test_unknown_collection_key_lists_member_of() -> None:
+    with pytest.raises(MsgraphConfigError, match="Allowed keys: resource, filter, advanced_query, member_of"):
+        make_settings({"collections": {"room_accounts": {"resource": "users", "unknown": True}}}, FULL_ENV)

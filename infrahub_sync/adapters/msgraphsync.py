@@ -131,7 +131,7 @@ ALLOWED_SETTINGS = (
     "select",
     "collections",
 )
-COLLECTION_KEYS = ("resource", "filter", "advanced_query")
+COLLECTION_KEYS = ("resource", "filter", "advanced_query", "member_of")
 ERROR_MAPPING = {"XXX": ODataError}
 
 # Retry waits go through this module attribute so that tests can replace it.
@@ -181,6 +181,7 @@ class Collection:
     resource: str
     filter: str | None = None
     advanced_query: bool = False
+    member_of: str | None = None
 
 
 @dataclass(frozen=True)
@@ -393,7 +394,17 @@ def _collection(name: Any, body: Any) -> Collection:
     if not isinstance(advanced_query, bool):
         msg = f"Setting '{where}.advanced_query' must be true or false, got {advanced_query!r}."
         raise MsgraphConfigError(msg)
-    return Collection(name=name, resource=resource, filter=query_filter or None, advanced_query=advanced_query)
+    member_of = body.get("member_of")
+    if "member_of" in body:
+        if not isinstance(member_of, str) or not member_of.strip():
+            msg = f"Setting '{where}.member_of' must be a non-empty string (a group object ID), got {member_of!r}."
+            raise MsgraphConfigError(msg)
+        if resource != USERS:
+            msg = f"Setting '{where}.member_of' is allowed only with resource 'users', got {resource!r}."
+            raise MsgraphConfigError(msg)
+    return Collection(
+        name=name, resource=resource, filter=query_filter or None, advanced_query=advanced_query, member_of=member_of
+    )
 
 
 def build_credential(settings: MsgraphSettings) -> Any:
@@ -460,16 +471,33 @@ class MsgraphClient:
     async def list_collection(self, collection: Collection, select: Sequence[str]) -> list[dict[str, Any]]:
         """Return every record of a collection, following `@odata.nextLink` until the last page."""
         builder = self.sdk.users if collection.resource == USERS else self.sdk.groups
+        if collection.member_of:
+            group = self.sdk.groups.by_group_id(collection.member_of)
+            members = group.transitive_members if self.settings.membership == MEMBERSHIP_TRANSITIVE else group.members
+            builder = members.graph_user
+        eventual = collection.advanced_query or bool(collection.member_of and collection.filter)
         info = builder.to_get_request_information(
             _request_configuration(
                 builder,
                 select=list(select),
                 top=self.settings.page_size,
                 filter=collection.filter or None,
-                count=True if collection.advanced_query else None,
+                count=True if eventual else None,
             )
         )
-        return await self._read_pages(builder, info, eventual=collection.advanced_query)
+        if collection.member_of and info.url_template is not None:
+            # Some SDK versions shorten the cast to `graph.user`; use Graph's fully qualified type name.
+            info.url_template = info.url_template.replace("/graph.user", "/microsoft.graph.user")
+        try:
+            return await self._read_pages(builder, info, eventual=eventual, member=bool(collection.member_of))
+        except MsgraphRequestError as exc:
+            if collection.member_of and exc.status == 404:
+                msg = (
+                    f"Microsoft Graph collection '{collection.name}': group '{collection.member_of}' was not found. "
+                    f"{exc} {NO_RECORDS_NOTE}"
+                )
+                raise MsgraphRequestError(msg, status=exc.status, code=exc.code, path=exc.path) from exc
+            raise
 
     async def user_member_ids(self, group_id: str, *, transitive: bool) -> list[str]:
         """Return the sorted, unique IDs of the users that are direct or transitive members of a group."""
@@ -706,6 +734,7 @@ class CollectionPlan:
 
     collection: Collection
     select: tuple[str, ...]
+    path: str
     needs_members: bool = False
 
 
@@ -728,7 +757,13 @@ def build_request_plan(
     plan: dict[str, CollectionPlan] = {}
     for name, collection in collections.items():
         _append_new(selects[name], settings.select.get(collection.resource, ()))
-        plan[name] = CollectionPlan(collection=collection, select=tuple(selects[name]), needs_members=members[name])
+        path = f"/{collection.resource}"
+        if collection.member_of:
+            relationship = "transitiveMembers" if settings.membership == MEMBERSHIP_TRANSITIVE else "members"
+            path = f"/groups/{collection.member_of}/{relationship}/microsoft.graph.user"
+        plan[name] = CollectionPlan(
+            collection=collection, select=tuple(selects[name]), path=path, needs_members=members[name]
+        )
     return plan
 
 
@@ -873,6 +908,7 @@ class MsgraphsyncAdapter(DiffSyncMixin, Adapter):
                     "collection read",
                     collection=name,
                     resource=plan.collection.resource,
+                    path=plan.path,
                     records=len(records[name]),
                     requests=graph.requests - requests_before,
                     member_requests=graph.member_requests - member_requests_before,

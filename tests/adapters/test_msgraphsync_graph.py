@@ -504,3 +504,80 @@ def test_error_messages_and_logs_never_contain_the_token(
     assert TOKEN not in repr(excinfo.value)
     assert TOKEN not in (excinfo.value.path or "")
     assert TOKEN not in caplog.text
+
+
+@pytest.mark.parametrize("membership", ["direct", "transitive"])
+@pytest.mark.parametrize(
+    ("query_filter", "advanced_query", "eventual"),
+    [
+        (None, False, False),
+        (None, True, True),
+        ("startswith(userPrincipalName,'room')", False, True),
+        ("startswith(userPrincipalName,'room')", True, True),
+    ],
+)
+def test_member_of_reads_user_cast_with_paging_and_query_options(
+    membership: str, query_filter: str | None, *, advanced_query: bool, eventual: bool
+) -> None:
+    router = GraphRouter()
+    path = router.members_path(graph_id(11), transitive=membership == "transitive") + "/microsoft.graph.user"
+    records = [user_record(1, "room1@example.com"), user_record(2, "room2@example.com")]
+    router.add_pages(path, [[records[0]], [records[1]]])
+    collection = Collection(
+        name="room_accounts",
+        resource="users",
+        member_of=graph_id(11),
+        filter=query_filter,
+        advanced_query=advanced_query,
+    )
+
+    result = list_collection(
+        router, collection, select=["id", "userPrincipalName"], settings={"membership": membership, "page_size": 25}
+    )
+
+    assert result == records
+    assert router.paths() == [path, path]
+    for request in router.requests:
+        assert request.url.params["$select"] == "id,userPrincipalName"
+        assert request.url.params["$top"] == "25"
+        assert request.url.params.get("$filter") == query_filter
+        assert request.url.params.get("$count") == ("true" if eventual else None)
+        assert request.headers.get("ConsistencyLevel") == ("eventual" if eventual else None)
+
+
+@pytest.mark.parametrize("page", [0, 1])
+def test_missing_member_of_group_stops_the_collection_read(page: int) -> None:
+    router = GraphRouter()
+    path = router.members_path(graph_id(11)) + "/microsoft.graph.user"
+    if page:
+        router.add_body(
+            path,
+            json.dumps(
+                {
+                    "value": [user_record(1, "room1@example.com")],
+                    "@odata.nextLink": f"{router.base_url}{path}?$skiptoken=1",
+                }
+            ).encode(),
+        )
+    router.add_error(path, 404, code="Request_ResourceNotFound", message="Group does not exist.")
+
+    with pytest.raises(MsgraphRequestError) as excinfo:
+        list_collection(router, Collection(name="room_accounts", resource="users", member_of=graph_id(11)))
+
+    assert excinfo.value.status == 404
+    assert excinfo.value.code == "Request_ResourceNotFound"
+    assert "room_accounts" in str(excinfo.value)
+    assert graph_id(11) in str(excinfo.value)
+    assert len(router.requests) == page + 1
+
+
+def test_member_of_permission_error_explains_member_permissions() -> None:
+    router = GraphRouter()
+    path = router.members_path(graph_id(11)) + "/microsoft.graph.user"
+    router.add_error(path, 403, code="Authorization_RequestDenied")
+
+    with pytest.raises(MsgraphPermissionError) as excinfo:
+        list_collection(router, Collection(name="room_accounts", resource="users", member_of=graph_id(11)))
+
+    assert "GroupMember.Read.All" in str(excinfo.value)
+    assert HIDDEN_MEMBERSHIP_PERMISSION in str(excinfo.value)
