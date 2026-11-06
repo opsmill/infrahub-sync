@@ -41,6 +41,8 @@ from infrahub_sync.product_store.models import (
     ConfigurationVersion,
     ConfigurationVersionPage,
     ConfigurationVersionSummary,
+    EventFilters,
+    EventPage,
     ExecutionFinishWriteback,
     ExecutionMergeWriteback,
     ExecutionWriteback,
@@ -102,10 +104,19 @@ CREATE TABLE IF NOT EXISTS write_admissions (
 );
 CREATE TABLE IF NOT EXISTS audit_events (
     event_id TEXT PRIMARY KEY, run_id TEXT, actor TEXT NOT NULL, operation TEXT NOT NULL,
-    reason TEXT, outcome TEXT NOT NULL, created_at TEXT NOT NULL
+    reason TEXT, outcome TEXT NOT NULL, created_at TEXT NOT NULL,
+    event_type TEXT, config_id TEXT, registry_version INTEGER, branch TEXT
 );
 CREATE INDEX IF NOT EXISTS audit_events_run_created
     ON audit_events (run_id, created_at);
+CREATE INDEX IF NOT EXISTS audit_events_created
+    ON audit_events (created_at, event_id);
+CREATE TABLE IF NOT EXISTS audit_event_resources (
+    event_id TEXT NOT NULL, kind TEXT NOT NULL, resource_id TEXT NOT NULL,
+    PRIMARY KEY (event_id, kind, resource_id), FOREIGN KEY (event_id) REFERENCES audit_events(event_id)
+);
+CREATE INDEX IF NOT EXISTS audit_event_resources_kind_resource
+    ON audit_event_resources (kind, resource_id);
 CREATE TABLE IF NOT EXISTS configurations (
     config_id TEXT PRIMARY KEY, created_at TEXT NOT NULL
 );
@@ -414,10 +425,49 @@ flow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 _SELECT_MUTATION_RECEIPT = """SELECT receipt_id, actor, key_digest, operation, target_run_id,
 request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body, flow_run_id,
 created_at, updated_at FROM mutation_receipts WHERE actor = ? AND key_digest = ?"""
-_INSERT_AUDIT_EVENT = """INSERT INTO audit_events (event_id, run_id, actor, operation, reason, outcome, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)"""
-_SELECT_AUDIT_EVENTS = """SELECT event_id, run_id, actor, operation, reason, outcome, created_at
-FROM audit_events WHERE run_id = ? ORDER BY created_at, event_id"""
+_INSERT_AUDIT_EVENT = """INSERT INTO audit_events (event_id, run_id, actor, operation, reason, outcome, created_at,
+event_type, config_id, registry_version, branch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+_INSERT_AUDIT_EVENT_RESOURCE = "INSERT INTO audit_event_resources (event_id, kind, resource_id) VALUES (?, ?, ?)"
+_AUDIT_EVENT_COLUMNS = (
+    "event_id, run_id, actor, operation, reason, outcome, created_at, event_type, config_id, registry_version, branch"
+)
+_SELECT_AUDIT_EVENTS = f"SELECT {_AUDIT_EVENT_COLUMNS} FROM audit_events WHERE run_id = ? ORDER BY created_at, event_id"  # noqa: S608
+_SELECT_ALL_AUDIT_EVENTS = f"SELECT {_AUDIT_EVENT_COLUMNS} FROM audit_events ORDER BY created_at, event_id"  # noqa: S608
+_SELECT_AUDIT_EVENT_RESOURCES = "SELECT event_id, kind, resource_id FROM audit_event_resources WHERE event_id IN ({})"
+# An event names one related resource; bound to (kind, resource_id).
+_EVENT_HAS_RESOURCE = (
+    "EXISTS (SELECT 1 FROM audit_event_resources AS resource WHERE resource.event_id = audit_events.event_id "
+    "AND resource.kind = ? AND resource.resource_id = ?)"
+)
+# Event IDs read per related-resource query, well under SQLite's bound-parameter limit.
+_EVENT_RESOURCE_BATCH = 500
+# The columns spec 017 adds to an audit event; all nullable, so a row written before the change stays valid.
+_AUDIT_EVENT_ADDED_COLUMNS = (
+    ("event_type", "TEXT"),
+    ("config_id", "TEXT"),
+    ("registry_version", "INTEGER"),
+    ("branch", "TEXT"),
+)
+_CONFIGURATION_OPERATIONS = "('register-config', 'create-config-version')"
+# The type of an event recorded before spec 017, from its (operation, outcome) pair (data-model.md, "Event types").
+# A request refused for a missing or invalid token keeps no type, so the event list never returns it (research R6).
+_BACKFILL_AUDIT_EVENT_TYPES = f"""UPDATE audit_events SET event_type = CASE
+WHEN outcome = 'refused-authentication' THEN NULL
+WHEN operation = 'register-config' AND outcome = 'accepted' THEN 'infrahub_sync.config.registered'
+WHEN operation = 'create-config-version' AND outcome = 'accepted' THEN 'infrahub_sync.config.version_registered'
+WHEN operation IN {_CONFIGURATION_OPERATIONS} AND substr(outcome, 1, 8) = 'refused-' THEN 'infrahub_sync.config.refused'
+WHEN operation IN {_CONFIGURATION_OPERATIONS} AND outcome = 'replayed' THEN 'infrahub_sync.config.replayed'
+WHEN operation IN {_CONFIGURATION_OPERATIONS} AND outcome = 'unavailable' THEN 'infrahub_sync.config.unavailable'
+WHEN outcome = 'accepted' THEN 'infrahub_sync.run.accepted'
+WHEN outcome = 'replayed' THEN 'infrahub_sync.run.replayed'
+WHEN substr(outcome, 1, 8) = 'refused-' THEN 'infrahub_sync.run.refused'
+WHEN outcome = 'unavailable' THEN 'infrahub_sync.run.unavailable'
+END WHERE event_type IS NULL"""  # noqa: S608 - module-owned literals only.
+# The actor's account is the one related resource an event recorded before spec 017 can name.
+_BACKFILL_AUDIT_EVENT_ACCOUNTS = """INSERT INTO audit_event_resources (event_id, kind, resource_id)
+SELECT event_id, 'account', actor FROM audit_events WHERE NOT EXISTS (
+SELECT 1 FROM audit_event_resources AS resource
+WHERE resource.event_id = audit_events.event_id AND resource.kind = 'account')"""
 _SELECT_AUDIT_LINKS = "SELECT event_id FROM audit_events WHERE run_id = ? ORDER BY created_at, event_id"
 
 
@@ -542,6 +592,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         terminal_state: Literal["completed", "failed", "interrupted"],
         terminal_outcome: Literal["succeeded", "failed", "ambiguous"],
         writeback: ExecutionWriteback,
+        event: AuditEvent | None = None,
     ) -> bool: ...
 
     def request_execution_cancellation(
@@ -566,7 +617,9 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         response_body: Mapping[str, Any],
     ) -> bool: ...
 
-    def cancel_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
+    def cancel_execution(
+        self, run_id: str, flow_run_id: str, *, terminal_at: datetime, event: AuditEvent | None = None
+    ) -> bool: ...
 
     def expire_execution_cancellation(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
 
@@ -586,6 +639,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         response_body: Mapping[str, Any],
         flow_run_id: str | None,
         updated_at: datetime,
+        event: AuditEvent | None = None,
     ) -> MutationReceipt: ...
 
     def claim_mutation(self, receipt_id: str, *, updated_at: datetime) -> bool: ...
@@ -595,6 +649,8 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def record_audit(self, event: AuditEvent) -> None: ...
 
     def audit_events(self, run_id: str | None = None) -> tuple[AuditEvent, ...]: ...
+
+    def list_events(self, filters: EventFilters, *, limit: int, offset: int) -> EventPage: ...
 
     def configuration_exists(self, config_id: str) -> bool: ...
 
@@ -835,6 +891,24 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.execute(f"ALTER TABLE mutation_receipts ALTER COLUMN {column} DROP NOT NULL")
 
     def _migrate_audit_events(self, cursor: _Cursor) -> None:
+        """Bring legacy audit events up to the typed event, preserving every event in place.
+
+        Spec 017 adds the nullable ``event_type``, ``config_id``, ``registry_version`` and
+        ``branch`` columns. The start-up that adds ``event_type`` fills it from each row's
+        ``(operation, outcome)`` pair and writes one ``account`` resource per event, so a
+        later start-up changes nothing. A legacy row names no configuration or branch,
+        because the old record did not hold them.
+        """
+        existing = self._read_table_columns(cursor, "audit_events")
+        for column, sql_type in _AUDIT_EVENT_ADDED_COLUMNS:
+            if column not in existing:
+                cursor.execute(f"ALTER TABLE audit_events ADD COLUMN {column} {sql_type}")
+        if "event_type" not in existing:
+            cursor.execute(_BACKFILL_AUDIT_EVENT_TYPES)
+            cursor.execute(_BACKFILL_AUDIT_EVENT_ACCOUNTS)
+        self._allow_audit_events_without_reason(cursor)
+
+    def _allow_audit_events_without_reason(self, cursor: _Cursor) -> None:
         """Allow an audit event without a reason, preserving every legacy event in place.
 
         A request may omit its audit reason, and the event then stores NULL rather than a
@@ -1379,8 +1453,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         terminal_state: Literal["completed", "failed", "interrupted"],
         terminal_outcome: Literal["succeeded", "failed", "ambiguous"],
         writeback: ExecutionWriteback,
+        event: AuditEvent | None = None,
     ) -> bool:
-        """Commit one claimed worker verdict and its business writeback together."""
+        """Commit one claimed worker verdict, its business writeback and its event together."""
         connection = self._connect()
         try:
             cursor = connection.cursor()
@@ -1461,6 +1536,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     terminal_state=terminal_state,
                     terminal_outcome=terminal_outcome,
                 )
+                if event is not None:
+                    self._insert_event(cursor, event)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -1701,8 +1778,10 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         finally:
             connection.close()
 
-    def cancel_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool:
-        """Commit clean cancellation only from acknowledged durable cancelled observation."""
+    def cancel_execution(
+        self, run_id: str, flow_run_id: str, *, terminal_at: datetime, event: AuditEvent | None = None
+    ) -> bool:
+        """Commit clean cancellation, and its event, only from acknowledged durable cancelled observation."""
         connection = self._connect()
         try:
             cursor = connection.cursor()
@@ -1723,6 +1802,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     self._sql(_UPDATE_LATEST_EXECUTION_CANCELLED),
                     (_utc_iso(terminal_at), run_id, flow_run_id),
                 )
+                if event is not None:
+                    self._insert_event(cursor, event)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -2059,6 +2140,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         response_body: Mapping[str, Any],
         flow_run_id: str | None,
         updated_at: datetime,
+        event: AuditEvent | None = None,
     ) -> MutationReceipt:
         connection = self._connect()
         try:
@@ -2072,6 +2154,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     (response_status, _json(response_body), flow_run_id, updated_at.isoformat(), receipt_id),
                 )
                 completed = cursor.rowcount == 1
+                if completed and event is not None:
+                    self._insert_event(cursor, event)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -2189,23 +2273,49 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             raise RunNotFoundError(msg)
         return _receipt_from_row(row)
 
+    def _insert_event(self, cursor: _Cursor, event: AuditEvent) -> None:
+        """Write one event row and its related-resource rows with the caller's cursor.
+
+        The caller commits or rolls back, so an event written with a decision is saved in
+        that decision's transaction (FR-014).
+        """
+        cursor.execute(
+            self._sql(_INSERT_AUDIT_EVENT),
+            (
+                event.event_id,
+                event.run_id,
+                event.actor,
+                event.operation,
+                event.reason,
+                event.outcome,
+                _utc_iso(event.created_at),
+                event.event_type,
+                event.config_id,
+                event.registry_version,
+                event.branch,
+            ),
+        )
+        for resource in event.related:
+            cursor.execute(self._sql(_INSERT_AUDIT_EVENT_RESOURCE), (event.event_id, resource.kind, resource.id))
+
+    def _read_event_resources(self, cursor: _Cursor, rows: Sequence[Sequence[Any]]) -> dict[str, list[tuple[str, str]]]:
+        """Return the related resources of the events in ``rows``, by event ID."""
+        resources: dict[str, list[tuple[str, str]]] = {str(row[0]): [] for row in rows}
+        event_ids = tuple(resources)
+        for start in range(0, len(event_ids), _EVENT_RESOURCE_BATCH):
+            batch = event_ids[start : start + _EVENT_RESOURCE_BATCH]
+            placeholders = ", ".join("?" for _ in batch)
+            cursor.execute(self._sql(_SELECT_AUDIT_EVENT_RESOURCES.format(placeholders)), batch)
+            for event_id, kind, resource_id in cursor.fetchall():
+                resources[str(event_id)].append((str(kind), str(resource_id)))
+        return resources
+
     def record_audit(self, event: AuditEvent) -> None:
         connection = self._connect()
         try:
             cursor = connection.cursor()
             try:
-                cursor.execute(
-                    self._sql(_INSERT_AUDIT_EVENT),
-                    (
-                        event.event_id,
-                        event.run_id,
-                        event.actor,
-                        event.operation,
-                        event.reason,
-                        event.outcome,
-                        event.created_at.isoformat(),
-                    ),
-                )
+                self._insert_event(cursor, event)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -2221,18 +2331,60 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             cursor = connection.cursor()
             try:
                 if run_id is None:
-                    cursor.execute(
-                        "SELECT event_id, run_id, actor, operation, reason, outcome, created_at "
-                        "FROM audit_events ORDER BY created_at, event_id"
-                    )
+                    cursor.execute(_SELECT_ALL_AUDIT_EVENTS)
                 else:
                     cursor.execute(self._sql(_SELECT_AUDIT_EVENTS), (run_id,))
                 rows = cursor.fetchall()
+                resources = self._read_event_resources(cursor, rows)
             finally:
                 cursor.close()
         finally:
             connection.close()
-        return tuple(_audit_from_row(row) for row in rows)
+        return tuple(_audit_from_row(row, resources[str(row[0])]) for row in rows)
+
+    def list_events(self, filters: EventFilters, *, limit: int, offset: int) -> EventPage:
+        """Return up to ``limit`` typed events matching ``filters`` after the first ``offset``, oldest first.
+
+        Events are ordered by ``created_at`` and then ``event_id``. An event without a type,
+        a request refused for a missing or invalid token, is never listed (research R6).
+
+        Raises:
+            ValueError: ``limit`` is less than 1 or ``offset`` is negative.
+        """
+        if offset < 0:
+            msg = "offset must be zero or a positive integer"
+            raise ValueError(msg)
+        conditions = ["event_type IS NOT NULL"]
+        parameters: list[object] = []
+        if filters.run_id is not None:
+            conditions.append("run_id = ?")
+            parameters.append(filters.run_id)
+        if filters.config_id is not None:
+            conditions.append(f"(config_id = ? OR {_EVENT_HAS_RESOURCE})")
+            parameters.extend((filters.config_id, "config", filters.config_id))
+        if filters.event_types:
+            conditions.append(f"event_type IN ({', '.join('?' for _ in filters.event_types)})")
+            parameters.extend(filters.event_types)
+        for resource in filters.related:
+            conditions.append(_EVENT_HAS_RESOURCE)
+            parameters.extend((resource.kind, resource.id))
+        if filters.since is not None:
+            conditions.append("created_at >= ?")
+            parameters.append(_utc_iso(filters.since))
+        if filters.until is not None:
+            conditions.append("created_at < ?")
+            parameters.append(_utc_iso(filters.until))
+        statement = (
+            f"SELECT {_AUDIT_EVENT_COLUMNS} FROM audit_events WHERE {' AND '.join(conditions)} "  # noqa: S608
+            "ORDER BY created_at, event_id LIMIT ? OFFSET ?"
+        )
+        resources: dict[str, list[tuple[str, str]]] = {}
+
+        def read_resources(cursor: _Cursor, page: Sequence[Sequence[Any]]) -> None:
+            resources.update(self._read_event_resources(cursor, page))
+
+        rows, has_more = self._read_page(statement, parameters, limit, read_resources, trailing=(offset,))
+        return EventPage(items=tuple(_audit_from_row(row, resources[str(row[0])]) for row in rows), has_more=has_more)
 
     def configuration_exists(self, config_id: str) -> bool:
         """Return configuration existence without hydrating its versions."""
@@ -2494,11 +2646,14 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         parameters: Sequence[object],
         limit: int,
         follow_up: Callable[[_Cursor, Sequence[Sequence[Any]]], None] | None = None,
+        *,
+        trailing: Sequence[object] = (),
     ) -> tuple[Sequence[Sequence[Any]], bool]:
         """Read up to ``limit`` rows of ``statement`` and whether more rows follow them.
 
-        ``statement`` ends with a ``LIMIT ?`` placeholder that this method binds to
-        ``limit + 1``, so one row past the page tells whether a further page exists.
+        ``statement`` has a ``LIMIT ?`` placeholder that this method binds to ``limit + 1``,
+        so one row past the page tells whether a further page exists. ``trailing`` binds the
+        placeholders after it, such as an ``OFFSET ?``.
         ``follow_up`` runs on the same cursor with the page's rows when the page is not empty.
 
         Raises:
@@ -2511,7 +2666,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         try:
             cursor = connection.cursor()
             try:
-                cursor.execute(self._sql(statement), (*parameters, limit + 1))
+                cursor.execute(self._sql(statement), (*parameters, limit + 1, *trailing))
                 rows = cursor.fetchall()
                 page = rows[:limit]
                 if follow_up is not None and page:
@@ -3040,6 +3195,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         terminal_state: Literal["completed", "failed", "interrupted"],
         terminal_outcome: Literal["succeeded", "failed", "ambiguous"],
         writeback: ExecutionWriteback,
+        event: AuditEvent | None = None,
         secrets: Sequence[str] = (),
     ) -> bool:
         """Atomically commit one claimed verdict and its business writeback.
@@ -3091,6 +3247,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             terminal_state=terminal_state,
             terminal_outcome=terminal_outcome,
             writeback=sanitized,
+            event=_redacted_event(event, secrets),
         )
 
     def request_execution_cancellation(
@@ -3141,14 +3298,23 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             response_body=sanitized,
         )
 
-    def cancel_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime | None = None) -> bool:
-        """Commit clean cancellation only after durable acknowledgement and observation."""
+    def cancel_execution(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        terminal_at: datetime | None = None,
+        event: AuditEvent | None = None,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """Commit clean cancellation, and its event, only after durable acknowledgement and observation."""
         if terminal_at is not None:
             _require_execution_timestamp(terminal_at)
         return self._records.cancel_execution(
             run_id,
             flow_run_id,
             terminal_at=terminal_at if terminal_at is not None else datetime.now(timezone.utc),
+            event=_redacted_event(event, secrets),
         )
 
     def expire_execution_cancellation(
@@ -3203,9 +3369,10 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         response_status: int,
         response_body: Mapping[str, Any],
         flow_run_id: str | None,
+        event: AuditEvent | None = None,
         secrets: Sequence[str] = (),
     ) -> MutationReceipt:
-        """Persist the exact accepted HTTP response and Prefect identity."""
+        """Persist the exact accepted HTTP response, Prefect identity and the decision's event together."""
         sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(response_body), secrets))
         return self._records.complete_mutation(
             redact(receipt_id, secrets),
@@ -3213,6 +3380,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             response_body=sanitized,
             flow_run_id=None if flow_run_id is None else redact(flow_run_id, secrets),
             updated_at=datetime.now(timezone.utc),
+            event=_redacted_event(event, secrets),
         )
 
     def claim_mutation(self, receipt_id: str, *, secrets: Sequence[str] = ()) -> bool:
@@ -3224,13 +3392,20 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         self._records.release_mutation(redact(receipt_id, secrets), updated_at=datetime.now(timezone.utc))
 
     def record_audit(self, event: AuditEvent, *, secrets: Sequence[str] = ()) -> None:
-        """Append one immutable, secret-safe authorization or mutation event."""
-        sanitized = AuditEvent.model_validate(_redact_value(event.model_dump(mode="json"), secrets))
-        self._records.record_audit(sanitized)
+        """Append one immutable, secret-safe event that saves nothing else, such as a refusal."""
+        self._records.record_audit(_redact_event(event, secrets))
 
     def audit_events(self, run_id: str | None = None) -> tuple[AuditEvent, ...]:
         """Return all audit evidence, optionally narrowed to one Sync run."""
         return self._records.audit_events(run_id)
+
+    def list_events(self, filters: EventFilters, *, limit: int = DEFAULT_LIMIT, offset: int = 0) -> EventPage:
+        """Return one page of typed events matching ``filters``, oldest first.
+
+        Raises:
+            ValueError: ``limit`` is less than 1 or ``offset`` is negative.
+        """
+        return self._records.list_events(filters, limit=limit, offset=offset)
 
     def create_configuration(
         self,
@@ -3718,7 +3893,16 @@ def _cancellation_unconfirmed_response(run_id: str, receipt_id: str) -> dict[str
     }
 
 
-def _audit_from_row(row: Sequence[Any]) -> AuditEvent:
+def _redact_event(event: AuditEvent, secrets: Sequence[str]) -> AuditEvent:
+    """Return ``event`` with every configured secret removed from its values."""
+    return AuditEvent.model_validate(_redact_value(event.model_dump(mode="json"), secrets))
+
+
+def _redacted_event(event: AuditEvent | None, secrets: Sequence[str]) -> AuditEvent | None:
+    return None if event is None else _redact_event(event, secrets)
+
+
+def _audit_from_row(row: Sequence[Any], related: Sequence[tuple[str, str]] = ()) -> AuditEvent:
     return AuditEvent.model_validate(
         {
             "event_id": row[0],
@@ -3728,6 +3912,11 @@ def _audit_from_row(row: Sequence[Any]) -> AuditEvent:
             "reason": row[4],
             "outcome": row[5],
             "created_at": row[6],
+            "event_type": row[7],
+            "config_id": row[8],
+            "registry_version": row[9],
+            "branch": row[10],
+            "related": tuple({"kind": kind, "id": resource_id} for kind, resource_id in related),
         }
     )
 
