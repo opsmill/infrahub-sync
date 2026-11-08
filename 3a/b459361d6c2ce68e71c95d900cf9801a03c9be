@@ -1,0 +1,20 @@
+dev/specs/017-sync-run-events-logs/tasks.md
+  s_01f3e2b1e0dad4::t_8bb488e7b052ea 165
+  s_01f3e2b1e0dad4::t_12f44c629062d5 1-164,166-212
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3ab459361d6c2ce68e71c95d900cf9801a03c9be",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

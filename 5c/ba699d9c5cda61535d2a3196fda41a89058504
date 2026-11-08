@@ -1,0 +1,94 @@
+tests/service/test_run_log_next_step.py
+  s_01f3e2b1e0dad4::t_edc2fb0e3b6307 199-210,213-275,281-287,289-292
+  s_01f3e2b1e0dad4::t_e7e389a6ae491e 288,704
+  s_01f3e2b1e0dad4::t_f73354aadfbea3 211-212,705-706
+  s_01f3e2b1e0dad4::t_75338f9cc1ab37 276-280
+  s_01f3e2b1e0dad4::t_6ad2336a2bba21 707
+changelog/+run-events.added.md
+  s_01f3e2b1e0dad4::t_a4c886be2d87ac 1
+tests/service/test_events_route.py
+  s_01f3e2b1e0dad4::t_03f1434f8780af 6
+  s_01f3e2b1e0dad4::t_46575f0a356d0b 341-348
+tests/cli/test_client_commands.py
+  s_01f3e2b1e0dad4::t_7e002d0cb6537e 810-838
+tests/service/test_run_logs_route.py
+  s_01f3e2b1e0dad4::t_b4ecaa0f827dbe 6,86,230,235-240
+infrahub_sync/cli.py
+  s_01f3e2b1e0dad4::t_9bf5e939091570 816-817,819,827,830,833,845,1174-1177,1179
+  s_01f3e2b1e0dad4::t_f59738387e4449 1322-1323
+  s_01f3e2b1e0dad4::t_fc94453f8c4e8d 1171
+  s_01f3e2b1e0dad4::t_46575f0a356d0b 814-815,818,820,1178
+infrahub_sync/service/flow.py
+  s_01f3e2b1e0dad4::t_03f1434f8780af 17
+  s_01f3e2b1e0dad4::t_46575f0a356d0b 160
+  s_01f3e2b1e0dad4::t_09273bf17b5116 928-931,939,949-955,1134,1180-1186,1192-1194,1196-1204,1226,1236-1239,1247
+tests/service/test_http_api.py
+  s_01f3e2b1e0dad4::t_fb4d04482a7162 1900-1904
+  s_01f3e2b1e0dad4::t_42d3aa5a0de14b 1865,1886,2610-2633
+  s_01f3e2b1e0dad4::t_2477000e34b052 2634-2635
+tests/service/test_orchestration_logs.py
+  s_01f3e2b1e0dad4::t_b4ecaa0f827dbe 157-158
+infrahub_sync/service/orchestration.py
+  s_01f3e2b1e0dad4::t_9c17d9d42d9e7c 77-78,81-84,394,396
+tests/service/test_prefect_wording.py
+  s_01f3e2b1e0dad4::t_a1740eb6b6fc05 6
+  s_01f3e2b1e0dad4::t_77f97e6cf475c7 181-195,246
+tests/service/test_run_log.py
+  s_01f3e2b1e0dad4::t_91a3da8d26f33a 111-123
+infrahub_sync/service/run_log.py
+  s_01f3e2b1e0dad4::t_06748dd12822b9 18,51-53,58-59,61,78,98-102,105,108
+dev/specs/017-sync-run-events-logs/contracts/events-route.md
+  s_01f3e2b1e0dad4::t_f59738387e4449 50-51
+  s_01f3e2b1e0dad4::t_9090c998288919 52
+docs/docs/reference/cli.mdx
+  s_01f3e2b1e0dad4::t_6e38248e1b725a 393
+docs/docs/running-a-sync.mdx
+  s_01f3e2b1e0dad4::t_f59738387e4449 260-268
+  s_01f3e2b1e0dad4::t_9090c998288919 269-270
+docs/docs/reference/sync-http-api.mdx
+  s_01f3e2b1e0dad4::t_f59738387e4449 496-498,526,533,541,548-552
+  s_01f3e2b1e0dad4::t_9090c998288919 527
+tests/product_store/test_audit_event_migration.py
+  s_01f3e2b1e0dad4::t_4d067699fc954c 274-276,279-286
+  s_01f3e2b1e0dad4::t_2285e0368b5206 277-278
+infrahub_sync/product_store/store.py
+  s_01f3e2b1e0dad4::t_2285e0368b5206 910-917,923-924
+  s_01f3e2b1e0dad4::t_46a5efc5d79097 588-590,1449-1452,1462,2001,2034-2035,3234-3243,3246-3248
+  s_01f3e2b1e0dad4::t_3060c2e362af4d 626,1698,1700,1702-1704,1767,1771,1776-1778,3351,3354-3358,3368-3370
+infrahub_sync/service/service.py
+  s_01f3e2b1e0dad4::t_06748dd12822b9 806-807
+  s_01f3e2b1e0dad4::t_b167591dd74c2f 82
+  s_01f3e2b1e0dad4::t_9c17d9d42d9e7c 9,796-802
+  s_01f3e2b1e0dad4::t_5817ba98fa921a 598-605,615,636-646
+tests/client/test_client.py
+  s_01f3e2b1e0dad4::t_e3498a7f009850 975,989
+  s_01f3e2b1e0dad4::t_30cd5837343906 972-974,976-988,990-995
+infrahub_sync/client/models.py
+  s_01f3e2b1e0dad4::t_e3498a7f009850 442-444
+  s_01f3e2b1e0dad4::t_f5877b40e579f9 7,9
+tests/service/test_flow_and_prefect.py
+  s_01f3e2b1e0dad4::t_e7e389a6ae491e 1777-1784
+dev/specs/017-sync-run-events-logs/contracts/cli-output.md
+  s_01f3e2b1e0dad4::t_d76e32af1bc20f 36-38
+tests/service/test_event_transactions.py
+  s_01f3e2b1e0dad4::t_f6d6fec6128a8a 274-280,288,292-298,333-371
+infrahub_sync/service/liveness.py
+  s_01f3e2b1e0dad4::t_46a5efc5d79097 18,226-228,233-235,238-254
+  s_01f3e2b1e0dad4::t_04acecf24e8628 255
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5cba699d9c5cda61535d2a3196fda41a89058504",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

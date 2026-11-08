@@ -1,0 +1,26 @@
+tests/service/test_status_observation_budget.py
+  s_01f3e2b1e0dad4::t_aeb61d0f4d50b5 544-575
+  s_01f3e2b1e0dad4::t_987a5fa391d509 245-246,253-256,266,413,423-424
+infrahub_sync/service/service.py
+  s_01f3e2b1e0dad4::t_0b97f162096ef1 1040
+  s_01f3e2b1e0dad4::t_b14fb740d9e849 1009-1011
+  s_01f3e2b1e0dad4::t_0e73ec1417ed5c 1018
+dev/specs/016-prefect-run-observability/tasks.md
+  s_01f3e2b1e0dad4::t_146d1e55ffecd6 61,65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3117df110a1c39f07b0c6548e7eded2c0b23f8d1",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

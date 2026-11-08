@@ -1,0 +1,36 @@
+infrahub_sync/service/flow.py
+  s_01f3e2b1e0dad4::t_6ebb5f838af0cf 1043-1045,1047,1049-1053
+  s_01f3e2b1e0dad4::t_e9799216c50f02 920-948
+  s_01f3e2b1e0dad4::t_b862cdfd0f9a10 22
+  s_01f3e2b1e0dad4::t_cd5d94c5dcd8fb 79
+  s_01f3e2b1e0dad4::t_943782d27d6a24 1058-1062
+tests/service/test_run_artifact.py
+  s_01f3e2b1e0dad4::t_38534c12657e9f 176-178
+  s_01f3e2b1e0dad4::t_c523737857983e 62-63
+  s_01f3e2b1e0dad4::t_9766eb38720234 1-20,23-61,64-159,161-168,171,174-175,179-226
+  s_01f3e2b1e0dad4::t_94732a4f269078 21-22,160,169-170,172-173
+tests/service/test_run_log_next_step.py
+  s_01f3e2b1e0dad4::t_94732a4f269078 357
+  s_01f3e2b1e0dad4::t_4104c5a82bf86a 320-323,325-340,342-354,356,358-366,368-447
+  s_01f3e2b1e0dad4::t_38534c12657e9f 324,341,355,367
+infrahub_sync/service/run_artifact.py
+  s_01f3e2b1e0dad4::t_37b69579bd71fb 1-129
+dev/specs/016-prefect-run-observability/tasks.md
+  s_01f3e2b1e0dad4::t_558573e73fe14b 132-133,140-141,148-149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6b59a232c1d7f5622c5bcf451a3f52dbea82e64f",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

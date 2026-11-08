@@ -1,0 +1,25 @@
+dev/specs/016-prefect-run-observability/quickstart.md
+  s_01f3e2b1e0dad4::t_65b7a4a3e8bae7 41,43
+infrahub_sync/service/run_artifact.py
+  s_01f3e2b1e0dad4::t_1a784c076adb38 10-11
+dev/specs/016-prefect-run-observability/spec.md
+  s_01f3e2b1e0dad4::t_1f5acb06cc4ed5 245
+dev/specs/016-prefect-run-observability/plan.md
+  s_01f3e2b1e0dad4::t_5093c7e10cb64e 53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b2ef7728bc8038777ac4de3234b0b366d53ce218",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

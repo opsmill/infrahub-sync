@@ -1,0 +1,29 @@
+dev/specs/017-sync-run-events-logs/contracts/cli-output.md
+  s_01f3e2b1e0dad4::t_2478e987be544e 13-17
+tests/cli/test_client_commands.py
+  s_01f3e2b1e0dad4::t_febed0b3a17b16 2039-2040,2049
+  s_01f3e2b1e0dad4::t_fcf10dba4c7152 2059-2060,2069
+  s_01f3e2b1e0dad4::t_85686c98e67705 1993-1994,2001,2003-2027
+  s_01f3e2b1e0dad4::t_2c14a1592cc5da 1996,2028-2038,2041-2048
+infrahub_sync/cli.py
+  s_01f3e2b1e0dad4::t_18578e1985a912 1222-1227,1229-1231
+  s_01f3e2b1e0dad4::t_e5890b9ef2a92e 1201
+  s_01f3e2b1e0dad4::t_fd762b81fa2f50 1203-1206
+  s_01f3e2b1e0dad4::t_32a1883e55b44c 1249-1250,1261,1263-1270
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c7bc530b38cfbdcdf96748608d8b5f44d9632d9e",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

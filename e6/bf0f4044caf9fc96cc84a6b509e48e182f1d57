@@ -1,0 +1,28 @@
+dev/specs/016-prefect-run-observability/tasks.md
+  s_01f3e2b1e0dad4::t_b9a09ab2b081b8 103-105,115-116
+infrahub_sync/service/flow.py
+  s_01f3e2b1e0dad4::t_b39ad523c6bbc1 14,799-827,840,843-844,863,910-915,998,1000,1012-1018
+  s_01f3e2b1e0dad4::t_66e1da37b0385a 1023
+tests/service/test_run_log_next_step.py
+  s_01f3e2b1e0dad4::t_4e80f378dc2e88 12,34,113-122,125,140,142,153,161,170,177-178,181-182,187-191
+  s_01f3e2b1e0dad4::t_bac75636be8056 305
+  s_01f3e2b1e0dad4::t_1097999ca5ef23 1-11,13-33,35-90,92-112,123-124,126-139,141,143-152,154-160,162-169,171-176,179-180,183-185,193-304,306-319
+  s_01f3e2b1e0dad4::t_37a3fc4fad0dd5 91
+  s_01f3e2b1e0dad4::t_66e1da37b0385a 186,192
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e6bf0f4044caf9fc96cc84a6b509e48e182f1d57",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

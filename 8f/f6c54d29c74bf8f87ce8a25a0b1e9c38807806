@@ -1,0 +1,30 @@
+dev/specs/017-sync-run-events-logs/data-model.md
+  s_01f3e2b1e0dad4::t_e1c15ddac6f127 62
+  s_01f3e2b1e0dad4::t_695806ca77fd25 46-49
+dev/specs/017-sync-run-events-logs/plan.md
+  s_01f3e2b1e0dad4::t_b9a82f0aca7d15 147,150,154,158-178
+  s_01f3e2b1e0dad4::t_7b2d8d962f5f1a 148-149,151-153,155-157
+dev/specs/017-sync-run-events-logs/quickstart.md
+  s_01f3e2b1e0dad4::t_00b2016c9f00fc 28
+  s_01f3e2b1e0dad4::t_8cc5cb8bb75d26 35-36
+dev/specs/017-sync-run-events-logs/spec.md
+  s_01f3e2b1e0dad4::t_f97366a2be1fb2 175-181
+dev/specs/017-sync-run-events-logs/critiques/critique-20261106.md
+  s_01f3e2b1e0dad4::t_d4550596421d4e 1-116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8ff6c54d29c74bf8f87ce8a25a0b1e9c38807806",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

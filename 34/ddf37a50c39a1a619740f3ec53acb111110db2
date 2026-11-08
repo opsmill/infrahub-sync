@@ -1,0 +1,27 @@
+dev/specs/016-prefect-run-observability/spec.md
+  s_01f3e2b1e0dad4::t_4faadaf8ba874f 240-242
+  s_01f3e2b1e0dad4::t_6e57c80ef5b744 260-262
+  s_01f3e2b1e0dad4::t_2781a120b69046 338-340
+  s_01f3e2b1e0dad4::t_75468e4bf54520 279-280
+dev/specs/016-prefect-run-observability/plan.md
+  s_01f3e2b1e0dad4::t_c495e672e72528 124-142
+dev/specs/016-prefect-run-observability/critiques/critique-20261105.md
+  s_01f3e2b1e0dad4::t_70d9b833de7b1b 1-120
+  s_01f3e2b1e0dad4::t_c605962cf4840b 121-133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "34ddf37a50c39a1a619740f3ec53acb111110db2",
+  "prompts": {},
+  "sessions": {
+    "s_01f3e2b1e0dad4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe8e5cc0-01c1-4130-9184-3efa7b025da4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
