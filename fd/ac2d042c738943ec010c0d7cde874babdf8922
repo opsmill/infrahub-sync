@@ -1,0 +1,34 @@
+docs/docs/reference/sync-http-api.mdx
+  s_b587fb435a3228::t_1dbe1df423e000 336-339
+  s_b587fb435a3228::t_3c30f1d6a92f1a 283-335,340-346
+dev/specs/018-plan-read-progress/tasks.md
+  s_b587fb435a3228::t_8a631823dca03c 119-124
+infrahub_sync/cli.py
+  s_b587fb435a3228::t_e76f038ba5d319 1197-1199
+changelog/+plan-read-progress.added.md
+  s_b587fb435a3228::t_6a35eee1b8dca7 1
+dev/specs/018-plan-read-progress/opsmill-implement-report.md
+  s_b587fb435a3228::t_b9101d8d56e888 34-64
+docs/docs/reference/cli.mdx
+  s_b587fb435a3228::t_1a68e05e9e6b10 393-395
+docs/docs/running-a-sync.mdx
+  s_b587fb435a3228::t_723a6acac0fa02 107-145
+docs/docs/reference/durable-product-records.mdx
+  s_b587fb435a3228::t_f2de40e2f8e8d3 196-207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fdac2d042c738943ec010c0d7cde874babdf8922",
+  "prompts": {},
+  "sessions": {
+    "s_b587fb435a3228": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "443573d1-a264-40b9-abb9-38a7fba8091b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
