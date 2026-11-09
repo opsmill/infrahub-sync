@@ -972,12 +972,23 @@ function useWidth<T extends HTMLElement>() {
   return [ref, width] as const;
 }
 
+/**
+ * The axis labels that fit, one per divider. Labels show seconds when two dividers fall in the
+ * same minute, and a label shows its date when it is on another day than the label before it.
+ */
 function axisLabels(marks: Mark[], width: number, startDay: string) {
+  const minute = (iso: string) => `${dayOf(iso)} ${hm(iso)}`;
+  // One format for the whole axis: seconds everywhere as soon as two dividers share a minute.
+  const minutes = marks.flatMap((o) => (o.iso ? [minute(o.iso)] : []));
+  const withSeconds = new Set(minutes).size < minutes.length;
+  const clockOf = (iso: string) =>
+    withSeconds ? new Date(iso).toLocaleTimeString("en-GB") : hm(iso);
   const labelled: { mark: Mark; text: string; align: "start" | "center" | "end" }[] = [];
   let prevDay = startDay;
   for (const mark of marks) {
     const day = mark.iso ? dayOf(mark.iso) : prevDay;
-    const text = mark.iso ? (day === prevDay ? hm(mark.iso) : `${day} ${hm(mark.iso)}`) : "now";
+    const t = mark.iso ? clockOf(mark.iso) : "now";
+    const text = mark.iso && day !== prevDay ? `${day} ${t}` : t;
     prevDay = day;
     const align = mark.at === 0 ? "start" : mark.at >= 99.5 ? "end" : "center";
     labelled.push({ mark, text, align });
@@ -1000,7 +1011,7 @@ function axisLabels(marks: Mark[], width: number, startDay: string) {
       else break;
     }
     const prev = kept[kept.length - 1];
-    // The same minute twice says nothing; keep the later one only when it ends the axis.
+    // The same time twice says nothing; keep the later one only when it ends the axis.
     if (prev && prev.text === l.text) {
       if (l.align === "end") kept[kept.length - 1] = l;
       continue;
@@ -1012,7 +1023,8 @@ function axisLabels(marks: Mark[], width: number, startDay: string) {
   for (const l of kept) {
     if (!l.mark.iso) continue;
     const d = dayOf(l.mark.iso);
-    l.text = d === day ? hm(l.mark.iso) : `${d} ${hm(l.mark.iso)}`;
+    const t = clockOf(l.mark.iso);
+    l.text = d === day ? t : `${d} ${t}`;
     day = d;
   }
   return kept;
@@ -1081,16 +1093,16 @@ export function RunTimeStrip({
       </div>
       <div className="-mx-3">
         <div className="relative">
-          {/* Faint guides at each step's start, behind the rows */}
+          {/* Faint guides at each labelled time, behind the rows */}
           <div
             aria-hidden="true"
             className="pointer-events-none absolute inset-y-0 right-[calc(5.5rem+2rem)] left-3 sm:left-[calc(10rem+2rem)]"
           >
-            {marks.map((mk) => (
+            {labels.map((l) => (
               <span
-                key={mk.at}
+                key={l.mark.at}
                 className="absolute inset-y-0 border-border border-l"
-                style={{ left: `${mk.at}%` }}
+                style={{ left: `${l.mark.at}%` }}
               />
             ))}
           </div>
