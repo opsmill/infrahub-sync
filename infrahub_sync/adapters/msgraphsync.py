@@ -15,6 +15,8 @@ import inspect
 import json
 import logging
 import os
+import random
+import ssl
 from collections import Counter
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -536,7 +538,7 @@ class MsgraphClient:
             info = builder.with_url(next_link).to_get_request_information()
 
     async def _send(self, info: RequestInformation, *, member: bool = False) -> dict[str, Any]:
-        """Send one GET request and return the JSON body, retrying HTTP 429, 502, 503 and 504 up to `max_retries` times.
+        """Send one GET request, retrying transient HTTP and transport failures up to `max_retries` times.
 
         `member` marks a request that reads group members: each attempt also counts in `member_requests`. The
         counters stay exact while member reads run concurrently because all reads run on one asyncio thread and
@@ -577,16 +579,29 @@ class MsgraphClient:
                     await _sleep(wait)
                     continue
                 raise self._api_error(exc, path, retried=attempt, member=member) from exc
-            except httpx.TimeoutException as exc:
+            except (httpx.RequestError, httpx.InvalidURL) as exc:
                 path = _request_path(info)
-                msg = (
-                    f"Microsoft Graph request {path} timed out after {self.settings.timeout:g} seconds "
-                    "(setting 'timeout')."
-                )
-                raise MsgraphRequestError(msg, path=path) from exc
-            except httpx.RequestError as exc:
-                path = _request_path(info)
-                msg = f"Microsoft Graph request {path} failed: {type(exc).__name__}."
+                if _retryable_transport_error(exc) and attempt < self.settings.max_retries:
+                    attempt += 1
+                    wait = _retry_wait(None, attempt)
+                    self.retries += 1
+                    log.warning(
+                        "graph request failed, waiting before retry",
+                        error=type(exc).__name__,
+                        path=path,
+                        wait_seconds=wait,
+                        retry=attempt,
+                        max_retries=self.settings.max_retries,
+                    )
+                    await _sleep(wait)
+                    continue
+                if isinstance(exc, httpx.TimeoutException):
+                    msg = (
+                        f"Microsoft Graph request {path} timed out after {self.settings.timeout:g} seconds "
+                        f"(setting 'timeout') after {attempt} retries."
+                    )
+                else:
+                    msg = f"Microsoft Graph request {path} failed: {type(exc).__name__} after {attempt} retries."
                 raise MsgraphRequestError(msg, path=path) from exc
             except AzureError as exc:
                 # Raised by the credential while it gets the token; Graph HTTP errors are `APIError`, handled above.
@@ -673,11 +688,27 @@ def _request_path(info: RequestInformation) -> str:
     return f"{path}?{unquote(parts.query)}" if parts.query else path
 
 
+def _retryable_transport_error(exc: Exception) -> bool:
+    """Whether a transport failure can recover, excluding invalid requests and untrusted certificates."""
+    if not isinstance(exc, httpx.TransportError) or isinstance(
+        exc, (httpx.UnsupportedProtocol, httpx.LocalProtocolError)
+    ):
+        return False
+    cause: BaseException | None = exc
+    seen: set[int] = set()
+    while cause is not None and id(cause) not in seen:
+        if isinstance(cause, ssl.SSLCertVerificationError):
+            return False
+        seen.add(id(cause))
+        cause = cause.__cause__ or cause.__context__
+    return True
+
+
 def _retry_wait(headers: Mapping[str, str] | None, attempt: int) -> float:
     """Seconds to wait before retry number `attempt` (from 1).
 
     A valid `Retry-After` header is honored in full, as Microsoft Graph requires. Without one, the wait doubles at
-    each retry from `FALLBACK_RETRY_SECONDS`, up to `MAX_BACKOFF_SECONDS`.
+    each retry from `FALLBACK_RETRY_SECONDS`, up to `MAX_BACKOFF_SECONDS`, with full jitter and a one-second floor.
     """
     for key, value in (headers or {}).items():
         if key.lower() == "retry-after":
@@ -685,7 +716,8 @@ def _retry_wait(headers: Mapping[str, str] | None, attempt: int) -> float:
                 return max(0.0, float(value))
             except ValueError:
                 break
-    return min(FALLBACK_RETRY_SECONDS * 2 ** (attempt - 1), MAX_BACKOFF_SECONDS)
+    upper_bound = min(FALLBACK_RETRY_SECONDS * 2 ** (attempt - 1), MAX_BACKOFF_SECONDS)
+    return max(1.0, random.uniform(0, upper_bound))
 
 
 def _parse_body(body: bytes | None, path: str) -> dict[str, Any]:

@@ -84,7 +84,7 @@ source:
     graph_url: "https://graph.microsoft.com/v1.0"       # default
     page_size: 999                 # 1 to 999
     timeout: 60                    # seconds per request
-    max_retries: 5                 # 0 to 10, after HTTP 429, 502, 503 and 504
+    max_retries: 5                 # 0 to 10, after transient HTTP or transport errors
     membership: direct             # direct (default) or transitive
     select:                        # extra Graph properties per resource
       users: [department]
@@ -131,8 +131,8 @@ auth 'client_secret' is missing values. Set the environment variable(s): MSGRAPH
 | `client_id` | string | none | Client ID | Application (client) ID for `auth: client_secret`. `MSGRAPH_CLIENT_ID` overrides it. Ignored with `auth: default`. |
 | `graph_url` | string | `https://graph.microsoft.com/v1.0` | An `https://` URL | Microsoft Graph endpoint and version. The token scope is derived from its scheme and host (`https://<host>/.default`), and the token is sent to that host only. A `graph_url` of a Microsoft cloud other than the public one is not tested: the credential still signs in through the default (public cloud) authority. |
 | `page_size` | integer | `999` | 1 to 999 | Records per page, sent as `$top` on every request. |
-| `timeout` | number | `60` | Greater than 0 | Seconds to wait for each request. A request that times out is not retried. |
-| `max_retries` | integer | `5` | 0 to 10 | Retries of one request after HTTP 429, 502, 503 or 504. Each request has its own count. |
+| `timeout` | number | `60` | Greater than 0 | Seconds to wait for each attempt. Timeouts are retried up to `max_retries` times. |
+| `max_retries` | integer | `5` | 0 to 10 | Retries of one request after HTTP 429, 502, 503, 504, a timeout or a dropped connection. All failures share this count. Without `Retry-After`, exponential backoff with jitter waits up to 60 seconds between attempts. |
 | `membership` | string | `direct` | `direct`, `transitive` | Which group members the adapter reads. See [Group membership](#group-membership). |
 | `select` | mapping | none | Keys `users` and `groups`; each value a property name or a list of names | Extra Graph properties to request, for properties used only in transforms. |
 | `collections` | mapping | none | Collection names mapped to definitions | Named, optionally filtered reads of users or groups. See [Collections and advanced queries](#collections-and-advanced-queries). |
@@ -458,13 +458,13 @@ schema_mapping 'IdentityServiceAccount', field 'owner': the Graph property 'owne
 ### Throttling and gateway errors: HTTP 429, 502, 503 or 504
 <!-- vale on -->
 
-Microsoft Graph limits the request rate of each application and tenant. On HTTP 429, 502, 503 or 504, the adapter waits for the number of seconds in the `Retry-After` header, then sends the same request again. When the header is missing, the wait starts at 5 seconds and doubles at each retry, up to 60 seconds. It logs one warning per wait:
+Microsoft Graph limits the request rate of each application and tenant. On HTTP 429, 502, 503 or 504, the adapter waits for the number of seconds in the `Retry-After` header, then sends the same request again. Requests that time out or lose their connection are also retried. Without `Retry-After`, exponential backoff doubles the wait upper bound from 5 seconds at each retry, up to 60 seconds; jitter chooses the wait within that bound, with a 1-second floor. TLS certificate verification failures, invalid URLs or protocols, authentication failures and other HTTP 4xx errors are not retried. It logs one warning per wait:
 
 ```text
 WARNING | infrahub_sync.adapters.msgraphsync | event='graph request throttled, waiting before retry' status=429 path='/v1.0/groups/.../members?$select=id&$top=999' wait_seconds=5.0 retry=1 max_retries=5
 ```
 
-`max_retries` counts retries per request: each request starts with its own count, so a run can wait more times in total than `max_retries`. After the last retry of one request, the sync stops:
+`max_retries` counts retries per request: HTTP and transport failures share one count, and each request starts with its own count, so a run can wait more times in total than `max_retries`. After the last retry of one request, the sync stops:
 
 ```text
 Microsoft Graph returned HTTP 429 for /v1.0/groups/.../members?$select=id&$top=999 after 5 retries (<code>: <message>). Run the sync again later, or raise the setting 'max_retries'.
@@ -481,10 +481,10 @@ Member reads send the most requests. Run the sync again later, raise `max_retrie
 ### Request timeout
 
 ```text
-Microsoft Graph request /v1.0/users?$select=id,...&$top=999 timed out after 60 seconds (setting 'timeout').
+Microsoft Graph request /v1.0/users?$select=id,...&$top=999 timed out after 60 seconds (setting 'timeout') after 5 retries.
 ```
 
-The adapter does not retry a request that timed out. Raise `timeout`, or lower `page_size` so that each page takes less time.
+The adapter retries a request that timed out up to `max_retries` times, using the same request URL for each attempt. If retries are exhausted, raise `timeout`, or lower `page_size` so that each page takes less time.
 
 ### Unknown collection
 

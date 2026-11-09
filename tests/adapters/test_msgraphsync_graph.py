@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import ssl
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -46,12 +47,18 @@ USERS = Collection(name="users", resource="users")
 US_GRAPH_URL = "https://graph.microsoft.us/v1.0"
 
 
-@pytest.fixture
-def sleeps(monkeypatch: pytest.MonkeyPatch) -> SleepRecorder:
+@pytest.fixture(name="sleeps")
+def record_sleeps(monkeypatch: pytest.MonkeyPatch) -> SleepRecorder:
     """Record retry waits instead of sleeping."""
     recorder = SleepRecorder()
     monkeypatch.setattr(msgraphsync, "_sleep", recorder)
     return recorder
+
+
+@pytest.fixture(autouse=True)
+def maximum_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make retry waits deterministic at their upper bound."""
+    monkeypatch.setattr(msgraphsync.random, "uniform", lambda _low, high: high)
 
 
 def make_settings(**raw: object) -> MsgraphSettings:
@@ -165,6 +172,35 @@ def test_advanced_query_sends_count_and_consistency_level_on_every_page() -> Non
         assert request.url.params["$count"] == "true"
         assert request.url.params["$filter"] == query_filter
         assert request.headers["ConsistencyLevel"] == "eventual"
+
+
+@pytest.mark.parametrize(
+    "error_cls", [httpx.ReadTimeout, httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError, httpx.PoolTimeout]
+)
+@pytest.mark.parametrize("member", [False, True])
+def test_transport_error_then_success(
+    sleeps: SleepRecorder, error_cls: type[httpx.RequestError], *, member: bool
+) -> None:
+    router = GraphRouter()
+    path = GraphRouter.members_path(graph_id(11)) if member else "/users"
+    records = sample_records("users", 1)
+    router.add_request_error(path, error_cls)
+    router.add_records(path, records)
+
+    async def read() -> None:
+        async with MsgraphClient(make_settings(), transport=router.transport, credential=FakeCredential()) as graph:
+            if member:
+                assert await graph.user_member_ids(graph_id(11), transitive=False) == [records[0]["id"]]
+            else:
+                assert await graph.list_collection(USERS, ["id"]) == records
+            assert graph.retries == 1
+            assert graph.requests == 2
+            assert graph.member_requests == (2 if member else 0)
+
+    asyncio.run(read())
+    assert len(sleeps.waits) == 1
+    requests = router.requests_for(path)
+    assert requests[0].url == requests[1].url
 
 
 def test_retry_after_429_waits_the_header_value_then_succeeds(sleeps: SleepRecorder) -> None:
@@ -284,12 +320,14 @@ def test_member_read_refused_names_the_hidden_membership_permission(sleeps: Slee
     assert sleeps.waits == []
 
 
-def test_timeout_raises_graph_error_naming_the_path(sleeps: SleepRecorder) -> None:
+@pytest.mark.parametrize("max_retries", [0, 2, 5])
+def test_timeout_raises_graph_error_naming_the_path(sleeps: SleepRecorder, max_retries: int) -> None:
     router = GraphRouter()
-    router.add_timeout("/users")
+    for _ in range(max_retries + 1):
+        router.add_timeout("/users")
 
     with pytest.raises(MsgraphRequestError) as excinfo:
-        list_collection(router, USERS, settings={"timeout": 7})
+        list_collection(router, USERS, settings={"timeout": 7, "max_retries": max_retries})
 
     message = str(excinfo.value)
     assert excinfo.value.path is not None
@@ -297,8 +335,51 @@ def test_timeout_raises_graph_error_naming_the_path(sleeps: SleepRecorder) -> No
     assert excinfo.value.path in message
     assert "7 seconds" in message
     assert "timeout" in message
-    assert len(router.requests_for("/users")) == 1
+    assert f"after {max_retries} retries" in message
+    assert len(router.requests_for("/users")) == max_retries + 1
+    assert len(sleeps.waits) == max_retries
+
+
+@pytest.mark.parametrize("transport_last", [False, True])
+def test_status_and_transport_errors_share_retry_budget(sleeps: SleepRecorder, *, transport_last: bool) -> None:
+    router = GraphRouter()
+    if transport_last:
+        router.add_error("/users", 503)
+        router.add_timeout("/users")
+    else:
+        router.add_timeout("/users")
+        router.add_error("/users", 503)
+
+    async def read() -> None:
+        async with MsgraphClient(
+            make_settings(max_retries=1), transport=router.transport, credential=FakeCredential()
+        ) as graph:
+            with pytest.raises(MsgraphRequestError, match="after 1 retries"):
+                await graph.list_collection(USERS, ["id"])
+            assert graph.retries == 1
+            assert graph.requests == 2
+
+    asyncio.run(read())
+    assert sleeps.waits == [FALLBACK_RETRY_SECONDS]
+
+
+def test_certificate_verification_error_is_not_retried(sleeps: SleepRecorder) -> None:
+    router = GraphRouter()
+    certificate_error = ssl.SSLCertVerificationError("untrusted certificate")
+    wrapped = OSError("TLS handshake failed")
+    wrapped.__cause__ = certificate_error
+    router.add_request_error("/users", httpx.ConnectError, cause=wrapped)
+
+    with pytest.raises(MsgraphRequestError, match="ConnectError after 0 retries"):
+        list_collection(router, USERS)
+
+    assert len(router.requests) == 1
     assert sleeps.waits == []
+
+
+def test_retry_jitter_has_one_second_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(msgraphsync.random, "uniform", lambda low, _high: low)
+    assert msgraphsync._retry_wait(None, 1) == pytest.approx(1.0)
 
 
 AUTH_GUIDANCE = {
@@ -343,9 +424,11 @@ def test_unreachable_token_endpoint_raises_authentication_error(auth: str, error
     assert router.requests == []
 
 
-@pytest.mark.parametrize("error_cls", [httpx.DecodingError, httpx.TooManyRedirects])
+@pytest.mark.parametrize(
+    "error_cls", [httpx.DecodingError, httpx.TooManyRedirects, httpx.UnsupportedProtocol, httpx.InvalidURL]
+)
 def test_request_error_after_the_response_raises_graph_error_naming_the_path(
-    sleeps: SleepRecorder, error_cls: type[httpx.RequestError]
+    sleeps: SleepRecorder, error_cls: type[httpx.RequestError | httpx.InvalidURL]
 ) -> None:
     router = GraphRouter()
     router.add_request_error("/users", error_cls)
@@ -477,7 +560,7 @@ def queue_server_error(router: GraphRouter) -> dict[str, Any]:
 
 def queue_timeout(router: GraphRouter) -> dict[str, Any]:
     router.add_timeout("/users")
-    return {}
+    return {"settings": {"max_retries": 0}}
 
 
 def refuse_token(router: GraphRouter) -> dict[str, Any]:  # noqa: ARG001 - same signature as the other scenarios

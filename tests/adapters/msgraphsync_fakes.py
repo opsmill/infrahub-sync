@@ -187,12 +187,15 @@ class GraphRouter:
 
         self._queued.setdefault(path, []).append(respond)
 
-    def add_request_error(self, path: str, error_cls: type[httpx.RequestError]) -> None:
+    def add_request_error(
+        self, path: str, error_cls: type[httpx.RequestError | httpx.InvalidURL], *, cause: Exception | None = None
+    ) -> None:
         """Queue one `httpx.RequestError` subclass, for example `httpx.DecodingError`, for `path`."""
 
         def respond(request: httpx.Request) -> httpx.Response:
             msg = f"fake {error_cls.__name__}"
-            raise error_cls(msg, request=request)
+            error = error_cls(msg) if issubclass(error_cls, httpx.InvalidURL) else error_cls(msg, request=request)
+            raise error from cause
 
         self._queued.setdefault(path, []).append(respond)
 
