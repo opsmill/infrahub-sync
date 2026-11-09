@@ -5,23 +5,24 @@ import { cn } from "tailwind-variants";
 
 import { isEnvelope } from "#/api/errors";
 import { describeError } from "#/api/queries";
-import type { Orchestration, Plan, Run } from "#/api/types";
+import type { Plan, Run } from "#/api/types";
 import { DownloadIcon } from "#/components/icons";
 import { Bar, CopyButton, ErrorPanel, FOCUS, SectionHeading } from "#/components/page";
-import { BranchCode, StateLabel, When } from "#/components/run-status";
-import { type RunState, runCounts } from "#/domain/run-state";
+import { BranchCode, When } from "#/components/run-status";
+import { runCounts } from "#/domain/run-state";
+import { PLAN_ARTIFACT_ID } from "#/domain/run-steps";
 import type { System } from "#/domain/systems";
 import { formatAbsolute, formatDuration } from "#/lib/time";
 
 import { changesSentence, PlanChanges, PlanFacts } from "./PlanReview";
 
-export const PLAN_ARTIFACT_ID = "plan-review";
+export { PLAN_ARTIFACT_ID };
 
 const MUTED_LINE = "flex flex-wrap items-center gap-3 text-foreground-muted text-sm";
 
 /* ---------- changes ---------- */
 
-interface PlanRequest {
+export interface PlanRequest {
   data?: Plan;
   error: unknown;
   isPending: boolean;
@@ -147,6 +148,40 @@ export function PlanSection({ run, plan }: { run: Run; plan: PlanRequest }) {
   );
 }
 
+/**
+ * The changes of a saved plan without its heading and record, for the Plan step of the timeline.
+ * A plan still loading, unreadable or empty falls back to `PlanSection`, which says why.
+ */
+export function ChangesList({
+  run,
+  plan,
+  hasPlan,
+}: {
+  run: Run;
+  plan: PlanRequest;
+  hasPlan: boolean;
+}) {
+  if (!hasPlan) {
+    return (
+      <p className="text-foreground-muted text-sm">
+        This run saved no plan, so there are no changes to list.
+      </p>
+    );
+  }
+  const data = plan.data;
+  if (!data || data.summary.total === 0) return <PlanSection run={run} plan={plan} />;
+  return (
+    <section aria-labelledby="changes" className="flex flex-col gap-3">
+      <div className="sr-only">
+        <SectionHeading id="changes" title="Changes" count={data.summary.total}>
+          {changesSentence(data, run.phase)}
+        </SectionHeading>
+      </div>
+      <PlanChanges plan={data} phase={run.phase} />
+    </section>
+  );
+}
+
 /* ---------- files ---------- */
 
 function formatBytes(n: number) {
@@ -209,163 +244,6 @@ export function RunFiles({ run }: { run: Run }) {
                   <DownloadIcon />
                   Download
                 </LinkButton>
-              </li>
-            );
-          })}
-        </ul>
-      </Card>
-    </section>
-  );
-}
-
-/* ---------- executions ---------- */
-
-function executionResult(o: Orchestration): { state: RunState; label: string } {
-  if (o.terminal_at == null) {
-    if (o.cancellation_requested_at) return { state: "running", label: "Cancelling" };
-    if (o.claimed_at) return { state: "running", label: "Running" };
-    return { state: "running", label: "Waiting for a worker" };
-  }
-  switch (o.terminal_outcome) {
-    case "succeeded":
-      return { state: "insync", label: "Succeeded" };
-    case "failed":
-      return { state: "failed", label: "Failed" };
-    case "ambiguous":
-      return { state: "failed", label: "Interrupted, outcome unknown" };
-    case "cancelled":
-      return { state: "idle", label: "Cancelled" };
-    case "abandoned":
-      return { state: "idle", label: "Not picked up by a worker" };
-    default:
-      return { state: "idle", label: "Ended, outcome not recorded" };
-  }
-}
-
-const queued = (o: Orchestration) =>
-  o.submitted_at && o.claimed_at ? formatDuration(o.submitted_at, o.claimed_at) : undefined;
-
-function ran(o: Orchestration): string {
-  if (o.claimed_at && o.terminal_at) return formatDuration(o.claimed_at, o.terminal_at);
-  return o.terminal_at ? "Did not run" : "Still running";
-}
-
-function FlowRunId({ id }: { id: string }) {
-  return (
-    <span className="inline-flex items-center gap-1">
-      <span className="font-mono text-subtle text-xs" title={id}>
-        {id.slice(0, 8)}
-      </span>
-      <CopyButton value={id} label="Copy flow run ID" />
-    </span>
-  );
-}
-
-function StageName({ o }: { o: Orchestration }) {
-  return (
-    <>
-      <span className="capitalize">{o.purpose}</span>
-      {o.attempt > 1 && <span className="text-subtle"> · attempt {o.attempt}</span>}
-    </>
-  );
-}
-
-const TH = "px-4 py-2 font-medium";
-const TD = "px-4 py-2.5";
-
-/** Each execution submitted to Prefect for this run, oldest first. */
-export function Executions({ orchestration }: { orchestration: Orchestration[] }) {
-  if (orchestration.length === 0) return null;
-  return (
-    <section aria-labelledby="executions" className="flex flex-col gap-3">
-      <SectionHeading id="executions" title="Executions" count={orchestration.length}>
-        Each stage submitted for this run, oldest first
-      </SectionHeading>
-      <Card className="overflow-hidden">
-        <table
-          aria-labelledby="executions"
-          className="w-full table-fixed border-collapse text-left text-[13px] max-md:hidden"
-        >
-          <colgroup>
-            <col className="w-[14%]" />
-            <col className="w-[26%]" />
-            <col className="w-[18%]" />
-            <col className="w-[12%]" />
-            <col className="w-[12%]" />
-            <col className="w-[18%]" />
-          </colgroup>
-          <thead>
-            <tr className="border-b text-subtle text-xs">
-              <th scope="col" className={TH}>
-                Stage
-              </th>
-              <th scope="col" className={TH}>
-                Result
-              </th>
-              <th scope="col" className={TH}>
-                Submitted
-              </th>
-              <th scope="col" className={TH}>
-                Queued
-              </th>
-              <th scope="col" className={TH}>
-                Ran
-              </th>
-              <th scope="col" className={TH}>
-                Flow run ID
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {orchestration.map((o) => {
-              const r = executionResult(o);
-              return (
-                <tr key={o.flow_run_id}>
-                  <td className={TD}>
-                    <StageName o={o} />
-                  </td>
-                  <td className={TD}>
-                    <StateLabel state={r.state} label={r.label} />
-                  </td>
-                  <td className={cn(TD, "text-foreground-muted")}>
-                    {o.submitted_at ? <When iso={o.submitted_at} /> : "—"}
-                  </td>
-                  <td className={cn(TD, "whitespace-nowrap text-foreground-muted tabular-nums")}>
-                    {queued(o) ?? "—"}
-                  </td>
-                  <td className={cn(TD, "whitespace-nowrap text-foreground-muted tabular-nums")}>
-                    {ran(o)}
-                  </td>
-                  <td className={TD}>
-                    <FlowRunId id={o.flow_run_id} />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        <ul aria-labelledby="executions" className="divide-y md:hidden">
-          {orchestration.map((o) => {
-            const r = executionResult(o);
-            const q = queued(o);
-            return (
-              <li key={o.flow_run_id} className="flex flex-col gap-1 px-4 py-3 text-[13px]">
-                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
-                  <span>
-                    <StageName o={o} />
-                  </span>
-                  <StateLabel state={r.state} label={r.label} />
-                </div>
-                <p className="text-foreground-muted text-xs">
-                  {o.submitted_at && (
-                    <>
-                      <When prefix="Submitted " iso={o.submitted_at} /> ·{" "}
-                    </>
-                  )}
-                  {q && <>queued {q} · </>}
-                  {o.claimed_at && o.terminal_at ? `ran ${ran(o)}` : ran(o).toLowerCase()}
-                </p>
-                <FlowRunId id={o.flow_run_id} />
               </li>
             );
           })}

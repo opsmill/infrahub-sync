@@ -46,13 +46,13 @@ export function VerifyDialog({
   const verify = useVerifyRun();
   const [key, renew] = useIdempotencyKey();
   const [reason, setReason] = useState("");
-  const submitLabel = "Verify plan";
+  const submitLabel = "Check the plan";
   return (
     <DialogFrame
       isOpen
       onOpenChange={(open) => !open && onClose()}
-      title="Verify the plan"
-      ariaLabel="Verify the plan"
+      title="Check the plan"
+      ariaLabel="Check the plan"
       description={
         <>
           <p>

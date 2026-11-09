@@ -40,9 +40,12 @@ import {
   runCounts,
   runState,
 } from "#/domain/run-state";
+import { runStepList } from "#/domain/run-steps";
 import { describeSystem, type System } from "#/domain/systems";
 import { useDocumentTitle } from "#/lib/title";
 import { ApplyButton, ApplyDialog, CancelDialog, VerifyDialog } from "./RunActions";
+import { RunTimeline, useStepFocus } from "./RunTimeline";
+import { RunTimeStrip } from "./RunTimeStrip";
 import {
   AbandonedNotice,
   FailureNotice,
@@ -51,8 +54,7 @@ import {
   NewerPlanNotice,
   NewerRunNotice,
 } from "./run-notices";
-import { Details, Executions, PLAN_ARTIFACT_ID, PlanSection, RunFiles } from "./run-sections";
-import { RunSteps } from "./run-steps";
+import { Details, PLAN_ARTIFACT_ID, RunFiles } from "./run-sections";
 import { StartRunDialog } from "./StartRunDialog";
 
 const LINK = cn(
@@ -77,6 +79,13 @@ function useAfter(active: boolean, ms: number) {
   return active && passed;
 }
 
+/** Where the three bars of the strip sit while the run loads. */
+const SKELETON_BARS = [
+  "h-3 w-1/2 rounded-full",
+  "ml-[50%] h-3 w-1/4 rounded-full",
+  "ml-[75%] h-3 w-1/4 rounded-full",
+];
+
 function RunSkeleton({ slow }: { slow: boolean }) {
   return (
     <div aria-busy="true">
@@ -99,11 +108,19 @@ function RunSkeleton({ slow }: { slow: boolean }) {
         </div>
         <Bar className="h-8 w-28 rounded-lg sm:hidden" />
       </div>
-      <Card className="grid grid-cols-3 divide-x">
-        {["plan", "verify", "apply"].map((k) => (
-          <div key={k} className="flex flex-col gap-2 px-3 py-3 sm:px-4 sm:py-3.5">
-            <Bar className="h-4 w-20 max-w-full" />
-            <Bar className="h-3 w-32 max-w-full max-sm:hidden" />
+      <Card className="flex flex-col gap-4 p-4 sm:p-5">
+        <div className="flex flex-col gap-1.5">
+          <Bar className="h-4 w-32" />
+          <Bar className="h-3 w-40" />
+        </div>
+        {["plan", "review", "apply"].map((k, i) => (
+          <div
+            key={k}
+            className="grid grid-cols-[minmax(0,1fr)_5.5rem] items-center gap-x-5 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)_5.5rem]"
+          >
+            <Bar className="h-4 w-20 max-sm:hidden" />
+            <Bar className={SKELETON_BARS[i]} />
+            <Bar className="ml-auto h-4 w-12" />
           </div>
         ))}
       </Card>
@@ -237,13 +254,6 @@ function MetaLine({
       </span>,
     ]);
   }
-  items.push([
-    "started",
-    <span>
-      <When prefix="Started " iso={run.started_at} />
-      {run.actor && <> by {run.actor}</>}
-    </span>,
-  ]);
   return (
     <ul className={META_LIST}>
       {items.map(([key, node]) => (
@@ -303,6 +313,7 @@ export function RunPage({ runId }: { runId: string }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const focusInActions = useRef(false);
   const slow = useAfter(runQ.isPending && runQ.fetchStatus === "fetching", 5_000);
+  const focus = useStepFocus();
 
   // A poll can remove the focused action (Cancel run once the run ends, Verify once it is verified).
   // The browser then moves focus to the body, so it goes to the title instead, whose state label is
@@ -397,6 +408,7 @@ export function RunPage({ runId }: { runId: string }) {
   const verifyFailed = Boolean(run.results?.verify_failure) && !isVerified(run);
   const reviewable = waitingPlan && !refreshError && !verifyFailed;
   const planExpired = plan.isError && describeError(plan.error).status === 410;
+  const steps = runStepList(resource, { inFlight, planExpired });
   const executable = executableCount(run) ?? 0;
   const deleteOnly = isDeleteOnlyPlan(run);
   const deletes = runCounts(run)?.delete ?? 0;
@@ -483,7 +495,7 @@ export function RunPage({ runId }: { runId: string }) {
             )}
             {canAct && wouldVerify && (
               <Button variant="outline" size="sm" onPress={() => setDialog("verify")}>
-                Verify
+                Check the plan
               </Button>
             )}
             {canAct && wouldApply && (
@@ -512,17 +524,15 @@ export function RunPage({ runId }: { runId: string }) {
       )}
       <div className="flex flex-col gap-8">
         <div className="flex flex-col gap-3">
-          {f ? (
-            <FailureNotice
-              run={run}
-              f={f}
-              orchestration={orchestration}
-              plan={plan.data}
-              source={source}
-              destination={destination}
-            />
-          ) : (
-            run.phase === "abandoned" && <AbandonedNotice run={run} orchestration={orchestration} />
+          <RunTimeStrip
+            run={run}
+            steps={steps}
+            planExpired={planExpired}
+            onSelect={focus.select}
+            selected={focus.selected}
+          />
+          {!f && run.phase === "abandoned" && (
+            <AbandonedNotice run={run} orchestration={orchestration} />
           )}
           {open && <InFlightNotice open={open} />}
           {wrote ? (
@@ -532,11 +542,31 @@ export function RunPage({ runId }: { runId: string }) {
           ) : (
             laterRun && <NewerRunNotice other={laterRun} />
           )}
-          <RunSteps resource={resource} inFlight={inFlight} planExpired={planExpired} />
         </div>
-        {hasPlan && <PlanSection run={run} plan={plan} />}
+        <RunTimeline
+          run={run}
+          steps={steps}
+          plan={plan}
+          hasPlan={hasPlan}
+          source={source}
+          destination={destination}
+          state={headerState}
+          label={label}
+          focus={focus}
+          failure={
+            f && (
+              <FailureNotice
+                run={run}
+                f={f}
+                orchestration={orchestration}
+                plan={plan.data}
+                source={source}
+                destination={destination}
+              />
+            )
+          }
+        />
         <RunFiles run={run} />
-        <Executions orchestration={orchestration} />
         <Details run={run} name={name} source={source} destination={destination} />
       </div>
       {dialog === "verify" && <VerifyDialog run={run} onClose={close} onDone={focusHeading} />}

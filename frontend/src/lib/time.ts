@@ -54,6 +54,16 @@ export function formatDuration(fromIso: string, toIso: string | number): string 
   return m % 60 ? `${part(h, "h")} ${part(m % 60, "min")}` : part(h, "h");
 }
 
+/** `formatDuration`, with days past 24 hours: "2 d 3 h" reads faster than "51 h". */
+export function formatSpan(fromIso: string, toIso: string | number): string {
+  const ms =
+    (typeof toIso === "number" ? toIso : new Date(toIso).getTime()) - new Date(fromIso).getTime();
+  if (ms < 86_400_000) return formatDuration(fromIso, toIso);
+  const d = Math.floor(ms / 86_400_000);
+  const h = Math.floor((ms % 86_400_000) / 3_600_000);
+  return h ? `${d}${NBSP}d ${h}${NBSP}h` : `${d}${NBSP}d`;
+}
+
 /* ---------- shared clock ---------- */
 
 interface Clock {
