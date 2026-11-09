@@ -1194,6 +1194,9 @@ def runs_show(
     """Show one run's service record and its selected execution.
 
     `prefect_flow_run_url` links the flow run in the Prefect UI; it reads <none> when the Sync API has no UI address.
+    For a run with a `plan` or `sync` stage, `source_read` and `destination_read` show the read state of each side
+    in that stage's latest execution: `state`, `mode`, `started_at`, `ended_at`, `nodes` and `error`, without the
+    keys that have no value.
     A failed stage adds its error type and, when the run recorded them, a `cause:` and a `hint:` line.
     """
     with _client_errors():

@@ -104,6 +104,45 @@ and saves the plan. It writes nothing to the destination. By default, `plan` wai
 plan, then prints the `run_id`, the `plan_checksum`, and the operation counts by action and
 by kind.
 
+### Follow the read of each side
+
+To follow the reads while the plan runs, start it with `--no-wait` and read the run until the
+stage ends:
+
+```bash
+infrahub-sync plan --config-id CONFIG_ID --version 1 --no-wait
+infrahub-sync runs show RUN_ID
+```
+
+`runs show` prints a `source_read` and a `destination_read` line after
+`prefect_flow_run_url`. They show the read state of each side in the run's latest `plan` or
+`sync` execution, even after `verify` or `apply` executions:
+
+```text
+source_read: state=succeeded mode=full started_at=2026-11-09T10:00:01+00:00 ended_at=2026-11-09T10:00:13+00:00 nodes=DcimDevice:3,LocationSite:2
+destination_read: state=failed started_at=2026-11-09T10:00:01+00:00 ended_at=2026-11-09T10:00:04+00:00 error=ConnectionError
+```
+
+Each side starts as `state=waiting`, then shows `state=reading` with `started_at` while the
+worker reads it. A read that ends shows `state=succeeded`, with the read `mode` (`full` or
+`incremental`) and the number of `nodes` of each kind, or `state=failed`, with the class name
+of the error. When the stage ends before a side's read ends, that side shows
+`state=not_started` or `state=interrupted`, with no `ended_at`. A side whose end the service
+did not record shows `<none>`. A key with no value is left out. A run created before the
+service recorded the read state prints neither line. The
+[Sync HTTP API reference](./reference/sync-http-api.mdx#read-state-of-each-side) describes each
+state.
+
+When a side's read ends, the run's log also holds one line for it, which
+`infrahub-sync runs logs RUN_ID` prints:
+
+```text
+Load: source read succeeded (full): 5 nodes; DcimDevice 3, LocationSite 2
+Load: destination read failed (ConnectionError)
+```
+
+A `sync` run shows the same lines for its `sync` stage.
+
 ## Review the plan
 
 ```bash

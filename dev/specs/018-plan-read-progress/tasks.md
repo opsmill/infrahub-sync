@@ -116,12 +116,12 @@ during and after each read.
 
 ## Phase 6: Polish and cross-cutting concerns
 
-- [ ] T024 [P] Document `reads` in each orchestration entry, with the state rules, in `docs/docs/reference/sync-http-api.mdx` (contracts/run-response.md).
-- [ ] T025 [P] Document the `source_read` and `destination_read` fields of `runs show` in `docs/docs/reference/cli.mdx`, and what the operator views during a Plan in `docs/docs/running-a-sync.mdx` (contracts/cli-output.md).
-- [ ] T026 [P] Check `docs/docs/reference/durable-product-records.mdx` for the list of what a stage execution records, and add the read state there if it lists execution fields (critique R5).
-- [ ] T027 [P] Add the news fragment `changelog/+plan-read-progress.added.md` with `uv run --extra dev towncrier create -c "<text>" +plan-read-progress.added.md`, describing what the operator views during a Plan and a `sync`.
-- [ ] T028 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`, `uv run infrahub-sync --help`, `uv run infrahub-sync runs --help`, and `uv run invoke docs.generate` if the CLI help changed; record the results in `dev/specs/018-plan-read-progress/opsmill-implement-report.md`.
-- [ ] T029 Run the live checks in `dev/specs/018-plan-read-progress/quickstart.md` sections 2 to 5 when the preview stack is available, and record each result or the reason it was not run in `dev/specs/018-plan-read-progress/opsmill-implement-report.md`.
+- [X] T024 [P] Document `reads` in each orchestration entry, with the state rules, in `docs/docs/reference/sync-http-api.mdx` (contracts/run-response.md).
+- [X] T025 [P] Document the `source_read` and `destination_read` fields of `runs show` in `docs/docs/reference/cli.mdx`, and what the operator views during a Plan in `docs/docs/running-a-sync.mdx` (contracts/cli-output.md).
+- [X] T026 [P] Check `docs/docs/reference/durable-product-records.mdx` for the list of what a stage execution records, and add the read state there if it lists execution fields (critique R5).
+- [X] T027 [P] Add the news fragment `changelog/+plan-read-progress.added.md` with `uv run --extra dev towncrier create -c "<text>" +plan-read-progress.added.md`, describing what the operator views during a Plan and a `sync`.
+- [X] T028 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`, `uv run infrahub-sync --help`, `uv run infrahub-sync runs --help`, and `uv run invoke docs.generate` if the CLI help changed; record the results in `dev/specs/018-plan-read-progress/opsmill-implement-report.md`.
+- [X] T029 Run the live checks in `dev/specs/018-plan-read-progress/quickstart.md` sections 2 to 5 when the preview stack is available, and record each result or the reason it was not run in `dev/specs/018-plan-read-progress/opsmill-implement-report.md`.
 
 ---
 
