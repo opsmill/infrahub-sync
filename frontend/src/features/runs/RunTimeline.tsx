@@ -4,10 +4,17 @@ import { type ReactNode, type RefObject, useEffect, useRef, useState } from "rea
 import { cn } from "tailwind-variants";
 
 import type { Orchestration, Run } from "#/api/types";
-import { ChevronRightIcon, DownloadIcon } from "#/components/icons";
+import { ArrowRightIcon, ChevronRightIcon, DownloadIcon } from "#/components/icons";
 import { CopyButton, expandChevron, FOCUS, SectionHeading } from "#/components/page";
-import { BranchCode, STEP_TONE, STEP_WORD, StateLabel, When } from "#/components/run-status";
-import type { RunState } from "#/domain/run-state";
+import {
+  BranchCode,
+  CHANGE_TONE,
+  STEP_TONE,
+  STEP_WORD,
+  StateLabel,
+  When,
+} from "#/components/run-status";
+import { fmt, type RunState, runCounts } from "#/domain/run-state";
 import {
   type Artifact,
   executionResult,
@@ -22,7 +29,7 @@ import type { System } from "#/domain/systems";
 import { formatAbsolute, formatSpan } from "#/lib/time";
 
 import { PlanFacts } from "./PlanReview";
-import { ChangesList, type PlanRequest } from "./run-sections";
+import type { PlanRequest } from "./run-sections";
 import { clock, stepNode, WaitTime } from "./step-time";
 
 /* ---------- opening a step from the strip ---------- */
@@ -372,6 +379,54 @@ function StepDetails({
   );
 }
 
+/* ---------- the changes, at a glance ---------- */
+
+/**
+ * The plan's counts in one line, with a link to the Changes section after the timeline. The counts
+ * come from the saved plan when it has loaded, else from the run's summary.
+ */
+function ChangesGlance({ run, plan }: { run: Run; plan: PlanRequest }) {
+  const by = plan.data?.summary.by_action as Record<string, number> | undefined;
+  const c = runCounts(run);
+  const counts = {
+    create: by?.create ?? c?.create ?? 0,
+    update: by?.update ?? c?.update ?? 0,
+    delete: by?.delete ?? c?.delete ?? 0,
+  };
+  const total = plan.data?.summary.total ?? c?.total ?? 0;
+  if (total === 0) return null;
+  const parts: [keyof typeof CHANGE_TONE, number, string][] = [
+    ["create", counts.create, counts.create === 1 ? "create" : "creates"],
+    ["update", counts.update, counts.update === 1 ? "update" : "updates"],
+    ["delete", counts.delete, counts.delete === 1 ? "delete, not applied" : "deletes, not applied"],
+  ];
+  return (
+    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px]">
+      {parts
+        .filter(([, n]) => n > 0)
+        .map(([action, n, word]) => (
+          <span key={action} className="inline-flex items-baseline gap-1 text-foreground-muted">
+            <span aria-hidden="true" className={cn("font-medium", CHANGE_TONE[action].text)}>
+              {CHANGE_TONE[action].sign}
+            </span>
+            <span className="font-medium text-foreground tabular-nums">{fmt(n)}</span>
+            {word}
+          </span>
+        ))}
+      <a
+        href="#changes"
+        className={cn(
+          "inline-flex items-center gap-1 rounded-sm font-medium text-accent hover:underline",
+          FOCUS
+        )}
+      >
+        See the {fmt(total)} {total === 1 ? "change" : "changes"}
+        <ArrowRightIcon className="size-3 rotate-90" />
+      </a>
+    </p>
+  );
+}
+
 /* ---------- timeline ---------- */
 
 /**
@@ -404,6 +459,10 @@ export function RunTimeline({
 }) {
   const failedIndex = steps.findIndex((s) => s.state === "failed");
   const finished = run.finished_at;
+  // A done plan with changes shows their counts and a link to the Changes section, not a sentence.
+  const changeTotal = plan.data?.summary.total ?? runCounts(run)?.total ?? 0;
+  const glance = (s: RunStep) =>
+    s.kind === "plan" && s.state === "done" && hasPlan && changeTotal > 0;
 
   const items: ReactNode[] = [
     <Event
@@ -469,7 +528,11 @@ export function RunTimeline({
           </span>
         }
       >
-        {s.outcome && <p className="text-pretty text-foreground-muted text-sm">{s.outcome}</p>}
+        {glance(s) ? (
+          <ChangesGlance run={run} plan={plan} />
+        ) : (
+          s.outcome && <p className="text-pretty text-foreground-muted text-sm">{s.outcome}</p>
+        )}
         {wait && (
           <p className={cn("text-xs", wait.to ? "text-subtle" : "text-warning")}>
             {"In review for "}
@@ -497,11 +560,6 @@ export function RunTimeline({
           onToggle={(o) => focus.setOpen(s.index, o)}
         />
         {s.index === failedIndex && failure}
-        {s.kind === "plan" && s.state === "done" && (
-          <div className="mt-1">
-            <ChangesList run={run} plan={plan} hasPlan={hasPlan} />
-          </div>
-        )}
       </Event>
     );
   }

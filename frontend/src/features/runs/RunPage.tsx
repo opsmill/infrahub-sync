@@ -54,7 +54,7 @@ import {
   NewerPlanNotice,
   NewerRunNotice,
 } from "./run-notices";
-import { Details, PLAN_ARTIFACT_ID, RunFiles } from "./run-sections";
+import { ChangesSection, Details, PLAN_ARTIFACT_ID, RunFiles } from "./run-sections";
 import { StartRunDialog } from "./StartRunDialog";
 
 const LINK = cn(
@@ -566,6 +566,7 @@ export function RunPage({ runId }: { runId: string }) {
             )
           }
         />
+        {hasPlan && <ChangesSection run={run} plan={plan} />}
         <RunFiles run={run} />
         <Details run={run} name={name} source={source} destination={destination} />
       </div>

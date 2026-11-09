@@ -149,34 +149,17 @@ export function PlanSection({ run, plan }: { run: Run; plan: PlanRequest }) {
 }
 
 /**
- * The changes of a saved plan without its heading and record, for the Plan step of the timeline.
- * A plan still loading, unreadable or empty falls back to `PlanSection`, which says why.
+ * The changes of the saved plan, as their own section after the timeline. A plan still loading,
+ * unreadable or empty falls back to `PlanSection`, which says why. A run with no saved plan has none.
  */
-export function ChangesList({
-  run,
-  plan,
-  hasPlan,
-}: {
-  run: Run;
-  plan: PlanRequest;
-  hasPlan: boolean;
-}) {
-  if (!hasPlan) {
-    return (
-      <p className="text-foreground-muted text-sm">
-        This run saved no plan, so there are no changes to list.
-      </p>
-    );
-  }
+export function ChangesSection({ run, plan }: { run: Run; plan: PlanRequest }) {
   const data = plan.data;
   if (!data || data.summary.total === 0) return <PlanSection run={run} plan={plan} />;
   return (
-    <section aria-labelledby="changes" className="flex flex-col gap-3">
-      <div className="sr-only">
-        <SectionHeading id="changes" title="Changes" count={data.summary.total}>
-          {changesSentence(data, run.phase)}
-        </SectionHeading>
-      </div>
+    <section aria-labelledby="changes" className="flex scroll-mt-16 flex-col gap-3">
+      <SectionHeading id="changes" title="Changes" count={data.summary.total}>
+        {changesSentence(data, run.phase)}
+      </SectionHeading>
       <PlanChanges plan={data} phase={run.phase} />
     </section>
   );
