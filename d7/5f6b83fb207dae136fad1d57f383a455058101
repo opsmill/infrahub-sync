@@ -1,0 +1,49 @@
+infrahub_sync/execution.py
+  s_b587fb435a3228::t_e790bbd0081dd2 79,1144,1234-1235
+dev/specs/018-plan-read-progress/opsmill-implement-report.md
+  s_b587fb435a3228::t_ba38aac97cc04e 10-33
+dev/specs/018-plan-read-progress/tasks.md
+  s_b587fb435a3228::t_b355e0fcb8a96d 37-40,44-48
+tests/product_store/test_side_read_columns.py
+  s_b587fb435a3228::t_fc9b5915025b3a 50
+  s_b587fb435a3228::t_710fb073f0acb4 1-49,51-139
+tests/test_potenda_read_progress.py
+  s_b587fb435a3228::t_d1ff5bd2787604 1-21,23-95,97,101,103-106,108-146,148-218,221-228,230-279
+  s_b587fb435a3228::t_9a1496c00adf14 147
+  s_b587fb435a3228::t_02e21a836978c4 286
+  s_b587fb435a3228::t_7e1e1571472ad3 22,96,98-100,102,107,219-220,229
+  s_b587fb435a3228::t_b1d5bb6fbef868 280-285,287-302
+tests/test_execution_surface.py
+  s_b587fb435a3228::t_cc639b8229e71e 1507-1515,1517-1524
+  s_b587fb435a3228::t_e6c374aa7c0d3e 1516
+infrahub_sync/potenda/read_progress.py
+  s_b587fb435a3228::t_b1b3efa667e37f 1-46
+infrahub_sync/potenda/__init__.py
+  s_b587fb435a3228::t_01ff9fef51388e 521-528,536-537,551-579
+  s_b587fb435a3228::t_588506fd46a444 328-330
+  s_b587fb435a3228::t_d96f6359ea68f0 251-259
+  s_b587fb435a3228::t_50c358b301917b 88
+  s_b587fb435a3228::t_6b311fffa627df 260-272
+  s_b587fb435a3228::t_c22b64dd20e491 36
+  s_b587fb435a3228::t_bd809327d61418 543-550
+infrahub_sync/product_store/models.py
+  s_b587fb435a3228::t_46c5190710f429 89-92
+infrahub_sync/product_store/store.py
+  s_b587fb435a3228::t_bf9309fb49d992 212-218,423,427-428,582-585,863,865,1369-1370,1442-1457,3252-3262,3829-3837,3919-3920
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d75f6b83fb207dae136fad1d57f383a455058101",
+  "prompts": {},
+  "sessions": {
+    "s_b587fb435a3228": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "443573d1-a264-40b9-abb9-38a7fba8091b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
