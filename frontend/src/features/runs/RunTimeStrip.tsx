@@ -4,7 +4,7 @@ import { cn } from "tailwind-variants";
 
 import type { Orchestration, Run } from "#/api/types";
 import { ArrowRightIcon, StateIcon } from "#/components/icons";
-import { FOCUS } from "#/components/page";
+import { FOCUS, SectionHeading } from "#/components/page";
 import { CHANGE_TONE, STEP_TONE, STEP_WORD } from "#/components/run-status";
 import {
   executableCount,
@@ -1083,79 +1083,79 @@ export function RunTimeStrip({
   const labels = axisLabels(marks, chartWidth, startDay);
 
   return (
-    <Card className="flex flex-col gap-4 p-4 sm:p-5">
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <h2 className="font-semibold text-sm">Run summary</h2>
+    <section aria-labelledby="run-summary" className="flex flex-col gap-3">
+      <SectionHeading id="run-summary" title="Run summary" />
+      <Card className="flex flex-col gap-3 p-4">
         <p className="text-foreground-muted text-xs">
           Started <time dateTime={run.started_at}>{clock(run.started_at)}</time>
           {run.operation === "sync" && <> · Sync without review</>}
         </p>
-      </div>
-      <div className="-mx-3">
-        <div className="relative">
-          {/* Faint guides at each labelled time, behind the rows */}
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0 right-[calc(5.5rem+2rem)] left-3 sm:left-[calc(10rem+2rem)]"
-          >
-            {labels.map((l) => (
-              <span
-                key={l.mark.at}
-                className="absolute inset-y-0 border-border border-l"
-                style={{ left: `${l.mark.at}%` }}
-              />
-            ))}
+        <div className="-mx-3">
+          <div className="relative">
+            {/* Faint guides at each labelled time, behind the rows */}
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 right-[calc(5.5rem+2rem)] left-3 sm:left-[calc(10rem+2rem)]"
+            >
+              {labels.map((l) => (
+                <span
+                  key={l.mark.at}
+                  className="absolute inset-y-0 border-border border-l"
+                  style={{ left: `${l.mark.at}%` }}
+                />
+              ))}
+            </div>
+            <ol className="relative flex flex-col gap-0.5">
+              {steps.map((s, i) => (
+                <GanttRow
+                  key={s.id}
+                  m={m}
+                  s={s}
+                  z={zs[i]}
+                  card={card}
+                  dimmed={card.active !== null && card.active !== s.index}
+                  noteAt={Math.max(0, ...zs.slice(0, i).map((p) => (p ? p.left + p.width : 0)))}
+                  selected={selected === s.index}
+                  onSelect={onSelect}
+                  now={now}
+                  startDay={startDay}
+                />
+              ))}
+            </ol>
           </div>
-          <ol className="relative flex flex-col gap-0.5">
-            {steps.map((s, i) => (
-              <GanttRow
-                key={s.id}
-                m={m}
-                s={s}
-                z={zs[i]}
-                card={card}
-                dimmed={card.active !== null && card.active !== s.index}
-                noteAt={Math.max(0, ...zs.slice(0, i).map((p) => (p ? p.left + p.width : 0)))}
-                selected={selected === s.index}
-                onSelect={onSelect}
-                now={now}
-                startDay={startDay}
-              />
-            ))}
-          </ol>
-        </div>
-        <div aria-hidden="true" className={cn("grid items-start gap-x-5 px-3 pt-1", COLS)}>
-          <span className="max-sm:hidden" />
-          <span
-            ref={chartRef}
-            className="relative h-6 border-border-strong border-t text-subtle text-xs tabular-nums"
-          >
-            {labels.map((l) => (
-              <span
-                key={`${l.mark.at}-${l.text}`}
-                className={cn(
-                  "absolute top-0 flex flex-col whitespace-nowrap",
-                  l.align === "start" && "items-start",
-                  l.align === "center" && "-translate-x-1/2 items-center",
-                  l.align === "end" && "-translate-x-full items-end"
-                )}
-                style={{ left: `${l.mark.at}%` }}
-              >
-                <span className="h-1 w-px bg-border-strong" />
-                <span className="pt-0.5">{l.text}</span>
+          <div aria-hidden="true" className={cn("grid items-start gap-x-5 px-3 pt-1", COLS)}>
+            <span className="max-sm:hidden" />
+            <span
+              ref={chartRef}
+              className="relative h-6 border-border-strong border-t text-subtle text-xs tabular-nums"
+            >
+              {labels.map((l) => (
+                <span
+                  key={`${l.mark.at}-${l.text}`}
+                  className={cn(
+                    "absolute top-0 flex flex-col whitespace-nowrap",
+                    l.align === "start" && "items-start",
+                    l.align === "center" && "-translate-x-1/2 items-center",
+                    l.align === "end" && "-translate-x-full items-end"
+                  )}
+                  style={{ left: `${l.mark.at}%` }}
+                >
+                  <span className="h-1 w-px bg-border-strong" />
+                  <span className="pt-0.5">{l.text}</span>
+                </span>
+              ))}
+            </span>
+            <span className="flex flex-col items-end border-border-strong border-t pt-1 text-right tabular-nums">
+              <span className="font-semibold text-[13px]">
+                {formatSpan(run.started_at, endIso ?? nowMs)}
               </span>
-            ))}
-          </span>
-          <span className="flex flex-col items-end border-border-strong border-t pt-1 text-right tabular-nums">
-            <span className="font-semibold text-[13px]">
-              {formatSpan(run.started_at, endIso ?? nowMs)}
+              <span className="text-[11px] text-subtle">
+                {!endIso ? "so far" : run.finished_at ? "total" : "run not finished"}
+              </span>
             </span>
-            <span className="text-[11px] text-subtle">
-              {!endIso ? "so far" : run.finished_at ? "total" : "run not finished"}
-            </span>
-          </span>
+          </div>
         </div>
-      </div>
-    </Card>
+      </Card>
+    </section>
   );
 }
