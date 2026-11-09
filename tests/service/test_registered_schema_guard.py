@@ -299,6 +299,7 @@ def _execute_apply_stage(harness: _Harness) -> tuple[dict[str, Any], Any]:
             projection=harness.projection,
             tracker=WriteDispatchTracker(),
             scratch=scratch,
+            flow_run_id=FLOW_RUN_ID,
         )
 
 
