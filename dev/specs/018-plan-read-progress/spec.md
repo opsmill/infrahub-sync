@@ -177,8 +177,8 @@ information. Plans are more common than `sync` runs on the frontend team's run p
 - Implementation starts after pull request #402 (spec 017) and the spec 016 branch are merged into
   `feature/v3-develop`, because all three change the worker's flow, the run response and the run response
   model.
-- Storing the read state needs one optional field on the stored stage execution. Executions recorded before this
-  feature have none. This crosses the database change gate, and the user accepted it during the grilling.
+- Storing the read state needs optional fields on the stored stage execution, one for each side. Executions
+  recorded before this feature have none. This crosses the database change gate, and the user accepted it during the grilling.
 - Adding the read state to the run response is an additive API change. Clients from before this feature ignore
   the new field.
 
