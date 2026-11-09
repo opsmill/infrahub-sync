@@ -1,0 +1,39 @@
+tests/cli/test_client_commands.py
+  s_b587fb435a3228::t_0b34adbf5c0b32 821-834
+infrahub_sync/product_store/store.py
+  s_b587fb435a3228::t_3986013ccc99c7 3873-3901
+  s_b587fb435a3228::t_73d6e583f578d8 3948-3949
+infrahub_sync/potenda/read_progress.py
+  s_b587fb435a3228::t_f34c17b55512f4 1,24-25
+docs/docs/running-a-sync.mdx
+  s_b587fb435a3228::t_f34c17b55512f4 128-129,132-135,140-141
+infrahub_sync/product_store/models.py
+  s_b587fb435a3228::t_f34c17b55512f4 90-91
+infrahub_sync/service/read_progress.py
+  s_b587fb435a3228::t_f34c17b55512f4 122-124
+tests/service/test_read_progress.py
+  s_b587fb435a3228::t_2eea1d77cb97ce 280-313
+docs/docs/reference/sync-http-api.mdx
+  s_b587fb435a3228::t_f34c17b55512f4 287-290,313-322,344-346
+tests/product_store/test_side_read_columns.py
+  s_b587fb435a3228::t_7c2ce8531bccb0 43
+  s_b587fb435a3228::t_f536fbbf07f1ec 5,14-15,31-34,37-42,44-56,60
+  s_b587fb435a3228::t_7aacb06a78c0a5 69-72,84,97-98,108-109,122,124,137
+  s_b587fb435a3228::t_439267b2e66463 136,162-190
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a2d253de0e9997f1b472483af12972a6416ab85b",
+  "prompts": {},
+  "sessions": {
+    "s_b587fb435a3228": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "443573d1-a264-40b9-abb9-38a7fba8091b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
