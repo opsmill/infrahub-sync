@@ -1,0 +1,32 @@
+dev/specs/018-plan-read-progress/contracts/cli-output.md
+  s_b587fb435a3228::t_c2e03e81158064 1-27
+CLAUDE.md
+  s_b587fb435a3228::t_1790021f1c4d98 6
+dev/specs/018-plan-read-progress/contracts/run-response.md
+  s_b587fb435a3228::t_9a2463e3185e38 1-49
+dev/specs/018-plan-read-progress/quickstart.md
+  s_b587fb435a3228::t_d50e7c1eb4c158 1-44
+dev/specs/018-plan-read-progress/plan.md
+  s_b587fb435a3228::t_b5a410f5e29b19 1,3,5,8-10,12-18,20-21,23-24,26,28-30,32,34-35,37,39-42,44-45,47,49,51-52,54-63,68-78,85-93,99-119,122-132,135-138,140,142-144
+  s_b587fb435a3228::t_71c2e2e9b09ebb 2,4,6-7,11,19,22,25,27,31,33,36,38,43,46,48,50,53,64-67,79-84,94-98,120-121,133-134,139,141
+dev/specs/018-plan-read-progress/data-model.md
+  s_b587fb435a3228::t_30c6d4c481f0f7 1-77
+dev/specs/018-plan-read-progress/research.md
+  s_b587fb435a3228::t_0975117f64fe3e 1-195
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7ad91bd62f7d0b913814d4bcbd5ecb1b5b56bde0",
+  "prompts": {},
+  "sessions": {
+    "s_b587fb435a3228": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "443573d1-a264-40b9-abb9-38a7fba8091b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
