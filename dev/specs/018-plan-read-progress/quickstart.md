@@ -28,9 +28,10 @@ Expected: every test passes.
 
 ## 3. Live check: a destination that cannot be read
 
-1. Stop the destination, or point the configuration at an unreachable address, and start a Plan.
-2. Expected: the run fails, `destination_read` shows `state=failed` and an `error=` class, and `source_read` shows
-   its own state.
+1. Point the configuration's destination at an unreachable address, and start a Plan.
+2. Expected: the run fails while the worker reads the destination schema, before either read starts, so both
+   `source_read` and `destination_read` show `state=not_started`. The live check on 2026-11-09 found no input that
+   makes a read fail after it started; the unit tests cover `state=failed` with an `error=` class.
 
 ## 4. Live check: an interrupted read
 

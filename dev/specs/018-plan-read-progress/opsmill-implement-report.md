@@ -118,12 +118,12 @@ A second review ran over the branch after the report. Its fixes are in the commi
 - The five read-only review agents ran in parallel rather than one after another, because they change nothing.
 - The broken-JSON case was rated High, not Medium, because it also stops the worker from recording a stage's result.
 - The deferred findings above were left out of this run, for the reasons given in the table.
-- The live checks were not run, because no preview stack was running and the run does not start containers.
+- The live checks were run later on a preview stack started for them; see Live checks.
 
 ## Suggested next steps
 
 1. Review the branch, then rebase the stack as planned: 017 onto the 016 branch, then 018 onto 017.
-2. Run the live checks in `quickstart.md` sections 2 to 5 on the preview stack.
+2. Find a live input that makes a read fail after it started, if the `failed` state needs a live check.
 3. Decide on the deferred findings, in particular a "counts unavailable" marker and a validated stored type.
 4. Open the pull request when the stack is ready.
 
@@ -180,12 +180,91 @@ the dev, Prefect and service extras (re-synced after `towncrier create`), on mac
 
 ## Live checks
 
-Checked on 2026-11-09. `docker ps` listed only the `hivemind` containers: no Sync API, worker, Prefect, Infrahub or
-NetBox container of the preview stack was running. `INFRAHUB_SYNC_API_URL` was unset, and nothing answered on
-`127.0.0.1:8000`. The containers were not started, because this chunk does not start containers it does not own.
+Run on 2026-11-09 from 19:12Z to 19:21Z, on branch `018-plan-read-progress` at `d3da45c2`, against a preview stack
+started from this worktree with `uv run invoke preview.up`. The stack ran on macOS, with Infrahub 1.11.9. The Sync API
+and the Prefect worker ran on the host from the worktree's virtual environment. Infrahub was published on port 8180
+through a git-ignored `development/preview.local.env`, because port 8080 was in use. `uv run invoke preview.seed`
+loaded the smoke dataset: one `InfraDevice` on `main` and the `preview-smoke` branch.
 
-- Section 2, a Plan that succeeds: not run, because no Sync API or worker was running.
-- Section 3, a destination that cannot be read: not run, for the same reason.
-- Section 4, an interrupted read: not run, for the same reason; it also needs a worker container to stop.
-- Section 5, response shape: not run against a live Sync API, for the same reason. The shape is covered offline by
-  the T014 tests in `tests/service/test_http_api.py`, which pass in the unit tier above.
+Each check registered its own package, with Infrahub `main` as the source and the `preview-smoke` branch as the
+destination, mapping `InfraDevice` (`name`, `type`). Each check started a Plan with `infrahub-sync plan --config-id
+<id> --version 1 --branch preview-smoke --no-wait`, then read `infrahub-sync runs show <run_id>` every 0.15 s. The
+driver script is not committed. Tokens are left out below.
+
+| Check | Run | Result |
+| --- | --- | --- |
+| Section 2, a Plan that succeeds | `20261109T1916-fa2ddf78` | Pass |
+| Section 3, a side that cannot be reached | `20261109T1917-a9f02677`, `20261109T1917-d0f5133b`, `20261109T1917-1c764fd5` | Pass, with the change described below |
+| Section 4, an interrupted read | `20261109T1918-54885be6` | Not observed: the reads took 30–60 ms |
+| Section 5, response shape | `GET /runs/20261109T1916-fa2ddf78` | Pass |
+
+### Section 2: a Plan that succeeds
+
+The states that `runs show` printed, in order:
+
+```text
+19:16:59Z execution_state=scheduled                       (no read lines)
+19:17:03Z execution_state=running    source_read: state=waiting / destination_read: state=waiting
+19:17:04Z execution_state=running    both sides state=reading started_at=...
+19:17:04Z execution_state=running    source_read: state=succeeded ... / destination_read: state=reading
+19:17:05Z phase=planned execution_state=completed
+source_read: state=succeeded mode=full started_at=2026-11-09T19:17:04.053135+00:00 ended_at=2026-11-09T19:17:04.221735+00:00 nodes=InfraDevice:1
+destination_read: state=succeeded mode=full started_at=2026-11-09T19:17:04.053401+00:00 ended_at=2026-11-09T19:17:04.910973+00:00 nodes=InfraDevice:1
+```
+
+`infrahub-sync runs logs 20261109T1916-fa2ddf78` printed one end line for each side:
+
+```text
+2026-11-09T19:17:04.228309+00:00  plan  INFO  Load: source read succeeded (full): 1 nodes; InfraDevice 1
+2026-11-09T19:17:04.920256+00:00  plan  INFO  Load: destination read succeeded (full): 1 nodes; InfraDevice 1
+```
+
+A first `runs logs` call, made right when the execution ended, did not yet show the destination line. A second call
+showed it. The logs reach the Sync API a short time after the execution ends.
+
+### Section 3: a side that cannot be reached
+
+In each of these Plans, the failure came before either read started:
+
+- The source URL `http://127.0.0.1:1`: `plan failed: ServerNotReachableError`. The worker looks up the source account
+  before the reads.
+- The destination URL `http://127.0.0.1:1`: `plan failed: DestinationSchemaUnavailableError`, raised while the worker
+  read the destination schema.
+- A source branch that does not exist: `plan failed: BranchNotFoundError`.
+
+In all three runs, both sides showed `state=not_started`, which is the spec's edge case "The Plan stops before either
+read". Before the second-review fix #1, these runs would have shown no read lines.
+
+`quickstart.md` expects `destination_read: state=failed` for an unreachable destination. That does not happen,
+because the destination's reachability is checked before the reads. A Plan that maps an attribute the source kind
+does not have also did not fail: the run ended `no-change` and both sides `succeeded`. No live input was found that
+makes a read fail after it started. The `failed` state is covered by the unit tests in
+`tests/test_potenda_read_progress.py` and `tests/service/test_read_progress.py`.
+
+### Section 4: an interrupted read
+
+The driver was set to stop the Prefect worker process (the host process `prefect-worker`; the preview stack runs no
+worker container) as soon as a side showed `state=reading`. The smoke dataset has one node, so both reads ended within
+60 ms, and no `runs show` call saw `state=reading`. The worker was not stopped. The `interrupted` state is covered by
+the unit tests.
+
+### Section 5: response shape
+
+`GET /runs/20261109T1916-fa2ddf78` returned 200, with this entry in `orchestration`:
+
+```json
+{"purpose": "plan", "state": "completed", "reads": {
+  "source": {"state": "succeeded", "started_at": "2026-11-09T19:17:04.053135Z", "ended_at": "2026-11-09T19:17:04.221735Z",
+             "read_mode": "full", "nodes_by_kind": {"InfraDevice": 1}, "error_class": null},
+  "destination": {"state": "succeeded", "started_at": "2026-11-09T19:17:04.053401Z", "ended_at": "2026-11-09T19:17:04.910973Z",
+                  "read_mode": "full", "nodes_by_kind": {"InfraDevice": 1}, "error_class": null}}}
+```
+
+`GET /runs` returned no `reads` field, as the docs state. No execution recorded before this feature existed in this
+fresh store, so `reads: null` for an older execution was not checked live.
+
+### Environment note
+
+The first Plan, `20261109T1912-9b334708`, crashed before it started: the Prefect worker had been started from a
+sandbox whose temporary directory no longer existed (`FileNotFoundError` in `tempfile.TemporaryDirectory`). The stack
+was restarted from a normal shell, and every later run used that restarted stack. This was not caused by the feature.
