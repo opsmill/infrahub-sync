@@ -429,3 +429,79 @@ def test_a_lineage_refusal_before_the_reads_leaves_both_sides_waiting_then_not_s
     assert stage_reads(failed, run_id=_RUN_ID) == StageReads(
         source=SideRead(state="not_started"), destination=SideRead(state="not_started")
     )
+
+
+# --- T022: the `sync` stage reads both sides the way a Plan does (research R9) ------------------
+
+_FAKE_SOURCE_REPORT = SideReadReport(succeeded=True, read_mode="full", nodes_by_kind={"DcimDevice": 3})
+_FAKE_DESTINATION_REPORT = SideReadReport(succeeded=False, error_class="ConnectionError")
+_FIXED_NOW = "2026-11-09T10:00:05+00:00"
+_SYNC_BINDING = ("cfg-read-progress", 1, "b" * 64)
+
+
+def _bind_sync_stage(monkeypatch: pytest.MonkeyPatch, projection: ProductProjection) -> None:
+    _bind_stage_context(monkeypatch, projection)
+    bind_granting_guard(monkeypatch, service_flow)
+
+
+def _fake_reads(_instance: object, **kwargs: object) -> None:
+    """Report the same two reads to whatever observer the stage passes, then end the stage."""
+    observer = cast("StoreSideReadObserver", kwargs["_read_observer"])
+    observer.read_started("source")
+    observer.read_started("destination")
+    observer.read_ended("source", _FAKE_SOURCE_REPORT)
+    observer.read_ended("destination", _FAKE_DESTINATION_REPORT)
+    raise _StopStageError
+
+
+def test_a_sync_stage_records_both_sides_waiting_then_passes_the_observer_to_its_composed_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projection = _store(tmp_path, "sync")
+    _bind_sync_stage(monkeypatch, projection)
+    seen: dict[str, Any] = {}
+
+    def _plan(_instance: object, **kwargs: object) -> None:
+        link = _stored_link(projection)
+        seen["source"], seen["destination"] = link.source_read, link.destination_read
+        seen.update(kwargs)
+        raise _StopStageError
+
+    monkeypatch.setattr(service_flow, "_plan", _plan)
+
+    with pytest.raises(_StopStageError):
+        _execute(projection, "sync", binding=_SYNC_BINDING)
+
+    assert seen["composed_sync"] is True
+    assert seen["source"] == {"state": "waiting"}
+    assert seen["destination"] == {"state": "waiting"}
+    observer = seen["observer"]
+    assert isinstance(observer, StoreSideReadObserver)
+    observer.read_started("destination")
+    assert _stored_link(projection).destination_read is not None
+    assert _stored_link(projection).destination_read["state"] == "reading"  # ty: ignore[not-subscriptable]
+
+
+def test_a_sync_stage_returns_the_same_reads_as_a_plan_stage_for_the_same_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("infrahub_sync.service.read_progress._now", lambda: _FIXED_NOW)
+    monkeypatch.setattr(service_flow, "execute_run", _fake_reads)
+    reads: dict[str, StageReads | None] = {}
+    for stage in ("plan", "sync"):
+        directory = tmp_path / stage
+        directory.mkdir()
+        projection = _store(directory, stage)
+        _bind_sync_stage(monkeypatch, projection)
+        with pytest.raises(_StopStageError):
+            _execute(projection, stage, binding=_SYNC_BINDING if stage == "sync" else (None, None, None))
+        reads[stage] = stage_reads(_stored_link(projection), run_id=_RUN_ID)
+
+    fixed = _utc(_FIXED_NOW)
+    assert reads["plan"] == StageReads(
+        source=SideRead(
+            state="succeeded", started_at=fixed, ended_at=fixed, read_mode="full", nodes_by_kind={"DcimDevice": 3}
+        ),
+        destination=SideRead(state="failed", started_at=fixed, ended_at=fixed, error_class="ConnectionError"),
+    )
+    assert reads["sync"] == reads["plan"]

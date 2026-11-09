@@ -104,11 +104,11 @@ during and after each read.
 
 ### Tests for User Story 3
 
-- [ ] T022 [P] [US3] Add failing tests to `tests/service/test_read_progress.py`: the `sync` stage records both sides as `waiting`, passes the observer to `_plan(..., composed_sync=True)`, and its run response returns the same `reads` as a Plan for the same fake reads (research R9).
+- [X] T022 [P] [US3] Add failing tests to `tests/service/test_read_progress.py`: the `sync` stage records both sides as `waiting`, passes the observer to `_plan(..., composed_sync=True)`, and its run response returns the same `reads` as a Plan for the same fake reads (research R9).
 
 ### Implementation for User Story 3
 
-- [ ] T023 [US3] Make T022 pass in `infrahub_sync/service/flow.py`, if T017 did not already cover the `sync` path.
+- [X] T023 [US3] Make T022 pass in `infrahub_sync/service/flow.py`, if T017 did not already cover the `sync` path.
 
 **Checkpoint**: All user stories work.
 
