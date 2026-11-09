@@ -1,0 +1,41 @@
+dev/specs/018-plan-read-progress/research.md
+  s_b587fb435a3228::t_70a2752a32113e 134-139
+  s_b587fb435a3228::t_57a978a55b4269 117-121
+  s_b587fb435a3228::t_c9fcc2516469c2 193-199
+dev/specs/018-plan-read-progress/spec.md
+  s_b587fb435a3228::t_d12409eb48656c 138-141
+  s_b587fb435a3228::t_f8c2b2c2ed0588 109-114
+  s_b587fb435a3228::t_ebe7d261dea05c 63
+  s_b587fb435a3228::t_d573cb055bd83e 76-77
+  s_b587fb435a3228::t_a0ffbdba683944 145-146
+  s_b587fb435a3228::t_32963720387790 156-157
+  s_b587fb435a3228::t_022e7ecb5e9793 166-168
+dev/specs/018-plan-read-progress/contracts/cli-output.md
+  s_b587fb435a3228::t_95092f5a8534d2 5-7
+dev/specs/018-plan-read-progress/plan.md
+  s_b587fb435a3228::t_1628d8526c01e7 17-18
+  s_b587fb435a3228::t_ddd4ed4c0c2e49 47-54
+dev/specs/018-plan-read-progress/critiques/critique-20261109.md
+  s_b587fb435a3228::t_d31e89801750aa 1-127
+dev/specs/018-plan-read-progress/contracts/run-response.md
+  s_b587fb435a3228::t_a6c56adf9298b0 50,52-53
+  s_b587fb435a3228::t_242266f1112a7b 42,46-49
+dev/specs/018-plan-read-progress/data-model.md
+  s_b587fb435a3228::t_dc2dab06e62287 70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4cb71c39448fc47e2ffd55757f9cdf43a1a3b275",
+  "prompts": {},
+  "sessions": {
+    "s_b587fb435a3228": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "443573d1-a264-40b9-abb9-38a7fba8091b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
