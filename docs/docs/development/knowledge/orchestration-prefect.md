@@ -83,6 +83,54 @@ temporary files and exchanges plans through object storage; it reads no shared c
 location. See the [registered-run lifecycle](sync-architecture.md#one-registered-run) for
 planning, verification, approved writes and result persistence.
 
+#### What a stage leaves in Prefect
+
+<!-- Extracted from dev/specs/archive/016-prefect-run-observability on 2026-11-09 -->
+
+An operator who opens a service flow run in the Prefect UI reads the stage's outcome and the
+next step there. Everything Prefect shows about the outcome comes from the stored run record,
+and the worker produces it only after it stores that record
+([ADR 0024](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0024-prefect-surfaces-follow-the-stored-run-record.md)).
+
+- **Order.** `service_sync_run` stores the outcome first: `_commit_success` on success, or
+  `_record_failure` on failure. `_record_failure` returns a frozen `RecordedFailure`, which
+  holds the stored terminal outcome (`failed` or `ambiguous`) and the evidence's redacted
+  `next_action`. It returns `None` when it stored nothing. The worker then writes the last log
+  line, and then publishes the run summary artifact.
+- **Last log line.** `final_log_line` writes
+  `service run <run_id> stage=<stage> outcome=<outcome>; next step: <next step>`. The next
+  step is the failure's `next_action`. A stage that succeeds with a failure in its result,
+  such as a `sync` that stops on left-out records, uses `result["failure"]["next_action"]`,
+  the field that the CLI prints. Without a next action, the next step is
+  `infrahub-sync runs show <run_id>`.
+- **Run summary artifact.** `infrahub_sync/service/run_artifact.py` publishes one markdown
+  artifact for each stage, and only when the stage runs inside a real Prefect flow run (the
+  `prefect_context` flag of `_run_logger`). The artifact holds the run ID, the stage, the
+  outcome, `config_id@registry_version`, the destination branch, the operation counts by
+  action and by kind, and the next steps: `runs show`, `runs plan <id> --detail` when the run
+  holds a saved plan review, then the next action. The key is `sync-run-<run_id>-<stage>`,
+  lowercased, with every character other than `a-z`, `0-9` and `-` replaced by a dash,
+  because Prefect artifact keys accept only those characters. A later flow run of the same
+  stage adds a version to the same key. The markdown passes through `redact` before it is
+  published. When the run record cannot be read, or publishing fails, the worker logs a
+  warning, and the run does not fail. `publish_run_artifact` receives the publishing function
+  (`create_markdown_artifact` in the worker), so unit tests pass a recorder.
+- **Refused claim.** When the worker refuses to claim a flow run that the Sync API is not
+  waiting for, such as a Prefect Retry or a run started by hand from the deployment, it raises
+  `ExecutionClaimRefusedError`. The message is built from fixed text and the run ID, and says
+  that nothing was read or written and how to start a new Sync run. `service_sync_run` logs
+  the message at ERROR level in the flow run log, then raises the error again.
+- **Reported state.** In the run response, an orchestration entry that has a recorded
+  `terminal_state` reports that verdict as its `state`. Otherwise it reports the live
+  observation when available, and the retained observation when not.
+- **Link to the flow run.** `infrahub_sync/service/prefect_ui.py` reads
+  `INFRAHUB_SYNC_PREFECT_UI_URL` once, when `build_app` starts. An empty or unset value
+  turns the link off. A value that is not an absolute `http` or `https` URL, or that carries
+  credentials, a query or a fragment, stops start-up with a `ValueError` whose message names
+  the setting but not the value. When the setting is set, each orchestration entry carries
+  `prefect_flow_run_url`, `<base>/runs/flow-run/<flow_run_id>`, which is the route that
+  Prefect 3.8.6 uses for its own UI links. `runs show` prints it.
+
 ### Direct integration {#the-flow}
 
 `infrahub_sync/orchestration/` provides the optional direct integration, installed by the
