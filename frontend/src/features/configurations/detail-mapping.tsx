@@ -9,10 +9,11 @@ import {
 } from "@infrahub/ui";
 import { useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
+import { cn } from "tailwind-variants";
 
 import type { ConfigurationVersion, DeclaredAdapter, DeclaredMapping } from "#/api/types";
 import { ArrowRightIcon, ChevronRightIcon } from "#/components/icons";
-import { FOCUS, FOCUS_INSET, SectionHeading, textAction } from "#/components/page";
+import { expandChevron, FOCUS, FOCUS_INSET, SectionHeading, textAction } from "#/components/page";
 import { BranchCode } from "#/components/run-status";
 import { fmt } from "#/domain/run-state";
 import { describeSystem, mappedKinds } from "#/domain/systems";
@@ -202,11 +203,12 @@ function MappingRow({
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className={`grid w-full cursor-pointer grid-cols-[16px_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5 px-4 py-2.5 text-left text-[13px] transition-colors duration-150 ease-out hover:bg-content-muted motion-reduce:transition-none md:grid-cols-[16px_minmax(0,16rem)_minmax(0,1fr)_auto] ${FOCUS_INSET}`}
+        className={cn(
+          "grid w-full cursor-pointer grid-cols-[16px_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5 px-4 py-2.5 text-left text-[13px] transition-colors duration-150 ease-out hover:bg-content-muted motion-reduce:transition-none md:grid-cols-[16px_minmax(0,16rem)_minmax(0,1fr)_auto]",
+          FOCUS_INSET
+        )}
       >
-        <ChevronRightIcon
-          className={`size-3.5 text-subtle transition-transform duration-150 ease-out motion-reduce:transition-none ${open ? "rotate-90" : ""}`}
-        />
+        <ChevronRightIcon className={expandChevron({ open, className: "text-subtle" })} />
         <span className="min-w-0 truncate font-medium font-mono" title={m.name}>
           {m.name}
         </span>
@@ -412,7 +414,7 @@ export function Mapping({
                 <button
                   type="button"
                   onClick={() => setRows(allOpen ? new Set() : new Set(mapping.map((_, i) => i)))}
-                  className={textAction(false)}
+                  className={textAction()}
                 >
                   {allOpen ? "Collapse all" : "Expand all"}
                 </button>

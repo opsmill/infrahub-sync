@@ -11,6 +11,7 @@ import {
 } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { type ComponentPropsWithRef, type ReactNode, useEffect, useRef, useState } from "react";
+import { cn } from "tailwind-variants";
 
 import { describeError, meQuery, statusQuery, versionQuery } from "#/api/queries";
 import { announce, LiveRegion } from "#/components/announcer";
@@ -31,7 +32,11 @@ export const Route = createRootRouteWithContext<RouterContext>()({
   component: RootComponent,
 });
 
-const NAV = `relative inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-md px-2 text-foreground-muted text-sm transition-colors duration-150 ease-out hover:bg-highlight hover:text-foreground motion-reduce:transition-none before:absolute before:inset-x-0 before:-inset-y-2 ${FOCUS} data-current:text-foreground data-current:after:absolute data-current:after:inset-x-2 data-current:after:bottom-[-9px] data-current:after:h-0.5 data-current:after:rounded-full data-current:after:bg-foreground`;
+const NAV = cn(
+  "relative inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-md px-2 text-foreground-muted text-sm transition-colors duration-150 ease-out hover:bg-highlight hover:text-foreground motion-reduce:transition-none before:absolute before:inset-x-0 before:-inset-y-2",
+  FOCUS,
+  "data-current:text-foreground data-current:after:absolute data-current:after:inset-x-2 data-current:after:bottom-[-9px] data-current:after:h-0.5 data-current:after:rounded-full data-current:after:bg-foreground"
+);
 
 function Mark() {
   return (
@@ -175,7 +180,7 @@ function useServiceState(): ServiceState & { showDetail: boolean } {
 function Row({
   term,
   children,
-  className = "",
+  className,
 }: {
   term: string;
   children: ReactNode;
@@ -184,7 +189,7 @@ function Row({
   return (
     <>
       <dt className="text-subtle">{term}</dt>
-      <dd className={`min-w-0 text-foreground tabular-nums ${className}`}>{children}</dd>
+      <dd className={cn("min-w-0 text-foreground tabular-nums", className)}>{children}</dd>
     </>
   );
 }
@@ -206,10 +211,13 @@ function StatusMenu() {
       <Button
         variant="ghost"
         size="sm"
-        className={`min-w-0 max-w-full shrink gap-2 px-2 max-sm:size-8 max-sm:px-0 max-sm:before:absolute max-sm:before:-inset-2 ${FOCUS_RAC}`}
+        className={cn(
+          "min-w-0 max-w-full shrink gap-2 px-2 max-sm:size-8 max-sm:px-0 max-sm:before:absolute max-sm:before:-inset-2",
+          FOCUS_RAC
+        )}
         aria-label={`${s.label}${actor ? `, ${actor}` : ""}. Open Sync service details`}
       >
-        <StateIcon state={s.icon} className={`size-3.5 shrink-0 ${s.color}`} />
+        <StateIcon state={s.icon} className={cn("size-3.5 shrink-0", s.color)} />
         <span className="min-w-0 truncate font-normal text-foreground-muted text-xs max-sm:sr-only">
           {s.label}
         </span>
@@ -231,7 +239,7 @@ function StatusMenu() {
           className="w-80 max-w-[calc(100vw-2rem)] p-4 text-sm"
         >
           <p className="flex items-center gap-2 font-medium text-foreground">
-            <StateIcon state={s.icon} className={`size-4 shrink-0 ${s.color}`} />
+            <StateIcon state={s.icon} className={cn("size-4 shrink-0", s.color)} />
             {s.label}
           </p>
           {s.sentence && <p className="mt-1.5 text-pretty text-foreground-muted">{s.sentence}</p>}
@@ -378,7 +386,10 @@ function RootComponent() {
     <div className="min-h-dvh bg-background text-foreground text-sm antialiased">
       <a
         href="#main"
-        className={`sr-only font-medium focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-lg focus:border focus:bg-content focus:px-3 focus:py-2 focus:shadow-md ${FOCUS}`}
+        className={cn(
+          "sr-only font-medium focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-lg focus:border focus:bg-content focus:px-3 focus:py-2 focus:shadow-md",
+          FOCUS
+        )}
       >
         Skip to content
       </a>
@@ -387,7 +398,10 @@ function RootComponent() {
           <PlainLink
             to="/"
             aria-label="Infrahub Sync, configurations"
-            className={`relative -ml-1 inline-flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-1 font-semibold tracking-tight before:absolute before:-inset-2 ${FOCUS}`}
+            className={cn(
+              "relative -ml-1 inline-flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-1 font-semibold tracking-tight before:absolute before:-inset-2",
+              FOCUS
+            )}
           >
             <Mark />
             <span className="max-sm:hidden">Infrahub Sync</span>

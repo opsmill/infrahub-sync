@@ -1,6 +1,7 @@
 import { Button, Card, LinkButton } from "@infrahub/ui";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { cn } from "tailwind-variants";
 
 import { isEnvelope } from "#/api/errors";
 import { describeError } from "#/api/queries";
@@ -326,16 +327,16 @@ export function Executions({ orchestration }: { orchestration: Orchestration[] }
                   <td className={TD}>
                     <StateLabel state={r.state} label={r.label} />
                   </td>
-                  <td className={`${TD} text-foreground-muted`}>
+                  <td className={cn(TD, "text-foreground-muted")}>
                     {o.submitted_at ? <When iso={o.submitted_at} /> : "—"}
                   </td>
-                  <td className={`${TD} whitespace-nowrap text-foreground-muted tabular-nums`}>
+                  <td className={cn(TD, "whitespace-nowrap text-foreground-muted tabular-nums")}>
                     {queued(o) ?? "—"}
                   </td>
-                  <td className={`${TD} whitespace-nowrap text-foreground-muted tabular-nums`}>
+                  <td className={cn(TD, "whitespace-nowrap text-foreground-muted tabular-nums")}>
                     {ran(o)}
                   </td>
-                  <td className={`${TD} py-1.5`}>
+                  <td className={TD}>
                     <FlowRunId id={o.flow_run_id} />
                   </td>
                 </tr>
@@ -417,7 +418,10 @@ export function Details({
             to="/configs/$configId"
             params={{ configId: run.config_id }}
             search={{ tab: "versions" }}
-            className={`relative rounded-sm text-accent before:absolute before:inset-x-0 before:-inset-y-3 before:content-[''] hover:underline ${FOCUS}`}
+            className={cn(
+              "relative rounded-sm text-accent before:absolute before:inset-x-0 before:-inset-y-3 before:content-[''] hover:underline",
+              FOCUS
+            )}
           >
             {name}
           </Link>

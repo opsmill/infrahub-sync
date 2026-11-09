@@ -11,6 +11,7 @@ import {
 import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { cn } from "tailwind-variants";
 
 import { configsQuery, describeError, runPagesQuery, runQuery } from "#/api/queries";
 import type { Run, RunResource } from "#/api/types";
@@ -239,7 +240,7 @@ export function RunsPage({ q, show = "all", config }: RunsSearch) {
           The Sync API does not list this configuration. It may have been removed, or the link is
           wrong.
         </p>
-        <Button variant="outline" size="sm" className={`mt-1 ${TOUCH}`} onPress={showAllConfigs}>
+        <Button variant="outline" size="sm" className={cn("mt-1", TOUCH)} onPress={showAllConfigs}>
           Show all configurations
         </Button>
       </EmptyPanel>
@@ -254,7 +255,7 @@ export function RunsPage({ q, show = "all", config }: RunsSearch) {
           <Link
             to="/configs/$configId"
             params={{ configId: config }}
-            className={`${buttonVariants({ variant: "outline", size: "sm" })} ${TOUCH}`}
+            className={buttonVariants({ variant: "outline", size: "sm", className: TOUCH })}
           >
             View configuration
           </Link>
@@ -366,7 +367,11 @@ export function RunsPage({ q, show = "all", config }: RunsSearch) {
           </p>
           <Link
             to="/"
-            className={`mt-1 ${buttonVariants({ variant: "outline", size: "sm" })} ${TOUCH}`}
+            className={buttonVariants({
+              variant: "outline",
+              size: "sm",
+              className: ["mt-1", TOUCH],
+            })}
           >
             View configurations
           </Link>
@@ -427,7 +432,7 @@ export function RunsPage({ q, show = "all", config }: RunsSearch) {
 /** The toolbar's shape on the first load, including the phone-only Show select. */
 function ToolbarSkeleton() {
   const field = (className: string) => (
-    <div className={`flex flex-col gap-1.5 ${className}`}>
+    <div className={cn("flex flex-col gap-1.5", className)}>
       <div className="flex h-4 items-center">
         <Bar className="h-3 w-24" />
       </div>
@@ -590,7 +595,7 @@ function NoMatch({
   return (
     <EmptyPanel title={title}>
       <p className="max-w-[56ch] text-pretty text-foreground-muted">{body}</p>
-      <Button variant="outline" size="sm" className={`mt-1 ${TOUCH}`} onPress={onShowAll}>
+      <Button variant="outline" size="sm" className={cn("mt-1", TOUCH)} onPress={onShowAll}>
         Show all runs
       </Button>
       {older && <div className="mt-2 flex flex-col items-center gap-2">{older}</div>}

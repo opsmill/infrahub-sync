@@ -27,6 +27,8 @@
     "openapi-react-query": "^0.5.4",
     "react": "catalog:",
     "react-dom": "catalog:",
+    "tailwind-merge": "catalog:",
+    "tailwind-variants": "^3.3.1",
     "tailwindcss": "catalog:"
   },
   "devDependencies": {

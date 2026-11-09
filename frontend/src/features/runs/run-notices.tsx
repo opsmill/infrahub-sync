@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { cn } from "tailwind-variants";
 
 import type { Orchestration, Plan, Run } from "#/api/types";
 import { CopyButton, FOCUS, InlineCode, Notice } from "#/components/page";
@@ -10,7 +11,7 @@ import { formatAbsolute } from "#/lib/time";
 
 import { identityParts } from "./PlanReview";
 
-const RUN_LINK = `rounded-sm font-mono text-[13px] text-accent hover:underline ${FOCUS}`;
+const RUN_LINK = cn("rounded-sm font-mono text-[13px] text-accent hover:underline", FOCUS);
 const LABEL = "block text-subtle text-xs";
 const CONNECT_ERRORS = new Set([
   "ConnectError",

@@ -1,6 +1,7 @@
 import { Button, Modal } from "@infrahub/ui";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useId, useLayoutEffect, useRef } from "react";
+import { cn } from "tailwind-variants";
 
 import { describeError } from "#/api/queries";
 import { FOCUS, Notice } from "#/components/page";
@@ -11,7 +12,10 @@ export const INPUT =
 /** The design-system amber fill gives white text about 3:1; amber-700 and darker reach 5:1. */
 const WARNING_FILL = "border-amber-700 from-amber-700 to-amber-800";
 
-export const LINK = `rounded-sm font-medium text-accent underline-offset-2 hover:underline ${FOCUS}`;
+export const LINK = cn(
+  "rounded-sm font-medium text-accent underline-offset-2 hover:underline",
+  FOCUS
+);
 
 /** Autofocus only with a mouse or trackpad, so a phone keyboard does not cover the dialog on open. */
 export const finePointer = () =>
@@ -259,7 +263,10 @@ export function DialogFrame({
               type="submit"
               variant={isDisabled ? "outline" : submitVariant}
               size="sm"
-              className={`max-sm:h-11 max-sm:w-full ${!isDisabled && submitVariant === "warning" ? WARNING_FILL : ""}`}
+              className={cn(
+                "max-sm:h-11 max-sm:w-full",
+                !isDisabled && submitVariant === "warning" && WARNING_FILL
+              )}
               isPending={isPending}
               isDisabledAndFocusable={isDisabled}
               aria-describedby={showReason ? reasonId : undefined}

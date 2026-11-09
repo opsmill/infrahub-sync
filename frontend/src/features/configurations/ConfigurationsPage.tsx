@@ -19,6 +19,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { cn } from "tailwind-variants";
 
 import { describeError } from "#/api/queries";
 import type { Run } from "#/api/types";
@@ -68,7 +69,7 @@ export type StateFilter = RunState | "all";
 const TABLE =
   "md:grid md:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)_minmax(9rem,max-content)] md:gap-x-6 lg:grid-cols-[minmax(240px,1.15fr)_140px_minmax(0,1fr)_minmax(9rem,max-content)]";
 const SUBGRID = "md:col-span-full md:grid md:grid-cols-subgrid";
-const ROW = `flex flex-col gap-y-2 px-4 py-3.5 md:items-start ${SUBGRID}`;
+const ROW = cn("flex flex-col gap-y-2 px-4 py-3.5 md:items-start", SUBGRID);
 
 // Tooltip triggers sit above the stretched row link for a mouse; on a touch screen a tap on them
 // opens the configuration, because touch does not open tooltips.
@@ -84,7 +85,7 @@ function HostTip({ system }: { system: System }) {
       placement="top"
       message={<span className="font-mono">{system.host}</span>}
     >
-      <span className={`${LIFT} cursor-default`}>{system.label}</span>
+      <span className={cn(LIFT, "cursor-default")}>{system.label}</span>
     </Tooltip>
   );
 }
@@ -110,7 +111,10 @@ function SystemsLine({ row }: { row: ConfigurationRow }) {
           message={fromRun ? "Branch of the latest run" : "Branch declared in the configuration"}
         >
           <span
-            className={`${LIFT} inline-flex min-w-0 max-w-full cursor-default items-center gap-1 font-mono text-[12px] text-subtle`}
+            className={cn(
+              LIFT,
+              "inline-flex min-w-0 max-w-full cursor-default items-center gap-1 font-mono text-[12px] text-subtle"
+            )}
           >
             <BranchIcon className="size-3.5 shrink-0" />
             <span className="sr-only">{fromRun ? "latest run on branch" : "on branch"}</span>
@@ -222,17 +226,23 @@ function Reason({
   return (
     <div id={id} className="flex min-w-0 flex-col gap-0.5">
       <p
-        className={`flex items-start gap-1.5 ${quiet ? "text-foreground-muted" : "text-foreground"}`}
+        className={cn(
+          "flex items-start gap-1.5",
+          quiet ? "text-foreground-muted" : "text-foreground"
+        )}
       >
         <StateIcon
           state={row.state}
-          className={`mt-[3px] size-3.5 shrink-0 ${STATE_TEXT[row.state]}`}
+          className={cn("mt-[3px] size-3.5 shrink-0", STATE_TEXT[row.state])}
         />
         <span className="text-pretty">{e.short}</span>
       </p>
       {e.note && (
         <p
-          className={`${LIFT} line-clamp-2 select-text pl-5 text-foreground-muted text-xs [overflow-wrap:anywhere] pointer-fine:cursor-text`}
+          className={cn(
+            LIFT,
+            "line-clamp-2 select-text pl-5 text-foreground-muted text-xs [overflow-wrap:anywhere] pointer-fine:cursor-text"
+          )}
         >
           {e.noteMono ? <ErrorClasses run={row.run} label={e.note} /> : e.note}
         </p>
@@ -274,7 +284,7 @@ function RowAction({
   if (!row.state) {
     if (row.runUnknown !== "failed") return null;
     return (
-      <Link to="/runs" search={{ config: id }} className={`${textAction(false)} ${ACTION_AREA}`}>
+      <Link to="/runs" search={{ config: id }} className={textAction({ className: ACTION_AREA })}>
         View runs
         {forName}
         <ChevronRightIcon className={CHEVRON} />
@@ -288,7 +298,7 @@ function RowAction({
       <Link
         to="/runs/$runId"
         params={{ runId: row.run.run_id }}
-        className={`${textAction(action.primary)} ${ACTION_AREA}`}
+        className={textAction({ primary: action.primary, className: ACTION_AREA })}
       >
         {action.label}
         {forName}
@@ -300,7 +310,7 @@ function RowAction({
     return (
       <button
         type="button"
-        className={`${textAction(false)} ${ACTION_AREA}`}
+        className={textAction({ className: ACTION_AREA })}
         onClick={() =>
           onStart({
             configId: id,
@@ -335,14 +345,17 @@ function Row({
   const name = configName(row);
   const quiet = row.state === "insync" || row.state === "idle";
   return (
-    <li data-config-id={id} className={`${ROW} ${CLICKABLE}`}>
+    <li data-config-id={id} className={cn(ROW, CLICKABLE)}>
       <div className="min-w-0">
         <Link
           to="/configs/$configId"
           params={{ configId: id }}
           data-stretched=""
           aria-describedby={`reason-${id}`}
-          className={`font-medium text-foreground [overflow-wrap:anywhere] decoration-subtle-muted underline-offset-2 hover:underline ${STRETCHED}`}
+          className={cn(
+            "font-medium text-foreground [overflow-wrap:anywhere] decoration-subtle-muted underline-offset-2 hover:underline",
+            STRETCHED
+          )}
         >
           {name}
         </Link>
@@ -425,7 +438,7 @@ function Table({ children }: { children: ReactNode }) {
     <Card className="overflow-hidden">
       <div className={TABLE}>
         <ColumnHeader />
-        <ul className={`divide-y ${SUBGRID}`}>{children}</ul>
+        <ul className={cn("divide-y", SUBGRID)}>{children}</ul>
       </div>
     </Card>
   );
@@ -735,7 +748,7 @@ export function ConfigurationsPage({
                       noun={["configuration matches", "configurations match"]}
                     />
                   </search>
-                  <div ref={filterRef} className={`contents ${nothingToFilter ? "invisible" : ""}`}>
+                  <div ref={filterRef} className={cn("contents", nothingToFilter && "invisible")}>
                     {/* Buttons 2 px taller than the shared filter's make it as tall as the search field. */}
                     <div className="hidden sm:contents pointer-fine:[&_button]:h-[34px]">
                       <FilterTabs
@@ -905,7 +918,10 @@ function KindsCount({ kinds }: { kinds: string[] }) {
       }
     >
       <span
-        className={`${LIFT} cursor-default tabular-nums underline decoration-subtle-muted decoration-dotted underline-offset-4`}
+        className={cn(
+          LIFT,
+          "cursor-default tabular-nums underline decoration-subtle-muted decoration-dotted underline-offset-4"
+        )}
       >
         {label}
       </span>

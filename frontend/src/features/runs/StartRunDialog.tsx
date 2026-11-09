@@ -2,6 +2,7 @@ import { Checkbox } from "@infrahub/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { cn } from "tailwind-variants";
 
 import { useCreateRun, useIdempotencyKey } from "#/api/actions";
 import { configQuery, configVersionQuery, runsQuery, statusQuery } from "#/api/queries";
@@ -278,7 +279,7 @@ export function StartRunDialog({
         <Field id="run-branch" label="Destination branch" hint={branchHint}>
           <input
             id="run-branch"
-            className={`${INPUT} font-mono`}
+            className={cn(INPUT, "font-mono")}
             value={branch}
             readOnly={version.isPending}
             onChange={(e) => {
@@ -356,7 +357,10 @@ export function StartRunDialog({
             <div key={option.value} className="flex flex-col">
               {card}
               <div
-                className={`grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none ${operation === "sync" ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
+                className={cn(
+                  "grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
+                  operation === "sync" ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                )}
               >
                 <div className="min-h-0 overflow-hidden" inert={operation !== "sync"}>
                   <div className="pt-2">

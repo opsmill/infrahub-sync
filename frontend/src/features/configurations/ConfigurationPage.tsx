@@ -2,6 +2,7 @@ import { Button, buttonVariants } from "@infrahub/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { cn } from "tailwind-variants";
 
 import {
   configQuery,
@@ -64,7 +65,10 @@ function newestApplied(items: VersionSummary[] | undefined) {
   return best;
 }
 
-const META_LINK = `relative rounded-sm tabular-nums before:absolute before:-inset-x-1 before:-inset-y-3 before:content-[''] underline decoration-dotted decoration-subtle-muted underline-offset-4 hover:text-foreground ${FOCUS}`;
+const META_LINK = cn(
+  "relative rounded-sm tabular-nums before:absolute before:-inset-x-1 before:-inset-y-3 before:content-[''] underline decoration-dotted decoration-subtle-muted underline-offset-4 hover:text-foreground",
+  FOCUS
+);
 
 function Breadcrumb({ current }: { current?: string }) {
   return (
@@ -115,11 +119,13 @@ function Tabs({
           replace
           resetScroll={false}
           aria-current={tab === id ? "page" : undefined}
-          className={`relative -mx-2 inline-flex h-11 items-center gap-1.5 rounded-md px-2 text-sm transition-colors duration-150 ease-out motion-reduce:transition-none ${FOCUS_INSET} ${
+          className={cn(
+            "relative -mx-2 inline-flex h-11 items-center gap-1.5 rounded-md px-2 text-sm transition-colors duration-150 ease-out motion-reduce:transition-none",
+            FOCUS_INSET,
             tab === id
               ? "text-foreground after:absolute after:inset-x-2 after:bottom-[-1px] after:h-0.5 after:rounded-full after:bg-foreground"
               : "text-foreground-muted hover:text-foreground"
-          }`}
+          )}
         >
           {label}
           {counts[id] !== undefined && <span className={COUNT_BADGE}>{counts[id]}</span>}
@@ -344,7 +350,7 @@ export function ConfigurationPage({
               <Link
                 to="/runs"
                 search={{ config: configId }}
-                className={`self-start ${textAction(false)}`}
+                className={textAction({ className: "self-start" })}
               >
                 View all runs of this configuration
                 <ChevronRightIcon />

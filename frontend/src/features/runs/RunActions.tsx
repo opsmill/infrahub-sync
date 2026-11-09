@@ -2,6 +2,7 @@ import { Button } from "@infrahub/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
+import { cn } from "tailwind-variants";
 
 import { useApplyRun, useCancelRun, useIdempotencyKey, useVerifyRun } from "#/api/actions";
 import { configQuery, configVersionQuery, runQuery, runsQuery } from "#/api/queries";
@@ -122,7 +123,7 @@ function verifiedAt(
 function ChangeLine({ tone, children }: { tone: keyof typeof CHANGE_TONE; children: ReactNode }) {
   return (
     <li className="flex items-baseline gap-2">
-      <span aria-hidden="true" className={`w-3 shrink-0 font-mono ${CHANGE_TONE[tone].text}`}>
+      <span aria-hidden="true" className={cn("w-3 shrink-0 font-mono", CHANGE_TONE[tone].text)}>
         {CHANGE_TONE[tone].sign}
       </span>
       <span className="min-w-0 text-pretty">{children}</span>
@@ -419,7 +420,11 @@ export function ApplyDialog({
         <div className="relative">
           <input
             id="apply-confirm"
-            className={`${INPUT} font-mono ${matches ? "border-success pr-9 focus-visible:border-success" : ""}`}
+            className={cn(
+              INPUT,
+              "font-mono",
+              matches && "border-success pr-9 focus-visible:border-success"
+            )}
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
             disabled={branch === undefined || checksumRefused}

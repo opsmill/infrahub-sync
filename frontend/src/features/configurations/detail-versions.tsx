@@ -2,6 +2,7 @@ import { Card } from "@infrahub/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { cn } from "tailwind-variants";
 
 import { configVersionQuery } from "#/api/queries";
 import type {
@@ -11,11 +12,14 @@ import type {
   VersionSummary,
 } from "#/api/types";
 import { ChevronRightIcon } from "#/components/icons";
-import { CopyButton, ErrorPanel, FOCUS, textAction } from "#/components/page";
+import { CopyButton, ErrorPanel, expandChevron, FOCUS, textAction } from "#/components/page";
 import { StateLabel, When } from "#/components/run-status";
 import { fmt, type ListRunState, refLabel, refState } from "#/domain/run-state";
 
-const RUN_LINK = `relative rounded-sm before:absolute before:-inset-x-1 before:-inset-y-3 before:content-[''] hover:underline ${FOCUS}`;
+const RUN_LINK = cn(
+  "relative rounded-sm before:absolute before:-inset-x-1 before:-inset-y-3 before:content-[''] hover:underline",
+  FOCUS
+);
 
 /**
  * The run's state as the Runs tab shows it when the run is on the loaded page. A reference carries
@@ -225,7 +229,7 @@ function VersionRow({
               to="/runs/$runId"
               params={{ runId: v.latest_applied_run.run_id }}
               aria-label={`Last applied run of version ${n}, run ${v.latest_applied_run.run_id}`}
-              className={`${RUN_LINK} text-foreground-muted`}
+              className={cn(RUN_LINK, "text-foreground-muted")}
             >
               Applied{" "}
               <When iso={v.latest_applied_run.finished_at ?? v.latest_applied_run.started_at} />
@@ -243,7 +247,7 @@ function VersionRow({
           search={{ tab: "mapping", version: n === latestVersion ? undefined : n }}
           replace
           resetScroll={false}
-          className={textAction(false)}
+          className={textAction()}
         >
           View mapping
           <ChevronRightIcon />
@@ -253,16 +257,14 @@ function VersionRow({
             type="button"
             aria-expanded={comparing}
             onClick={() => setComparing((c) => !c)}
-            className={textAction(false)}
+            className={textAction()}
           >
             {comparing ? "Hide comparison" : `Compare with version ${n - 1}`}
-            <ChevronRightIcon
-              className={`size-3.5 transition-transform duration-150 ease-out motion-reduce:transition-none ${comparing ? "rotate-90" : ""}`}
-            />
+            <ChevronRightIcon className={expandChevron({ open: comparing })} />
           </button>
         )}
         {onStart && latestVersion !== undefined && n < latestVersion && (
-          <button type="button" onClick={() => onStart(n)} className={textAction(false)}>
+          <button type="button" onClick={() => onStart(n)} className={textAction()}>
             Plan version {n}
             <ChevronRightIcon />
           </button>

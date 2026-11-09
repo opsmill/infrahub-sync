@@ -1,5 +1,6 @@
 import { Button, buttonVariants } from "@infrahub/ui";
 import { type ErrorComponentProps, Link, useRouterState } from "@tanstack/react-router";
+import { cn } from "tailwind-variants";
 
 import { useDocumentTitle } from "#/lib/title";
 
@@ -56,7 +57,7 @@ export function AppErrorPage({ error }: ErrorComponentProps) {
         happens again, include the error details when you report it.
       </p>
       <details className="w-full max-w-2xl text-subtle text-xs">
-        <summary className={`w-fit cursor-pointer rounded-sm ${FOCUS}`}>Error details</summary>
+        <summary className={cn("w-fit cursor-pointer rounded-sm", FOCUS)}>Error details</summary>
         <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-xl border bg-content-muted px-3 py-2 font-mono [overflow-wrap:anywhere]">
           {error instanceof Error ? error.message : String(error)}
         </pre>

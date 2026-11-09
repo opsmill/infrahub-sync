@@ -1,3 +1,5 @@
+import { cn } from "tailwind-variants";
+
 import { type RunState, STEP_NAMES, type StepState } from "#/domain/run-state";
 import { formatAbsolute, formatRelative, useNow } from "#/lib/time";
 
@@ -75,7 +77,10 @@ export function Stepper({
               {/* The fixed box keeps the dot centres in place whatever the size of each dot. */}
               <span className="flex size-3 shrink-0 items-center justify-center">
                 <span
-                  className={`block shrink-0 rounded-full ${quiet && s === "done" ? QUIET_DONE : NODE[s]}`}
+                  className={cn(
+                    "block shrink-0 rounded-full",
+                    quiet && s === "done" ? QUIET_DONE : NODE[s]
+                  )}
                   title={`${names[i]}: ${STEP_WORD[s]}`}
                 />
               </span>
@@ -85,7 +90,10 @@ export function Stepper({
               {i < steps.length - 1 && (
                 <span
                   aria-hidden="true"
-                  className={`mx-1 block h-0.5 flex-1 rounded-full ${lineDone ? (quiet ? "bg-subtle-muted/30" : "bg-success-strong/45") : "bg-border"}`}
+                  className={cn(
+                    "mx-1 block h-0.5 flex-1 rounded-full",
+                    lineDone ? (quiet ? "bg-subtle-muted/30" : "bg-success-strong/45") : "bg-border"
+                  )}
                 />
               )}
             </li>
@@ -96,7 +104,10 @@ export function Stepper({
         <div className="relative mt-0.5 h-4" aria-hidden="true">
           {focus >= 0 && (
             <span
-              className={`absolute top-0 whitespace-nowrap font-medium text-xs ${STEP_TONE[steps[focus]]}`}
+              className={cn(
+                "absolute top-0 whitespace-nowrap font-medium text-xs",
+                STEP_TONE[steps[focus]]
+              )}
               style={
                 focus === 0
                   ? { left: 0 }
@@ -118,7 +129,7 @@ export function Stepper({
 export function When({
   iso,
   prefix = "",
-  className = "",
+  className,
 }: {
   iso: string;
   prefix?: string;
@@ -129,7 +140,7 @@ export function When({
     <time
       dateTime={iso}
       title={formatAbsolute(iso)}
-      className={`whitespace-nowrap tabular-nums ${className}`}
+      className={cn("whitespace-nowrap tabular-nums", className)}
     >
       {prefix}
       {formatRelative(iso, now)}
@@ -142,7 +153,7 @@ export function StateLabel({
   state,
   label,
   quiet = false,
-  className = "",
+  className,
 }: {
   state: RunState;
   label: string;
@@ -151,9 +162,13 @@ export function StateLabel({
 }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap ${quiet ? "font-normal text-foreground-muted" : "font-medium text-foreground"} ${className}`}
+      className={cn(
+        "inline-flex items-center gap-1.5 whitespace-nowrap",
+        quiet ? "font-normal text-foreground-muted" : "font-medium text-foreground",
+        className
+      )}
     >
-      <StateIcon state={state} className={`size-3.5 shrink-0 ${STATE_TEXT[state]}`} />
+      <StateIcon state={state} className={cn("size-3.5 shrink-0", STATE_TEXT[state])} />
       {label}
     </span>
   );
@@ -161,7 +176,7 @@ export function StateLabel({
 
 export function BranchCode({
   branch,
-  className = "",
+  className,
   title,
 }: {
   branch: string;
@@ -169,7 +184,7 @@ export function BranchCode({
   title?: string;
 }) {
   return (
-    <code className={`${CODE_CHIP} ${className}`} title={title}>
+    <code className={cn(CODE_CHIP, className)} title={title}>
       {branch}
     </code>
   );

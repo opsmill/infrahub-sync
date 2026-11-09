@@ -1,5 +1,6 @@
 import { Card } from "@infrahub/ui";
 import { Link } from "@tanstack/react-router";
+import { cn } from "tailwind-variants";
 
 import type { Run } from "#/api/types";
 import { Bar, CLICKABLE, STRETCHED } from "#/components/page";
@@ -121,11 +122,11 @@ function TimeLine({ run }: { run: Run }) {
   );
 }
 
-function ActorLine({ run, className = "" }: { run: Run; className?: string }) {
+function ActorLine({ run, className }: { run: Run; className?: string }) {
   if (!run.actor) return null;
   return (
     <span
-      className={`text-subtle text-xs ${className}`}
+      className={cn("text-subtle text-xs", className)}
       title={`Started ${formatAbsolute(run.started_at)}`}
     >
       Started by {run.actor}
@@ -144,13 +145,13 @@ function StateNote({
   wide?: boolean;
 }) {
   const f = state.state === "failed" ? failureDetail(run) : undefined;
-  const line = `mt-0.5 block text-pretty break-words text-xs ${wide ? "" : "line-clamp-2"}`;
+  const line = cn("mt-0.5 block text-pretty break-words text-xs", !wide && "line-clamp-2");
   if (f?.ambiguous)
-    return <span className={`${line} text-danger`}>May have written to the destination</span>;
+    return <span className={cn(line, "text-danger")}>May have written to the destination</span>;
   if (f?.known) {
     return (
       <span
-        className={`${line} ${state.quiet ? "text-subtle" : "text-foreground"}`}
+        className={cn(line, state.quiet ? "text-subtle" : "text-foreground")}
         title={f.cause ?? f.sentence}
       >
         {f.sentence}
@@ -159,7 +160,7 @@ function StateNote({
   }
   if (state.note) {
     return (
-      <span className={`${line} text-subtle`} title={state.note}>
+      <span className={cn(line, "text-subtle")} title={state.note}>
         {state.note}
       </span>
     );
@@ -231,7 +232,7 @@ function RunLink({ run, state, name, namesPending, now, className = "line-clamp-
         params={{ runId: run.run_id }}
         data-stretched=""
         data-run-id={run.run_id}
-        className={`block py-0.5 ${STRETCHED} ${className}`}
+        className={cn("block py-0.5", STRETCHED, className)}
       >
         <Bar className="h-3.5 w-40" />
         <span className="sr-only">
@@ -252,7 +253,7 @@ function RunLink({ run, state, name, namesPending, now, className = "line-clamp-
       data-stretched=""
       data-run-id={run.run_id}
       title={withConfig ? name : undefined}
-      className={`break-words font-medium text-foreground ${STRETCHED} ${className}`}
+      className={cn("break-words font-medium text-foreground", STRETCHED, className)}
     >
       {text}
       <span className="sr-only">, {suffix}</span>
@@ -326,7 +327,7 @@ function Head({ withConfig }: { withConfig: boolean }) {
         <th scope="col" className={TH}>
           Branch
         </th>
-        <th scope="col" className={`${TH} text-right`}>
+        <th scope="col" className={cn(TH, "text-right")}>
           Time
         </th>
       </tr>
@@ -409,13 +410,13 @@ export function RunsTable({
                   <StateLabel state={state.state} label={state.label} quiet={state.quiet} />
                   <StateNote run={run} state={state} />
                 </td>
-                <td className={`${TD} leading-5`}>
+                <td className={cn(TD, "leading-5")}>
                   <Counts run={run} counts={counts} />
                 </td>
                 <td className={TD}>
                   <Branch run={run} />
                 </td>
-                <td className={`${TD} text-right text-foreground-muted`}>
+                <td className={cn(TD, "text-right text-foreground-muted")}>
                   <TimeLine run={run} />
                   <ActorLine run={run} className="block" />
                 </td>
@@ -427,7 +428,10 @@ export function RunsTable({
           {rows.map(({ run, state, name, counts }) => (
             <li
               key={run.run_id}
-              className={`${CLICKABLE} grid grid-cols-1 items-start gap-x-3 gap-y-1 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto]`}
+              className={cn(
+                CLICKABLE,
+                "grid grid-cols-1 items-start gap-x-3 gap-y-1 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto]"
+              )}
             >
               <RunLink
                 run={run}

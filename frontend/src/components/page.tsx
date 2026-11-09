@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { cn, tv } from "tailwind-variants";
 
 import { describeError } from "#/api/queries";
 import { formatAbsolute } from "#/lib/time";
@@ -135,7 +136,10 @@ export function ErrorPanel({
   return (
     <Card>
       <div
-        className={`flex flex-col items-center gap-3 px-6 text-center ${compact ? "py-8" : "py-16"}`}
+        className={cn(
+          "flex flex-col items-center gap-3 px-6 text-center",
+          compact ? "py-8" : "py-16"
+        )}
         role={d.notFound ? undefined : "alert"}
       >
         {d.notFound ? (
@@ -189,7 +193,7 @@ export function Notice({
   action,
   role = "status",
   id,
-  className = "",
+  className,
 }: {
   tone?: "neutral" | "warning" | "danger";
   icon?: ReactNode;
@@ -207,12 +211,16 @@ export function Notice({
     <div
       id={id}
       role={role}
-      className={`flex flex-wrap items-start gap-x-3 gap-y-1 rounded-xl border px-4 py-2.5 text-sm ${t.box} ${className}`}
+      className={cn(
+        "flex flex-wrap items-start gap-x-3 gap-y-1 rounded-xl border px-4 py-2.5 text-sm",
+        t.box,
+        className
+      )}
     >
       {icon ?? t.icon}
       <div className="flex min-w-0 flex-1 flex-col gap-1 text-pretty text-foreground-muted">
         {title && (
-          <Title id={titleId} className={`font-medium text-sm ${t.title}`}>
+          <Title id={titleId} className={cn("font-medium text-sm", t.title)}>
             {title}
           </Title>
         )}
@@ -300,7 +308,10 @@ export function EmptyPanel({ title, children }: { title: string; children?: Reac
 
 export const Bar = ({ className }: { className: string }) => (
   <span
-    className={`block animate-skeleton rounded-md bg-border motion-reduce:animate-none ${className}`}
+    className={cn(
+      "block animate-skeleton rounded-md bg-border motion-reduce:animate-none",
+      className
+    )}
     aria-hidden="true"
   />
 );
@@ -394,6 +405,26 @@ function overflowOf(el: HTMLElement): Overflow {
   return start && end ? "both" : start ? "start" : end ? "end" : "none";
 }
 
+/** The chevron of a row or section that expands; it turns down while open. */
+export const expandChevron = tv({
+  base: "size-3.5 transition-transform duration-150 ease-out motion-reduce:transition-none",
+  variants: { open: { true: "rotate-90" } },
+});
+
+/** A button in a row of filters; the selected one is filled. */
+export const filterTab = tv({
+  base: [
+    "inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[10px] px-2.5 text-sm transition-colors duration-150 ease-out pointer-coarse:h-11 motion-reduce:transition-none",
+    FOCUS_INSET,
+  ],
+  variants: {
+    selected: {
+      true: "bg-content-strong text-foreground",
+      false: "text-foreground-muted hover:bg-content-muted hover:text-foreground",
+    },
+  },
+});
+
 /** Buttons that switch between views of one list; the pressed button is the current view. */
 export function FilterTabs<T extends string>({
   label,
@@ -442,7 +473,10 @@ export function FilterTabs<T extends string>({
     >
       <div
         ref={scroller}
-        className={`relative flex min-w-0 gap-0.5 overflow-x-auto [scrollbar-width:none] ${FADE[overflow]}`}
+        className={cn(
+          "relative flex min-w-0 gap-0.5 overflow-x-auto [scrollbar-width:none]",
+          FADE[overflow]
+        )}
       >
         {options.map((o) => {
           const selected = o.id === value;
@@ -452,18 +486,17 @@ export function FilterTabs<T extends string>({
               type="button"
               aria-pressed={selected}
               onClick={() => onChange(o.id)}
-              className={`inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-[10px] px-2.5 text-sm transition-colors duration-150 ease-out pointer-coarse:h-11 motion-reduce:transition-none ${FOCUS_INSET} ${
-                selected
-                  ? "bg-content-strong text-foreground"
-                  : "text-foreground-muted hover:bg-content-muted hover:text-foreground"
-              }`}
+              className={filterTab({ selected })}
             >
               {o.label}
               {o.count !== undefined && (
                 <>
                   <span className="sr-only">, </span>
                   <span
-                    className={`text-xs tabular-nums ${o.count === 0 && !selected ? "text-subtle-muted" : "text-subtle"}`}
+                    className={cn(
+                      "text-xs tabular-nums",
+                      o.count === 0 && !selected ? "text-subtle-muted" : "text-subtle"
+                    )}
                   >
                     {o.count}
                   </span>
@@ -568,7 +601,10 @@ export function SearchField({
             ref.current?.focus();
           }}
           aria-label="Clear search"
-          className={`absolute top-1/2 right-1.5 flex size-7 -translate-y-1/2 cursor-pointer items-center justify-center rounded-lg text-subtle before:absolute before:-inset-1.5 hover:bg-highlight hover:text-foreground ${FOCUS}`}
+          className={cn(
+            "absolute top-1/2 right-1.5 flex size-7 -translate-y-1/2 cursor-pointer items-center justify-center rounded-lg text-subtle before:absolute before:-inset-1.5 hover:bg-highlight hover:text-foreground",
+            FOCUS
+          )}
         >
           <XIcon />
         </button>
@@ -597,9 +633,16 @@ export const STRETCHED =
   "after:absolute after:inset-0 after:rounded-[inherit] after:content-[''] focus-visible:outline-hidden";
 
 /** A quiet action that names the next step; teal when a person must act. */
-export const textAction = (primary: boolean) =>
-  `relative z-10 -mx-1.5 inline-flex h-8 cursor-pointer items-center gap-1 whitespace-nowrap rounded-md px-1.5 font-medium text-[13px] transition-colors duration-150 ease-out motion-reduce:transition-none ${FOCUS} ${
-    primary
-      ? "text-accent hover:bg-accent-surface"
-      : "text-foreground-muted hover:bg-highlight group-hover:text-foreground"
-  }`;
+export const textAction = tv({
+  base: [
+    "relative z-10 -mx-1.5 inline-flex h-8 cursor-pointer items-center gap-1 whitespace-nowrap rounded-md px-1.5 font-medium text-[13px] transition-colors duration-150 ease-out motion-reduce:transition-none",
+    FOCUS,
+  ],
+  variants: {
+    primary: {
+      true: "text-accent hover:bg-accent-surface",
+      false: "text-foreground-muted hover:bg-highlight group-hover:text-foreground",
+    },
+  },
+  defaultVariants: { primary: false },
+});

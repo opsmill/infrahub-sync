@@ -1,5 +1,6 @@
 import { Card } from "@infrahub/ui";
 import type { ReactNode } from "react";
+import { cn } from "tailwind-variants";
 
 import type { Orchestration, RunResource } from "#/api/types";
 import { BranchCode, NODE, QUIET_DONE, STEP_TONE, STEP_WORD, When } from "#/components/run-status";
@@ -238,7 +239,7 @@ function StepCard({ index, name, step }: { index: number; name: string; step: St
       <span className="mt-1 flex size-3 items-center justify-center">
         <span
           aria-hidden="true"
-          className={`block shrink-0 rounded-full ${nodeClass(step.state)}`}
+          className={cn("block shrink-0 rounded-full", nodeClass(step.state))}
         />
       </span>
       <div className="flex min-w-0 flex-col sm:flex-row sm:items-baseline sm:gap-2">
@@ -246,7 +247,7 @@ function StepCard({ index, name, step }: { index: number; name: string; step: St
           <span className="sr-only">Step {index + 1}: </span>
           {name}
         </span>
-        <span className={`text-xs ${STEP_TONE[step.state]}`}>
+        <span className={cn("text-xs", STEP_TONE[step.state])}>
           <span className="sr-only">, </span>
           {step.word ?? STEP_WORD[step.state]}
         </span>

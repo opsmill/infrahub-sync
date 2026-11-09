@@ -2,6 +2,7 @@ import { Button, buttonVariants, Card } from "@infrahub/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { cn } from "tailwind-variants";
 
 import {
   configQuery,
@@ -54,7 +55,10 @@ import { Details, Executions, PLAN_ARTIFACT_ID, PlanSection, RunFiles } from "./
 import { RunSteps } from "./run-steps";
 import { StartRunDialog } from "./StartRunDialog";
 
-const LINK = `relative rounded-sm text-accent before:absolute before:inset-x-0 before:-inset-y-3 before:content-[''] hover:underline ${FOCUS}`;
+const LINK = cn(
+  "relative rounded-sm text-accent before:absolute before:inset-x-0 before:-inset-y-3 before:content-[''] hover:underline",
+  FOCUS
+);
 
 const EYEBROW: Record<string, string> = {
   plan: "Run with a review step",
@@ -130,7 +134,7 @@ function Breadcrumb({ run, name }: { run: Run; name: string }) {
             <Link
               to="/configs/$configId"
               params={{ configId }}
-              className={`${CRUMB} [overflow-wrap:anywhere]`}
+              className={cn(CRUMB, "[overflow-wrap:anywhere]")}
             >
               {name}
             </Link>
@@ -146,12 +150,16 @@ function Breadcrumb({ run, name }: { run: Run; name: string }) {
         </li>
       </ol>
       {configId ? (
-        <Link to="/configs/$configId" params={{ configId }} className={`${CRUMB} gap-1 sm:hidden`}>
+        <Link
+          to="/configs/$configId"
+          params={{ configId }}
+          className={cn(CRUMB, "gap-1 sm:hidden")}
+        >
           <ArrowRightIcon className="size-3.5 shrink-0 rotate-180 text-subtle" />
           <span className="[overflow-wrap:anywhere]">{name}</span>
         </Link>
       ) : (
-        <Link to="/" className={`${CRUMB} gap-1 sm:hidden`}>
+        <Link to="/" className={cn(CRUMB, "gap-1 sm:hidden")}>
           <ArrowRightIcon className="size-3.5 shrink-0 rotate-180 text-subtle" />
           Configurations
         </Link>

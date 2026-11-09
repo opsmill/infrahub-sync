@@ -1,5 +1,6 @@
 import { Button, Menu, MenuItem, MenuTrigger, Popover } from "@infrahub/ui";
 import type { ReactNode } from "react";
+import { cn } from "tailwind-variants";
 
 import { FOCUS_RAC } from "#/components/classes";
 import { MonitorIcon, MoonIcon, SunIcon } from "#/components/icons";
@@ -38,7 +39,10 @@ export function ThemeMenu() {
         size="sm"
         shape="square"
         aria-label={label}
-        className={`relative shrink-0 text-foreground-muted before:absolute before:-inset-y-[7px] before:-right-[7px] before:-left-[5px] data-hovered:text-foreground pointer-coarse:before:-inset-y-2 pointer-coarse:before:-right-2 ${FOCUS_RAC}`}
+        className={cn(
+          "relative shrink-0 text-foreground-muted before:absolute before:-inset-y-[7px] before:-right-[7px] before:-left-[5px] data-hovered:text-foreground pointer-coarse:before:-inset-y-2 pointer-coarse:before:-right-2",
+          FOCUS_RAC
+        )}
       >
         {ICON[resolved]}
       </Button>

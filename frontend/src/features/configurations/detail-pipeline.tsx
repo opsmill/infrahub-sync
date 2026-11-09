@@ -1,6 +1,7 @@
 import { buttonVariants, Card } from "@infrahub/ui";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { cn } from "tailwind-variants";
 
 import type { Orchestration, Run, RunResource } from "#/api/types";
 import { ChevronRightIcon } from "#/components/icons";
@@ -180,7 +181,10 @@ function lastAppliedClause(run: Run, ctx: PipelineContext): Clause[] {
         <Link
           to="/runs/$runId"
           params={{ runId: last.run_id }}
-          className={`relative whitespace-nowrap rounded-sm underline decoration-subtle-muted underline-offset-4 before:absolute before:-inset-x-1 before:-inset-y-3 before:content-[''] hover:decoration-foreground ${FOCUS}`}
+          className={cn(
+            "relative whitespace-nowrap rounded-sm underline decoration-subtle-muted underline-offset-4 before:absolute before:-inset-x-1 before:-inset-y-3 before:content-[''] hover:decoration-foreground",
+            FOCUS
+          )}
         >
           Last applied <When iso={last.finished_at} />
         </Link>
@@ -536,7 +540,7 @@ export function pipelineModel(run: Run | undefined, ctx: PipelineContext): Pipel
 const CONNECTOR =
   "not-last:before:absolute not-last:before:top-5 not-last:before:-bottom-3 not-last:before:left-[5.5px] not-last:before:w-px not-last:before:bg-border-strong not-last:before:content-[''] lg:not-last:before:hidden lg:not-last:after:absolute lg:not-last:after:top-[5.5px] lg:not-last:after:left-5 lg:not-last:after:-right-4 lg:not-last:after:h-px lg:not-last:after:bg-border-strong lg:not-last:after:content-['']";
 
-const ITEM = `relative grid grid-cols-[12px_minmax(0,1fr)] gap-x-3 lg:block ${CONNECTOR}`;
+const ITEM = cn("relative grid grid-cols-[12px_minmax(0,1fr)] gap-x-3 lg:block", CONNECTOR);
 
 const MARKER =
   "relative z-10 mt-0.5 flex size-3 items-center justify-center bg-card lg:mt-0 lg:mb-2";
@@ -633,7 +637,7 @@ export function PipelineSkeleton() {
               {i < 2 ? (
                 <span className="size-2 rounded-[2px] bg-subtle-muted" />
               ) : (
-                <span className={`block rounded-full ${NODE.idle}`} />
+                <span className={cn("block rounded-full", NODE.idle)} />
               )}
             </span>
             <div className="min-w-0">
@@ -702,16 +706,19 @@ export function Pipeline({
           ) : null}
         </SystemStage>
         {model.stages.map((s, i) => (
-          <li key={s.key} className={`${ITEM} ${s.key === "sync" ? "lg:col-span-3" : ""}`}>
+          <li key={s.key} className={cn(ITEM, s.key === "sync" && "lg:col-span-3")}>
             <span className={MARKER} aria-hidden="true">
-              <span className={`block rounded-full ${markerNode(s.state)}`} />
+              <span className={cn("block rounded-full", markerNode(s.state))} />
             </span>
             <div className="min-w-0">
               <p className="font-medium text-foreground text-xs" aria-hidden="true">
                 {NAME[s.key]}
               </p>
               <p
-                className={`text-xs ${i === focus ? `font-medium ${STEP_TONE[s.state as StepState]}` : "text-subtle"}`}
+                className={cn(
+                  "text-xs",
+                  i === focus ? ["font-medium", STEP_TONE[s.state as StepState]] : "text-subtle"
+                )}
               >
                 <span className="sr-only">{NAME[s.key]}: </span>
                 {s.word}
@@ -729,7 +736,7 @@ export function Pipeline({
       <div className={FOOTER}>
         <div className="flex min-w-0 flex-col gap-0.5">
           <p className="flex flex-wrap items-center gap-x-2">
-            <StateLabel state={model.state} label={model.lead} className="whitespace-normal" />
+            <StateLabel state={model.state} label={model.lead} />
           </p>
           {model.clauses.length > 0 && (
             <ul className={CLAUSES}>
@@ -751,13 +758,13 @@ export function Pipeline({
               </Link>
             )}
             {action.kind === "run" && run && (
-              <Link to="/runs/$runId" params={{ runId: run.run_id }} className={textAction(false)}>
+              <Link to="/runs/$runId" params={{ runId: run.run_id }} className={textAction()}>
                 {action.label}
                 <ChevronRightIcon />
               </Link>
             )}
             {action.kind === "plan" && onStart && (
-              <button type="button" onClick={onStart} className={textAction(false)}>
+              <button type="button" onClick={onStart} className={textAction()}>
                 {action.label}
                 <ChevronRightIcon />
               </button>

@@ -1,3 +1,5 @@
+import { cn } from "tailwind-variants";
+
 /** Keyboard focus for a control with room around it. Outlines survive forced-colours mode. */
 export const FOCUS =
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
@@ -14,7 +16,10 @@ export const FOCUS_RAC =
   "data-focus-visible:border-transparent data-focus-visible:outline-2 data-focus-visible:outline-offset-2 data-focus-visible:outline-ring data-focus-visible:outline-solid data-focus-visible:ring-0";
 
 /** A breadcrumb link, 32 px high (44 px on a touch screen). */
-export const CRUMB = `-mx-1 inline-flex min-h-8 items-center rounded-md px-1 transition-colors duration-150 ease-out hover:text-foreground pointer-coarse:min-h-11 motion-reduce:transition-none ${FOCUS}`;
+export const CRUMB = cn(
+  "-mx-1 inline-flex min-h-8 items-center rounded-md px-1 transition-colors duration-150 ease-out hover:text-foreground pointer-coarse:min-h-11 motion-reduce:transition-none",
+  FOCUS
+);
 
 export const COUNT_BADGE =
   "inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-border bg-content px-1.5 font-medium text-[11px] text-foreground-muted tabular-nums inset-shadow-raised";

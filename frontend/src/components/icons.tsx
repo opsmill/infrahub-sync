@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { cn } from "tailwind-variants";
 
 import type { RunState } from "#/domain/run-state";
 
@@ -140,7 +141,7 @@ export function StateIcon({
     return (
       <svg
         viewBox="0 0 16 16"
-        className={`${className} animate-spin motion-reduce:animate-none`}
+        className={cn(className, "animate-spin motion-reduce:animate-none")}
         aria-hidden="true"
       >
         <circle

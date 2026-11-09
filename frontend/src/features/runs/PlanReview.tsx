@@ -10,13 +10,16 @@ import {
   useRef,
   useState,
 } from "react";
+import { cn } from "tailwind-variants";
 
 import type { Plan, PlanLastChange } from "#/api/types";
 import { CheckIcon, ChevronRightIcon } from "#/components/icons";
 import {
   CopyButton,
   EmptyPanel,
+  expandChevron,
   FOCUS_INSET,
+  filterTab,
   Notice,
   SearchField,
   textAction,
@@ -175,16 +178,21 @@ function Filter({
             type="button"
             aria-pressed={selected}
             onClick={() => onChange(o)}
-            className={`inline-flex h-8 flex-1 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-[10px] px-1.5 text-sm transition-colors sm:flex-none sm:px-2.5 duration-150 ease-out pointer-coarse:h-11 motion-reduce:transition-none ${FOCUS_INSET} ${
-              selected
-                ? "bg-content-strong font-medium text-foreground"
-                : "text-foreground-muted hover:bg-content-muted hover:text-foreground"
-            }`}
+            className={filterTab({
+              selected,
+              className: [
+                "flex-1 justify-center px-1.5 sm:flex-none sm:px-2.5",
+                selected && "font-medium",
+              ],
+            })}
           >
             {o === "all" ? "All" : ACTION_WORDS[o].filter}
             <span className="sr-only">, </span>
             <span
-              className={`text-xs tabular-nums ${selected ? FILTER_COUNT[o] : n === 0 ? "text-subtle-muted" : "text-subtle"}`}
+              className={cn(
+                "text-xs tabular-nums",
+                selected ? FILTER_COUNT[o] : n === 0 ? "text-subtle-muted" : "text-subtle"
+              )}
             >
               {fmt(n)}
             </span>
@@ -296,10 +304,15 @@ function KindGroup({
           onClick={toggle}
           aria-expanded={open}
           aria-controls={open ? listId : undefined}
-          className={`flex min-h-11 w-full cursor-pointer items-center gap-3 px-4 py-2 text-left sm:min-h-0 ${KIND_HEADER_BG} ${open ? "border-b border-b-border-strong" : ""} ${FOCUS_INSET}`}
+          className={cn(
+            "flex min-h-11 w-full cursor-pointer items-center gap-3 px-4 py-2 text-left sm:min-h-0",
+            KIND_HEADER_BG,
+            open && "border-b border-b-border-strong",
+            FOCUS_INSET
+          )}
         >
           <ChevronRightIcon
-            className={`size-3.5 shrink-0 text-subtle transition-transform duration-150 ease-out motion-reduce:transition-none ${open ? "rotate-90" : ""}`}
+            className={expandChevron({ open, className: "shrink-0 text-subtle" })}
           />
           <span className="flex min-w-0 flex-wrap items-baseline gap-x-2">
             <span className="font-mono font-semibold text-[13px] [overflow-wrap:anywhere]">
@@ -321,7 +334,10 @@ function KindGroup({
             {planCounts.byAction.map(([a, n]) => (
               <span
                 key={a}
-                className={`whitespace-nowrap rounded-md px-1.5 font-medium text-xs leading-5 tabular-nums ${CHANGE_TONE[a].chip}`}
+                className={cn(
+                  "whitespace-nowrap rounded-md px-1.5 font-medium text-xs leading-5 tabular-nums",
+                  CHANGE_TONE[a].chip
+                )}
               >
                 {ACTION_WORDS[a].count(n, ctx.done)}
               </span>
@@ -331,7 +347,7 @@ function KindGroup({
       </h3>
       {open && (
         <>
-          <ul id={listId} className={`divide-y ${CLEAR_STICKY}`}>
+          <ul id={listId} className={cn("divide-y", CLEAR_STICKY)}>
             {views.slice(0, limit).map((v) => (
               <OperationRow
                 key={v.op.operation_id}
@@ -343,11 +359,11 @@ function KindGroup({
             ))}
           </ul>
           {rest > 0 && (
-            <div className={`border-t px-4 py-1 ${CLEAR_STICKY}`}>
+            <div className={cn("border-t px-4 py-1", CLEAR_STICKY)}>
               <button
                 type="button"
                 onClick={onShowMore}
-                className={`${textAction(false)} pointer-coarse:h-11`}
+                className={textAction({ className: "pointer-coarse:h-11" })}
               >
                 Show the next {fmt(Math.min(PAGE, rest))} operations ({fmt(rest)} not shown)
               </button>
@@ -664,7 +680,7 @@ export function PlanChanges({ plan, phase }: { plan: Plan; phase: string }) {
                 searching,
               })
             }
-            className={`${textAction(false)} ml-auto shrink-0 pointer-coarse:h-11`}
+            className={textAction({ className: "ml-auto shrink-0 pointer-coarse:h-11" })}
           >
             {allOpen ? "Collapse all kinds" : "Expand all kinds"}
           </button>

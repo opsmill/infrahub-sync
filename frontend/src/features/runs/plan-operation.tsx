@@ -1,8 +1,9 @@
 import { Fragment, type ReactNode } from "react";
+import { cn } from "tailwind-variants";
 
 import type { PlanLastChange, PlanOperation } from "#/api/types";
 import { ChevronRightIcon } from "#/components/icons";
-import { CopyButton, FOCUS_INSET } from "#/components/page";
+import { CopyButton, expandChevron, FOCUS_INSET } from "#/components/page";
 import { CHANGE_TONE, When } from "#/components/run-status";
 import { formatAbsolute } from "#/lib/time";
 
@@ -44,7 +45,10 @@ function Sign({ action }: { action: PlanOperation["action"] }) {
   return (
     <span
       aria-hidden="true"
-      className={`col-start-1 row-start-1 mt-0.5 grid size-4 place-items-center rounded-[5px] font-mono font-semibold text-[11px] leading-none sm:mt-0 ${CHANGE_TONE[action].chip}`}
+      className={cn(
+        "col-start-1 row-start-1 mt-0.5 grid size-4 place-items-center rounded-[5px] font-mono font-semibold text-[11px] leading-none sm:mt-0",
+        CHANGE_TONE[action].chip
+      )}
     >
       {CHANGE_TONE[action].sign}
     </span>
@@ -59,7 +63,10 @@ function NameCell({ view, muted }: { view: OperationView; muted?: boolean }) {
       title={view.label}
     >
       <span
-        className={`min-w-0 font-medium text-[13px] [overflow-wrap:anywhere] sm:max-w-[70%] sm:shrink-0 sm:truncate ${muted ? "text-foreground-muted" : "text-foreground"}`}
+        className={cn(
+          "min-w-0 font-medium text-[13px] [overflow-wrap:anywhere] sm:max-w-[70%] sm:shrink-0 sm:truncate",
+          muted ? "text-foreground-muted" : "text-foreground"
+        )}
       >
         <span className="sr-only">{ACTION_WORDS[view.op.action].word} </span>
         {name}
@@ -174,7 +181,7 @@ function LastChangeLine({
   // The API does not say why both are missing: no value, or metadata the plan did not read.
   else text = "Who last changed this field, and when, is not recorded.";
   return (
-    <span className={`mt-0.5 block text-xs ${other ? "text-warning" : "text-subtle"}`}>
+    <span className={cn("mt-0.5 block text-xs", other ? "text-warning" : "text-subtle")}>
       {text}
       {change.field_type === "relationship" &&
         many &&
@@ -190,7 +197,7 @@ function FieldValue({ field, changed }: { field: Field; changed: boolean }) {
     const { peers, peerKind } = field.rel;
     return (
       // The negative margin hangs the chip padding outside the column, so chip text lines up with plain values.
-      <span className={`flex flex-wrap items-center gap-1 ${peers.length > 0 ? "-ml-1.5" : ""}`}>
+      <span className={cn("flex flex-wrap items-center gap-1", peers.length > 0 && "-ml-1.5")}>
         {newValue}
         {peers.length === 0 ? (
           <span className="text-subtle">no peers</span>
@@ -198,7 +205,12 @@ function FieldValue({ field, changed }: { field: Field; changed: boolean }) {
           peers.map((peer, i) => (
             <span
               key={i}
-              className={`inline-flex items-center rounded-md px-1.5 text-xs leading-5 ${changed ? "bg-diff-updated-surface font-medium text-foreground" : "bg-content-strong text-foreground-muted"}`}
+              className={cn(
+                "inline-flex items-center rounded-md px-1.5 text-xs leading-5",
+                changed
+                  ? "bg-diff-updated-surface font-medium text-foreground"
+                  : "bg-content-strong text-foreground-muted"
+              )}
             >
               {nodeLabel(peer)}
             </span>
@@ -206,7 +218,10 @@ function FieldValue({ field, changed }: { field: Field; changed: boolean }) {
         )}
         {peerKind && (
           <span
-            className={`basis-full font-mono text-[11px] text-subtle-muted sm:basis-auto ${peers.length > 0 ? "pl-1.5" : ""}`}
+            className={cn(
+              "basis-full font-mono text-[11px] text-subtle-muted sm:basis-auto",
+              peers.length > 0 && "pl-1.5"
+            )}
           >
             {peerKind}
           </span>
@@ -222,7 +237,10 @@ function FieldValue({ field, changed }: { field: Field; changed: boolean }) {
     <>
       {newValue}
       <span
-        className={`-ml-1 rounded-sm bg-diff-updated-surface px-1 font-medium [box-decoration-break:clone] ${empty ? "text-subtle" : "text-foreground"}`}
+        className={cn(
+          "-ml-1 rounded-sm bg-diff-updated-surface px-1 font-medium [box-decoration-break:clone]",
+          empty ? "text-subtle" : "text-foreground"
+        )}
       >
         {text}
       </span>
@@ -279,7 +297,7 @@ function Group({
   children: ReactNode;
 }) {
   return (
-    <div className={`flex flex-col gap-2 ${divided ? "border-t pt-3" : ""}`}>
+    <div className={cn("flex flex-col gap-2", divided && "border-t pt-3")}>
       <h4 className="font-medium text-foreground text-xs">{title}</h4>
       {children}
     </div>
@@ -365,7 +383,7 @@ export function OperationRow({
     return (
       <li id={rowId} className="scroll-mt-12">
         {/* tabIndex lets "Show the next…" move focus here; the row has no action of its own. */}
-        <div tabIndex={-1} className={`${ROW} ${FOCUS_INSET}`}>
+        <div tabIndex={-1} className={cn(ROW, FOCUS_INSET)}>
           <Sign action="delete" />
           <NameCell view={view} muted />
           <DeleteNote done={ctx.done} />
@@ -381,7 +399,11 @@ export function OperationRow({
         onClick={onToggle}
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
-        className={`${ROW} cursor-pointer transition-colors duration-150 ease-out hover:bg-content-muted active:bg-content-strong motion-reduce:transition-none ${FOCUS_INSET}`}
+        className={cn(
+          ROW,
+          "cursor-pointer transition-colors duration-150 ease-out hover:bg-content-muted active:bg-content-strong motion-reduce:transition-none",
+          FOCUS_INSET
+        )}
       >
         <Sign action={op.action} />
         <NameCell view={view} muted={op.action === "delete"} />
@@ -391,7 +413,10 @@ export function OperationRow({
           <Summary view={view} done={ctx.done} />
         )}
         <ChevronRightIcon
-          className={`col-start-3 row-start-1 size-3.5 self-center text-subtle transition-transform duration-150 ease-out motion-reduce:transition-none sm:col-start-4 ${open ? "rotate-90" : ""}`}
+          className={expandChevron({
+            open,
+            className: "col-start-3 row-start-1 self-center text-subtle sm:col-start-4",
+          })}
         />
       </button>
       {open && <Panel view={view} ctx={ctx} id={panelId} />}
