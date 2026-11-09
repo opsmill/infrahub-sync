@@ -209,6 +209,13 @@ _PREFECT_EXECUTION_LIVENESS_COLUMNS: tuple[tuple[str, str], ...] = (
     ("terminal_state", "TEXT"),
     ("terminal_outcome", "TEXT"),
 )
+# The read state of each side of a plan or sync execution: one JSON document per side, so the
+# two read threads never write the same column (spec 018, research R3).
+_PREFECT_EXECUTION_READ_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("source_read", "TEXT"),
+    ("destination_read", "TEXT"),
+)
+_SIDE_READ_COLUMNS: dict[str, str] = {"source": "source_read", "destination": "destination_read"}
 _CONFIGURATION_BINDING_CONSTRAINT = "product_runs_configuration_binding_consistent"
 _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
     "(config_id IS NULL AND registry_version IS NULL AND package_checksum IS NULL) "
@@ -413,12 +420,12 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _SELECT_PREFECT_EXECUTIONS = """SELECT run_id, flow_run_id, deployment_id, purpose, attempt, last_observed_state,
 last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at, cancellation_requested_at,
 cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at, terminal_at, terminal_state,
-terminal_outcome, position FROM prefect_executions WHERE run_id = ? ORDER BY position"""
+terminal_outcome, position, source_read, destination_read FROM prefect_executions WHERE run_id = ? ORDER BY position"""
 _INSERT_PREFECT_EXECUTION = """INSERT INTO prefect_executions (run_id, flow_run_id, deployment_id, purpose, attempt,
 last_observed_state, last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at,
 cancellation_requested_at, cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at,
-terminal_at, terminal_state, terminal_outcome, position, mutation_receipt_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+terminal_at, terminal_state, terminal_outcome, position, mutation_receipt_id, source_read, destination_read)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _INSERT_MUTATION_RECEIPT = """INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation,
 target_run_id, request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body,
 flow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
@@ -571,6 +578,10 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def observe_prefect_execution(
         self, run_id: str, flow_run_id: str, *, state: str | None, observed_at: datetime
     ) -> None: ...
+
+    def record_side_read(
+        self, run_id: str, flow_run_id: str, side: Literal["source", "destination"], document: Mapping[str, Any]
+    ) -> bool: ...
 
     def claim_execution(
         self,
@@ -849,9 +860,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             cursor.execute(statement)
 
     def _migrate_prefect_execution_columns(self, cursor: _Cursor) -> None:
-        """Add liveness columns without fabricating timestamps for legacy links."""
+        """Add liveness and read-state columns without fabricating values for legacy links."""
         existing = self._read_table_columns(cursor, "prefect_executions")
-        for column, sql_type in _PREFECT_EXECUTION_LIVENESS_COLUMNS:
+        for column, sql_type in (*_PREFECT_EXECUTION_LIVENESS_COLUMNS, *_PREFECT_EXECUTION_READ_COLUMNS):
             if column not in existing:
                 cursor.execute(f"ALTER TABLE prefect_executions ADD COLUMN {column} {sql_type}")
 
@@ -1355,6 +1366,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 link.terminal_outcome,
                 position,
                 mutation_receipt_id,
+                None if link.source_read is None else _json(link.source_read),
+                None if link.destination_read is None else _json(link.destination_read),
             ),
         )
 
@@ -1424,6 +1437,22 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         return self._execution_update(
             statement,
             (claimed_at.isoformat(), worker_id, run_id, flow_run_id, admission_deadline_at.isoformat()),
+        )
+
+    def record_side_read(
+        self, run_id: str, flow_run_id: str, side: Literal["source", "destination"], document: Mapping[str, Any]
+    ) -> bool:
+        """Store one side's read document while the execution is not terminal.
+
+        Returns whether a row changed. A write that arrives after the execution ended, for
+        example from a worker that kept running after it was marked interrupted, changes
+        nothing. `side` selects the column, so it is checked before any SQL runs.
+        """
+        column = _side_read_column(side)
+        return self._execution_update(
+            f"UPDATE prefect_executions SET {column} = ? "  # noqa: S608 - column from a fixed two-name map
+            "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL",
+            (_json(dict(document)), run_id, flow_run_id),
         )
 
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime) -> bool:
@@ -3220,6 +3249,17 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             admission_deadline_at=admission_deadline_at,
         )
 
+    def record_side_read(
+        self, run_id: str, flow_run_id: str, side: Literal["source", "destination"], document: Mapping[str, Any]
+    ) -> bool:
+        """Store one side's read document on a non-terminal execution; return whether it changed.
+
+        The document holds a state, times, a read mode, node counts and an error class name,
+        never an exception message (spec 018 data-model.md). An unknown side is refused.
+        """
+        _side_read_column(side)
+        return self._records.record_side_read(run_id, flow_run_id, side, document)
+
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime | None = None) -> bool:
         """Set the first stall marker while leaving a pre-TTL execution claimable."""
         effective_stalled_at = stalled_at if stalled_at is not None else datetime.now(timezone.utc)
@@ -3786,6 +3826,15 @@ def production_product_projection(
     )
 
 
+def _side_read_column(side: str) -> str:
+    """The column that stores `side`'s read document; refuses any other side name."""
+    column = _SIDE_READ_COLUMNS.get(side)
+    if column is None:
+        msg = f"unknown read side {side!r}; expected 'source' or 'destination'"
+        raise ValueError(msg)
+    return column
+
+
 def _json(value: Any) -> str:
     return canonical_json_bytes(value).decode()
 
@@ -3867,6 +3916,8 @@ def _run_from_rows(
                     "terminal_at": item[15],
                     "terminal_state": item[16],
                     "terminal_outcome": item[17],
+                    "source_read": None if item[19] is None else json.loads(item[19]),
+                    "destination_read": None if item[20] is None else json.loads(item[20]),
                 }
                 for item in links
             ],

@@ -1,0 +1,139 @@
+"""The stored read state of each side of a stage execution (spec 018, research R3, critique R2)."""
+
+from __future__ import annotations
+
+import sqlite3
+import threading
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
+
+import pytest
+
+from infrahub_sync.product_store import PrefectExecutionLink, ProductProjection
+from infrahub_sync.product_store.store import FileArtifactStore, SQLiteRunStore
+from tests.product_store.test_contract import _append_execution, _run
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+_FLOW_RUN_ID = "flow-plan-1"
+_SUCCEEDED = {
+    "state": "succeeded",
+    "started_at": "2026-11-09T10:00:01+00:00",
+    "ended_at": "2026-11-09T10:00:13+00:00",
+    "read_mode": "full",
+    "nodes_by_kind": {"DcimDevice": 3, "LocationSite": 2},
+}
+_READING = {"state": "reading", "started_at": "2026-11-09T10:00:01+00:00"}
+
+
+def _projection(database: Path, tmp_path: Path) -> ProductProjection:
+    return ProductProjection(SQLiteRunStore(database), FileArtifactStore(tmp_path / "objects"))
+
+
+def _projection_with_execution(tmp_path: Path) -> tuple[ProductProjection, Path]:
+    database = tmp_path / "records.sqlite3"
+    projection = _projection(database, tmp_path)
+    run = _run()
+    projection.create_run(run)
+    _append_execution(projection, run.run_id, PrefectExecutionLink(flow_run_id=_FLOW_RUN_ID, purpose="plan", attempt=1))
+    return projection, database
+
+
+def _link(projection: ProductProjection) -> PrefectExecutionLink:
+    run = projection.lookup_run("run-001").value
+    assert run is not None
+    return run.prefect_executions[0]
+
+
+def test_a_store_created_before_the_feature_gains_both_columns_and_reads_old_rows_as_none(tmp_path: Path) -> None:
+    _original, database = _projection_with_execution(tmp_path)
+    # Return the store to its shape before this feature.
+    connection = sqlite3.connect(database)
+    try:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(prefect_executions)")}
+        for column in ("source_read", "destination_read"):
+            if column in columns:
+                connection.execute(f"ALTER TABLE prefect_executions DROP COLUMN {column}")
+        connection.commit()
+    finally:
+        connection.close()
+
+    restarted = _projection(database, tmp_path)
+
+    connection = sqlite3.connect(database)
+    try:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(prefect_executions)")}
+    finally:
+        connection.close()
+    assert {"source_read", "destination_read"} <= columns
+    link = _link(restarted)
+    assert link.source_read is None
+    assert link.destination_read is None
+
+
+def test_recording_one_side_leaves_the_other_side_unchanged(tmp_path: Path) -> None:
+    projection, _database = _projection_with_execution(tmp_path)
+
+    assert projection.record_side_read("run-001", _FLOW_RUN_ID, "destination", _READING) is True
+    assert projection.record_side_read("run-001", _FLOW_RUN_ID, "source", _SUCCEEDED) is True
+
+    link = _link(projection)
+    assert link.source_read == _SUCCEEDED
+    assert link.destination_read == _READING
+
+
+def test_a_write_to_a_terminal_execution_changes_nothing(tmp_path: Path) -> None:
+    projection, _database = _projection_with_execution(tmp_path)
+    projection.record_side_read("run-001", _FLOW_RUN_ID, "source", _READING)
+    assert projection.abandon_execution("run-001", _FLOW_RUN_ID, terminal_at=datetime.now(timezone.utc))
+
+    assert projection.record_side_read("run-001", _FLOW_RUN_ID, "source", _SUCCEEDED) is False
+
+    link = _link(projection)
+    assert link.source_read == _READING
+    assert link.destination_read is None
+
+
+@pytest.mark.parametrize("side", ["A", "source_read", "source; DROP TABLE prefect_executions", ""])
+def test_an_unknown_side_is_refused_before_any_sql_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, side: str
+) -> None:
+    projection, _database = _projection_with_execution(tmp_path)
+    records = projection._records
+
+    def no_connection() -> None:
+        pytest.fail("a connection was opened for an unknown side")
+
+    monkeypatch.setattr(records, "_connect", no_connection)
+
+    with pytest.raises(ValueError, match="side"):
+        projection.record_side_read("run-001", _FLOW_RUN_ID, side, _SUCCEEDED)  # ty: ignore[invalid-argument-type]
+
+
+def test_both_sides_written_from_two_threads_at_once_are_both_stored(tmp_path: Path) -> None:
+    projection, _database = _projection_with_execution(tmp_path)
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+
+    def write(side: str, document: dict[str, object]) -> None:
+        try:
+            barrier.wait()
+            for _ in range(20):
+                projection.record_side_read("run-001", _FLOW_RUN_ID, side, document)  # ty: ignore[invalid-argument-type]
+        except BaseException as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=write, args=("source", _SUCCEEDED)),
+        threading.Thread(target=write, args=("destination", _READING)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    link = _link(projection)
+    assert link.source_read == _SUCCEEDED
+    assert link.destination_read == _READING
