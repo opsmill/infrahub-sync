@@ -1,0 +1,25 @@
+dev/specs/018-plan-read-progress/tasks.md
+  s_b587fb435a3228::t_fba77c097d4311 89,93
+infrahub_sync/cli.py
+  s_b587fb435a3228::t_20e9eb56bdaafb 74
+  s_b587fb435a3228::t_3a2f23a4960c5b 640-664
+tests/cli/test_client_commands.py
+  s_b587fb435a3228::t_54696b1ef17cce 751-845
+  s_b587fb435a3228::t_44e4b12198d9d4 57-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c1a115d889256d1d4cd367916c162a820901378",
+  "prompts": {},
+  "sessions": {
+    "s_b587fb435a3228": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "443573d1-a264-40b9-abb9-38a7fba8091b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
