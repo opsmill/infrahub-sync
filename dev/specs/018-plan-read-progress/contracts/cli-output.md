@@ -2,7 +2,9 @@
 
 ## `runs show`
 
-When the latest orchestration entry has `reads`, two fields follow `prefect_flow_run_url`:
+The read fields come from the latest orchestration entry whose `purpose` is `plan` or `sync`, even when `verify`
+or `apply` entries follow it. The other fields keep reading the latest entry. When that entry has `reads`, two
+fields follow `prefect_flow_run_url`:
 
 ```text
 source_read: state=succeeded mode=full started_at=2026-11-09T10:00:01+00:00 ended_at=2026-11-09T10:00:13+00:00 nodes=DcimDevice:3,LocationSite:2

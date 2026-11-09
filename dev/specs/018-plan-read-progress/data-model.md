@@ -67,7 +67,7 @@ A stage stopped before the reads leaves `waiting`. A killed worker leaves `readi
 
 | Field | Type | Rule |
 | --- | --- | --- |
-| `state` | `"waiting"`, `"reading"`, `"succeeded"`, `"failed"`, `"not_started"` or `"interrupted"` | The stored state, except that a terminal execution returns `waiting` as `not_started` and `reading` as `interrupted`. |
+| `state` | `"waiting"`, `"reading"`, `"succeeded"`, `"failed"`, `"not_started"` or `"interrupted"` | The stored state, except that an execution with a terminal state other than `completed` returns `waiting` as `not_started` and `reading` as `interrupted`. A `completed` execution returns a side still `waiting` or `reading` as `null` instead of a `SideRead`. |
 | `started_at` | `datetime \| None` | As stored. |
 | `ended_at` | `datetime \| None` | As stored. Always `None` for `not_started` and `interrupted`. |
 | `read_mode` | `"full" \| "incremental" \| None` | As stored. |

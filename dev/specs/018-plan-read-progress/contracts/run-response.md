@@ -39,11 +39,15 @@ Other fields of the entry are unchanged and are left out above.
 1. `reads` is `null` for an execution recorded before this feature, and for `verify` and `apply` executions.
 2. For a `plan` or `sync` execution, both sides are present from the moment the worker starts the stage, in state
    `waiting`.
-3. When `terminal_state` is set:
+3. When `terminal_state` is set to anything other than `completed`:
    - a side stored as `waiting` is returned as `not_started`;
    - a side stored as `reading` is returned as `interrupted`;
    - `ended_at` is `null` for both.
-4. `nodes_by_kind` is present only for `succeeded`, and `error_class` only for `failed`. They are `{}` and `null`
+4. When `terminal_state` is `completed`, a side still stored as `waiting` or `reading` is returned as `null`: its
+   end was not recorded.
+5. A run can hold `plan`, `verify` and `apply` entries in order. A client that shows one read state shows that of
+   the latest entry whose `purpose` is `plan` or `sync`.
+6. `nodes_by_kind` is present only for `succeeded`, and `error_class` only for `failed`. They are `{}` and `null`
    otherwise.
-5. No field holds an exception message, an address, a secret or configuration content.
-6. The change is additive. Existing fields keep their meaning and order.
+7. No field holds an exception message, an address, a secret or configuration content.
+8. The change is additive. Existing fields keep their meaning and order.

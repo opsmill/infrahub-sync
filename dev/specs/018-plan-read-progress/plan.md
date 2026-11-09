@@ -14,8 +14,8 @@ or failed, with its times, its read mode and its node counts. This plan:
 - stores each side's state in one new column of the stage execution's row, written by the worker as the state
   changes;
 - returns the state in each orchestration entry of the run response, and shows a side that never ended as
-  `not_started` or `interrupted` once the execution is terminal;
-- prints the state in `infrahub-sync runs show`.
+  `not_started` or `interrupted` once the execution has failed or stopped;
+- prints the state of the latest `plan` or `sync` execution in `infrahub-sync runs show`.
 
 Each change is delivered test-first. The design decisions are in [research.md](./research.md).
 
@@ -43,6 +43,14 @@ columns on `prefect_executions`, added by the existing column migration (data-mo
 
 Extended files: `tests/test_execution_surface.py` (the private seam), `tests/service/test_http_api.py` (the run
 response), `tests/cli/test_client_commands.py` (`runs show`).
+
+From the critique:
+
+- a store test runs both reads concurrently on SQLite and checks both end documents (R2);
+- existing tests that compare a full run response or an `OrchestrationSummary` dictionary are updated for the new
+  `reads` key, in a task of their own (R4);
+- the documentation task checks `docs/docs/reference/durable-product-records.mdx` for execution fields (R5);
+- the implementation report records the node-counting time on the largest example configuration (research R5).
 
 **Target Platform**: the Sync API and worker containers (Linux), and the CLI on any host.
 

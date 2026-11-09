@@ -60,7 +60,7 @@ and read the run while each read is in progress and after the stage ends.
 ### User Story 2 - The CLI shows the same information (Priority: P2)
 
 An operator who works from a terminal runs `infrahub-sync runs show <run_id>` and reads the same read state for
-each side of the latest execution.
+each side of the run's latest execution that read the sides, meaning its latest `plan` or `sync` execution.
 
 **Why this priority**: Not every site uses the web UI, and the CLI is the operator's other way to read a run.
 It depends on User Story 1 for the data.
@@ -73,6 +73,8 @@ It depends on User Story 1 for the data.
    side with its state, its start and end times, its read mode and its node counts.
 2. **Given** a run recorded before this feature, **When** the operator runs `runs show`, **Then** the output has
    no read-state lines and no error.
+3. **Given** a run whose Plan has ended and whose plan the operator then verified, **When** the operator runs
+   `runs show`, **Then** the output still shows the Plan execution's read state.
 
 ---
 
@@ -104,6 +106,12 @@ information. Plans are more common than `sync` runs on the frontend team's run p
   until it ends. The run shows "failed" next to "reading" for that time. The other read is not cancelled.
 - **A run has several executions,** for example after an execution expired or was refused. Each execution keeps
   its own read state, and nothing is overwritten.
+- **The worker fails to record a side's end, and the stage succeeds.** A completed `plan` or `sync` execution read
+  both sides successfully, so "interrupted" would be false. The run shows no read state for that side (FR-009).
+- **A run holds `verify` and `apply` executions after its Plan.** These read no side. The UI and the CLI show the
+  read state of the latest `plan` or `sync` execution (FR-012).
+- **An execution is still in the queue.** The worker has not started the stage, so the execution has no read state
+  yet.
 - **An execution recorded before this feature.** It has no read state. The run response returns no read state
   for it, and the UI and the CLI show nothing for it.
 - **A read is incremental.** Most nodes come from the cache. The node count is the total compared for each kind,
@@ -127,13 +135,15 @@ information. Plans are more common than `sync` runs on the frontend team's run p
   stage succeeded or failed.
 - **FR-007**: A failure to record the read state MUST NOT change the stage's outcome.
 - **FR-008**: The system MUST record each side's read mode: full or incremental.
-- **FR-009**: When a stage execution has a terminal state, the run response MUST show a side that is still
-  "waiting" as "not started", and a side that is still "reading" as "interrupted". Neither gets an end time.
+- **FR-009**: When a stage execution has a terminal state other than completed, the run response MUST show a side
+  that is still "waiting" as "not started", and a side that is still "reading" as "interrupted". Neither gets an
+  end time. When the execution completed, a side that is still "waiting" or "reading" MUST be returned with no read
+  state, because its end was not recorded.
 - **FR-010**: When a side's read ends, the system MUST write a log line in the run's log that names the side, its
   state, its read mode and its node counts, and no error text.
 - **FR-011**: The read state MUST belong to one stage execution, so that each execution of a run keeps its own.
-- **FR-012**: `infrahub-sync runs show` MUST print the read state of each side of the latest execution, when that
-  execution has one.
+- **FR-012**: `infrahub-sync runs show` MUST print the read state of each side of the run's latest `plan` or `sync`
+  execution, when that execution has one, even when `verify` or `apply` executions follow it.
 - **FR-013**: The read state MUST hold no secret, no address, no configuration content and no exception text.
 
 ### Key Entities
@@ -143,7 +153,8 @@ information. Plans are more common than `sync` runs on the frontend team's run p
 - **Side read**: the source or the destination of one stage execution. It holds the state, the start and end
   times, the read mode, the node count for each kind, and the error class when the read failed. It is new data
   on the stage execution, not a separate entity.
-- **Run**: unchanged. The UI and the CLI show the latest execution's read state by default.
+- **Run**: unchanged. A run can hold `plan`, `verify` and `apply` executions in order. The UI and the CLI show the
+  read state of the latest `plan` or `sync` execution by default.
 
 ## Success Criteria *(mandatory)*
 
@@ -152,8 +163,9 @@ information. Plans are more common than `sync` runs on the frontend team's run p
 - **SC-001**: Within 5 seconds of a side's read changing state, an operator who reads the run sees the new state.
 - **SC-002**: For every Plan that fails during a read, the operator can tell which side failed from the run alone,
   without opening the logs.
-- **SC-003**: Every side of an execution that has ended shows a final state: succeeded, failed, not started or
-  interrupted. No side shows "waiting" or "reading" once its execution has ended.
+- **SC-003**: Every side of an execution that has ended shows a final state (succeeded, failed, not started or
+  interrupted) or, for a completed execution whose end was not recorded, no read state. No side shows "waiting" or
+  "reading" once its execution has ended.
 
 ## Assumptions
 

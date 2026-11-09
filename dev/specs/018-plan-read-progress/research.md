@@ -114,6 +114,11 @@ uses the same model names (`infrahub_sync/plan/review.py:121`).
 **Rationale**: The count is the number of nodes compared, whether they came from the cache or from the system
 (FR-003). A top-level kind with zero nodes is useful to an operator who expects some.
 
+**Open measurement (critique R3)**: with DiffSync's Redis store, `count(model)` scans the store's keys for each
+kind (`diffsync/store/redis.py:210`). The implementation measures the counting time on the largest example
+configuration and records it in the implementation report. If it exceeds 5% of the side's read time, it counts
+once over `get_all_model_names()` with a single pass instead.
+
 ## R6. What the run response shows
 
 **Finding**: `RunService._resource_with_observations` (`infrahub_sync/service/service.py:1160`) builds one
@@ -126,8 +131,12 @@ uses the same model names (`infrahub_sync/plan/review.py:121`).
   each a `SideRead | None`.
 - When the link has neither document, `reads` is `None` (an execution recorded before this feature, or a `verify`
   or `apply` execution).
-- When `link.terminal_state` is set, a side stored as `waiting` is returned as `not_started`, and a side stored as
-  `reading` as `interrupted`. Neither gets `ended_at`. The stored document is not changed.
+- When `link.terminal_state` is set to anything other than `completed`, a side stored as `waiting` is returned as
+  `not_started`, and a side stored as `reading` as `interrupted`. Neither gets `ended_at`. The stored document is
+  not changed.
+- When `link.terminal_state` is `completed`, a side still stored as `waiting` or `reading` is returned as `None`,
+  and the service logs one WARNING with the run ID and the side. A completed `plan` or `sync` execution read both
+  sides, so its end write was lost (critique M2).
 - A stored document that does not parse is returned as `None` for that side, and the service logs one WARNING
   with the run ID and the side.
 
@@ -181,7 +190,13 @@ flow_run_id)`. Each method builds the side's document (data-model.md) with the c
 **Finding**: `_echo_run` (`infrahub_sync/cli.py:612`) prints `key: value` fields for the latest orchestration
 entry (`resource.orchestration[-1]`).
 
-**Decision**: When that entry's `reads` is set, `_echo_run` adds two fields after `prefect_flow_run_url`,
+A registered run records its `verify` and `apply` stages as later executions of the same run
+(`RunService._owned_run(run_id, ..., "verify")`, `infrahub_sync/service/service.py:341,370`), so the latest entry
+is often a `verify` or `apply` execution with no read state (critique M1).
+
+**Decision**: `_echo_run` reads the read state from the latest entry whose `purpose` is `plan` or `sync`, not from
+`orchestration[-1]`. The existing fields keep reading `orchestration[-1]`. When that entry's `reads` is set,
+`_echo_run` adds two fields after `prefect_flow_run_url`,
 `source_read` and `destination_read`, formatted as
 `state=succeeded mode=full started_at=<ISO time> ended_at=<ISO time> nodes=DcimDevice:3,LocationSite:2`, with
 `error=<class>` for a failed read. Keys with no value are left out. When `reads` is `None`, neither field is
