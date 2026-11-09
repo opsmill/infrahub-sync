@@ -1,0 +1,48 @@
+infrahub_sync/service/flow.py
+  s_b587fb435a3228::t_ad550e46252172 83,286,298,566-570,586,588-592,619-624,626,736-741,743,1151
+  s_b587fb435a3228::t_115a2dad9d54dc 565,625,742
+infrahub_sync/service/service.py
+  s_b587fb435a3228::t_95455c46bd104e 1191,1215
+  s_b587fb435a3228::t_a64b3634d94b48 72
+tests/service/test_read_progress.py
+  s_b587fb435a3228::t_d38c895bab9bac 1-14,17-23,26-53,57-201,205-288,290-292,296,298-322,324-339,341-362,364-368,370-392,394-413,415-416,418-420,422-425,429-431
+  s_b587fb435a3228::t_4a11cf1c90f3c0 24-25,297
+  s_b587fb435a3228::t_39b1cbdf73a215 289
+  s_b587fb435a3228::t_374171c654d0b8 16,293-295,363,426-428
+  s_b587fb435a3228::t_afe6439c3371a0 54-56,202-204
+  s_b587fb435a3228::t_952118959a7751 323,340,369,393,414
+  s_b587fb435a3228::t_f4d1747711f79f 15,417,421
+infrahub_sync/client/models.py
+  s_b587fb435a3228::t_ac52416181b712 319-321
+  s_b587fb435a3228::t_13caec3ccbaff3 268-298
+infrahub_sync/service/read_progress.py
+  s_b587fb435a3228::t_374171c654d0b8 48
+  s_b587fb435a3228::t_c0f734b25e3718 1-47,49-132
+tests/service/test_registered_schema_guard.py
+  s_b587fb435a3228::t_09b65d92363a92 302
+infrahub_sync/client/__init__.py
+  s_b587fb435a3228::t_374171c654d0b8 54-55,109-110
+tests/runtime_schema/test_worker_path.py
+  s_b587fb435a3228::t_09b65d92363a92 314
+dev/specs/018-plan-read-progress/tasks.md
+  s_b587fb435a3228::t_47e36d80859995 63-66,70-74
+tests/service/test_http_api.py
+  s_b587fb435a3228::t_374171c654d0b8 78,2688
+  s_b587fb435a3228::t_6cc071b02a6b7b 12,14,23,43,94-100,2684-2687,2689-2799
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c9c9ea700fdd4cac9abcbfed61f7addda42537b7",
+  "prompts": {},
+  "sessions": {
+    "s_b587fb435a3228": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "443573d1-a264-40b9-abb9-38a7fba8091b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
