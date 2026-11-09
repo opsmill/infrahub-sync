@@ -284,8 +284,10 @@ response that holds the field.
 
 Each orchestration entry also carries `reads`: the state of the source read and the
 destination read of a `plan` or `sync` execution. Read the run while the stage runs to follow
-each side, and after it ends to find which side failed or did not start. Every route that
-returns a run resource returns it, including `GET /runs/{run_id}` and `GET /runs`.
+each side, and after it ends to find which side failed or did not start. Every route whose
+response holds orchestration entries returns it: `POST /runs`, `GET /runs/{run_id}`,
+`POST /runs/{run_id}/verify`, `POST /runs/{run_id}/apply` and `POST /runs/{run_id}/cancel`.
+`GET /runs` does not return it, because its items hold no orchestration entries.
 
 ```json
 "reads": {
@@ -308,9 +310,16 @@ returns a run resource returns it, including `GET /runs/{run_id}` and `GET /runs
 }
 ```
 
-`reads` is `null` for a `verify` or `apply` execution, which reads neither side, and for an
-execution recorded before the Sync API stored the read state. For a `plan` or `sync` execution,
-`source` and `destination` are both present from the moment the worker starts the stage.
+`reads` is `null` in three cases:
+
+- For a `verify` or `apply` execution, which reads neither side.
+- For an execution recorded before the Sync API stored the read state.
+- For a `plan` or `sync` execution that the worker has not yet brought to its planning step:
+  one that has not started, or one that failed before planning, for example in the write
+  checks that a `sync` stage runs first.
+
+When the worker starts planning, it records both sides as `waiting`, so `source` and
+`destination` are both present from that moment.
 
 | `state` | Meaning |
 | --- | --- |
@@ -332,7 +341,9 @@ returned state from the stored state and the execution's `terminal_state`:
   warning.
 - A stored state that does not parse is returned as `null`, and the Sync API logs a warning.
 
-`read_mode` is `full` or `incremental`. `nodes_by_kind` counts the nodes read for each
+`read_mode` is `full` when the worker extracted every top-level kind of the side in full,
+and `incremental` otherwise, including for a side that mixes kinds extracted in full and
+kinds read incrementally. `nodes_by_kind` counts the nodes read for each
 top-level kind of the side and each other kind the side holds, sorted by kind name; a
 top-level kind with no node counts `0`. It is `{}` for every state other than `succeeded`,
 and for a succeeded read whose nodes could not be counted, in which case the worker logs a

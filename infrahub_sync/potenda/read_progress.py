@@ -1,4 +1,4 @@
-"""What Potenda reports about each side's read while a Plan runs.
+"""What Potenda reports about each side's read while a `plan` or `sync` stage runs.
 
 `Potenda._load_side` calls an optional `SideReadObserver` when a side's read starts and when it
 ends. The engine imports nothing from the service: the Sync service's worker supplies the one
@@ -21,8 +21,8 @@ ReadMode = Literal["full", "incremental"]
 class SideReadReport:
     """How one side's read ended.
 
-    A read that succeeded carries its mode and the number of nodes of every top-level kind,
-    sorted by kind name. A read that failed carries only the class name of the exception,
+    A read that succeeded carries its mode and the number of nodes of every top-level kind
+    and of every other kind the side holds, sorted by kind name. A read that failed carries only the class name of the exception,
     never its message, so the report holds no address or secret.
     """
 

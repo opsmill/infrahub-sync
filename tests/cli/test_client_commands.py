@@ -818,6 +818,20 @@ def test_runs_show_prints_the_plan_read_state_when_a_verify_execution_follows_it
     assert "destination_read: <none>" in lines
 
 
+def test_runs_show_prints_no_read_fields_when_the_newest_plan_execution_has_no_read_state(client: MagicMock) -> None:
+    """FR-011, cli-output.md: the newest `plan` execution is selected, not an older one with reads."""
+    older = _with_reads(_run(), StageReads(source=SideRead(state="succeeded", read_mode="full")))
+    queued = older.orchestration[0].model_copy(update={"flow_run_id": "flow-service-2", "attempt": 2, "reads": None})
+    client.get_run.return_value = older.model_copy(update={"orchestration": (*older.orchestration, queued)})
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert "flow_run_id: flow-service-2" in lines
+    assert not [line for line in lines if line.startswith(("source_read", "destination_read"))]
+
+
 def test_runs_show_prints_no_read_fields_for_a_run_without_read_state(client: MagicMock) -> None:
     """A run recorded before read state existed keeps its output and exit code unchanged."""
     resource = _with_reads(_run(), None)

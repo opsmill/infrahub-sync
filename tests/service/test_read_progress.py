@@ -277,6 +277,40 @@ def test_a_stored_field_outside_the_document_is_not_returned() -> None:
     assert _SECRET_DETAIL not in reads.model_dump_json()
 
 
+def test_each_execution_of_a_run_keeps_and_returns_its_own_read_state(tmp_path: Path) -> None:
+    """FR-011: reads recorded on a second execution leave the first execution's documents unchanged."""
+    failed = {"state": "failed", "started_at": _STARTED, "ended_at": _ENDED, "error_class": "ConnectionError"}
+    second_flow_run_id = "flow-plan-2"
+    projection = _store(tmp_path, "plan")
+    assert projection.record_side_read(_RUN_ID, _FLOW_RUN_ID, "source", _SUCCEEDED) is True
+    assert projection.record_side_read(_RUN_ID, _FLOW_RUN_ID, "destination", failed) is True
+    assert projection.abandon_execution(_RUN_ID, _FLOW_RUN_ID, terminal_at=_TERMINAL_AT) is True
+    append_execution(
+        projection, _RUN_ID, PrefectExecutionLink(flow_run_id=second_flow_run_id, purpose="plan", attempt=2)
+    )
+
+    record_waiting(projection, _RUN_ID, second_flow_run_id)
+    assert projection.record_side_read(_RUN_ID, second_flow_run_id, "source", _READING) is True
+
+    run = projection.lookup_run(_RUN_ID).value
+    assert run is not None
+    first, second = run.prefect_executions
+    assert (first.attempt, second.attempt) == (1, 2)
+    assert first.source_read == _SUCCEEDED
+    assert first.destination_read == failed
+    assert second.source_read == _READING
+    assert second.destination_read == _WAITING
+    first_reads = stage_reads(first, run_id=_RUN_ID)
+    assert first_reads is not None
+    assert first_reads.source is not None
+    assert first_reads.source.state == "succeeded"
+    assert first_reads.destination is not None
+    assert first_reads.destination.state == "failed"
+    assert stage_reads(second, run_id=_RUN_ID) == StageReads(
+        source=SideRead(state="reading", started_at=_utc(_STARTED)), destination=SideRead(state="waiting")
+    )
+
+
 # --- T013: the stage records `waiting` and passes the observer ----------------------------------
 
 

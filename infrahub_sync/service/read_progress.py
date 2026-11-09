@@ -119,8 +119,9 @@ def _side_read(
 def stage_reads(link: PrefectExecutionLink, *, run_id: str) -> StageReads | None:
     """Derive the read state the run response returns for one execution (research R6).
 
-    `None` when the execution stored no document: one recorded before the read state, or a
-    `verify` or `apply` execution.
+    `None` when the execution stored no document: one recorded before the read state, a
+    `verify` or `apply` execution, or a `plan` or `sync` execution the worker has not brought
+    to its planning step (not started yet, or failed before `record_waiting` ran).
     """
     if link.source_read is None and link.destination_read is None:
         return None

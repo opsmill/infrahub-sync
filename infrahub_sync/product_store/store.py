@@ -3870,6 +3870,35 @@ def _is_canonical_uuid(value: str) -> bool:
         return False
 
 
+def _stored_side_read(value: str | None, *, run_id: str, column: str) -> dict[str, Any] | None:
+    """Parse one stored side-read column; a value that is not a JSON object reads as ``None``.
+
+    A side's read state is a progress report, so a damaged value must not stop a run from being
+    read. The warning names the run, the column and the error class, never the stored text.
+    """
+    if value is None:
+        return None
+    try:
+        document = json.loads(value)
+    except (json.JSONDecodeError, TypeError) as exc:
+        logger.warning(
+            "Ignoring an unreadable side-read column: run_id=%s column=%s error=%s",
+            run_id,
+            column,
+            type(exc).__name__,
+        )
+        return None
+    if not isinstance(document, dict):
+        logger.warning(
+            "Ignoring a side-read column that is not a JSON object: run_id=%s column=%s type=%s",
+            run_id,
+            column,
+            type(document).__name__,
+        )
+        return None
+    return document
+
+
 def _run_from_rows(
     row: Sequence[Any],
     references: Sequence[Sequence[Any]],
@@ -3916,8 +3945,8 @@ def _run_from_rows(
                     "terminal_at": item[15],
                     "terminal_state": item[16],
                     "terminal_outcome": item[17],
-                    "source_read": None if item[19] is None else json.loads(item[19]),
-                    "destination_read": None if item[20] is None else json.loads(item[20]),
+                    "source_read": _stored_side_read(item[19], run_id=row[0], column="source_read"),
+                    "destination_read": _stored_side_read(item[20], run_id=row[0], column="destination_read"),
                 }
                 for item in links
             ],

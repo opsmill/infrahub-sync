@@ -125,16 +125,20 @@ destination_read: state=failed started_at=2026-11-09T10:00:01+00:00 ended_at=202
 
 Each side starts as `state=waiting`, then shows `state=reading` with `started_at` while the
 worker reads it. A read that ends shows `state=succeeded`, with the read `mode` (`full` or
-`incremental`) and the number of `nodes` of each kind, or `state=failed`, with the class name
+`incremental`; `full` only when every top-level kind of the side was extracted in full) and
+the number of `nodes` of each kind, or `state=failed`, with the class name
 of the error. When the stage ends before a side's read ends, that side shows
 `state=not_started` or `state=interrupted`, with no `ended_at`. A side whose end the service
-did not record shows `<none>`. A key with no value is left out. A run created before the
-service recorded the read state prints neither line. The
+did not record, or whose stored state does not parse, shows `<none>`. A key with no value is
+left out. Neither line is printed for a run created before the service recorded the read
+state, nor while the latest `plan` or `sync` execution has not reached its planning step: it
+has not started, or it failed before planning. The
 [Sync HTTP API reference](./reference/sync-http-api.mdx#read-state-of-each-side) describes each
 state.
 
 When a side's read ends, the run's log also holds one line for it, which
-`infrahub-sync runs logs RUN_ID` prints:
+`infrahub-sync runs logs RUN_ID` prints. The example shows the message only; `runs logs` also
+prints each line's timestamp, stage and level:
 
 ```text
 Load: source read succeeded (full): 5 nodes; DcimDevice 3, LocationSite 2
