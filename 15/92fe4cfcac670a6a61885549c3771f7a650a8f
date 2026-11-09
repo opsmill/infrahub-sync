@@ -1,0 +1,21 @@
+dev/specs/018-plan-read-progress/spec.md
+  s_b587fb435a3228::t_28ed3e689625ea 1-180
+dev/specs/018-plan-read-progress/checklists/requirements.md
+  s_b587fb435a3228::t_26924357d9e35d 1-40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1592fe4cfcac670a6a61885549c3771f7a650a8f",
+  "prompts": {},
+  "sessions": {
+    "s_b587fb435a3228": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "443573d1-a264-40b9-abb9-38a7fba8091b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
