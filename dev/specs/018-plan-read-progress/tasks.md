@@ -23,7 +23,7 @@ and the CLI all need them. US1 then wires the worker and the response. US2 (CLI)
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm the baseline: on branch `018-plan-read-progress`, run `uv run invoke tests.tests-unit` and `uv run ruff check .`, and record the pass count under a "Baseline" heading in `dev/specs/018-plan-read-progress/opsmill-implement-report.md` (create the file).
+- [X] T001 Confirm the baseline: on branch `018-plan-read-progress`, run `uv run invoke tests.tests-unit` and `uv run ruff check .`, and record the pass count under a "Baseline" heading in `dev/specs/018-plan-read-progress/opsmill-implement-report.md` (create the file).
 
 ---
 
