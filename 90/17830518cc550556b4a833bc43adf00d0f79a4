@@ -1,0 +1,21 @@
+dev/specs/018-plan-read-progress/alignment-check.md
+  s_b587fb435a3228::t_9f8965dbaacbe2 1-30
+dev/specs/018-plan-read-progress/spec.md
+  s_b587fb435a3228::t_93dded57f36119 180-181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9017830518cc550556b4a833bc43adf00d0f79a4",
+  "prompts": {},
+  "sessions": {
+    "s_b587fb435a3228": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "443573d1-a264-40b9-abb9-38a7fba8091b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
