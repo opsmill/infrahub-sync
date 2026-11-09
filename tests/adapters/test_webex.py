@@ -238,12 +238,12 @@ def test_multi_page_rate_limit_loads_every_record(adapter: WebexAdapter, monkeyp
         side_effect=[
             _http_response(
                 {"items": [{"id": str(i), "displayName": f"record-{i}"} for i in range(500)]},
-                Link='</v1/example?after=500>; rel="next"',
+                Link='</v1/example?after=500&orgId=invented-org-a>; rel="next"',
             ),
             _http_response({}, 429, **{"Retry-After": "7"}),
             _http_response(
                 {"items": [{"id": str(i), "displayName": f"record-{i}"} for i in range(500, 1000)]},
-                Link='</v1/example?after=1000>; rel="next"',
+                Link='</v1/example?after=1000&orgId=invented-org-a>; rel="next"',
             ),
             _http_response({"items": [{"id": "1000", "displayName": "record-1000"}]}),
         ]
@@ -276,7 +276,9 @@ def test_calling_workspace_fixed_query_uses_returned_set(
         assert params["type"] == "meetingRoom"
         matching = [record for record in records if record["type"] == params["type"]]
         if not urlsplit(url).query:
-            return _http_response({"items": matching[:1]}, Link='</v1/workspaces?after=one>; rel="next"')
+            return _http_response(
+                {"items": matching[:1]}, Link='</v1/workspaces?after=one&orgId=invented-org-a>; rel="next"'
+            )
         return _http_response({"items": matching[1:]})
 
     http = Mock(side_effect=read)

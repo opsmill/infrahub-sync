@@ -108,6 +108,7 @@ class WebexClient(RestApiClient):
         self.request_count = 0
         self._credentials: set[str] = {self._token, self._client_id, self._client_secret, self._refresh_token} - {""}
         self._validate_organization()
+        self._linked_org_id: str | None = None
 
     def _validate_organization(self) -> None:
         """Resolve one project scope, allowing resources to omit unsupported orgId."""
@@ -139,9 +140,13 @@ class WebexClient(RestApiClient):
             msg = "Webex: refused an endpoint, redirect or pagination link outside the configured HTTPS origin"
             raise ValueError(msg)
         linked_orgs = parse_qs(parts.query, keep_blank_values=True).get("orgId", [])
-        if any(value != self.options.org_id for value in linked_orgs):
-            msg = "Webex: endpoint or pagination orgId differs from the project organization"
-            raise ValueError(msg)
+        if linked_orgs:
+            organization = self.options.org_id or self._linked_org_id or linked_orgs[0]
+            if any(not value.strip() or value != organization for value in linked_orgs):
+                msg = "Webex: endpoint or pagination orgId differs from the project organization"
+                raise ValueError(msg)
+            # Retain token-organization scope across resources without adding query parameters.
+            self._linked_org_id = linked_orgs[0]
         return url
 
     def _redact(self, text: str) -> str:

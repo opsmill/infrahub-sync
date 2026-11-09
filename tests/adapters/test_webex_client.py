@@ -42,16 +42,26 @@ def _service_fixture(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     return {"auth_method": "service_app"}
 
 
-def test_get_and_pagination_through_empty_page(http: Mock) -> None:
+@pytest.mark.parametrize("org_id", [None, "example-org"])
+def test_get_and_pagination_through_empty_page(org_id: str | None, http: Mock) -> None:
     http.side_effect = [
-        response({"items": [{"id": "1"}]}, Link='<https://webexapis.com/v1/locations?max=100&after=one>; rel="next"'),
-        response({"items": []}, Link='</v1/locations?max=100&after=two>; rel="next"'),
+        response(
+            {"items": [{"id": "1"}]},
+            Link='<https://webexapis.com/v1/locations?max=100&after=one&orgId=example-org>; rel="next"',
+        ),
+        response({"items": []}, Link='</v1/locations?max=100&after=two&orgId=example-org>; rel="next"'),
         response({"items": [{"id": "2"}]}),
     ]
-    pages = WebexClient({"org_id": "example-org"}).pages("/v1/locations", {"max": 100, "orgId": "example-org"})
+    params: dict[str, object] = {"max": 100}
+    if org_id is not None:
+        params["orgId"] = org_id
+    client = WebexClient({"org_id": org_id})
+    pages = client.pages("/v1/locations", params)
     assert [obj["id"] for page in pages for obj in page["items"]] == ["1", "2"]
     assert http.call_count == 3
-    assert http.call_args_list[1].kwargs["params"] == {"orgId": "example-org"}
+    assert http.call_args_list[0].kwargs["params"] == params
+    assert http.call_args_list[1].kwargs["params"] is None
+    assert client.options.org_id == org_id
     assert all(call.args[0] == "GET" and call.kwargs["allow_redirects"] is False for call in http.call_args_list)
     assert http.call_args_list[0].kwargs["headers"]["Authorization"] == "Bearer invented-access-value"
 
@@ -240,7 +250,7 @@ def test_invalid_refresh_payload_hides_credentials_with_traceback_locals(http: M
 @pytest.mark.parametrize("placement", ["params", "endpoint"])
 def test_start_cursor_still_loads_all_pages(cursor: str, placement: str, http: Mock) -> None:
     http.side_effect = [
-        response({"items": [{"id": "first"}]}, Link='</v1/devices?after=next>; rel="next"'),
+        response({"items": [{"id": "first"}]}, Link='</v1/devices?after=next&orgId=invented-org-a>; rel="next"'),
         response({"items": [{"id": "last"}]}),
     ]
     endpoint = f"/v1/devices?{cursor}=invented-start&max=1" if placement == "endpoint" else "/v1/devices"
@@ -274,11 +284,68 @@ def test_endpoint_organization_cannot_change_project_scope(endpoint: str, http: 
     http.assert_not_called()
 
 
-def test_pagination_cannot_switch_organizations(http: Mock) -> None:
-    http.return_value = response(Link='</v1/devices?orgId=invented-org-b>; rel="next"')
+@pytest.mark.parametrize("org_id", [None, "invented-org-a"])
+def test_pagination_cannot_switch_organizations(org_id: str | None, http: Mock) -> None:
+    http.side_effect = [
+        response(Link='</v1/devices?after=one&orgId=invented-org-a>; rel="next"'),
+        response(Link='</v1/devices?after=two&orgId=invented-org-b>; rel="next"'),
+        response(),
+    ]
     with pytest.raises(ValueError, match="organization"):
-        WebexClient({"org_id": "invented-org-a"}).pages("/v1/devices", {"orgId": "invented-org-a"})
+        WebexClient({"org_id": org_id}).pages("/v1/devices", {})
+    assert http.call_count == 2
+
+
+@pytest.mark.parametrize("settings", [{"org_id": "invented-org-a"}, {"params": {"orgId": "invented-org-a"}}])
+def test_first_link_cannot_change_configured_organization(settings: dict, http: Mock) -> None:
+    http.return_value = response(Link='</v1/devices?after=one&orgId=invented-org-b>; rel="next"')
+    with pytest.raises(ValueError, match="organization"):
+        WebexClient(settings).pages("/v1/devices", {})
     assert http.call_count == 1
+
+
+def test_pinned_organization_applies_across_resources(http: Mock) -> None:
+    http.side_effect = [
+        response(Link='</v1/locations?after=one&orgId=invented-org-a>; rel="next"'),
+        response(),
+        response(Link='</v1/devices?after=one&orgId=invented-org-b>; rel="next"'),
+    ]
+    client = WebexClient({})
+    client.pages("/v1/locations", {})
+    client._validate_organization()
+    with pytest.raises(ValueError, match="organization"):
+        client.pages("/v1/devices", {})
+    assert http.call_count == 3
+
+
+@pytest.mark.parametrize("query", ["orgId=", "orgId=%20", "orgId=invented-org-a&orgId=invented-org-b"])
+def test_first_link_rejects_invalid_organization(query: str, http: Mock) -> None:
+    http.return_value = response(Link=f'</v1/devices?after=one&{query}>; rel="next"')
+    with pytest.raises(ValueError, match="organization"):
+        WebexClient({}).pages("/v1/devices", {})
+    assert http.call_count == 1
+
+
+def test_pinned_organization_allows_links_without_org_id(http: Mock) -> None:
+    http.side_effect = [
+        response(Link='</v1/locations?after=one&orgId=invented-org-a>; rel="next"'),
+        response(Link='</v1/locations?after=two>; rel="next"'),
+        response(),
+    ]
+    assert len(WebexClient({}).pages("/v1/locations", {})) == 3
+    assert http.call_count == 3
+
+
+def test_pinned_organization_is_isolated_per_client(http: Mock) -> None:
+    http.side_effect = [
+        response(Link='</v1/devices?after=one&orgId=invented-org-a>; rel="next"'),
+        response(),
+        response(Link='</v1/devices?after=one&orgId=invented-org-b>; rel="next"'),
+        response(),
+    ]
+    assert len(WebexClient({}).pages("/v1/devices", {})) == 2
+    assert len(WebexClient({}).pages("/v1/devices", {})) == 2
+    assert http.call_count == 4
 
 
 @pytest.mark.parametrize(

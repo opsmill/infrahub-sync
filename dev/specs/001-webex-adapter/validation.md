@@ -18,7 +18,7 @@ The engineer explicitly deferred persisted destination deletion after inspection
 | Missing-key diagnostics name endpoint and key | `test_missing_response_key_names_endpoint_and_key` covers ordinary and dotted keys. | PASS |
 | HTTP 400 repeats safe Webex text | Tests cover safe text, known/current/earlier/rotated credentials, special characters and URL encoding, bearer values, credential assignments and URLs; other response fields are excluded. | PASS |
 | Start parameters still permit complete extraction | `test_start_cursor_still_loads_all_pages` covers before/after in params and endpoint queries; the first request normalizes away start cursors and follows returned continuation links. | PASS |
-| One organization per project | Conflicting source/resource IDs fail before HTTP; endpoints and pagination cannot change scope; `test_two_projects_isolate_two_organizations` checks independent diffs and peers for two organization fixtures. | PASS |
+| One organization per project | Conflicting source/resource IDs fail before HTTP; endpoints and pagination cannot change scope; without configured scope the first linked organization is pinned across resources for the client lifetime; `test_two_projects_isolate_two_organizations` checks independent diffs and peers for two organization fixtures. | PASS |
 | Several pages plus rate limit return every record | `test_multi_page_rate_limit_loads_every_record` loads 1,001 distinct records over three pages, honors Retry-After 7 and retries the identical middle-page request. | PASS |
 | Fixed Calling workspace query | `test_calling_workspace_fixed_query_uses_returned_set` asserts type=meetingRoom on both requests and loads only the returned matching rooms. | PASS |
 | Parent request counters include failures and retries | `test_many_parents_count_retries_and_failed_requests` exercises 500 parents, 100 HTTP 404s and one 429 retry: 400 records and exactly 501 counted/logged requests. | PASS |
@@ -36,7 +36,7 @@ The engineer explicitly deferred persisted destination deletion after inspection
 | `uv run ty check .` | No errors; three existing unused-ignore warnings in unrelated optional-adapter tests; exit 0. | PASS |
 | `uv run pylint infrahub_sync/adapters/webex.py infrahub_sync/adapters/webex_client.py tests/adapters/test_webex.py tests/adapters/test_webex_client.py tests/adapters/test_webex_examples.py --output-format=json` | `[]`; zero diagnostics; exit 0. | PASS |
 | `uv run invoke linter.lint-pylint` | Exit 30; 56 existing diagnostics in unchanged code; score `9.60/10`, unchanged from baseline. | Baseline failure |
-| `uv run pytest -q` | `301 passed, 3 skipped, 48 warnings in 10.28s`; exit 0. | PASS |
+| `uv run pytest -q` | `311 passed, 3 skipped, 48 warnings in 13.12s`; exit 0 after the pagination orgId fix. | PASS |
 | `uv run infrahub-sync --help` | CLI help rendered; exit 0. | PASS |
 | `uv run infrahub-sync list --directory examples/` | Exactly one Webex project: `webex-workspaces-to-infrahub` with source `webex` and destination `infrahub`; exit 0. | PASS |
 | Fixture CLI generation | `test_cli_generate_uses_fixture_destination_schema` runs `generate` against a mocked destination schema; included in passing pytest suite. No live generation command is run. | PASS |
@@ -48,6 +48,14 @@ The engineer explicitly deferred persisted destination deletion after inspection
 The docs build reports existing Docusaurus deprecation, stale Browserslist data and Node localStorage warnings. Pytest warnings include generated-model local_id shadowing, Click deprecations and the existing unregistered timeout marker. No suppressions, type overrides or unrelated core cleanup were added to hide baseline findings.
 
 The complete checks were run after implementation. The last record-only update changes this validation text and the matching audit/PR evidence; Markdown and whitespace checks were repeated on those artifacts.
+
+## Pagination orgId regression
+
+Real Webex next-page links include `orgId` even when the project uses the token's own organization without an explicit scope. Successful pagination fixtures now include invented organization IDs, including the empty intermediate page, start-cursor, rate-limit and Calling workspace cases. With no configured organization, the client pins the first nonempty endpoint or pagination `orgId` for its lifetime and rejects subsequent differing IDs across pages and resources. The learned ID is separate from configuration, so it does not add query parameters to other resources. Configured organizations retain their existing validation, and separate clients retain independent scopes.
+
+The original check reproduced the reported failure: `test_get_and_pagination_through_empty_page[None]` failed before page two, while the configured-organization case passed. The engineer's workaround failed the new organization-switch regression because it followed a conflicting link. Added tests cover both configurations, cross-resource pinning, blank or conflicting repeated IDs, links omitting `orgId`, and client isolation.
+
+After the fix, `uv run pytest -q` reports `311 passed, 3 skipped, 48 warnings`; Ruff, yamllint, ty and Pylint over both Webex modules and all three Webex test files exit 0, with Pylint returning `[]`. CLI help/list, fixture-backed CLI generation in pytest, CLI documentation generation and the Docusaurus build pass. The unrelated generated CLI-reference change was discarded. Changed Markdown/MDX and `git diff --check` pass. Aggregate lint still stops at the two existing MD007 findings in the unchanged spec; repository-wide Pylint still exits 30 with 56 existing diagnostics and score `9.60/10`. No live data requests or pushes were performed.
 
 ## Documentation and scope review
 
