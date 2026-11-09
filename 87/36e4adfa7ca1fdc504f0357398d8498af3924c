@@ -1,0 +1,55 @@
+dev/specs/archive/016-prefect-run-observability/contracts/run-response.md
+  s_b587fb435a3228::t_00bbec2f1de016 1-30
+dev/specs/archive/016-prefect-run-observability/spec.md
+  s_b587fb435a3228::t_00bbec2f1de016 1-358
+docs/docs/development/adr-index.mdx
+  s_b587fb435a3228::t_00bbec2f1de016 25
+dev/specs/archive/016-prefect-run-observability/critiques/critique-20261105.md
+  s_b587fb435a3228::t_00bbec2f1de016 1-133
+dev/specs/archive/016-prefect-run-observability/EXTRACTED.md
+  s_b587fb435a3228::t_00bbec2f1de016 1-31
+dev/adr/0024-prefect-surfaces-follow-the-stored-run-record.md
+  s_b587fb435a3228::t_00bbec2f1de016 1-55
+dev/specs/archive/016-prefect-run-observability/quickstart.md
+  s_b587fb435a3228::t_00bbec2f1de016 1-62
+dev/specs/archive/016-prefect-run-observability/contracts/cli-output.md
+  s_b587fb435a3228::t_00bbec2f1de016 1-32
+dev/specs/archive/016-prefect-run-observability/tasks.md
+  s_b587fb435a3228::t_00bbec2f1de016 1-228
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_b587fb435a3228::t_00bbec2f1de016 86-133
+dev/specs/archive/016-prefect-run-observability/plan.md
+  s_b587fb435a3228::t_00bbec2f1de016 1-157
+dev/specs/archive/016-prefect-run-observability/contracts/prefect-surfaces.md
+  s_b587fb435a3228::t_00bbec2f1de016 1-51
+dev/specs/archive/016-prefect-run-observability/checklists/requirements.md
+  s_b587fb435a3228::t_00bbec2f1de016 1-37
+dev/specs/archive/016-prefect-run-observability/alignment-check.md
+  s_b587fb435a3228::t_00bbec2f1de016 1-50
+dev/adr/README.md
+  s_b587fb435a3228::t_00bbec2f1de016 52-54
+docs/docs/development/guidelines/secret-redaction.md
+  s_b587fb435a3228::t_00bbec2f1de016 21-22,27
+dev/specs/archive/016-prefect-run-observability/data-model.md
+  s_b587fb435a3228::t_00bbec2f1de016 1-39
+dev/specs/archive/016-prefect-run-observability/research.md
+  s_b587fb435a3228::t_00bbec2f1de016 1-142
+dev/specs/archive/016-prefect-run-observability/opsmill-implement-report.md
+  s_b587fb435a3228::t_00bbec2f1de016 1-198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8736e4adfa7ca1fdc504f0357398d8498af3924c",
+  "prompts": {},
+  "sessions": {
+    "s_b587fb435a3228": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "443573d1-a264-40b9-abb9-38a7fba8091b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
