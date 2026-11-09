@@ -38,23 +38,26 @@ _TERMINAL_AT = datetime(2026, 11, 9, 10, 5, tzinfo=timezone.utc)
 
 
 class _RecordingProjection:
-    """Records each `record_side_read` call."""
+    """Records each side written by each `record_side_reads` call, and the number of calls."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, stored: bool = True) -> None:
         self.writes: list[tuple[str, str, str, dict[str, Any]]] = []
+        self.calls = 0
+        self._stored = stored
 
-    def record_side_read(self, run_id: str, flow_run_id: str, side: str, document: Mapping[str, Any]) -> bool:
-        self.writes.append((run_id, flow_run_id, side, dict(document)))
-        return True
+    def record_side_reads(self, run_id: str, flow_run_id: str, documents: Mapping[str, Mapping[str, Any]]) -> bool:
+        self.calls += 1
+        self.writes.extend((run_id, flow_run_id, side, dict(document)) for side, document in documents.items())
+        return self._stored
 
 
 class _RaisingProjection:
     """A store whose write raises with text that must not be logged."""
 
-    def record_side_read(  # noqa: PLR6301 - the projection method this double stands in for
-        self, run_id: str, flow_run_id: str, side: str, document: Mapping[str, Any]
+    def record_side_reads(  # noqa: PLR6301 - the projection method this double stands in for
+        self, run_id: str, flow_run_id: str, documents: Mapping[str, Mapping[str, Any]]
     ) -> bool:
-        msg = f"store unavailable for {run_id}/{flow_run_id}/{side} ({len(document)}): {_SECRET_DETAIL}"
+        msg = f"store unavailable for {run_id}/{flow_run_id} ({len(documents)}): {_SECRET_DETAIL}"
         raise ConnectionError(msg)
 
 
@@ -84,14 +87,15 @@ def test_read_started_writes_a_reading_document_with_its_start_time() -> None:
     _utc(document["started_at"])
 
 
-def test_a_successful_read_ended_writes_succeeded_with_times_mode_and_sorted_counts() -> None:
+def test_a_successful_read_ended_writes_succeeded_with_times_mode_and_counts_in_reported_order() -> None:
+    """Potenda reports the counts sorted by kind name; the observer stores them in that order."""
     projection = _RecordingProjection()
     observer = _observer(projection)
 
     observer.read_started("destination")
     observer.read_ended(
         "destination",
-        SideReadReport(succeeded=True, read_mode="incremental", nodes_by_kind={"LocationSite": 2, "DcimDevice": 3}),
+        SideReadReport(succeeded=True, read_mode="incremental", nodes_by_kind={"DcimDevice": 3, "LocationSite": 2}),
     )
 
     started = projection.writes[0][3]
@@ -131,11 +135,12 @@ def test_a_store_write_that_raises_is_logged_as_a_warning_and_not_raised(caplog:
     assert _SECRET_DETAIL not in caplog.text
 
 
-def test_record_waiting_writes_both_sides_as_waiting() -> None:
+def test_record_waiting_writes_both_sides_as_waiting_in_one_write() -> None:
     projection = _RecordingProjection()
 
     record_waiting(cast("ProductProjection", projection), _RUN_ID, _FLOW_RUN_ID)
 
+    assert projection.calls == 1
     assert projection.writes == [
         (_RUN_ID, _FLOW_RUN_ID, "source", {"state": "waiting"}),
         (_RUN_ID, _FLOW_RUN_ID, "destination", {"state": "waiting"}),
@@ -146,8 +151,19 @@ def test_record_waiting_logs_a_store_failure_and_does_not_raise(caplog: pytest.L
     with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
         record_waiting(cast("ProductProjection", _RaisingProjection()), _RUN_ID, _FLOW_RUN_ID)
 
-    assert len([record for record in caplog.records if record.levelno == logging.WARNING]) == 2
+    assert len([record for record in caplog.records if record.levelno == logging.WARNING]) == 1
     assert _SECRET_DETAIL not in caplog.text
+
+
+def test_a_write_that_changes_no_row_is_logged_as_a_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """A write to an execution that ended, or to a flow run ID that matches no row, leaves a trace."""
+    with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
+        _observer(_RecordingProjection(stored=False)).read_started("source")
+
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert _RUN_ID in warnings[0].getMessage()
+    assert _FLOW_RUN_ID in warnings[0].getMessage()
 
 
 # --- T012: what the run response derives from the stored documents ----------------------------
@@ -227,6 +243,28 @@ def test_an_execution_that_did_not_complete_keeps_a_side_that_ended() -> None:
     )
 
 
+@pytest.mark.parametrize("prefect_state", ["crashed", "failed", "cancelled", "Crashed"])
+def test_an_execution_prefect_reports_ended_returns_unfinished_sides_as_ended_before_a_verdict(
+    prefect_state: str,
+) -> None:
+    """SC-003: a killed worker's execution has no verdict yet, but no side reads as still running."""
+    reads = stage_reads(_link(_WAITING, _READING), run_id=_RUN_ID, prefect_state=prefect_state)
+
+    assert reads == StageReads(
+        source=SideRead(state="not_started"),
+        destination=SideRead(state="interrupted", started_at=_utc(_STARTED), ended_at=None),
+    )
+
+
+@pytest.mark.parametrize("prefect_state", [None, "running", "completed"])
+def test_an_execution_prefect_does_not_report_failed_keeps_the_stored_states(prefect_state: str | None) -> None:
+    reads = stage_reads(_link(_WAITING, _READING), run_id=_RUN_ID, prefect_state=prefect_state)
+
+    assert reads == StageReads(
+        source=SideRead(state="waiting"), destination=SideRead(state="reading", started_at=_utc(_STARTED))
+    )
+
+
 @pytest.mark.parametrize("unfinished", [_WAITING, _READING], ids=["waiting", "reading"])
 def test_a_completed_execution_returns_an_unfinished_side_as_none_and_logs_one_warning(
     unfinished: dict[str, Any], caplog: pytest.LogCaptureFixture
@@ -251,8 +289,10 @@ def test_a_completed_execution_returns_an_unfinished_side_as_none_and_logs_one_w
         {"state": "succeeded", "nodes_by_kind": "many"},
         {"state": "reading", "started_at": "yesterday"},
         {"started_at": _STARTED},
+        {"state": "interrupted"},
+        {"state": "succeeded", "read_mode": "partial"},
     ],
-    ids=["unknown-state", "counts-not-an-object", "time-not-a-time", "no-state"],
+    ids=["unknown-state", "counts-not-an-object", "time-not-a-time", "no-state", "derived-state", "unknown-mode"],
 )
 def test_a_document_that_does_not_parse_returns_none_for_that_side_and_logs_one_warning(
     document: dict[str, Any], caplog: pytest.LogCaptureFixture
@@ -282,15 +322,14 @@ def test_each_execution_of_a_run_keeps_and_returns_its_own_read_state(tmp_path: 
     failed = {"state": "failed", "started_at": _STARTED, "ended_at": _ENDED, "error_class": "ConnectionError"}
     second_flow_run_id = "flow-plan-2"
     projection = _store(tmp_path, "plan")
-    assert projection.record_side_read(_RUN_ID, _FLOW_RUN_ID, "source", _SUCCEEDED) is True
-    assert projection.record_side_read(_RUN_ID, _FLOW_RUN_ID, "destination", failed) is True
+    assert projection.record_side_reads(_RUN_ID, _FLOW_RUN_ID, {"source": _SUCCEEDED, "destination": failed}) is True
     assert projection.abandon_execution(_RUN_ID, _FLOW_RUN_ID, terminal_at=_TERMINAL_AT) is True
     append_execution(
         projection, _RUN_ID, PrefectExecutionLink(flow_run_id=second_flow_run_id, purpose="plan", attempt=2)
     )
 
     record_waiting(projection, _RUN_ID, second_flow_run_id)
-    assert projection.record_side_read(_RUN_ID, second_flow_run_id, "source", _READING) is True
+    assert projection.record_side_reads(_RUN_ID, second_flow_run_id, {"source": _READING}) is True
 
     run = projection.lookup_run(_RUN_ID).value
     assert run is not None
@@ -463,6 +502,60 @@ def test_a_lineage_refusal_before_the_reads_leaves_both_sides_waiting_then_not_s
     assert stage_reads(failed, run_id=_RUN_ID) == StageReads(
         source=SideRead(state="not_started"), destination=SideRead(state="not_started")
     )
+
+
+class _SchemaReadError(RuntimeError):
+    """Stands in for a destination that cannot be reached during the live schema read."""
+
+
+def _fail_schema_read(*_args: object, **_kwargs: object) -> None:
+    raise _SchemaReadError
+
+
+@pytest.mark.parametrize(
+    ("stage", "binding"),
+    [("plan", (None, None, None)), ("sync", ("cfg-read-progress", 1, "b" * 64))],
+    ids=["plan", "sync"],
+)
+def test_a_stage_that_fails_in_its_schema_read_returns_both_sides_not_started(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str, binding: tuple[Any, Any, Any]
+) -> None:
+    """Both sides are `waiting` from the start of the stage, before the live schema read."""
+    projection = _store(tmp_path, stage)
+    bind_granting_guard(monkeypatch, service_flow)
+    monkeypatch.setattr(service_flow, "_worker_execution_context", _fail_schema_read)
+
+    with pytest.raises(_SchemaReadError):
+        _execute(projection, stage, binding=binding)
+
+    link = _stored_link(projection)
+    assert (link.source_read, link.destination_read) == ({"state": "waiting"}, {"state": "waiting"})
+    failed = link.model_copy(
+        update={"terminal_at": _TERMINAL_AT, "terminal_state": "failed", "terminal_outcome": "failed"}
+    )
+    assert stage_reads(failed, run_id=_RUN_ID) == StageReads(
+        source=SideRead(state="not_started"), destination=SideRead(state="not_started")
+    )
+
+
+def test_a_sync_stage_records_waiting_before_it_waits_for_the_write_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projection = _store(tmp_path, "sync")
+    _bind_stage_context(monkeypatch, projection)
+    seen: dict[str, Any] = {}
+
+    def _guard(_configuration_id: str) -> None:
+        link = _stored_link(projection)
+        seen["reads"] = (link.source_read, link.destination_read)
+        raise _StopStageError
+
+    monkeypatch.setattr(service_flow, "_configuration_write_guard", _guard)
+
+    with pytest.raises(_StopStageError):
+        _execute(projection, "sync", binding=_SYNC_BINDING)
+
+    assert seen["reads"] == ({"state": "waiting"}, {"state": "waiting"})
 
 
 # --- T022: the `sync` stage reads both sides the way a Plan does (research R9) ------------------

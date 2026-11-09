@@ -756,6 +756,24 @@ def _with_reads(resource: RunResource, reads: StageReads | None) -> RunResource:
     return resource.model_copy(update={"orchestration": (execution,)})
 
 
+@pytest.mark.parametrize("command", ["plan", "sync", "apply"])
+def test_only_runs_show_prints_the_side_reads(client: MagicMock, command: Literal["plan", "sync", "apply"]) -> None:
+    """The other commands share the run printout, but the reads belong to the plan or sync execution only."""
+    reads = StageReads(source=SideRead(state="waiting"), destination=SideRead(state="waiting"))
+    getattr(client, command).return_value = _with_reads(_run(operation=command), reads)
+    arguments = {
+        "plan": ("--config-id", "edge-sync", "--version", "1", "--reason", "review", "--no-wait"),
+        "sync": ("--config-id", "edge-sync", "--version", "1", "--reason", "sync", "--no-wait"),
+        "apply": ("service-run-1", "--expected-checksum", CHECKSUM, "--reason", "apply", "--no-wait"),
+    }[command]
+
+    result = _invoke(client, command, *arguments)
+
+    assert result.exit_code == 0, result.output
+    assert "source_read" not in result.output
+    assert "destination_read" not in result.output
+
+
 def test_runs_show_prints_each_side_read_after_the_prefect_flow_run_link(client: MagicMock) -> None:
     """FR-012: an operator reads each side's read state where the run's other fields are."""
     reads = StageReads(
@@ -764,7 +782,7 @@ def test_runs_show_prints_each_side_read_after_the_prefect_flow_run_link(client:
             read_mode="full",
             started_at=READ_STARTED,
             ended_at=READ_STARTED + timedelta(seconds=12),
-            nodes_by_kind={"LocationSite": 2, "DcimDevice": 3},
+            nodes_by_kind={"DcimDevice": 3, "LocationSite": 2},
         ),
         destination=SideRead(
             state="failed",

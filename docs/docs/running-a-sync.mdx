@@ -131,8 +131,8 @@ of the error. When the stage ends before a side's read ends, that side shows
 `state=not_started` or `state=interrupted`, with no `ended_at`. A side whose end the service
 did not record, or whose stored state does not parse, shows `<none>`. A key with no value is
 left out. Neither line is printed for a run created before the service recorded the read
-state, nor while the latest `plan` or `sync` execution has not reached its planning step: it
-has not started, or it failed before planning. The
+state, nor while the worker has not started the latest `plan` or `sync` execution. Only
+`runs show` prints these lines; `plan`, `sync`, `verify`, `apply` and `runs cancel` do not. The
 [Sync HTTP API reference](./reference/sync-http-api.mdx#read-state-of-each-side) describes each
 state.
 

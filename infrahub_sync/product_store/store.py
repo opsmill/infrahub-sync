@@ -16,7 +16,7 @@ from math import isfinite
 from pathlib import Path, PurePosixPath
 from tempfile import mkdtemp
 from time import sleep
-from typing import Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from uuid import UUID
 
 from pydantic import TypeAdapter
@@ -55,6 +55,10 @@ from infrahub_sync.product_store.models import (
     RunReference,
 )
 
+if TYPE_CHECKING:
+    # Typing only: importing the engine package at runtime would load the whole engine into the store.
+    from infrahub_sync.potenda.read_progress import Side
+
 logger = logging.getLogger(__name__)
 
 _SCHEMA = """
@@ -89,7 +93,7 @@ CREATE TABLE IF NOT EXISTS prefect_executions (
     claimed_at TEXT, claiming_worker_id TEXT, stalled_at TEXT, cancellation_requested_at TEXT,
     cancellation_recovery_deadline_at TEXT, cancellation_receipt_id TEXT, cancellation_acknowledged_at TEXT,
     terminal_at TEXT, terminal_state TEXT, terminal_outcome TEXT, position INTEGER NOT NULL,
-    mutation_receipt_id TEXT UNIQUE,
+    mutation_receipt_id TEXT UNIQUE, source_read TEXT, destination_read TEXT,
     PRIMARY KEY (run_id, flow_run_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id),
     FOREIGN KEY (mutation_receipt_id) REFERENCES mutation_receipts(receipt_id)
 );
@@ -211,11 +215,10 @@ _PREFECT_EXECUTION_LIVENESS_COLUMNS: tuple[tuple[str, str], ...] = (
 )
 # The read state of each side of a plan or sync execution: one JSON document per side, so the
 # two read threads never write the same column (spec 018, research R3).
-_PREFECT_EXECUTION_READ_COLUMNS: tuple[tuple[str, str], ...] = (
-    ("source_read", "TEXT"),
-    ("destination_read", "TEXT"),
+_SIDE_READ_COLUMNS: dict[Side, str] = {"source": "source_read", "destination": "destination_read"}
+_PREFECT_EXECUTION_READ_COLUMNS: tuple[tuple[str, str], ...] = tuple(
+    (column, "TEXT") for column in _SIDE_READ_COLUMNS.values()
 )
-_SIDE_READ_COLUMNS: dict[str, str] = {"source": "source_read", "destination": "destination_read"}
 _CONFIGURATION_BINDING_CONSTRAINT = "product_runs_configuration_binding_consistent"
 _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
     "(config_id IS NULL AND registry_version IS NULL AND package_checksum IS NULL) "
@@ -579,9 +582,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         self, run_id: str, flow_run_id: str, *, state: str | None, observed_at: datetime
     ) -> None: ...
 
-    def record_side_read(
-        self, run_id: str, flow_run_id: str, side: Literal["source", "destination"], document: Mapping[str, Any]
-    ) -> bool: ...
+    def record_side_reads(self, run_id: str, flow_run_id: str, documents: Mapping[Side, Mapping[str, Any]]) -> bool: ...
 
     def claim_execution(
         self,
@@ -1439,20 +1440,22 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             (claimed_at.isoformat(), worker_id, run_id, flow_run_id, admission_deadline_at.isoformat()),
         )
 
-    def record_side_read(
-        self, run_id: str, flow_run_id: str, side: Literal["source", "destination"], document: Mapping[str, Any]
-    ) -> bool:
-        """Store one side's read document while the execution is not terminal.
+    def record_side_reads(self, run_id: str, flow_run_id: str, documents: Mapping[Side, Mapping[str, Any]]) -> bool:
+        """Store one or both sides' read documents in one write while the execution is not terminal.
 
         Returns whether a row changed. A write that arrives after the execution ended, for
         example from a worker that kept running after it was marked interrupted, changes
-        nothing. `side` selects the column, so it is checked before any SQL runs.
+        nothing. Each side selects a column, so the sides are checked before any SQL runs.
         """
-        column = _side_read_column(side)
+        if not documents:
+            msg = "record_side_reads needs at least one side"
+            raise ValueError(msg)
+        columns = [_side_read_column(side) for side in documents]
+        assignments = ", ".join(f"{column} = ?" for column in columns)
         return self._execution_update(
-            f"UPDATE prefect_executions SET {column} = ? "  # noqa: S608 - column from a fixed two-name map
+            f"UPDATE prefect_executions SET {assignments} "  # noqa: S608 - columns from a fixed two-name map
             "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL",
-            (_json(dict(document)), run_id, flow_run_id),
+            (*(_json(dict(document)) for document in documents.values()), run_id, flow_run_id),
         )
 
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime) -> bool:
@@ -3249,16 +3252,13 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             admission_deadline_at=admission_deadline_at,
         )
 
-    def record_side_read(
-        self, run_id: str, flow_run_id: str, side: Literal["source", "destination"], document: Mapping[str, Any]
-    ) -> bool:
-        """Store one side's read document on a non-terminal execution; return whether it changed.
+    def record_side_reads(self, run_id: str, flow_run_id: str, documents: Mapping[Side, Mapping[str, Any]]) -> bool:
+        """Store read documents, keyed by side, on a non-terminal execution; return whether it changed.
 
-        The document holds a state, times, a read mode, node counts and an error class name,
+        Each document holds a state, times, a read mode, node counts and an error class name,
         never an exception message (spec 018 data-model.md). An unknown side is refused.
         """
-        _side_read_column(side)
-        return self._records.record_side_read(run_id, flow_run_id, side, document)
+        return self._records.record_side_reads(run_id, flow_run_id, documents)
 
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime | None = None) -> bool:
         """Set the first stall marker while leaving a pre-TTL execution claimable."""
@@ -3828,7 +3828,8 @@ def production_product_projection(
 
 def _side_read_column(side: str) -> str:
     """The column that stores `side`'s read document; refuses any other side name."""
-    column = _SIDE_READ_COLUMNS.get(side)
+    # Compared, not looked up: `side` comes from a caller and may be any string.
+    column = next((column for name, column in _SIDE_READ_COLUMNS.items() if name == side), None)
     if column is None:
         msg = f"unknown read side {side!r}; expected 'source' or 'destination'"
         raise ValueError(msg)

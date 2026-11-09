@@ -97,20 +97,37 @@ def test_a_store_created_before_the_feature_gains_both_columns_and_reads_old_row
 def test_recording_one_side_leaves_the_other_side_unchanged(tmp_path: Path, profile: str) -> None:
     projection, _database = _projection_with_execution(tmp_path, profile)
 
-    assert projection.record_side_read("run-001", _FLOW_RUN_ID, "destination", _READING) is True
-    assert projection.record_side_read("run-001", _FLOW_RUN_ID, "source", _SUCCEEDED) is True
+    assert projection.record_side_reads("run-001", _FLOW_RUN_ID, {"destination": _READING}) is True
+    assert projection.record_side_reads("run-001", _FLOW_RUN_ID, {"source": _SUCCEEDED}) is True
 
     link = _link(projection)
     assert link.source_read == _SUCCEEDED
     assert link.destination_read == _READING
 
 
+def test_both_sides_are_recorded_in_one_write(tmp_path: Path, profile: str) -> None:
+    projection, _database = _projection_with_execution(tmp_path, profile)
+
+    assert projection.record_side_reads("run-001", _FLOW_RUN_ID, {"source": _SUCCEEDED, "destination": _READING})
+
+    link = _link(projection)
+    assert link.source_read == _SUCCEEDED
+    assert link.destination_read == _READING
+
+
+def test_a_write_with_no_side_is_refused(tmp_path: Path, profile: str) -> None:
+    projection, _database = _projection_with_execution(tmp_path, profile)
+
+    with pytest.raises(ValueError, match="side"):
+        projection.record_side_reads("run-001", _FLOW_RUN_ID, {})
+
+
 def test_a_write_to_a_terminal_execution_changes_nothing(tmp_path: Path, profile: str) -> None:
     projection, _database = _projection_with_execution(tmp_path, profile)
-    projection.record_side_read("run-001", _FLOW_RUN_ID, "source", _READING)
+    projection.record_side_reads("run-001", _FLOW_RUN_ID, {"source": _READING})
     assert projection.abandon_execution("run-001", _FLOW_RUN_ID, terminal_at=datetime.now(timezone.utc))
 
-    assert projection.record_side_read("run-001", _FLOW_RUN_ID, "source", _SUCCEEDED) is False
+    assert projection.record_side_reads("run-001", _FLOW_RUN_ID, {"source": _SUCCEEDED}) is False
 
     link = _link(projection)
     assert link.source_read == _READING
@@ -130,7 +147,7 @@ def test_an_unknown_side_is_refused_before_any_sql_runs(
     monkeypatch.setattr(records, "_connect", no_connection)
 
     with pytest.raises(ValueError, match="side"):
-        projection.record_side_read("run-001", _FLOW_RUN_ID, side, _SUCCEEDED)  # ty: ignore[invalid-argument-type]
+        projection.record_side_reads("run-001", _FLOW_RUN_ID, {side: _SUCCEEDED})  # ty: ignore[invalid-argument-type]
 
 
 def test_both_sides_written_from_two_threads_at_once_are_both_stored(tmp_path: Path, profile: str) -> None:
@@ -142,7 +159,7 @@ def test_both_sides_written_from_two_threads_at_once_are_both_stored(tmp_path: P
         try:
             barrier.wait()
             for _ in range(20):
-                projection.record_side_read("run-001", _FLOW_RUN_ID, side, document)  # ty: ignore[invalid-argument-type]
+                projection.record_side_reads("run-001", _FLOW_RUN_ID, {side: document})  # ty: ignore[invalid-argument-type]
         except BaseException as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             errors.append(exc)
 
@@ -167,7 +184,7 @@ def test_a_stored_read_that_is_not_a_json_object_reads_as_none_and_logs_one_warn
 ) -> None:
     """A damaged read column must not stop the run from being read, by the API or by the worker."""
     projection, database = _projection_with_execution(tmp_path, profile)
-    assert projection.record_side_read("run-001", _FLOW_RUN_ID, "destination", _SUCCEEDED) is True
+    assert projection.record_side_reads("run-001", _FLOW_RUN_ID, {"destination": _SUCCEEDED}) is True
     connection = sqlite3.connect(database)
     try:
         connection.execute("UPDATE prefect_executions SET source_read = ?", (stored,))

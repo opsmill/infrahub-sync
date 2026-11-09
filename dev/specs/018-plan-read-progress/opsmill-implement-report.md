@@ -89,6 +89,28 @@ then a simplify pass. The orchestrator confirmed each fixed finding against the 
 | Low | `infrahub_sync/product_store/store.py` | A SQLite lock can drop one read-state write; the side then shows no state. | Deferred: the result degrades safely. |
 | Low | several | Simplify suggestions: use `SideRead.model_fields` for the stored fields, remove a repeated side check, import `Side` in the store, call `_store` directly. | Deferred: advisory only. |
 
+### Second review (`/code-review xhigh`)
+
+A second review ran over the branch after the report. Its fixes are in the commit that follows `003f32a8`.
+
+| # | File | Finding | Outcome |
+| --- | --- | --- | --- |
+| 1 | `infrahub_sync/service/flow.py` | Both sides were recorded as `waiting` only at `_plan`, after the live schema read and, for `sync`, after the write guard. A stage that failed earlier returned `reads: null` instead of both sides `not_started`. | Fixed: `_execute_stage` records `waiting` as its first step for `plan` and `sync`. Tests cover a schema-read failure for both stages and a `sync` that waits for the guard. |
+| 2 | `infrahub_sync/service/read_progress.py` | A side stayed `reading` while Prefect already reported the flow run as `Crashed`, until liveness recorded the verdict. | Fixed: `stage_reads` takes the observed Prefect state; `failed`, `crashed` or `cancelled` with no verdict ends the unfinished sides. |
+| 3 | `infrahub_sync/service/read_progress.py` | A write that changed no row left no trace; the broad catch was not explained. | Fixed: a write that changes no row logs a WARNING naming the execution. The catch stays broad, with the reason in the docstring: the store raises the errors of two drivers that share no base class. |
+| 4 | `infrahub_sync/potenda/__init__.py` | `_nodes_by_kind` counts with `adapter.count`, which scans a configured store again for each kind and miscounts on one store type. | No change needed: the v3 service has no store (`execution.py` and `configuration/runtime.py` refuse a configured store). Counting from the snapshot records instead is not a small change, because the snapshot covers only top-level kinds and is written only when a run directory is set. |
+| 5 | `infrahub_sync/cli.py` | `_echo_run` printed the read lines for `plan`, `sync`, `verify`, `apply` and `runs cancel` too. | Fixed: only `runs show` prints them. |
+| 6 | `infrahub_sync/client/models.py` | A closed `Literal` on `SideRead.state` and `read_mode` would make a client fail on a state a later server adds. | Fixed: both are strings on the client model. The Sync API still returns only the states it stores and derives. |
+| 7 | `read_progress.py`, `store.py` | The "still reading after completed" and "unreadable column" warnings repeat on every read of the run. | Deferred: logging each bad document once needs state shared across requests and workers. |
+| 8 | `infrahub_sync/service/read_progress.py` | `record_waiting` wrote the two columns in two transactions. | Fixed: the store method is now `record_side_reads`, which writes one or both sides in one `UPDATE`. |
+| 9 | `read_progress.py`, `cli.py` | The node counts were sorted three times. | Fixed: Potenda sorts them; the observer and the CLI keep that order. |
+| 10 | `infrahub_sync/product_store/store.py` | The side name was checked twice, and the column names were listed twice. | Fixed: the store checks the side once, and the migration tuple is built from `_SIDE_READ_COLUMNS`. |
+| 11 | `infrahub_sync/product_store/store.py` | `source_read` and `destination_read` were missing from `CREATE TABLE prefect_executions`. | Fixed. |
+| 12 | `infrahub_sync/service/service.py` | Each client applies the "latest `plan` or `sync` entry" rule itself. | Deferred: a run-level field changes the API, which is a design decision for the maintainers. |
+| 13 | `potenda/__init__.py`, `read_progress.py` | Three broad `except Exception` catches. | Partly fixed through #3; the two Potenda catches stay, because an observer or a count must never fail a read (FR-007). |
+| 14 | `store.py`, `client/models.py` | `Side` and `ReadMode` were retyped. | Fixed in the store, which imports `Side` for typing only. The client model now uses strings (#6). |
+| 15 | `infrahub_sync/product_store/store.py` | The read-state `UPDATE` does not require `claiming_worker_id`. | Deferred: the worker ID is not passed to `_execute_stage`; adding it changes the store method, the observer and every caller. |
+
 ## Autonomous decisions
 
 - The work ran in a separate worktree, because the main checkout holds uncommitted 016 extraction changes.

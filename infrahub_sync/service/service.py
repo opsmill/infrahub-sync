@@ -1188,7 +1188,7 @@ class RunService:
                         terminal_state=link.terminal_state,
                         terminal_outcome=link.terminal_outcome,
                         prefect_flow_run_url=link_url,
-                        reads=stage_reads(link, run_id=run.run_id),
+                        reads=stage_reads(link, run_id=run.run_id, prefect_state=link.last_observed_state),
                     )
                 )
                 continue
@@ -1212,7 +1212,11 @@ class RunService:
                     terminal_state=link.terminal_state,
                     terminal_outcome=link.terminal_outcome,
                     prefect_flow_run_url=link_url,
-                    reads=stage_reads(link, run_id=run.run_id),
+                    reads=stage_reads(
+                        link,
+                        run_id=run.run_id,
+                        prefect_state=observed.state if observed.available else link.last_observed_state,
+                    ),
                 )
             )
         return RunResource(run=public_run_resource(run), orchestration=tuple(orchestration))

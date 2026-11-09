@@ -562,12 +562,6 @@ def _require_registered_write(binding: tuple[str, int, str] | None) -> str:
     return binding[0]
 
 
-def _waiting_read_observer(projection: ProductProjection, run_id: str, flow_run_id: str) -> StoreSideReadObserver:
-    """Record both sides as `waiting`, then return the observer that stores each side's read."""
-    record_waiting(projection, run_id, flow_run_id)
-    return StoreSideReadObserver(projection, run_id, flow_run_id)
-
-
 def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-statements
     run_id: str,
     stage: Literal["plan", "verify", "apply", "sync"],
@@ -587,9 +581,13 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
 ) -> tuple[dict[str, Any], ExecutionWriteback]:
     """Resolve and execute one service stage within the sanitized worker boundary.
 
-    A `plan` or `sync` stage records both sides as `waiting` before it plans, and gives the
-    engine an observer that stores each side's read on the execution `flow_run_id`.
+    A `plan` or `sync` stage records both sides as `waiting` as soon as it starts, before the
+    live schema read and before a `sync` waits for its write guard, so a stage that fails
+    before either read returns both sides as `not_started`. It then gives the engine an
+    observer that stores each side's read on the execution `flow_run_id`.
     """
+    if stage in ("plan", "sync"):
+        record_waiting(projection, run_id, flow_run_id)
     parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
     if stage in ("apply", "sync"):
         if not confirm_writes:
@@ -622,7 +620,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             branch=branch,
             composed_sync=False,
             base_directory=scratch.root,
-            observer=_waiting_read_observer(projection, run_id, flow_run_id),
+            observer=StoreSideReadObserver(projection, run_id, flow_run_id),
         )
         # The internal handoff first: a plan that is publicly reviewable but has no
         # durable checkpoint would invite an apply on another worker that cannot read it.
@@ -739,7 +737,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 branch=branch,
                 composed_sync=True,
                 base_directory=scratch.root,
-                observer=_waiting_read_observer(projection, run_id, flow_run_id),
+                observer=StoreSideReadObserver(projection, run_id, flow_run_id),
             )
             # Durable before the first destination operation: a sync interrupted
             # mid-write leaves the plan an operator reconciles what happened against.

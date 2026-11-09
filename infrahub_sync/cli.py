@@ -637,8 +637,14 @@ def _echo_run(resource: RunResource) -> None:
             ("prefect_flow_run_url", selected.prefect_flow_run_url if selected is not None else None),
         )
     )
-    # `verify` and `apply` run as later executions of the same run and read no side, so the
-    # read state comes from the latest execution that reads, not from the selected one.
+
+
+def _echo_reads(resource: RunResource) -> None:
+    """Print each side's read state for `runs show`.
+
+    `verify` and `apply` run as later executions of the same run and read no side, so the
+    read state comes from the latest execution that reads, not from the selected one.
+    """
     reading = next((entry for entry in reversed(resource.orchestration) if entry.purpose in {"plan", "sync"}), None)
     if reading is not None and reading.reads is not None:
         _echo_fields(
@@ -658,7 +664,7 @@ def _side_read_text(side: SideRead | None) -> str | None:
         ("mode", side.read_mode),
         ("started_at", side.started_at.isoformat() if side.started_at is not None else None),
         ("ended_at", side.ended_at.isoformat() if side.ended_at is not None else None),
-        ("nodes", ",".join(f"{kind}:{count}" for kind, count in sorted(side.nodes_by_kind.items())) or None),
+        ("nodes", ",".join(f"{kind}:{count}" for kind, count in side.nodes_by_kind.items()) or None),
         ("error", side.error_class),
     )
     return " ".join(f"{key}={value}" for key, value in pairs if value is not None)
@@ -1202,6 +1208,7 @@ def runs_show(
     with _client_errors():
         resource = _client(ctx).get_run(run_id)
     _echo_run(resource)
+    _echo_reads(resource)
     # The latest execution of each stage; the orchestration list is in run order.
     latest_by_stage = {execution.purpose: execution for execution in resource.orchestration}
     # A failed stage's cause and next action, as the run's results recorded them (FR-002).

@@ -265,6 +265,8 @@ class PublicRunResource(_ResourceModel):
         return self
 
 
+# The states a side can have today. `SideRead.state` accepts any string, so a client keeps reading
+# a run when a later Sync API returns a state this release does not know.
 SideReadState = Literal["waiting", "reading", "succeeded", "failed", "not_started", "interrupted"]
 
 
@@ -274,12 +276,15 @@ class SideRead(_ResourceModel):
     `not_started` and `interrupted` are never stored: the Sync API returns a side stored as
     `waiting` or `reading` with them once the execution ended without completing. No field holds
     an exception message; `error_class` is the class name of the error that ended the read.
+
+    `state` is one of `SideReadState` and `read_mode` is `full` or `incremental` today. Both are
+    plain strings, so a state or mode a later Sync API adds does not fail the whole run response.
     """
 
-    state: SideReadState
+    state: str
     started_at: datetime | None = None
     ended_at: datetime | None = None
-    read_mode: Literal["full", "incremental"] | None = None
+    read_mode: str | None = None
     nodes_by_kind: dict[str, Annotated[int, Field(ge=0)]] = Field(default_factory=dict)
     error_class: str | None = None
 
