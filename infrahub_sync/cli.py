@@ -71,6 +71,7 @@ if TYPE_CHECKING:
         RunLogLine,
         RunLogPage,
         RunReference,
+        SideRead,
     )
 
 _Resource = TypeVar("_Resource")
@@ -636,6 +637,31 @@ def _echo_run(resource: RunResource) -> None:
             ("prefect_flow_run_url", selected.prefect_flow_run_url if selected is not None else None),
         )
     )
+    # `verify` and `apply` run as later executions of the same run and read no side, so the
+    # read state comes from the latest execution that reads, not from the selected one.
+    reading = next((entry for entry in reversed(resource.orchestration) if entry.purpose in {"plan", "sync"}), None)
+    if reading is not None and reading.reads is not None:
+        _echo_fields(
+            (
+                ("source_read", _side_read_text(reading.reads.source)),
+                ("destination_read", _side_read_text(reading.reads.destination)),
+            )
+        )
+
+
+def _side_read_text(side: SideRead | None) -> str | None:
+    """Render one side's read state as `key=value` pairs, leaving out the keys with no value."""
+    if side is None:
+        return None
+    pairs = (
+        ("state", side.state),
+        ("mode", side.read_mode),
+        ("started_at", side.started_at.isoformat() if side.started_at is not None else None),
+        ("ended_at", side.ended_at.isoformat() if side.ended_at is not None else None),
+        ("nodes", ",".join(f"{kind}:{count}" for kind, count in sorted(side.nodes_by_kind.items())) or None),
+        ("error", side.error_class),
+    )
+    return " ".join(f"{key}={value}" for key, value in pairs if value is not None)
 
 
 def _wait(

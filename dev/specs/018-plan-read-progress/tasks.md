@@ -86,11 +86,11 @@ during and after each read.
 
 ### Tests for User Story 2
 
-- [ ] T020 [P] [US2] Write failing tests in `tests/cli/test_client_commands.py`: `runs show` prints `source_read` and `destination_read` after `prefect_flow_run_url`, with keys in the order `state`, `mode`, `started_at`, `ended_at`, `nodes`, `error` and keys with no value left out; a run whose Plan execution is followed by a `verify` execution still prints the Plan's read state; a run without `reads` prints neither field and keeps every other field and the exit code (FR-012; contracts/cli-output.md; critique M1).
+- [X] T020 [P] [US2] Write failing tests in `tests/cli/test_client_commands.py`: `runs show` prints `source_read` and `destination_read` after `prefect_flow_run_url`, with keys in the order `state`, `mode`, `started_at`, `ended_at`, `nodes`, `error` and keys with no value left out; a run whose Plan execution is followed by a `verify` execution still prints the Plan's read state; a run without `reads` prints neither field and keeps every other field and the exit code (FR-012; contracts/cli-output.md; critique M1).
 
 ### Implementation for User Story 2
 
-- [ ] T021 [US2] In `infrahub_sync/cli.py`, change `_echo_run` to select the latest orchestration entry whose `purpose` is `plan` or `sync` for the read fields, and print `source_read` and `destination_read` when it has `reads` (research R11). Make T020 pass.
+- [X] T021 [US2] In `infrahub_sync/cli.py`, change `_echo_run` to select the latest orchestration entry whose `purpose` is `plan` or `sync` for the read fields, and print `source_read` and `destination_read` when it has `reads` (research R11). Make T020 pass.
 
 **Checkpoint**: User Stories 1 and 2 both work.
 
