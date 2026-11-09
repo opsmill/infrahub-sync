@@ -68,7 +68,6 @@ class Destination(InfrahubAdapter):
     def __init__(  # pylint: disable=super-init-not-called
         self, project: SyncConfig, module: ModuleType, records: dict[str, list[dict]] | None = None
     ) -> None:
-        # Bypass server initialization while exercising real destination behavior.
         Adapter.__init__(self)  # pylint: disable=non-parent-init-called
         self.config = project
         self.schema = {}
@@ -168,7 +167,6 @@ def test_25_devices_create_in_empty_destination_and_converge(tmp_path: Path, *, 
         assert created[record["id"]]["ip_address"] == record["ip"]
         assert created[record["id"]]["connection_status"] == record["connectionStatus"]
     assert not dest.diff_from(src).has_diffs()
-    # Reload from persisted SDK fixture nodes rather than relying only on DiffSync's cache.
     persisted = {}
     for kind, nodes in dest.nodes.items():
         persisted[kind] = [

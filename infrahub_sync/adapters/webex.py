@@ -137,7 +137,6 @@ class WebexAdapter(GenericrestapiAdapter):
                 page_records = self._extract(page, options.response_key, element.name, self.client._resource(path))
                 for index, record in enumerate(page_records, start=len(records)):
                     if record.get("id") is None and not any(key.endswith("_id") for key in record):
-                        # Singleton settings endpoints need not expose their own ID.
                         identity = json.dumps([path, params, index], sort_keys=True)
                         record["_webex_id"] = hashlib.sha256(identity.encode()).hexdigest()
                 self._load_details(page_records, options, params, element.name)

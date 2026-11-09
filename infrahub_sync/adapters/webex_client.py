@@ -145,7 +145,6 @@ class WebexClient(RestApiClient):
             if any(not value.strip() or value != organization for value in linked_orgs):
                 msg = "Webex: endpoint or pagination orgId differs from the project organization"
                 raise ValueError(msg)
-            # Retain token-organization scope across resources without adding query parameters.
             self._linked_org_id = linked_orgs[0]
         return url
 
@@ -153,7 +152,6 @@ class WebexClient(RestApiClient):
         for secret in sorted(self._credentials, key=lambda value: -len(value)):
             for encoded in (secret, quote(secret, safe=""), quote_plus(secret)):
                 text = text.replace(encoded, "[redacted]")
-        # Upstream messages may echo arbitrary headers, URLs or credential parameters.
         text = re.sub(r"https?://\S+", "[redacted URL]", text, flags=re.IGNORECASE)
         text = re.sub(r"\b(Bearer|Basic)\s+\S+", r"\1 [redacted]", text, flags=re.IGNORECASE)
         text = re.sub(
@@ -187,7 +185,6 @@ class WebexClient(RestApiClient):
         *,
         params: dict[str, Any] | None = None,
     ) -> requests.Response:
-        # Keep this guard at the final transport boundary, including internal callers.
         if method != "GET" and (
             method != "POST" or self.options.auth_method != "service_app" or url != self.base_url + "/v1/access_token"
         ):
@@ -222,7 +219,6 @@ class WebexClient(RestApiClient):
         resource = self._resource(url)
         for attempt in range(self.options.retries + 1):
             try:
-                # Credential-bearing frames are excluded by the safe exception below.
                 response = self._perform_request(method, url, params=params)
             except (requests.Timeout, requests.ConnectionError):
                 if attempt == self.options.retries:
@@ -349,8 +345,6 @@ class WebexClient(RestApiClient):
 
     def pages(self, endpoint: str, params: dict[str, Any]) -> list[Any]:
         """Read all pages, including empty intermediate pages, without leaking credentials."""
-        # Inventory reads start at the first page even when a start cursor is supplied.
-        # Continuation cursors from Webex are followed normally and never replayed.
         parts = urlsplit(endpoint)
         query = [
             (key, value)
@@ -375,7 +369,6 @@ class WebexClient(RestApiClient):
             pages.append(self._json(response, self._resource(endpoint)))
             link = response.links.get("next", {}).get("url")
             next_url = self._url(urljoin(next_url, link)) if link else ""
-            # Link controls cursor values; retain configured scope/filters if omitted.
             linked_params = parse_qs(urlsplit(next_url).query, keep_blank_values=True)
             next_params = {key: value for key, value in params.items() if key not in linked_params} or None
         logger.info(
