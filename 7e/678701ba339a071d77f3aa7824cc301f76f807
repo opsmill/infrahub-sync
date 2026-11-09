@@ -1,0 +1,19 @@
+dev/specs/018-plan-read-progress/tasks.md
+  s_b587fb435a3228::t_2953f7a29d415b 1-154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7e678701ba339a071d77f3aa7824cc301f76f807",
+  "prompts": {},
+  "sessions": {
+    "s_b587fb435a3228": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "443573d1-a264-40b9-abb9-38a7fba8091b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
