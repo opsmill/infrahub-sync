@@ -6,12 +6,19 @@ import logging
 import sqlite3
 import threading
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, get_args
 
 import pytest
 
+from infrahub_sync.potenda.read_progress import ReadMode
 from infrahub_sync.product_store import PrefectExecutionLink, ProductProjection
-from infrahub_sync.product_store.store import FileArtifactStore, PostgreSQLRunStore, S3ArtifactStore, SQLiteRunStore
+from infrahub_sync.product_store.store import (
+    _SIDE_READ_MODES,  # noqa: PLC2701 - the store's copy of the engine read modes
+    FileArtifactStore,
+    PostgreSQLRunStore,
+    S3ArtifactStore,
+    SQLiteRunStore,
+)
 from tests.product_store.test_contract import _append_execution, _connect, _FakeS3, _run
 
 if TYPE_CHECKING:
@@ -205,3 +212,78 @@ def test_a_stored_read_that_is_not_a_json_object_reads_as_none_and_logs_one_warn
     assert stored not in message
     assert "not json" not in message
     assert "1,2" not in message
+
+
+# A value that must never reach the run record or an error message.
+_CANARY = "db.internal.example:5432 password=ZZ-WRITE-CANARY"
+_FAILED = {
+    "state": "failed",
+    "started_at": "2026-11-09T10:00:01+00:00",
+    "ended_at": "2026-11-09T10:00:02+00:00",
+    "error_class": "ConnectionError",
+}
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        pytest.param({**_READING, "message": _CANARY}, id="extra-field"),
+        pytest.param({**_READING, _CANARY: "x"}, id="extra-field-named-by-the-value"),
+        pytest.param({**_READING, "state": _CANARY}, id="unknown-state"),
+        pytest.param({"started_at": "2026-11-09T10:00:01+00:00"}, id="no-state"),
+        pytest.param({**_SUCCEEDED, "read_mode": _CANARY}, id="unknown-read-mode"),
+        pytest.param({**_READING, "started_at": _CANARY}, id="timestamp-that-does-not-parse"),
+        pytest.param({**_READING, "started_at": 1731146401}, id="timestamp-that-is-not-text"),
+        pytest.param({**_SUCCEEDED, "nodes_by_kind": {"DcimDevice": _CANARY}}, id="count-that-is-text"),
+        pytest.param({**_SUCCEEDED, "nodes_by_kind": {"DcimDevice": -1}}, id="negative-count"),
+        pytest.param({**_SUCCEEDED, "nodes_by_kind": {"DcimDevice": True}}, id="count-that-is-a-bool"),
+        pytest.param({**_SUCCEEDED, "nodes_by_kind": {"DcimDevice": 1.5}}, id="count-that-is-a-float"),
+        pytest.param({**_SUCCEEDED, "nodes_by_kind": None}, id="counts-that-are-none"),
+        pytest.param({**_FAILED, "error_class": _CANARY}, id="error-class-holding-a-message"),
+        pytest.param({**_FAILED, "error_class": "E" * 201}, id="error-class-too-long"),
+    ],
+)
+def test_a_read_document_with_a_field_or_value_that_is_not_allowed_is_refused_before_any_sql_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profile: str, document: dict[str, object]
+) -> None:
+    projection, _database = _projection_with_execution(tmp_path, profile)
+    assert projection.record_side_reads("run-001", _FLOW_RUN_ID, {"destination": _READING}) is True
+    records = projection._records
+
+    def no_connection() -> None:
+        pytest.fail("a connection was opened for a refused document")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(records, "_connect", no_connection)
+        with pytest.raises(ValueError, match="source read document") as refused:
+            projection.record_side_reads("run-001", _FLOW_RUN_ID, {"source": document, "destination": _SUCCEEDED})
+
+    assert _CANARY not in str(refused.value)
+    link = _link(projection)
+    assert link.source_read is None
+    assert link.destination_read == _READING
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        pytest.param({"state": "waiting"}, id="waiting"),
+        pytest.param(_READING, id="reading"),
+        pytest.param(_SUCCEEDED, id="succeeded"),
+        pytest.param({**_SUCCEEDED, "read_mode": "incremental", "nodes_by_kind": {}}, id="incremental-no-nodes"),
+        pytest.param(_FAILED, id="failed"),
+        pytest.param({key: value for key, value in _FAILED.items() if key != "started_at"}, id="failed-before-start"),
+    ],
+)
+def test_each_read_document_the_worker_writes_is_stored(
+    tmp_path: Path, profile: str, document: dict[str, object]
+) -> None:
+    projection, _database = _projection_with_execution(tmp_path, profile)
+
+    assert projection.record_side_reads("run-001", _FLOW_RUN_ID, {"source": document}) is True
+
+    assert _link(projection).source_read == document
+
+
+def test_the_read_modes_the_store_allows_are_the_engine_read_modes() -> None:
+    assert set(get_args(ReadMode)) == _SIDE_READ_MODES

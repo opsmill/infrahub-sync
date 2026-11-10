@@ -216,6 +216,13 @@ _PREFECT_EXECUTION_LIVENESS_COLUMNS: tuple[tuple[str, str], ...] = (
 # The read state of each side of a plan or sync execution: one JSON document per side, so the
 # two read threads never write the same column (spec 018, research R3).
 _SIDE_READ_COLUMNS: dict[Side, str] = {"source": "source_read", "destination": "destination_read"}
+# The fields and values a side's read document may hold. The store checks them before it writes,
+# so a document cannot carry an exception message, an address, or a secret into the run record.
+# The read modes repeat `ReadMode` in the engine, which the store does not import at run time.
+_SIDE_READ_FIELDS = frozenset({"state", "started_at", "ended_at", "read_mode", "nodes_by_kind", "error_class"})
+_SIDE_READ_STATES = frozenset({"waiting", "reading", "succeeded", "failed"})
+_SIDE_READ_MODES = frozenset({"full", "incremental"})
+_SIDE_READ_ERROR_CLASS_MAX_LENGTH = 200
 _PREFECT_EXECUTION_READ_COLUMNS: tuple[tuple[str, str], ...] = tuple(
     (column, "TEXT") for column in _SIDE_READ_COLUMNS.values()
 )
@@ -1451,6 +1458,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             msg = "record_side_reads needs at least one side"
             raise ValueError(msg)
         columns = [_side_read_column(side) for side in documents]
+        for side, document in documents.items():
+            _check_side_read_document(side, document)
         assignments = ", ".join(f"{column} = ?" for column in columns)
         return self._execution_update(
             f"UPDATE prefect_executions SET {assignments} "  # noqa: S608 - columns from a fixed two-name map
@@ -3834,6 +3843,55 @@ def _side_read_column(side: str) -> str:
         msg = f"unknown read side {side!r}; expected 'source' or 'destination'"
         raise ValueError(msg)
     return column
+
+
+def _check_side_read_document(side: str, document: Mapping[str, Any]) -> None:
+    """Refuse a read document that holds a field or a value the read state does not allow.
+
+    The error names the side and the field, never the value, because a refused value may be
+    an exception message or a secret.
+    """
+    if not isinstance(document, Mapping):
+        msg = f"the {side} read document is not a mapping"
+        raise ValueError(msg)  # noqa: TRY004 - one error type for every refused document
+    for key in document:
+        if not isinstance(key, str) or key not in _SIDE_READ_FIELDS:
+            msg = f"the {side} read document holds a field that is not allowed"
+            raise ValueError(msg)
+    for key, value in document.items():
+        if not _side_read_value_allowed(key, value):
+            msg = f"the {side} read document has a value for {key!r} that is not allowed"
+            raise ValueError(msg)
+    if "state" not in document:
+        msg = f"the {side} read document has no 'state'"
+        raise ValueError(msg)
+
+
+def _side_read_value_allowed(key: str, value: Any) -> bool:
+    """Whether `value` is an allowed value for the read-document field `key`."""
+    if key == "state":
+        return isinstance(value, str) and value in _SIDE_READ_STATES
+    if key == "nodes_by_kind":
+        return isinstance(value, Mapping) and all(
+            isinstance(kind, str) and isinstance(count, int) and not isinstance(count, bool) and count >= 0
+            for kind, count in value.items()
+        )
+    if value is None or not isinstance(value, str):
+        return value is None
+    if key == "read_mode":
+        return value in _SIDE_READ_MODES
+    if key == "error_class":
+        return len(value) <= _SIDE_READ_ERROR_CLASS_MAX_LENGTH and value.isidentifier()
+    return _is_iso_timestamp(value)
+
+
+def _is_iso_timestamp(value: str) -> bool:
+    """Whether `value` is an ISO 8601 timestamp, the form of `started_at` and `ended_at`."""
+    try:
+        datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _json(value: Any) -> str:
