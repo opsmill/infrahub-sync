@@ -428,6 +428,7 @@ function ChangesGlance({ run, onOpenChanges }: { run: Run; onOpenChanges: () => 
 /**
  * What happened in the run, in order: when it started, each step with what it found or wrote and
  * its details, then how it ended. The notice on the run's outcome sits under the step it explains.
+ * The events sit in a border without a fill: a card's white surface was too heavy for this much text.
  */
 export function RunTimeline({
   run,
@@ -609,7 +610,9 @@ export function RunTimeline({
     <section aria-labelledby="timeline" className="flex flex-col gap-4">
       <SectionHeading id="timeline" title="Timeline" />
       {notice && noticeIndex < 0 && notice}
-      <ol aria-labelledby="timeline">{items}</ol>
+      <div className="rounded-2xl border p-4">
+        <ol aria-labelledby="timeline">{items}</ol>
+      </div>
     </section>
   );
 }
