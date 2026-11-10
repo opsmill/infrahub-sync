@@ -73,7 +73,7 @@ specification keeps them and builds on them. They are not new requirements.
 | FR-022: the plan of a stopped apply is not applied again | A run that admitted a write never admits another stage: HTTP 409 `run-execution-conflict`, "review the run and create a new plan or sync run" | `infrahub_sync/product_store/store.py:310-314`, `:2166-2177` |
 | Part of FR-020: a stopped apply shows what it wrote | The run summary records `applied_operations`, `failed_operation` (an operation ID), `failed_operation_wrote` and `may_have_partially_written` | `infrahub_sync/plan/models.py:649-664`, `infrahub_sync/service/flow.py:947-963` |
 | Part of FR-021: a new plan holds only what the destination does not match | The plan compares the source with the destination, so written nodes drop out ([ADR 0012](../../adr/0012-the-convergent-upsert-is-the-replace-set-write.md)). No test covers a stopped apply | Hivemind note of 2026-11-05: a second plan after a full apply held only one recorded delete |
-| The hook for a `sync` that stops after its plan | `result_next_action` reads `result["failure"]["next_action"]` from a successful stage result, and the last log line and the CLI use it. Nothing writes that key today | `infrahub_sync/service/flow.py:888-897`, `docs/docs/development/knowledge/orchestration-prefect.md:110-113` |
+| The hook for a `sync` that stops after its plan | `result_next_action` reads `result["failure"]["next_action"]` from a successful stage result, and the last log line uses it. The CLI does not read it yet. Nothing writes that key today | `infrahub_sync/service/flow.py:888-897`, `docs/docs/development/knowledge/orchestration-prefect.md:110-113` |
 
 ### Decisions that change old specification 009
 
@@ -366,8 +366,8 @@ plan finishes and that each #374 case is written or listed.
   does not appear in any cause, problem reason or plan file, because none of them is built from
   a credential or from error text. A source value that happens to equal a credential value is
   source data and appears like any other value.
-- A plan saved in format 3 before this feature: it can still be viewed. What its apply does is a
-  question for the product owner (see "Open questions").
+- A plan saved in format 3 before this feature: it can still be viewed, and its apply is refused
+  with the instruction to plan again (see "Assumptions").
 - A run made by a direct Prefect flow, with no destination schema snapshot: the Dropdown check
   cannot run, and the plan summary states that Dropdown values were not checked.
 
@@ -429,7 +429,9 @@ plan finishes and that each #374 case is written or listed.
   counts by action and by kind and the count of deletes not executed. It MUST show how many
   left-out records have a problem and how many depend on one, the count of problems by type, and
   the count of kept records.
-- **FR-008**: A left-out record MUST produce no create, update or delete in the plan.
+- **FR-008**: A left-out record MUST produce no create, update or delete in the plan. When the
+  identity of a left-out record cannot be computed, the plan MUST compute no delete for its kind,
+  and the summary MUST show, per kind, that deletes were not computed.
 - **FR-009**: The next plan MUST check left-out records again, with no action from the team, and
   include them when they no longer have a problem.
 - **FR-010**: An apply of a plan that leaves out records MUST require the person to confirm that
@@ -612,8 +614,9 @@ plan finishes and that each #374 case is written or listed.
   the checksum alone, or content and a checksum that match.
 
 FR-004 and FR-013 of old 009 are not repeated: they describe behavior that `feature/v3-develop`
-already has (see "What `feature/v3-develop` already does"). Their numbers are not reused, so
-that the other numbers match old 009.
+already has (see "What `feature/v3-develop` already does"). Their numbers are not reused. FR-001
+to FR-012 keep old 009's numbers; the other numbers are mapped in "Traceability to old
+specification 009".
 
 ### Key Entities
 
@@ -691,7 +694,10 @@ that the other numbers match old 009.
   rejection (#370). Whether every rejection carries the kind and attribute is not known; the
   cause leaves them empty when Infrahub does not return them.
 - The Dropdown check needs the attribute choices in the destination schema record that a plan is
-  bound to. Adding them changes that record.
+  bound to. Adding them changes that record, so plans saved by an earlier release must be planned
+  again before they are applied (#371). This is accepted for the testing release, as in old 009.
+  A plan saved in format 3 stays readable, and its apply is refused with the instruction to plan
+  again.
 - A plan failure that is not tied to one record, such as an unreachable system or a refused
   token, still fails the whole plan. Only the nine problem types of FR-002 leave records out. A
   transform that fails, even for every record, leaves out each record it fails for.
@@ -759,6 +765,7 @@ that the other numbers match old 009.
 
 1. Does the sign-off of 2026-10-17 on ADR 0020 and ADR 0021 cover the rewritten records, which
    extend `<stage>_failure` instead of adding a `failure` field?
-2. Apply of a plan saved in format 3 before this feature: refuse it with "plan again before
-   applying", as old 009 did, or apply it as a plan with nothing left out? The plan phase
-   proposes a default.
+2. A `sync` run that stops after its plan gives back its write admission when it dispatched no
+   operation, so the confirmed apply can run on the same run (old 009's design; plan research
+   R11). This changes the rule that a run that admitted a write never admits another stage, for
+   that one case. Is that acceptable?

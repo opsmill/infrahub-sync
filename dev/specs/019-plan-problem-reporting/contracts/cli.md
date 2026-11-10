@@ -10,9 +10,11 @@ problems: 1
 kept_without_relationship: 0
 ```
 
-When the run had no destination schema snapshot:
+Then, only when they apply, one line per kind whose deletes the plan does not compute, and one
+line when the run had no destination schema snapshot:
 
 ```text
+deletes not computed for IpamVRF: 1 records without identity
 Dropdown values were not checked: no destination schema snapshot in this run
 ```
 
@@ -66,9 +68,10 @@ failed operation: op_518aada155d790ad update DcimDevice location=r1 name=rtr1 (m
 hint: Fix the cause, then create and review a new plan with `infrahub-sync plan`.
 ```
 
-A `sync` that stops after its plan ended without a stage failure record. The CLI reads the
-`failure` object of the stage result in the run's `results` (the field the worker's last log line
-also uses) and prints:
+A `sync` that stops after its plan ends without a stage failure record. Today the CLI reads only
+`<stage>_failure` (`infrahub_sync/cli.py:832-866`); it must also read the `failure` object of the
+stage result in the run's `results`, the field the worker's last log line already uses
+(`result_next_action`, `flow.py:888-897`), and print:
 
 ```text
 sync stopped: left_out_review_required (12 records left out)

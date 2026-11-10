@@ -47,7 +47,7 @@ left-out and kept lists and counts, and no write.
 
 ### Tests for User Story 1
 
-- [ ] T009 [P] [US1] Test the admission helper for each caught error (wrong type, duplicate identity, excluded required peer, failed transform) and that the read continues, in `tests/test_admit_record.py`
+- [ ] T009 [P] [US1] Test the base-class read loop and `load_record` for each caught error (wrong type, duplicate identity, excluded required peer, missing required peer, peer not loaded, failed transform), that the read continues with the next record, and that any other error is raised as `RecordLoadError`, in `tests/test_load_record.py`
 - [ ] T010 [P] [US1] Test each of the nine problem types, one test per type, against the T002 fixture, in `tests/plan/test_problems.py`
 - [ ] T011 [P] [US1] Test the dependency walk at any depth, the two kept cases of FR-005, a record with two problems counted once, and the edge cases of spec.md (both records of a duplicate pair left out; a left-out record that exists in Infrahub gets no update or delete; every record left out), in `tests/plan/test_left_out_walk.py`
 - [ ] T012 [P] [US1] Test that the stores and the DiffSync diff are unchanged after the problem pass and the selection step, in `tests/plan/test_stores_unchanged.py`
@@ -58,21 +58,21 @@ left-out and kept lists and counts, and no write.
 
 ### Implementation for User Story 1
 
-- [ ] T017 [US1] Implement `DiffSyncMixin.admit_record` writing to the load report and continuing, in `infrahub_sync/__init__.py`; remove `continue_on_error` from the plan path (research R2)
-- [ ] T018 [P] [US1] Call `admit_record` from the NetBox loop and turn its missing-peer errors (`netbox.py:271`, `:308`) into load report entries, in `infrahub_sync/adapters/netbox.py`
-- [ ] T019 [P] [US1] Call `admit_record` from the Nautobot loop and report the dropped reference as `peer_not_found_in_source`, in `infrahub_sync/adapters/nautobot.py`
-- [ ] T020 [P] [US1] Call `admit_record` from the ACI, generic REST, Peering Manager, Prometheus, Slurp'it and IP Fabric loops, in `infrahub_sync/adapters/aci.py`, `genericrestapi.py`, `peeringmanager.py`, `prometheus.py`, `slurpitsync.py`, `ipfabricsync.py`
-- [ ] T021 [US1] Add the shared peer resolution helper for adapters that resolve references while reading, in new `infrahub_sync/adapters/references.py`, and use it from T018 to T020 (research R5)
-- [ ] T022 [US1] Call `admit_record` from the Infrahub adapter's own loader and detect `destination_identity_ambiguous` on a full read of a kind, in `infrahub_sync/adapters/infrahub.py` (research R6)
+- [ ] T017 [US1] Implement the default `DiffSyncMixin.model_loader` (mapping lookup, `list_records`, filters with the removed-ID bookkeeping, transforms) and `load_record` (the admission step of research R2) writing to the load report, in `infrahub_sync/__init__.py`; add `ExcludedRequiredPeerError`, `PeerNotLoadedError`, source-side `PeerNotFoundError` and `RecordLoadError`; remove `continue_on_error` from `infrahub_sync/execution.py`, `utils.py`, `potenda/__init__.py`, `adapters/nautobot.py` and `adapters/infrahub.py`
+- [ ] T018 [P] [US1] Replace the NetBox `model_loader` and `_records_to_diffsync` with `list_records` and `record_to_data`, moving the filter bookkeeping to the base class, in `infrahub_sync/adapters/netbox.py`
+- [ ] T019 [P] [US1] Replace the Nautobot `model_loader` and `_records_to_diffsync` with `list_records` and `record_to_data`, and report the dropped reference as `peer_not_found_in_source`, in `infrahub_sync/adapters/nautobot.py`
+- [ ] T020 [P] [US1] Replace the loops of ACI, generic REST and Peering Manager, Prometheus (keep its `lookup` injection in `list_records`), Slurp'it (keep its `load()` override) and IP Fabric (`add` instead of `update_or_add_model_instance`) with `list_records` and `record_to_data`, in `infrahub_sync/adapters/aci.py`, `genericrestapi.py`, `peeringmanager.py`, `prometheus.py`, `slurpitsync.py`, `ipfabricsync.py`
+- [ ] T021 [US1] Add the shared peer resolution helper `peer_unique_id` (index by kind and `local_id`; raises `ExcludedRequiredPeerError`, `PeerNotLoadedError` or `PeerNotFoundError` for a required relationship, returns a placeholder and a load report entry for an optional one), in new `infrahub_sync/adapters/references.py`, and use it from the `record_to_data` functions of T018 to T020 (research R5; old 009 research R4)
+- [ ] T022 [US1] Call `load_record` from the Infrahub adapter's own `model_loader` with a hook for the SDK store, and detect `destination_identity_ambiguous` on a full read of a kind, in `infrahub_sync/adapters/infrahub.py` (research R2, R6)
 - [ ] T023 [US1] Record Dropdown choices in the runtime schema and in the consumed-schema fingerprint, in `infrahub_sync/runtime_schema/` (research R4)
 - [ ] T024 [US1] Return collision groups from `infrahub_sync/plan/keying.py` and merge groups from `warn_missing_convergence_key` in `infrahub_sync/plan/derive.py`, instead of raising `DestinationIdentityCollisionError` or only logging (research R6)
 - [ ] T025 [US1] Turn `SourcePeerUnresolvedError.absent` into a placeholder reference that the problem pass resolves, in `infrahub_sync/plan/derive.py` and `infrahub_sync/plan/errors.py` (research R5)
-- [ ] T026 [US1] Implement the problem pass, the dependency walk and the pure selection step, with reason templates per problem type, in new `infrahub_sync/plan/problems.py` (research R3; reference `plan/problems.py` and `plan/left_out_peer.py` on the old branch)
+- [ ] T026 [US1] Implement the problem pass, the dependency walk and the pure selection step, with reason templates per problem type, and compute no delete for a kind that holds a left-out record without identity or an ambiguous destination identity (FR-008), in new `infrahub_sync/plan/problems.py` (research R3; reference `plan/problems.py` and `plan/left_out_peer.py` on the old branch)
 - [ ] T027 [US1] Write and read plan format 4 (`report.jsonl`, manifest `report`, `dropdown_values_checked`), set `PLAN_FORMAT_VERSION = 4` and `SUPPORTED_FORMAT_VERSIONS = {2, 3, 4}`, in `infrahub_sync/plan/models.py`, `writer.py`, `reader.py`, `verify.py` (contracts/plan-artifact-format-4.md)
 - [ ] T028 [US1] Run the problem pass and the selection step before the plan is written, in `infrahub_sync/potenda/__init__.py`
-- [ ] T029 [US1] Add the summary counts of FR-007 to the saved plan review and `PlanSummaryResource`, in `infrahub_sync/service/flow.py` (`_review_document`) and `infrahub_sync/client/models.py`
+- [ ] T029 [US1] Add the summary counts of FR-007 and `deletes_withheld_by_kind` (FR-008, research R21) to the saved plan review and `PlanSummaryResource`, in `infrahub_sync/service/flow.py` (`_review_document`) and `infrahub_sync/client/models.py`
 - [ ] T030 [US1] Add `GET /runs/{run_id}/plan/problems`, `/plan/left-out`, `/plan/kept` with paging and filters, in `infrahub_sync/service/app.py` and `infrahub_sync/service/service.py`, and the paged reads in `infrahub_sync/client/client.py` (contracts/sync-api.md)
-- [ ] T031 [US1] Print the summary lines and the first 20 problems after `plan`, and add `--problems`, `--left-out`, `--kept` and `--type` to `runs plan`, in `infrahub_sync/cli.py` (contracts/cli.md)
+- [ ] T031 [US1] Print the summary lines, the "deletes not computed" lines and the first 20 problems after `plan`, and add `--problems`, `--left-out`, `--kept` and `--type` to `runs plan`, in `infrahub_sync/cli.py` (contracts/cli.md)
 - [ ] T032 [P] [US1] Write `dev/adr/0020-records-with-problems-are-left-out-of-a-plan.md` and `dev/adr/0022-saved-plan-format-4.md` from research R11, R14 and R9, and list them in `dev/adr/README.md`
 
 **Checkpoint**: T009 to T016 pass; T003 passes with only the format version and the empty report changed.
@@ -88,7 +88,7 @@ the fixture and apply the stopped run.
 
 ### Tests for User Story 2
 
-- [ ] T033 [US2] Test, before any change, the store's admission rule for a stopped `sync` run: its confirmed apply is admitted under the `sync` receipt's admission; a second apply and an apply on a `sync` run that dispatched an operation are refused with `run-execution-conflict` (research R11), in `tests/product_store/test_stopped_sync_admission.py`
+- [ ] T033 [US2] Test, before any change, the store's admission rule for a stopped `sync` run (research R11): the stop's writeback releases the run's write admission in the same transaction only when no operation was dispatched; a confirmed apply is then admitted; a second apply, and an apply on a `sync` run that dispatched any operation, are refused with `run-execution-conflict`, in `tests/product_store/test_stopped_sync_admission.py` (reference: the old branch's `tests/service/test_sync_left_out_stop.py`)
 - [ ] T034 [P] [US2] Test the apply gate: refusal before any write with the count and audit outcome `refused-left-out-not-confirmed`; confirmation accepted and ignored when nothing is left out; strict boolean (422); a request without the field keeps working; format 3 apply refused with `PlanFormatApplyUnsupportedError` (SC-006), in `tests/service/test_apply_left_out_confirmation.py`
 - [ ] T035 [P] [US2] Test the engine's own check for direct callers, in `tests/plan/test_apply_gate.py`
 - [ ] T036 [P] [US2] Test the `sync` stop: phase `planned`, outcome `left-out-review-required`, `failure` in the stage result with the run ID, the checksum and `--confirm-left-out` in `next_action`, no destination call, the last log line, in `tests/service/test_sync_left_out_stop.py`
@@ -97,7 +97,7 @@ the fixture and apply the stopped run.
 
 ### Implementation for User Story 2
 
-- [ ] T039 [US2] Implement the admission of one confirmed apply on a stopped `sync` run under its existing write admission, in `infrahub_sync/product_store/store.py` and `infrahub_sync/service/service.py` (research R11)
+- [ ] T039 [US2] Add the release of the write admission to the stop's writeback (`release_write_admission`), applied only when no operation was dispatched, in `infrahub_sync/product_store/store.py` and `infrahub_sync/product_store/__init__.py` (research R11; reference the old branch's `service/left_out_stop.py`)
 - [ ] T040 [US2] Add `confirm_left_out` to `ApplyRunRequest` (sent only when true) in `infrahub_sync/client/models.py` and `infrahub_sync/client/client.py`
 - [ ] T041 [US2] Check `confirm_left_out` after the checksum check and refuse with 409 `left-out-confirmation-required`, in `infrahub_sync/service/service.py` (`apply_run`, around lines 397-420)
 - [ ] T042 [US2] Check the confirmation again in the engine's apply and refuse format 2 and 3 plans with `PlanFormatApplyUnsupportedError`, in `infrahub_sync/potenda/__init__.py` and `infrahub_sync/plan/errors.py` (research R9, R10)
@@ -206,7 +206,7 @@ the register response holds no redacted content (FR-034 to FR-038).
 ## Parallel examples
 
 - After Phase 2: Phase 3 tests T009 to T016 together; Phase 5 tests T046 to T050 together.
-- Adapter changes T018, T019, T020 in parallel after T017.
+- Adapter changes T018, T019, T020 in parallel after T017 and T021's helper signature.
 - Phase 7 tests T061 to T065 together.
 
 ## Implementation strategy

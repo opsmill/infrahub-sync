@@ -38,6 +38,5 @@
   request, plan format 3) that operators and the UI already read, and the repository's other
   specifications (014 to 018) name them the same way.
 - Two questions are left for the product owner under "Open questions"; neither blocks planning.
-  The plan proposes a default for the format 3 apply question.
-- Old 009 FR-004 and FR-013 are delivered; their numbers are kept free so the other numbers match
-  old 009.
+- Old 009 FR-004 and FR-013 are delivered; their numbers are kept free. FR-001 to FR-012 keep old
+  009's numbers; the rest are mapped in the traceability table.

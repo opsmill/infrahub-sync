@@ -81,6 +81,7 @@ Added to `PlanSummaryResource` (`infrahub_sync/client/models.py:502-509`), next 
 | `problems` | integer ≥ 0 | Problem entries |
 | `problems_by_type` | object problem type to integer | |
 | `kept` | integer ≥ 0 | Kept entries |
+| `deletes_withheld_by_kind` | object kind to integer | Per kind, the left-out records without a known identity plus the `destination_identity_ambiguous` identities; the plan computes no delete of these kinds (FR-008, research R21). Empty when there is none |
 | `dropdown_values_checked` | boolean | False when the run had no destination schema snapshot |
 
 A format 2 or 3 plan returns zeros and `dropdown_values_checked: false`.
@@ -141,7 +142,8 @@ Run state: phase `planned`, outcome `left-out-review-required`, no write admitte
 | From | Event | To |
 | --- | --- | --- |
 | `sync` run planning | Plan saved with `left_out` > 0 | phase `planned`, outcome `left-out-review-required` |
-| that state | Apply with checksum and `confirm_left_out: true` | apply appended under the `sync` receipt's write admission, then runs as for a `plan` run (research R11) |
+| `sync` run at the stop | Same commit as the stop's writeback, no operation dispatched | the run's write admission is released (research R11) |
+| that state | Apply with checksum and `confirm_left_out: true` | a new write admission is reserved, and the apply runs as for a `plan` run |
 | that state | Apply without `confirm_left_out: true` | 409 `left-out-confirmation-required`, state unchanged |
 | after that apply was admitted | A second apply | 409 `run-execution-conflict` |
 | `sync` run that dispatched any operation | Any apply | 409 `run-execution-conflict` (today) |

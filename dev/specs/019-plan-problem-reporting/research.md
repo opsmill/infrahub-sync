@@ -29,27 +29,70 @@ check needs the choices of R4.
 
 ## R2. Where a record that cannot be built is caught
 
-Decision: one admission helper on the adapter base class (`DiffSyncMixin` in
-`infrahub_sync/__init__.py`), `admit_record(model, data, element)`, that builds the model and
-adds it. It catches `pydantic.ValidationError` (`wrong_value_type`), `ObjectAlreadyExists`
-(`duplicate_source_identity`), the excluded-required-peer error (`required_peer_excluded_by_filter`)
-and a transform failure (`transform_failed`, R7), writes one entry to a per-adapter load report,
-and continues. Each bundled adapter's loop calls the helper instead of `model(**data)` and
-`self.add(item)`. The Infrahub adapter, which has its own loader, calls the same helper.
+Where each error is raised today:
 
-Rationale: the smallest change that catches the error at the one place it is raised, with one
-helper for every adapter (constitution principle III).
+- Transforms and peer resolution run inside the adapters' record conversion, before the model is
+  built. The NetBox loop iterates the generator `_records_to_diffsync`
+  (`infrahub_sync/adapters/netbox.py:120`, called at `:220-222`), which filters, transforms and
+  resolves references, then builds `model(**data)` and calls `self.add(item)` (`:223-224`).
+  Nautobot has the same generator (`adapters/nautobot.py:135`). A failed transform or a missing
+  peer is raised inside the generator; a generator that raises cannot continue with the next
+  record.
+- `pydantic.ValidationError` is raised at `model(**data)`, one line before `add`.
+- `ObjectAlreadyExists` is raised inside `add`.
+
+So a helper that wraps only `model(**data)` and `add` would catch the wrong type and the
+duplicate, but not the failed transform, the excluded peer or the missing peer.
+
+Decision (as old 009 research R3, rebuilt on the current adapters): the base class owns the
+per-record loop. `DiffSyncMixin.model_loader` gets a default implementation:
+
+1. find the mapping entry for the kind
+2. call the adapter's `list_records(model_name, element)` for the raw records
+3. on the source side, apply the configured filters, record the IDs a filter removed (the NetBox
+   bookkeeping of `netbox.py:208-227` moves here), and apply the transforms record by record
+4. for each record, call `load_record(model, element, record)`
+
+`load_record` is the admission step. It runs the record's transforms, calls the adapter's
+`record_to_data(record, element, model)` (which resolves references through the helper of R5),
+builds `model(**data)` and calls `self.add(item)`. On the source side it catches, per record:
+
+| Exception | Recorded as |
+| --- | --- |
+| `pydantic.ValidationError` whose errors are all type errors | `wrong_value_type` |
+| `diffsync.exceptions.ObjectAlreadyExists` | `duplicate_source_identity`; the store keeps the first record |
+| `ExcludedRequiredPeerError` (new) | `required_peer_excluded_by_filter` |
+| `PeerNotLoadedError` (new) | a dependent left-out record (R5) |
+| `PeerNotFoundError` (new, source side) for a required relationship | `peer_not_found_in_source` |
+| `TransformError` (R7) | `transform_failed` |
+
+Any other exception, including a `ValidationError` for a missing required value, is raised as
+`RecordLoadError` with the kind, the source ID and the field, and fails the plan with the failure
+type `record_load_failed` (FR-018). On the destination side nothing is caught.
+
+Each bundled source adapter keeps only `list_records` and `record_to_data`, taken from its
+current `model_loader` and conversion function (NetBox, Nautobot, ACI, generic REST and Peering
+Manager, Prometheus, Slurp'it, IP Fabric). IP Fabric today calls `update_or_add_model_instance`,
+which overwrites a duplicate silently; through `load_record` it calls `add`, and a duplicate
+becomes a problem. The Infrahub adapter keeps its own `model_loader`, because it also fills the
+SDK store and hydrates peers, and calls `load_record` for each record.
+
+`continue_on_error` exists today in `infrahub_sync/execution.py`, `utils.py`,
+`potenda/__init__.py`, `adapters/nautobot.py` and `adapters/infrahub.py`. It skips records
+without a count. It is removed: a skipped record without a problem entry breaks FR-001.
+
+Rationale: one loop in one class is the only place where a per-record catch covers transforms,
+reference resolution, model construction and `add` together (constitution principle III).
 
 Alternatives considered:
 
-- Move every adapter's loop into the base class (`list_records` plus `record_to_data`), as the
-  old branch did. Rejected for this rebuild: it changes eight adapters' structure at once, and
-  the helper gives the same result with a smaller change.
-- Catch the error around the whole source read. Rejected: the read cannot continue with the
-  next record.
-- Keep `continue_on_error`. It skips records without a count. The old branch removed it. This
-  rebuild removes it from the plan path too, because a skipped record without a problem entry
-  breaks FR-001.
+- A helper that each adapter calls around `model(**data)` and `add`. Rejected: it misses errors
+  raised inside the conversion generators (see above). Old 009's plan rejected it for the same
+  reason ("a call per adapter was rejected").
+- A model validator that returns a substitute instance. Rejected by old 009 research R3: pydantic
+  discards a substitute returned by a wrap validator.
+- Catch the error around the whole source read. Rejected: the read cannot continue with the next
+  record.
 
 ## R3. How the plan decides what is left out
 
@@ -102,7 +145,7 @@ full; the old branch's `plan/destination_ambiguity.py` is the reference.
 ## R7. A transform that fails for one record
 
 Decision: the transform step raises a typed `TransformError` that holds the field and the
-transform's position (`transforms[0]`), never the value or the error text. The admission helper
+transform's position (`transforms[0]`), never the value or the error text. The admission step
 records it as `transform_failed`.
 
 ## R8. Sync API and CLI surface for the lists (decision 8)
@@ -164,30 +207,36 @@ write stage on the same run is refused with `run-execution-conflict`
 (`infrahub_sync/product_store/store.py:2175`, message at `:310-314`). So without a store change,
 the team could not apply a `sync` run that stopped after its plan, and FR-012 would fail.
 
-Decision: the apply of a stopped `sync` run is appended under the `sync` run's existing write
-admission, not under a new one. The store already has the rule that a write execution is
-appended only with the receipt that holds the run's admission (`_ADMITTED_APPEND_REFUSED`,
-`store.py:315-317`). The change:
+Decision (old 009's design, rebuilt): the stop gives back the `sync` run's write admission. The
+writeback that records the stop (phase `planned`, outcome `left-out-review-required`) also
+deletes the run's `write_admissions` row, in the same transaction, and only when the stage
+dispatched no destination operation. The old branch did this with
+`ExecutionFinishWriteback(release_write_admission=True)` in `service/left_out_stop.py`, and the
+behavior was checked on the preview stack on 2026-10-20 (apply refused without the confirmation,
+`sync` stopped, confirmed apply admitted). After the release, `RunService.apply_run` reserves a
+new write admission as for a `plan` run, so the existing rule holds: one write admission per run
+that writes, and none after it.
 
-- When the `sync` stage ends at the stop, the flow records in the same commit that the stage
-  dispatched no destination operation (phase `planned`, outcome `left-out-review-required`,
-  `dispatch_started` false).
-- `RunService.apply_run` on a run in that state, with the checksum and `confirm_left_out: true`,
-  appends its execution under the `sync` receipt's admission. Exactly one such apply is admitted;
-  a second one, or an apply on a `sync` run that dispatched any operation, is still refused with
-  `run-execution-conflict`.
-- Tests cover the three cases: stopped `sync` then confirmed apply (admitted), second apply on
-  that run (refused), apply on a `sync` run that failed after dispatch (refused).
+Not yet verified on the current store: the store has changed since the old branch (specs 015 to
+018). Task T033 writes the tests first:
+
+- stopped `sync`, then a confirmed apply: admitted
+- a second apply on that run: refused with `run-execution-conflict`
+- an apply on a `sync` run that dispatched any operation: refused with `run-execution-conflict`
+- the release and the stop's writeback commit together, or neither does
 
 Alternatives considered:
 
-- Delete or release the write admission row at the stop. Rejected: the admission row is the
-  store's record that this run may write, and removing rows weakens ADR 0010's single-verdict
-  rule.
+- Append the apply under the `sync` receipt's existing admission. Not chosen: an apply request
+  reserves its own receipt, and the store accepts a write execution only with the receipt that
+  holds the admission (`_ADMITTED_APPEND_REFUSED`, `store.py:315-317`), so it needs a second
+  change to receipts.
 - Tell the team to create a new `plan` run and apply that. Rejected: it drops the plan the team
   reviewed, and old 009 FR-012 requires applying the stopped run.
 
-ADR 0020 records this consequence.
+The release changes the store's rule "a run that admitted its one write never admits another
+stage" (`store.py:2160-2175`) for one case: a `sync` that stopped before any dispatch. ADR 0020
+records it, and the product owner is asked to confirm it (spec, "Open questions").
 
 ## R12. The failure record (decisions 1 and 2)
 
@@ -307,7 +356,7 @@ Decision:
 
 ## R19. Plan time
 
-The time the admission helper and the problem pass add at tier M is not known. Spec 018 records
+The time the read loop changes and the problem pass add at tier M is not known. Spec 018 records
 each side's read time; the plan step's total time is in the run record. Decision: measure a tier M
 plan before and after on the `from-netbox` check and record both in the implementation report. No
 target is set, because the spec sets none.
@@ -319,3 +368,27 @@ write, then plans again on the same stores and checks FR-022 and SC-004. The old
 `tests/plan/test_replan_after_stopped_apply.py` is the reference. The run record gains the total
 operation count and the failed operation's action, kind and identity, read from the plan by
 `failed_operation` ID.
+
+## R21. Fields of old 009's data model and format 4 contract
+
+Compared field by field with old `data-model.md` and `contracts/plan-artifact-format-4.md`.
+
+- **`deletes_withheld_by_kind`: kept.** A left-out record whose identity cannot be computed (the
+  load could not build it) cannot be matched to its Infrahub node. If the plan computed deletes
+  for its kind, that node would look absent from the source and be planned as a delete, which
+  breaks FR-008. So the plan computes no delete for such a kind, nor for a
+  `destination_identity_ambiguous` identity, and the summary counts these records per kind in
+  `deletes_withheld_by_kind`. The CLI prints one line per kind ("deletes not computed for
+  `<kind>`: N records without identity").
+- **Reserved `cleared_relationships` field: not carried over.** Old 009 reserved it on updates
+  for old spec 010 (second sync), with a refusal `plan-feature-not-supported`. Old spec 010 is not
+  on `feature/v3-develop` (the current `dev/specs/010-prefect-from-sync-image/` is another
+  subject), and no current specification asks for it. A later format can add it.
+- **Format 3 apply.** Old 009's contract refused format 2 and 3 apply with "plan again before
+  applying", and its assumptions accepted that for the testing release. Kept: R9.
+- **Old refusal codes `new-plan-required` and `plan-format-not-applicable`: not carried over**
+  (decision 4; R9 uses the existing `PlanFormatApplyUnsupportedError`).
+- **`RunFailureCause.summary` and `error_class`: mapped** to the existing `cause` and
+  `error_type` keys of `<stage>_failure` (decision 1).
+- **`apply_progress`: mapped** to the existing apply record keys plus `operations_total` and
+  `failed_operation_detail`.
