@@ -19,7 +19,7 @@ check reads the approval that US1 stores, and US4's `approve` refusal extends US
 
 ## Phase 1: Setup
 
-- [ ] T001 Record the unit-test baseline: run `uv run invoke tests.tests-unit` and `uv run ruff check .` in the worktree and note the pass/skip counts in `dev/specs/019-plan-approval/tasks.md` under "Baseline" (no source change)
+- [X] T001 Record the unit-test baseline: run `uv run invoke tests.tests-unit` and `uv run ruff check .` in the worktree and note the pass/skip counts in `dev/specs/019-plan-approval/tasks.md` under "Baseline" (no source change)
 
 ## Phase 2: Foundational (blocks US1 and US3)
 
@@ -162,4 +162,9 @@ Within each story, tests first (they fail), then models, store, service, route, 
 
 ## Baseline
 
-(T001 records it here.)
+Recorded by T001 on commit `b46ecd79`, Python 3.11.8, after
+`uv sync --extra dev --extra prefect --extra service`:
+
+- `uv run invoke tests.tests-unit`: 6449 passed, 4 skipped, 1 xfailed, 246 deselected,
+  0 failed, 6 warnings, in 180.65 s.
+- `uv run ruff check .`: all checks passed.
