@@ -26,7 +26,7 @@ import {
   verificationNotes,
 } from "#/domain/run-steps";
 import type { System } from "#/domain/systems";
-import { formatAbsolute, formatSpan } from "#/lib/time";
+import { formatAbsolute } from "#/lib/time";
 
 import { PlanFacts } from "./PlanReview";
 import type { PlanRequest } from "./run-sections";
@@ -719,17 +719,7 @@ export function RunTimeline({
         last
         time={endedAt}
         node={<Dot className="size-2 bg-subtle-muted" />}
-        title={
-          <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-            <StateLabel state={state} label={label} />
-            <span aria-hidden="true" className="text-subtle-muted">
-              ·
-            </span>
-            <span className="font-normal text-subtle text-xs tabular-nums leading-5">
-              {formatSpan(run.started_at, finished)} in total
-            </span>
-          </span>
-        }
+        title={<StateLabel state={state} label={label} />}
       />
     ) : (
       <Event
