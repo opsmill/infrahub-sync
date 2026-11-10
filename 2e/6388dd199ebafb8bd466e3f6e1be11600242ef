@@ -1,0 +1,21 @@
+dev/specs/019-plan-problem-reporting/spec.md
+  s_d199771aa41449::t_34ddaf0760381a 720-722
+dev/specs/019-plan-problem-reporting/alignment-check.md
+  s_d199771aa41449::t_9b728a79781d3e 1-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2e6388dd199ebafb8bd466e3f6e1be11600242ef",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
