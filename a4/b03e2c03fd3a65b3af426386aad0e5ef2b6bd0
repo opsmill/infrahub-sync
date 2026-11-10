@@ -1,0 +1,24 @@
+tests/service/test_cancel_planned_run.py
+  s_3026b865c0ab8b::t_3801f51f88b855 191-194,208-209,350-390
+  s_3026b865c0ab8b::t_8aae182fa215ad 391-392
+infrahub_sync/service/service.py
+  s_3026b865c0ab8b::t_9ed6dd590cd0f5 695-700
+  s_3026b865c0ab8b::t_e59e5222839286 732
+  s_3026b865c0ab8b::t_a420b7419ba9be 906-910
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a4b03e2c03fd3a65b3af426386aad0e5ef2b6bd0",
+  "prompts": {},
+  "sessions": {
+    "s_3026b865c0ab8b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "825efe40-61e7-452d-9076-42e4bc5cee3e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
