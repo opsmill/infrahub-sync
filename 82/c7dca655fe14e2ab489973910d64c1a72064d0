@@ -1,0 +1,39 @@
+dev/specs/019-plan-problem-reporting/contracts/cli.md
+  s_d199771aa41449::t_c825c87ac2b61f 13-14,17
+  s_d199771aa41449::t_9e91192dc56c37 71-74
+dev/specs/019-plan-problem-reporting/data-model.md
+  s_d199771aa41449::t_7141ca6003f10a 84
+  s_d199771aa41449::t_891fb1810b14f1 145-146
+dev/specs/019-plan-problem-reporting/research.md
+  s_d199771aa41449::t_78a0bbaf24d96f 210-226,230-233,237-239
+  s_d199771aa41449::t_a5ec1e20eea0a8 32-85,89-95
+  s_d199771aa41449::t_f2fea5927125ba 148,359,371-394
+dev/specs/019-plan-problem-reporting/alignment-check.md
+  s_d199771aa41449::t_b9252b8c02aafb 15-17,26-28,30
+dev/specs/019-plan-problem-reporting/checklists/requirements.md
+  s_d199771aa41449::t_4d0acff7bc77ed 41-42
+dev/specs/019-plan-problem-reporting/critiques/critique-20261111.md
+  s_d199771aa41449::t_d72610ed4cefc3 8-10,19-26,63-66,110-112,118-119,128
+dev/specs/019-plan-problem-reporting/plan.md
+  s_d199771aa41449::t_fc73ed5ae423bb 15-18,62-67,77,81,108,113,115,155-156,177-180,198,200
+dev/specs/019-plan-problem-reporting/spec.md
+  s_d199771aa41449::t_aa429fdfcdaaec 76,369-370,432-434,617-619,697-700,768-771
+dev/specs/019-plan-problem-reporting/tasks.md
+  s_d199771aa41449::t_c8891561919630 50,61-66,70,73,75,91,100,209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "82c7dca655fe14e2ab489973910d64c1a72064d0",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
