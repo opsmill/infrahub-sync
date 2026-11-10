@@ -143,8 +143,9 @@ approved plan, and run `sync`.
   and MUST return it when the run is read through the Sync API and in `runs show`.
 - **FR-003**: Approving MUST refuse a checksum that differs from the saved plan's checksum, and MUST record nothing
   in that case.
-- **FR-004**: The system MUST check, before recording an approval, that the saved plan files are unchanged (the
-  checks `verify` runs today). A failed check MUST refuse the approval and name the check.
+- **FR-004**: The system MUST refuse an approval when the saved plan cannot be read, or when the checksum check
+  recorded for the saved plan failed. The refusal MUST say which. Approving does not contact the source or the
+  destination; `verify` and `apply` run the full pre-write checks.
 - **FR-005**: Only a run whose plan stage succeeded, that is not being planned, and that has not been applied MAY be
   approved. Approving any other run MUST be refused with the reason.
 - **FR-006**: A run MUST have at most one approval. A second approval MUST be refused and MUST show the existing
