@@ -1,0 +1,36 @@
+infrahub_sync/service/settings.py
+  s_3026b865c0ab8b::t_0582c2fe4b2b0c 1-52
+tests/service/test_approval_required.py
+  s_3026b865c0ab8b::t_32e9057ce4dc55 1-300
+  s_3026b865c0ab8b::t_443ee77d51987e 301-303
+dev/specs/019-plan-approval/tasks.md
+  s_3026b865c0ab8b::t_745ffbd39ad81d 90-92,96-98
+infrahub_sync/cli.py
+  s_3026b865c0ab8b::t_fe2630c3a7f77c 1096-1102
+infrahub_sync/client/models.py
+  s_3026b865c0ab8b::t_a425eca2c27c19 379-383,387
+infrahub_sync/service/app.py
+  s_3026b865c0ab8b::t_bfcbdd88f22338 51,93-99,214-219
+infrahub_sync/service/service.py
+  s_3026b865c0ab8b::t_d23339783cb421 59,207-220,366-367,395-429
+tests/cli/test_client_commands.py
+  s_3026b865c0ab8b::t_7c4efba97d5019 1608-1614,1620-1624
+tests/service/test_http_api.py
+  s_3026b865c0ab8b::t_01716c51fbbdda 2430-2431,2440,2452-2469
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "39c4624eac9b7c616697059b483609e1957e5ec8",
+  "prompts": {},
+  "sessions": {
+    "s_3026b865c0ab8b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "825efe40-61e7-452d-9076-42e4bc5cee3e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
