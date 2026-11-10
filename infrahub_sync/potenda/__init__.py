@@ -5,6 +5,7 @@ import logging
 import re
 import sys
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 # The one costly module-level import: apply's exception boundary must name the SDK's errors.
@@ -25,8 +26,9 @@ from infrahub_sync.plan.errors import (
     PlanVerificationError,
     SkippedDeleteOperation,
 )
-from infrahub_sync.plan.models import ACTIONS, DESTINATION_ID_FORMAT_VERSION, ApplyRecord
+from infrahub_sync.plan.models import ACTIONS, DESTINATION_ID_FORMAT_VERSION, ApplyRecord, ordered_checks
 from infrahub_sync.plan.write_surface import (
+    LineageResolvingDestination,
     PlannedWriteDestination,
     destination_last_changes,
     destination_lineage_record,
@@ -81,9 +83,21 @@ if TYPE_CHECKING:
 
     from infrahub_sync import SyncInstance
     from infrahub_sync.cache.cursors import CursorState
-    from infrahub_sync.plan.models import PlanManifest, PlannedOperation, VerificationFailure
+    from infrahub_sync.plan.models import PlanManifest, PlannedOperation, PreWriteCheck, VerificationFailure
     from infrahub_sync.plan.ownership import WriteOwnership
-    from infrahub_sync.plan.reader import RawPlanArtifact
+    from infrahub_sync.plan.reader import LoadedPlan, RawPlanArtifact
+
+
+@dataclass(frozen=True)
+class PlanCheck:
+    """The outcome of the pre-write gate: the plan it parsed and the checks that passed, in order.
+
+    `apply_plan` writes `loaded.operations`; `verify` reports `checks`. Both come from one
+    `Potenda.check_plan` call, so the plan `verify` passed is checked exactly as `apply` checks it.
+    """
+
+    loaded: LoadedPlan
+    checks: tuple[PreWriteCheck, ...]
 
 
 def _plan_refusal(failures: Sequence[VerificationFailure], *, run_id: str) -> PlanVerificationError:
@@ -105,7 +119,9 @@ def _plan_refusal(failures: Sequence[VerificationFailure], *, run_id: str) -> Pl
 
     # The next action names each failed check with its own next action, so the hint the CLI
     # prints says what to fix.
-    return PlanVerificationError(msg, next_action=failure_guidance(failures))
+    return PlanVerificationError(
+        msg, next_action=failure_guidance(failures), checks=[failure.check for failure in failures]
+    )
 
 
 # The destination's uniqueness refusal, as measured: this exact message grammar, and
@@ -172,22 +188,29 @@ def _require_applyable_format(manifest: PlanManifest, *, run_id: str) -> None:
 
 def _validate_infrahub_plan_payload(
     destination: PlannedWriteDestination, operations: Sequence[PlannedOperation], *, run_id: str
-) -> None:
-    """Check all Infrahub direct fields before dispatch; other adapters are unchanged."""
+) -> bool:
+    """Check all Infrahub direct fields before dispatch; other adapters are unchanged.
+
+    Returns whether the check ran, so a destination it does not apply to does not report it
+    as passed.
+    """
     from infrahub_sync.adapters.infrahub import InfrahubAdapter
 
-    if isinstance(destination, InfrahubAdapter):
-        try:
-            destination.validate_planned_payload_fields(operations)
-        except InfrahubSDKError as exc:
-            msg = (
-                f"The live destination schema for run {run_id!r} could not be checked before apply: "
-                f"{_operational_failure_summary(exc)}. Nothing was written to the destination."
-            )
-            raise PlanVerificationError(
-                msg,
-                next_action="Check destination access, then retry applying the reviewed plan.",
-            ) from exc
+    if not isinstance(destination, InfrahubAdapter):
+        return False
+    try:
+        destination.validate_planned_payload_fields(operations)
+    except InfrahubSDKError as exc:
+        msg = (
+            f"The live destination schema for run {run_id!r} could not be checked before apply: "
+            f"{_operational_failure_summary(exc)}. Nothing was written to the destination."
+        )
+        raise PlanVerificationError(
+            msg,
+            next_action="Check destination access, then retry applying the reviewed plan.",
+            checks=["planned_fields"],
+        ) from exc
+    return True
 
 
 def _failure_reach_and_remedy(exc: Exception, *, record: ApplyRecord) -> tuple[str, str | None]:
@@ -820,9 +843,7 @@ class Potenda:
                 a `TypeError` from an SDK shape change — propagates **unchanged** with the
                 partial record attached as `apply_record`.
         """
-        from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes, require_plan_directory
-        from infrahub_sync.plan.review import expected_checksum_refusal
-        from infrahub_sync.plan.verify import verify_plan
+        from infrahub_sync.plan.reader import read_plan_artifact_bytes, require_plan_directory
 
         if not self.run_dir:
             msg = "Potenda.apply_plan requires run_dir to be set."
@@ -841,58 +862,15 @@ class Potenda:
         # object, so the bytes verified and approved are the bytes applied and nothing re-reads
         # the disk between the gate and the writes (DBR-006, DBA-004).
         raw = read_plan_artifact_bytes(self.run_dir) if artifact is None else artifact
-        destination = self.destination
-        # FR-023's write-surface check joins the same pre-write gate as the five verification
-        # checks, so one attempt tells the operator everything that is wrong (AD036). The
-        # adapter's **name** goes in, not a boolean, because the failure it drives names the
-        # adapter (AD058). On what the protocol check does and does not verify, see
-        # `infrahub_sync.plan.write_surface`.
-        failures = verify_plan(
-            artifact=raw,
-            run_id=run_id,
-            config_version=comparison_version,
-            write_surface_missing_on=(
-                None if isinstance(destination, PlannedWriteDestination) else type(destination).__name__
-            ),
-        )
-        if failures:
-            raise _plan_refusal(failures, run_id=run_id)
 
-        # The operator's approval, decided about the bytes above and therefore the bytes applied.
-        # **After** the gate so FR-009's evaluate-all disclosure still reaches an operator whose
-        # artifact is torn as well as unapproved, and **before** the parse and the loop so a plan
-        # that is not the approved one is refused with nothing written. A caller's earlier check
-        # is a fast path that spares building a destination; this one is what decides.
-        if expected_checksum is not None:
-            refusal = expected_checksum_refusal(
-                artifact=raw, run_id=run_id, expected=expected_checksum, destination_contacted=True
-            )
-            if refusal is not None:
-                raise PlanVerificationError(refusal.reason, next_action=refusal.next_action)
-
-        # The gate evaluated the write-surface check, so an empty failure list proves the
-        # surface is present — the cast narrows for the type checker; it is not a second gate.
-        destination = cast("PlannedWriteDestination", destination)
-
-        # Parse after the gate and before the loop — the same bytes the gate verified.
-        # Everything the gate can see is already reported; what remains for the parser is
-        # per-record validity — an unrecognized `action` above all — which is still refused
-        # before the first destination write.
-        # `last_changes.jsonl` is display-only: the gate above checked it, and apply never reads it.
-        loaded = parse_plan_artifact(raw, run_id=run_id, parse_last_changes=False)
-
-        # Readable and reviewable, but not applyable. Refused after the artifact has been
-        # read, before `ownership.before_operation` and therefore before the first dispatch,
-        # so the destination is provably untouched.
-        _require_applyable_format(loaded.manifest, run_id=run_id)
-
-        # The registered service has a schema fingerprint guard, but direct Python apply
-        # callers need the same no-write guarantee for reviewed Infrahub payload fields.
-        # Check the entire artifact before dispatching its first operation.
-        _validate_infrahub_plan_payload(destination, loaded.operations, run_id=run_id)
-
-        # Resolved again before the first write, never reused; compared with the plan's (FR-012).
-        resolve_destination_lineage(destination, saved_plan=loaded.manifest)
+        # The whole pre-write gate, on those bytes. `verify` runs the same function and stops
+        # here, so the two cannot disagree about whether a plan would apply (SC-004).
+        loaded = self.check_plan(
+            run_id=run_id, config_version=comparison_version, artifact=raw, expected_checksum=expected_checksum
+        ).loaded
+        # The gate evaluated the write-surface check, so passing it proves the surface is
+        # present — the cast narrows for the type checker; it is not a second gate.
+        destination = cast("PlannedWriteDestination", self.destination)
         self._last_applied_plan_action_counts = {
             action: sum(operation.action == action for operation in loaded.operations) for action in ACTIONS
         }
@@ -997,6 +975,108 @@ class Potenda:
             )
 
         return completed
+
+    def check_plan(
+        self,
+        *,
+        run_id: str,
+        config_version: str | None,
+        artifact: RawPlanArtifact,
+        expected_checksum: str | None = None,
+    ) -> PlanCheck:
+        """Run the pre-write gate on `artifact`; return the parsed plan and the checks that passed.
+
+        The gate `apply_plan` runs before its first write, and nothing after it: no ownership
+        is proven and no destination write method is called, so `verify` runs it to learn
+        whether the plan would apply now. The checks read the destination (its lineage, and
+        for Infrahub its schema) but never write to it.
+
+        `expected_checksum=None` skips only the approval comparison. Every other check runs.
+        A check that does not apply to this destination — the planned-field check outside
+        Infrahub, the lineage check for a destination that records no lineage — is skipped
+        and not reported as passed.
+
+        Raises:
+            ValueError: no configuration version can be formed.
+            PlanVerificationError: a check failed; `checks` on the error names it.
+            PlanFormatApplyUnsupportedError: the plan's format can be reviewed but not applied.
+            PlanArtifactTornError: an operations record fails validation.
+            UnsupportedOperationActionError: an operation's `action` is outside `ACTIONS`.
+            ReviewedPayloadFieldMissingError: the destination schema lacks a planned field.
+            PlanLineageMissingError: the plan records no import account (lineage).
+            ImportAccountMismatchError: the import account differs from the plan's (lineage).
+            NamedLineageNodeNotFoundError: a named lineage node does not exist (lineage).
+        """
+        from infrahub_sync.plan.reader import parse_plan_artifact
+        from infrahub_sync.plan.review import expected_checksum_refusal
+        from infrahub_sync.plan.verify import verify_plan
+
+        comparison_version = self._apply_config_version(config_version)
+        raw = artifact
+        destination = self.destination
+        # FR-023's write-surface check joins the same pre-write gate as the five verification
+        # checks, so one attempt tells the operator everything that is wrong (AD036). The
+        # adapter's **name** goes in, not a boolean, because the failure it drives names the
+        # adapter (AD058). On what the protocol check does and does not verify, see
+        # `infrahub_sync.plan.write_surface`.
+        failures = verify_plan(
+            artifact=raw,
+            run_id=run_id,
+            config_version=comparison_version,
+            write_surface_missing_on=(
+                None if isinstance(destination, PlannedWriteDestination) else type(destination).__name__
+            ),
+        )
+        if failures:
+            raise _plan_refusal(failures, run_id=run_id)
+
+        # The operator's approval, decided about the bytes above and therefore the bytes applied.
+        # **After** the gate so FR-009's evaluate-all disclosure still reaches an operator whose
+        # artifact is torn as well as unapproved, and **before** the parse and the loop so a plan
+        # that is not the approved one is refused with nothing written. A caller's earlier check
+        # is a fast path that spares building a destination; this one is what decides.
+        if expected_checksum is not None:
+            refusal = expected_checksum_refusal(
+                artifact=raw, run_id=run_id, expected=expected_checksum, destination_contacted=True
+            )
+            if refusal is not None:
+                raise PlanVerificationError(refusal.reason, next_action=refusal.next_action)
+
+        # The gate evaluated the write-surface check, so an empty failure list proves the
+        # surface is present — the cast narrows for the type checker; it is not a second gate.
+        destination = cast("PlannedWriteDestination", destination)
+
+        # Parse after the gate and before the loop — the same bytes the gate verified.
+        # Everything the gate can see is already reported; what remains for the parser is
+        # per-record validity — an unrecognized `action` above all — which is still refused
+        # before the first destination write.
+        # `last_changes.jsonl` is display-only: the gate above checked it, and apply never reads it.
+        loaded = parse_plan_artifact(raw, run_id=run_id, parse_last_changes=False)
+
+        # Readable and reviewable, but not applyable. Refused after the artifact has been
+        # read, before `ownership.before_operation` and therefore before the first dispatch,
+        # so the destination is provably untouched.
+        _require_applyable_format(loaded.manifest, run_id=run_id)
+        checks: list[PreWriteCheck] = [
+            "run_binding",
+            "plan_checksum",
+            "source_snapshot",
+            "config_version",
+            "format_version",
+            "write_surface",
+        ]
+
+        # The registered service has a schema fingerprint guard, but direct Python apply
+        # callers need the same no-write guarantee for reviewed Infrahub payload fields.
+        # Check the entire artifact before dispatching its first operation.
+        if _validate_infrahub_plan_payload(destination, loaded.operations, run_id=run_id):
+            checks.append("planned_fields")
+
+        # Resolved again before the first write, never reused; compared with the plan's (FR-012).
+        resolve_destination_lineage(destination, saved_plan=loaded.manifest)
+        if isinstance(destination, LineageResolvingDestination):
+            checks.append("lineage")
+        return PlanCheck(loaded=loaded, checks=ordered_checks(checks))
 
     def persist_cursors_for_run(self, *, side: str) -> None:
         """Persist source-guaranteed bounds captured before a successful side load.

@@ -283,7 +283,10 @@ class RunService:
         """Accept an independently auditable, read-only verification."""
         run = self._owned_run(run_id, principal, "verify", request.reason)
         body = request.model_dump(mode="json")
-        parameters = self._stage_parameters(run, "verify", confirm_writes=False)
+        # The branch the run was created for, so the destination-binding check compares the
+        # plan with the destination it was planned against. `None` for a run that predates the
+        # stored branch, which keeps the configuration's default, as `apply` without one does.
+        parameters = self._stage_parameters(run, "verify", branch=run.destination_branch, confirm_writes=False)
         existing = self._lookup_existing_receipt(
             run,
             principal,

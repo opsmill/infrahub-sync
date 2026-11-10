@@ -464,6 +464,8 @@ def test_the_verify_stage_reads_the_checkpoint_it_rehydrated(monkeypatch: pytest
         return SavedPlan(manifest=manifest, operations=[], checksum_ok=True, verification_notes=[])
 
     monkeypatch.setattr(service_flow, "execute_run", execute_run)
+    # The destination checks are `tests/service/test_verify_destination.py`'s subject.
+    monkeypatch.setattr(service_flow, "_check_destination", lambda *_a, **_k: ("checkpoint",))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", lambda *_a, **_k: _instance())
     monkeypatch.setattr(service_flow, "build_runtime_model_plan", lambda *_a, **_k: None)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))
@@ -498,6 +500,8 @@ def test_a_read_stage_advances_no_baseline(monkeypatch: pytest.MonkeyPatch, tmp_
         return SavedPlan(manifest=_manifest_of(directory), operations=[], checksum_ok=True, verification_notes=[])
 
     monkeypatch.setattr(service_flow, "execute_run", execute_run)
+    # The destination checks are `tests/service/test_verify_destination.py`'s subject.
+    monkeypatch.setattr(service_flow, "_check_destination", lambda *_a, **_k: ("checkpoint",))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", lambda *_a, **_k: _instance())
     monkeypatch.setattr(service_flow, "build_runtime_model_plan", lambda *_a, **_k: None)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))

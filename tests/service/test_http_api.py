@@ -2385,6 +2385,31 @@ def test_a_new_run_records_the_branch_its_worker_plans_against(
     assert resolved_endpoint(settings or {}, worker_branch)[1] == expected
 
 
+@pytest.mark.parametrize("requested", [None, "review"], ids=["default-branch", "requested-branch"])
+def test_verify_checks_the_destination_branch_the_run_was_created_for(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    requested: str | None,
+) -> None:
+    """R4: the verify stage compares the plan with the branch the run stored, not a default."""
+    client, projection, orchestration = service_api
+    version = projection.create_configuration(_package_variant(name="verify-branch-inventory", branch=None))
+    created = _create_for(client, version, key=f"verify-branch-{requested}", branch=requested)
+    run_id = cast("str", created["run_id"])
+    _publish_plan(projection, run_id)
+    _settle_open_executions(projection, run_id)
+
+    response = client.post(
+        f"/runs/{run_id}/verify",
+        headers={**READ, "Idempotency-Key": f"verify-branch-check-{requested}"},
+        json={"reason": "check before the window"},
+    )
+
+    assert response.status_code == 202, response.text
+    submitted, _key = orchestration.submissions[-1]
+    assert submitted["stage"] == "verify"
+    assert submitted["branch"] == created["destination_branch"] == (requested or "main")
+
+
 def test_a_run_stored_without_a_branch_shows_null(
     service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
 ) -> None:

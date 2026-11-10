@@ -875,7 +875,9 @@ def _read_verified_plan(*, sync_instance: SyncInstance, run_id: str, base_direct
         )
         next_actions = tuple(dict.fromkeys(failure.next_action for failure in failures))
         msg = f"Saved plan {run_id!r} failed verification checks: {checks}. {detail}"
-        raise PlanVerificationError(msg, next_action=" ".join(next_actions))
+        raise PlanVerificationError(
+            msg, next_action=" ".join(next_actions), checks=[failure.check for failure in failures]
+        )
     return saved
 
 

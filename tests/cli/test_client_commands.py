@@ -1464,6 +1464,32 @@ def test_verify_calls_client_verify_with_the_reason_and_retry_key(client: MagicM
     assert "run_id: service-run-1" in result.output
 
 
+def test_a_successful_verify_prints_one_line_per_check_that_passed(client: MagicMock) -> None:
+    accepted = _run()
+    checks = ["checkpoint", "run_binding", "destination_binding", "lineage"]
+    completed = accepted.model_copy(
+        update={
+            "run": accepted.run.model_copy(
+                update={"results": {"verification": {"checks": checks, "destination_checked": True}}}
+            )
+        }
+    )
+    client.verify.return_value = accepted
+    client.wait_for_run.side_effect = lambda _accepted, **_kwargs: completed
+
+    result = _invoke(client, "verify", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    printed = [line for line in result.output.splitlines() if line.startswith("check: ")]
+    assert printed == [f"check: {name} passed" for name in checks]
+
+
+def test_verify_help_says_it_checks_the_plan_would_apply_without_writing() -> None:
+    assert "Check that the named run's saved plan would apply now, without writing." in " ".join(
+        _help_text("verify").split()
+    )
+
+
 def test_runs_list_without_filters_prints_one_row_per_run(client: MagicMock) -> None:
     client.list_runs.return_value = RunPage(
         items=(_public_run("run-2", outcome="planned"), _public_run("run-1", config_id=None)),

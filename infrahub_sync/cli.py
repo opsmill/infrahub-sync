@@ -1061,7 +1061,7 @@ def verify_cmd(
     wait_timeout: float = typer.Option(DEFAULT_WAIT_TIMEOUT, "--wait-timeout", help="Bounded wait in seconds."),
     poll_interval: float = typer.Option(DEFAULT_POLL_INTERVAL, "--poll-interval", help="Poll interval in seconds."),
 ) -> None:
-    """Check that the saved plan files of the named run are unchanged, without contacting source or destination."""
+    """Check that the named run's saved plan would apply now, without writing."""
     with _client_errors():
         client = _waiting_client(ctx, wait_timeout=wait_timeout, poll_interval=poll_interval)
         completed = _submit_and_wait(
@@ -1074,6 +1074,18 @@ def verify_cmd(
         )
         if wait:
             _echo_run(completed)
+            _echo_verification_checks(completed)
+
+
+def _echo_verification_checks(resource: RunResource) -> None:
+    """Print one line per pre-write check the run's verification passed, in the order it ran them."""
+    verification = resource.run.results.get("verification")
+    checks = verification.get("checks") if isinstance(verification, dict) else None
+    if not isinstance(checks, list):
+        return
+    for check in checks:
+        if isinstance(check, str):
+            typer.echo(_display(f"check: {check} passed"))
 
 
 @app.command("whoami")

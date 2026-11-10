@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 from infrahub_sync.client.models import SCHEMA_CHANGED_NEXT_ACTION
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from infrahub_sync.plan.models import ApplyRecord
 
 
@@ -386,9 +388,27 @@ class NullRelationshipValueError(PlanArtifactError):
 
 
 class PlanVerificationError(PlanArtifactError):
-    """One or more pre-apply checks failed, so the apply is refused."""
+    """One or more pre-apply checks failed, so the apply is refused.
+
+    `checks` names the pre-write checks the refusal failed on, in the order they were
+    evaluated, so `verify` and `apply` can report the same check by name. It is empty for a
+    refusal that names no check, such as an approved checksum the artifact does not hash to.
+    """
 
     next_action = "Address each failed check named above; every failure carries its own next action."
+    checks: tuple[str, ...] = ()
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        next_action: str | None = None,
+        wrote: bool | None = None,
+        checks: Sequence[str] = (),
+    ) -> None:
+        super().__init__(message, next_action=next_action, wrote=wrote)
+        if checks:
+            self.checks = tuple(checks)
 
 
 class PlanSchemaChangedError(PlanArtifactError):
@@ -475,6 +495,29 @@ LINEAGE_REFUSALS: tuple[type[PlanArtifactError | NamedLineageNodeNotFoundError],
     ImportAccountMismatchError,
     NamedLineageNodeNotFoundError,
 )
+
+
+def failed_checks(exc: BaseException) -> tuple[str, ...]:
+    """The pre-write checks a refusal failed on, by name, or `()` when it names none.
+
+    Follows the explicit `raise ... from` links only, so a refusal wrapped by a caller still
+    names its check. `verify` records these names, and the parity test compares them with
+    the ones `apply` fails on.
+    """
+    link: BaseException | None = exc
+    while link is not None:
+        if isinstance(link, PlanVerificationError) and link.checks:
+            return link.checks
+        if isinstance(link, (PlanFormatVersionError, PlanFormatApplyUnsupportedError)):
+            return ("format_version",)
+        if isinstance(link, PlanSchemaChangedError):
+            return ("destination_schema",)
+        if isinstance(link, ReviewedPayloadFieldMissingError):
+            return ("planned_fields",)
+        if isinstance(link, LINEAGE_REFUSALS):
+            return ("lineage",)
+        link = link.__cause__
+    return ()
 
 
 class OperationApplyFailedError(PlanArtifactError):

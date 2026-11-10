@@ -14,7 +14,7 @@ operations into write units (FR-026).
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import PurePath
@@ -680,6 +680,30 @@ VerificationCheck: TypeAlias = Literal[
     "write_surface",
     "destination_binding",
 ]
+
+# The pre-write checks `apply` runs before its first write and `verify` reports as passed,
+# in the order `verify` reports them. `verify` and `apply` share one gate, so a check that
+# refuses an apply fails a verify under the same name.
+PreWriteCheck: TypeAlias = Literal[
+    "checkpoint",
+    "run_binding",
+    "plan_checksum",
+    "source_snapshot",
+    "config_version",
+    "format_version",
+    "destination_schema",
+    "destination_binding",
+    "write_surface",
+    "planned_fields",
+    "lineage",
+]
+PRE_WRITE_CHECKS: tuple[PreWriteCheck, ...] = get_args(PreWriteCheck)
+
+
+def ordered_checks(checks: Iterable[PreWriteCheck]) -> tuple[PreWriteCheck, ...]:
+    """Return `checks` once each, in the order `PRE_WRITE_CHECKS` lists them."""
+    present = set(checks)
+    return tuple(check for check in PRE_WRITE_CHECKS if check in present)
 
 
 class VerificationFailure(BaseModel):
