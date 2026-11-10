@@ -1605,6 +1605,37 @@ def test_runs_cancel_prompts_when_interactive(
     assert result.exit_code == (0 if cancelled else 1), result.output
 
 
+def test_runs_cancel_help_says_a_finished_plan_is_withdrawn() -> None:
+    text = " ".join(_help_text("runs", "cancel").split())
+    assert (
+        "Cancel a run. Cancelling a finished plan withdraws it so it cannot be approved or applied; "
+        "cancelling a write can leave its outcome ambiguous." in text
+    )
+
+
+def test_runs_cancel_prompt_says_a_finished_plan_is_withdrawn(
+    client: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("infrahub_sync.cli._stdin_is_interactive", lambda: True)
+
+    result = RUNNER.invoke(app, ["runs", "cancel", "service-run-1"], obj={"client": client}, input="n\n")
+
+    assert (
+        "Cancel run service-run-1? A finished plan is withdrawn; cancelling a write can leave an ambiguous outcome."
+        in result.output
+    )
+    client.cancel_run.assert_not_called()
+
+
+def test_runs_cancel_prints_phase_cancelled_after_a_withdrawal(client: MagicMock) -> None:
+    client.cancel_run.return_value = _run(phase="cancelled")
+
+    result = _invoke(client, "runs", "cancel", "service-run-1", "--yes")
+
+    assert result.exit_code == 0, result.output
+    assert "phase: cancelled" in result.output
+
+
 @pytest.mark.parametrize(("approval_required", "rendered"), [(True, "true"), (False, "false")])
 def test_whoami_prints_actor_administrator_and_approval_required(
     client: MagicMock, *, approval_required: bool, rendered: str

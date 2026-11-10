@@ -22,6 +22,8 @@ _INVALID_SERVICE_WORKER_ID = "service worker identity is invalid"
 # their accepted receipt stores a success response with no flow-run ID. The receipt's
 # ``operation`` column is plain text, so this set is the only place an operation is named.
 SERVICE_ANSWERED_OPERATIONS = frozenset({"approve"})
+# The status of a ``cancel`` receipt that withdrew a finished plan (spec 019, User Story 4).
+WITHDRAWN_CANCEL_STATUS = 200
 _LEGAL_EXECUTION_VERDICTS = {
     ("completed", "succeeded"),
     ("failed", "failed"),
@@ -223,6 +225,12 @@ class RunApproval(BaseModel):
                 "reason": approval_reason,
             }
         )
+
+
+RUN_CANCELLED_MESSAGE = (
+    "the run was cancelled, so its plan cannot be approved or applied; create a new plan run to try again"
+)
+RUN_ALREADY_CANCELLED_MESSAGE = "the run is already cancelled"
 
 
 def not_approvable_message(phase: str, active_stage: str | None = None) -> str:
@@ -453,7 +461,12 @@ class MutationReceipt(BaseModel):
         # A run receipt answered with a refusal never reached Prefect, so it has no
         # flow-run ID to carry; only an accepted submission does. An operation the
         # service answers itself, such as ``approve``, never submits a flow run.
-        submits_flow_run = self.resource_kind == "run" and self.operation not in SERVICE_ANSWERED_OPERATIONS
+        # A ``cancel`` that withdraws a finished plan is answered ``200`` by the service, with no
+        # execution to target; a ``cancel`` of an active execution is answered ``202`` and names it.
+        withdrawal = self.operation == "cancel" and self.response_status == WITHDRAWN_CANCEL_STATUS
+        submits_flow_run = (
+            self.resource_kind == "run" and self.operation not in SERVICE_ANSWERED_OPERATIONS and not withdrawal
+        )
         if (
             self.state == "accepted"
             and submits_flow_run

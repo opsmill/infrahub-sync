@@ -35,11 +35,12 @@ from infrahub_sync.product_store import (
     ProductProjection,
     ProductRun,
 )
+from infrahub_sync.product_store.models import RunApproval
 from infrahub_sync.product_store.store import FileArtifactStore, PostgreSQLRunStore, SQLiteRunStore
 from tests.product_store.postgresql_isolation import postgresql_schema_fixture
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
 # Run IDs and receipt identities stay namespaced to one test session, so a case reads
@@ -665,3 +666,145 @@ def test_an_expired_cancellation_of_a_claimed_write_records_reconciliation(proje
     assert stored is not None
     assert stored.reconciliation_required is True
     assert (stored.phase, stored.outcome) == ("interrupted", "ambiguous")
+
+
+# Withdrawing a finished plan (spec 019, User Story 4): ``cancel_planned_run`` takes the same
+# write-first row lock as a write admission, so a cancel and an apply never both succeed.
+
+_CANCELLED_AT = datetime(2026, 11, 10, 15, tzinfo=timezone.utc)
+_WITHDRAWN_BODY = {"run": {"phase": "cancelled"}, "orchestration": []}
+
+
+def _planned_run(projection: ProductProjection, run_id: str) -> None:
+    """Create a run whose plan stage finished: phase ``planned``, its plan execution terminal."""
+    projection.create_run(_run(run_id).model_copy(update={"phase": "planned"}))
+    plan = _reserve_read(projection, run_id, f"m-plan-{run_id}", operation="plan")
+    flow_run_id = f"flow-plan-{run_id}"
+    projection.add_prefect_execution(run_id, _link(flow_run_id, purpose="plan"), receipt_id=plan.receipt_id)
+    projection.complete_mutation(
+        plan.receipt_id, response_status=202, response_body={"accepted": True}, flow_run_id=flow_run_id
+    )
+    projection.claim_execution(run_id, flow_run_id, worker_id=_WORKER_ID)
+    projection.commit_claimed_execution(
+        run_id,
+        flow_run_id,
+        worker_id=_WORKER_ID,
+        terminal_at=datetime.now(timezone.utc),
+        terminal_state="completed",
+        terminal_outcome="succeeded",
+        writeback=ExecutionMergeWriteback(results={"plan": {"outcome": "planned"}}),
+    )
+
+
+def _cancel_receipt(projection: ProductProjection, run_id: str, name: str = "m-withdraw") -> MutationReceipt:
+    reserved, _created = projection.reserve_mutation(_receipt(name, run_id=run_id, operation="cancel"))
+    return reserved
+
+
+def _stored_receipt(projection: ProductProjection, receipt: MutationReceipt) -> MutationReceipt:
+    stored = projection.lookup_mutation(receipt.actor, receipt.key_digest).value
+    assert stored is not None
+    return stored
+
+
+def test_cancelling_a_planned_run_withdraws_it_and_keeps_its_approval(projection: ProductProjection) -> None:
+    run_id = _rid("withdraw-approved")
+    _planned_run(projection, run_id)
+    approve, _created = projection.reserve_mutation(_receipt("m-approve", run_id=run_id, operation="approve"))
+    approval = RunApproval(approved_by="operator@example.com", approved_at=_STARTED_AT, plan_checksum="c" * 64)
+    assert projection.record_approval(run_id, approval, approve, {"run": {"run_id": run_id}})
+    cancel = _cancel_receipt(projection, run_id)
+
+    withdrawn = projection.cancel_planned_run(run_id, cancel, _WITHDRAWN_BODY, cancelled_at=_CANCELLED_AT)
+
+    assert withdrawn is True
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert (stored.phase, stored.outcome, stored.finished_at) == ("cancelled", "cancelled", _CANCELLED_AT)
+    assert stored.approval == approval
+    completed = _stored_receipt(projection, cancel)
+    assert (completed.state, completed.response_status, completed.response_body) == (
+        "accepted",
+        200,
+        _WITHDRAWN_BODY,
+    )
+
+
+def _admit_competing_write(projection: ProductProjection, run_id: str) -> None:
+    assert _admit_write(projection, run_id, "m-competing-apply", operation="apply").state == "reserved"
+
+
+def _reserve_competing_verify(projection: ProductProjection, run_id: str) -> None:
+    _reserve_read(projection, run_id, "m-competing-verify", operation="verify")
+
+
+def _run_competing_verify(projection: ProductProjection, run_id: str) -> None:
+    verify = _reserve_read(projection, run_id, "m-running-verify", operation="verify")
+    projection.add_prefect_execution(
+        run_id, _link("flow-running-verify", purpose="verify"), receipt_id=verify.receipt_id
+    )
+    projection.complete_mutation(
+        verify.receipt_id, response_status=202, response_body={"accepted": True}, flow_run_id="flow-running-verify"
+    )
+
+
+@pytest.mark.parametrize(
+    "compete",
+    [_admit_competing_write, _reserve_competing_verify, _run_competing_verify],
+    ids=["write-admitted", "unresolved-receipt", "unfinished-execution"],
+)
+def test_cancelling_a_planned_run_with_other_work_stores_a_run_execution_conflict(
+    projection: ProductProjection, compete: Callable[[ProductProjection, str], None]
+) -> None:
+    run_id = _rid(f"withdraw-conflict-{uuid4().hex[:8]}")
+    _planned_run(projection, run_id)
+    compete(projection, run_id)
+    cancel = _cancel_receipt(projection, run_id)
+
+    withdrawn = projection.cancel_planned_run(run_id, cancel, _WITHDRAWN_BODY, cancelled_at=_CANCELLED_AT)
+
+    assert withdrawn is False
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert stored.phase == "planned"
+    completed = _stored_receipt(projection, cancel)
+    assert (completed.state, completed.response_status) == ("accepted", 409)
+    assert _refusal_code(completed) == _CONFLICT_CODE
+
+
+@pytest.mark.parametrize(
+    ("phase", "code"),
+    [("cancelled", "run-already-cancelled"), ("applied", "execution-terminal"), ("failed", "execution-terminal")],
+)
+def test_cancel_planned_run_leaves_a_run_outside_phase_planned_unchanged(
+    projection: ProductProjection, phase: str, code: str
+) -> None:
+    run_id = _rid(f"withdraw-{phase}")
+    projection.create_run(_run(run_id).model_copy(update={"phase": phase}))
+    cancel = _cancel_receipt(projection, run_id)
+
+    withdrawn = projection.cancel_planned_run(run_id, cancel, _WITHDRAWN_BODY, cancelled_at=_CANCELLED_AT)
+
+    assert withdrawn is False
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert (stored.phase, stored.outcome, stored.finished_at) == (phase, None, None)
+    completed = _stored_receipt(projection, cancel)
+    assert (completed.response_status, _refusal_code(completed)) == (409, code)
+
+
+def test_a_withdrawn_run_refuses_an_apply_reservation_but_still_admits_a_verify(
+    projection: ProductProjection,
+) -> None:
+    run_id = _rid("withdrawn-then-apply")
+    _planned_run(projection, run_id)
+    assert projection.cancel_planned_run(
+        run_id, _cancel_receipt(projection, run_id), _WITHDRAWN_BODY, cancelled_at=_CANCELLED_AT
+    )
+
+    refused = _admit_write(projection, run_id, "m-late-apply", operation="apply")
+    verify = _reserve_read(projection, run_id, "m-late-verify", operation="verify")
+
+    assert (refused.state, refused.response_status) == ("accepted", 409)
+    assert _refusal_code(refused) == _CONFLICT_CODE
+    assert verify.state == "reserved"

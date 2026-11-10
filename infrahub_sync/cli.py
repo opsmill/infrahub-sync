@@ -1173,7 +1173,9 @@ def runs_cancel(
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
     yes: bool = typer.Option(False, "--yes", help="Cancel without asking for confirmation."),  # noqa: FBT003
 ) -> None:
-    """Request cancellation of a run. Cancelling a write can leave its outcome ambiguous."""
+    """Cancel a run. Cancelling a finished plan withdraws it so it cannot be approved or applied;
+    cancelling a write can leave its outcome ambiguous.
+    """
     with _client_errors():
         if not yes:
             if not _stdin_is_interactive():
@@ -1184,7 +1186,9 @@ def runs_cancel(
                 )
                 raise typer.Exit(2)
             if not typer.confirm(
-                f"Cancel run {_display(run_id)}? Cancelling a write can leave an ambiguous outcome.", default=False
+                f"Cancel run {_display(run_id)}? A finished plan is withdrawn; "
+                "cancelling a write can leave an ambiguous outcome.",
+                default=False,
             ):
                 typer.echo("not cancelled", err=True)
                 raise typer.Exit(1)

@@ -846,3 +846,23 @@ def test_approve_refusal_is_a_typed_api_error() -> None:
 
     assert raised.value.code == "already-approved"
     assert raised.value.status == 409
+
+
+def test_cancel_run_accepts_the_200_of_a_withdrawn_plan() -> None:
+    """Withdrawing a finished plan is answered 200 with the run, not 202 (spec 019, User Story 4)."""
+    base = _run()
+    run = base["run"]
+    assert isinstance(run, dict)
+    withdrawn = {**base, "run": {**run, "phase": "cancelled"}}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        assert (request.method, request.url.path) == ("POST", "/runs/run-1/cancel")
+        return httpx.Response(200, json=withdrawn)
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+
+    resource = client.cancel_run("run-1", CancelRunRequest(reason="withdraw"), "key-withdraw")
+
+    assert resource.run.phase == "cancelled"

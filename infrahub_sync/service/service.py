@@ -30,7 +30,13 @@ from infrahub_sync.product_store import (
     RunFilters,
 )
 from infrahub_sync.product_store.configs import CONFIGURATION_NOT_FOUND_REASON, CONFIGURATION_VERSION_NOT_FOUND_REASON
-from infrahub_sync.product_store.models import RunApproval, already_approved_body, not_approvable_message
+from infrahub_sync.product_store.models import (
+    RUN_ALREADY_CANCELLED_MESSAGE,
+    RUN_CANCELLED_MESSAGE,
+    RunApproval,
+    already_approved_body,
+    not_approvable_message,
+)
 
 from .liveness import CancellationSelectionUnavailableError, select_cancellable_execution
 from .models import (
@@ -363,6 +369,7 @@ class RunService:
                 outcome="refused-confirmation",
             )
             raise self._error(409, "confirmation-required", "confirm_writes=true is required for apply", run_id=run_id)
+        self._refuse_cancelled(run, principal, "apply", request.reason)
         if approval_required():
             self._require_matching_approval(run, request, principal)
         self._require_supported_run_configuration(run)
@@ -391,6 +398,17 @@ class RunService:
             admit_write=True,
         )
         return await self._resume_or_replay(receipt, parameters, principal, request.reason)
+
+    def _refuse_cancelled(self, run: ProductRun, principal: Principal, operation: str, reason: str | None) -> None:
+        """Refuse to approve or apply a run in phase ``cancelled``, before any receipt is reserved.
+
+        Raises:
+            ServiceAPIError: ``409 run-cancelled``.
+        """
+        if run.phase != "cancelled":
+            return
+        self._audit(run.run_id, actor=principal.actor, operation=operation, reason=reason, outcome="refused-cancelled")
+        raise self._error(409, "run-cancelled", RUN_CANCELLED_MESSAGE, run_id=run.run_id)
 
     def _require_matching_approval(self, run: ProductRun, request: ApplyRunRequest, principal: Principal) -> None:
         """Refuse an ``apply`` whose run has no approval, or an approval of another checksum.
@@ -449,6 +467,7 @@ class RunService:
         if existing is not None and existing.state == "accepted":
             self._audit(run_id, actor=principal.actor, operation="approve", reason=request.reason, outcome="replayed")
             return self._stored_response(existing)
+        self._refuse_cancelled(run, principal, "approve", request.reason)
         self._require_approvable(run, principal, request.reason)
         plan = self._plan(run_id)
         self._require_approvable_plan(run, plan, request, principal)
@@ -490,6 +509,8 @@ class RunService:
             outcome = "accepted"
         elif content["error"]["code"] == "already-approved":
             outcome = "refused-already-approved"
+        elif content["error"]["code"] == "run-cancelled":
+            outcome = "refused-cancelled"
         else:
             outcome = "refused-not-approvable"
         self._audit(run_id, actor=principal.actor, operation="approve", reason=request.reason, outcome=outcome)
@@ -604,6 +625,17 @@ class RunService:
                 exc=exc,
             )
         if link is None:
+            if run.phase == "planned":
+                return self._withdraw_planned_run(run, request, principal, idempotency_key, receipt)
+            if run.phase == "cancelled":
+                self._audit(
+                    run_id,
+                    actor=principal.actor,
+                    operation="cancel",
+                    reason=request.reason,
+                    outcome="refused-cancelled",
+                )
+                raise self._error(409, "run-already-cancelled", RUN_ALREADY_CANCELLED_MESSAGE, run_id=run_id)
             self._audit(
                 run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="refused-terminal"
             )
@@ -760,6 +792,53 @@ class RunService:
             return self._stored_response(completed)
         self._audit(run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="accepted")
         return self._stored_response(completed)
+
+    def _withdraw_planned_run(
+        self,
+        run: ProductRun,
+        request: CancelRunRequest,
+        principal: Principal,
+        idempotency_key: str,
+        receipt: MutationReceipt | None,
+    ) -> tuple[int, dict[str, Any]]:
+        """Cancel a run whose plan finished and that has nothing running: the plan is withdrawn.
+
+        Nothing is sent to Prefect. The store re-checks the run under its write-first row lock
+        and completes the ``cancel`` receipt in the same transaction, so a retry with the same
+        key replays the stored response and a concurrent apply or approval cannot also succeed.
+        """
+        if receipt is None:
+            receipt = self._reserve_existing(
+                run,
+                principal,
+                idempotency_key,
+                operation="cancel",
+                reason=request.reason,
+                body=request.model_dump(mode="json"),
+            )
+            if receipt.state == "accepted":
+                self._audit(
+                    run.run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="replayed"
+                )
+                return self._stored_response(receipt)
+        cancelled_at = self._clock()
+        withdrawn = run.model_copy(update={"phase": "cancelled", "outcome": "cancelled", "finished_at": cancelled_at})
+        response = self._resource_with_observations(self._redacted_links(withdrawn), {}).model_dump(mode="json")
+        stored = self._projection.cancel_planned_run(
+            run.run_id, receipt, response, cancelled_at=cancelled_at, secrets=self._secrets
+        )
+        completed = self._projection.lookup_mutation(receipt.actor, receipt.key_digest).value
+        assert completed is not None  # cancel_planned_run completed this receipt or raised.
+        status, content = self._stored_response(completed)
+        if stored:
+            outcome = "accepted-withdrawn"
+        else:
+            outcome = {
+                "run-already-cancelled": "refused-cancelled",
+                "execution-terminal": "refused-terminal",
+            }.get(content["error"]["code"], "refused-run-execution-conflict")
+        self._audit(run.run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome=outcome)
+        return status, content
 
     def _raise_cancel_unavailable(
         self,

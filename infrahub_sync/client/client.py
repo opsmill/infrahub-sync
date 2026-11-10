@@ -473,9 +473,15 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         return self.approve_run(run_id, request, idempotency_key)
 
     def cancel_run(self, run_id: str, request: CancelRunRequest, idempotency_key: str) -> RunResource:
-        """Request cancellation of a run idempotently."""
+        """Request cancellation of a run idempotently.
 
-        return self._run_mutation("cancel_run", run_id, "cancel", request=request, idempotency_key=idempotency_key)
+        The service answers ``202`` when it cancels an active execution, and ``200`` when it
+        withdraws a finished plan; both return the run resource.
+        """
+
+        return self._run_mutation(
+            "cancel_run", run_id, "cancel", request=request, idempotency_key=idempotency_key, success={200, 202}
+        )
 
     def wait_for_run(
         self,
@@ -553,7 +559,14 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         return float(value)
 
     def _run_mutation(
-        self, operation: str, run_id: str, suffix: str, *, request: BaseModel, idempotency_key: str
+        self,
+        operation: str,
+        run_id: str,
+        suffix: str,
+        *,
+        request: BaseModel,
+        idempotency_key: str,
+        success: set[int] | None = None,
     ) -> RunResource:
         run_id = self._identifier(run_id, "run_id")
         return self._request_model(
@@ -561,7 +574,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             "POST",
             f"/runs/{run_id}/{suffix}",
             model=RunResource,
-            success={202},
+            success={202} if success is None else success,
             body=request,
             idempotency_key=idempotency_key,
         )

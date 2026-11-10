@@ -32,6 +32,8 @@ from infrahub_sync.product_store.bundle import (
 )
 from infrahub_sync.product_store.models import (
     DEFAULT_LIMIT,
+    RUN_ALREADY_CANCELLED_MESSAGE,
+    RUN_CANCELLED_MESSAGE,
     ArtifactReference,
     AuditEvent,
     BaselineWriteback,
@@ -600,6 +602,16 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         receipt: MutationReceipt,
         response: Mapping[str, Any],
         *,
+        updated_at: datetime,
+    ) -> bool: ...
+
+    def cancel_planned_run(
+        self,
+        run_id: str,
+        receipt: MutationReceipt,
+        response: Mapping[str, Any],
+        *,
+        cancelled_at: datetime,
         updated_at: datetime,
     ) -> bool: ...
 
@@ -2038,13 +2050,19 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         after that write becomes terminal: terminal write evidence is immutable and the
         operator's next step is a new run. A write additionally needs the run quiet — no
         other unresolved submission and no unfinished execution — so an apply cannot race
-        a verify that has reserved but not yet submitted.
+        a verify that has reserved but not yet submitted. A write is also refused once the
+        run is in phase ``cancelled``: the caller holds the same row lock as
+        ``cancel_planned_run``, so a cancel and an apply never both succeed.
         """
         cursor.execute(self._sql("SELECT 1 FROM write_admissions WHERE run_id = ?"), (run_id,))
         if cursor.fetchone() is not None:
             return True
         if not admit_write:
             return False
+        cursor.execute(self._sql("SELECT phase FROM product_runs WHERE run_id = ?"), (run_id,))
+        row = cursor.fetchone()
+        if row is not None and row[0] == "cancelled":
+            return True
         # Every stage a run arbitrates is every run mutation except cancellation, which
         # targets the execution a write already owns rather than reserving a stage.
         cursor.execute(
@@ -2126,6 +2144,89 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             connection.close()
         return stored
 
+    def cancel_planned_run(
+        self,
+        run_id: str,
+        receipt: MutationReceipt,
+        response: Mapping[str, Any],
+        *,
+        cancelled_at: datetime,
+        updated_at: datetime,
+    ) -> bool:
+        """Withdraw a finished plan: set phase ``cancelled`` and complete the cancel receipt, in one transaction.
+
+        The run's row is locked with the write-first pattern before anything is read, the same
+        lock a write admission and an approval take, so a cancel and an ``apply`` or ``approve``
+        of the run never both succeed. The run is withdrawn only while it is in phase
+        ``planned`` with no admitted write, no unresolved receipt other than a cancel, and no
+        unfinished execution. Otherwise the run is left unchanged and the receipt is completed
+        with the matching refusal: ``run-execution-conflict`` when other work holds the run,
+        ``run-already-cancelled`` for a cancelled run, ``execution-terminal`` for any other phase.
+        A retry with the same key replays what this transaction stored.
+
+        Returns:
+            Whether this call withdrew the run.
+
+        Raises:
+            ValueError: The receipt is not awaiting completion; nothing is stored.
+        """
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql("UPDATE product_runs SET run_id = run_id WHERE run_id = ?"), (run_id,))
+                cursor.execute(self._sql("SELECT phase FROM product_runs WHERE run_id = ?"), (run_id,))
+                row = cursor.fetchone()
+                refusal = self._withdrawal_refusal(cursor, run_id, receipt.receipt_id, None if row is None else row[0])
+                withdrawn = refusal is None
+                if refusal is None:
+                    cursor.execute(
+                        self._sql(
+                            "UPDATE product_runs SET phase = 'cancelled', outcome = 'cancelled', finished_at = ? "
+                            "WHERE run_id = ? AND phase = 'planned'"
+                        ),
+                        (_utc_iso(cancelled_at), run_id),
+                    )
+                    status, body = 200, response
+                else:
+                    status, body = refusal
+                self._answer_receipt_row(
+                    cursor, receipt.receipt_id, response_status=status, response_body=body, updated_at=updated_at
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return withdrawn
+
+    def _withdrawal_refusal(
+        self, cursor: _Cursor, run_id: str, receipt_id: str, phase: str | None
+    ) -> tuple[int, dict[str, Any]] | None:
+        """Return the refusal a withdrawal stores, or None when the locked run may be withdrawn."""
+        if phase is None:
+            return 404, approval_error_body(
+                404, "run-not-found", "the requested Sync run does not exist", run_id=run_id, mutation_id=receipt_id
+            )
+        if phase == "cancelled":
+            return 409, approval_error_body(
+                409, "run-already-cancelled", RUN_ALREADY_CANCELLED_MESSAGE, run_id=run_id, mutation_id=receipt_id
+            )
+        if phase != "planned":
+            return 409, approval_error_body(
+                409,
+                "execution-terminal",
+                "the service execution is already terminal",
+                run_id=run_id,
+                mutation_id=receipt_id,
+            )
+        if self._reservation_refused(cursor, run_id, receipt_id, admit_write=True):
+            return 409, _run_execution_conflict_response(run_id, receipt_id)
+        return None
+
     def _answer_receipt_row(
         self,
         cursor: _Cursor,
@@ -2160,6 +2261,10 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         if row is None:
             return 404, approval_error_body(
                 404, "run-not-found", "the requested Sync run does not exist", run_id=run_id, mutation_id=receipt_id
+            )
+        if row[0] == "cancelled":
+            return 409, approval_error_body(
+                409, "run-cancelled", RUN_CANCELLED_MESSAGE, run_id=run_id, mutation_id=receipt_id
             )
         existing = RunApproval.from_columns(row[1], row[2], row[3], row[4])
         if existing is not None:
@@ -3331,6 +3436,25 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(response), secrets))
         return self._records.record_approval(
             run_id, sanitized_approval, receipt, sanitized, updated_at=datetime.now(timezone.utc)
+        )
+
+    def cancel_planned_run(
+        self,
+        run_id: str,
+        receipt: MutationReceipt,
+        response: Mapping[str, Any],
+        *,
+        cancelled_at: datetime,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """Withdraw a finished plan with its request's secret-safe response, or store the refusal.
+
+        Returns:
+            Whether this call withdrew the run; when it did not, the receipt holds the refusal.
+        """
+        sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(response), secrets))
+        return self._records.cancel_planned_run(
+            run_id, receipt, sanitized, cancelled_at=cancelled_at, updated_at=datetime.now(timezone.utc)
         )
 
     def complete_mutation(
