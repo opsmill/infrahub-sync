@@ -305,7 +305,16 @@ def create_app(
         status, content = await service.approve_run(run_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
-    @application.post("/runs/{run_id}/cancel", status_code=202, response_model=RunResource, responses=ERROR_RESPONSES)
+    @application.post(
+        "/runs/{run_id}/cancel",
+        status_code=202,
+        response_model=RunResource,
+        responses={
+            # A run with nothing running whose plan finished is withdrawn in the request itself.
+            200: {"model": RunResource, "description": "The finished plan was withdrawn; the run is cancelled."},
+            **ERROR_RESPONSES,
+        },
+    )
     async def cancel_run(
         run_id: str,
         body: CancelRunRequest,

@@ -516,7 +516,10 @@ class RunService:
                 deletes_recorded=plan.summary.deletes_not_executed,
             ),
         ).model_dump(mode="json")
-        stored = self._projection.record_approval(run_id, approval, receipt, response, secrets=self._secrets)
+        try:
+            stored = self._projection.record_approval(run_id, approval, receipt, response, secrets=self._secrets)
+        except ValueError as refusal:
+            return self._replay_answered(receipt, principal, request.reason, refusal)
         completed = self._projection.lookup_mutation(receipt.actor, receipt.key_digest).value
         assert completed is not None  # record_approval completed this receipt or raised.
         status, content = self._stored_response(completed)
@@ -597,7 +600,13 @@ class RunService:
     async def cancel_run(  # noqa: PLR0911  # pylint: disable=too-many-branches,too-many-return-statements,too-many-statements
         self, run_id: str, request: CancelRunRequest, principal: Principal, idempotency_key: str
     ) -> tuple[int, dict[str, Any]]:
-        """Request cancellation of only the latest active service execution."""
+        """Cancel the latest active service execution, or withdraw a finished plan.
+
+        A run with an active execution has that execution cancelled through Prefect (``202``). A
+        run in phase ``planned`` with no active execution is withdrawn: its phase becomes
+        ``cancelled`` in one store transaction and nothing is sent to Prefect (``200``). A run
+        already cancelled, or in any other phase with nothing running, is refused (``409``).
+        """
         run = self._owned_run(run_id, principal, "cancel", request.reason)
         body = request.model_dump(mode="json")
         receipt = self._lookup_existing_receipt(
@@ -839,9 +848,12 @@ class RunService:
         cancelled_at = self._clock()
         withdrawn = run.model_copy(update={"phase": "cancelled", "outcome": "cancelled", "finished_at": cancelled_at})
         response = self._resource_with_observations(self._redacted_links(withdrawn), {}).model_dump(mode="json")
-        stored = self._projection.cancel_planned_run(
-            run.run_id, receipt, response, cancelled_at=cancelled_at, secrets=self._secrets
-        )
+        try:
+            stored = self._projection.cancel_planned_run(
+                run.run_id, receipt, response, cancelled_at=cancelled_at, secrets=self._secrets
+            )
+        except ValueError as refusal:
+            return self._replay_answered(receipt, principal, request.reason, refusal)
         completed = self._projection.lookup_mutation(receipt.actor, receipt.key_digest).value
         assert completed is not None  # cancel_planned_run completed this receipt or raised.
         status, content = self._stored_response(completed)
@@ -854,6 +866,28 @@ class RunService:
             }.get(content["error"]["code"], "refused-run-execution-conflict")
         self._audit(run.run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome=outcome)
         return status, content
+
+    def _replay_answered(
+        self, receipt: MutationReceipt, principal: Principal, reason: str | None, refusal: ValueError
+    ) -> tuple[int, dict[str, Any]]:
+        """Replay a receipt that another request with the same key answered first.
+
+        The store refuses to complete a receipt that is no longer awaiting completion. For an
+        approval or a withdrawal, which the service answers in the request, that happens when a
+        concurrent retry with the same key completed it first: this request returns that answer
+        instead of failing.
+
+        Raises:
+            ValueError: ``refusal``, when the receipt is still not answered: the store refused
+                for another reason.
+        """
+        completed = self._projection.lookup_mutation(receipt.actor, receipt.key_digest).value
+        if completed is None or completed.state != "accepted":
+            raise refusal
+        self._audit(
+            receipt.run_id, actor=principal.actor, operation=receipt.operation, reason=reason, outcome="replayed"
+        )
+        return self._stored_response(completed)
 
     def _raise_cancel_unavailable(
         self,

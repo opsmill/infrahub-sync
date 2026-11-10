@@ -698,6 +698,10 @@ PreWriteCheck: TypeAlias = Literal[
     "lineage",
 ]
 PRE_WRITE_CHECKS: tuple[PreWriteCheck, ...] = get_args(PreWriteCheck)
+# The name a refusal records for the check it failed on. A file check can fail under a name
+# narrower than the pre-write check that covers it (`torn_operations` and `last_changes`
+# belong to the plan files), so a failure names either vocabulary.
+CheckName: TypeAlias = VerificationCheck | PreWriteCheck
 
 
 def ordered_checks(checks: Iterable[PreWriteCheck]) -> tuple[PreWriteCheck, ...]:

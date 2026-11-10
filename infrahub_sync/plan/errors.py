@@ -22,7 +22,7 @@ from infrahub_sync.client.models import SCHEMA_CHANGED_NEXT_ACTION
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from infrahub_sync.plan.models import ApplyRecord
+    from infrahub_sync.plan.models import ApplyRecord, CheckName
 
 
 class SkippedDeleteOperation(Exception):  # noqa: N818 — a control signal, not an error
@@ -396,7 +396,7 @@ class PlanVerificationError(PlanArtifactError):
     """
 
     next_action = "Address each failed check named above; every failure carries its own next action."
-    checks: tuple[str, ...] = ()
+    checks: tuple[CheckName, ...] = ()
 
     def __init__(
         self,
@@ -404,7 +404,7 @@ class PlanVerificationError(PlanArtifactError):
         *,
         next_action: str | None = None,
         wrote: bool | None = None,
-        checks: Sequence[str] = (),
+        checks: Sequence[CheckName] = (),
     ) -> None:
         super().__init__(message, next_action=next_action, wrote=wrote)
         if checks:
@@ -497,7 +497,7 @@ LINEAGE_REFUSALS: tuple[type[PlanArtifactError | NamedLineageNodeNotFoundError],
 )
 
 
-def failed_checks(exc: BaseException) -> tuple[str, ...]:
+def failed_checks(exc: BaseException) -> tuple[CheckName, ...]:
     """The pre-write checks a refusal failed on, by name, or `()` when it names none.
 
     Follows the explicit `raise ... from` links only, so a refusal wrapped by a caller still

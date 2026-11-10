@@ -18,7 +18,7 @@ import pytest
 from pydantic import ValidationError
 from typing_extensions import LiteralString
 
-from infrahub_sync.product_store import MutationReceipt, ProductRun
+from infrahub_sync.product_store import MutationReceipt, PrefectExecutionLink, ProductRun
 from infrahub_sync.product_store.models import RunApproval
 from infrahub_sync.product_store.store import PostgreSQLRunStore, SQLiteRunStore
 from tests.product_store.postgresql_isolation import dsn_or_skip, isolated_schema
@@ -209,19 +209,19 @@ def test_invalid_approval_is_refused(overrides: dict[str, object]) -> None:
 _APPROVED_RESPONSE: dict[str, Any] = {"run": {"run_id": "run-001"}, "plan_summary": {"creates": 1}}
 
 
-def _approve_receipt(ordinal: int, *, run_id: str = "run-001") -> MutationReceipt:
+def _approve_receipt(ordinal: int, *, run_id: str = "run-001", operation: str = "approve") -> MutationReceipt:
     now = datetime(2026, 8, 8, 14, tzinfo=timezone.utc)
     return MutationReceipt(
-        receipt_id=f"m-approve-{ordinal}",
+        receipt_id=f"m-{operation}-{ordinal}",
         actor="reviewer@example.com",
-        key_digest=sha256(f"approve-key-{ordinal}".encode()).hexdigest(),
-        operation="approve",
+        key_digest=sha256(f"{operation}-key-{ordinal}".encode()).hexdigest(),
+        operation=operation,
         target_run_id=run_id,
         request_fingerprint=sha256(f"approve-body-{ordinal}".encode()).hexdigest(),
         reason="CHG-42 reviewed",
         resource_id=run_id,
         run_id=run_id,
-        prefect_key=sha256(f"prefect:approve-{ordinal}".encode()).hexdigest(),
+        prefect_key=sha256(f"prefect:{operation}-{ordinal}".encode()).hexdigest(),
         created_at=now,
         updated_at=now,
     )
@@ -337,6 +337,60 @@ def test_record_approval_refuses_a_cancelled_run_with_run_cancelled(backend: _Ba
     assert refused.response_status == 409
     assert refused.response_body is not None
     assert refused.response_body["error"]["code"] == "run-cancelled"
+
+
+def _admit_apply(store: SQLiteRunStore | PostgreSQLRunStore, *, submitted: bool) -> None:
+    """Admit one apply of ``run-001``, and append its execution when ``submitted``."""
+    admitted, created = store.reserve_mutation(_approve_receipt(8, operation="apply"), None, admit_write=True)
+    assert created
+    assert admitted.state == "reserved"
+    if submitted:
+        store.add_prefect_execution(
+            "run-001",
+            PrefectExecutionLink(
+                flow_run_id="flow-apply-1", purpose="apply", attempt=1, submitted_at=datetime.now(timezone.utc)
+            ),
+            receipt_id=admitted.receipt_id,
+        )
+
+
+def test_record_approval_refuses_a_run_with_an_unfinished_execution(backend: _Backend) -> None:
+    """No approval is stored while an execution runs: the store checks under the run's row lock."""
+    store = backend.make_store()
+    store.create(_planned_run())
+    _admit_apply(store, submitted=True)
+    receipt = _reserved(store, 1)
+
+    stored = store.record_approval(
+        "run-001", _approval(), receipt, _APPROVED_RESPONSE, updated_at=datetime.now(timezone.utc)
+    )
+
+    assert stored is False
+    loaded = store.lookup("run-001").value
+    assert loaded is not None
+    assert loaded.approval is None
+    refused = _stored_receipt(store, receipt)
+    assert refused.response_status == 409
+    assert refused.response_body is not None
+    error = refused.response_body["error"]
+    assert error["code"] == "run-not-approvable"
+    assert "apply execution is in progress" in error["message"]
+
+
+def test_record_approval_is_not_blocked_by_a_write_admitted_but_never_submitted(backend: _Backend) -> None:
+    """An apply whose submission failed is retried with its key; once approval is required, it needs one."""
+    store = backend.make_store()
+    store.create(_planned_run())
+    _admit_apply(store, submitted=False)
+
+    stored = store.record_approval(
+        "run-001", _approval(), _reserved(store, 1), _APPROVED_RESPONSE, updated_at=datetime.now(timezone.utc)
+    )
+
+    assert stored is True
+    loaded = store.lookup("run-001").value
+    assert loaded is not None
+    assert loaded.approval == _approval()
 
 
 def test_record_approval_rolls_back_when_the_receipt_cannot_be_completed(backend: _Backend) -> None:

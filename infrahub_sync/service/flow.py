@@ -48,7 +48,7 @@ from infrahub_sync.orchestration.flow import (
 )
 from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.errors import PlanSchemaChangedError, PlanVerificationError, failed_checks
-from infrahub_sync.plan.models import ApplyRecord, PlanManifest, PreWriteCheck, ordered_checks
+from infrahub_sync.plan.models import ApplyRecord, CheckName, PlanManifest, PreWriteCheck, ordered_checks
 from infrahub_sync.plan.ownership import ProvenWriteOwnership, WriteDispatchTracker
 from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import SavedPlan, resolve_run_directory
@@ -134,7 +134,7 @@ class RegisteredPlanVerificationError(PlanVerificationError, ValueError):
         recovery_action: RecoveryAction | None,
         *,
         guidance: str,
-        checks: Sequence[str] = (),
+        checks: Sequence[CheckName] = (),
     ) -> None:
         super().__init__(
             message,
@@ -295,7 +295,14 @@ def _verify_registered_apply(
         )
     manifest = parse_plan_artifact(artifact, run_id=run_id, parse_last_changes=False).manifest
     if manifest.configuration_binding != binding:
-        raise ValueError(_REGISTERED_PLAN_BINDING_MISMATCH)
+        # Named `run_binding`: the plan was written for another registered configuration than
+        # this run's, so it is not this run's plan. `verify` and `apply` name the same check.
+        raise RegisteredPlanVerificationError(
+            _REGISTERED_PLAN_BINDING_MISMATCH,
+            "rebuild",
+            guidance=RECOVERY_NEXT_ACTIONS["rebuild"],
+            checks=["run_binding"],
+        )
     if manifest.plan_checksum != expected_checksum:
         raise ValueError(_REGISTERED_PLAN_CHECKSUM_MISMATCH)
     return manifest

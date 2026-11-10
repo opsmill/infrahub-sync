@@ -2108,11 +2108,17 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
     ) -> bool:
         """Store a run's one approval and complete its request's receipt in one transaction.
 
-        The conditional update stores the approval only on a run in phase ``planned`` that
-        has none, so of two concurrent approvals exactly one stores. The loser's receipt is
-        completed with a stored refusal instead: ``already-approved`` with the approval that
-        won, or ``run-not-approvable`` when the run left phase ``planned``. Either way a retry
-        with the same key replays what this transaction stored.
+        The run's row is locked first, with the write-first pattern a write admission and a
+        withdrawal take, so the execution check and the update below see one state. The
+        conditional update stores the approval only on a run in phase ``planned`` that has none
+        and no unfinished execution, so of two concurrent approvals exactly one stores, and no
+        approval is stored while an execution such as an ``apply`` is running. A write admitted
+        but not yet submitted does not block the approval: once approval is required, retrying
+        that ``apply`` needs this approval. The loser's receipt is completed with a stored
+        refusal instead: ``already-approved`` with the approval that won, ``run-cancelled`` for
+        a withdrawn run, or ``run-not-approvable`` when an execution is unfinished or the run
+        left phase ``planned``. Either way a retry with the same key replays what this
+        transaction stored.
 
         Returns:
             Whether this call stored the approval.
@@ -2124,15 +2130,23 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         try:
             cursor = connection.cursor()
             try:
-                cursor.execute(
-                    self._sql(
-                        "UPDATE product_runs SET approved_by = ?, approved_at = ?, approved_checksum = ?, "
-                        "approval_reason = ? WHERE run_id = ? AND approved_by IS NULL AND phase = 'planned'"
-                    ),
-                    (*_approval_columns(approval), run_id),
+                cursor.execute(self._sql("UPDATE product_runs SET run_id = run_id WHERE run_id = ?"), (run_id,))
+                active_stage = self._unfinished_execution_purpose(cursor, run_id)
+                stored = False
+                if active_stage is None:
+                    cursor.execute(
+                        self._sql(
+                            "UPDATE product_runs SET approved_by = ?, approved_at = ?, approved_checksum = ?, "
+                            "approval_reason = ? WHERE run_id = ? AND approved_by IS NULL AND phase = 'planned'"
+                        ),
+                        (*_approval_columns(approval), run_id),
+                    )
+                    stored = cursor.rowcount == 1
+                status, body = (
+                    (200, response)
+                    if stored
+                    else self._approval_refusal(cursor, run_id, receipt.receipt_id, active_stage=active_stage)
                 )
-                stored = cursor.rowcount == 1
-                status, body = (200, response) if stored else self._approval_refusal(cursor, run_id, receipt.receipt_id)
                 self._answer_receipt_row(
                     cursor, receipt.receipt_id, response_status=status, response_body=body, updated_at=updated_at
                 )
@@ -2250,8 +2264,26 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             msg = f"Mutation receipt {receipt_id!r} is unavailable for completion"
             raise ValueError(msg)
 
-    def _approval_refusal(self, cursor: _Cursor, run_id: str, receipt_id: str) -> tuple[int, dict[str, Any]]:
-        """Return the status and refusal a losing approval stores, read in the losing transaction."""
+    def _unfinished_execution_purpose(self, cursor: _Cursor, run_id: str) -> str | None:
+        """Return the stage of the run's latest unfinished execution, or None when every execution finished."""
+        cursor.execute(
+            self._sql(
+                "SELECT purpose FROM prefect_executions WHERE run_id = ? AND terminal_at IS NULL "
+                "ORDER BY position DESC LIMIT 1"
+            ),
+            (run_id,),
+        )
+        row = cursor.fetchone()
+        return None if row is None else str(row[0])
+
+    def _approval_refusal(
+        self, cursor: _Cursor, run_id: str, receipt_id: str, *, active_stage: str | None = None
+    ) -> tuple[int, dict[str, Any]]:
+        """Return the status and refusal a losing approval stores, read in the losing transaction.
+
+        ``active_stage`` names the unfinished execution that refused the approval, if any; it is
+        reported before an existing approval, in the order the service checks the two.
+        """
         cursor.execute(
             self._sql(
                 "SELECT phase, approved_by, approved_at, approved_checksum, approval_reason "
@@ -2269,10 +2301,14 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 409, "run-cancelled", RUN_CANCELLED_MESSAGE, run_id=run_id, mutation_id=receipt_id
             )
         existing = RunApproval.from_columns(row[1], row[2], row[3], row[4])
-        if existing is not None:
+        if existing is not None and active_stage is None:
             return 409, already_approved_body(existing, run_id=run_id, mutation_id=receipt_id)
         return 409, approval_error_body(
-            409, "run-not-approvable", not_approvable_message(str(row[0])), run_id=run_id, mutation_id=receipt_id
+            409,
+            "run-not-approvable",
+            not_approvable_message(str(row[0]), active_stage),
+            run_id=run_id,
+            mutation_id=receipt_id,
         )
 
     def complete_mutation(

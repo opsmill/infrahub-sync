@@ -260,6 +260,11 @@ def _break_run_binding(harness: _Harness) -> None:
     harness.rewrite_manifest(run_id="another-run")
 
 
+def _break_configuration_binding(harness: _Harness) -> None:
+    # The plan names another version of the registered configuration than the run does.
+    harness.rewrite_manifest(registry_version=harness.binding[1] + 1)
+
+
 def _break_plan_checksum(harness: _Harness) -> None:
     tamper_with_operations(harness.run_dir)
 
@@ -297,28 +302,31 @@ def _break_lineage(harness: _Harness) -> None:
     harness.destination.refuse_lineage = True
 
 
-_BREAKS: dict[str, Callable[[_Harness], None]] = {
-    "run_binding": _break_run_binding,
-    "plan_checksum": _break_plan_checksum,
-    "source_snapshot": _break_source_snapshot,
-    "config_version": _break_config_version,
-    "format_version": _break_format_version,
-    "destination_schema": _break_destination_schema,
-    "destination_binding": _break_destination_binding,
-    "write_surface": _break_write_surface,
-    "planned_fields": _break_planned_fields,
-    "lineage": _break_lineage,
+# Each case: the check both stages must name, and how the fixture is broken for it.
+_BREAKS: dict[str, tuple[str, Callable[[_Harness], None]]] = {
+    "run_binding": ("run_binding", _break_run_binding),
+    "configuration_binding": ("run_binding", _break_configuration_binding),
+    "plan_checksum": ("plan_checksum", _break_plan_checksum),
+    "source_snapshot": ("source_snapshot", _break_source_snapshot),
+    "config_version": ("config_version", _break_config_version),
+    "format_version": ("format_version", _break_format_version),
+    "destination_schema": ("destination_schema", _break_destination_schema),
+    "destination_binding": ("destination_binding", _break_destination_binding),
+    "write_surface": ("write_surface", _break_write_surface),
+    "planned_fields": ("planned_fields", _break_planned_fields),
+    "lineage": ("lineage", _break_lineage),
 }
 
 
-@pytest.mark.parametrize("check", list(_BREAKS))
+@pytest.mark.parametrize("case", list(_BREAKS))
 def test_verify_and_apply_fail_on_the_same_named_check(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, check: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
     harness = _harness(tmp_path, monkeypatch)
     # Approved before the break, as an operator approves the plan they reviewed.
     approved = harness.recorded_checksum
-    _BREAKS[check](harness)
+    check, breaks = _BREAKS[case]
+    breaks(harness)
     if check != "plan_checksum":
         # A re-recorded manifest is the plan the operator would now be applying.
         approved = harness.recorded_checksum

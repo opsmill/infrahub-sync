@@ -10,7 +10,7 @@ import json
 from datetime import datetime, timezone
 from hashlib import sha256
 from itertools import count
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.product_store import (
     ExecutionMergeWriteback,
+    LookupResult,
     MutationReceipt,
     PrefectExecutionLink,
     ProductProjection,
@@ -36,11 +37,13 @@ from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
     from httpx import Response
 
     from infrahub_sync.product_store import ConfigurationVersion
+    from infrahub_sync.product_store.models import RunApproval
 
 OWNER_TOKEN = "owner-token-withdraw-0001"  # noqa: S105 - deliberate non-secret boundary canary.
 OTHER_TOKEN = "other-token-withdraw-0002"  # noqa: S105 - deliberate non-secret boundary canary.
@@ -124,8 +127,8 @@ def _api_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Api:
     return TestClient(create_app(service, resolver)), projection, orchestration, version
 
 
-def _start_execution(projection: ProductProjection, purpose: str) -> str:
-    """Submit one execution the way the service does: reserve, append, answer the receipt."""
+def _reserve_receipt(projection: ProductProjection, purpose: str) -> MutationReceipt:
+    """Reserve one stage's receipt the way the service does, before it submits anything."""
     ordinal = next(_ORDINAL)
     now = datetime.now(timezone.utc)
     reserved, _created = projection.reserve_mutation(
@@ -144,10 +147,18 @@ def _start_execution(projection: ProductProjection, purpose: str) -> str:
             updated_at=now,
         )
     )
-    flow_run_id = f"flow-{purpose}-{ordinal}"
+    return reserved
+
+
+def _start_execution(projection: ProductProjection, purpose: str) -> str:
+    """Submit one execution the way the service does: reserve, append, answer the receipt."""
+    reserved = _reserve_receipt(projection, purpose)
+    flow_run_id = f"flow-{purpose}-{reserved.receipt_id}"
     projection.add_prefect_execution(
         RUN_ID,
-        PrefectExecutionLink(flow_run_id=flow_run_id, purpose=purpose, attempt=1, submitted_at=now),
+        PrefectExecutionLink(
+            flow_run_id=flow_run_id, purpose=purpose, attempt=1, submitted_at=datetime.now(timezone.utc)
+        ),
         receipt_id=reserved.receipt_id,
     )
     projection.complete_mutation(
@@ -399,3 +410,192 @@ def test_a_run_whose_verify_execution_was_cancelled_cannot_be_applied(api: _Api)
     assert (approved.status_code, approved.json()["error"]["code"]) == (409, "run-cancelled")
     assert _receipt_for(projection, "apply-after-cancelled-verify") is None
     assert orchestration.submissions == []
+
+
+def test_the_cancel_route_documents_the_withdrawal_status(api: _Api) -> None:
+    """A withdrawal answers ``200`` and a cancelled execution ``202``; the OpenAPI document lists both."""
+    client, _projection, _orchestration, _version = api
+
+    responses = client.get("/openapi.json").json()["paths"]["/runs/{run_id}/cancel"]["post"]["responses"]
+
+    assert {"200", "202"} <= responses.keys()
+
+
+# Store refusals: the run changed after the request read it, so the store's answer, decided under
+# the run's row lock, is the response and decides the audit outcome.
+
+
+def _read_before_the_change(
+    monkeypatch: pytest.MonkeyPatch, projection: ProductProjection, snapshot: ProductRun
+) -> None:
+    """Answer the next run lookup with ``snapshot``: the run as the request read it, before another request changed it."""
+    lookup_run = projection.lookup_run
+    pending = [snapshot]
+
+    def stale_then_current(run_id: str) -> LookupResult[ProductRun]:
+        return LookupResult(value=pending.pop()) if pending else lookup_run(run_id)
+
+    monkeypatch.setattr(projection, "lookup_run", stale_then_current)
+
+
+def _as_planned(projection: ProductProjection) -> ProductRun:
+    """The stored run as a request read it while it was still in phase ``planned`` and unapproved."""
+    stored = projection.lookup_run(RUN_ID).value
+    assert stored is not None
+    return stored.model_copy(update={"phase": "planned", "approval": None})
+
+
+@pytest.mark.parametrize(
+    ("stored_phase", "approved_first", "code", "outcome"),
+    [
+        ("cancelled", False, "run-cancelled", "refused-cancelled"),
+        ("applied", False, "run-not-approvable", "refused-not-approvable"),
+        ("planned", True, "already-approved", "refused-already-approved"),
+    ],
+    ids=["withdrawn", "applied", "approved"],
+)
+def test_an_approval_the_store_refuses_is_audited_with_the_stored_refusal(  # noqa: PLR0913
+    api: _Api,
+    monkeypatch: pytest.MonkeyPatch,
+    stored_phase: str,
+    code: str,
+    outcome: str,
+    *,
+    approved_first: bool,
+) -> None:
+    client, projection, _orchestration, version = api
+    _stored_run(projection, version, phase=stored_phase)
+    snapshot = _as_planned(projection)
+    if approved_first:
+        assert _approve(client, key="approve-first").status_code == 200
+    _read_before_the_change(monkeypatch, projection, snapshot)
+
+    response = _approve(client, key="approve-late")
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == code
+    receipt = _receipt_for(projection, "approve-late")
+    assert receipt is not None
+    assert receipt.response_status == 409
+    assert _outcomes(projection, "approve")[-1] == outcome
+
+
+def test_an_approval_is_refused_when_an_execution_started_after_the_request_read_the_run(
+    api: _Api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, projection, _orchestration, version = api
+    _stored_run(projection, version)
+    snapshot = _as_planned(projection)
+    _start_execution(projection, "verify")
+    _read_before_the_change(monkeypatch, projection, snapshot)
+
+    response = _approve(client)
+
+    assert response.status_code == 409, response.text
+    error = response.json()["error"]
+    assert error["code"] == "run-not-approvable"
+    assert "verify execution is in progress" in error["message"]
+    stored = projection.lookup_run(RUN_ID).value
+    assert stored is not None
+    assert stored.approval is None
+    assert _outcomes(projection, "approve") == ["refused-not-approvable"]
+
+
+@pytest.mark.parametrize(
+    ("stored_phase", "code", "outcome"),
+    [
+        ("cancelled", "run-already-cancelled", "refused-cancelled"),
+        ("applied", "execution-terminal", "refused-terminal"),
+    ],
+    ids=["already-withdrawn", "applied"],
+)
+def test_a_withdrawal_the_store_refuses_is_audited_with_the_stored_refusal(
+    api: _Api, monkeypatch: pytest.MonkeyPatch, stored_phase: str, code: str, outcome: str
+) -> None:
+    client, projection, orchestration, version = api
+    _stored_run(projection, version, phase=stored_phase)
+    _read_before_the_change(monkeypatch, projection, _as_planned(projection))
+
+    response = _cancel(client)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == code
+    stored = projection.lookup_run(RUN_ID).value
+    assert stored is not None
+    assert stored.phase == stored_phase
+    assert orchestration.cancelled == []
+    assert _outcomes(projection, "cancel") == [outcome]
+
+
+def test_a_withdrawal_refused_because_another_stage_is_reserved_is_audited_as_a_conflict(api: _Api) -> None:
+    """A verify reserved but not yet submitted holds the run, so the store refuses the withdrawal."""
+    client, projection, orchestration, version = api
+    _stored_run(projection, version)
+    _reserve_receipt(projection, "verify")
+
+    response = _cancel(client)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "run-execution-conflict"
+    stored = projection.lookup_run(RUN_ID).value
+    assert stored is not None
+    assert stored.phase == "planned"
+    assert orchestration.cancelled == []
+    assert _outcomes(projection, "cancel") == ["refused-run-execution-conflict"]
+
+
+# Two requests with one key: the second finds the receipt already answered and replays that answer.
+
+
+def test_an_approval_whose_receipt_a_concurrent_retry_answered_first_replays_that_answer(
+    api: _Api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, projection, _orchestration, version = api
+    _stored_run(projection, version)
+    record_approval = projection.record_approval
+
+    def answered_first(
+        run_id: str,
+        approval: RunApproval,
+        receipt: MutationReceipt,
+        response: Mapping[str, Any],
+        *,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        record_approval(run_id, approval, receipt, response, secrets=secrets)  # the concurrent retry
+        return record_approval(run_id, approval, receipt, response, secrets=secrets)
+
+    monkeypatch.setattr(projection, "record_approval", answered_first)
+
+    response = _approve(client)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["run"]["approval"]["approved_by"] == "owner"
+    assert _outcomes(projection, "approve") == ["replayed"]
+
+
+def test_a_withdrawal_whose_receipt_a_concurrent_retry_answered_first_replays_that_answer(
+    api: _Api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, projection, _orchestration, version = api
+    _stored_run(projection, version)
+    cancel_planned_run = projection.cancel_planned_run
+
+    def answered_first(
+        run_id: str,
+        receipt: MutationReceipt,
+        response: Mapping[str, Any],
+        *,
+        cancelled_at: datetime,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        cancel_planned_run(run_id, receipt, response, cancelled_at=cancelled_at, secrets=secrets)  # the retry
+        return cancel_planned_run(run_id, receipt, response, cancelled_at=cancelled_at, secrets=secrets)
+
+    monkeypatch.setattr(projection, "cancel_planned_run", answered_first)
+
+    response = _cancel(client)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["run"]["phase"] == "cancelled"
+    assert _outcomes(projection, "cancel") == ["replayed"]
