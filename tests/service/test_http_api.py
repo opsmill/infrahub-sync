@@ -9,9 +9,9 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from importlib.metadata import version as installed_version
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, cast, get_args
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
@@ -20,6 +20,7 @@ pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
 pytest.importorskip("fastapi")
 
+from diffsync import Adapter, DiffSyncModel
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from prefect.client.schemas.responses import (
@@ -39,18 +40,23 @@ from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.validation import credential_namespace_finding
 from infrahub_sync.plan.models import PlanManifest
 from infrahub_sync.plan.review import SavedPlan
+from infrahub_sync.potenda import Potenda
 from infrahub_sync.product_store import (
+    AuditEvent,
     ConfigurationVersion,
     ExecutionMergeWriteback,
     PrefectExecutionLink,
+    PrimaryResource,
     ProductProjection,
     ProductRun,
+    RelatedResource,
     WriteAdmissionConflictError,
     local_product_projection,
 )
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
+from infrahub_sync.service.liveness import LivenessPolicy, RunLivenessReconciler
 from infrahub_sync.service.models import (
     ApplyRunRequest,
     CreateRunRequest,
@@ -66,12 +72,16 @@ from infrahub_sync.service.orchestration import (
     Observation,
     PoolStatus,
     PrefectOrchestration,
+    RunLogRead,
     Submission,
 )
+from infrahub_sync.service.read_progress import StoreSideReadObserver, record_waiting
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService, ServiceAPIError
 from tests.service.execution_fixtures import append_execution
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from httpx import Response
     from opsmill_prefect_extras.executors import RemoteExecutionClient
     from prefect.client.schemas.objects import State
@@ -81,6 +91,13 @@ OTHER_TOKEN = "other-token-canary-0002"  # noqa: S105 - deliberate non-secret bo
 ADMIN_TOKEN = "admin-token-canary-0003"  # noqa: S105 - deliberate non-secret boundary canary.
 RAW_KEY = "client-idempotency-key-canary"
 AUTH = {"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": RAW_KEY}
+_EMPTY_SIDE_READ = {
+    "started_at": None,
+    "ended_at": None,
+    "read_mode": None,
+    "nodes_by_kind": {},
+    "error_class": None,
+}
 _LEGACY_EXECUTION_FIELDS = {
     "flow_run_id",
     "deployment_id",
@@ -167,6 +184,10 @@ class _FakeOrchestration:
             msg = "response lost after Prefect accepted cancellation token-canary"
             raise TimeoutError(msg)
         return CancellationResult(acknowledged=True)
+
+    async def read_logs(self, flow_run_ids: Sequence[str]) -> RunLogRead:  # noqa: PLR6301
+        del flow_run_ids
+        return RunLogRead(expired=False)
 
 
 @pytest.fixture
@@ -1804,11 +1825,13 @@ def test_confirmation_schema_errors_and_openapi_contract(
 
     paths = openapi["paths"]
     assert set(paths) == {
+        "/events",
         "/me",
         "/runs",
         "/runs/{run_id}",
         "/runs/{run_id}/plan",
         "/runs/{run_id}/results",
+        "/runs/{run_id}/logs",
         "/runs/{run_id}/artifacts",
         "/runs/{run_id}/artifacts/{artifact_id}",
         "/runs/{run_id}/verify",
@@ -1850,6 +1873,7 @@ def test_version_is_unauthenticated_and_declares_the_unstable_api(
 
 def test_cancelling_a_claimed_write_answers_with_durable_ambiguity(
     service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A worker already holding the write may have reached the destination.
 
@@ -1870,6 +1894,7 @@ def test_cancelling_a_claimed_write_answers_with_durable_ambiguity(
     apply_flow_run_id = applied.json()["orchestration"][-1]["flow_run_id"]
     assert projection.claim_execution(run_id, apply_flow_run_id, worker_id=_PLAN_WORKER_ID)
     orchestration.observations[apply_flow_run_id] = Observation(available=True, state="running")
+    _refuse_record_audit_for(monkeypatch, projection, "refused-terminal")
 
     cancelled = client.post(
         f"/runs/{run_id}/cancel",
@@ -1883,6 +1908,11 @@ def test_cancelling_a_claimed_write_answers_with_durable_ambiguity(
     resource = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {OWNER_TOKEN}"}).json()
     assert resource["run"]["reconciliation_required"] is True
     assert resource["run"]["outcome"] == "ambiguous"
+    # FR-014: the refusal event is saved once, with the refusal it records.
+    cancel_events = [event for event in projection.audit_events(run_id) if event.operation == "cancel"]
+    assert [(event.event_type, event.outcome) for event in cancel_events] == [
+        ("infrahub_sync.run.refused", "refused-terminal")
+    ]
 
 
 def test_a_run_that_never_wrote_reports_no_reconciliation_requirement(
@@ -2486,3 +2516,328 @@ def test_the_token_check_refuses_an_invalid_token_and_records_the_refusal(
     assert response.headers["WWW-Authenticate"] == "Bearer"
     events = projection.audit_events()
     assert [(event.actor, event.outcome) for event in events] == [("unauthenticated", "refused-authentication")]
+
+
+def _typed(projection: ProductProjection, run_id: str | None = None) -> list[tuple[str | None, str, str, str]]:
+    return [
+        (event.event_type, event.operation, event.outcome, event.actor) for event in projection.audit_events(run_id)
+    ]
+
+
+def _refuse_record_audit_for(monkeypatch: pytest.MonkeyPatch, projection: ProductProjection, outcome: str) -> None:
+    """Fail any event with ``outcome`` written apart from its decision, so it must share the decision's transaction."""
+    record_audit = projection.record_audit
+
+    def guarded(event: AuditEvent, *, secrets: tuple[str, ...] = ()) -> None:
+        if event.outcome == outcome:
+            msg = f"the {outcome} event was written outside the decision's transaction"
+            raise AssertionError(msg)
+        record_audit(event, secrets=secrets)
+
+    monkeypatch.setattr(projection, "record_audit", guarded)
+
+
+def test_an_accepted_plan_records_a_run_accepted_event_with_its_resources(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FR-012 and FR-014: the accepted event names the run, account, configuration, version and branch."""
+    client, projection, _orchestration = service_api
+    version = client.app.state.run_binding
+    _refuse_record_audit_for(monkeypatch, projection, "accepted")
+
+    created = _create(client)
+
+    assert created.status_code == 202
+    run_id = created.json()["run"]["run_id"]
+    run = projection.lookup_run(run_id).value
+    assert run is not None
+    assert run.destination_branch is not None
+    (event,) = projection.audit_events(run_id)
+    assert (event.event_type, event.operation, event.outcome) == ("infrahub_sync.run.accepted", "plan", "accepted")
+    assert event.primary_resource == PrimaryResource(kind="run", id=run_id)
+    assert (event.config_id, event.registry_version, event.branch) == (
+        version.config_id,
+        version.registry_version,
+        run.destination_branch,
+    )
+    assert event.related == (
+        RelatedResource(kind="account", id="owner"),
+        RelatedResource(kind="config", id=version.config_id),
+        RelatedResource(kind="config_version", id=f"{version.config_id}@{version.registry_version}"),
+        RelatedResource(kind="branch", id=run.destination_branch),
+    )
+
+
+def test_a_replayed_request_records_a_run_replayed_event(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """FR-012: answering from the stored response records `run.replayed`."""
+    client, projection, _orchestration = service_api
+    run_id = _create(client).json()["run"]["run_id"]
+
+    assert _create(client).status_code == 202
+
+    assert _typed(projection, run_id) == [
+        ("infrahub_sync.run.accepted", "plan", "accepted", "owner"),
+        ("infrahub_sync.run.replayed", "plan", "replayed", "owner"),
+    ]
+    assert projection.audit_events(run_id)[-1].related[0] == RelatedResource(kind="account", id="owner")
+
+
+def test_every_refusal_except_authentication_records_a_run_refused_event(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """FR-012: each `refused-*` outcome is typed `run.refused`; a refused token gets no type."""
+    client, projection, _orchestration = service_api
+    run_id = _create(client).json()["run"]["run_id"]
+    other = {"Authorization": f"Bearer {OTHER_TOKEN}", "Idempotency-Key": "other-verify"}
+    owner = {"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": "owner-apply"}
+
+    assert client.post(f"/runs/{run_id}/verify", headers=other, json={"reason": "not mine"}).status_code == 403
+    apply_body = {"expected_checksum": "a" * 64, "reason": "no confirmation"}
+    assert client.post(f"/runs/{run_id}/apply", headers=owner, json=apply_body).status_code == 409
+    assert _create(client, reason="same key, different content").status_code == 409
+    assert client.get(f"/runs/{run_id}", headers={"Authorization": "Bearer not-a-token"}).status_code == 401
+
+    refusals = [event for event in projection.audit_events() if event.outcome.startswith("refused-")]
+    assert {event.outcome for event in refusals} == {
+        "refused-authorization",
+        "refused-confirmation",
+        "refused-idempotency",
+        "refused-authentication",
+    }
+    for event in refusals:
+        expected = None if event.outcome == "refused-authentication" else "infrahub_sync.run.refused"
+        assert event.event_type == expected, event.outcome
+    authorization = next(event for event in refusals if event.outcome == "refused-authorization")
+    assert authorization.primary_resource == PrimaryResource(kind="run", id=run_id)
+    assert authorization.related[0] == RelatedResource(kind="account", id="other")
+
+
+def test_an_orchestration_failure_records_a_run_unavailable_event(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """FR-012: Prefect not confirming the submission records `run.unavailable`."""
+    client, projection, orchestration = service_api
+    orchestration.fail_after_accept_once = True
+
+    response = _create(client)
+
+    assert response.status_code == 503
+    run_id = response.json()["error"]["run_id"]
+    assert _typed(projection, run_id) == [("infrahub_sync.run.unavailable", "plan", "unavailable", "owner")]
+
+
+def test_an_accepted_cancel_and_the_recorded_cancellation_record_their_events(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FR-012 and FR-014: the 202 and the cancellation each write their event in the same transaction."""
+    client, projection, orchestration = service_api
+    version = client.app.state.run_binding
+    run_id = _create(client).json()["run"]["run_id"]
+    _refuse_record_audit_for(monkeypatch, projection, "accepted")
+    _refuse_record_audit_for(monkeypatch, projection, "cancelled")
+    headers = {"Authorization": f"Bearer {ADMIN_TOKEN}", "Idempotency-Key": "admin-cancel"}
+
+    assert client.post(f"/runs/{run_id}/cancel", headers=headers, json={"reason": "stop"}).status_code == 202
+    run = projection.lookup_run(run_id).value
+    assert run is not None
+    flow_run_id = run.prefect_executions[-1].flow_run_id
+    orchestration.observations[flow_run_id] = Observation(available=True, state="cancelled")
+    reconciler = RunLivenessReconciler(projection, orchestration, LivenessPolicy(300, 30, 5), "pool")
+    asyncio.run(reconciler.reconcile_run(run_id))
+
+    assert _typed(projection, run_id) == [
+        ("infrahub_sync.run.accepted", "plan", "accepted", "owner"),
+        ("infrahub_sync.run.accepted", "cancel", "accepted", "admin"),
+        ("infrahub_sync.run.cancelled", "cancel", "cancelled", "admin"),
+    ]
+    cancelled = projection.audit_events(run_id)[-1]
+    assert cancelled.primary_resource == PrimaryResource(kind="run", id=run_id)
+    assert RelatedResource(kind="config_version", id=f"{version.config_id}@{version.registry_version}") in (
+        cancelled.related
+    )
+
+
+def test_an_interrupted_execution_records_a_run_failed_event_with_its_verdict(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FR-012a and FR-014: a claimed execution that ended without its worker records `run.failed`."""
+    client, projection, orchestration = service_api
+    run_id = _create(client).json()["run"]["run_id"]
+    run = projection.lookup_run(run_id).value
+    assert run is not None
+    flow_run_id = run.prefect_executions[-1].flow_run_id
+    assert projection.claim_execution(run_id, flow_run_id, worker_id=_PLAN_WORKER_ID)
+    orchestration.observations[flow_run_id] = Observation(available=True, state="crashed")
+    _refuse_record_audit_for(monkeypatch, projection, "ambiguous")
+    reconciler = RunLivenessReconciler(projection, orchestration, LivenessPolicy(300, 30, 5), "pool")
+
+    asyncio.run(reconciler.reconcile_run(run_id))
+
+    assert _typed(projection, run_id) == [
+        ("infrahub_sync.run.accepted", "plan", "accepted", "owner"),
+        ("infrahub_sync.run.failed", "plan", "ambiguous", "owner"),
+    ]
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert stored.prefect_executions[-1].terminal_state == "interrupted"
+
+
+# --- FR-006: the 503 messages name the orchestrator, not Prefect (T025) ----------------------
+
+
+def test_an_unconfirmed_submission_names_the_orchestrator(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, _projection, orchestration = service_api
+    orchestration.fail_after_accept_once = True
+
+    response = _create(client, key="unconfirmed-submission")
+
+    assert response.status_code == 503
+    message = response.json()["error"]["message"]
+    assert message == "the orchestrator could not confirm service submission (TimeoutError)"
+    assert "Prefect" not in message
+
+
+@pytest.mark.parametrize("failure", ["not-acknowledged", "transport-error"])
+def test_an_unconfirmed_cancellation_names_the_orchestrator(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration], failure: str
+) -> None:
+    client, _projection, orchestration = service_api
+    run_id = _create(client).json()["run"]["run_id"]
+    if failure == "not-acknowledged":
+        orchestration.cancel_failure = True
+    else:
+        orchestration.cancel_exception = True
+
+    response = client.post(
+        f"/runs/{run_id}/cancel",
+        headers={**AUTH, "Idempotency-Key": f"unconfirmed-cancel-{failure}"},
+        json={"reason": "stop the run"},
+    )
+
+    assert response.status_code == 503
+    message = response.json()["error"]["message"]
+    assert message == "the orchestrator could not confirm the cancellation request"
+    assert "Prefect" not in message
+
+
+# --- spec 018 T014: each orchestration entry returns its read state ---------------------------
+
+_READ_CANARY = "db.internal.example:5432 password=ZZ-HTTP-READ-CANARY"
+
+
+class _ReadSite(DiffSyncModel):
+    _modelname = "LocationSite"
+    _identifiers = ("name",)
+    _attributes = ()
+    name: str
+
+
+class _ReadDevice(DiffSyncModel):
+    _modelname = "DcimDevice"
+    _identifiers = ("name",)
+    _attributes = ()
+    name: str
+
+
+class _ReadAdapter(Adapter):
+    """A DiffSync adapter whose read can be paused, then made to fail with secret text."""
+
+    LocationSite = _ReadSite
+    DcimDevice = _ReadDevice
+    top_level: ClassVar[list[str]] = []
+
+    def __init__(self, *, sites: int = 0, devices: int = 0, gate: Event | None = None) -> None:
+        super().__init__()
+        self._sites = sites
+        self._devices = devices
+        self._gate = gate
+        self.entered = Event()
+
+    def load(self) -> None:
+        self.entered.set()
+        if self._gate is not None:
+            assert self._gate.wait(timeout=10)
+            raise ConnectionError(_READ_CANARY)
+        for index in range(self._sites):
+            self.add(_ReadSite(name=f"site-{index}"))
+        for index in range(self._devices):
+            self.add(_ReadDevice(name=f"device-{index}"))
+
+
+def _reads(client: TestClient, run_id: str) -> dict[str, Any] | None:
+    response = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {OWNER_TOKEN}"})
+    assert response.status_code == 200
+    assert _READ_CANARY not in response.text
+    return response.json()["orchestration"][0]["reads"]
+
+
+def test_run_response_returns_each_sides_read_while_the_destination_read_is_paused(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, projection, _orchestration = service_api
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    flow_run_id = created.json()["orchestration"][0]["flow_run_id"]
+    record_waiting(projection, run_id, flow_run_id)
+    assert _reads(client, run_id) == {
+        "source": {**_EMPTY_SIDE_READ, "state": "waiting"},
+        "destination": {**_EMPTY_SIDE_READ, "state": "waiting"},
+    }
+
+    gate = Event()
+    destination = _ReadAdapter(gate=gate)
+    engine = Potenda(
+        source=_ReadAdapter(sites=2, devices=3),
+        destination=destination,
+        config=None,  # ty: ignore[invalid-argument-type]
+        top_level=["LocationSite", "DcimDevice"],
+        concurrent_load=False,
+    )
+    engine.read_observer = StoreSideReadObserver(projection, run_id, flow_run_id)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(engine.load_both_sides)
+        assert destination.entered.wait(timeout=10)
+
+        paused = _reads(client, run_id)
+
+        gate.set()
+        with pytest.raises(ValueError, match="An error occurred while loading"):
+            future.result(timeout=10)
+
+    assert paused is not None
+    source, reading = paused["source"], paused["destination"]
+    assert source["state"] == "succeeded"
+    assert source["read_mode"] == "full"
+    assert source["nodes_by_kind"] == {"DcimDevice": 3, "LocationSite": 2}
+    assert source["error_class"] is None
+    assert datetime.fromisoformat(source["ended_at"]) >= datetime.fromisoformat(source["started_at"])
+    assert reading["state"] == "reading"
+    assert reading["started_at"] is not None
+    assert {key: reading[key] for key in ("ended_at", "read_mode", "nodes_by_kind", "error_class")} == {
+        "ended_at": None,
+        "read_mode": None,
+        "nodes_by_kind": {},
+        "error_class": None,
+    }
+
+    ended = _reads(client, run_id)
+    assert ended is not None
+    assert ended["destination"]["state"] == "failed"
+    assert ended["destination"]["error_class"] == "ConnectionError"
+    assert ended["destination"]["nodes_by_kind"] == {}
+
+
+def test_an_execution_recorded_before_the_read_state_returns_reads_null(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, _projection, _orchestration = service_api
+    run_id = _create(client).json()["run"]["run_id"]
+
+    assert _reads(client, run_id) is None

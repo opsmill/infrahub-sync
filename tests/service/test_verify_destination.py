@@ -24,6 +24,8 @@ import pytest
 pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
 
+from prefect.client.schemas.objects import State
+
 from infrahub_sync.adapters.infrahub import InfrahubAdapter
 from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.configuration.runtime import resolve_runtime_instance
@@ -212,8 +214,7 @@ def _harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, purpose: str = 
     def build_runtime_model_plan(**kwargs: Any) -> RuntimeModelPlan:  # noqa: ANN401
         assert kwargs["scope"] == "destination", "verify and apply build the destination scope only"
         if harness.schema_unavailable:
-            msg = f"destination schema unavailable at {RECORDED_URL}"
-            raise DestinationSchemaUnavailableError(msg, reason="timeout")
+            raise DestinationSchemaUnavailableError(reason="timeout", branch="main")
         return RuntimeModelPlan(
             branch="main",
             schema_fingerprint=harness.live_fingerprint,
@@ -241,12 +242,12 @@ def _execute(harness: _Harness, stage: Literal["verify", "apply"], *, approved: 
             None,
             approved if stage == "apply" else None,
             confirm_writes=stage == "apply",
-            run_logger=service_flow.logger,
             secrets=[],
             config_directory=str(harness.tmp_path),
             projection=harness.projection,
             tracker=WriteDispatchTracker(),
             scratch=scratch,
+            flow_run_id=FLOW_RUN_ID,
         )
     return result
 
@@ -365,7 +366,7 @@ def _stored(harness: _Harness) -> ProductRun:
     return stored
 
 
-def _verify(harness: _Harness) -> dict[str, Any]:
+def _verify(harness: _Harness) -> Any:  # noqa: ANN401 - a result dict, or a Failed state
     publish_plan_directory(harness.projection, RUN_ID, harness.run_dir)
     return service_sync_run.fn(RUN_ID, "verify", *harness.binding)
 
@@ -406,9 +407,11 @@ def test_an_unreachable_destination_fails_and_reports_no_destination_check(
     harness = _harness(tmp_path, monkeypatch)
     harness.schema_unavailable = True
 
-    with pytest.raises(RuntimeError) as failure:
-        _verify(harness)
+    # A recognized failure ends the flow run Failed with its cause, rather than raising (spec 017).
+    state = _verify(harness)
 
+    assert isinstance(state, State)
+    assert state.is_failed()
     stored = _stored(harness)
     recorded = stored.results["verify_failure"]
     assert recorded["error_type"] == "DestinationSchemaUnavailableError"
@@ -416,7 +419,7 @@ def test_an_unreachable_destination_fails_and_reports_no_destination_check(
     assert stored.phase == "planned"
     for canary in (NETBOX_CANARY, INFRAHUB_CANARY):
         assert canary not in json.dumps(stored.results)
-        assert canary not in str(failure.value)
+        assert canary not in str(state.message)
 
 
 def test_verify_takes_no_configuration_write_guard(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

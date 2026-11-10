@@ -25,8 +25,12 @@ from infrahub_sync.client import (
     ConfigurationPage,
     ConfigurationVersionPage,
     CreateRunRequest,
+    EventPage,
+    EventResource,
     PrincipalResource,
     ProtocolError,
+    RunLogLine,
+    RunLogPage,
     RunPage,
     SyncClient,
     TransportError,
@@ -866,3 +870,265 @@ def test_cancel_run_accepts_the_200_of_a_withdrawn_plan() -> None:
     resource = client.cancel_run("run-1", CancelRunRequest(reason="withdraw"), "key-withdraw")
 
     assert resource.run.phase == "cancelled"
+
+
+def _event_item(event_id: str) -> dict[str, object]:
+    return {
+        "event_id": event_id,
+        "event_type": "infrahub_sync.run.planned",
+        "occurred_at": NOW,
+        "actor": "alice",
+        "operation": "plan",
+        "outcome": "succeeded",
+        "reason": None,
+        "primary_resource": {"kind": "run", "id": "run-1"},
+        "related": [{"kind": "account", "id": "alice"}, {"kind": "branch", "id": "main"}],
+    }
+
+
+def _events_client(pages: dict[str, object], requests: list[httpx.Request]) -> SyncClient:
+    """Answer each event-list request with the page keyed by its ``offset`` query parameter."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        requests.append(request)
+        return httpx.Response(200, json=pages[request.url.params.get("offset", "0")])
+
+    return SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+
+
+def test_list_events_sends_the_contract_query_and_parses_the_page() -> None:
+    requests: list[httpx.Request] = []
+    page_body = {"items": [_event_item("e-1")], "limit": 10, "offset": 5, "has_more": True}
+    client = _events_client({"5": page_body}, requests)
+    since = datetime(2026, 11, 6, 10, tzinfo=timezone.utc)
+    until = datetime(2026, 11, 6, 11, tzinfo=timezone.utc)
+
+    page = client.list_events(
+        run_id="run-1",
+        config_id="cfg",
+        event_types=("infrahub_sync.run.accepted", "infrahub_sync.run.planned"),
+        related=(("account", "alice"), ("branch", "main")),
+        since=since,
+        until=until,
+        limit=10,
+        offset=5,
+    )
+
+    assert isinstance(page, EventPage)
+    assert (page.limit, page.offset, page.has_more) == (10, 5, True)
+    (event,) = page.items
+    assert isinstance(event, EventResource)
+    assert (event.event_id, event.event_type, event.occurred_at) == (
+        "e-1",
+        "infrahub_sync.run.planned",
+        datetime(2026, 8, 30, 12, tzinfo=timezone.utc),
+    )
+    assert event.primary_resource is not None
+    assert (event.primary_resource.kind, event.primary_resource.id) == ("run", "run-1")
+    assert [(item.kind, item.id) for item in event.related] == [("account", "alice"), ("branch", "main")]
+    assert requests[0].url.path == "/events"
+    assert requests[0].url.params.multi_items() == [
+        ("run_id", "run-1"),
+        ("config_id", "cfg"),
+        ("event_type", "infrahub_sync.run.accepted"),
+        ("event_type", "infrahub_sync.run.planned"),
+        ("related", "account:alice"),
+        ("related", "branch:main"),
+        ("since", since.isoformat()),
+        ("until", until.isoformat()),
+        ("limit", "10"),
+        ("offset", "5"),
+    ]
+    assert requests[0].headers["Authorization"] == f"Bearer {TOKEN}"
+
+
+def test_list_events_without_arguments_sends_no_query() -> None:
+    requests: list[httpx.Request] = []
+    client = _events_client({"0": {"items": [], "limit": 50, "offset": 0, "has_more": False}}, requests)
+
+    assert client.list_events() == EventPage(items=(), limit=50, offset=0, has_more=False)
+    assert requests[0].url.query == b""
+
+
+def test_iter_events_follows_offset_until_has_more_is_false() -> None:
+    requests: list[httpx.Request] = []
+    pages: dict[str, object] = {
+        "0": {"items": [_event_item("e-1"), _event_item("e-2")], "limit": 2, "offset": 0, "has_more": True},
+        "2": {"items": [_event_item("e-3"), _event_item("e-4")], "limit": 2, "offset": 2, "has_more": True},
+        "4": {"items": [_event_item("e-5")], "limit": 2, "offset": 4, "has_more": False},
+    }
+    client = _events_client(pages, requests)
+
+    events = list(client.iter_events(run_id="run-1", limit=2))
+
+    assert [event.event_id for event in events] == ["e-1", "e-2", "e-3", "e-4", "e-5"]
+    assert [request.url.params.get("offset") for request in requests] == [None, "2", "4"]
+    assert all(request.url.params["run_id"] == "run-1" for request in requests)
+    assert all(request.url.params["limit"] == "2" for request in requests)
+
+
+def test_iter_events_refuses_a_page_that_does_not_advance() -> None:
+    requests: list[httpx.Request] = []
+    client = _events_client({"0": {"items": [], "limit": 50, "offset": 0, "has_more": True}}, requests)
+
+    with pytest.raises(ProtocolError) as raised:
+        list(client.iter_events())
+    assert raised.value.operation == "list_events"
+
+
+@pytest.mark.parametrize(
+    ("call", "argument"),
+    [
+        (lambda client: client.list_events(run_id="bad id"), "run_id"),
+        (lambda client: client.list_events(config_id="-bad"), "config_id"),
+        (lambda client: client.list_events(event_types=("",)), "event_types"),
+        (lambda client: client.list_events(related=(("account", ""),)), "related"),
+        (lambda client: client.list_events(since=datetime(2026, 11, 6)), "since"),  # noqa: DTZ001 - deliberately naive.
+        (lambda client: client.list_events(until=datetime(2026, 11, 6)), "until"),  # noqa: DTZ001 - deliberately naive.
+        (lambda client: client.list_events(limit=0), "limit"),
+        (lambda client: client.list_events(limit=201), "limit"),
+        (lambda client: client.list_events(offset=-1), "offset"),
+        (lambda client: client.list_events(offset=True), "offset"),
+    ],
+)
+def test_event_list_arguments_are_refused_before_any_request(
+    call: Callable[[SyncClient], object], argument: str
+) -> None:
+    requests: list[httpx.Request] = []
+    client = _events_client({}, requests)
+
+    with pytest.raises(ClientInputError) as raised:
+        call(client)
+    assert raised.value.argument == argument
+    assert requests == []
+
+
+def _log_page(**extra: object) -> dict[str, object]:
+    return {
+        "run_id": "run-1",
+        "items": [
+            {
+                "stage": "plan",
+                "attempt": 1,
+                "timestamp": NOW,
+                "level": "ERROR",
+                "source": "infrahub_sync.service.flow",
+                "message": "Branch `demo` does not exist in Infrahub.",
+            }
+        ],
+        "limit": 50,
+        "offset": 3,
+        "has_more": False,
+        "run_phase": "plan-failed",
+        **extra,
+    }
+
+
+def _logs_client(response: httpx.Response, requests: list[httpx.Request]) -> SyncClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        requests.append(request)
+        return response
+
+    return SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+
+
+def test_read_run_logs_sends_the_contract_query_and_parses_the_page() -> None:
+    requests: list[httpx.Request] = []
+    client = _logs_client(httpx.Response(200, json=_log_page()), requests)
+
+    page = client.read_run_logs("run-1", stage="plan", limit=50, offset=3)
+
+    assert isinstance(page, RunLogPage)
+    assert (page.run_id, page.limit, page.offset, page.has_more, page.run_phase) == (
+        "run-1",
+        50,
+        3,
+        False,
+        "plan-failed",
+    )
+    (line,) = page.items
+    assert isinstance(line, RunLogLine)
+    assert (line.stage, line.attempt, line.level, line.source) == ("plan", 1, "ERROR", "infrahub_sync.service.flow")
+    assert line.timestamp == datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
+    assert requests[0].url.path == "/runs/run-1/logs"
+    assert requests[0].url.params.multi_items() == [("stage", "plan"), ("limit", "50"), ("offset", "3")]
+
+
+def test_a_log_line_keeps_the_indentation_of_its_message() -> None:
+    """A table or traceback line the service served keeps its leading and trailing spaces."""
+    message = "    | Device | created |  "
+    item = {**cast("list[dict[str, object]]", _log_page()["items"])[0], "message": message}
+    client = _logs_client(httpx.Response(200, json=_log_page(items=[item])), [])
+
+    (line,) = client.read_run_logs("run-1").items
+
+    assert line.message == message
+
+
+def test_the_service_emits_a_log_line_with_its_indentation() -> None:
+    pytest.importorskip("fastapi")
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.service.models import public_run_log_page
+
+    message = "    | Device | created |  "
+    line = RunLogLine.model_validate({**cast("list[dict[str, object]]", _log_page()["items"])[0], "message": message})
+
+    page = public_run_log_page("run-1", (line,), limit=50, offset=0, has_more=False, run_phase="planned")
+
+    assert page.items[0].message == message
+
+
+def test_read_run_logs_without_arguments_sends_no_query() -> None:
+    requests: list[httpx.Request] = []
+    client = _logs_client(httpx.Response(200, json=_log_page(items=[], offset=0, limit=200)), requests)
+
+    page = client.read_run_logs("run-1")
+
+    assert page.items == ()
+    assert requests[0].url.query == b""
+
+
+@pytest.mark.parametrize(("status", "code"), [(410, "log-expired"), (503, "log-unavailable"), (404, "run-not-found")])
+def test_read_run_logs_maps_refusals_to_api_errors(status: int, code: str) -> None:
+    body = {
+        "error": {
+            "code": code,
+            "message": "the log of this run has expired",
+            "status": status,
+            "run_id": "run-1",
+            "mutation_id": None,
+        }
+    }
+    client = _logs_client(httpx.Response(status, json=body), [])
+
+    with pytest.raises(APIError) as raised:
+        client.read_run_logs("run-1")
+
+    assert (raised.value.status, raised.value.code, raised.value.run_id) == (status, code, "run-1")
+
+
+@pytest.mark.parametrize(
+    ("call", "argument"),
+    [
+        (lambda client: client.read_run_logs("bad id"), "run_id"),
+        (lambda client: client.read_run_logs("run-1", stage="deploy"), "stage"),
+        (lambda client: client.read_run_logs("run-1", limit=0), "limit"),
+        (lambda client: client.read_run_logs("run-1", limit=1001), "limit"),
+        (lambda client: client.read_run_logs("run-1", offset=-1), "offset"),
+        (lambda client: client.read_run_logs("run-1", offset=True), "offset"),
+    ],
+)
+def test_read_run_logs_arguments_are_refused_before_any_request(
+    call: Callable[[SyncClient], object], argument: str
+) -> None:
+    requests: list[httpx.Request] = []
+    client = _logs_client(httpx.Response(200, json=_log_page()), requests)
+
+    with pytest.raises(ClientInputError) as raised:
+        call(client)
+    assert raised.value.argument == argument
+    assert requests == []

@@ -50,6 +50,13 @@ _AUTHENTICATION_INTRO = (
     "command; the CLI reads it from the environment and never accepts it as a flag. See\n"
     "[Sync HTTP API — Configure principals](./sync-http-api.mdx#configure-principals) for how\n"
     "tokens are issued.\n"
+    "\n"
+    "When the Sync API address is missing or invalid, or the token is missing, a command prints\n"
+    "`error: client-input` and `argument: service_url` or `argument: token` on standard error,\n"
+    "then a `hint:` line. An address is invalid when it does not use `http` or `https`, has no\n"
+    "host, or carries a user name, a password, a query string or a fragment. For the address,\n"
+    "set `INFRAHUB_SYNC_API_URL` or pass `--api-url` with the absolute URL of the Sync API; for\n"
+    "the token, set `INFRAHUB_SYNC_API_TOKEN`. Other `client-input` errors print no `hint:` line.\n"
 )
 
 

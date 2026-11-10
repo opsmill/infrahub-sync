@@ -16,7 +16,7 @@ from math import isfinite
 from pathlib import Path, PurePosixPath
 from tempfile import mkdtemp
 from time import sleep
-from typing import Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from uuid import UUID
 
 from pydantic import TypeAdapter
@@ -43,6 +43,8 @@ from infrahub_sync.product_store.models import (
     ConfigurationVersion,
     ConfigurationVersionPage,
     ConfigurationVersionSummary,
+    EventFilters,
+    EventPage,
     ExecutionFinishWriteback,
     ExecutionMergeWriteback,
     ExecutionWriteback,
@@ -58,6 +60,10 @@ from infrahub_sync.product_store.models import (
     approval_error_body,
     not_approvable_message,
 )
+
+if TYPE_CHECKING:
+    # Typing only: importing the engine package at runtime would load the whole engine into the store.
+    from infrahub_sync.potenda.read_progress import Side
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +99,7 @@ CREATE TABLE IF NOT EXISTS prefect_executions (
     claimed_at TEXT, claiming_worker_id TEXT, stalled_at TEXT, cancellation_requested_at TEXT,
     cancellation_recovery_deadline_at TEXT, cancellation_receipt_id TEXT, cancellation_acknowledged_at TEXT,
     terminal_at TEXT, terminal_state TEXT, terminal_outcome TEXT, position INTEGER NOT NULL,
-    mutation_receipt_id TEXT UNIQUE,
+    mutation_receipt_id TEXT UNIQUE, source_read TEXT, destination_read TEXT,
     PRIMARY KEY (run_id, flow_run_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id),
     FOREIGN KEY (mutation_receipt_id) REFERENCES mutation_receipts(receipt_id)
 );
@@ -108,10 +114,19 @@ CREATE TABLE IF NOT EXISTS write_admissions (
 );
 CREATE TABLE IF NOT EXISTS audit_events (
     event_id TEXT PRIMARY KEY, run_id TEXT, actor TEXT NOT NULL, operation TEXT NOT NULL,
-    reason TEXT, outcome TEXT NOT NULL, created_at TEXT NOT NULL
+    reason TEXT, outcome TEXT NOT NULL, created_at TEXT NOT NULL,
+    event_type TEXT, config_id TEXT, registry_version INTEGER, branch TEXT
 );
 CREATE INDEX IF NOT EXISTS audit_events_run_created
     ON audit_events (run_id, created_at);
+CREATE INDEX IF NOT EXISTS audit_events_created
+    ON audit_events (created_at, event_id);
+CREATE TABLE IF NOT EXISTS audit_event_resources (
+    event_id TEXT NOT NULL, kind TEXT NOT NULL, resource_id TEXT NOT NULL,
+    PRIMARY KEY (event_id, kind, resource_id), FOREIGN KEY (event_id) REFERENCES audit_events(event_id)
+);
+CREATE INDEX IF NOT EXISTS audit_event_resources_kind_resource
+    ON audit_event_resources (kind, resource_id);
 CREATE TABLE IF NOT EXISTS configurations (
     config_id TEXT PRIMARY KEY, created_at TEXT NOT NULL
 );
@@ -213,6 +228,19 @@ _PREFECT_EXECUTION_LIVENESS_COLUMNS: tuple[tuple[str, str], ...] = (
     ("terminal_at", "TEXT"),
     ("terminal_state", "TEXT"),
     ("terminal_outcome", "TEXT"),
+)
+# The read state of each side of a plan or sync execution: one JSON document per side, so the
+# two read threads never write the same column (spec 018, research R3).
+_SIDE_READ_COLUMNS: dict[Side, str] = {"source": "source_read", "destination": "destination_read"}
+# The fields and values a side's read document may hold. The store checks them before it writes,
+# so a document cannot carry an exception message, an address, or a secret into the run record.
+# The read modes repeat `ReadMode` in the engine, which the store does not import at run time.
+_SIDE_READ_FIELDS = frozenset({"state", "started_at", "ended_at", "read_mode", "nodes_by_kind", "error_class"})
+_SIDE_READ_STATES = frozenset({"waiting", "reading", "succeeded", "failed"})
+_SIDE_READ_MODES = frozenset({"full", "incremental"})
+_SIDE_READ_ERROR_CLASS_MAX_LENGTH = 200
+_PREFECT_EXECUTION_READ_COLUMNS: tuple[tuple[str, str], ...] = tuple(
+    (column, "TEXT") for column in _SIDE_READ_COLUMNS.values()
 )
 _CONFIGURATION_BINDING_CONSTRAINT = "product_runs_configuration_binding_consistent"
 _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
@@ -419,22 +447,67 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _SELECT_PREFECT_EXECUTIONS = """SELECT run_id, flow_run_id, deployment_id, purpose, attempt, last_observed_state,
 last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at, cancellation_requested_at,
 cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at, terminal_at, terminal_state,
-terminal_outcome, position FROM prefect_executions WHERE run_id = ? ORDER BY position"""
+terminal_outcome, position, source_read, destination_read FROM prefect_executions WHERE run_id = ? ORDER BY position"""
 _INSERT_PREFECT_EXECUTION = """INSERT INTO prefect_executions (run_id, flow_run_id, deployment_id, purpose, attempt,
 last_observed_state, last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at,
 cancellation_requested_at, cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at,
-terminal_at, terminal_state, terminal_outcome, position, mutation_receipt_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+terminal_at, terminal_state, terminal_outcome, position, mutation_receipt_id, source_read, destination_read)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _INSERT_MUTATION_RECEIPT = """INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation,
 target_run_id, request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body,
 flow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _SELECT_MUTATION_RECEIPT = """SELECT receipt_id, actor, key_digest, operation, target_run_id,
 request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body, flow_run_id,
 created_at, updated_at FROM mutation_receipts WHERE actor = ? AND key_digest = ?"""
-_INSERT_AUDIT_EVENT = """INSERT INTO audit_events (event_id, run_id, actor, operation, reason, outcome, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)"""
-_SELECT_AUDIT_EVENTS = """SELECT event_id, run_id, actor, operation, reason, outcome, created_at
-FROM audit_events WHERE run_id = ? ORDER BY created_at, event_id"""
+# The receipt of one operation that holds a flow run ID; the oldest wins if two ever do.
+_SELECT_MUTATION_RECEIPT_FOR_EXECUTION = """SELECT receipt_id, actor, key_digest, operation, target_run_id,
+request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body, flow_run_id,
+created_at, updated_at FROM mutation_receipts WHERE run_id = ? AND flow_run_id = ? AND operation = ?
+ORDER BY created_at, receipt_id"""
+_INSERT_AUDIT_EVENT = """INSERT INTO audit_events (event_id, run_id, actor, operation, reason, outcome, created_at,
+event_type, config_id, registry_version, branch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+_INSERT_AUDIT_EVENT_RESOURCE = "INSERT INTO audit_event_resources (event_id, kind, resource_id) VALUES (?, ?, ?)"
+_AUDIT_EVENT_COLUMNS = (
+    "event_id, run_id, actor, operation, reason, outcome, created_at, event_type, config_id, registry_version, branch"
+)
+_SELECT_AUDIT_EVENTS = f"SELECT {_AUDIT_EVENT_COLUMNS} FROM audit_events WHERE run_id = ? ORDER BY created_at, event_id"  # noqa: S608
+_SELECT_ALL_AUDIT_EVENTS = f"SELECT {_AUDIT_EVENT_COLUMNS} FROM audit_events ORDER BY created_at, event_id"  # noqa: S608
+_SELECT_AUDIT_EVENT_RESOURCES = "SELECT event_id, kind, resource_id FROM audit_event_resources WHERE event_id IN ({})"
+# An event names one related resource; bound to (kind, resource_id).
+_EVENT_HAS_RESOURCE = (
+    "EXISTS (SELECT 1 FROM audit_event_resources AS resource WHERE resource.event_id = audit_events.event_id "
+    "AND resource.kind = ? AND resource.resource_id = ?)"
+)
+# Event IDs read per related-resource query, well under SQLite's bound-parameter limit.
+_EVENT_RESOURCE_BATCH = 500
+# The columns spec 017 adds to an audit event; all nullable, so a row written before the change stays valid.
+_AUDIT_EVENT_ADDED_COLUMNS = (
+    ("event_type", "TEXT"),
+    ("config_id", "TEXT"),
+    ("registry_version", "INTEGER"),
+    ("branch", "TEXT"),
+)
+_CONFIGURATION_OPERATIONS = "('register-config', 'create-config-version')"
+# The type of an event recorded before spec 017, from its (operation, outcome) pair (data-model.md, "Event types").
+# A request refused for a missing or invalid token keeps no type, so the event list never returns it (research R6).
+# Those rows are left out of the update: they stay NULL for good, and rewriting every one of them on
+# each start-up would cost more as refused requests accumulate.
+_BACKFILL_AUDIT_EVENT_TYPES = f"""UPDATE audit_events SET event_type = CASE
+WHEN operation = 'register-config' AND outcome = 'accepted' THEN 'infrahub_sync.config.registered'
+WHEN operation = 'create-config-version' AND outcome = 'accepted' THEN 'infrahub_sync.config.version_registered'
+WHEN operation IN {_CONFIGURATION_OPERATIONS} AND substr(outcome, 1, 8) = 'refused-' THEN 'infrahub_sync.config.refused'
+WHEN operation IN {_CONFIGURATION_OPERATIONS} AND outcome = 'replayed' THEN 'infrahub_sync.config.replayed'
+WHEN operation IN {_CONFIGURATION_OPERATIONS} AND outcome = 'unavailable' THEN 'infrahub_sync.config.unavailable'
+WHEN outcome = 'accepted' THEN 'infrahub_sync.run.accepted'
+WHEN outcome = 'replayed' THEN 'infrahub_sync.run.replayed'
+WHEN substr(outcome, 1, 8) = 'refused-' THEN 'infrahub_sync.run.refused'
+WHEN outcome = 'unavailable' THEN 'infrahub_sync.run.unavailable'
+END WHERE event_type IS NULL AND outcome <> 'refused-authentication'"""  # noqa: S608 - module-owned literals only.
+# The actor's account is the one related resource an event recorded before spec 017 can name.
+_BACKFILL_AUDIT_EVENT_ACCOUNTS = """INSERT INTO audit_event_resources (event_id, kind, resource_id)
+SELECT event_id, 'account', actor FROM audit_events WHERE NOT EXISTS (
+SELECT 1 FROM audit_event_resources AS resource
+WHERE resource.event_id = audit_events.event_id AND resource.kind = 'account')"""
 _SELECT_AUDIT_LINKS = "SELECT event_id FROM audit_events WHERE run_id = ? ORDER BY created_at, event_id"
 
 
@@ -533,6 +606,8 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         self, run_id: str, flow_run_id: str, *, state: str | None, observed_at: datetime
     ) -> None: ...
 
+    def record_side_reads(self, run_id: str, flow_run_id: str, documents: Mapping[Side, Mapping[str, Any]]) -> bool: ...
+
     def claim_execution(
         self,
         run_id: str,
@@ -547,7 +622,9 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def abandon_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
 
-    def interrupt_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
+    def interrupt_execution(
+        self, run_id: str, flow_run_id: str, *, terminal_at: datetime, event: AuditEvent | None = None
+    ) -> bool: ...
 
     def commit_claimed_execution(
         self,
@@ -559,6 +636,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         terminal_state: Literal["completed", "failed", "interrupted"],
         terminal_outcome: Literal["succeeded", "failed", "ambiguous"],
         writeback: ExecutionWriteback,
+        event: AuditEvent | None = None,
     ) -> bool: ...
 
     def request_execution_cancellation(
@@ -581,9 +659,13 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         acknowledged_at: datetime,
         response_status: int,
         response_body: Mapping[str, Any],
+        event: AuditEvent | None = None,
+        refusal_events: Mapping[int, AuditEvent] | None = None,
     ) -> bool: ...
 
-    def cancel_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
+    def cancel_execution(
+        self, run_id: str, flow_run_id: str, *, terminal_at: datetime, event: AuditEvent | None = None
+    ) -> bool: ...
 
     def expire_execution_cancellation(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool: ...
 
@@ -615,6 +697,10 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         updated_at: datetime,
     ) -> bool: ...
 
+    def lookup_mutation_for_execution(
+        self, run_id: str, flow_run_id: str, operation: str
+    ) -> LookupResult[MutationReceipt]: ...
+
     def complete_mutation(
         self,
         receipt_id: str,
@@ -623,6 +709,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         response_body: Mapping[str, Any],
         flow_run_id: str | None,
         updated_at: datetime,
+        event: AuditEvent | None = None,
     ) -> MutationReceipt: ...
 
     def claim_mutation(self, receipt_id: str, *, updated_at: datetime) -> bool: ...
@@ -632,6 +719,8 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def record_audit(self, event: AuditEvent) -> None: ...
 
     def audit_events(self, run_id: str | None = None) -> tuple[AuditEvent, ...]: ...
+
+    def list_events(self, filters: EventFilters, *, limit: int, offset: int) -> EventPage: ...
 
     def configuration_exists(self, config_id: str) -> bool: ...
 
@@ -816,9 +905,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             cursor.execute(statement)
 
     def _migrate_prefect_execution_columns(self, cursor: _Cursor) -> None:
-        """Add liveness columns without fabricating timestamps for legacy links."""
+        """Add liveness and read-state columns without fabricating values for legacy links."""
         existing = self._read_table_columns(cursor, "prefect_executions")
-        for column, sql_type in _PREFECT_EXECUTION_LIVENESS_COLUMNS:
+        for column, sql_type in (*_PREFECT_EXECUTION_LIVENESS_COLUMNS, *_PREFECT_EXECUTION_READ_COLUMNS):
             if column not in existing:
                 cursor.execute(f"ALTER TABLE prefect_executions ADD COLUMN {column} {sql_type}")
 
@@ -872,6 +961,27 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 cursor.execute(f"ALTER TABLE mutation_receipts ALTER COLUMN {column} DROP NOT NULL")
 
     def _migrate_audit_events(self, cursor: _Cursor) -> None:
+        """Bring legacy audit events up to the typed event, preserving every event in place.
+
+        Spec 017 adds the nullable ``event_type``, ``config_id``, ``registry_version`` and
+        ``branch`` columns, fills ``event_type`` from each row's ``(operation, outcome)`` pair
+        and writes one ``account`` resource per event. A legacy row names no configuration or
+        branch, because the old record did not hold them.
+
+        Both fills run on every start-up, not only the one that adds the columns: SQLite
+        commits ``ALTER TABLE`` at once, so a start-up that failed after adding the columns
+        would otherwise leave the rows untyped for good. Each fill touches only rows it has
+        not filled yet, so a later start-up changes nothing.
+        """
+        existing = self._read_table_columns(cursor, "audit_events")
+        for column, sql_type in _AUDIT_EVENT_ADDED_COLUMNS:
+            if column not in existing:
+                cursor.execute(f"ALTER TABLE audit_events ADD COLUMN {column} {sql_type}")
+        cursor.execute(_BACKFILL_AUDIT_EVENT_TYPES)
+        cursor.execute(_BACKFILL_AUDIT_EVENT_ACCOUNTS)
+        self._allow_audit_events_without_reason(cursor)
+
+    def _allow_audit_events_without_reason(self, cursor: _Cursor) -> None:
         """Allow an audit event without a reason, preserving every legacy event in place.
 
         A request may omit its audit reason, and the event then stores NULL rather than a
@@ -1302,6 +1412,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 link.terminal_outcome,
                 position,
                 mutation_receipt_id,
+                None if link.source_read is None else _json(link.source_read),
+                None if link.destination_read is None else _json(link.destination_read),
             ),
         )
 
@@ -1373,6 +1485,26 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             (claimed_at.isoformat(), worker_id, run_id, flow_run_id, admission_deadline_at.isoformat()),
         )
 
+    def record_side_reads(self, run_id: str, flow_run_id: str, documents: Mapping[Side, Mapping[str, Any]]) -> bool:
+        """Store one or both sides' read documents in one write while the execution is not terminal.
+
+        Returns whether a row changed. A write that arrives after the execution ended, for
+        example from a worker that kept running after it was marked interrupted, changes
+        nothing. Each side selects a column, so the sides are checked before any SQL runs.
+        """
+        if not documents:
+            msg = "record_side_reads needs at least one side"
+            raise ValueError(msg)
+        columns = [_side_read_column(side) for side in documents]
+        for side, document in documents.items():
+            _check_side_read_document(side, document)
+        assignments = ", ".join(f"{column} = ?" for column in columns)
+        return self._execution_update(
+            f"UPDATE prefect_executions SET {assignments} "  # noqa: S608 - columns from a fixed two-name map
+            "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL",
+            (*(_json(dict(document)) for document in documents.values()), run_id, flow_run_id),
+        )
+
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime) -> bool:
         """Record the first informational stall without changing claim eligibility."""
         return self._execution_update(
@@ -1394,8 +1526,10 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             outcome="abandoned",
         )
 
-    def interrupt_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool:
-        """Atomically terminalize an orphaned claimed execution and its product run."""
+    def interrupt_execution(
+        self, run_id: str, flow_run_id: str, *, terminal_at: datetime, event: AuditEvent | None = None
+    ) -> bool:
+        """Atomically terminalize an orphaned claimed execution and its product run, with its event."""
         return self._terminalize_execution(
             run_id,
             flow_run_id,
@@ -1405,6 +1539,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             terminal_outcome="ambiguous",
             phase="interrupted",
             outcome="ambiguous",
+            event=event,
         )
 
     def commit_claimed_execution(
@@ -1417,8 +1552,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         terminal_state: Literal["completed", "failed", "interrupted"],
         terminal_outcome: Literal["succeeded", "failed", "ambiguous"],
         writeback: ExecutionWriteback,
+        event: AuditEvent | None = None,
     ) -> bool:
-        """Commit one claimed worker verdict and its business writeback together."""
+        """Commit one claimed worker verdict, its business writeback and its event together."""
         connection = self._connect()
         try:
             cursor = connection.cursor()
@@ -1499,6 +1635,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     terminal_state=terminal_state,
                     terminal_outcome=terminal_outcome,
                 )
+                if event is not None:
+                    self._insert_event(cursor, event)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -1636,8 +1774,15 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         acknowledged_at: datetime,
         response_status: int,
         response_body: Mapping[str, Any],
+        event: AuditEvent | None = None,
+        refusal_events: Mapping[int, AuditEvent] | None = None,
     ) -> bool:
-        """Persist remote acknowledgement and the replay result in one transaction."""
+        """Persist remote acknowledgement, the replay result and its event in one transaction.
+
+        ``event`` is written only when the acknowledgement is accepted. When it is turned into
+        an ambiguous (409) or unconfirmed (503) refusal, the event of ``refusal_events`` for
+        that status is written instead, in the transaction that stores the refusal (FR-014).
+        """
         connection = self._connect()
         try:
             cursor = connection.cursor()
@@ -1699,14 +1844,18 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         if claimed_write
                         else _cancellation_unconfirmed_response(run_id, receipt_id)
                     )
+                    refusal_status = int(refusal["error"]["status"])
                     self._complete_receipt_row(
                         cursor,
                         receipt_id,
-                        response_status=int(refusal["error"]["status"]),
+                        response_status=refusal_status,
                         response_body=refusal,
                         flow_run_id=flow_run_id,
                         updated_at=acknowledged_at,
                     )
+                    refusal_event = (refusal_events or {}).get(refusal_status)
+                    if refusal_event is not None:
+                        self._insert_event(cursor, refusal_event)
                     connection.commit()
                     return False
                 cursor.execute(
@@ -1728,6 +1877,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     flow_run_id=flow_run_id,
                     updated_at=acknowledged_at,
                 )
+                if event is not None:
+                    self._insert_event(cursor, event)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -1739,8 +1890,10 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         finally:
             connection.close()
 
-    def cancel_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime) -> bool:
-        """Commit clean cancellation only from acknowledged durable cancelled observation."""
+    def cancel_execution(
+        self, run_id: str, flow_run_id: str, *, terminal_at: datetime, event: AuditEvent | None = None
+    ) -> bool:
+        """Commit clean cancellation, and its event, only from acknowledged durable cancelled observation."""
         connection = self._connect()
         try:
             cursor = connection.cursor()
@@ -1761,6 +1914,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     self._sql(_UPDATE_LATEST_EXECUTION_CANCELLED),
                     (_utc_iso(terminal_at), run_id, flow_run_id),
                 )
+                if event is not None:
+                    self._insert_event(cursor, event)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -1923,6 +2078,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         terminal_outcome: str,
         phase: str,
         outcome: str,
+        event: AuditEvent | None = None,
     ) -> bool:
         connection = self._connect()
         try:
@@ -1955,6 +2111,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     terminal_state=terminal_state,
                     terminal_outcome=terminal_outcome,
                 )
+                if event is not None:
+                    self._insert_event(cursor, event)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -2088,6 +2246,23 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             cursor = connection.cursor()
             try:
                 cursor.execute(self._sql(_SELECT_MUTATION_RECEIPT), (actor, key_digest))
+                row = cursor.fetchone()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        if row is None:
+            return LookupResult(value=None, reason="mutation-receipt-not-found")
+        return LookupResult(value=_receipt_from_row(row))
+
+    def lookup_mutation_for_execution(
+        self, run_id: str, flow_run_id: str, operation: str
+    ) -> LookupResult[MutationReceipt]:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_MUTATION_RECEIPT_FOR_EXECUTION), (run_id, flow_run_id, operation))
                 row = cursor.fetchone()
             finally:
                 cursor.close()
@@ -2319,6 +2494,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         response_body: Mapping[str, Any],
         flow_run_id: str | None,
         updated_at: datetime,
+        event: AuditEvent | None = None,
     ) -> MutationReceipt:
         connection = self._connect()
         try:
@@ -2332,6 +2508,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     (response_status, _json(response_body), flow_run_id, updated_at.isoformat(), receipt_id),
                 )
                 completed = cursor.rowcount == 1
+                if completed and event is not None:
+                    self._insert_event(cursor, event)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -2449,23 +2627,49 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             raise RunNotFoundError(msg)
         return _receipt_from_row(row)
 
+    def _insert_event(self, cursor: _Cursor, event: AuditEvent) -> None:
+        """Write one event row and its related-resource rows with the caller's cursor.
+
+        The caller commits or rolls back, so an event written with a decision is saved in
+        that decision's transaction (FR-014).
+        """
+        cursor.execute(
+            self._sql(_INSERT_AUDIT_EVENT),
+            (
+                event.event_id,
+                event.run_id,
+                event.actor,
+                event.operation,
+                event.reason,
+                event.outcome,
+                _utc_iso(event.created_at),
+                event.event_type,
+                event.config_id,
+                event.registry_version,
+                event.branch,
+            ),
+        )
+        for resource in event.related:
+            cursor.execute(self._sql(_INSERT_AUDIT_EVENT_RESOURCE), (event.event_id, resource.kind, resource.id))
+
+    def _read_event_resources(self, cursor: _Cursor, rows: Sequence[Sequence[Any]]) -> dict[str, list[tuple[str, str]]]:
+        """Return the related resources of the events in ``rows``, by event ID."""
+        resources: dict[str, list[tuple[str, str]]] = {str(row[0]): [] for row in rows}
+        event_ids = tuple(resources)
+        for start in range(0, len(event_ids), _EVENT_RESOURCE_BATCH):
+            batch = event_ids[start : start + _EVENT_RESOURCE_BATCH]
+            placeholders = ", ".join("?" for _ in batch)
+            cursor.execute(self._sql(_SELECT_AUDIT_EVENT_RESOURCES.format(placeholders)), batch)
+            for event_id, kind, resource_id in cursor.fetchall():
+                resources[str(event_id)].append((str(kind), str(resource_id)))
+        return resources
+
     def record_audit(self, event: AuditEvent) -> None:
         connection = self._connect()
         try:
             cursor = connection.cursor()
             try:
-                cursor.execute(
-                    self._sql(_INSERT_AUDIT_EVENT),
-                    (
-                        event.event_id,
-                        event.run_id,
-                        event.actor,
-                        event.operation,
-                        event.reason,
-                        event.outcome,
-                        event.created_at.isoformat(),
-                    ),
-                )
+                self._insert_event(cursor, event)
                 connection.commit()
             except Exception:
                 connection.rollback()
@@ -2481,18 +2685,60 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             cursor = connection.cursor()
             try:
                 if run_id is None:
-                    cursor.execute(
-                        "SELECT event_id, run_id, actor, operation, reason, outcome, created_at "
-                        "FROM audit_events ORDER BY created_at, event_id"
-                    )
+                    cursor.execute(_SELECT_ALL_AUDIT_EVENTS)
                 else:
                     cursor.execute(self._sql(_SELECT_AUDIT_EVENTS), (run_id,))
                 rows = cursor.fetchall()
+                resources = self._read_event_resources(cursor, rows)
             finally:
                 cursor.close()
         finally:
             connection.close()
-        return tuple(_audit_from_row(row) for row in rows)
+        return tuple(_audit_from_row(row, resources[str(row[0])]) for row in rows)
+
+    def list_events(self, filters: EventFilters, *, limit: int, offset: int) -> EventPage:
+        """Return up to ``limit`` typed events matching ``filters`` after the first ``offset``, oldest first.
+
+        Events are ordered by ``created_at`` and then ``event_id``. An event without a type,
+        a request refused for a missing or invalid token, is never listed (research R6).
+
+        Raises:
+            ValueError: ``limit`` is less than 1 or ``offset`` is negative.
+        """
+        if offset < 0:
+            msg = "offset must be zero or a positive integer"
+            raise ValueError(msg)
+        conditions = ["event_type IS NOT NULL"]
+        parameters: list[object] = []
+        if filters.run_id is not None:
+            conditions.append("run_id = ?")
+            parameters.append(filters.run_id)
+        if filters.config_id is not None:
+            conditions.append(f"(config_id = ? OR {_EVENT_HAS_RESOURCE})")
+            parameters.extend((filters.config_id, "config", filters.config_id))
+        if filters.event_types:
+            conditions.append(f"event_type IN ({', '.join('?' for _ in filters.event_types)})")
+            parameters.extend(filters.event_types)
+        for resource in filters.related:
+            conditions.append(_EVENT_HAS_RESOURCE)
+            parameters.extend((resource.kind, resource.id))
+        if filters.since is not None:
+            conditions.append("created_at >= ?")
+            parameters.append(_utc_iso(filters.since))
+        if filters.until is not None:
+            conditions.append("created_at < ?")
+            parameters.append(_utc_iso(filters.until))
+        statement = (
+            f"SELECT {_AUDIT_EVENT_COLUMNS} FROM audit_events WHERE {' AND '.join(conditions)} "  # noqa: S608
+            "ORDER BY created_at, event_id LIMIT ? OFFSET ?"
+        )
+        resources: dict[str, list[tuple[str, str]]] = {}
+
+        def read_resources(cursor: _Cursor, page: Sequence[Sequence[Any]]) -> None:
+            resources.update(self._read_event_resources(cursor, page))
+
+        rows, has_more = self._read_page(statement, parameters, limit, read_resources, trailing=(offset,))
+        return EventPage(items=tuple(_audit_from_row(row, resources[str(row[0])]) for row in rows), has_more=has_more)
 
     def configuration_exists(self, config_id: str) -> bool:
         """Return configuration existence without hydrating its versions."""
@@ -2754,11 +3000,14 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         parameters: Sequence[object],
         limit: int,
         follow_up: Callable[[_Cursor, Sequence[Sequence[Any]]], None] | None = None,
+        *,
+        trailing: Sequence[object] = (),
     ) -> tuple[Sequence[Sequence[Any]], bool]:
         """Read up to ``limit`` rows of ``statement`` and whether more rows follow them.
 
-        ``statement`` ends with a ``LIMIT ?`` placeholder that this method binds to
-        ``limit + 1``, so one row past the page tells whether a further page exists.
+        ``statement`` has a ``LIMIT ?`` placeholder that this method binds to ``limit + 1``,
+        so one row past the page tells whether a further page exists. ``trailing`` binds the
+        placeholders after it, such as an ``OFFSET ?``.
         ``follow_up`` runs on the same cursor with the page's rows when the page is not empty.
 
         Raises:
@@ -2771,7 +3020,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         try:
             cursor = connection.cursor()
             try:
-                cursor.execute(self._sql(statement), (*parameters, limit + 1))
+                cursor.execute(self._sql(statement), (*parameters, limit + 1, *trailing))
                 rows = cursor.fetchall()
                 page = rows[:limit]
                 if follow_up is not None and page:
@@ -3272,6 +3521,14 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             admission_deadline_at=admission_deadline_at,
         )
 
+    def record_side_reads(self, run_id: str, flow_run_id: str, documents: Mapping[Side, Mapping[str, Any]]) -> bool:
+        """Store read documents, keyed by side, on a non-terminal execution; return whether it changed.
+
+        Each document holds a state, times, a read mode, node counts and an error class name,
+        never an exception message (spec 018 data-model.md). An unknown side is refused.
+        """
+        return self._records.record_side_reads(run_id, flow_run_id, documents)
+
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime | None = None) -> bool:
         """Set the first stall marker while leaving a pre-TTL execution claimable."""
         effective_stalled_at = stalled_at if stalled_at is not None else datetime.now(timezone.utc)
@@ -3284,11 +3541,21 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         _require_execution_timestamp(effective_terminal_at)
         return self._records.abandon_execution(run_id, flow_run_id, terminal_at=effective_terminal_at)
 
-    def interrupt_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime | None = None) -> bool:
-        """CAS a claimed execution into the terminal interrupted/ambiguous verdict."""
+    def interrupt_execution(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        terminal_at: datetime | None = None,
+        event: AuditEvent | None = None,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """CAS a claimed execution into the terminal interrupted/ambiguous verdict, with its event."""
         effective_terminal_at = terminal_at if terminal_at is not None else datetime.now(timezone.utc)
         _require_execution_timestamp(effective_terminal_at)
-        return self._records.interrupt_execution(run_id, flow_run_id, terminal_at=effective_terminal_at)
+        return self._records.interrupt_execution(
+            run_id, flow_run_id, terminal_at=effective_terminal_at, event=_redacted_event(event, secrets)
+        )
 
     def commit_claimed_execution(
         self,
@@ -3300,6 +3567,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         terminal_state: Literal["completed", "failed", "interrupted"],
         terminal_outcome: Literal["succeeded", "failed", "ambiguous"],
         writeback: ExecutionWriteback,
+        event: AuditEvent | None = None,
         secrets: Sequence[str] = (),
     ) -> bool:
         """Atomically commit one claimed verdict and its business writeback.
@@ -3351,6 +3619,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             terminal_state=terminal_state,
             terminal_outcome=terminal_outcome,
             writeback=sanitized,
+            event=_redacted_event(event, secrets),
         )
 
     def request_execution_cancellation(
@@ -3388,9 +3657,15 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         acknowledged_at: datetime,
         response_status: int,
         response_body: Mapping[str, Any],
+        event: AuditEvent | None = None,
+        refusal_events: Mapping[int, AuditEvent] | None = None,
         secrets: Sequence[str] = (),
     ) -> bool:
-        """Commit acknowledgement and the accepted replay response together."""
+        """Commit acknowledgement, its replay response and its event together.
+
+        ``refusal_events`` maps the status of a late or claimed-write refusal (409 or 503) to
+        the event saved with it.
+        """
         _require_execution_timestamp(acknowledged_at)
         sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(response_body), secrets))
         return self._records.acknowledge_execution_cancellation(
@@ -3399,16 +3674,29 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             acknowledged_at=acknowledged_at,
             response_status=response_status,
             response_body=sanitized,
+            event=_redacted_event(event, secrets),
+            refusal_events={
+                status: _redact_event(refusal, secrets) for status, refusal in (refusal_events or {}).items()
+            },
         )
 
-    def cancel_execution(self, run_id: str, flow_run_id: str, *, terminal_at: datetime | None = None) -> bool:
-        """Commit clean cancellation only after durable acknowledgement and observation."""
+    def cancel_execution(
+        self,
+        run_id: str,
+        flow_run_id: str,
+        *,
+        terminal_at: datetime | None = None,
+        event: AuditEvent | None = None,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """Commit clean cancellation, and its event, only after durable acknowledgement and observation."""
         if terminal_at is not None:
             _require_execution_timestamp(terminal_at)
         return self._records.cancel_execution(
             run_id,
             flow_run_id,
             terminal_at=terminal_at if terminal_at is not None else datetime.now(timezone.utc),
+            event=_redacted_event(event, secrets),
         )
 
     def expire_execution_cancellation(
@@ -3495,6 +3783,12 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             run_id, receipt, sanitized, cancelled_at=cancelled_at, updated_at=datetime.now(timezone.utc)
         )
 
+    def lookup_mutation_for_execution(
+        self, run_id: str, flow_run_id: str, operation: str
+    ) -> LookupResult[MutationReceipt]:
+        """Look up the receipt of ``operation`` that holds a run's flow run ID, such as the request that started it."""
+        return self._records.lookup_mutation_for_execution(run_id, flow_run_id, operation)
+
     def complete_mutation(
         self,
         receipt_id: str,
@@ -3502,9 +3796,10 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         response_status: int,
         response_body: Mapping[str, Any],
         flow_run_id: str | None,
+        event: AuditEvent | None = None,
         secrets: Sequence[str] = (),
     ) -> MutationReceipt:
-        """Persist the exact accepted HTTP response and Prefect identity."""
+        """Persist the exact accepted HTTP response, Prefect identity and the decision's event together."""
         sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(response_body), secrets))
         return self._records.complete_mutation(
             redact(receipt_id, secrets),
@@ -3512,6 +3807,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             response_body=sanitized,
             flow_run_id=None if flow_run_id is None else redact(flow_run_id, secrets),
             updated_at=datetime.now(timezone.utc),
+            event=_redacted_event(event, secrets),
         )
 
     def claim_mutation(self, receipt_id: str, *, secrets: Sequence[str] = ()) -> bool:
@@ -3523,13 +3819,20 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         self._records.release_mutation(redact(receipt_id, secrets), updated_at=datetime.now(timezone.utc))
 
     def record_audit(self, event: AuditEvent, *, secrets: Sequence[str] = ()) -> None:
-        """Append one immutable, secret-safe authorization or mutation event."""
-        sanitized = AuditEvent.model_validate(_redact_value(event.model_dump(mode="json"), secrets))
-        self._records.record_audit(sanitized)
+        """Append one immutable, secret-safe event that saves nothing else, such as a refusal."""
+        self._records.record_audit(_redact_event(event, secrets))
 
     def audit_events(self, run_id: str | None = None) -> tuple[AuditEvent, ...]:
         """Return all audit evidence, optionally narrowed to one Sync run."""
         return self._records.audit_events(run_id)
+
+    def list_events(self, filters: EventFilters, *, limit: int = DEFAULT_LIMIT, offset: int = 0) -> EventPage:
+        """Return one page of typed events matching ``filters``, oldest first.
+
+        Raises:
+            ValueError: ``limit`` is less than 1 or ``offset`` is negative.
+        """
+        return self._records.list_events(filters, limit=limit, offset=offset)
 
     def create_configuration(
         self,
@@ -3831,6 +4134,65 @@ def production_product_projection(
     )
 
 
+def _side_read_column(side: str) -> str:
+    """The column that stores `side`'s read document; refuses any other side name."""
+    # Compared, not looked up: `side` comes from a caller and may be any string.
+    column = next((column for name, column in _SIDE_READ_COLUMNS.items() if name == side), None)
+    if column is None:
+        msg = f"unknown read side {side!r}; expected 'source' or 'destination'"
+        raise ValueError(msg)
+    return column
+
+
+def _check_side_read_document(side: str, document: Mapping[str, Any]) -> None:
+    """Refuse a read document that holds a field or a value the read state does not allow.
+
+    The error names the side and the field, never the value, because a refused value may be
+    an exception message or a secret.
+    """
+    if not isinstance(document, Mapping):
+        msg = f"the {side} read document is not a mapping"
+        raise ValueError(msg)  # noqa: TRY004 - one error type for every refused document
+    for key in document:
+        if not isinstance(key, str) or key not in _SIDE_READ_FIELDS:
+            msg = f"the {side} read document holds a field that is not allowed"
+            raise ValueError(msg)
+    for key, value in document.items():
+        if not _side_read_value_allowed(key, value):
+            msg = f"the {side} read document has a value for {key!r} that is not allowed"
+            raise ValueError(msg)
+    if "state" not in document:
+        msg = f"the {side} read document has no 'state'"
+        raise ValueError(msg)
+
+
+def _side_read_value_allowed(key: str, value: Any) -> bool:
+    """Whether `value` is an allowed value for the read-document field `key`."""
+    if key == "state":
+        return isinstance(value, str) and value in _SIDE_READ_STATES
+    if key == "nodes_by_kind":
+        return isinstance(value, Mapping) and all(
+            isinstance(kind, str) and isinstance(count, int) and not isinstance(count, bool) and count >= 0
+            for kind, count in value.items()
+        )
+    if value is None or not isinstance(value, str):
+        return value is None
+    if key == "read_mode":
+        return value in _SIDE_READ_MODES
+    if key == "error_class":
+        return len(value) <= _SIDE_READ_ERROR_CLASS_MAX_LENGTH and value.isidentifier()
+    return _is_iso_timestamp(value)
+
+
+def _is_iso_timestamp(value: str) -> bool:
+    """Whether `value` is an ISO 8601 timestamp, the form of `started_at` and `ended_at`."""
+    try:
+        datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _json(value: Any) -> str:
     return canonical_json_bytes(value).decode()
 
@@ -3871,6 +4233,35 @@ def _approval_columns(approval: RunApproval | None) -> tuple[str | None, str | N
     if approval is None:
         return None, None, None, None
     return approval.approved_by, _utc_iso(approval.approved_at), approval.plan_checksum, approval.reason
+
+
+def _stored_side_read(value: str | None, *, run_id: str, column: str) -> dict[str, Any] | None:
+    """Parse one stored side-read column; a value that is not a JSON object reads as ``None``.
+
+    A side's read state is a progress report, so a damaged value must not stop a run from being
+    read. The warning names the run, the column and the error class, never the stored text.
+    """
+    if value is None:
+        return None
+    try:
+        document = json.loads(value)
+    except (json.JSONDecodeError, TypeError) as exc:
+        logger.warning(
+            "Ignoring an unreadable side-read column: run_id=%s column=%s error=%s",
+            run_id,
+            column,
+            type(exc).__name__,
+        )
+        return None
+    if not isinstance(document, dict):
+        logger.warning(
+            "Ignoring a side-read column that is not a JSON object: run_id=%s column=%s type=%s",
+            run_id,
+            column,
+            type(document).__name__,
+        )
+        return None
+    return document
 
 
 def _run_from_rows(
@@ -3920,6 +4311,8 @@ def _run_from_rows(
                     "terminal_at": item[15],
                     "terminal_state": item[16],
                     "terminal_outcome": item[17],
+                    "source_read": _stored_side_read(item[19], run_id=row[0], column="source_read"),
+                    "destination_read": _stored_side_read(item[20], run_id=row[0], column="destination_read"),
                 }
                 for item in links
             ],
@@ -4025,7 +4418,28 @@ def _cancellation_unconfirmed_response(run_id: str, receipt_id: str) -> dict[str
     }
 
 
-def _audit_from_row(row: Sequence[Any]) -> AuditEvent:
+# Event fields this module or the clock writes, never caller text, so no secret can be in them.
+# Redacting them could only break their validation: a secret such as `infrahub` would turn the
+# event type into text the type pattern refuses, and fail the decision the event is saved with.
+_EVENT_FIXED_FIELDS = frozenset({"event_id", "event_type", "created_at", "registry_version"})
+
+
+def _redact_event(event: AuditEvent, secrets: Sequence[str]) -> AuditEvent:
+    """Return ``event`` with every configured secret removed from its caller-supplied values."""
+    ordered = redaction_order(secrets)
+    return AuditEvent.model_validate(
+        {
+            name: value if name in _EVENT_FIXED_FIELDS else _redact_ordered_value(value, ordered, numbers=False)
+            for name, value in event.model_dump(mode="json").items()
+        }
+    )
+
+
+def _redacted_event(event: AuditEvent | None, secrets: Sequence[str]) -> AuditEvent | None:
+    return None if event is None else _redact_event(event, secrets)
+
+
+def _audit_from_row(row: Sequence[Any], related: Sequence[tuple[str, str]] = ()) -> AuditEvent:
     return AuditEvent.model_validate(
         {
             "event_id": row[0],
@@ -4035,6 +4449,11 @@ def _audit_from_row(row: Sequence[Any]) -> AuditEvent:
             "reason": row[4],
             "outcome": row[5],
             "created_at": row[6],
+            "event_type": row[7],
+            "config_id": row[8],
+            "registry_version": row[9],
+            "branch": row[10],
+            "related": tuple({"kind": kind, "id": resource_id} for kind, resource_id in related),
         }
     )
 

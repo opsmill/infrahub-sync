@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 - Pydantic resolves resource annotations at runtime.
 from math import isfinite
-from typing import Any, Literal, Protocol, TypeVar, cast
+from typing import Annotated, Any, Literal, Protocol, TypeVar, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 Operation = Literal["plan", "verify", "apply", "sync"]
 TerminalState = Literal["completed", "failed", "cancelled", "abandoned", "interrupted"]
@@ -39,6 +39,11 @@ RECOVERY_NEXT_ACTIONS: dict[RecoveryAction, str] = {
 DEFAULT_LIMIT = 50
 MIN_LIMIT = 1
 MAX_LIMIT = 200
+
+# Page sizes of a run's log (spec 017, contracts/logs-route.md), and the stages it filters by.
+DEFAULT_LOG_LIMIT = 200
+MAX_LOG_LIMIT = 1000
+LOG_STAGES: tuple[str, ...] = ("plan", "verify", "apply", "sync")
 
 _Item_co = TypeVar("_Item_co", covariant=True)
 
@@ -286,6 +291,42 @@ class PublicRunResource(_ResourceModel):
         return self
 
 
+# The states a side can have today. `SideRead.state` accepts any string, so a client keeps reading
+# a run when a later Sync API returns a state this release does not know.
+SideReadState = Literal["waiting", "reading", "succeeded", "failed", "not_started", "interrupted"]
+
+
+class SideRead(_ResourceModel):
+    """The read state of one side of a `plan` or `sync` execution.
+
+    `not_started` and `interrupted` are never stored: the Sync API returns a side stored as
+    `waiting` or `reading` with them once the execution ended without completing. No field holds
+    an exception message; `error_class` is the class name of the error that ended the read.
+
+    `state` is one of `SideReadState` and `read_mode` is `full` or `incremental` today. Both are
+    plain strings, so a state or mode a later Sync API adds does not fail the whole run response.
+    """
+
+    state: str
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    read_mode: str | None = None
+    nodes_by_kind: dict[str, Annotated[int, Field(ge=0)]] = Field(default_factory=dict)
+    error_class: str | None = None
+
+    @field_validator("started_at", "ended_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone(value, _EXECUTION_TIME_MESSAGE)
+
+
+class StageReads(_ResourceModel):
+    """The read state of the source and the destination of one execution."""
+
+    source: SideRead | None = None
+    destination: SideRead | None = None
+
+
 class OrchestrationSummary(_ResourceModel):
     """Summarize one orchestration attempt and its terminal verdict."""
 
@@ -304,6 +345,11 @@ class OrchestrationSummary(_ResourceModel):
     terminal_at: datetime | None
     terminal_state: TerminalState | None
     terminal_outcome: TerminalOutcome | None
+    # Absent from a Sync API without a Prefect UI address, or one that predates the link.
+    prefect_flow_run_url: str | None = None
+    # Each side's read for a `plan` or `sync` execution; `None` for a `verify` or `apply`
+    # execution, one recorded before the read state, or a Sync API that predates it.
+    reads: StageReads | None = None
 
     @field_validator(
         "submitted_at",
@@ -419,6 +465,84 @@ class RunPage(_ResourceModel):
 
     items: tuple[PublicRunResource, ...]
     next_cursor: str | None = None
+
+
+class EventPrimaryResource(_ResourceModel):
+    """The resource an event is about: its run, or else its configuration.
+
+    ``kind`` is a plain string so the client still reads a kind a newer server adds.
+    """
+
+    kind: str
+    id: str
+
+
+class EventRelatedResource(_ResourceModel):
+    """One resource an event names besides its primary resource, such as ``account:alice`` or ``branch:main``."""
+
+    kind: str
+    id: str
+
+
+class EventResource(_ResourceModel):
+    """One typed event: a Sync API decision or a stage result, with the resources it names."""
+
+    event_id: str
+    event_type: str
+    occurred_at: datetime
+    actor: str
+    operation: str
+    outcome: str
+    reason: str | None = None
+    primary_resource: EventPrimaryResource | None = None
+    related: tuple[EventRelatedResource, ...] = ()
+
+    @field_validator("occurred_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime | None:
+        return _timezone(value, "event timestamps must include a timezone")
+
+
+class EventPage(_ResourceModel):
+    """One page of the event list, oldest first; ``has_more`` says whether events follow the page."""
+
+    items: tuple[EventResource, ...]
+    limit: int = Field(ge=MIN_LIMIT, le=MAX_LIMIT)
+    offset: int = Field(ge=0)
+    has_more: bool
+
+
+class RunLogLine(_ResourceModel):
+    """One log line that Sync's own code wrote during a run, tagged with its stage.
+
+    ``stage`` and ``level`` are plain strings so the client still reads a value a newer
+    server adds.
+    """
+
+    stage: str
+    attempt: int = Field(ge=1)
+    timestamp: datetime
+    level: str
+    source: str
+    # Kept as written: the resource models strip text, which would drop a table's or a
+    # traceback's indentation.
+    message: Annotated[str, StringConstraints(strip_whitespace=False)]
+
+    @field_validator("timestamp")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime | None:
+        return _timezone(value, "log timestamps must include a timezone")
+
+
+class RunLogPage(_ResourceModel):
+    """One page of a run's log, oldest first, with the run's phase so a poller knows when to stop."""
+
+    run_id: str
+    items: tuple[RunLogLine, ...]
+    limit: int = Field(ge=MIN_LIMIT, le=MAX_LOG_LIMIT)
+    offset: int = Field(ge=0)
+    has_more: bool
+    run_phase: str
 
 
 class PlanSummaryResource(_ResourceModel):

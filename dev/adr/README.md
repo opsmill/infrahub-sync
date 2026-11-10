@@ -52,6 +52,10 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0019 — Prefect is an internal component of Sync](0019-prefect-is-an-internal-component-of-sync.md)
   — why Sync runs its own Prefect server and PostgreSQL server instead of Infrahub's task
   manager and `task-manager-db`, and what that costs.
+- [0024 — Prefect shows a Sync stage's outcome only after the run record stores it](0024-prefect-surfaces-follow-the-stored-run-record.md)
+  — why a stage's last log line and run summary artifact are written after the outcome is
+  stored, where their outcome and next action come from, what the artifact may contain, and
+  why a recorded verdict is the reported state.
 
 ## Related
 

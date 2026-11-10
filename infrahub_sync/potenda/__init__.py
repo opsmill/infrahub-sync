@@ -35,6 +35,7 @@ from infrahub_sync.plan.write_surface import (
     resolve_destination_lineage,
     resolve_destination_metadata_read,
 )
+from infrahub_sync.potenda.read_progress import SideReadReport
 
 # Justified once here rather than per site. Nearly every `infrahub_sync`
 # import in this module is deliberately deferred into the function that needs it: the cache
@@ -86,6 +87,7 @@ if TYPE_CHECKING:
     from infrahub_sync.plan.models import PlanManifest, PlannedOperation, PreWriteCheck, VerificationFailure
     from infrahub_sync.plan.ownership import WriteOwnership
     from infrahub_sync.plan.reader import LoadedPlan, RawPlanArtifact
+    from infrahub_sync.potenda.read_progress import Side, SideReadObserver
 
 
 @dataclass(frozen=True)
@@ -269,6 +271,28 @@ def _operational_failure_summary(exc: Exception) -> str:
     return str(exc)
 
 
+def _nodes_by_kind(adapter: Adapter) -> dict[str, int]:
+    """The number of nodes of every top-level kind and stored model, sorted by kind name.
+
+    A top-level kind with no node shows `0` (research R5).
+    """
+    names = set(adapter.top_level) | set(adapter.get_all_model_names())
+    return {name: adapter.count(name) for name in sorted(names)}
+
+
+def _counted_nodes(side: Side, adapter: Adapter) -> dict[str, int]:
+    """`_nodes_by_kind`, or no counts when the adapter's store cannot be counted.
+
+    Counting only reports the read, so a failure here never changes the read's result
+    (FR-007): it logs one WARNING with the error class and reports no counts.
+    """
+    try:
+        return _nodes_by_kind(adapter)
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught  # reporting never fails a read
+        logger.warning("Load: could not count the %s side's nodes (%s)", side, type(exc).__name__)
+        return {}
+
+
 class Potenda:
     def __init__(  # pylint: disable=too-many-positional-arguments  # public constructor; callers may pass positionally
         self,
@@ -324,6 +348,9 @@ class Potenda:
         self._prev_run_cached: Path | None = None
         # Runtime toggle set per-command by the CLI just before load.
         self.force_full_extract: bool = False
+        # Receives the start and the end of each side's read; set by the caller after
+        # construction, as `force_full_extract` is. `None` reports nothing.
+        self.read_observer: SideReadObserver | None = None
 
         self.config = config
 
@@ -514,7 +541,14 @@ class Potenda:
         self._side_cursors[side] = next_cursors
 
     def _load_side(self, *, side: str, adapter: Adapter) -> None:
-        """Keep cursors publishable only when loading and snapshotting both succeed."""
+        """Keep cursors publishable only when loading and snapshotting both succeed.
+
+        Reports the start and the end of the read to `read_observer`, and logs the end. Side
+        `A` is the source and side `B` the destination. A read succeeds only when the load and
+        the snapshot both return; its node counts are taken after the snapshot is written.
+        """
+        side_name: Side = "source" if side == "A" else "destination"
+        self._notify_read_observer(side_name, None)
         completed = False
         try:
             logger.info("Load: Importing data from %s", adapter)
@@ -522,11 +556,50 @@ class Potenda:
             self._write_side_snapshot(side, adapter)
             completed = True
         except Exception as exc:
+            # The class name only: the message can hold an address or a secret (FR-013).
+            self._end_read(side_name, SideReadReport(succeeded=False, error_class=type(exc).__name__))
             msg = f"An error occurred while loading {adapter}: {exc!s}"
             raise ValueError(msg) from exc
         finally:
             if not completed:
                 self._side_cursors.pop(side, None)
+        self._end_read(
+            side_name,
+            SideReadReport(
+                succeeded=True,
+                read_mode="full" if self._side_full_extract.get(side, False) else "incremental",
+                nodes_by_kind=_counted_nodes(side_name, adapter),
+            ),
+        )
+
+    def _end_read(self, side: Side, report: SideReadReport) -> None:
+        """Report the end of one side's read to the observer, then log it."""
+        self._notify_read_observer(side, report)
+        if not report.succeeded:
+            logger.info("Load: %s read failed (%s)", side, report.error_class)
+            return
+        total = sum(report.nodes_by_kind.values())
+        counts = ", ".join(f"{kind} {count}" for kind, count in report.nodes_by_kind.items())
+        logger.info(
+            "Load: %s read succeeded (%s): %d nodes%s", side, report.read_mode, total, f"; {counts}" if counts else ""
+        )
+
+    def _notify_read_observer(self, side: Side, report: SideReadReport | None) -> None:
+        """Call the observer's start method, or its end method when `report` is given.
+
+        An observer that raises never changes the read's result (FR-007): its failure is
+        logged once, by error class only, and the read continues.
+        """
+        observer = self.read_observer
+        if observer is None:
+            return
+        try:
+            if report is None:
+                observer.read_started(side)
+            else:
+                observer.read_ended(side, report)
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught  # an observer never fails a read
+            logger.warning("Load: the read observer failed for the %s side (%s)", side, type(exc).__name__)
 
     def source_load(self):
         """Load the source and write its snapshot."""

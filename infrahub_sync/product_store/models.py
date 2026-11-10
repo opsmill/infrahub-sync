@@ -92,6 +92,11 @@ class PrefectExecutionLink(BaseModel):
     terminal_at: datetime | None = None
     terminal_state: Literal["completed", "failed", "cancelled", "abandoned", "interrupted"] | None = None
     terminal_outcome: Literal["succeeded", "failed", "cancelled", "abandoned", "ambiguous"] | None = None
+    # Each side's stored read document (spec 018 data-model.md); `None` for an execution
+    # recorded before that feature, a stage that reads no side, or a `plan` or `sync`
+    # execution that has not reached its planning step.
+    source_read: dict[str, Any] | None = None
+    destination_read: dict[str, Any] | None = None
 
     @field_validator(
         "last_observed_at",
@@ -612,8 +617,38 @@ class RunFilters(BaseModel):
 RunPage: TypeAlias = StorePage[ProductRun]
 
 
+# An event's dotted type, ``infrahub_sync.<resource>.<action>`` (spec 017, FR-012).
+EVENT_TYPE_PATTERN = r"^infrahub_sync\.(run|config)\.[a-z_]+$"
+# The kinds of resource an event names besides its primary resource, in the order an event lists them.
+RelatedResourceKind: TypeAlias = Literal["account", "config", "config_version", "branch"]
+_RELATED_KIND_ORDER: dict[str, int] = {"account": 0, "config": 1, "config_version": 2, "branch": 3}
+
+
+class RelatedResource(BaseModel):
+    """One resource an event names besides its primary resource: the actor's account, a configuration, a version or a branch."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: RelatedResourceKind
+    id: str = Field(min_length=1)
+
+
+class PrimaryResource(BaseModel):
+    """The resource an event is about: its run, or else its configuration."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["run", "config"]
+    id: str = Field(min_length=1)
+
+
 class AuditEvent(BaseModel):
-    """Secret-safe durable evidence for one Sync API decision."""
+    """Secret-safe durable evidence for one Sync API decision or one stage result.
+
+    ``event_type`` is NULL only for a request refused for a missing or invalid token, which
+    the event list never returns. ``related`` is kept in one order (account, configuration,
+    version, branch, then ID), so an event reads back equal to the event that was recorded.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -624,6 +659,11 @@ class AuditEvent(BaseModel):
     reason: str | None = Field(min_length=1)
     outcome: str = Field(min_length=1)
     created_at: datetime
+    event_type: str | None = Field(default=None, pattern=EVENT_TYPE_PATTERN)
+    config_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
+    registry_version: int | None = Field(default=None, ge=1, le=MAX_REGISTRY_VERSION)
+    branch: str | None = Field(default=None, min_length=1)
+    related: tuple[RelatedResource, ...] = ()
 
     @field_validator("created_at")
     @classmethod
@@ -632,6 +672,53 @@ class AuditEvent(BaseModel):
             msg = "audit-event timestamps must include a timezone"
             raise ValueError(msg)
         return value
+
+    @field_validator("related")
+    @classmethod
+    def _order_related(cls, value: tuple[RelatedResource, ...]) -> tuple[RelatedResource, ...]:
+        if len(set(value)) != len(value):
+            msg = "an event names each related resource once"
+            raise ValueError(msg)
+        return tuple(sorted(value, key=lambda item: (_RELATED_KIND_ORDER[item.kind], item.id)))
+
+    @property
+    def primary_resource(self) -> PrimaryResource | None:
+        """Return the run the event is about, else its configuration, else nothing."""
+        if self.run_id is not None:
+            return PrimaryResource(kind="run", id=self.run_id)
+        if self.config_id is not None:
+            return PrimaryResource(kind="config", id=self.config_id)
+        return None
+
+
+class EventFilters(BaseModel):
+    """What an event list is restricted to; every given filter must match, and none lists every typed event.
+
+    ``config_id`` matches the event's configuration or a ``config`` related resource.
+    ``event_types`` matches any of the types. ``related`` matches an event that names every
+    listed resource. ``since`` is inclusive and ``until`` exclusive.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
+    config_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
+    event_types: tuple[Annotated[str, Field(pattern=EVENT_TYPE_PATTERN)], ...] = ()
+    related: tuple[RelatedResource, ...] = ()
+    since: datetime | None = None
+    until: datetime | None = None
+
+    @field_validator("since", "until")
+    @classmethod
+    def _require_filter_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
+            msg = "event-list time bounds must include a timezone"
+            raise ValueError(msg)
+        return value
+
+
+# One page of events, oldest first.
+EventPage: TypeAlias = StorePage[AuditEvent]
 
 
 T = TypeVar("T")

@@ -24,6 +24,8 @@ from infrahub_sdk.schema.main import AttributeKind, NodeSchemaAPI
 pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
 
+from prefect.client.schemas.objects import State
+
 from infrahub_sync.client.models import PlanResource
 from infrahub_sync.configuration import ConfigurationPackage, parse_configuration_package
 from infrahub_sync.configuration import capabilities as capabilities_module
@@ -261,7 +263,7 @@ def _publish_current_plan(harness: _Harness) -> None:
     publish_plan_directory(harness.projection, RUN_ID, harness.run_dir)
 
 
-def _apply(harness: _Harness, *, expected_checksum: str | None = None) -> dict[str, Any]:
+def _apply(harness: _Harness, *, expected_checksum: str | None = None) -> dict[str, Any] | State[Any]:
     _publish_current_plan(harness)
     return service_sync_run.fn(
         RUN_ID,
@@ -270,6 +272,15 @@ def _apply(harness: _Harness, *, expected_checksum: str | None = None) -> dict[s
         expected_checksum=harness.checksum if expected_checksum is None else expected_checksum,
         confirm_writes=True,
     )
+
+
+def _apply_ends_failed(harness: _Harness) -> str:
+    """Apply a known failure: the flow returns a `Failed` state; return its message (spec 017, T026)."""
+    state = _apply(harness)
+    assert isinstance(state, State)
+    assert state.is_failed()
+    assert state.message is not None
+    return state.message
 
 
 def _execute_apply_stage(harness: _Harness) -> tuple[dict[str, Any], Any]:
@@ -283,12 +294,12 @@ def _execute_apply_stage(harness: _Harness) -> tuple[dict[str, Any], Any]:
             None,
             harness.checksum,
             confirm_writes=True,
-            run_logger=service_flow.logger,
             secrets=[],
             config_directory=str(harness.run_dir.parents[2]),
             projection=harness.projection,
             tracker=WriteDispatchTracker(),
             scratch=scratch,
+            flow_run_id=FLOW_RUN_ID,
         )
 
 
@@ -316,6 +327,7 @@ def test_an_unchanged_consumed_schema_applies_the_retained_plan(
 
     result = _apply(harness)
 
+    assert isinstance(result, dict)
     assert result["outcome"] == "no-change"
     assert len(harness.calls) == 1
     # The guard read the live schema on the run's effective destination branch.
@@ -628,11 +640,9 @@ def test_a_failed_schema_read_refuses_with_only_its_short_reason(
         f"\x07token={INFRAHUB_CANARY} at https://destination.invalid/graphql", reason="unauthorized"
     )
 
-    with pytest.raises(RuntimeError) as caught:
-        _apply(harness)
-
-    message = str(caught.value)
-    assert "unauthorized" in message
+    message = _apply_ends_failed(harness)
+    # The reason reaches the operator as its fixed cause (spec 017, FR-001).
+    assert "Infrahub refused the destination token" in message
     assert INFRAHUB_CANARY not in message
     assert "https://destination.invalid" not in message
     assert harness.calls == []
@@ -756,12 +766,10 @@ def test_an_ambiguous_live_member_name_refuses_before_any_write(
     }
     retained = (harness.run_dir / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes()
 
-    with pytest.raises(RuntimeError) as caught:
-        _apply(harness)
+    message = _apply_ends_failed(harness)
 
     assert harness.calls == []
     assert (harness.run_dir / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes() == retained
-    message = str(caught.value)
     assert "rejected" in message
     for leaked in (INFRAHUB_CANARY, NETBOX_CANARY):
         assert leaked not in message
