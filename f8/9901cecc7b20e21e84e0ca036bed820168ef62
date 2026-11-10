@@ -1,0 +1,27 @@
+infrahub_sync/service/events.py
+  s_32988cb222c1dc::t_f76112d75a94bb 28-29
+infrahub_sync/service/config_routes.py
+  s_32988cb222c1dc::t_f76112d75a94bb 36-42,317,321,335
+dev/specs/017-sync-run-events-logs/data-model.md
+  s_32988cb222c1dc::t_f76112d75a94bb 43
+docs/docs/reference/sync-http-api.mdx
+  s_32988cb222c1dc::t_f76112d75a94bb 545
+tests/service/test_config_routes.py
+  s_32988cb222c1dc::t_f76112d75a94bb 1581,1603-1608,1621
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f89901cecc7b20e21e84e0ca036bed820168ef62",
+  "prompts": {},
+  "sessions": {
+    "s_32988cb222c1dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "abf908f4-09bf-43d4-bfed-57c1fe4c9baa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
