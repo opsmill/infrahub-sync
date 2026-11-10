@@ -163,6 +163,64 @@ class PrefectExecutionLink(BaseModel):
         return self
 
 
+class RunApproval(BaseModel):
+    """The one recorded approval of a run's published plan.
+
+    Stored at most once per run and never changed or removed. ``approved_by``,
+    ``approved_at`` and ``plan_checksum`` are required together, so a partial approval
+    cannot be built; ``reason`` is the optional audit reason of the approve request.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    approved_by: str = Field(min_length=1)
+    approved_at: datetime
+    plan_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    reason: str | None = None
+
+    @field_validator("approved_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            msg = "approval timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
+
+    @classmethod
+    def from_columns(
+        cls,
+        approved_by: str | None,
+        approved_at: str | datetime | None,
+        approved_checksum: str | None,
+        approval_reason: str | None,
+    ) -> RunApproval | None:
+        """Build the approval from its four stored columns, or ``None`` when none is stored.
+
+        ``approved_at`` may be the stored ISO 8601 text; Pydantic parses it.
+
+        Raises:
+            ValueError: Some but not all of the required columns are present, or a reason
+                is stored without an approval.
+        """
+        required = (approved_by, approved_at, approved_checksum)
+        if all(value is None for value in required):
+            if approval_reason is not None:
+                msg = "an approval reason requires a stored approval"
+                raise ValueError(msg)
+            return None
+        if any(value is None for value in required):
+            msg = "approval columns must be all absent or all present"
+            raise ValueError(msg)
+        return cls.model_validate(
+            {
+                "approved_by": approved_by,
+                "approved_at": approved_at,
+                "plan_checksum": approved_checksum,
+                "reason": approval_reason,
+            }
+        )
+
+
 class ProductRun(BaseModel):
     """One compact Sync-owned product record.
 
@@ -193,6 +251,9 @@ class ProductRun(BaseModel):
     # The effective Infrahub branch the run writes to, recorded when the run is created.
     # ``None`` for runs created before the store recorded it.
     destination_branch: str | None = None
+    # The run's one approval of its published plan, or ``None`` when it was never approved.
+    # Approval is not a phase: an approved run stays in phase ``planned``.
+    approval: RunApproval | None = None
     artifact_refs: tuple[ArtifactReference, ...] = ()
     prefect_executions: tuple[PrefectExecutionLink, ...] = ()
 

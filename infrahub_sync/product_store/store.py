@@ -48,6 +48,7 @@ from infrahub_sync.product_store.models import (
     MutationReceipt,
     PrefectExecutionLink,
     ProductRun,
+    RunApproval,
     RunFilters,
     RunPage,
     RunReference,
@@ -160,11 +161,21 @@ _CONFIGURATION_BINDING_COLUMNS: tuple[tuple[str, str], ...] = (
     ("registry_version", "INTEGER"),
     ("package_checksum", "TEXT"),
 )
+# Nullable approval columns on ``product_runs``, read and written as ``ProductRun.approval``.
+# ``approved_by``, ``approved_at`` (UTC ISO 8601 text, like the other run timestamps) and
+# ``approved_checksum`` are all NULL (never approved) or all NOT NULL; ``approval_reason`` is
+# the optional audit reason. Runs stored before approval existed keep NULL and read as unapproved.
+_APPROVAL_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("approved_by", "TEXT"),
+    ("approved_at", "TEXT"),
+    ("approved_checksum", "TEXT"),
+    ("approval_reason", "TEXT"),
+)
 # Every nullable column the start-up migration adds to a pre-existing table, per table. Each is
 # added only when the catalog does not list it, so a second start-up issues no ALTER. Runs
 # created before ``destination_branch`` existed keep NULL; nothing backfills it.
 _ADDED_NULLABLE_COLUMNS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
-    ("product_runs", (*_CONFIGURATION_BINDING_COLUMNS, ("destination_branch", "TEXT"))),
+    ("product_runs", (*_CONFIGURATION_BINDING_COLUMNS, ("destination_branch", "TEXT"), *_APPROVAL_COLUMNS)),
     ("configuration_versions", (("registered_by", "TEXT"), ("registration_reason", "TEXT"))),
     ("configurations", (("name", "TEXT"),)),
 )
@@ -366,10 +377,11 @@ _SELECT_NEXT_CONFIGURATION_VERSION = (
 
 _INSERT_PRODUCT_RUN = """INSERT INTO product_runs (run_id, operation, configuration_reference, config_id,
 registry_version, package_checksum, actor, audit_links, started_at, finished_at, phase, outcome, summary, results,
-reconciliation_required, destination_branch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+reconciliation_required, destination_branch, approved_by, approved_at, approved_checksum, approval_reason)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _PRODUCT_RUN_COLUMNS = """run_id, operation, configuration_reference, actor, audit_links, started_at,
 finished_at, phase, outcome, summary, results, config_id, registry_version, package_checksum, reconciliation_required,
-destination_branch"""
+destination_branch, approved_by, approved_at, approved_checksum, approval_reason"""
 _SELECT_PRODUCT_RUN = "SELECT " + _PRODUCT_RUN_COLUMNS + " FROM product_runs WHERE run_id = ?"  # noqa: S608 - module constants only.
 # The run list is assembled from these fixed fragments only; every value is a bound parameter.
 # The keyset predicate is the row comparison ``(started_at, run_id) < (?, ?)`` written out as an
@@ -735,7 +747,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
     def _migrate_added_columns(self, cursor: _Cursor) -> frozenset[tuple[str, str]]:
         """Additively bring pre-existing tables up to the current nullable column set.
 
-        Covers ``product_runs`` (configuration binding and ``destination_branch``),
+        Covers ``product_runs`` (configuration binding, ``destination_branch`` and approval),
         ``configuration_versions`` (``registered_by``, ``registration_reason``) and
         ``configurations`` (``name``). Every column is nullable, so no existing row needs a
         value, and a column the catalog already lists is skipped. Returns the
@@ -994,6 +1006,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 _json(run.results),
                 run.reconciliation_required,
                 run.destination_branch,
+                *_approval_columns(run.approval),
             ),
         )
 
@@ -3567,6 +3580,13 @@ def _is_canonical_uuid(value: str) -> bool:
         return False
 
 
+def _approval_columns(approval: RunApproval | None) -> tuple[str | None, str | None, str | None, str | None]:
+    """Return the four stored ``product_runs`` approval columns for ``approval``."""
+    if approval is None:
+        return None, None, None, None
+    return approval.approved_by, _utc_iso(approval.approved_at), approval.plan_checksum, approval.reason
+
+
 def _run_from_rows(
     row: Sequence[Any],
     references: Sequence[Sequence[Any]],
@@ -3593,6 +3613,7 @@ def _run_from_rows(
             # SQLite stores a BOOLEAN column as 0/1; PostgreSQL returns a bool.
             "reconciliation_required": bool(row[14]),
             "destination_branch": row[15],
+            "approval": RunApproval.from_columns(row[16], row[17], row[18], row[19]),
             "artifact_refs": [_reference_from_row(item).model_dump() for item in references],
             "prefect_executions": [
                 {

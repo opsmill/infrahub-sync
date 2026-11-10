@@ -23,9 +23,9 @@ check reads the approval that US1 stores, and US4's `approve` refusal extends US
 
 ## Phase 2: Foundational (blocks US1 and US3)
 
-- [ ] T002 Add the `RunApproval` model (fields `approved_by`, `approved_at` with time zone, `plan_checksum` 64-hex, `reason`) and `ProductRun.approval: RunApproval | None = None` with a validator refusing a partial record, in `infrahub_sync/product_store/models.py`
-- [ ] T003 Add nullable columns `approved_by`, `approved_at`, `approved_checksum`, `approval_reason` to `product_runs` through the existing start-up nullable-column migration list, and map them in the row-to-`ProductRun` and `ProductRun`-to-row code for SQLite and PostgreSQL, in `infrahub_sync/product_store/store.py`
-- [ ] T004 [P] Test that a pre-existing `product_runs` table gains the four columns idempotently, that existing rows read `approval is None`, and that a stored approval round-trips, in `tests/product_store/test_run_approval.py`
+- [X] T002 Add the `RunApproval` model (fields `approved_by`, `approved_at` with time zone, `plan_checksum` 64-hex, `reason`) and `ProductRun.approval: RunApproval | None = None` with a validator refusing a partial record, in `infrahub_sync/product_store/models.py`
+- [X] T003 Add nullable columns `approved_by`, `approved_at`, `approved_checksum`, `approval_reason` to `product_runs` through the existing start-up nullable-column migration list, and map them in the row-to-`ProductRun` and `ProductRun`-to-row code for SQLite and PostgreSQL, in `infrahub_sync/product_store/store.py`
+- [X] T004 [P] Test that a pre-existing `product_runs` table gains the four columns idempotently, that existing rows read `approval is None`, and that a stored approval round-trips, in `tests/product_store/test_run_approval.py`
 
 **Checkpoint**: the store carries an optional approval; nothing writes it yet.
 
