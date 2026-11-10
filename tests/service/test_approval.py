@@ -209,6 +209,30 @@ def test_approve_records_the_approval_and_returns_the_run_with_the_plan_summary(
     assert _outcomes(projection) == ["accepted"]
 
 
+def test_an_approval_and_its_accepted_event_carry_one_clock_reading(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An injected clock that advances on every read still stamps both records with one time."""
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": OWNER_TOKEN}}))
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    projection = local_product_projection(tmp_path.resolve())
+    version = projection.create_configuration(_registered_package())
+    readings = iter(datetime(2026, 11, 11, 12, second, tzinfo=timezone.utc) for second in range(60))
+    service = RunService(
+        projection, _RecordingOrchestration(), secrets=resolver.secret_values, clock=lambda: next(readings)
+    )
+    _stored_run(projection, version)
+
+    assert _approve(TestClient(create_app(service, resolver))).status_code == 200
+
+    stored = projection.lookup_run(RUN_ID).value
+    assert stored is not None
+    assert stored.approval is not None
+    accepted = [event for event in projection.audit_events(RUN_ID) if event.operation == "approve"]
+    assert [event.outcome for event in accepted] == ["accepted"]
+    assert accepted[0].created_at == stored.approval.approved_at
+
+
 def test_an_approval_and_its_refusal_are_listed_as_typed_run_events(api: _Api) -> None:
     """Spec 017's event list shows the approve request as `run.accepted`, a refused one as `run.refused`."""
     client, projection, _orchestration, version = api

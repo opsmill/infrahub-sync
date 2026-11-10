@@ -562,9 +562,11 @@ class RunService:
         if receipt.state == "accepted":
             self._audit(run_id, actor=principal.actor, operation="approve", reason=request.reason, outcome="replayed")
             return self._stored_response(receipt)
+        # One clock reading stamps the approval and its accepted event.
+        approved_at = self._clock()
         approval = RunApproval(
             approved_by=principal.actor,
-            approved_at=self._clock(),
+            approved_at=approved_at,
             plan_checksum=plan.checksum,
             reason=request.reason,
         )
@@ -584,7 +586,13 @@ class RunService:
         try:
             # The accepted event is written in the approval's transaction (spec 017, FR-014).
             accepted = self._event(
-                run_id, actor=principal.actor, operation="approve", reason=request.reason, outcome="accepted", run=run
+                run_id,
+                actor=principal.actor,
+                operation="approve",
+                reason=request.reason,
+                outcome="accepted",
+                run=run,
+                created_at=approved_at,
             )
             stored = self._projection.record_approval(
                 run_id, approval, receipt, response, events=(accepted,), secrets=self._secrets
@@ -1588,13 +1596,16 @@ class RunService:
         registry_version: int | None = None,
         branch: str | None = None,
         run: ProductRun | None = None,
+        created_at: datetime | None = None,
     ) -> AuditEvent:
         """Build the typed event of one request decision.
 
         The type comes from the outcome. The configuration, version and branch come from the
         stored run when there is one, else from the arguments, for a request refused before
         its run exists. A caller that already holds the run passes it as ``run``; those three
-        values never change during a run, so the run is not read again.
+        values never change during a run, so the run is not read again. A caller that stamps
+        a stored record with the same decision passes that time as ``created_at``; otherwise
+        the event reads the clock.
         """
         if run is None and run_id is not None:
             run = self._projection.lookup_run(run_id).value
@@ -1609,7 +1620,7 @@ class RunService:
             config_id=config_id,
             registry_version=registry_version,
             branch=branch,
-            created_at=self._clock(),
+            created_at=self._clock() if created_at is None else created_at,
         )
 
     def _audit(
