@@ -1,0 +1,1 @@
+The `verify` documentation and CLI help no longer say that `verify` checks the plan against the destination. `verify` checks only that the files the plan run saved are unchanged; it does not contact the source or the destination, and it does not approve the plan.

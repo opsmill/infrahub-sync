@@ -443,8 +443,10 @@ plan.
 
 ### Verify and apply the reviewed plan
 
-Verification is read-only and retains verification evidence without finishing or otherwise
-advancing the product run:
+Verification is read-only. It checks only the files that the plan run saved: the run binding,
+the plan checksum, the saved source snapshot and the configuration version. It does not
+connect to the source or the destination, and it does not approve the plan. It retains
+verification evidence without finishing or otherwise advancing the product run:
 
 ```bash
 curl --request POST \

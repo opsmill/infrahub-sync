@@ -106,7 +106,7 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 - `infrahub-sync runs show` / `runs plan` / `runs results` / `runs artifacts` — inspect one run, its saved plan, its results and its artifacts (safe).
 - `infrahub-sync whoami` — check which actor the API token belongs to (safe).
 - `infrahub-sync plan` — create a plan run and review its summary (Sync API required). `diff` is a hidden, deprecated alias.
-- `infrahub-sync verify` — check a run's saved plan against the destination without writing (Sync API required).
+- `infrahub-sync verify` — check that a run's saved plan files are unchanged; contacts neither source nor destination, and `apply` repeats these checks (Sync API required).
 - `infrahub-sync sync` — perform synchronization (Sync API and approval required).
 - `infrahub-sync apply` — apply a reviewed plan by checksum (Sync API and approval required).
 - `infrahub-sync runs cancel` — cancel a run; cancelling a write can leave an ambiguous outcome (approval required).
@@ -205,7 +205,7 @@ The container image is published to `registry.opsmill.io/opsmill/infrahub-sync` 
 ## Known Issues and Limitations
 
 - Optional dependencies (e.g. `pynetbox`, `pynautobot`) may be missing, producing import warnings.
-- `plan`, `verify`, `sync`, and `apply` require a running Sync API and its destination servers.
+- `plan`, `sync`, and `apply` require a running Sync API and its destination servers. `verify` requires the Sync API only.
 - Docs npm audit may flag dev-only vulnerabilities; they do not affect the Python package.
 
 ## Git and PR Process

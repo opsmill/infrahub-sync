@@ -1022,7 +1022,7 @@ def verify_cmd(
     wait_timeout: float = typer.Option(DEFAULT_WAIT_TIMEOUT, "--wait-timeout", help="Bounded wait in seconds."),
     poll_interval: float = typer.Option(DEFAULT_POLL_INTERVAL, "--poll-interval", help="Poll interval in seconds."),
 ) -> None:
-    """Start verification of the saved plan of the named run."""
+    """Check that the saved plan files of the named run are unchanged, without contacting source or destination."""
     with _client_errors():
         client = _waiting_client(ctx, wait_timeout=wait_timeout, poll_interval=poll_interval)
         completed = _submit_and_wait(

@@ -126,14 +126,20 @@ contain. Apply never executes a delete. The detailed output marks each delete as
 destination side was not read in full, the plan contains no deletes and the review says so.
 See [Deletes in a plan](./reference/cache-layout#deletes-in-a-plan).
 
-To check the saved plan against the current destination without writing, run:
+To check that the saved plan files have not changed since the plan run, run:
 
 ```bash
 infrahub-sync verify RUN_ID --reason "check plan before apply"
 ```
 
-`verify` acts on the plan that the run already saved; it does not compute a new plan. Apply
-runs the same checks again before its first write, so this step is optional.
+`verify` reads only the files that the plan run saved. It checks that the plan belongs to
+this run, that the plan checksum and the saved source snapshot are unchanged, and that the
+configuration version is the one the plan was created with. It does not connect to the
+source or the destination, does not compute a new plan, and does not approve the plan.
+
+Apply runs the same checks again before its first write, so this step is optional. Apply also
+checks that the destination URL and branch match the ones the plan recorded, and that the
+checksum you pass with `--expected-checksum` matches the saved plan.
 
 ## Apply the reviewed plan
 
