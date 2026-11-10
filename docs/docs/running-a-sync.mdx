@@ -181,7 +181,8 @@ After the review, three commands follow, each with one purpose:
 2. `approve` records that you accept the plan, without writing.
 3. `apply` writes the plan to the destination.
 
-`verify` and `approve` are optional unless the Sync API requires approval; see
+`verify` is always optional. `approve` is optional too, unless the Sync API requires
+approval: then `apply` refuses a run that has no approval. See
 [Require an approved plan](#require-an-approved-plan).
 
 ## Verify the plan against the destination
@@ -201,6 +202,9 @@ that `apply` uses, so `verify` fails when it cannot reach the destination. The c
 - The destination URL and branch match the ones the plan recorded.
 - The destination adapter can apply a saved plan, and every planned field still exists in the
   destination schema and can still be written.
+- For a destination that records lineage, such as Infrahub: the plan records an import
+  account, the apply would run with that same import account, and the `source` and `owner`
+  nodes that the package names exist in the destination.
 
 On success, `verify` prints one `check: NAME passed` line for each check, in the order it ran
 them, such as `check: destination_schema passed`. When a check fails, `verify` exits with a
@@ -236,7 +240,8 @@ command prints the run, its approval, and the counts of the plan approved:
 then prints `approved_by`, `approved_at` and `approved_checksum`. The run stays in phase
 `planned`.
 
-The service refuses an approval in these cases, and records nothing:
+The service refuses an approval in these cases. It stores no approval on the run, and records
+the refusal in the audit history:
 
 - The checksum differs from the saved plan's checksum (`checksum-mismatch`).
 - The saved plan's checksum could not be confirmed (`plan-checksum-unverified`).
@@ -507,14 +512,14 @@ and the retry key. Check the run later with `runs show RUN_ID` or `runs plan RUN
 
 ### Audit reasons
 
-`configs register`, `configs version`, `plan`, `verify`, `sync`, `apply`, and `runs cancel`
+`configs register`, `configs version`, `plan`, `verify`, `approve`, `sync`, `apply`, and `runs cancel`
 accept `--reason`. The
 reason is optional. When you give one, the service records it in the audit history of the
 request. When you omit it, the service records the request without a reason.
 
 ### Retry keys
 
-`configs register`, `configs version`, `plan`, `verify`, `sync`, `apply`, and `runs cancel`
+`configs register`, `configs version`, `plan`, `verify`, `approve`, `sync`, `apply`, and `runs cancel`
 accept `--idempotency-key`. If you omit it, the CLI generates a key and prints it. If the connection
 fails before you see a response, run the same command again with that key. The service then
 returns the original response instead of starting a second operation. See

@@ -206,7 +206,7 @@ The container image is published to `registry.opsmill.io/opsmill/infrahub-sync` 
 ## Known Issues and Limitations
 
 - Optional dependencies (e.g. `pynetbox`, `pynautobot`) may be missing, producing import warnings.
-- `plan`, `sync`, and `apply` require a running Sync API and its destination servers. `verify` requires the Sync API only.
+- `plan`, `sync`, and `apply` require a running Sync API and its destination servers. `verify` requires the Sync API, and for a run of a registered configuration it also connects to the destination.
 - Docs npm audit may flag dev-only vulnerabilities; they do not affect the Python package.
 
 ## Git and PR Process

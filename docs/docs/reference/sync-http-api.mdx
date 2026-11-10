@@ -785,7 +785,8 @@ The service evaluates the request in this order:
 6. A run that already has an approval is refused with `409 already-approved`. The error's
    `details` carry the existing approval.
 
-A refused approval records nothing. On success, the service answers `200` with the run
+A refused approval stores no approval on the run. The service records the refusal in the
+audit history as an `infrahub_sync.run.refused` event. On success, the service answers `200` with the run
 resource, which now carries `approval`, and `plan_summary` with the counts of the plan
 approved: `creates`, `updates` and `deletes_recorded`. The response is stored with the
 mutation receipt, so a retry with the same key returns it unchanged. The run's `approval` is:
