@@ -49,6 +49,8 @@ export interface StepContext {
   inFlight?: string;
   /** `GET /runs/{run_id}/plan` answered 410. */
   planExpired?: boolean;
+  /** When a newer plan of the configuration was made: this plan no longer waits for review. */
+  replacedAt?: string;
 }
 
 export interface Wait {
@@ -245,6 +247,9 @@ function reviewedSteps(run: Run, orchestration: Orchestration[], ctx: StepContex
   } else if (ctx.planExpired) {
     reviewState = "skipped";
     reviewOutcome = "The plan expired before it was applied. Plan again.";
+  } else if (waiting && ctx.replacedAt) {
+    reviewState = "skipped";
+    reviewOutcome = "Replaced by a newer plan";
   } else if (waiting && executable === 0) {
     reviewState = "skipped";
     reviewOutcome = "Nothing to apply: the plan has only deletes, and apply never deletes.";
@@ -258,9 +263,13 @@ function reviewedSteps(run: Run, orchestration: Orchestration[], ctx: StepContex
     reviewState === "idle" || planState !== "done"
       ? undefined
       : (planExec?.terminal_at ?? undefined);
-  // Review ends when the apply is requested, or when the saved plan fails its check.
+  // Review ends when the apply is requested, when the saved plan fails its check, or when a
+  // newer plan replaces this one.
   const reviewEnd =
-    applyExec?.submitted_at ?? (checkFailed ? checks.at(-1)?.terminal_at : undefined) ?? undefined;
+    applyExec?.submitted_at ??
+    (checkFailed ? checks.at(-1)?.terminal_at : undefined) ??
+    (waiting ? ctx.replacedAt : undefined) ??
+    undefined;
 
   let applyState: StepState = stopped ? (applyExec ? "skipped" : "idle") : states[2];
   if (applyState === "waiting") applyState = "idle";

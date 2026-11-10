@@ -163,6 +163,7 @@ export function ChangesSheet({
   onFilterChange,
   close,
   morph,
+  replaced = false,
 }: {
   run: Run;
   counts: ChangeCounts;
@@ -171,6 +172,8 @@ export function ChangesSheet({
   onFilterChange: (f: ChangesFilter) => void;
   close: () => void;
   morph: boolean;
+  /** A newer plan replaced this one, so it no longer waits for review. */
+  replaced?: boolean;
 }) {
   const still = reducedMotion();
   const [phase, setPhase] = useState<"enter" | "open" | "leave">(still || morph ? "open" : "enter");
@@ -281,7 +284,7 @@ export function ChangesSheet({
     return () => document.removeEventListener("keydown", onKey, true);
   });
 
-  const line = changesStateLine(run, counts, branch);
+  const line = changesStateLine(run, counts, branch, replaced);
   const plan = download.plan;
 
   let content: ReactNode;

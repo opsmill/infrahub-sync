@@ -427,7 +427,7 @@ function ChangesGlance({ run, onOpenChanges }: { run: Run; onOpenChanges: () => 
 
 /**
  * What happened in the run, in order: when it started, each step with what it found or wrote and
- * its details, then how it ended. The failure notice sits under the step that failed.
+ * its details, then how it ended. The notice on the run's outcome sits under the step it explains.
  */
 export function RunTimeline({
   run,
@@ -438,7 +438,7 @@ export function RunTimeline({
   destination,
   state,
   label,
-  failure,
+  notice,
   focus,
   onOpenChanges,
 }: {
@@ -451,14 +451,27 @@ export function RunTimeline({
   destination?: System;
   state: RunState;
   label: string;
-  /** The failure notice, shown under the step that failed. */
-  failure?: ReactNode;
+  /** Why the run failed, ended without running a step, or waits: shown under that step. */
+  notice?: ReactNode;
   focus: StepFocus;
   /** Opens the changes sheet. */
   onOpenChanges: () => void;
 }) {
-  const failedIndex = steps.findIndex((s) => s.state === "failed");
+  const noticeIndex = steps.findIndex(
+    (s) =>
+      s.state === "failed" ||
+      s.exec?.terminal_outcome === "abandoned" ||
+      s.exec?.terminal_outcome === "cancelled" ||
+      (s.exec != null &&
+        s.exec.terminal_at == null &&
+        (s.exec.stalled_at != null || s.exec.cancellation_requested_at != null))
+  );
   const finished = run.finished_at;
+  // A waiting plan finishes when its plan is saved, but its review can end later (a newer plan).
+  const endedAt = [finished, ...steps.map((s) => s.end)]
+    .filter((t): t is string => Boolean(t))
+    .sort()
+    .at(-1);
   // A done plan with changes shows their counts and a link that opens them, not a sentence.
   const changeTotal = runCounts(run)?.total ?? 0;
   const glance = (s: RunStep) =>
@@ -559,7 +572,7 @@ export function RunTimeline({
           open={focus.open.has(s.index)}
           onToggle={(o) => focus.setOpen(s.index, o)}
         />
-        {s.index === failedIndex && failure}
+        {s.index === noticeIndex && notice}
       </Event>
     );
   }
@@ -569,7 +582,7 @@ export function RunTimeline({
       <Event
         key="end"
         last
-        time={finished}
+        time={endedAt}
         node={<Dot className="size-2 bg-subtle-muted" />}
         title={
           <span className="inline-flex flex-wrap items-baseline gap-2">
@@ -595,7 +608,7 @@ export function RunTimeline({
   return (
     <section aria-labelledby="timeline" className="flex flex-col gap-4">
       <SectionHeading id="timeline" title="Timeline" />
-      {failure && failedIndex < 0 && failure}
+      {notice && noticeIndex < 0 && notice}
       <ol aria-labelledby="timeline">{items}</ol>
     </section>
   );

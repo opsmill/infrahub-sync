@@ -1,17 +1,17 @@
 import { Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { cn } from "tailwind-variants";
 
 import type { Orchestration, Plan, Run } from "#/api/types";
+import { ArrowRightIcon } from "#/components/icons";
 import { CopyButton, FOCUS, InlineCode, Notice } from "#/components/page";
 import { BranchCode, When } from "#/components/run-status";
 import { executableCount, type FailureDetail, fmt, phaseLabel } from "#/domain/run-state";
 import type { System } from "#/domain/systems";
-import { formatAbsolute } from "#/lib/time";
+import { useNow } from "#/lib/time";
 
 import { identityParts } from "./plan-values";
 
-const RUN_LINK = cn("rounded-sm font-mono text-[13px] text-accent hover:underline", FOCUS);
 const LABEL = "block text-subtle text-xs";
 const CONNECT_ERRORS = new Set([
   "ConnectError",
@@ -215,117 +215,118 @@ export function FailureNotice({
   );
 }
 
-/** An abandoned execution was never picked up by a worker, so it read and wrote nothing. */
-export function AbandonedNotice({
-  run,
-  orchestration,
-}: {
-  run: Run;
-  orchestration: Orchestration[];
-}) {
-  const o = orchestration.at(-1);
-  const ended = o?.terminal_at ?? run.finished_at;
-  const earlierRan = orchestration.some((e) => e !== o && e.terminal_outcome === "succeeded");
-  const nothing =
-    earlierRan && o
-      ? `Nothing was read or written by the ${o.purpose}.`
-      : "Nothing was read or written.";
+export type NoticeTone = "neutral" | "warning";
+
+/* ---------- notices about other runs: the sheets tucked under the run summary ---------- */
+
+const CHIP: Record<NoticeTone, string> = { neutral: "bg-accent", warning: "bg-warning-strong" };
+const TITLE: Record<NoticeTone, string> = { neutral: "text-accent", warning: "text-warning" };
+
+const glyph = {
+  fill: "none",
+  stroke: "currentColor",
+  strokeLinecap: "round",
+  strokeWidth: 1.75,
+} as const;
+
+/** The tone's mark: a white glyph on a solid circle. */
+function ToneMark({ tone }: { tone: NoticeTone }) {
   return (
-    <Notice
-      tone="neutral"
-      role="note"
-      id="abandoned"
-      titleAs="h2"
-      titleId="abandoned-title"
-      title="Why this run was abandoned"
+    <span
+      className={cn(
+        "mt-px grid size-[18px] shrink-0 place-items-center rounded-full text-content shadow-[0_1px_1px_rgb(0_0_0/0.12)]",
+        CHIP[tone]
+      )}
     >
-      <Body>
-        {!o ? (
-          <p>The Sync service recorded no execution for this run.</p>
-        ) : o.cancellation_requested_at ? (
-          <p>
-            Cancellation was requested <When iso={o.cancellation_requested_at} />, before a worker
-            picked up the {o.purpose}. {nothing}
-          </p>
+      <svg viewBox="0 0 16 16" aria-hidden="true" className="size-3">
+        {tone === "neutral" ? (
+          <>
+            <path d="M8 7v4.5" {...glyph} />
+            <circle cx="8" cy="4.4" r="1" fill="currentColor" />
+          </>
         ) : (
-          <p>
-            No worker picked up the {o.purpose} within the admission time, so the Sync service
-            stopped waiting
-            {ended && (
-              <>
-                {" "}
-                <When iso={ended} />
-              </>
-            )}
-            . {nothing} Check that a worker is running, then plan again.
+          <>
+            <path d="M8 3.5v5" {...glyph} />
+            <circle cx="8" cy="11.9" r="1" fill="currentColor" />
+          </>
+        )}
+      </svg>
+    </span>
+  );
+}
+
+/** A small button, its hit area grown to 40px; its ring takes the sheet's colour. */
+const OPEN_RUN = cn(
+  "relative inline-flex h-7 shrink-0 items-center gap-1 rounded-lg bg-content/80 px-2.5 font-medium text-[13px] text-foreground",
+  "shadow-[0_0_0_1px_color-mix(in_oklab,var(--notice-tone)_26%,transparent),0_1px_2px_rgb(0_0_0/0.06)] hover:bg-content",
+  "before:absolute before:inset-x-0 before:-inset-y-1.5 before:content-['']",
+  "transition-[background-color,scale] duration-150 ease-out active:scale-[0.97] motion-reduce:transition-none",
+  FOCUS
+);
+
+const WHY = cn(
+  "relative ml-1 rounded-sm font-medium text-foreground underline decoration-current/30 underline-offset-2 sm:hidden",
+  "before:absolute before:-inset-x-1 before:-inset-y-3 before:content-['']",
+  FOCUS
+);
+
+/** The other run's ID, as text: "Open run" is the row's one link. */
+function RunId({ id }: { id: string }) {
+  return (
+    <span className="font-mono text-[13px] text-foreground [overflow-wrap:anywhere]">{id}</span>
+  );
+}
+
+/** One notice in the sheet tucked under the run summary: about another run, which it opens. */
+function SheetNotice({
+  tone,
+  id,
+  title,
+  other,
+  more,
+  children,
+}: {
+  tone: NoticeTone;
+  id: string;
+  title: string;
+  other: Run;
+  /** The explanation that a phone shows behind "Why?". */
+  more?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const moreId = useId();
+  return (
+    <div role="note" id={id} className="flex flex-wrap items-start gap-x-2.5 gap-y-2 pt-3">
+      <ToneMark tone={tone} />
+      <div className="flex min-w-0 flex-1 basis-64 flex-col gap-1">
+        <p className="text-pretty text-foreground-muted text-sm">
+          <span className={cn("font-medium [overflow-wrap:anywhere]", TITLE[tone])}>{title}.</span>{" "}
+          {children}
+          {more && <span className="max-sm:hidden"> {more}</span>}
+          {more && (
+            <button
+              type="button"
+              aria-expanded={open}
+              aria-controls={moreId}
+              onClick={() => setOpen((o) => !o)}
+              className={WHY}
+            >
+              {open ? "Less" : "Why?"}
+            </button>
+          )}
+        </p>
+        {more && open && (
+          <p id={moreId} className="text-pretty text-foreground-muted text-sm sm:hidden">
+            {more}
           </p>
         )}
-      </Body>
-    </Notice>
-  );
-}
-
-/** An execution in flight that someone asked to cancel, or that no worker has picked up. */
-export function InFlightNotice({ open }: { open: Orchestration }) {
-  if (open.cancellation_requested_at) {
-    const deadline = open.cancellation_recovery_deadline_at;
-    return (
-      <Notice
-        tone="neutral"
-        role="note"
-        id="cancelling"
-        titleAs="h2"
-        titleId="cancelling-title"
-        title="Cancellation requested"
-      >
-        <Body>
-          <p>
-            {deadline && (
-              <>
-                If no worker confirms the cancellation by{" "}
-                <time dateTime={deadline}>{formatAbsolute(deadline)}</time>, the Sync service ends
-                the {open.purpose}.{" "}
-              </>
-            )}
-            {open.claimed_at
-              ? "A worker already started it, so its outcome is then unknown."
-              : "No worker has picked it up, so nothing has been read or written."}
-          </p>
-        </Body>
-      </Notice>
-    );
-  }
-  if (!open.stalled_at || open.claimed_at) return null;
-  return (
-    <Notice
-      tone="warning"
-      role="note"
-      id="stalled"
-      titleAs="h2"
-      titleId="stalled-title"
-      title={`No worker has picked up this ${open.purpose}`}
-    >
-      <Body>
-        <p>
-          The {open.purpose} has waited
-          {open.submitted_at && (
-            <>
-              {" "}
-              since <When iso={open.submitted_at} />
-            </>
-          )}
-          . Check that a worker is running.
-        </p>
-      </Body>
-    </Notice>
-  );
-}
-
-function RunLink({ runId }: { runId: string }) {
-  return (
-    <Link to="/runs/$runId" params={{ runId }} className={RUN_LINK}>
-      {runId}
-    </Link>
+      </div>
+      <Link to="/runs/$runId" params={{ runId: other.run_id }} className={OPEN_RUN}>
+        Open run
+        <ArrowRightIcon className="size-3.5 shrink-0 text-subtle" />
+      </Link>
+    </div>
   );
 }
 
@@ -341,70 +342,225 @@ export function LaterWriteNotice({
   deleteOnly: boolean;
 }) {
   return (
-    <Notice
+    <SheetNotice
       tone="warning"
-      role="note"
       id="stale-plan"
-      titleAs="h2"
-      titleId="stale-plan-title"
       title={`Another run wrote to ${run.destination_branch ?? "the destination"} after this plan was made`}
+      other={other}
+      more={
+        deleteOnly
+          ? undefined
+          : "An apply writes the operations saved in this plan. It checks the destination schema but not the destination's data, so it does not detect what that run changed."
+      }
     >
-      <Body>
-        <p>
-          Run <RunLink runId={other.run_id} /> ended{" "}
-          {other.finished_at && (
-            <>
-              <When iso={other.finished_at} />{" "}
-            </>
-          )}
-          with the state “{phaseLabel(other)}”.{" "}
-          {!deleteOnly &&
-            "An apply writes the operations saved in this plan. It checks the destination schema but not the destination's data, so it does not detect what that run changed. "}
-          Create a new plan to compare against the current destination.
-        </p>
-      </Body>
-    </Notice>
+      Run <RunId id={other.run_id} /> ended{" "}
+      {other.finished_at && (
+        <>
+          <When iso={other.finished_at} />{" "}
+        </>
+      )}
+      with the state “{phaseLabel(other)}”. Create a new plan to compare against the current
+      destination.
+    </SheetNotice>
   );
 }
 
 export function NewerPlanNotice({ other }: { other: Run }) {
   return (
-    <Notice
+    <SheetNotice
       tone="neutral"
-      role="note"
       id="newer-plan"
-      titleAs="h2"
-      titleId="newer-plan-title"
       title="A newer plan is waiting for review"
+      other={other}
     >
-      <Body>
-        <p>
-          Run <RunLink runId={other.run_id} />{" "}
-          {other.registry_version != null
-            ? `planned version ${other.registry_version}`
-            : "was planned"}{" "}
-          <When iso={other.started_at} />.
-        </p>
-      </Body>
-    </Notice>
+      Run <RunId id={other.run_id} />{" "}
+      {other.registry_version != null
+        ? `planned version ${other.registry_version},`
+        : "was planned"}{" "}
+      <When iso={other.started_at} />.
+    </SheetNotice>
   );
 }
 
 /** A run of the same configuration started after this one, so this run no longer asks for action. */
 export function NewerRunNotice({ other }: { other: Run }) {
   return (
-    <Notice
+    <SheetNotice
       tone="neutral"
-      role="note"
       id="newer-run"
-      titleAs="h2"
-      titleId="newer-run-title"
       title="A newer run of this configuration exists"
+      other={other}
+    >
+      Run <RunId id={other.run_id} /> started <When iso={other.started_at} /> and has the state “
+      {phaseLabel(other)}”.
+    </SheetNotice>
+  );
+}
+
+/* ---------- the run's own outcome: a box under its step in the timeline ---------- */
+
+const timeOfDay = (iso: string) =>
+  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+
+function WaitedMinutes({ from }: { from: string }) {
+  const now = useNow(1000);
+  return <>{Math.max(1, Math.floor((now - new Date(from).getTime()) / 60_000))} min</>;
+}
+
+function Until({ iso }: { iso: string }) {
+  const now = useNow(1000);
+  const minutes = Math.max(1, Math.ceil((new Date(iso).getTime() - now) / 60_000));
+  return (
+    <>
+      <time dateTime={iso}>{timeOfDay(iso)}</time> (in {minutes} min)
+    </>
+  );
+}
+
+const writes = (purpose?: string) => purpose === "apply" || purpose === "sync";
+
+/**
+ * Why an abandoned run read and wrote nothing: no worker picked up a step, or a cancellation came
+ * first. Once a newer run exists, it gives no advice.
+ */
+export function AbandonedNotice({
+  run,
+  orchestration,
+  newerRun,
+}: {
+  run: Run;
+  orchestration: Orchestration[];
+  newerRun: boolean;
+}) {
+  const o = orchestration.at(-1);
+  if (!o) {
+    return (
+      <Notice
+        tone="warning"
+        role="note"
+        id="abandoned"
+        titleAs="h2"
+        title="No execution was recorded for this run"
+      >
+        <Body>
+          <p>Nothing was read or written.{newerRun ? "" : " Plan again."}</p>
+        </Body>
+      </Notice>
+    );
+  }
+  if (o.cancellation_requested_at) {
+    return (
+      <Notice
+        tone="neutral"
+        role="note"
+        id="abandoned"
+        titleAs="h2"
+        title={`Cancelled before a worker picked up the ${o.purpose}`}
+      >
+        <Body>
+          <p>
+            Cancellation was requested <When iso={o.cancellation_requested_at} />. Nothing was read
+            or written.
+          </p>
+        </Body>
+      </Notice>
+    );
+  }
+  const earlierRan = orchestration.some((e) => e !== o && e.terminal_outcome === "succeeded");
+  return (
+    <Notice
+      tone="warning"
+      role="note"
+      id="abandoned"
+      titleAs="h2"
+      title={`No worker picked up the ${o.purpose}`}
     >
       <Body>
         <p>
-          Run <RunLink runId={other.run_id} /> started <When iso={other.started_at} /> and has the
-          state “{phaseLabel(other)}”.
+          The Sync service stopped waiting{" "}
+          <When iso={o.terminal_at ?? run.finished_at ?? run.started_at} />. Nothing was read or
+          written{earlierRan ? ` by the ${o.purpose}` : ""}.
+          {newerRun ? "" : " Check that a worker is running, then plan again."}
+        </p>
+      </Body>
+    </Notice>
+  );
+}
+
+/** When a cancelled run was cancelled, and whether the cancelled step could write. */
+export function CancelledNotice({ orchestration }: { orchestration: Orchestration[] }) {
+  const o = [...orchestration].reverse().find((e) => e.cancellation_requested_at);
+  return (
+    <Notice tone="neutral" role="note" id="cancelled" titleAs="h2" title="This run was cancelled">
+      <Body>
+        <p>
+          {o?.cancellation_requested_at ? (
+            <>
+              Cancellation was requested <When iso={o.cancellation_requested_at} />
+              {o.claimed_at
+                ? `, after a worker started the ${o.purpose}.`
+                : `, before a worker picked up the ${o.purpose}.`}
+              {!writes(o.purpose) && ` A ${o.purpose} does not write to the destination.`}
+            </>
+          ) : (
+            "The Sync service did not record when cancellation was requested."
+          )}
+        </p>
+      </Body>
+    </Notice>
+  );
+}
+
+/** True when an execution in flight has a notice: someone asked to cancel it, or no worker picked it up. */
+export const hasInFlightNotice = (open: Orchestration) =>
+  Boolean(open.cancellation_requested_at) || (Boolean(open.stalled_at) && !open.claimed_at);
+
+/** An execution in flight that someone asked to cancel, or that no worker has picked up. */
+export function InFlightNotice({ open }: { open: Orchestration }) {
+  if (!hasInFlightNotice(open)) return null;
+  if (open.cancellation_requested_at) {
+    const deadline = open.cancellation_recovery_deadline_at;
+    return (
+      <Notice
+        tone="neutral"
+        role="note"
+        id="cancelling"
+        titleAs="h2"
+        title="Cancellation requested"
+      >
+        <Body>
+          <p>
+            {deadline && (
+              <>
+                If no worker confirms it by <Until iso={deadline} />, the Sync service ends the{" "}
+                {open.purpose}.{" "}
+              </>
+            )}
+            {open.claimed_at
+              ? "A worker already started it, so its outcome is then unknown."
+              : "No worker has picked it up, so nothing has been read or written."}
+          </p>
+        </Body>
+      </Notice>
+    );
+  }
+  return (
+    <Notice
+      tone="warning"
+      role="note"
+      id="stalled"
+      titleAs="h2"
+      title={`No worker has picked up this ${open.purpose}`}
+    >
+      <Body>
+        <p>
+          {open.submitted_at && (
+            <>
+              The {open.purpose} has waited <WaitedMinutes from={open.submitted_at} />, since{" "}
+              {timeOfDay(open.submitted_at)}.{" "}
+            </>
+          )}
+          Check that a worker is running.
         </p>
       </Body>
     </Notice>

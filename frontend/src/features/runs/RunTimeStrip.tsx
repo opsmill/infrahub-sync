@@ -1,5 +1,5 @@
 import { Card, Popover } from "@infrahub/ui";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "tailwind-variants";
 
 import type { Orchestration, Run } from "#/api/types";
@@ -17,12 +17,15 @@ import {
 import { executionResult, inTimeline, type RunStep, reviewWait } from "#/domain/run-steps";
 import { formatSpan, useNow } from "#/lib/time";
 
+import type { NoticeTone } from "./run-notices";
 import { clock, WaitTime } from "./step-time";
 
 /** What the strip reads from the run page. */
 interface RunView {
   run: Run;
   planExpired: boolean;
+  /** A newer plan replaced this one, so its review ended unanswered. */
+  replaced?: boolean;
 }
 
 /* ---------- words ---------- */
@@ -635,7 +638,11 @@ const COLS = "grid-cols-[minmax(0,1fr)_5.5rem] sm:grid-cols-[minmax(0,10rem)_min
 
 function StepLabel({ m, s }: { m: RunView; s: RunStep }) {
   const settled = s.state === "done" || s.state === "failed";
-  const word = settled ? undefined : rowWord(s, Boolean(m.run.finished_at));
+  const word = settled
+    ? undefined
+    : m.replaced && s.kind === "review"
+      ? { text: "replaced", tone: "text-subtle" }
+      : rowWord(s, Boolean(m.run.finished_at));
   const attempts = s.shared ? 0 : s.kind === "review" ? 0 : s.execs.length;
   return (
     <span className="col-span-2 flex min-w-0 items-center gap-2 overflow-hidden sm:col-span-1 sm:flex-col sm:items-stretch sm:gap-0.5">
@@ -1036,12 +1043,15 @@ function axisLabels(marks: Mark[], width: number, startDay: string) {
  * The steps of a run on one time axis: a row per step, its bar placed where it ran, its duration
  * on the right. Hovering a row shows what happened; clicking it opens the step in the timeline.
  */
+
 export function RunTimeStrip({
   run,
   steps,
   planExpired,
   onSelect,
   selected,
+  notices = [],
+  replaced,
 }: {
   run: Run;
   steps: RunStep[];
@@ -1049,10 +1059,15 @@ export function RunTimeStrip({
   onSelect: (index: number) => void;
   /** The step last opened from the strip. */
   selected?: number;
+  /** Notices about the run's context, tucked under the top of the card. */
+  /** Notices about other runs, each on its own sheet tucked under the top of the card. */
+  notices?: { id: string; tone: NoticeTone; node: ReactNode }[];
+  /** A newer plan replaced this one: the Review row says so. */
+  replaced?: boolean;
 }) {
   const nowMs = useNow(1000);
   const now = nowMs / 1000;
-  const m: RunView = { run, planExpired };
+  const m: RunView = { run, planExpired, replaced };
   const zs = zones(steps, now);
   const startDay = dayOf(run.started_at);
   const [chartRef, chartWidth] = useWidth<HTMLSpanElement>();
@@ -1084,8 +1099,44 @@ export function RunTimeStrip({
 
   return (
     <section aria-labelledby="run-summary" className="flex flex-col gap-3">
-      <SectionHeading id="run-summary" title="Run summary" />
-      <Card className="flex flex-col gap-3 p-4">
+      <div className="flex flex-col gap-1.5">
+        <SectionHeading id="run-summary" title="Run summary" />
+        {/*
+         * The sheets slide out from under the card when they arrive after it. Their bottom 12px sits
+         * under the card: the section's 12px gap plus that overlap is the -mb-6.
+         */}
+        <div
+          className={cn(
+            "grid transition-[grid-template-rows,margin-bottom] duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
+            notices.length > 0 ? "-mb-6 grid-rows-[1fr]" : "-mt-1.5 grid-rows-[0fr]"
+          )}
+        >
+          {/* 1px at the top so a sheet's hairline is not clipped. */}
+          <div className="min-h-0 overflow-hidden pt-px">
+            {notices.length > 0 && (
+              // Side by side, so no notice reads as coming before another; they stack on a phone.
+              <div
+                className={cn(
+                  "mx-3 grid items-stretch gap-2 sm:mx-5",
+                  notices.length > 1 && "sm:grid-cols-2",
+                  "max-sm:[&>*:not(:last-child)]:rounded-b-[14px] max-sm:[&>*:not(:last-child)]:pb-3"
+                )}
+              >
+                {notices.map((n) => (
+                  <div
+                    key={n.id}
+                    data-tone={n.tone}
+                    className="notice-sheet relative flex flex-col rounded-t-[14px] px-4 pb-6"
+                  >
+                    {n.node}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      <Card className="relative flex flex-col gap-3 p-4 shadow-[var(--card-shadow),0_-10px_22px_-14px_rgb(0_0_0/0.22)]">
         <p className="text-foreground-muted text-xs">
           Started <time dateTime={run.started_at}>{clock(run.started_at)}</time>
           {run.operation === "sync" && <> · Sync without review</>}

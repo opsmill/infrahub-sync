@@ -44,13 +44,22 @@ const noun = (c: ChangeCounts, a: Action) => NOUN[a][c[a] === 1 ? 0 : 1];
 /** A plan that lists only deletes: apply never deletes, so it has nothing to write. */
 export const isDeleteOnly = (c: ChangeCounts) => c.total > 0 && c.create + c.update === 0;
 
-/** A run writes once: only a plan waiting for review has a decision ahead; the others are history. */
-const awaitsReview = (run: Run, c: ChangeCounts) =>
-  run.phase === "planned" && run.outcome === "planned" && !isDeleteOnly(c);
+/**
+ * A run writes once: only a plan waiting for review has a decision ahead; the others are history,
+ * and so is a plan that a newer plan replaced.
+ */
+const awaitsReview = (run: Run, c: ChangeCounts, replaced: boolean) =>
+  !replaced && run.phase === "planned" && run.outcome === "planned" && !isDeleteOnly(c);
 
 /** Where the plan's changes stand, in the words of the run page. */
-export function changesStateLine(run: Run, c: ChangeCounts, branch?: string | null): string {
+export function changesStateLine(
+  run: Run,
+  c: ChangeCounts,
+  branch?: string | null,
+  replaced = false
+): string {
   if (isDeleteOnly(c)) return "Nothing to apply";
+  if (replaced) return "Replaced by a newer plan";
   const to = branch ? ` to ${branch}` : "";
   if (run.phase === "planned" && run.outcome === "planned") return `Waiting for review${to}`;
   if (run.phase === "applied") return `Applied${to}`;
@@ -145,12 +154,15 @@ export function ChangesDock({
   branch,
   onOpen,
   morph,
+  replaced = false,
 }: {
   run: Run;
   state: ChangesState;
   branch?: string | null;
   onOpen: () => void;
   morph?: boolean;
+  /** A newer plan replaced this one, so it no longer waits for review. */
+  replaced?: boolean;
 }) {
   let body: React.ReactNode;
   if (state.kind === "pending" || state.kind === "none") {
@@ -178,7 +190,7 @@ export function ChangesDock({
     );
   } else {
     const c = state.counts;
-    const line = changesStateLine(run, c, branch);
+    const line = changesStateLine(run, c, branch, replaced);
     body = (
       <div className="flex items-center gap-5 p-1.5 pl-4">
         <span className="flex min-w-0 flex-col">
@@ -212,7 +224,7 @@ export function ChangesDock({
               FOCUS
             )}
           >
-            {awaitsReview(run, c) ? "Review" : "View changes"}
+            {awaitsReview(run, c, replaced) ? "Review" : "View changes"}
             <kbd className="rounded-[5px] border border-white/22 px-1 font-mono text-[11px] text-white/60 leading-4">
               C
             </kbd>

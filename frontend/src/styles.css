@@ -161,3 +161,52 @@ html:active-view-transition-type(changes-close)::view-transition-new(changes-sur
     animation: none !important;
   }
 }
+
+/*
+ * A notice sheet tucked under the run summary card: an almost-white sheet whose colour gathers at
+ * the icon and fades across it, edged by a hairline of the same colour. Mixed in OKLab: OKLCH
+ * blends the hues, so teal mixed into the warm dark card turns olive.
+ */
+.notice-sheet {
+  --notice-tint-icon: 17%;
+  --notice-tint-mid: 5%;
+  --notice-tint-end: 2%;
+  --notice-edge: 12%;
+  background-image: radial-gradient(
+    120% 160% at 0% 0%,
+    color-mix(in oklab, var(--notice-tone) var(--notice-tint-icon), var(--color-content)) 0%,
+    color-mix(in oklab, var(--notice-tone) var(--notice-tint-mid), var(--color-content)) 45%,
+    color-mix(in oklab, var(--notice-tone) var(--notice-tint-end), var(--color-content)) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.8),
+    0 0 0 1px color-mix(in oklab, var(--notice-tone) var(--notice-edge), transparent),
+    0 1px 2px rgb(0 0 0 / 0.04);
+}
+.notice-sheet[data-tone="neutral"] {
+  --notice-tone: var(--color-accent);
+}
+.notice-sheet[data-tone="warning"] {
+  --notice-tone: var(--color-warning-strong);
+  --notice-tint-icon: 23%;
+}
+.dark .notice-sheet {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.06),
+    0 0 0 1px color-mix(in oklab, var(--notice-tone) var(--notice-edge), transparent);
+}
+/* The dark theme's accent is a pale cyan that turns grey in the tint: half of it is the saturated teal. */
+.dark .notice-sheet[data-tone="neutral"] {
+  --notice-tone: color-mix(in oklab, var(--color-accent-strong) 50%, var(--color-accent));
+  --notice-tint-icon: 25.5%;
+  --notice-tint-mid: 8%;
+  --notice-tint-end: 3.5%;
+  --notice-edge: 24%;
+}
+.dark .notice-sheet[data-tone="warning"] {
+  --notice-tone: color-mix(in oklab, oklch(0.666 0.179 58.318) 50%, var(--color-warning-strong));
+  --notice-tint-icon: 24.5%;
+  --notice-tint-mid: 6.5%;
+  --notice-tint-end: 2.5%;
+  --notice-edge: 21%;
+}

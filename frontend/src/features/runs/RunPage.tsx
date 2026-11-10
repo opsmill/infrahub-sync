@@ -50,11 +50,14 @@ import { RunTimeline, useStepFocus } from "./RunTimeline";
 import { RunTimeStrip } from "./RunTimeStrip";
 import {
   AbandonedNotice,
+  CancelledNotice,
   FailureNotice,
+  hasInFlightNotice,
   InFlightNotice,
   LaterWriteNotice,
   NewerPlanNotice,
   NewerRunNotice,
+  type NoticeTone,
 } from "./run-notices";
 import { Details, PLAN_ARTIFACT_ID, type PlanRequest, RunFiles } from "./run-sections";
 import { StartRunDialog } from "./StartRunDialog";
@@ -380,7 +383,15 @@ export function RunPage({ runId }: { runId: string }) {
     (typeof summaryName === "string" ? summaryName : undefined) ??
     run?.configuration_reference ??
     runId;
-  const label = run ? phaseLabel(run, { inFlight }) : undefined;
+  const siblingRuns = running || !run ? [] : (siblings.data?.items ?? []);
+  const wrote = run && waitingPlan ? laterWrite(run, siblingRuns) : undefined;
+  // A plan that a newer plan replaced no longer waits for review.
+  const newer = run && waitingPlan && !wrote ? newerPlan(run, siblingRuns) : undefined;
+  const label = run
+    ? newer
+      ? "Replaced by a newer plan"
+      : phaseLabel(run, { inFlight })
+    : undefined;
   const notFound = !resource && runQ.isError && describeError(runQ.error).notFound;
   useDocumentTitle(...(label ? [label, name] : notFound ? ["Run not found"] : ["Runs"]));
 
@@ -420,13 +431,10 @@ export function RunPage({ runId }: { runId: string }) {
   const source = declared ? describeSystem(declared.source) : undefined;
   const destination = declared ? describeSystem(declared.destination) : undefined;
   const latestVersion = config.data?.latest_version ?? undefined;
-  const headerState = runState(run, { inFlight });
+  const headerState: RunState = newer ? "idle" : runState(run, { inFlight });
   const refreshError = runQ.isError;
   const open = orchestration.find((o) => o.terminal_at == null);
   const f = failureDetail(run);
-  const siblingRuns = running ? [] : (siblings.data?.items ?? []);
-  const wrote = waitingPlan ? laterWrite(run, siblingRuns) : undefined;
-  const newer = waitingPlan && !wrote ? newerPlan(run, siblingRuns) : undefined;
   // Runs are listed newest first, so the first later one is the newest run of the configuration.
   const laterRun =
     wrote || newer
@@ -442,15 +450,14 @@ export function RunPage({ runId }: { runId: string }) {
     (expiresAt != null && time(expiresAt) <= Date.now()) ||
     (download.status === "error" && describeError(download.error).status === 410);
   const planRefused = download.status === "error" || download.plan?.checksum_ok === false;
-  const steps = runStepList(resource, { inFlight, planExpired });
+  const steps = runStepList(resource, { inFlight, planExpired, replacedAt: newer?.started_at });
   const executable = executableCount(run) ?? 0;
   const deleteOnly = isDeleteOnlyPlan(run);
-  const deletes = runCounts(run)?.delete ?? 0;
   const outdated =
     latestVersion !== undefined && registryVersion !== undefined && latestVersion > registryVersion;
   const canAct = !me.data || me.data.administrator || me.data.actor === run.actor;
   const wouldCancel = Boolean(open) && !refreshError && !open?.cancellation_requested_at;
-  const wouldVerify = reviewable && !isVerified(run) && !planExpired;
+  const wouldVerify = reviewable && !newer && !isVerified(run) && !planExpired;
   const wouldApply =
     reviewable && executable > 0 && hasPlan && !planExpired && download.plan?.checksum_ok !== false;
   const planVariant: "primary" | "outline" | undefined =
@@ -478,6 +485,37 @@ export function RunPage({ runId }: { runId: string }) {
     isPending: false,
     refetch: download.start,
   };
+
+  // Notices about other runs go in the run summary; the run's own outcome goes under its step.
+  const notices: { id: string; tone: NoticeTone; node: ReactNode }[] = wrote
+    ? [
+        {
+          id: "later-write",
+          tone: "warning",
+          node: <LaterWriteNotice run={run} other={wrote} deleteOnly={deleteOnly} />,
+        },
+      ]
+    : newer
+      ? [{ id: "newer-plan", tone: "neutral", node: <NewerPlanNotice other={newer} /> }]
+      : laterRun
+        ? [{ id: "newer-run", tone: "neutral", node: <NewerRunNotice other={laterRun} /> }]
+        : [];
+  const outcome = f ? (
+    <FailureNotice
+      run={run}
+      f={f}
+      orchestration={orchestration}
+      plan={download.plan}
+      source={source}
+      destination={destination}
+    />
+  ) : run.phase === "abandoned" ? (
+    <AbandonedNotice run={run} orchestration={orchestration} newerRun={Boolean(laterRun)} />
+  ) : run.phase === "cancelled" ? (
+    <CancelledNotice orchestration={orchestration} />
+  ) : open && hasInFlightNotice(open) ? (
+    <InFlightNotice open={open} />
+  ) : undefined;
 
   const close = () => setDialog(null);
   const focusHeading = () => requestAnimationFrame(() => headingRef.current?.focus());
@@ -537,12 +575,6 @@ export function RunPage({ runId }: { runId: string }) {
                 Cancel run
               </Button>
             )}
-            {reviewable && deleteOnly && (
-              <p className="max-w-[44ch] text-foreground-muted text-sm">
-                Nothing to apply. This plan lists only {fmt(deletes)}{" "}
-                {deletes === 1 ? "delete" : "deletes"}, and apply does not run deletes.
-              </p>
-            )}
             {canAct && wouldVerify && (
               <Button variant="outline" size="sm" onPress={() => setDialog("verify")}>
                 Check the plan
@@ -551,7 +583,7 @@ export function RunPage({ runId }: { runId: string }) {
             {canAct && wouldApply && (
               <ApplyButton
                 label={`Apply ${fmt(executable)} ${executable === 1 ? "change" : "changes"}`}
-                variant={wrote ? "outline" : "primary"}
+                variant={wrote || newer ? "outline" : "primary"}
                 onPress={() => setDialog("apply")}
               />
             )}
@@ -572,26 +604,15 @@ export function RunPage({ runId }: { runId: string }) {
         />
       )}
       <div className="flex flex-col gap-8">
-        <div className="flex flex-col gap-3">
-          <RunTimeStrip
-            run={run}
-            steps={steps}
-            planExpired={planExpired}
-            onSelect={focus.select}
-            selected={focus.selected}
-          />
-          {!f && run.phase === "abandoned" && (
-            <AbandonedNotice run={run} orchestration={orchestration} />
-          )}
-          {open && <InFlightNotice open={open} />}
-          {wrote ? (
-            <LaterWriteNotice run={run} other={wrote} deleteOnly={deleteOnly} />
-          ) : newer ? (
-            <NewerPlanNotice other={newer} />
-          ) : (
-            laterRun && <NewerRunNotice other={laterRun} />
-          )}
-        </div>
+        <RunTimeStrip
+          run={run}
+          steps={steps}
+          planExpired={planExpired}
+          onSelect={focus.select}
+          selected={focus.selected}
+          notices={notices}
+          replaced={Boolean(newer)}
+        />
         <RunTimeline
           run={run}
           steps={steps}
@@ -603,18 +624,7 @@ export function RunPage({ runId }: { runId: string }) {
           state={headerState}
           label={label}
           focus={focus}
-          failure={
-            f && (
-              <FailureNotice
-                run={run}
-                f={f}
-                orchestration={orchestration}
-                plan={download.plan}
-                source={source}
-                destination={destination}
-              />
-            )
-          }
+          notice={outcome}
         />
         <RunFiles run={run} />
         <Details run={run} name={name} source={source} destination={destination} />
@@ -628,6 +638,7 @@ export function RunPage({ runId }: { runId: string }) {
           branch={writesTo}
           onOpen={() => sheet.open()}
           morph={sheet.morph}
+          replaced={Boolean(newer)}
         />
       )}
       {sheet.isOpen && changes?.kind === "list" && (
@@ -639,6 +650,7 @@ export function RunPage({ runId }: { runId: string }) {
           onFilterChange={sheet.setFilter}
           close={sheet.close}
           morph={sheet.morph}
+          replaced={Boolean(newer)}
         />
       )}
       {dialog === "cancel" && <CancelDialog run={run} onClose={close} onDone={focusHeading} />}
