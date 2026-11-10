@@ -159,6 +159,7 @@ exclude = [
     "build",
     "dist",
     "examples",
+    ".specify",
 ]
 
 
@@ -322,7 +323,7 @@ max-complexity = 33
 [tool.ty]
 
 [tool.ty.src]
-exclude = ["examples/**"]
+exclude = ["examples/**", ".specify/**"]
 
 [tool.ty.environment]
 python-version = "3.10"

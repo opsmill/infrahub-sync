@@ -1,6 +1,20 @@
 {
   "schema_version": "1.0",
   "presets": {
+    "critique-opsmill": {
+      "version": "1.0.0",
+      "source": "local",
+      "manifest_hash": "sha256:0dfb76ba3f29dc941a01ed43cda981777fb1463466a9ebaedc796fd85962ffff",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "claude": [
+          "speckit.critique.run"
+        ]
+      },
+      "registered_skills": {},
+      "installed_at": "2026-11-06T08:39:11.683809+00:00"
+    },
     "taskstoissues-jira": {
       "version": "1.0.0",
       "source": "local",
@@ -8,23 +22,12 @@
       "enabled": true,
       "priority": 10,
       "registered_commands": {
-        "agy": [
-          "speckit.taskstoissues"
-        ],
-        "amp": [
-          "speckit.taskstoissues"
-        ],
         "claude": [
-          "speckit.taskstoissues"
-        ],
-        "codex": [
           "speckit.taskstoissues"
         ]
       },
-      "registered_skills": [
-        "speckit-taskstoissues"
-      ],
-      "installed_at": "2026-06-22T10:45:32.741623+00:00"
+      "registered_skills": {},
+      "installed_at": "2026-11-06T08:39:30.977605+00:00"
     }
   }
 }
