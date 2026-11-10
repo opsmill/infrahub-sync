@@ -487,6 +487,9 @@ file checks only, from `checkpoint` to `format_version`, and reports
 
 When a check fails, the verification stage fails, and `GET /runs/{run_id}` reports the failure
 with the name of the check, what was expected and what was found, as for a refused `apply`.
+Two failures of the saved plan files have names of their own, and both belong to
+`plan_checksum`: `torn_operations` when the operations file is missing or incomplete, and
+`last_changes` when the last-changes file does not match the manifest.
 When the destination cannot be reached, the stage fails with the destination error, and no
 check after it is reported as passed.
 

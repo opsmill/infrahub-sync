@@ -59,6 +59,8 @@ name, the expected value and the found value, as `apply` does.
 
 Check names, in order: `checkpoint`, `run_binding`, `plan_checksum`, `source_snapshot`, `config_version`,
 `format_version`, `destination_schema`, `destination_binding`, `write_surface`, `planned_fields`, `lineage`.
+A failure of the saved plan files can also name `torn_operations` (the operations file is missing or incomplete)
+or `last_changes` (the last-changes file does not match the manifest); both belong to `plan_checksum`.
 
 ## Approval-required setting (new, service configuration)
 
