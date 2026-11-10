@@ -1,0 +1,81 @@
+AGENTS.md
+  s_3026b865c0ab8b::t_3c1f8e136a86e2 107,109-113
+changelog/+plan-approval.added.md
+  s_3026b865c0ab8b::t_175749dbb63040 1
+changelog/+verify-destination-checks.changed.md
+  s_3026b865c0ab8b::t_b2657caa542fe1 1
+tests/preview/test_run_completion.py
+  s_3026b865c0ab8b::t_55ce0eac4686ea 283-285,287-289
+  s_3026b865c0ab8b::t_c97565e115cc0e 225
+  s_3026b865c0ab8b::t_91825445702dcc 9-12
+  s_3026b865c0ab8b::t_d79d5ef1dfca1e 278,286,290-292
+  s_3026b865c0ab8b::t_a6652fc14ab118 25
+  s_3026b865c0ab8b::t_8cc5762f17e727 333-340
+  s_3026b865c0ab8b::t_a96ae24ca0536c 304
+  s_3026b865c0ab8b::t_fb92a775987886 67
+docker-compose.yml
+  s_3026b865c0ab8b::t_0e9d8833b7b4ad 241-242
+docs/docs/compose-deployment.mdx
+  s_3026b865c0ab8b::t_cf8093593cc339 784-785
+  s_3026b865c0ab8b::t_2173ff6358c67a 138
+  s_3026b865c0ab8b::t_1cb82945c7c493 789-796
+docs/docs/running-a-sync.mdx
+  s_3026b865c0ab8b::t_426fff193cc134 401-403
+  s_3026b865c0ab8b::t_f67dceb36a7190 131-140,146-158,166-190,192-201
+  s_3026b865c0ab8b::t_d125c977edffe6 164-165
+  s_3026b865c0ab8b::t_c173b332664ce1 159-163
+  s_3026b865c0ab8b::t_6e92d3127e6909 9,15-17
+  s_3026b865c0ab8b::t_196de1d0cd6142 230-267
+  s_3026b865c0ab8b::t_84d38418fbef7b 346
+  s_3026b865c0ab8b::t_da453639940c99 303-306
+development/docker-compose.yml
+  s_3026b865c0ab8b::t_24ff2f4acac420 87
+docs/docs/reference/sync-http-api.mdx
+  s_3026b865c0ab8b::t_d9bae2e85c197a 706
+  s_3026b865c0ab8b::t_904a7dcdb665c3 480
+  s_3026b865c0ab8b::t_bb2241d1716685 568-610
+  s_3026b865c0ab8b::t_1a21da6e67760a 301-302,304
+  s_3026b865c0ab8b::t_4852b2a5f536e1 81
+  s_3026b865c0ab8b::t_9ba6416015f483 325
+  s_3026b865c0ab8b::t_89b57bd2a88ff6 385,388-390
+  s_3026b865c0ab8b::t_15b04b0c27a771 449,451-455,466-469,471-478,481-542
+  s_3026b865c0ab8b::t_79a31e8c4e83be 470
+  s_3026b865c0ab8b::t_3152ed6f9131e5 663
+  s_3026b865c0ab8b::t_90f38711cde3f4 479
+  s_3026b865c0ab8b::t_1af2fcf4b70026 698-700
+  s_3026b865c0ab8b::t_67f64844f6ea23 362-363
+  s_3026b865c0ab8b::t_9e5b6920853f66 288
+  s_3026b865c0ab8b::t_7ee5f8deeddac4 543
+dev/specs/019-plan-approval/quickstart.md
+  s_3026b865c0ab8b::t_2a3f7551910307 66-97
+infrahub_sync/testcontainers/docker-compose.yml
+  s_3026b865c0ab8b::t_c32b220ea7c7c6 241-242
+docs/docs/reference/cli.mdx
+  s_476409cdb37ac1::t_f47ca64d67a005 31-32,106-126,129,323,366-367
+dev/specs/019-plan-approval/tasks.md
+  s_3026b865c0ab8b::t_feac537e188bea 127-133,171-191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8da2d83a48e41fa4c4a77a1de58cd5e8113f0c49",
+  "prompts": {},
+  "sessions": {
+    "s_3026b865c0ab8b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "825efe40-61e7-452d-9076-42e4bc5cee3e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_476409cdb37ac1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a108dd5b1d48a6309",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
