@@ -1,0 +1,309 @@
+dev/specs/archive/016-prefect-run-observability/contracts/run-response.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-30
+dev/specs/archive/016-prefect-run-observability/data-model.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-39
+tests/client/test_models.py
+  s_3026b865c0ab8b::t_840d55258d36b2 19-22,280-325
+  s_3026b865c0ab8b::t_fdf54976343121 278-279
+tests/service/test_run_artifact.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-232
+tests/test_potenda_read_progress.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-302
+changelog/+prefect-flow-run-url.added.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1
+dev/specs/archive/016-prefect-run-observability/opsmill-implement-report.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-198
+development/docker-compose.yml
+  s_3026b865c0ab8b::t_840d55258d36b2 246-248
+tests/configuration/test_schema_validation.py
+  s_3026b865c0ab8b::t_840d55258d36b2 32,715-765
+docs/docs/reference/sync-http-api.mdx
+  s_3026b865c0ab8b::t_840d55258d36b2 268-270,275-370,398-399,431-432,509-663,966,968-970
+changelog/+cli-api-address-hint.changed.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1
+infrahub_sync/potenda/__init__.py
+  s_3026b865c0ab8b::t_bacad2804f30a6 90
+  s_3026b865c0ab8b::t_840d55258d36b2 38,274-295,351-353,544-551,559-560,566-602
+docs/docs/orchestration.mdx
+  s_3026b865c0ab8b::t_840d55258d36b2 70-129,157-159
+infrahub_sync/service/config_routes.py
+  s_3026b865c0ab8b::t_840d55258d36b2 3,36-42,301,308,311,317,321,325,328,334-342,350-356,358-367,369-370,375-376,386-401,438
+tests/dev_stack/test_compose_valid.py
+  s_3026b865c0ab8b::t_840d55258d36b2 23,96-115
+tests/service/test_read_progress.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-634
+tests/cli/test_parity_and_closure.py
+  s_3026b865c0ab8b::t_840d55258d36b2 43-54,202-203,226,269,275-286
+  s_3026b865c0ab8b::t_ae0558ee65fa82 287-288
+dev/specs/018-plan-read-progress/plan.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-152
+infrahub_sync/product_store/__init__.py
+  s_3026b865c0ab8b::t_840d55258d36b2 13-14,21,23,64-65,72,76
+infrahub_sync/client/models.py
+  s_3026b865c0ab8b::t_840d55258d36b2 7,9,43-47,294-329,348-352,470-545
+  s_3026b865c0ab8b::t_aafd15fb1662c3 546-547
+changelog/+run-logs.added.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1
+docker-compose.yml
+  s_3026b865c0ab8b::t_840d55258d36b2 248-253
+dev/specs/017-sync-run-events-logs/checklists/requirements.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-36
+docs/docs/development/adr-index.mdx
+  s_3026b865c0ab8b::t_840d55258d36b2 25
+docs/docs/operations/compose-troubleshooting.mdx
+  s_3026b865c0ab8b::t_840d55258d36b2 38
+infrahub_sync/runtime_schema/worker.py
+  s_3026b865c0ab8b::t_840d55258d36b2 33,144-145,147-148,161-163
+docs/docs/running-a-sync.mdx
+  s_3026b865c0ab8b::t_840d55258d36b2 109-155,369-377,406-413,415-423
+infrahub_sync/service/service.py
+  s_3026b865c0ab8b::t_840d55258d36b2 9,18,28,33,45,57,61-62,68-69,73-79,81-84,94,174-212,224,227,273-275,815-822,833,841,849-856,863-866,887-898,1057-1133,1202,1241-1247,1488-1492,1499,1511-1512,1523,1535-1540,1545-1580,1589-1591,1593-1595,1600-1602,1607
+tasks/docs.py
+  s_3026b865c0ab8b::t_840d55258d36b2 53-59
+tests/product_store/test_contract.py
+  s_3026b865c0ab8b::t_840d55258d36b2 82-83,90,94,4610-4614,4631-4633,4733-4735,4749
+tests/service/test_flow_and_prefect.py
+  s_3026b865c0ab8b::t_840d55258d36b2 6,48-55,704,748,786,831-833,837,1436-1452,1464-1468,1471-1472,1476,1483,1485-1489,1503-1508,1511-1512,1538,1552,1570,1590-1595,1690-1833
+tests/service/test_status_observation_budget.py
+  s_3026b865c0ab8b::t_840d55258d36b2 37,108-111,249-250,257-260,270,417,427-428,456-458,550-646
+changelog/+terminal-state-as-state.fixed.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1
+tests/service/test_run_log_next_step.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-742
+dev/specs/archive/016-prefect-run-observability/alignment-check.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-50
+changelog/+worker-log-next-step.added.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1
+infrahub_sync/service/run_artifact.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-136
+infrahub_sync/service/run_log.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-108
+dev/specs/archive/016-prefect-run-observability/plan.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-157
+tests/client/test_client.py
+  s_3026b865c0ab8b::t_fdf54976343121 873-874
+  s_3026b865c0ab8b::t_840d55258d36b2 28-29,32-33,875-1134
+changelog/+run-events.added.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1
+dev/specs/018-plan-read-progress/contracts/cli-output.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-29
+dev/specs/017-sync-run-events-logs/data-model.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-76
+tests/service/test_failure_without_traceback.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-160
+tests/service/test_prefect_ui.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-67
+tests/test_execution_surface.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1507-1524
+infrahub_sync/runtime_schema/__init__.py
+  s_3026b865c0ab8b::t_840d55258d36b2 14,42
+dev/specs/017-sync-run-events-logs/contracts/logs-route.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-47
+docs/docs/reference/durable-product-records.mdx
+  s_3026b865c0ab8b::t_840d55258d36b2 196-214
+docs/docs/development/guidelines/secret-redaction.md
+  s_3026b865c0ab8b::t_840d55258d36b2 21-22,27
+tests/runtime_schema/test_destination_branch_missing.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-107
+dev/specs/018-plan-read-progress/critiques/critique-20261109.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-127
+dev/specs/018-plan-read-progress/data-model.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-77
+dev/specs/archive/016-prefect-run-observability/spec.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-358
+changelog/+plan-read-progress.added.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1
+infrahub_sync/service/flow.py
+  s_3026b865c0ab8b::t_840d55258d36b2 4-5,13,15-16,19,24,29,68,74,91,96-97,117-129,174-190,202-225,315,327,518,673,675-683,710-717,845-852,972-1008,1021,1024-1025,1044,1075-1078,1086,1095-1195,1215,1220-1223,1228-1230,1233-1240,1267,1274-1283,1296,1298,1302,1310-1324,1328-1365,1370,1374,1383-1386,1395
+tests/service/test_sync_checkpoint_order.py
+  s_3026b865c0ab8b::t_840d55258d36b2 243-245
+infrahub_sync/service/app.py
+  s_3026b865c0ab8b::t_840d55258d36b2 8,11,16,42,46,54,91-170,413-414
+infrahub_sync/service/orchestration.py
+  s_3026b865c0ab8b::t_840d55258d36b2 18,26,31,69-104,195-196,279-292,365-408
+  s_3026b865c0ab8b::t_ff535ba85772a6 409
+tests/service/test_prefect_wording.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-276
+infrahub_sync/client/__init__.py
+  s_3026b865c0ab8b::t_840d55258d36b2 32-35,52-53,58-59,88-91,109-110,117-118
+dev/specs/archive/016-prefect-run-observability/contracts/prefect-surfaces.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-51
+dev/specs/017-sync-run-events-logs/plan.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-205
+dev/specs/017-sync-run-events-logs/alignment-check.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-40
+tests/integration/isolated_worker_program.py
+  s_3026b865c0ab8b::t_840d55258d36b2 243
+infrahub_sync/runtime_schema/errors.py
+  s_3026b865c0ab8b::t_840d55258d36b2 5-6,16-59,64-67,70-74,77-90
+infrahub_sync/product_store/store.py
+  s_3026b865c0ab8b::t_a1184330ff74d5 2258-2274
+  s_3026b865c0ab8b::t_840d55258d36b2 19,46-47,64-67,102,117-118,122-129,232-244,450,454-455,462-510,609-610,625-627,639,662-663,666-668,700-703,712,723-724,908,910,964-984,1415-1416,1488-1507,1529-1532,1542,1555,1557,1638-1639,1777-1778,1780-1785,1847,1851,1856-1858,1880-1881,1893-1896,1917-1918,2081,2114-2115,2497,2511-2512,2630-2666,2672,2688,2692,2697-2741,3003-3004,3008-3010,3023,3524-3531,3544-3553,3556-3558,3570,3622,3660-3661,3664-3668,3677-3680,3683-3692,3699,3786-3791,3799,3802,3810,3822-3823,3829-3836,4137-4195,4238-4266,4314-4315,4421-4442,4452-4456
+infrahub_sync/service/models.py
+  s_3026b865c0ab8b::t_840d55258d36b2 32-35,45-46,58,73-76,86-87,95,97,161-162,171-172,234-274
+  s_3026b865c0ab8b::t_3280c92a6c2308 275
+dev/specs/017-sync-run-events-logs/critiques/critique-20261106.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-116
+infrahub_sync/service/serve.py
+  s_3026b865c0ab8b::t_840d55258d36b2 17-25,30-31,54-57,69-70,83
+tests/service/test_artifact_confidentiality.py
+  s_3026b865c0ab8b::t_840d55258d36b2 25,33,63-64
+  s_3026b865c0ab8b::t_17d6e6bb5260f7 65
+tests/service/test_registered_plan_apply.py
+  s_3026b865c0ab8b::t_840d55258d36b2 365
+dev/specs/017-sync-run-events-logs/contracts/events-route.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-52
+dev/specs/018-plan-read-progress/research.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-210
+tests/service/test_event_transactions.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-371
+docs/docs/compose-deployment.mdx
+  s_3026b865c0ab8b::t_840d55258d36b2 140,427-432,438-451,485-487,884-932
+  s_3026b865c0ab8b::t_29306f042b1c90 933
+infrahub_sync/service/liveness.py
+  s_3026b865c0ab8b::t_840d55258d36b2 12,18,202-207,226-228,233-235,238-270
+  s_3026b865c0ab8b::t_8f9b4c26065aa9 271
+tests/product_store/test_side_read_columns.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-289
+dev/specs/017-sync-run-events-logs/spec.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-279
+tests/service/test_plan_checkpoint.py
+  s_3026b865c0ab8b::t_840d55258d36b2 476
+docs/docs/reference/cli.mdx
+  s_3026b865c0ab8b::t_840d55258d36b2 10-16,41,172-189,353,417-424,476-494
+  s_3026b865c0ab8b::t_56b215295c8838 495
+dev/specs/018-plan-read-progress/contracts/run-response.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-53
+dev/specs/archive/016-prefect-run-observability/checklists/requirements.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-37
+dev/specs/018-plan-read-progress/alignment-check.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-30
+tests/service/test_failure_cause.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-91
+dev/specs/archive/016-prefect-run-observability/research.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-142
+tests/test_run_events_docs.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-41
+dev/adr/0024-prefect-surfaces-follow-the-stored-run-record.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-68
+tests/runtime_schema/test_worker_path.py
+  s_3026b865c0ab8b::t_840d55258d36b2 314
+infrahub_sync/service/events.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-148
+tests/service/test_registered_schema_guard.py
+  s_3026b865c0ab8b::t_840d55258d36b2 27-28,266,277-285,302,330,643-645,769
+tests/service/test_events_route.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-402
+dev/specs/018-plan-read-progress/checklists/requirements.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-40
+tests/cli/test_client_commands.py
+  s_3026b865c0ab8b::t_840d55258d36b2 38-40,54-55,61-62,716-882,944-997,2288-2563
+  s_3026b865c0ab8b::t_fdf54976343121 2286-2287
+  s_3026b865c0ab8b::t_e50f605bafdfa9 998-999
+dev/specs/017-sync-run-events-logs/quickstart.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-42
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_3026b865c0ab8b::t_840d55258d36b2 86-143
+dev/specs/018-plan-read-progress/opsmill-implement-report.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-270
+changelog/+orchestrator-wording.changed.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1
+dev/specs/018-plan-read-progress/spec.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-192
+infrahub_sync/execution.py
+  s_3026b865c0ab8b::t_840d55258d36b2 79,1146,1236-1237
+tests/product_store/test_audit_event_migration.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-510
+infrahub_sync/cli.py
+  s_3026b865c0ab8b::t_840d55258d36b2 18,50,67,72-73,75,209-214,216,218-221,637-638,652-682,856-862,869,873,876,888,1282-1291,1293-1308,1340-1465
+  s_3026b865c0ab8b::t_90f448d70e936e 870,891,901
+tests/service/test_run_log.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-147
+tests/service/test_http_api.py
+  s_3026b865c0ab8b::t_840d55258d36b2 12,14,23,43,45,49,52,59,75,78,83-84,94-100,188-191,1828,1834,1876,1897,1911-1915,2519-2843
+changelog/+missing-branch-cause.fixed.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1
+infrahub_sync/client/client.py
+  s_3026b865c0ab8b::t_840d55258d36b2 7,29,31,48-49,58,68,88-90,99,375-445,467-495,730,801,871-896
+  s_3026b865c0ab8b::t_8dd1ba4e24cf00 897
+infrahub_sync/service/failure_cause.py
+  s_3026b865c0ab8b::t_840d55258d36b2 4-6,19,40-44,64
+changelog/+prefect-run-summary-artifact.added.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1
+dev/specs/archive/016-prefect-run-observability/critiques/critique-20261105.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-133
+infrahub_sync/service/read_progress.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-162
+infrahub_sync/potenda/read_progress.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-46
+tests/service/test_managed_write_guard.py
+  s_3026b865c0ab8b::t_840d55258d36b2 306-308,312,315-316
+changelog/+refused-claim-guidance.changed.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1
+dev/specs/017-sync-run-events-logs/tasks.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-212
+dev/specs/017-sync-run-events-logs/contracts/cli-output.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-38
+infrahub_sync/service/prefect_ui.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-45
+tests/service/test_orchestration_logs.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-158
+dev/specs/archive/016-prefect-run-observability/EXTRACTED.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-31
+tests/service/test_worker_claim.py
+  s_3026b865c0ab8b::t_840d55258d36b2 6,22,27,197-201,227-231,235-313
+  s_3026b865c0ab8b::t_90ba4ff9371869 314-315
+infrahub_sync/configuration/capabilities.py
+  s_3026b865c0ab8b::t_840d55258d36b2 253,282-286,289
+tests/service/test_verify_destination.py
+  s_3026b865c0ab8b::t_ead213838c6226 369,410-411,413-414,422
+  s_3026b865c0ab8b::t_37f33fbae76bdd 28
+  s_3026b865c0ab8b::t_cab577f28a40ae 217
+  s_3026b865c0ab8b::t_23beaf7bf286f0 250
+  s_3026b865c0ab8b::t_17e1e4a0b06fc9 27
+dev/specs/017-sync-run-events-logs/research.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-205
+dev/specs/018-plan-read-progress/quickstart.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-45
+infrahub_sync/product_store/models.py
+  s_3026b865c0ab8b::t_840d55258d36b2 95-99,620-644,646-651,662-666,676-721
+  s_3026b865c0ab8b::t_e1a05d4b0c94e3 722
+tests/service/test_run_logs_route.py
+  s_3026b865c0ab8b::t_840d55258d36b2 1-270
+dev/adr/README.md
+  s_3026b865c0ab8b::t_840d55258d36b2 55-58
+dev/specs/archive/016-prefect-run-observability/tasks.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-228
+tests/service/test_apply_checkpoint_order.py
+  s_3026b865c0ab8b::t_840d55258d36b2 253,260-261
+tests/service/test_liveness_policy.py
+  s_3026b865c0ab8b::t_840d55258d36b2 19,21-28,31-32,97-100,310-312
+dev/specs/archive/016-prefect-run-observability/contracts/cli-output.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-32
+tests/service/test_config_routes.py
+  s_3026b865c0ab8b::t_840d55258d36b2 20-26,33,42,65-68,1174-1227,1551-1676
+infrahub_sync/testcontainers/docker-compose.yml
+  s_3026b865c0ab8b::t_840d55258d36b2 248-253
+dev/specs/018-plan-read-progress/tasks.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-154
+dev/specs/017-sync-run-events-logs/opsmill-implement-report.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-268
+dev/specs/archive/016-prefect-run-observability/quickstart.md
+  s_3026b865c0ab8b::t_840d55258d36b2 1-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9a25681c4c4c6e331456308988fbf81f3bd0bf56",
+  "prompts": {},
+  "sessions": {
+    "s_3026b865c0ab8b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "825efe40-61e7-452d-9076-42e4bc5cee3e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
