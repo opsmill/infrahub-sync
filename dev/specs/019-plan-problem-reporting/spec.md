@@ -717,7 +717,9 @@ that the other numbers match old 009.
   repository.
 - **Product owner sign-off.** The product owner signed off ADR 0020 with the AD-12 amendment and
   ADR 0021 on 2026-10-17, for old 009. Whether that sign-off covers the rewritten records of this
-  specification is not known (see "Open questions").
+  specification is not known (see "Open questions"). FR-014 to FR-019 ship only after the product
+  owner signs off decision record 0021 (old 009 FR-030), and FR-005 to FR-012 only after the
+  sign-off of decision record 0020 with the AD-12 amendment (old 009 FR-029).
 
 ## Out of Scope
 
