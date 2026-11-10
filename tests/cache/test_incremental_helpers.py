@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from infrahub_sync.cache.incremental import previous_successful_run_dir, should_use_incremental
 
 
@@ -10,6 +12,7 @@ def _write_run(cache_root: Path, run_id: str, status: str) -> Path:
     run_dir = cache_root / run_id
     run_dir.mkdir(parents=True)
     (run_dir / "run.json").write_text(json.dumps({"status": status}))
+    (run_dir / "cursors.json").write_text("{}")
     return run_dir
 
 
@@ -191,3 +194,30 @@ def test_force_full_when_cadence_exceeded(tmp_path: Path) -> None:
         cadence=10,
     )
     assert decision is False
+
+
+@pytest.mark.parametrize("status", ["applied", "dry-run"])
+def test_skips_newer_cursorless_runs(tmp_path: Path, status: str) -> None:
+    baseline = _write_run(tmp_path, "2026-05-17T10-00-00Z", status)
+    cursorless = _write_run(tmp_path, "2026-05-18T10-00-00Z", "dry-run")
+    (cursorless / "cursors.json").unlink()
+    cursorless_sync = _write_run(tmp_path, "2026-05-19T10-00-00Z", "applied")
+    (cursorless_sync / "cursors.json").unlink()
+    _write_run(tmp_path, "2026-05-20T10-00-00Z", "failed")
+
+    assert previous_successful_run_dir(tmp_path) == baseline
+
+
+@pytest.mark.parametrize("status", ["applied", "dry-run"])
+def test_returns_none_when_only_cursorless_success_exists(tmp_path: Path, status: str) -> None:
+    cursorless = _write_run(tmp_path, "2026-05-18T10-00-00Z", status)
+    (cursorless / "cursors.json").unlink()
+
+    assert previous_successful_run_dir(tmp_path) is None
+
+
+def test_cursor_bearing_dry_run_is_eligible(tmp_path: Path) -> None:
+    _write_run(tmp_path, "2026-05-17T10-00-00Z", "applied")
+    latest = _write_run(tmp_path, "2026-05-18T10-00-00Z", "dry-run")
+
+    assert previous_successful_run_dir(tmp_path) == latest

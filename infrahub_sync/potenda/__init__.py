@@ -215,6 +215,8 @@ class Potenda:
             if model_cls is None:
                 continue
             if cursor is None or tier_supported is CursorTier.NONE:
+                reason = "cursor tier NONE" if tier_supported is CursorTier.NONE else "no cursor in prior run"
+                logger.info("Incremental disabled: %s (side=%s, resource=%s)", reason, side, resource)
                 adapter.model_loader(model_name=resource, model=model_cls)  # ty: ignore[unresolved-attribute]
                 continue
 

@@ -25,8 +25,10 @@ _SUCCESS_STATUSES = frozenset({"applied", "dry-run"})
 
 
 def previous_successful_run_dir(cache_root: Path) -> Path | None:
-    """Return the most recent `<run_id>/` whose run.json status is
-    'applied' or 'dry-run'. Returns None when no such run exists.
+    """Return the most recent successful run containing ``cursors.json``.
+
+    Both applied and dry-run statuses are eligible when cursors exist.
+    Cursorless diff runs are skipped. Returns None when no such run exists.
     """
     if not cache_root.exists():
         return None
@@ -41,7 +43,7 @@ def previous_successful_run_dir(cache_root: Path) -> Path | None:
             payload = json.loads(run_file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if payload.get("status") in _SUCCESS_STATUSES:
+        if payload.get("status") in _SUCCESS_STATUSES and (run_dir / "cursors.json").is_file():
             candidates.append(run_dir)
     if not candidates:
         return None
