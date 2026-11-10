@@ -28,6 +28,8 @@ from .config_routes import (
 from .liveness import RunLivenessReconciler
 from .models import (
     ApplyRunRequest,
+    ApprovedRunResource,
+    ApproveRunRequest,
     ArtifactListResource,
     CancelRunRequest,
     ConfigErrorDetail,
@@ -52,6 +54,33 @@ logger = logging.getLogger(__name__)
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     status: {"model": ErrorEnvelope} for status in (401, 403, 404, 409, 410, 422, 503)
 }
+
+
+async def _service_error(_request: Request, exc: ServiceAPIError) -> JSONResponse:  # noqa: RUF029
+    """Return a classified service refusal; its ``details`` appear only when the refusal has any."""
+    envelope = ErrorEnvelope(
+        error=ErrorDetail(
+            code=exc.code,
+            message=exc.message,
+            status=exc.status,
+            run_id=exc.run_id,
+            mutation_id=exc.mutation_id,
+            details=exc.details,
+        )
+    )
+    headers = {"WWW-Authenticate": "Bearer"} if exc.status == 401 else None
+    return JSONResponse(status_code=exc.status, content=_error_content(envelope), headers=headers)
+
+
+def _error_content(envelope: ErrorEnvelope) -> dict[str, Any]:
+    """Dump an error envelope, leaving ``details`` out when the refusal has none.
+
+    Most refusals carry no structured context, so their body keeps the fields it always had.
+    """
+    content = envelope.model_dump(mode="json")
+    if envelope.error.details is None:
+        del content["error"]["details"]
+    return content
 
 
 def create_app(
@@ -108,19 +137,7 @@ def create_app(
             raise ServiceAPIError(422, "idempotency-key-required", "a non-empty Idempotency-Key header is required")
         return value
 
-    @application.exception_handler(ServiceAPIError)
-    async def service_error(_request: Request, exc: ServiceAPIError) -> JSONResponse:  # noqa: RUF029
-        envelope = ErrorEnvelope(
-            error=ErrorDetail(
-                code=exc.code,
-                message=exc.message,
-                status=exc.status,
-                run_id=exc.run_id,
-                mutation_id=exc.mutation_id,
-            )
-        )
-        headers = {"WWW-Authenticate": "Bearer"} if exc.status == 401 else None
-        return JSONResponse(status_code=exc.status, content=envelope.model_dump(mode="json"), headers=headers)
+    application.add_exception_handler(ServiceAPIError, _service_error)  # ty: ignore[invalid-argument-type]
 
     @application.exception_handler(ConfigurationAPIError)
     async def configuration_error(_request: Request, exc: ConfigurationAPIError) -> JSONResponse:  # noqa: RUF029
@@ -144,14 +161,14 @@ def create_app(
     async def invalid_cursor(_request: Request, exc: InvalidCursorError) -> JSONResponse:  # noqa: RUF029
         """Refuse a paging cursor that does not decode or was issued for other filters."""
         envelope = ErrorEnvelope(error=ErrorDetail(code="invalid-cursor", message=exc.message, status=422))
-        return JSONResponse(status_code=422, content=envelope.model_dump(mode="json"))
+        return JSONResponse(status_code=422, content=_error_content(envelope))
 
     @application.exception_handler(RequestValidationError)
     async def validation_error(_request: Request, _exc: RequestValidationError) -> JSONResponse:  # noqa: RUF029
         envelope = ErrorEnvelope(
             error=ErrorDetail(code="request-invalid", message="the request does not match the API schema", status=422)
         )
-        return JSONResponse(status_code=422, content=envelope.model_dump(mode="json"))
+        return JSONResponse(status_code=422, content=_error_content(envelope))
 
     @application.get("/version")
     def get_version() -> VersionResource:
@@ -183,7 +200,7 @@ def create_app(
                 status=503,
             )
         )
-        return JSONResponse(status_code=503, content=envelope.model_dump(mode="json"))
+        return JSONResponse(status_code=503, content=_error_content(envelope))
 
     @application.get("/me", responses=ERROR_RESPONSES)
     def get_me(principal: Annotated[Principal, Depends(authenticate)]) -> PrincipalResource:
@@ -262,6 +279,19 @@ def create_app(
         key: Annotated[str, Depends(idempotency_key)],
     ) -> JSONResponse:
         status, content = await service.apply_run(run_id, body, principal, key)
+        return JSONResponse(status_code=status, content=content)
+
+    @application.post(
+        "/runs/{run_id}/approve", status_code=200, response_model=ApprovedRunResource, responses=ERROR_RESPONSES
+    )
+    async def approve_run(
+        run_id: str,
+        body: ApproveRunRequest,
+        principal: Annotated[Principal, Depends(authenticate)],
+        key: Annotated[str, Depends(idempotency_key)],
+    ) -> JSONResponse:
+        """Record approval of the run's saved plan without applying it; submits no execution."""
+        status, content = await service.approve_run(run_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
     @application.post("/runs/{run_id}/cancel", status_code=202, response_model=RunResource, responses=ERROR_RESPONSES)

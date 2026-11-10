@@ -30,10 +30,14 @@ from infrahub_sync.product_store import (
     RunFilters,
 )
 from infrahub_sync.product_store.configs import CONFIGURATION_NOT_FOUND_REASON, CONFIGURATION_VERSION_NOT_FOUND_REASON
+from infrahub_sync.product_store.models import RunApproval, already_approved_body, not_approvable_message
 
 from .liveness import CancellationSelectionUnavailableError, select_cancellable_execution
 from .models import (
     ApplyRunRequest,
+    ApprovedPlanSummaryResource,
+    ApprovedRunResource,
+    ApproveRunRequest,
     ArtifactListResource,
     CancelRunRequest,
     CreateRunRequest,
@@ -114,12 +118,15 @@ class ServiceAPIError(Exception):
         *,
         run_id: str | None = None,
         mutation_id: str | None = None,
+        details: dict[str, Any] | None = None,
         secrets: tuple[str, ...] = (),
     ) -> None:
         self.status = status
         self.code = code
         self.run_id = run_id
         self.mutation_id = mutation_id
+        # Structured context a refusal carries, such as the existing approval; most have none.
+        self.details = details
         self.message = redact(message, secrets)
         super().__init__(self.message)
 
@@ -364,6 +371,137 @@ class RunService:
             admit_write=True,
         )
         return await self._resume_or_replay(receipt, parameters, principal, request.reason)
+
+    async def approve_run(
+        self, run_id: str, request: ApproveRunRequest, principal: Principal, idempotency_key: str
+    ) -> tuple[int, dict[str, Any]]:
+        """Record the one approval of a run's saved plan, bound to the reviewed checksum.
+
+        The service answers in the request: no flow run is submitted. The checks run in the
+        order of the HTTP contract, and the approval is stored in the same store transaction
+        that completes the request's receipt, so a retry with the same key replays the body.
+        """
+        run = self._owned_run(run_id, principal, "approve", request.reason)
+        body = request.model_dump(mode="json")
+        existing = self._lookup_existing_receipt(
+            run,
+            principal,
+            idempotency_key,
+            operation="approve",
+            reason=request.reason,
+            body=body,
+        )
+        if existing is not None and existing.state == "accepted":
+            self._audit(run_id, actor=principal.actor, operation="approve", reason=request.reason, outcome="replayed")
+            return self._stored_response(existing)
+        self._require_approvable(run, principal, request.reason)
+        plan = self._plan(run_id)
+        self._require_approvable_plan(run, plan, request, principal)
+        receipt = existing or self._reserve_existing(
+            run,
+            principal,
+            idempotency_key,
+            operation="approve",
+            reason=request.reason,
+            body=body,
+        )
+        if receipt.state == "accepted":
+            self._audit(run_id, actor=principal.actor, operation="approve", reason=request.reason, outcome="replayed")
+            return self._stored_response(receipt)
+        approval = RunApproval(
+            approved_by=principal.actor,
+            approved_at=self._clock(),
+            plan_checksum=plan.checksum,
+            reason=request.reason,
+        )
+        resource = self._resource_with_observations(
+            self._redacted_links(run.model_copy(update={"approval": approval})), {}
+        )
+        by_action = plan.summary.by_action
+        response = ApprovedRunResource(
+            run=resource.run,
+            orchestration=resource.orchestration,
+            plan_summary=ApprovedPlanSummaryResource(
+                creates=by_action.get("create", 0),
+                updates=by_action.get("update", 0),
+                deletes_recorded=plan.summary.deletes_not_executed,
+            ),
+        ).model_dump(mode="json")
+        stored = self._projection.record_approval(run_id, approval, receipt, response, secrets=self._secrets)
+        completed = self._projection.lookup_mutation(receipt.actor, receipt.key_digest).value
+        assert completed is not None  # record_approval completed this receipt or raised.
+        status, content = self._stored_response(completed)
+        if stored:
+            outcome = "accepted"
+        elif content["error"]["code"] == "already-approved":
+            outcome = "refused-already-approved"
+        else:
+            outcome = "refused-not-approvable"
+        self._audit(run_id, actor=principal.actor, operation="approve", reason=request.reason, outcome=outcome)
+        return status, content
+
+    def _require_approvable(self, run: ProductRun, principal: Principal, reason: str | None) -> None:
+        """Refuse a run that is still running a stage or is not in phase ``planned``.
+
+        Checked before the plan lookup, so a run still planning is not reported as a run
+        whose plan is missing.
+        """
+        active = next((link for link in reversed(run.prefect_executions) if link.terminal_at is None), None)
+        if active is None and run.phase == "planned":
+            return
+        self._audit(
+            run.run_id, actor=principal.actor, operation="approve", reason=reason, outcome="refused-not-approvable"
+        )
+        raise self._error(
+            409,
+            "run-not-approvable",
+            not_approvable_message(run.phase, None if active is None else active.purpose),
+            run_id=run.run_id,
+        )
+
+    def _require_approvable_plan(
+        self, run: ProductRun, plan: PlanResource, request: ApproveRunRequest, principal: Principal
+    ) -> None:
+        """Refuse an unverified plan, a checksum other than the plan's, and a second approval."""
+        if not plan.checksum_ok:
+            self._audit(
+                run.run_id,
+                actor=principal.actor,
+                operation="approve",
+                reason=request.reason,
+                outcome="refused-plan-unverified",
+            )
+            raise self._error(
+                409,
+                "plan-checksum-unverified",
+                "the saved plan's checksum was not verified when it was published; create and review a new plan",
+                run_id=run.run_id,
+            )
+        if request.expected_checksum != plan.checksum:
+            self._audit(
+                run.run_id,
+                actor=principal.actor,
+                operation="approve",
+                reason=request.reason,
+                outcome="refused-checksum",
+            )
+            raise self._error(
+                409,
+                "checksum-mismatch",
+                f"expected_checksum {request.expected_checksum} does not match the saved plan's checksum "
+                f"{plan.checksum}",
+                run_id=run.run_id,
+            )
+        if run.approval is not None:
+            self._audit(
+                run.run_id,
+                actor=principal.actor,
+                operation="approve",
+                reason=request.reason,
+                outcome="refused-already-approved",
+            )
+            error = already_approved_body(run.approval, run_id=run.run_id, mutation_id=None)["error"]
+            raise self._error(409, error["code"], error["message"], run_id=run.run_id, details=error["details"])
 
     async def cancel_run(  # noqa: PLR0911  # pylint: disable=too-many-branches,too-many-return-statements,too-many-statements
         self, run_id: str, request: CancelRunRequest, principal: Principal, idempotency_key: str
@@ -1113,6 +1251,7 @@ class RunService:
         *,
         run_id: str | None = None,
         mutation_id: str | None = None,
+        details: dict[str, Any] | None = None,
     ) -> ServiceAPIError:
         return ServiceAPIError(
             status,
@@ -1120,5 +1259,6 @@ class RunService:
             message,
             run_id=run_id,
             mutation_id=mutation_id,
+            details=details,
             secrets=self._secrets,
         )

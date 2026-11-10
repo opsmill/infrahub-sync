@@ -18,6 +18,9 @@ from pydantic import BaseModel, ConfigDict
 
 from infrahub_sync.client.models import (
     ApplyRunRequest,
+    ApprovedPlanSummaryResource,
+    ApprovedRunResource,
+    ApproveRunRequest,
     ArtifactListResource,
     CancelRunRequest,
     ConfigErrorDetail,
@@ -34,6 +37,7 @@ from infrahub_sync.client.models import (
     PublicExecutionLink,
     PublicRunResource,
     ResultsResource,
+    RunApprovalResource,
     RunPage,
     RunResource,
     ServiceStatusResource,
@@ -49,6 +53,9 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ApplyRunRequest",
+    "ApproveRunRequest",
+    "ApprovedPlanSummaryResource",
+    "ApprovedRunResource",
     "ArtifactListResource",
     "CancelRunRequest",
     "ConfigErrorDetail",
@@ -65,6 +72,7 @@ __all__ = [
     "PublicExecutionLink",
     "PublicRunResource",
     "ResultsResource",
+    "RunApprovalResource",
     "RunPage",
     "RunResource",
     "ServiceStatusResource",

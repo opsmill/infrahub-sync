@@ -28,6 +28,8 @@ from .models import (
     MAX_LIMIT,
     MIN_LIMIT,
     ApplyRunRequest,
+    ApprovedRunResource,
+    ApproveRunRequest,
     ArtifactContent,
     ArtifactListResource,
     CancelRunRequest,
@@ -450,6 +452,25 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         """Apply a reviewed saved plan idempotently."""
 
         return self.apply_run(run_id, request, idempotency_key)
+
+    def approve_run(self, run_id: str, request: ApproveRunRequest, idempotency_key: str) -> ApprovedRunResource:
+        """Record approval of a reviewed saved plan without applying it, idempotently."""
+
+        run_id = self._identifier(run_id, "run_id")
+        return self._request_model(
+            "approve_run",
+            "POST",
+            f"/runs/{run_id}/approve",
+            model=ApprovedRunResource,
+            success={200},
+            body=request,
+            idempotency_key=idempotency_key,
+        )
+
+    def approve(self, run_id: str, request: ApproveRunRequest, idempotency_key: str) -> ApprovedRunResource:
+        """Record approval of a reviewed saved plan without applying it, idempotently."""
+
+        return self.approve_run(run_id, request, idempotency_key)
 
     def cancel_run(self, run_id: str, request: CancelRunRequest, idempotency_key: str) -> RunResource:
         """Request cancellation of a run idempotently."""

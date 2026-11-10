@@ -10,6 +10,7 @@ import sqlite3
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ import pytest
 from pydantic import ValidationError
 from typing_extensions import LiteralString
 
-from infrahub_sync.product_store import ProductRun
+from infrahub_sync.product_store import MutationReceipt, ProductRun
 from infrahub_sync.product_store.models import RunApproval
 from infrahub_sync.product_store.store import PostgreSQLRunStore, SQLiteRunStore
 from tests.product_store.postgresql_isolation import dsn_or_skip, isolated_schema
@@ -203,3 +204,132 @@ def test_absent_approval_columns_read_as_no_approval() -> None:
 def test_invalid_approval_is_refused(overrides: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         _approval(**overrides)
+
+
+_APPROVED_RESPONSE: dict[str, Any] = {"run": {"run_id": "run-001"}, "plan_summary": {"creates": 1}}
+
+
+def _approve_receipt(ordinal: int, *, run_id: str = "run-001") -> MutationReceipt:
+    now = datetime(2026, 8, 8, 14, tzinfo=timezone.utc)
+    return MutationReceipt(
+        receipt_id=f"m-approve-{ordinal}",
+        actor="reviewer@example.com",
+        key_digest=sha256(f"approve-key-{ordinal}".encode()).hexdigest(),
+        operation="approve",
+        target_run_id=run_id,
+        request_fingerprint=sha256(f"approve-body-{ordinal}".encode()).hexdigest(),
+        reason="CHG-42 reviewed",
+        resource_id=run_id,
+        run_id=run_id,
+        prefect_key=sha256(f"prefect:approve-{ordinal}".encode()).hexdigest(),
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _reserved(store: SQLiteRunStore | PostgreSQLRunStore, ordinal: int) -> MutationReceipt:
+    reserved, created = store.reserve_mutation(_approve_receipt(ordinal), None)
+    assert created
+    assert reserved.state == "reserved"
+    return reserved
+
+
+def _stored_receipt(store: SQLiteRunStore | PostgreSQLRunStore, receipt: MutationReceipt) -> MutationReceipt:
+    stored = store.lookup_mutation(receipt.actor, receipt.key_digest).value
+    assert stored is not None
+    return stored
+
+
+def _planned_run(phase: str = "planned") -> ProductRun:
+    return _run().model_copy(update={"finished_at": None, "outcome": None, "phase": phase})
+
+
+def test_record_approval_stores_the_approval_and_completes_the_receipt_once(backend: _Backend) -> None:
+    store = backend.make_store()
+    store.create(_planned_run())
+    receipt = _reserved(store, 1)
+    approval = _approval()
+
+    stored = store.record_approval(
+        "run-001", approval, receipt, _APPROVED_RESPONSE, updated_at=datetime.now(timezone.utc)
+    )
+
+    assert stored is True
+    loaded = store.lookup("run-001").value
+    assert loaded is not None
+    assert loaded.approval == approval
+    completed = _stored_receipt(store, receipt)
+    assert completed.state == "accepted"
+    assert completed.response_status == 200
+    assert completed.response_body == _APPROVED_RESPONSE
+    assert completed.flow_run_id is None
+
+
+def test_a_second_record_approval_reports_already_approved_and_keeps_the_first(backend: _Backend) -> None:
+    store = backend.make_store()
+    store.create(_planned_run())
+    first = _approval()
+    assert store.record_approval(
+        "run-001", first, _reserved(store, 1), _APPROVED_RESPONSE, updated_at=datetime.now(timezone.utc)
+    )
+    second_receipt = _reserved(store, 2)
+
+    stored = store.record_approval(
+        "run-001",
+        _approval(approved_by="someone-else", reason=None),
+        second_receipt,
+        _APPROVED_RESPONSE,
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    assert stored is False
+    loaded = store.lookup("run-001").value
+    assert loaded is not None
+    assert loaded.approval == first
+    assert loaded.approval is not None
+    refused = _stored_receipt(store, second_receipt)
+    assert refused.state == "accepted"
+    assert refused.response_status == 409
+    assert refused.response_body is not None
+    error = refused.response_body["error"]
+    assert error["code"] == "already-approved"
+    assert error["mutation_id"] == second_receipt.receipt_id
+    assert error["details"] == {"approval": loaded.approval.model_dump(mode="json")}
+    assert error["details"]["approval"]["approved_at"] == "2026-08-08T12:30:00Z"
+
+
+@pytest.mark.parametrize("phase", ["failed", "applied", "accepted"])
+def test_record_approval_does_not_update_a_run_outside_phase_planned(backend: _Backend, phase: str) -> None:
+    store = backend.make_store()
+    store.create(_planned_run(phase))
+    receipt = _reserved(store, 1)
+
+    stored = store.record_approval(
+        "run-001", _approval(), receipt, _APPROVED_RESPONSE, updated_at=datetime.now(timezone.utc)
+    )
+
+    assert stored is False
+    loaded = store.lookup("run-001").value
+    assert loaded is not None
+    assert loaded.approval is None
+    refused = _stored_receipt(store, receipt)
+    assert refused.response_status == 409
+    assert refused.response_body is not None
+    assert refused.response_body["error"]["code"] == "run-not-approvable"
+    assert phase in refused.response_body["error"]["message"]
+
+
+def test_record_approval_rolls_back_when_the_receipt_cannot_be_completed(backend: _Backend) -> None:
+    """The approval and the receipt completion are one transaction: neither lands alone."""
+    store = backend.make_store()
+    store.create(_planned_run())
+    never_reserved = _approve_receipt(9)
+
+    with pytest.raises(ValueError, match="unavailable for completion"):
+        store.record_approval(
+            "run-001", _approval(), never_reserved, _APPROVED_RESPONSE, updated_at=datetime.now(timezone.utc)
+        )
+
+    loaded = store.lookup("run-001").value
+    assert loaded is not None
+    assert loaded.approval is None

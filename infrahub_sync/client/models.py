@@ -124,6 +124,13 @@ class ApplyRunRequest(_RequestModel):
     reason: str | None = Field(default=None, min_length=1)
 
 
+class ApproveRunRequest(_RequestModel):
+    """Request approval of a run's saved plan, bound to the reviewed checksum, without applying it."""
+
+    expected_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    reason: str | None = Field(default=None, min_length=1)
+
+
 class CancelRunRequest(_RequestModel):
     """Request cancellation of an accepted run."""
 
@@ -211,6 +218,22 @@ class PublicExecutionLink(_ResourceModel):
         return _timezone(value, "execution timestamps must include a timezone")
 
 
+class RunApprovalResource(_ResourceModel):
+    """The one recorded approval of a run's saved plan: who approved which checksum, and when."""
+
+    approved_by: str = Field(min_length=1)
+    approved_at: datetime
+    plan_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    reason: str | None = None
+
+    @field_validator("approved_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, "approval timestamps must include a timezone")
+        assert checked is not None
+        return checked
+
+
 class PublicRunResource(_ResourceModel):
     """Represent the public product record for one Sync run."""
 
@@ -234,6 +257,9 @@ class PublicRunResource(_ResourceModel):
     # The effective Infrahub branch the run writes to; ``None`` for runs created before
     # the store recorded it.
     destination_branch: str | None = None
+    # The run's one approval of its saved plan; ``None`` when the plan was never approved.
+    # Approval is not a phase: an approved run stays in phase ``planned``.
+    approval: RunApprovalResource | None = None
     artifact_refs: tuple[ArtifactReferenceResource, ...] = ()
     prefect_executions: tuple[PublicExecutionLink, ...] = ()
 
@@ -361,6 +387,21 @@ class RunResource(_ResourceModel):
 
     run: PublicRunResource
     orchestration: tuple[OrchestrationSummary, ...]
+
+
+class ApprovedPlanSummaryResource(_ResourceModel):
+    """The counts of the plan an approval covers: creates, updates and recorded deletes."""
+
+    creates: int = Field(ge=0)
+    updates: int = Field(ge=0)
+    # Deletes the plan records; apply executes none of them.
+    deletes_recorded: int = Field(ge=0)
+
+
+class ApprovedRunResource(RunResource):
+    """The approve response: the run with its approval, and the counts of the plan approved."""
+
+    plan_summary: ApprovedPlanSummaryResource
 
 
 class RunPage(_ResourceModel):
@@ -633,6 +674,9 @@ class ErrorDetail(_ResourceModel):
     status: int
     run_id: str | None = None
     mutation_id: str | None = None
+    # Structured context of a refusal, such as the existing approval of ``already-approved``.
+    # Absent from most errors.
+    details: dict[str, Any] | None = None
 
 
 class ErrorEnvelope(_ResourceModel):

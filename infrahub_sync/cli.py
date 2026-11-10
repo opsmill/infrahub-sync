@@ -25,6 +25,7 @@ from pydantic import ValidationError
 from infrahub_sync.client import (
     APIError,
     ApplyRunRequest,
+    ApproveRunRequest,
     CancelRunRequest,
     ClientInputError,
     CompatibilityError,
@@ -620,6 +621,15 @@ def _echo_run(resource: RunResource) -> None:
             ("flow_run_id", selected.flow_run_id if selected is not None else None),
         )
     )
+    # Printed only for an approved run: an unapproved run has no approval lines at all.
+    if run.approval is not None:
+        _echo_fields(
+            (
+                ("approved_by", run.approval.approved_by),
+                ("approved_at", run.approval.approved_at.isoformat()),
+                ("approved_checksum", run.approval.plan_checksum),
+            )
+        )
 
 
 def _wait(
@@ -1009,6 +1019,35 @@ def apply_cmd(
         if wait:
             _echo_run(completed)
             _echo_completed_destination_branch(client, completed.run.run_id)
+
+
+@app.command("approve")
+def approve_cmd(
+    ctx: typer.Context,
+    *,
+    run_id: str = typer.Argument(..., help="Service-issued run ID whose saved plan was reviewed."),
+    expected_checksum: str = typer.Option(..., "--expected-checksum", help="Checksum printed by `runs plan`."),
+    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the approval."),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
+) -> None:
+    """Record approval of the named run's saved plan without applying it."""
+    with _client_errors():
+        client = _client(ctx)
+        request = cast(
+            "ApproveRunRequest", _request(ApproveRunRequest, expected_checksum=expected_checksum, reason=reason)
+        )
+        key = _idempotency_key(idempotency_key)
+        _echo_idempotency_key(key)
+        # Approval completes in the request, so there is no execution to wait for.
+        approved = client.approve(run_id, request, key)
+        _echo_run(approved)
+        _echo_fields(
+            (
+                ("approved_creates", approved.plan_summary.creates),
+                ("approved_updates", approved.plan_summary.updates),
+                ("approved_deletes_recorded", approved.plan_summary.deletes_recorded),
+            )
+        )
 
 
 @app.command("verify")

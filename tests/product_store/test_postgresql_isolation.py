@@ -9,7 +9,11 @@ only generated identifiers when it destroys anything.
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
+from threading import Barrier
 from typing import Any
 
 import pytest
@@ -248,5 +252,88 @@ def test_postgresql_start_up_upgrades_a_database_without_the_run_discovery_schem
         loaded = store.lookup("legacy-run-001").value
         assert loaded is not None
         assert loaded.destination_branch is None
+    finally:
+        schema.drop()
+
+
+@pytest.mark.integration
+def test_postgresql_concurrent_approvals_of_one_run_store_exactly_one() -> None:
+    """Two transactions approve the same run at once: the conditional update lets one store."""
+    schema = postgresql_isolation.isolated_schema(
+        postgresql_isolation.dsn_or_skip("the concurrent run-approval PostgreSQL case")
+    )
+    # pylint: disable-next=import-outside-toplevel,import-error
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
+
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.product_store import MutationReceipt, ProductRun
+
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.product_store.models import RunApproval
+
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.product_store.store import PostgreSQLRunStore
+
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.service.storage import PsycopgConnectionFactory
+
+    def connect() -> Any:  # noqa: ANN401 - the provider's own connection wrapper.
+        return PsycopgConnectionFactory(psycopg.connect)(schema.dsn)
+
+    now = datetime.now(timezone.utc)
+
+    def receipt(ordinal: int) -> MutationReceipt:
+        return MutationReceipt(
+            receipt_id=f"m-approve-{ordinal}",
+            actor=f"reviewer-{ordinal}",
+            key_digest=sha256(f"approve-key-{ordinal}".encode()).hexdigest(),
+            operation="approve",
+            target_run_id="run-approve",
+            request_fingerprint=sha256(f"approve-body-{ordinal}".encode()).hexdigest(),
+            reason=None,
+            resource_id="run-approve",
+            run_id="run-approve",
+            prefect_key=sha256(f"prefect:approve-{ordinal}".encode()).hexdigest(),
+            created_at=now,
+            updated_at=now,
+        )
+
+    schema.create()
+    try:
+        setup = PostgreSQLRunStore(connect)
+        setup.create(
+            ProductRun(
+                run_id="run-approve",
+                operation="plan",
+                configuration_reference="sha256:configuration",
+                actor="operator",
+                started_at=now,
+                phase="planned",
+            )
+        )
+        receipts = [setup.reserve_mutation(receipt(ordinal), None)[0] for ordinal in (1, 2)]
+        stores = [PostgreSQLRunStore(connect), PostgreSQLRunStore(connect)]
+        barrier = Barrier(2)
+
+        def approve(index: int) -> bool:
+            approval = RunApproval(approved_by=f"reviewer-{index + 1}", approved_at=now, plan_checksum="a" * 64)
+            barrier.wait()
+            return stores[index].record_approval(
+                "run-approve", approval, receipts[index], {"run": {"run_id": "run-approve"}}, updated_at=now
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(approve, (0, 1)))
+
+        assert sorted(outcomes) == [False, True]
+        winner = outcomes.index(True)
+        stored = setup.lookup("run-approve").value
+        assert stored is not None
+        assert stored.approval is not None
+        assert stored.approval.approved_by == f"reviewer-{winner + 1}"
+        statuses = sorted(
+            (setup.lookup_mutation(item.actor, item.key_digest).value or item).response_status or 0 for item in receipts
+        )
+        assert statuses == [200, 409]
     finally:
         schema.drop()

@@ -52,6 +52,9 @@ from infrahub_sync.product_store.models import (
     RunFilters,
     RunPage,
     RunReference,
+    already_approved_body,
+    approval_error_body,
+    not_approvable_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -589,6 +592,16 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     ) -> tuple[MutationReceipt, bool]: ...
 
     def lookup_mutation(self, actor: str, key_digest: str) -> LookupResult[MutationReceipt]: ...
+
+    def record_approval(
+        self,
+        run_id: str,
+        approval: RunApproval,
+        receipt: MutationReceipt,
+        response: Mapping[str, Any],
+        *,
+        updated_at: datetime,
+    ) -> bool: ...
 
     def complete_mutation(
         self,
@@ -2064,6 +2077,97 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             return LookupResult(value=None, reason="mutation-receipt-not-found")
         return LookupResult(value=_receipt_from_row(row))
 
+    def record_approval(
+        self,
+        run_id: str,
+        approval: RunApproval,
+        receipt: MutationReceipt,
+        response: Mapping[str, Any],
+        *,
+        updated_at: datetime,
+    ) -> bool:
+        """Store a run's one approval and complete its request's receipt in one transaction.
+
+        The conditional update stores the approval only on a run in phase ``planned`` that
+        has none, so of two concurrent approvals exactly one stores. The loser's receipt is
+        completed with a stored refusal instead: ``already-approved`` with the approval that
+        won, or ``run-not-approvable`` when the run left phase ``planned``. Either way a retry
+        with the same key replays what this transaction stored.
+
+        Returns:
+            Whether this call stored the approval.
+
+        Raises:
+            ValueError: The receipt is not awaiting completion; nothing is stored.
+        """
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql(
+                        "UPDATE product_runs SET approved_by = ?, approved_at = ?, approved_checksum = ?, "
+                        "approval_reason = ? WHERE run_id = ? AND approved_by IS NULL AND phase = 'planned'"
+                    ),
+                    (*_approval_columns(approval), run_id),
+                )
+                stored = cursor.rowcount == 1
+                status, body = (200, response) if stored else self._approval_refusal(cursor, run_id, receipt.receipt_id)
+                self._answer_receipt_row(
+                    cursor, receipt.receipt_id, response_status=status, response_body=body, updated_at=updated_at
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return stored
+
+    def _answer_receipt_row(
+        self,
+        cursor: _Cursor,
+        receipt_id: str,
+        *,
+        response_status: int,
+        response_body: Mapping[str, Any],
+        updated_at: datetime,
+    ) -> None:
+        """Complete a receipt the service answers itself, with no flow run, in the caller's transaction."""
+        cursor.execute(
+            self._sql(
+                "UPDATE mutation_receipts SET state = 'accepted', response_status = ?, response_body = ?, "
+                "updated_at = ? WHERE receipt_id = ? AND state IN ('reserved', 'processing')"
+            ),
+            (response_status, _json(response_body), updated_at.isoformat(), receipt_id),
+        )
+        if cursor.rowcount != 1:
+            msg = f"Mutation receipt {receipt_id!r} is unavailable for completion"
+            raise ValueError(msg)
+
+    def _approval_refusal(self, cursor: _Cursor, run_id: str, receipt_id: str) -> tuple[int, dict[str, Any]]:
+        """Return the status and refusal a losing approval stores, read in the losing transaction."""
+        cursor.execute(
+            self._sql(
+                "SELECT phase, approved_by, approved_at, approved_checksum, approval_reason "
+                "FROM product_runs WHERE run_id = ?"
+            ),
+            (run_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return 404, approval_error_body(
+                404, "run-not-found", "the requested Sync run does not exist", run_id=run_id, mutation_id=receipt_id
+            )
+        existing = RunApproval.from_columns(row[1], row[2], row[3], row[4])
+        if existing is not None:
+            return 409, already_approved_body(existing, run_id=run_id, mutation_id=receipt_id)
+        return 409, approval_error_body(
+            409, "run-not-approvable", not_approvable_message(str(row[0])), run_id=run_id, mutation_id=receipt_id
+        )
+
     def complete_mutation(
         self,
         receipt_id: str,
@@ -3208,6 +3312,26 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
     def lookup_mutation(self, actor: str, key_digest: str) -> LookupResult[MutationReceipt]:
         """Look up the durable receipt for an actor and hashed client key."""
         return self._records.lookup_mutation(actor, key_digest)
+
+    def record_approval(
+        self,
+        run_id: str,
+        approval: RunApproval,
+        receipt: MutationReceipt,
+        response: Mapping[str, Any],
+        *,
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """Store a run's one approval with its request's secret-safe response, or the stored refusal.
+
+        Returns:
+            Whether this call stored the approval; when it did not, the receipt holds the refusal.
+        """
+        sanitized_approval = RunApproval.model_validate(_redact_value(approval.model_dump(mode="json"), secrets))
+        sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(response), secrets))
+        return self._records.record_approval(
+            run_id, sanitized_approval, receipt, sanitized, updated_at=datetime.now(timezone.utc)
+        )
 
     def complete_mutation(
         self,

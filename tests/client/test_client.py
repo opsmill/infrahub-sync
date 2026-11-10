@@ -14,6 +14,8 @@ from typing_extensions import override
 from infrahub_sync.client import (
     APIError,
     ApplyRunRequest,
+    ApprovedRunResource,
+    ApproveRunRequest,
     CancelRunRequest,
     ClientInputError,
     ClientTimeoutError,
@@ -777,3 +779,70 @@ def test_iter_config_versions_follows_next_cursor_until_null() -> None:
 
     assert [item.registry_version for item in client.iter_config_versions("cfg")] == [2, 1]
     assert [request.url.params.get("cursor") for request in requests] == [None, "c1"]
+
+
+def _approved_run() -> dict[str, object]:
+    resource = _run()
+    run = cast("dict[str, object]", resource["run"])
+    run["phase"] = "planned"
+    run["approval"] = {
+        "approved_by": "operator",
+        "approved_at": NOW,
+        "plan_checksum": "a" * 64,
+        "reason": "reviewed",
+    }
+    return {**resource, "plan_summary": {"creates": 1, "updates": 2, "deletes_recorded": 3}}
+
+
+@pytest.mark.parametrize("method", ["approve_run", "approve"])
+def test_approve_posts_the_reviewed_checksum_and_parses_the_approved_run(method: str) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(200, json=_approved_run())
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+    request = ApproveRunRequest(expected_checksum="a" * 64, reason="reviewed")
+
+    approved = getattr(client, method)("run-1", request, "key-approve")
+
+    sent = requests[-1]
+    assert (sent.method, sent.url.path) == ("POST", "/runs/run-1/approve")
+    assert sent.headers["Idempotency-Key"] == "key-approve"
+    assert sent.headers["Authorization"] == f"Bearer {TOKEN}"
+    assert json.loads(sent.content) == {"expected_checksum": "a" * 64, "reason": "reviewed"}
+    assert isinstance(approved, ApprovedRunResource)
+    assert approved.run.approval is not None
+    assert approved.run.approval.approved_by == "operator"
+    assert approved.run.approval.plan_checksum == "a" * 64
+    assert approved.plan_summary.model_dump() == {"creates": 1, "updates": 2, "deletes_recorded": 3}
+
+
+def test_approve_refusal_is_a_typed_api_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(
+            409,
+            json={
+                "error": {
+                    "code": "already-approved",
+                    "message": "the run's plan is already approved",
+                    "status": 409,
+                    "run_id": "run-1",
+                    "mutation_id": "m-1",
+                    "details": {"approval": {"approved_by": "operator"}},
+                }
+            },
+        )
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+
+    with pytest.raises(APIError) as raised:
+        client.approve_run("run-1", ApproveRunRequest(expected_checksum="a" * 64), "key-approve")
+
+    assert raised.value.code == "already-approved"
+    assert raised.value.status == 409

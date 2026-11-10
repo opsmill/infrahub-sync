@@ -18,6 +18,10 @@ MAX_REGISTRY_VERSION = 2**63 - 1
 # Equal to the Sync API's ``DEFAULT_LIMIT``; the store does not import the client package.
 DEFAULT_LIMIT = 50
 _INVALID_SERVICE_WORKER_ID = "service worker identity is invalid"
+# Run mutations the service answers in the request itself, without submitting a flow run:
+# their accepted receipt stores a success response with no flow-run ID. The receipt's
+# ``operation`` column is plain text, so this set is the only place an operation is named.
+SERVICE_ANSWERED_OPERATIONS = frozenset({"approve"})
 _LEGAL_EXECUTION_VERDICTS = {
     ("completed", "succeeded"),
     ("failed", "failed"),
@@ -221,6 +225,47 @@ class RunApproval(BaseModel):
         )
 
 
+def not_approvable_message(phase: str, active_stage: str | None = None) -> str:
+    """Say why a run cannot be approved: the stage still running, or the run's phase."""
+    if active_stage is not None:
+        return f"the run cannot be approved while a {active_stage} execution is in progress"
+    return f"the run cannot be approved in phase {phase!r}; only a run in phase 'planned' can be approved"
+
+
+def approval_error_body(
+    status: int,
+    code: str,
+    message: str,
+    *,
+    run_id: str,
+    mutation_id: str | None,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the error envelope of a refused approval, as the Sync API sends and a receipt stores it."""
+    error: dict[str, Any] = {
+        "code": code,
+        "message": message,
+        "status": status,
+        "run_id": run_id,
+        "mutation_id": mutation_id,
+    }
+    if details is not None:
+        error["details"] = details
+    return {"error": error}
+
+
+def already_approved_body(approval: RunApproval, *, run_id: str, mutation_id: str | None) -> dict[str, Any]:
+    """Return the ``already-approved`` refusal, carrying the approval the run already has."""
+    return approval_error_body(
+        409,
+        "already-approved",
+        f"the run's plan was already approved by {approval.approved_by!r}",
+        run_id=run_id,
+        mutation_id=mutation_id,
+        details={"approval": approval.model_dump(mode="json")},
+    )
+
+
 class ProductRun(BaseModel):
     """One compact Sync-owned product record.
 
@@ -406,10 +451,12 @@ class MutationReceipt(BaseModel):
             msg = "an accepted mutation receipt requires its stored status and response"
             raise ValueError(msg)
         # A run receipt answered with a refusal never reached Prefect, so it has no
-        # flow-run ID to carry; only an accepted submission does.
+        # flow-run ID to carry; only an accepted submission does. An operation the
+        # service answers itself, such as ``approve``, never submits a flow run.
+        submits_flow_run = self.resource_kind == "run" and self.operation not in SERVICE_ANSWERED_OPERATIONS
         if (
             self.state == "accepted"
-            and self.resource_kind == "run"
+            and submits_flow_run
             and self.flow_run_id is None
             and self.response_status is not None
             and self.response_status < 400

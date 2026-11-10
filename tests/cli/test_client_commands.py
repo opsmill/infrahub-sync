@@ -19,6 +19,9 @@ from infrahub_sync.cli import _display, app  # noqa: PLC2701 - the renderer unde
 from infrahub_sync.client import (
     APIError,
     ApplyRunRequest,
+    ApprovedPlanSummaryResource,
+    ApprovedRunResource,
+    ApproveRunRequest,
     ArtifactListResource,
     ArtifactReferenceResource,
     CancelRunRequest,
@@ -44,6 +47,7 @@ from infrahub_sync.client import (
     RegisteredConfigurationResource,
     RegisteredVersionResource,
     ResultsResource,
+    RunApprovalResource,
     RunPage,
     RunReference,
     RunResource,
@@ -1273,6 +1277,7 @@ def test_a_given_reason_is_still_validated(client: MagicMock, tmp_path: Path, re
         ("plan",),
         ("sync",),
         ("apply",),
+        ("approve",),
         ("verify",),
         ("runs", "cancel"),
     ],
@@ -1834,3 +1839,96 @@ def test_configuration_lookup_errors_other_than_not_found_are_reported(client: M
     assert result.exit_code == 1
     assert "status: 403" in result.output
     client.iter_configs.assert_not_called()
+
+
+_APPROVAL = RunApprovalResource(
+    approved_by="alice",
+    approved_at=datetime(2026, 11, 10, 14, 3, 11, tzinfo=timezone.utc),
+    plan_checksum=CHECKSUM,
+    reason="reviewed by the network team",
+)
+
+
+def _approved(resource: RunResource) -> RunResource:
+    return resource.model_copy(update={"run": resource.run.model_copy(update={"approval": _APPROVAL})})
+
+
+def test_approve_sends_the_checksum_and_prints_the_run_its_approval_and_the_approved_counts(
+    client: MagicMock,
+) -> None:
+    approved = _approved(_run(phase="planned"))
+    client.approve.return_value = ApprovedRunResource(
+        run=approved.run,
+        orchestration=approved.orchestration,
+        plan_summary=ApprovedPlanSummaryResource(creates=1, updates=2, deletes_recorded=3),
+    )
+
+    result = _invoke(
+        client,
+        "approve",
+        "service-run-1",
+        "--expected-checksum",
+        CHECKSUM,
+        "--reason",
+        "reviewed by the network team",
+        "--idempotency-key",
+        "retry-approve",
+    )
+
+    assert result.exit_code == 0, result.output
+    client.approve.assert_called_once_with(
+        "service-run-1",
+        ApproveRunRequest(expected_checksum=CHECKSUM, reason="reviewed by the network team"),
+        "retry-approve",
+    )
+    client.wait_for_run.assert_not_called()
+    for line in (
+        "idempotency_key: retry-approve",
+        "run_id: service-run-1",
+        "phase: planned",
+        "approved_by: alice",
+        "approved_at: 2026-11-10T14:03:11+00:00",
+        f"approved_checksum: {CHECKSUM}",
+        "approved_creates: 1",
+        "approved_updates: 2",
+        "approved_deletes_recorded: 3",
+    ):
+        assert line in result.output.splitlines(), line
+
+
+def test_approve_does_not_ask_for_confirmation_and_documents_itself() -> None:
+    help_text = _help_text("approve")
+
+    assert "Record approval of the named run's saved plan without applying it." in help_text
+    assert "--yes" not in help_text
+    assert "--expected-checksum" in help_text
+
+
+def test_approve_refusal_is_printed_through_the_client_error_path(client: MagicMock) -> None:
+    client.approve.side_effect = APIError(409, "already-approved", run_id="service-run-1")
+
+    result = _invoke(client, "approve", "service-run-1", "--expected-checksum", CHECKSUM)
+
+    assert result.exit_code != 0
+    assert "already-approved" in result.output
+
+
+def test_runs_show_prints_the_approval_lines_when_the_run_is_approved(client: MagicMock) -> None:
+    client.get_run.return_value = _approved(_run(phase="planned"))
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert "approved_by: alice" in lines
+    assert "approved_at: 2026-11-10T14:03:11+00:00" in lines
+    assert f"approved_checksum: {CHECKSUM}" in lines
+
+
+def test_runs_show_prints_no_approval_lines_for_an_unapproved_run(client: MagicMock) -> None:
+    client.get_run.return_value = _run(phase="planned")
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert "approved_" not in result.output

@@ -15,6 +15,9 @@ from .errors import (
 )
 from .models import (
     ApplyRunRequest,
+    ApprovedPlanSummaryResource,
+    ApprovedRunResource,
+    ApproveRunRequest,
     ArtifactContent,
     ArtifactListResource,
     ArtifactReferenceResource,
@@ -41,6 +44,7 @@ from .models import (
     RegisteredConfigurationResource,
     RegisteredVersionResource,
     ResultsResource,
+    RunApprovalResource,
     RunPage,
     RunReference,
     RunResource,
@@ -55,6 +59,9 @@ from .models import (
 __all__ = [
     "APIError",
     "ApplyRunRequest",
+    "ApproveRunRequest",
+    "ApprovedPlanSummaryResource",
+    "ApprovedRunResource",
     "ArtifactContent",
     "ArtifactListResource",
     "ArtifactReferenceResource",
@@ -86,6 +93,7 @@ __all__ = [
     "RegisteredConfigurationResource",
     "RegisteredVersionResource",
     "ResultsResource",
+    "RunApprovalResource",
     "RunPage",
     "RunReference",
     "RunResource",
