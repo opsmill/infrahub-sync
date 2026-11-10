@@ -311,6 +311,7 @@ def test_a_registered_stage_reaches_execution_with_its_models_bound(
             projection=cast("ProductProjection", projection),
             tracker=WriteDispatchTracker(),
             scratch=scratch,
+            flow_run_id="flow-composed-sync",
         )
 
     assert result["operation"] == "sync"

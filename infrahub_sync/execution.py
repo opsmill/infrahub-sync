@@ -76,6 +76,7 @@ if TYPE_CHECKING:
     from infrahub_sync.plan.ownership import WriteOwnership
     from infrahub_sync.plan.review import SavedPlan
     from infrahub_sync.potenda import Potenda
+    from infrahub_sync.potenda.read_progress import SideReadObserver
 
 logger = logging.getLogger(__name__)
 
@@ -1140,6 +1141,7 @@ def execute_run(
     _run_file_mode: Literal["diff", "sync"] | None = None,
     _require_verified: bool = False,
     _return_saved_plan: bool = False,
+    _read_observer: SideReadObserver | None = None,
 ) -> RunResult | SavedPlan:
     """Run one product operation against a resolved instance.
 
@@ -1229,6 +1231,8 @@ def execute_run(
             base_directory=base_directory,
         )
         ptd.force_full_extract = full_extract
+        # Set after the factory call so its pinned eight-keyword shape does not change.
+        ptd.read_observer = _read_observer
         if ptd.run_dir is None:  # get_potenda_from_instance always allocates one
             msg = "get_potenda_from_instance did not allocate a run_dir"
             raise RuntimeError(msg)

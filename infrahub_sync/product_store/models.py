@@ -86,6 +86,11 @@ class PrefectExecutionLink(BaseModel):
     terminal_at: datetime | None = None
     terminal_state: Literal["completed", "failed", "cancelled", "abandoned", "interrupted"] | None = None
     terminal_outcome: Literal["succeeded", "failed", "cancelled", "abandoned", "ambiguous"] | None = None
+    # Each side's stored read document (spec 018 data-model.md); `None` for an execution
+    # recorded before that feature, a stage that reads no side, or a `plan` or `sync`
+    # execution that has not reached its planning step.
+    source_read: dict[str, Any] | None = None
+    destination_read: dict[str, Any] | None = None
 
     @field_validator(
         "last_observed_at",

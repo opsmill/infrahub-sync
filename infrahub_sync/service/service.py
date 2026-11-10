@@ -69,6 +69,7 @@ from .orchestration import (
 )
 from .paging import FilterValue, decode_cursor, timestamp_cursor, timestamp_key, validate_limit
 from .prefect_ui import flow_run_url
+from .read_progress import stage_reads
 from .run_log import page as log_page
 from .run_log import sync_lines
 
@@ -1187,6 +1188,7 @@ class RunService:
                         terminal_state=link.terminal_state,
                         terminal_outcome=link.terminal_outcome,
                         prefect_flow_run_url=link_url,
+                        reads=stage_reads(link, run_id=run.run_id, prefect_state=link.last_observed_state),
                     )
                 )
                 continue
@@ -1210,6 +1212,11 @@ class RunService:
                     terminal_state=link.terminal_state,
                     terminal_outcome=link.terminal_outcome,
                     prefect_flow_run_url=link_url,
+                    reads=stage_reads(
+                        link,
+                        run_id=run.run_id,
+                        prefect_state=observed.state if observed.available else link.last_observed_state,
+                    ),
                 )
             )
         return RunResource(run=public_run_resource(run), orchestration=tuple(orchestration))

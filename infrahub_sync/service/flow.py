@@ -81,6 +81,7 @@ from .failure_cause import operator_cause
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME, run_name
+from .read_progress import StoreSideReadObserver, record_waiting
 from .run_artifact import publish_run_artifact
 from .scratch import StageScratch, stage_scratch
 from .service import PLAN_ARTIFACT_ID
@@ -290,6 +291,7 @@ def _plan(
     branch: str | None,
     composed_sync: bool,
     base_directory: Path | None = None,
+    observer: StoreSideReadObserver | None = None,
 ) -> SavedPlan:
     saved = execute_run(
         instance,
@@ -301,6 +303,7 @@ def _plan(
         base_directory=base_directory,
         _run_file_mode="sync" if composed_sync else None,
         _return_saved_plan=True,
+        _read_observer=observer,
     )
     assert isinstance(saved, SavedPlan)
     return saved
@@ -582,8 +585,17 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     projection: ProductProjection,
     tracker: WriteDispatchTracker,
     scratch: StageScratch,
+    flow_run_id: str,
 ) -> tuple[dict[str, Any], ExecutionWriteback]:
-    """Resolve and execute one service stage within the sanitized worker boundary."""
+    """Resolve and execute one service stage within the sanitized worker boundary.
+
+    A `plan` or `sync` stage records both sides as `waiting` as soon as it starts, before the
+    live schema read and before a `sync` waits for its write guard, so a stage that fails
+    before either read returns both sides as `not_started`. It then gives the engine an
+    observer that stores each side's read on the execution `flow_run_id`.
+    """
+    if stage in ("plan", "sync"):
+        record_waiting(projection, run_id, flow_run_id)
     parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
     if stage in ("apply", "sync"):
         if not confirm_writes:
@@ -610,7 +622,14 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     secrets[:] = collect_secret_values(instance)
     result: dict[str, Any]
     if stage == "plan":
-        saved = _plan(instance, run_id=run_id, branch=branch, composed_sync=False, base_directory=scratch.root)
+        saved = _plan(
+            instance,
+            run_id=run_id,
+            branch=branch,
+            composed_sync=False,
+            base_directory=scratch.root,
+            observer=StoreSideReadObserver(projection, run_id, flow_run_id),
+        )
         # The internal handoff first: a plan that is publicly reviewable but has no
         # durable checkpoint would invite an apply on another worker that cannot read it.
         publish_plan_checkpoint(
@@ -720,7 +739,14 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 stage=stage,
             )
             run_directory = scratch.run_directory(instance.name, run_id)
-            saved = _plan(instance, run_id=run_id, branch=branch, composed_sync=True, base_directory=scratch.root)
+            saved = _plan(
+                instance,
+                run_id=run_id,
+                branch=branch,
+                composed_sync=True,
+                base_directory=scratch.root,
+                observer=StoreSideReadObserver(projection, run_id, flow_run_id),
+            )
             # Durable before the first destination operation: a sync interrupted
             # mid-write leaves the plan an operator reconciles what happened against.
             publish_plan_checkpoint(
@@ -1129,6 +1155,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 projection=projection,
                 tracker=tracker,
                 scratch=scratch,
+                flow_run_id=flow_run_id,
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         failure = exc

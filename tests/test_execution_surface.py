@@ -1504,6 +1504,24 @@ def test_factory_is_called_with_the_pinned_kwargs_of_get_potenda_from_instance(
     signature.bind(**recorded)
 
 
+def test_the_read_observer_seam_reaches_the_engine_without_changing_the_factory_call(
+    config_dir: str,
+    cache_root: Path,
+) -> None:
+    """Spec 018 research R2: `_read_observer` is set on the built engine, not passed to the factory."""
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root)
+    observer = object()
+
+    execute_run(instance, operation="plan", potenda_factory=factory, _read_observer=observer)
+
+    assert factory.engine is not None
+    assert getattr(factory.engine, "read_observer", None) is observer
+    recorded = factory.calls[0]
+    assert set(recorded) == set(inspect.signature(get_potenda_from_instance).parameters)
+    assert len(recorded) == 8
+
+
 def test_successful_plan_writes_the_diff_lifecycle(
     config_dir: str,
     cache_root: Path,

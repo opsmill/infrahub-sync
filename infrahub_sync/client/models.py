@@ -265,6 +265,42 @@ class PublicRunResource(_ResourceModel):
         return self
 
 
+# The states a side can have today. `SideRead.state` accepts any string, so a client keeps reading
+# a run when a later Sync API returns a state this release does not know.
+SideReadState = Literal["waiting", "reading", "succeeded", "failed", "not_started", "interrupted"]
+
+
+class SideRead(_ResourceModel):
+    """The read state of one side of a `plan` or `sync` execution.
+
+    `not_started` and `interrupted` are never stored: the Sync API returns a side stored as
+    `waiting` or `reading` with them once the execution ended without completing. No field holds
+    an exception message; `error_class` is the class name of the error that ended the read.
+
+    `state` is one of `SideReadState` and `read_mode` is `full` or `incremental` today. Both are
+    plain strings, so a state or mode a later Sync API adds does not fail the whole run response.
+    """
+
+    state: str
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    read_mode: str | None = None
+    nodes_by_kind: dict[str, Annotated[int, Field(ge=0)]] = Field(default_factory=dict)
+    error_class: str | None = None
+
+    @field_validator("started_at", "ended_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone(value, _EXECUTION_TIME_MESSAGE)
+
+
+class StageReads(_ResourceModel):
+    """The read state of the source and the destination of one execution."""
+
+    source: SideRead | None = None
+    destination: SideRead | None = None
+
+
 class OrchestrationSummary(_ResourceModel):
     """Summarize one orchestration attempt and its terminal verdict."""
 
@@ -285,6 +321,9 @@ class OrchestrationSummary(_ResourceModel):
     terminal_outcome: TerminalOutcome | None
     # Absent from a Sync API without a Prefect UI address, or one that predates the link.
     prefect_flow_run_url: str | None = None
+    # Each side's read for a `plan` or `sync` execution; `None` for a `verify` or `apply`
+    # execution, one recorded before the read state, or a Sync API that predates it.
+    reads: StageReads | None = None
 
     @field_validator(
         "submitted_at",

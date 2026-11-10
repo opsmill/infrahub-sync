@@ -9,9 +9,9 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from importlib.metadata import version as installed_version
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast, get_args
+from typing import TYPE_CHECKING, Any, ClassVar, cast, get_args
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
@@ -20,6 +20,7 @@ pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
 pytest.importorskip("fastapi")
 
+from diffsync import Adapter, DiffSyncModel
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from prefect.client.schemas.responses import (
@@ -39,6 +40,7 @@ from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.validation import credential_namespace_finding
 from infrahub_sync.plan.models import PlanManifest
 from infrahub_sync.plan.review import SavedPlan
+from infrahub_sync.potenda import Potenda
 from infrahub_sync.product_store import (
     AuditEvent,
     ConfigurationVersion,
@@ -73,6 +75,7 @@ from infrahub_sync.service.orchestration import (
     RunLogRead,
     Submission,
 )
+from infrahub_sync.service.read_progress import StoreSideReadObserver, record_waiting
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService, ServiceAPIError
 from tests.service.execution_fixtures import append_execution
 
@@ -88,6 +91,13 @@ OTHER_TOKEN = "other-token-canary-0002"  # noqa: S105 - deliberate non-secret bo
 ADMIN_TOKEN = "admin-token-canary-0003"  # noqa: S105 - deliberate non-secret boundary canary.
 RAW_KEY = "client-idempotency-key-canary"
 AUTH = {"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": RAW_KEY}
+_EMPTY_SIDE_READ = {
+    "started_at": None,
+    "ended_at": None,
+    "read_mode": None,
+    "nodes_by_kind": {},
+    "error_class": None,
+}
 _LEGACY_EXECUTION_FIELDS = {
     "flow_run_id",
     "deployment_id",
@@ -2671,3 +2681,119 @@ def test_an_unconfirmed_cancellation_names_the_orchestrator(
     message = response.json()["error"]["message"]
     assert message == "the orchestrator could not confirm the cancellation request"
     assert "Prefect" not in message
+
+
+# --- spec 018 T014: each orchestration entry returns its read state ---------------------------
+
+_READ_CANARY = "db.internal.example:5432 password=ZZ-HTTP-READ-CANARY"
+
+
+class _ReadSite(DiffSyncModel):
+    _modelname = "LocationSite"
+    _identifiers = ("name",)
+    _attributes = ()
+    name: str
+
+
+class _ReadDevice(DiffSyncModel):
+    _modelname = "DcimDevice"
+    _identifiers = ("name",)
+    _attributes = ()
+    name: str
+
+
+class _ReadAdapter(Adapter):
+    """A DiffSync adapter whose read can be paused, then made to fail with secret text."""
+
+    LocationSite = _ReadSite
+    DcimDevice = _ReadDevice
+    top_level: ClassVar[list[str]] = []
+
+    def __init__(self, *, sites: int = 0, devices: int = 0, gate: Event | None = None) -> None:
+        super().__init__()
+        self._sites = sites
+        self._devices = devices
+        self._gate = gate
+        self.entered = Event()
+
+    def load(self) -> None:
+        self.entered.set()
+        if self._gate is not None:
+            assert self._gate.wait(timeout=10)
+            raise ConnectionError(_READ_CANARY)
+        for index in range(self._sites):
+            self.add(_ReadSite(name=f"site-{index}"))
+        for index in range(self._devices):
+            self.add(_ReadDevice(name=f"device-{index}"))
+
+
+def _reads(client: TestClient, run_id: str) -> dict[str, Any] | None:
+    response = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {OWNER_TOKEN}"})
+    assert response.status_code == 200
+    assert _READ_CANARY not in response.text
+    return response.json()["orchestration"][0]["reads"]
+
+
+def test_run_response_returns_each_sides_read_while_the_destination_read_is_paused(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, projection, _orchestration = service_api
+    created = _create(client)
+    run_id = created.json()["run"]["run_id"]
+    flow_run_id = created.json()["orchestration"][0]["flow_run_id"]
+    record_waiting(projection, run_id, flow_run_id)
+    assert _reads(client, run_id) == {
+        "source": {**_EMPTY_SIDE_READ, "state": "waiting"},
+        "destination": {**_EMPTY_SIDE_READ, "state": "waiting"},
+    }
+
+    gate = Event()
+    destination = _ReadAdapter(gate=gate)
+    engine = Potenda(
+        source=_ReadAdapter(sites=2, devices=3),
+        destination=destination,
+        config=None,  # ty: ignore[invalid-argument-type]
+        top_level=["LocationSite", "DcimDevice"],
+        concurrent_load=False,
+    )
+    engine.read_observer = StoreSideReadObserver(projection, run_id, flow_run_id)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(engine.load_both_sides)
+        assert destination.entered.wait(timeout=10)
+
+        paused = _reads(client, run_id)
+
+        gate.set()
+        with pytest.raises(ValueError, match="An error occurred while loading"):
+            future.result(timeout=10)
+
+    assert paused is not None
+    source, reading = paused["source"], paused["destination"]
+    assert source["state"] == "succeeded"
+    assert source["read_mode"] == "full"
+    assert source["nodes_by_kind"] == {"DcimDevice": 3, "LocationSite": 2}
+    assert source["error_class"] is None
+    assert datetime.fromisoformat(source["ended_at"]) >= datetime.fromisoformat(source["started_at"])
+    assert reading["state"] == "reading"
+    assert reading["started_at"] is not None
+    assert {key: reading[key] for key in ("ended_at", "read_mode", "nodes_by_kind", "error_class")} == {
+        "ended_at": None,
+        "read_mode": None,
+        "nodes_by_kind": {},
+        "error_class": None,
+    }
+
+    ended = _reads(client, run_id)
+    assert ended is not None
+    assert ended["destination"]["state"] == "failed"
+    assert ended["destination"]["error_class"] == "ConnectionError"
+    assert ended["destination"]["nodes_by_kind"] == {}
+
+
+def test_an_execution_recorded_before_the_read_state_returns_reads_null(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, _projection, _orchestration = service_api
+    run_id = _create(client).json()["run"]["run_id"]
+
+    assert _reads(client, run_id) is None
