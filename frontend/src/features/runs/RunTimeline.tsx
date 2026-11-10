@@ -4,7 +4,7 @@ import { type ReactNode, type RefObject, useEffect, useRef, useState } from "rea
 import { cn } from "tailwind-variants";
 
 import type { Orchestration, Run } from "#/api/types";
-import { ArrowRightIcon, ChevronRightIcon, DownloadIcon } from "#/components/icons";
+import { ArrowRightIcon, ChevronRightIcon, DownloadIcon, StateIcon } from "#/components/icons";
 import { CopyButton, expandChevron, FOCUS, SectionHeading } from "#/components/page";
 import {
   BranchBadge,
@@ -14,7 +14,7 @@ import {
   StateLabel,
   When,
 } from "#/components/run-status";
-import { fmt, type RunState, runCounts } from "#/domain/run-state";
+import { fmt, type RunState, runCounts, type StepState } from "#/domain/run-state";
 import {
   type Artifact,
   executionResult,
@@ -107,6 +107,7 @@ function Event({
   title,
   headingRef,
   children,
+  rows = false,
   last = false,
   dashed = false,
   flash = false,
@@ -117,6 +118,8 @@ function Event({
   title: ReactNode;
   headingRef?: (el: HTMLHeadingElement | null) => void;
   children?: ReactNode;
+  /** The content is rows with their own padding, so it sits closer to the title. */
+  rows?: boolean;
   last?: boolean;
   /** The line below the node is dashed: the run waited for review. */
   dashed?: boolean;
@@ -138,15 +141,16 @@ function Event({
             aria-hidden="true"
             className={cn(
               "mt-1 flex-1",
-              dashed ? "w-0 border-subtle-muted border-l-2 border-dashed" : "w-px bg-border-strong"
+              dashed ? "w-0 border-border-strong border-l border-dashed" : "w-px bg-border-strong"
             )}
           />
         )}
       </div>
       <div
         className={cn(
-          "-mx-3 -mt-2 flex min-w-0 flex-col gap-2 rounded-lg px-3 pt-2 transition-colors duration-700 ease-out motion-reduce:transition-none",
-          !last && "pb-8",
+          "-mx-3 -mt-2 flex min-w-0 flex-col rounded-lg px-3 pt-2 transition-colors duration-700 ease-out motion-reduce:transition-none",
+          rows ? "gap-1.5" : "gap-3",
+          !last && "pb-7",
           flash ? "bg-accent-surface duration-150" : "bg-transparent"
         )}
       >
@@ -170,18 +174,74 @@ const Dot = ({ className }: { className: string }) => (
   <span aria-hidden="true" className={cn("block rounded-full", className)} />
 );
 
-function ExecLine({ s }: { s: RunStep }) {
-  if (!s.exec) return null;
-  const e = executionResult(s.exec);
-  const queued = queuedFor(s.exec);
-  const ran = ranFor(s.exec);
+/* ---------- a step's state and time ---------- */
+
+const ICON_STATE: Record<StepState, RunState> = {
+  done: "insync",
+  failed: "failed",
+  waiting: "review",
+  active: "running",
+  idle: "idle",
+  skipped: "idle",
+};
+
+/** In the timeline a done step is green: the state is said once, in its colour. */
+const stepTone = (s: RunStep) => (s.state === "done" ? "text-success" : STEP_TONE[s.state]);
+
+/** A review that ended with an apply request says so as its state, not in a sentence under it. */
+const applyRequested = (s: RunStep) => s.kind === "review" && s.state === "done";
+
+const stateLabel = (s: RunStep) =>
+  applyRequested(s)
+    ? "Apply requested"
+    : s.exec
+      ? executionResult(s.exec).label
+      : STEP_WORD[s.state];
+
+/** A queue time shorter than this is left to the step's details. */
+const QUEUE_SHOWN_FROM_MS = 5000;
+
+const PREPOSITION: Record<StepState, string> = {
+  done: "in",
+  failed: "after",
+  active: "for",
+  waiting: "for",
+  idle: "after",
+  skipped: "after",
+};
+
+/** "in 44 s, after 7 s in the queue", "after 27 s", "for 2 h 16 min" while the step still runs or waits. */
+function StepTime({ s }: { s: RunStep }) {
+  const wait = reviewWait(s);
+  const o = s.exec;
+  let time: ReactNode;
+  let queued: string | undefined;
+  if (wait) {
+    time = <WaitTime wait={wait} />;
+  } else if (o) {
+    const queuedMs =
+      o.submitted_at && o.claimed_at
+        ? new Date(o.claimed_at).getTime() - new Date(o.submitted_at).getTime()
+        : 0;
+    if (o.claimed_at && queuedMs >= QUEUE_SHOWN_FROM_MS) queued = queuedFor(o);
+    const from = o.claimed_at ?? o.submitted_at;
+    if (o.terminal_at) time = ranFor(o);
+    else if (from) time = <WaitTime wait={{ from }} />;
+  }
+  if (!time) return null;
   return (
-    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-subtle text-xs">
-      <StateLabel state={e.state} label={e.label} quiet className="text-xs" />
-      {queued && <span className="tabular-nums">queued {queued}</span>}
-      {ran && <span className="tabular-nums">ran {ran}</span>}
-    </p>
+    <span className="font-normal text-[13px] text-subtle tabular-nums leading-5">
+      {applyRequested(s) ? "after" : PREPOSITION[s.state]} {time}
+      {queued && <>, after {queued} in the queue</>}
+    </span>
   );
+}
+
+/** The sentence under the step, without the words its state already says. */
+function stepSentence(s: RunStep) {
+  if (applyRequested(s)) return undefined;
+  const text = s.outcome?.replace(/^Waiting for review: /, "");
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : undefined;
 }
 
 /* ---------- step details ---------- */
@@ -276,6 +336,8 @@ function ExecutionFacts({ o }: { o: Orchestration }) {
       </span>,
     ],
   ];
+  // A succeeded execution's result is the step's state, already in its title.
+  if (o.terminal_outcome === "succeeded") rows.shift();
   return (
     <dl className="grid grid-cols-1 gap-x-8 gap-y-3 p-4 text-[13px] sm:grid-cols-2 lg:grid-cols-3">
       {rows.map(([k, v]) => (
@@ -332,7 +394,7 @@ function StepDetails({
     >
       <summary
         className={cn(
-          "-ml-1 inline-flex min-h-8 cursor-pointer list-none items-center gap-1.5 rounded-md px-1 text-foreground-muted text-xs transition-colors duration-150 ease-out hover:text-foreground pointer-coarse:min-h-11 motion-reduce:transition-none [&::-webkit-details-marker]:hidden",
+          "relative -ml-1 inline-flex min-h-5 cursor-pointer list-none items-center gap-1.5 rounded-md px-1 before:absolute before:inset-x-0 before:-inset-y-2 text-foreground-muted text-xs transition-colors duration-150 ease-out hover:text-foreground pointer-coarse:min-h-11 motion-reduce:transition-none [&::-webkit-details-marker]:hidden",
           FOCUS
         )}
       >
@@ -512,7 +574,8 @@ function StartFacts({
 
 /**
  * What happened in the run, in order: when it started, each step with what it found or wrote and
- * its details, then how it ended. The notice on the run's outcome sits under the step it explains.
+ * its details, then how it ended. The notice on the run's outcome replaces the sentence of the step it
+ * explains.
  * The events sit in a border without a fill: a card's white surface was too heavy for this much text.
  */
 export function RunTimeline({
@@ -566,6 +629,7 @@ export function RunTimeline({
   const items: ReactNode[] = [
     <Event
       key="start"
+      rows
       time={run.started_at}
       node={<Dot className="size-2 border-[1.5px] border-subtle-muted bg-content" />}
       title={
@@ -583,6 +647,9 @@ export function RunTimeline({
 
   for (const s of steps.filter(inTimeline)) {
     const wait = reviewWait(s);
+    const sentence = stepSentence(s);
+    // The notice on the run's outcome takes the place of the step's sentence; its details follow.
+    const stepNotice = s.index === noticeIndex ? notice : null;
     items.push(
       <Event
         key={s.id}
@@ -595,46 +662,52 @@ export function RunTimeline({
         }}
         node={<Dot className={stepNode(s)} />}
         title={
-          <span className="inline-flex items-baseline gap-2">
+          <span className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5">
             {s.name}
-            <span className={cn("font-normal text-xs", STEP_TONE[s.state])}>
-              {STEP_WORD[s.state]}
+            <span className="inline-flex flex-wrap items-center gap-x-1">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 whitespace-nowrap font-normal text-[13px] leading-5",
+                  stepTone(s)
+                )}
+              >
+                <StateIcon state={ICON_STATE[s.state]} className="size-3.5 shrink-0" />
+                <span className="first-letter:uppercase">{stateLabel(s)}</span>
+              </span>
+              <StepTime s={s} />
             </span>
           </span>
         }
       >
-        {glance(s) ? (
-          <ChangesGlance run={run} onOpenChanges={onOpenChanges} />
-        ) : (
-          s.outcome && <p className="text-pretty text-foreground-muted text-sm">{s.outcome}</p>
-        )}
-        {wait && (
-          <p className={cn("text-xs", wait.to ? "text-subtle" : "text-warning")}>
-            {"In review for "}
-            <WaitTime wait={wait} />
-            {wait.to ? "" : " so far"}
-          </p>
-        )}
-        {s.kind === "review" &&
-          s.execs.map((o) => (
-            <p key={o.flow_run_id} className="text-subtle text-xs">
-              {o.terminal_outcome === "succeeded"
-                ? "Plan check passed"
-                : o.terminal_at
-                  ? "Plan check failed"
-                  : "Checking the plan"}
-              {o.terminal_at && <> · {clock(o.terminal_at)}</>}
-            </p>
-          ))}
-        <ExecLine s={s} />
-        <StepDetails
-          run={run}
-          plan={plan}
-          s={s}
-          open={focus.open.has(s.index)}
-          onToggle={(o) => focus.setOpen(s.index, o)}
-        />
-        {s.index === noticeIndex && notice}
+        {stepNotice}
+        <div className="flex flex-col gap-1 empty:hidden">
+          {glance(s) ? (
+            <ChangesGlance run={run} onOpenChanges={onOpenChanges} />
+          ) : (
+            sentence &&
+            !stepNotice && (
+              <p className="text-pretty text-[13px] text-foreground-muted">{sentence}</p>
+            )
+          )}
+          {s.kind === "review" &&
+            s.execs.map((o) => (
+              <p key={o.flow_run_id} className="text-subtle text-xs">
+                {o.terminal_outcome === "succeeded"
+                  ? "Plan check passed"
+                  : o.terminal_at
+                    ? "Plan check failed"
+                    : "Checking the plan"}
+                {o.terminal_at && <> · {clock(o.terminal_at)}</>}
+              </p>
+            ))}
+          <StepDetails
+            run={run}
+            plan={plan}
+            s={s}
+            open={focus.open.has(s.index)}
+            onToggle={(o) => focus.setOpen(s.index, o)}
+          />
+        </div>
       </Event>
     );
   }
@@ -647,9 +720,12 @@ export function RunTimeline({
         time={endedAt}
         node={<Dot className="size-2 bg-subtle-muted" />}
         title={
-          <span className="inline-flex flex-wrap items-baseline gap-2">
+          <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
             <StateLabel state={state} label={label} />
-            <span className="font-normal text-subtle text-xs">
+            <span aria-hidden="true" className="text-subtle-muted">
+              ·
+            </span>
+            <span className="font-normal text-subtle text-xs tabular-nums leading-5">
               {formatSpan(run.started_at, finished)} in total
             </span>
           </span>
