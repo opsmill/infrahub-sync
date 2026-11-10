@@ -168,8 +168,14 @@ Steps 3 to 4 ship only after the AD-12 amendment is merged in `infrahub-sync-pro
 
 ## Open risks
 
-- R11: whether the store admits an apply on a `sync` run that stopped after its plan is verified
-  in the first task of step 4.
+- R11: a `sync` run holds a write admission from its creation, so the apply of a stopped `sync`
+  run is appended under that admission. This changes the store's admission rule and is the first
+  task of step 4, with tests for the admitted case and both refused cases.
+- R12: a source adapter's refused token or unreachable address is classified from the
+  exception's type and HTTP status code attribute only (for example pynetbox `RequestError`,
+  `requests` `HTTPError` and `ConnectionError`, `httpx` errors), never from its text. The
+  per-adapter table is written and tested in step 1; an adapter error that the table does not
+  name is `internal_error` with `system` set.
 - Infrahub 1.11 may not return the node kind and attribute for every rejection; the fields stay
   empty then.
 - Behavior change for four adapters: a reference to a peer not in the source no longer fails the
@@ -183,5 +189,6 @@ Steps 3 to 4 ship only after the AD-12 amendment is merged in `infrahub-sync-pro
 | --- | --- | --- |
 | Infrahub's own message reaches the run record (principle VI: error messages must not leak internal details) | FR-016: the team acts on Infrahub's message (#370) | Class names only give no cause; a fixed text per code says nothing for an unknown code |
 | Plan format 4 instead of an additive manifest key | The left-out confirmation is an apply safety gate | An older reader ignores an additive key and applies without the confirmation |
+| An apply appended under a stopped `sync` run's write admission | FR-012: the team applies the plan it reviewed, on the same run | Releasing the admission row weakens the store's single-admission record; a new `plan` run drops the reviewed plan (R11) |
 | New product-store table `worker_environments` (database change gate) | FR-035: the Sync API cannot see the worker's environment otherwise | Reading the variables in the API process checks the wrong process; Compose gives the worker and the API different variables |
 | Worker and Prefect logs keep masked error text | Product owner decision of 2026-10-15: masking stays unchanged in the testing release | Logging only the structured cause is 3.0 work |

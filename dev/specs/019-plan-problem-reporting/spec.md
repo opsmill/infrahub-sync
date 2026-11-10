@@ -521,7 +521,8 @@ plan finishes and that each #374 case is written or listed.
   apply wrote and that still match the source. A test MUST stop an apply partway and check this.
 - **FR-023**: When the team applies the plan of a run that already admitted a write, the CLI
   MUST print the existing `run-execution-conflict` refusal with the next step: create and review
-  a new plan. No new refusal code is added.
+  a new plan. No new refusal code is added. A `sync` run that stopped under FR-012 dispatched no
+  write; its one confirmed apply is admitted, and any apply after that is refused the same way.
 
 #### What the Sync API returns and what the CLI prints
 

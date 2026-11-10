@@ -155,12 +155,39 @@ guard admits a write, the flow reads the manifest's left-out count. When it is g
 the stage returns a result with `failure = {failure_type: "left_out_review_required",
 next_action: ...}`, phase `planned` and outcome `left-out-review-required`.
 `result_next_action` (`flow.py:888-897`) already reads that key for the last log line, and the CLI
-reads the same field. No write is admitted, so the run can still be applied.
+reads the same field.
 
-To verify first, in code and with a test: that `RunService.apply_run` and the product store admit
-an apply on a `sync` run that stopped after its plan. Today `run-execution-conflict` refuses a
-second stage only on a run that admitted a write (`product_store/store.py:310-314`); a stopped
-`sync` run admitted none. If the store refuses it, the fix belongs to this feature.
+Write admission (found during the critique, 2026-11-11): a `sync` run holds a write admission from
+the moment it is created (`RunService.create_run` reserves its receipt with
+`admit_write=request.operation == "sync"`, `infrahub_sync/service/service.py:278-283`). Any later
+write stage on the same run is refused with `run-execution-conflict`
+(`infrahub_sync/product_store/store.py:2175`, message at `:310-314`). So without a store change,
+the team could not apply a `sync` run that stopped after its plan, and FR-012 would fail.
+
+Decision: the apply of a stopped `sync` run is appended under the `sync` run's existing write
+admission, not under a new one. The store already has the rule that a write execution is
+appended only with the receipt that holds the run's admission (`_ADMITTED_APPEND_REFUSED`,
+`store.py:315-317`). The change:
+
+- When the `sync` stage ends at the stop, the flow records in the same commit that the stage
+  dispatched no destination operation (phase `planned`, outcome `left-out-review-required`,
+  `dispatch_started` false).
+- `RunService.apply_run` on a run in that state, with the checksum and `confirm_left_out: true`,
+  appends its execution under the `sync` receipt's admission. Exactly one such apply is admitted;
+  a second one, or an apply on a `sync` run that dispatched any operation, is still refused with
+  `run-execution-conflict`.
+- Tests cover the three cases: stopped `sync` then confirmed apply (admitted), second apply on
+  that run (refused), apply on a `sync` run that failed after dispatch (refused).
+
+Alternatives considered:
+
+- Delete or release the write admission row at the stop. Rejected: the admission row is the
+  store's record that this run may write, and removing rows weakens ADR 0010's single-verdict
+  rule.
+- Tell the team to create a new `plan` run and apply that. Rejected: it drops the plan the team
+  reviewed, and old 009 FR-012 requires applying the stopped run.
+
+ADR 0020 records this consequence.
 
 ## R12. The failure record (decisions 1 and 2)
 

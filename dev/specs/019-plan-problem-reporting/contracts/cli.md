@@ -66,7 +66,9 @@ failed operation: op_518aada155d790ad update DcimDevice location=r1 name=rtr1 (m
 hint: Fix the cause, then create and review a new plan with `infrahub-sync plan`.
 ```
 
-A `sync` that stops after its plan prints:
+A `sync` that stops after its plan ended without a stage failure record. The CLI reads the
+`failure` object of the stage result in the run's `results` (the field the worker's last log line
+also uses) and prints:
 
 ```text
 sync stopped: left_out_review_required (12 records left out)
