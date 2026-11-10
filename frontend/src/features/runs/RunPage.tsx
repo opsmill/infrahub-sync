@@ -15,7 +15,7 @@ import {
   runsQuery,
 } from "#/api/queries";
 import type { Run, RunResource } from "#/api/types";
-import { ArrowRightIcon, BranchIcon, PlusIcon } from "#/components/icons";
+import { ArrowRightIcon, PlusIcon } from "#/components/icons";
 import {
   Bar,
   CODE_CHIP,
@@ -25,7 +25,7 @@ import {
   META_LIST,
   StaleNotice,
 } from "#/components/page";
-import { BranchCode, StateLabel, When } from "#/components/run-status";
+import { BranchBadge, StateLabel, When } from "#/components/run-status";
 import {
   executableCount,
   failureDetail,
@@ -253,14 +253,7 @@ function MetaLine({
     ]);
   }
   if (run.destination_branch) {
-    items.push([
-      "branch",
-      <span className="inline-flex min-w-0 max-w-full items-center gap-1 [&>code]:whitespace-normal [&>code]:[overflow-wrap:anywhere]">
-        <BranchIcon className="size-3.5 shrink-0 text-subtle" />
-        <span className="sr-only">Branch </span>
-        <BranchCode branch={run.destination_branch} />
-      </span>,
-    ]);
+    items.push(["branch", <BranchBadge branch={run.destination_branch} />]);
   }
   if (changes) items.push(["changes", changes]);
   return (

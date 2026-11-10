@@ -3,8 +3,7 @@ import { cn } from "tailwind-variants";
 import { type RunState, STEP_NAMES, type StepState } from "#/domain/run-state";
 import { formatAbsolute, formatRelative, useNow } from "#/lib/time";
 
-import { CODE_CHIP } from "./classes";
-import { STATE_TEXT, StateIcon } from "./icons";
+import { BranchIcon, STATE_TEXT, StateIcon } from "./icons";
 
 /**
  * Sign and colours for counts of changes: the app's change colours (`--change-*` in styles.css),
@@ -181,18 +180,43 @@ export function StateLabel({
   );
 }
 
-export function BranchCode({
+/**
+ * A branch as one badge, with the branch icon inside it. A long name wraps inside the badge, or is
+ * cut with an ellipsis when `truncate` is set. In a sentence the badge sits on the text's baseline.
+ */
+export function BranchBadge({
   branch,
-  className,
+  truncate = false,
+  label = "Branch",
   title,
+  className,
 }: {
   branch: string;
-  className?: string;
+  /** Keep the name on one line and cut it; pair it with `title`. */
+  truncate?: boolean;
+  /** Read by screen readers before the name. */
+  label?: string;
   title?: string;
+  className?: string;
 }) {
   return (
-    <code className={cn(CODE_CHIP, className)} title={title}>
-      {branch}
-    </code>
+    <span
+      title={title}
+      className={cn(
+        "inline-flex min-w-0 max-w-full items-baseline gap-1 rounded-md border bg-content py-px pr-1.5 pl-1 font-normal text-foreground-muted",
+        className
+      )}
+    >
+      <BranchIcon className="mt-[3px] size-3 shrink-0 self-start text-subtle" />
+      <span className="sr-only">{label} </span>
+      <code
+        className={cn(
+          "min-w-0 font-mono text-[0.85em] leading-[18px]",
+          truncate ? "truncate" : "[overflow-wrap:anywhere]"
+        )}
+      >
+        {branch}
+      </code>
+    </span>
   );
 }

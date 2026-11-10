@@ -5,7 +5,7 @@ import { cn } from "tailwind-variants";
 import type { Orchestration, Plan, Run } from "#/api/types";
 import { ArrowRightIcon } from "#/components/icons";
 import { CopyButton, FOCUS, InlineCode, Notice } from "#/components/page";
-import { BranchCode, When } from "#/components/run-status";
+import { BranchBadge, When } from "#/components/run-status";
 import { executableCount, type FailureDetail, fmt, phaseLabel } from "#/domain/run-state";
 import type { System } from "#/domain/systems";
 import { useNow } from "#/lib/time";
@@ -163,7 +163,7 @@ export function FailureNotice({
             The Sync service could not confirm what was written. Inspect{" "}
             {run.destination_branch ? (
               <>
-                <BranchCode branch={run.destination_branch} /> in{" "}
+                <BranchBadge branch={run.destination_branch} /> in{" "}
               </>
             ) : null}
             {destination?.label ?? "the destination"}, then create a new plan. The new plan proposes

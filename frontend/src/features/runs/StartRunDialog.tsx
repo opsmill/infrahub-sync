@@ -9,7 +9,7 @@ import { configQuery, configVersionQuery, runsQuery, statusQuery } from "#/api/q
 import type { Run } from "#/api/types";
 import { StateIcon } from "#/components/icons";
 import { Notice } from "#/components/page";
-import { BranchCode, When } from "#/components/run-status";
+import { BranchBadge, When } from "#/components/run-status";
 import { executableCount, fmt, NO_WORKER_SENTENCE, queueSentence } from "#/domain/run-state";
 import { describeSystem } from "#/domain/systems";
 
@@ -269,7 +269,7 @@ export function StartRunDialog({
             tabIndex={-1}
             className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm outline-hidden"
           >
-            <BranchCode branch={declared} />
+            <BranchBadge branch={declared} />
             <span className="text-subtle text-xs">
               Set by version {n}. Every run of this version writes to it.
             </span>
@@ -380,7 +380,7 @@ export function StartRunDialog({
                           ) : (
                             <>
                               I confirm this run writes to{" "}
-                              <BranchCode branch={version.isError ? typed : effective} /> without a
+                              <BranchBadge branch={version.isError ? typed : effective} /> without a
                               review
                               {version.isError ? `, unless version ${n} sets another branch` : ""}.
                             </>

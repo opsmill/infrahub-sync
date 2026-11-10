@@ -1,8 +1,9 @@
 import { Tooltip } from "@infrahub/ui";
 import { cn } from "tailwind-variants";
 
-import { ArrowRightIcon, BranchIcon } from "#/components/icons";
+import { ArrowRightIcon } from "#/components/icons";
 import { Bar } from "#/components/page";
+import { BranchBadge } from "#/components/run-status";
 import type { System } from "#/domain/systems";
 
 import { type ConfigurationRow, defaultBranch, type MatchHint } from "./rows";
@@ -44,15 +45,8 @@ export function SystemsLine({ row }: { row: ConfigurationRow }) {
           placement="top"
           message={fromRun ? "Branch of the latest run" : "Branch declared in the configuration"}
         >
-          <span
-            className={cn(
-              LIFT,
-              "inline-flex min-w-0 max-w-full cursor-default items-center gap-1 font-mono text-[12px] text-subtle"
-            )}
-          >
-            <BranchIcon className="size-3.5 shrink-0" />
-            <span className="sr-only">{fromRun ? "latest run on branch" : "on branch"}</span>
-            <span className="min-w-0 [overflow-wrap:anywhere]">{branch}</span>
+          <span className={cn(LIFT, "inline-flex min-w-0 max-w-full cursor-default")}>
+            <BranchBadge branch={branch} label={fromRun ? "latest run on branch" : "on branch"} />
           </span>
         </Tooltip>
       )}

@@ -9,7 +9,7 @@ import { configQuery, configVersionQuery, runQuery, runsQuery } from "#/api/quer
 import type { Plan, Run } from "#/api/types";
 import { CheckIcon, PlayIcon, StateIcon } from "#/components/icons";
 import { CopyButton, Notice } from "#/components/page";
-import { BranchCode, CHANGE_TONE, When } from "#/components/run-status";
+import { BranchBadge, CHANGE_TONE, When } from "#/components/run-status";
 import { executableCount, fmt, isVerified, laterWrite, newerPlan } from "#/domain/run-state";
 import { describeSystem } from "#/domain/systems";
 
@@ -204,7 +204,7 @@ export function ApplyDialog({
         <p>
           Run <RunLink run={later} onLeave={onClose} />{" "}
           {later.phase === "applied" && later.outcome === "applied" ? "wrote" : "may have written"}{" "}
-          to {branch ? <BranchCode branch={branch} /> : "the destination branch"}{" "}
+          to {branch ? <BranchBadge branch={branch} /> : "the destination branch"}{" "}
           {later.finished_at && <When iso={later.finished_at} />}, after this plan was made. Apply
           writes the operations saved in this plan and does not detect what that run changed.
         </p>
@@ -253,7 +253,7 @@ export function ApplyDialog({
               {" "}
               to{" "}
               <span className="font-normal">
-                <BranchCode branch={branch} />
+                <BranchBadge branch={branch} />
               </span>
             </>
           )}
@@ -281,7 +281,7 @@ export function ApplyDialog({
           "The Sync service refuses to apply this plan."
         ) : branch ? (
           <>
-            Type <BranchCode branch={branch} /> to continue.
+            Type <BranchBadge branch={branch} /> to continue.
           </>
         ) : undefined
       }
@@ -410,7 +410,7 @@ export function ApplyDialog({
         label={
           branch ? (
             <>
-              Type <BranchCode branch={branch} /> to confirm
+              Type <BranchBadge branch={branch} /> to confirm
             </>
           ) : (
             "Type the destination branch to confirm"
@@ -524,7 +524,7 @@ export function CancelDialog({
             <p>
               This {noun} may already be writing to{" "}
               {run.destination_branch ? (
-                <BranchCode branch={run.destination_branch} />
+                <BranchBadge branch={run.destination_branch} />
               ) : (
                 "the destination branch"
               )}

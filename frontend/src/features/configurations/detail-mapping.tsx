@@ -14,7 +14,7 @@ import { cn } from "tailwind-variants";
 import type { ConfigurationVersion, DeclaredAdapter, DeclaredMapping } from "#/api/types";
 import { ArrowRightIcon, ChevronRightIcon } from "#/components/icons";
 import { expandChevron, FOCUS, FOCUS_INSET, SectionHeading, textAction } from "#/components/page";
-import { BranchCode } from "#/components/run-status";
+import { BranchBadge } from "#/components/run-status";
 import { fmt } from "#/domain/run-state";
 import { describeSystem, mappedKinds } from "#/domain/systems";
 
@@ -157,7 +157,7 @@ function SystemCard({
               <dt className="text-subtle max-sm:mt-1.5">Branch</dt>
               <dd className="min-w-0">
                 {s.branch ? (
-                  <BranchCode branch={s.branch} />
+                  <BranchBadge branch={s.branch} />
                 ) : (
                   <span className="text-pretty text-foreground-muted">
                     Not declared in this version. Each run records the branch it used.

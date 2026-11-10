@@ -6,7 +6,7 @@ import { cn } from "tailwind-variants";
 import type { Orchestration, Run, RunResource } from "#/api/types";
 import { ChevronRightIcon } from "#/components/icons";
 import { Bar, FOCUS, textAction } from "#/components/page";
-import { BranchCode, NODE, STEP_TONE, StateLabel, When } from "#/components/run-status";
+import { BranchBadge, NODE, STEP_TONE, StateLabel, When } from "#/components/run-status";
 import {
   type Counts,
   changesCount,
@@ -477,7 +477,7 @@ export function pipelineModel(run: Run | undefined, ctx: PipelineContext): Pipel
                     {run.destination_branch && (
                       <>
                         {" "}
-                        on <BranchCode branch={run.destination_branch} />
+                        on <BranchBadge branch={run.destination_branch} />
                       </>
                     )}
                   </>
@@ -605,10 +605,7 @@ function SystemStage({
 function BranchLine({ label, branch }: { label: string; branch: string }) {
   return (
     <p className="mt-0.5 text-subtle text-xs">
-      {label}{" "}
-      <span className="inline-block max-w-full truncate align-bottom" title={branch}>
-        <BranchCode branch={branch} />
-      </span>
+      {label} <BranchBadge branch={branch} title={branch} truncate className="align-bottom" />
     </p>
   );
 }

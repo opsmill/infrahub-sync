@@ -7,7 +7,7 @@ import type { Orchestration, Run } from "#/api/types";
 import { ArrowRightIcon, ChevronRightIcon, DownloadIcon } from "#/components/icons";
 import { CopyButton, expandChevron, FOCUS, SectionHeading } from "#/components/page";
 import {
-  BranchCode,
+  BranchBadge,
   CHANGE_TONE,
   STEP_TONE,
   STEP_WORD,
@@ -423,6 +423,91 @@ function ChangesGlance({ run, onOpenChanges }: { run: Run; onOpenChanges: () => 
   );
 }
 
+/* ---------- the start ---------- */
+
+const REQUEST: Record<string, string> = {
+  plan: "Plan requested, to review before anything is written",
+  sync: "Sync requested, without a review step",
+};
+
+/** A system's name, and its host unless the name already is the host (a REST API source). */
+function SystemName({ system }: { system: System }) {
+  return (
+    <>
+      <span className="font-medium">{system.label}</span>
+      {system.host && system.host !== system.label && (
+        <span className="font-mono text-subtle text-xs [overflow-wrap:anywhere]">
+          {system.host}
+        </span>
+      )}
+    </>
+  );
+}
+
+const FACT_ROW = "col-span-2 grid grid-cols-subgrid items-start border-b py-1.5 last:border-b-0";
+const FACT_LABEL = "text-subtle text-xs leading-6";
+const FACT_VALUE = "flex min-h-6 min-w-0 flex-wrap items-center gap-x-2";
+
+/**
+ * What the run was started with, one line each: the source, the destination and the branch it
+ * writes to, and the configuration version. A system is left out until its version is read.
+ */
+function StartFacts({
+  run,
+  source,
+  destination,
+}: {
+  run: Run;
+  source?: System;
+  destination?: System;
+}) {
+  // The branch the run writes to, even when the run records none, as the Apply dialog resolves it.
+  const branch = run.destination_branch ?? (destination ? (destination.branch ?? "main") : null);
+  const versioned = run.registry_version != null && run.config_id;
+  if (!source && !destination && !branch && !versioned) return null;
+  return (
+    <dl className="grid w-fit min-w-[min(100%,32rem)] max-w-full grid-cols-[5.5rem_minmax(0,1fr)] gap-x-4 pt-0.5 text-[13px]">
+      {source && (
+        <div className={FACT_ROW}>
+          <dt className={FACT_LABEL}>Source</dt>
+          <dd className={FACT_VALUE}>
+            <SystemName system={source} />
+          </dd>
+        </div>
+      )}
+      {(destination || branch) && (
+        <div className={FACT_ROW}>
+          <dt className={FACT_LABEL}>Destination</dt>
+          <dd className={FACT_VALUE}>
+            {destination && <SystemName system={destination} />}
+            {branch && (
+              <>
+                {destination && <span className="text-subtle text-xs">on</span>}
+                <BranchBadge branch={branch} />
+              </>
+            )}
+          </dd>
+        </div>
+      )}
+      {versioned && (
+        <div className={FACT_ROW}>
+          <dt className={FACT_LABEL}>Configuration</dt>
+          <dd className={FACT_VALUE}>
+            <Link
+              to="/configs/$configId"
+              params={{ configId: versioned }}
+              search={{ tab: "versions" }}
+              className={cn("rounded-sm text-accent tabular-nums hover:underline", FOCUS)}
+            >
+              Version {run.registry_version}
+            </Link>
+          </dd>
+        </div>
+      )}
+    </dl>
+  );
+}
+
 /* ---------- timeline ---------- */
 
 /**
@@ -483,40 +568,16 @@ export function RunTimeline({
       key="start"
       time={run.started_at}
       node={<Dot className="size-2 border-[1.5px] border-subtle-muted bg-content" />}
-      title="Started"
+      title={
+        <span className="inline-flex flex-wrap items-baseline gap-x-2">
+          Started
+          {REQUEST[run.operation] && (
+            <span className="font-normal text-subtle text-xs">{REQUEST[run.operation]}</span>
+          )}
+        </span>
+      }
     >
-      <p className="text-pretty text-foreground-muted text-sm">
-        {run.registry_version != null && run.config_id ? (
-          <Link
-            to="/configs/$configId"
-            params={{ configId: run.config_id }}
-            search={{ tab: "versions" }}
-            className={cn("rounded-sm text-accent hover:underline", FOCUS)}
-          >
-            Version {run.registry_version}
-          </Link>
-        ) : (
-          "The configuration"
-        )}
-        {source && destination && (
-          <>
-            {" "}
-            reads {source.label}
-            {source.host && <span className="font-mono text-subtle text-xs"> {source.host}</span>}{" "}
-            and writes to {destination.label}
-            {destination.host && (
-              <span className="font-mono text-subtle text-xs"> {destination.host}</span>
-            )}
-          </>
-        )}
-        {run.destination_branch && (
-          <>
-            {" "}
-            on <BranchCode branch={run.destination_branch} />
-          </>
-        )}
-        .
-      </p>
+      <StartFacts run={run} source={source} destination={destination} />
     </Event>,
   ];
 

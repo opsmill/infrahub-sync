@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import type { Plan } from "#/api/types";
 import { CheckIcon } from "#/components/icons";
 import { CopyButton } from "#/components/page";
-import { BranchCode } from "#/components/run-status";
+import { BranchBadge } from "#/components/run-status";
 import { countsSentence, fmt } from "#/domain/run-state";
 
 /* ---------- the sentence under the Changes heading ---------- */
@@ -107,7 +107,7 @@ export function PlanFacts({ plan, runBranch }: { plan: Plan; runBranch: string |
       {plan.destination_branch && plan.destination_branch !== runBranch && (
         <Fact term="Destination branch">
           <dd>
-            <BranchCode branch={plan.destination_branch} />
+            <BranchBadge branch={plan.destination_branch} />
           </dd>
           <Explain>
             The plan was created for this branch. Apply refuses this plan on any other branch.

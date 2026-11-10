@@ -6,7 +6,7 @@ import { cn } from "tailwind-variants";
 import type { Plan, Run } from "#/api/types";
 import { DownloadIcon } from "#/components/icons";
 import { CopyButton, FOCUS, SectionHeading } from "#/components/page";
-import { BranchCode, When } from "#/components/run-status";
+import { BranchBadge, When } from "#/components/run-status";
 import { PLAN_ARTIFACT_ID } from "#/domain/run-steps";
 import type { System } from "#/domain/systems";
 import { formatAbsolute, formatDuration } from "#/lib/time";
@@ -155,7 +155,7 @@ export function Details({
   if (source) rows.push(["Source", <SystemValue system={source} />]);
   if (destination) rows.push(["Destination", <SystemValue system={destination} />]);
   if (run.destination_branch) {
-    rows.push(["Destination branch", <BranchCode branch={run.destination_branch} />]);
+    rows.push(["Destination branch", <BranchBadge branch={run.destination_branch} />]);
   }
   rows.push(["Started", formatAbsolute(run.started_at)]);
   rows.push(["Finished", run.finished_at ? formatAbsolute(run.finished_at) : "Not finished"]);

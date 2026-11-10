@@ -4,7 +4,7 @@ import { cn } from "tailwind-variants";
 
 import type { Run } from "#/api/types";
 import { Bar, CLICKABLE, STRETCHED } from "#/components/page";
-import { BranchCode, CHANGE_TONE, StateLabel, When } from "#/components/run-status";
+import { BranchBadge, CHANGE_TONE, StateLabel, When } from "#/components/run-status";
 import {
   type Counts as ChangeCounts,
   countsSentence,
@@ -262,8 +262,6 @@ function RunLink({ run, state, name, namesPending, now, className = "line-clamp-
 }
 
 /** The branch chip truncates inside its border, so the ellipsis and the border stay visible. */
-const TRUNCATE = "max-w-full truncate align-top";
-
 function Branch({ run }: { run: Run }) {
   if (!run.destination_branch) {
     return (
@@ -277,11 +275,7 @@ function Branch({ run }: { run: Run }) {
   }
   return (
     <div className="flex h-5 items-center">
-      <BranchCode
-        branch={run.destination_branch}
-        title={run.destination_branch}
-        className={TRUNCATE}
-      />
+      <BranchBadge branch={run.destination_branch} title={run.destination_branch} truncate />
     </div>
   );
 }
@@ -458,10 +452,10 @@ export function RunsTable({
               <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs sm:col-span-2">
                 {counts && <Counts run={run} counts={counts} inList />}
                 {run.destination_branch && (
-                  <BranchCode
+                  <BranchBadge
                     branch={run.destination_branch}
                     title={run.destination_branch}
-                    className={TRUNCATE}
+                    truncate
                   />
                 )}
                 <span className="text-subtle">
