@@ -246,6 +246,26 @@ def test_claim_refusal_message_names_the_run_and_the_recovery_commands() -> None
     assert "infrahub-sync diff" not in message
 
 
+@pytest.mark.parametrize(
+    "run_id",
+    [
+        "run-1\nservice worker execution claim succeeded",
+        "run-1\r\x1b[2Kforged",
+        "run-1\x1b]0;title\x07",
+        "run-1\x00",
+        "r" * 129,
+    ],
+)
+def test_claim_refusal_message_replaces_a_run_id_that_is_not_a_product_run_id(run_id: str) -> None:
+    """A hand-triggered run ID with control characters cannot add text to the refusal line."""
+    message = str(ExecutionClaimRefusedError(run_id))
+
+    assert run_id not in message
+    assert not any(ord(char) < 0x20 or ord(char) == 0x7F for char in message)
+    assert "infrahub-sync runs show <run-id>" in message
+    assert "infrahub-sync apply <run-id> --expected-checksum <checksum>" in message
+
+
 class _LevelRecordingRunLogger:
     """Records each log call's level and rendered message."""
 

@@ -9,6 +9,7 @@
 
 import logging
 import os
+import re
 from collections.abc import Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager, suppress
 from dataclasses import dataclass
@@ -109,6 +110,10 @@ _WORKER_EXECUTION_REFUSED_GUIDANCE = (
     "`infrahub-sync sync`, or apply a reviewed plan with "
     "`infrahub-sync apply {run_id} --expected-checksum <checksum>`."
 )
+# The form of a product run ID (`ProductRun.run_id`). A Prefect run started by hand can pass any
+# text as `run_id`, so the refusal names only an ID of this form and a placeholder otherwise.
+_RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+_UNNAMED_RUN_ID = "<run-id>"
 _WORKER_EXECUTION_ID_INVALID = "service worker execution identity is invalid"
 _WORKER_EXECUTION_IDENTITY_UNAVAILABLE = "service worker execution identity is unavailable"
 _WORKER_EXECUTION_WRITEBACK_REFUSED = "service worker execution writeback was refused"
@@ -148,11 +153,14 @@ class ExecutionClaimRefusedError(RuntimeError):
     """The worker refused to claim a Prefect flow run the Sync API is not waiting for.
 
     The message is built from fixed text and the run ID only, and tells the operator how to
-    recover the Sync run without replaying it from Prefect.
+    recover the Sync run without replaying it from Prefect. A run ID that is not of the product
+    run ID form, such as one with a newline or a terminal control sequence, is replaced by a
+    fixed placeholder, so the message cannot add lines of its own to the flow run log.
     """
 
     def __init__(self, run_id: str) -> None:
-        guidance = _WORKER_EXECUTION_REFUSED_GUIDANCE.format(run_id=run_id)
+        shown = run_id if _RUN_ID_PATTERN.fullmatch(run_id) else _UNNAMED_RUN_ID
+        guidance = _WORKER_EXECUTION_REFUSED_GUIDANCE.format(run_id=shown)
         super().__init__(f"{_WORKER_EXECUTION_REFUSED}: {guidance}")
         self.run_id = run_id
 
