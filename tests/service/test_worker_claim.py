@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -18,10 +19,12 @@ pytest.importorskip("prefect")
 
 from prefect import __version__ as prefect_version
 from prefect.client.schemas.objects import WorkerStatus
+from prefect.states import State
 from prefect.workers.process import ProcessJobConfiguration, ProcessWorker
 
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from infrahub_sync.service import flow as service_flow
+from infrahub_sync.service.flow import ExecutionClaimRefusedError
 from tests.service.execution_fixtures import append_execution
 from tests.service.prefect_launch import LaunchRecorder
 
@@ -191,8 +194,11 @@ def test_expired_worker_claim_refusal_precedes_all_stage_runtime_construction(
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(service_flow, "_execute_stage", lambda *_args, **_kwargs: constructed.append(stage))
 
-    with pytest.raises(RuntimeError, match="service worker execution claim was refused"):
-        service_flow.service_sync_run.fn("run-worker-claim", stage)
+    state = service_flow.service_sync_run.fn("run-worker-claim", stage)
+
+    assert isinstance(state, State)
+    assert state.is_failed()
+    assert (state.message or "").startswith("service worker execution claim was refused")
 
     assert constructed == []
 
@@ -218,9 +224,93 @@ def test_claim_refusal_prevents_registry_and_adapter_construction(
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", lambda *_args, **_kwargs: constructed.append(True))
 
-    with pytest.raises(RuntimeError, match="service worker execution claim was refused"):
-        service_flow.service_sync_run.fn("run-worker-claim", "plan")
+    refusal = service_flow.service_sync_run.fn("run-worker-claim", "plan")
+
+    assert isinstance(refusal, State)
+    assert refusal.is_failed()
+    assert (refusal.message or "").startswith("service worker execution claim was refused")
     assert constructed == []
+
+
+def test_claim_refusal_message_names_the_run_and_the_recovery_commands() -> None:
+    """The refusal says nothing was touched and which commands recover the run."""
+    run_id = "run-worker-claim"
+
+    message = str(ExecutionClaimRefusedError(run_id))
+
+    assert issubclass(ExecutionClaimRefusedError, RuntimeError)
+    assert message.startswith("service worker execution claim was refused: ")
+    assert "\n" not in message
+    assert run_id in message
+    assert "Nothing was read or written" in message
+    assert "Prefect Retry" in message
+    assert "admission expired" in message
+    assert "not replayed" in message
+    assert f"infrahub-sync runs show {run_id}" in message
+    assert "infrahub-sync plan" in message
+    assert "infrahub-sync sync" in message
+    assert f"infrahub-sync apply {run_id} --expected-checksum <checksum>" in message
+    assert "infrahub-sync diff" not in message
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    [
+        "run-1\nservice worker execution claim succeeded",
+        "run-1\r\x1b[2Kforged",
+        "run-1\x1b]0;title\x07",
+        "run-1\x00",
+        "r" * 129,
+    ],
+)
+def test_claim_refusal_message_replaces_a_run_id_that_is_not_a_product_run_id(run_id: str) -> None:
+    """A hand-triggered run ID with control characters cannot add text to the refusal line."""
+    message = str(ExecutionClaimRefusedError(run_id))
+
+    assert run_id not in message
+    assert not any(ord(char) < 0x20 or ord(char) == 0x7F for char in message)
+    assert "infrahub-sync runs show <run-id>" in message
+    assert "infrahub-sync apply <run-id> --expected-checksum <checksum>" in message
+
+
+class _LevelRecordingRunLogger:
+    """Records each log call's level and rendered message."""
+
+    def __init__(self) -> None:
+        self.records: list[tuple[int, str]] = []
+
+    def log(self, level: int, msg: str, *args: object) -> None:
+        self.records.append((level, msg % args))
+
+    def info(self, msg: str, *args: object) -> None:
+        self.records.append((logging.INFO, msg % args))
+
+
+def test_claim_refusal_is_logged_at_error_before_the_flow_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The flow run log holds the refusal at ERROR level once, and the flow run ends `Failed`.
+
+    The flow returns the `Failed` state instead of raising, so Prefect's engine does not log
+    the refusal a second time with a traceback.
+    """
+    run_id = "run-worker-claim"
+    run_logger = _LevelRecordingRunLogger()
+    refused = ExecutionClaimRefusedError(run_id)
+
+    def refuse(*_args: object) -> tuple[str, str]:
+        raise refused
+
+    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), _projection(tmp_path)))
+    monkeypatch.setattr(service_flow, "_run_logger", lambda: (run_logger, True))
+    monkeypatch.setattr(service_flow, "_claim_current_execution", refuse)
+
+    state = service_flow.service_sync_run.fn(run_id, "plan")
+
+    assert isinstance(state, State)
+    assert state.is_failed()
+    assert state.message == str(refused)
+    assert run_logger.records == [(logging.ERROR, f"infrahub_sync.service.flow | {refused}")]
 
 
 @pytest.mark.parametrize("value", [None, "not-a-uuid", FLOW_ID.upper()])

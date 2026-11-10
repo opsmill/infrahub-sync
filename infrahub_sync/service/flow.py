@@ -1,5 +1,7 @@
 """Separate Prefect flow for API-created durable Sync runs."""
 
+# pylint: disable=too-many-lines  # one module owns the worker's claim, stage execution and run reporting
+
 # Deliberately no ``from __future__ import annotations``. Prefect parameter
 # validation must receive the concrete Literal at runtime; the direct Prefect
 # flow (``infrahub_sync/orchestration/flow.py``) documents the affected
@@ -7,19 +9,23 @@
 
 import logging
 import os
+import re
 from collections.abc import Iterator, Sequence
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, contextmanager, suppress
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 from uuid import UUID
 
 import httpx
 from prefect import flow, get_run_logger
+from prefect.artifacts import create_markdown_artifact
 from prefect.client.orchestration import get_client
 from prefect.client.schemas.objects import WorkerStatus
 from prefect.exceptions import MissingContextError, ObjectNotFound
 from prefect.runtime import flow_run as current_flow_run
+from prefect.states import Failed, State
 
 from infrahub_sync.client.models import RECOVERY_NEXT_ACTIONS, RecoveryAction
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
@@ -58,20 +64,24 @@ from infrahub_sync.plan.verify import (
     verify_plan,
 )
 from infrahub_sync.product_store import (
+    AuditEvent,
     BaselineWriteback,
     ExecutionFinishWriteback,
     ExecutionMergeWriteback,
     ExecutionWriteback,
     ProductProjection,
+    ProductRun,
 )
 from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, RuntimeModelPlan, build_runtime_model_plan
 
 from .apply_guard import ApplyGuard, hold_apply_guard
 from .checkpoints import publish_final_checkpoint, publish_plan_checkpoint, rehydrate_plan_checkpoint
+from .events import run_event, stage_result_type
 from .failure_cause import operator_cause
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME, run_name
+from .run_artifact import publish_run_artifact
 from .scratch import StageScratch, stage_scratch
 from .service import PLAN_ARTIFACT_ID
 from .storage import service_guard_secrets, service_guard_session, service_product_projection
@@ -91,6 +101,19 @@ _LEGACY_CONFIGURATION_DIRECTORY_UNAVAILABLE = (
 )
 _LEGACY_RUN_CONFIGURATION_MISMATCH = "legacy service run configuration version does not match durable run"
 _WORKER_EXECUTION_REFUSED = "service worker execution claim was refused"
+# Fixed text with the run ID as its only value, so the refusal echoes nothing else.
+_WORKER_EXECUTION_REFUSED_GUIDANCE = (
+    "this Prefect flow run is not an execution the Sync API submitted for run {run_id} and is waiting for. "
+    "A Prefect Retry, a run started by hand from the deployment, and an execution whose admission expired "
+    "are refused. Nothing was read or written. A Sync run is not replayed from Prefect: check it with "
+    "`infrahub-sync runs show {run_id}`, then start a new run with `infrahub-sync plan` or "
+    "`infrahub-sync sync`, or apply a reviewed plan with "
+    "`infrahub-sync apply {run_id} --expected-checksum <checksum>`."
+)
+# The form of a product run ID (`ProductRun.run_id`). A Prefect run started by hand can pass any
+# text as `run_id`, so the refusal names only an ID of this form and a placeholder otherwise.
+_RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+_UNNAMED_RUN_ID = "<run-id>"
 _WORKER_EXECUTION_ID_INVALID = "service worker execution identity is invalid"
 _WORKER_EXECUTION_IDENTITY_UNAVAILABLE = "service worker execution identity is unavailable"
 _WORKER_EXECUTION_WRITEBACK_REFUSED = "service worker execution writeback was refused"
@@ -126,7 +149,23 @@ class RegisteredPlanVerificationError(PlanVerificationError, ValueError):
         self.args = (message,)
 
 
-def _raise_writeback_refused() -> None:
+class ExecutionClaimRefusedError(RuntimeError):
+    """The worker refused to claim a Prefect flow run the Sync API is not waiting for.
+
+    The message is built from fixed text and the run ID only, and tells the operator how to
+    recover the Sync run without replaying it from Prefect. A run ID that is not of the product
+    run ID form, such as one with a newline or a terminal control sequence, is replaced by a
+    fixed placeholder, so the message cannot add lines of its own to the flow run log.
+    """
+
+    def __init__(self, run_id: str) -> None:
+        shown = run_id if _RUN_ID_PATTERN.fullmatch(run_id) else _UNNAMED_RUN_ID
+        guidance = _WORKER_EXECUTION_REFUSED_GUIDANCE.format(run_id=shown)
+        super().__init__(f"{_WORKER_EXECUTION_REFUSED}: {guidance}")
+        self.run_id = run_id
+
+
+def _raise_writeback_refused() -> NoReturn:
     raise RuntimeError(_WORKER_EXECUTION_WRITEBACK_REFUSED)
 
 
@@ -136,6 +175,30 @@ def _run_logger() -> tuple[RunLogger, bool]:
         return get_run_logger(), True
     except MissingContextError:
         return logger, False
+
+
+class SyncFlowLines:
+    """Write the service flow's own lines through the run logger, as Sync lines.
+
+    Each line starts with `infrahub_sync.service.flow | `, the form `RunLoggerBridge` gives every
+    bridged line, so the log reader can tell every line Sync writes from Prefect's own lines. Each
+    line is redacted with the stage's secrets as they are when the line is written.
+    """
+
+    def __init__(self, run_logger: RunLogger, secrets: Sequence[str]) -> None:
+        self._run_logger = run_logger
+        self._secrets = secrets
+
+    def _text(self, msg: str, args: tuple[object, ...]) -> str:
+        return redact(msg % args if args else msg, self._secrets)
+
+    def log(self, level: int, msg: str, *args: object) -> None:
+        """Write one line at `level`."""
+        self._run_logger.log(level, "%s | %s", __name__, self._text(msg, args))
+
+    def info(self, msg: str, *args: object) -> None:
+        """Write one INFO line."""
+        self._run_logger.info("%s | %s", __name__, self._text(msg, args))
 
 
 @contextmanager
@@ -419,7 +482,7 @@ def _claim_current_execution(projection: ProductProjection, run_id: str) -> tupl
         worker_id=worker_id,
         admission_ttl_seconds=admission_ttl_seconds,
     ):
-        raise RuntimeError(_WORKER_EXECUTION_REFUSED)
+        raise ExecutionClaimRefusedError(run_id)
     return flow_run_id, worker_id
 
 
@@ -514,7 +577,6 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     expected_checksum: str | None,
     *,
     confirm_writes: bool,
-    run_logger: RunLogger,
     secrets: list[str],
     config_directory: str | None,
     projection: ProductProjection,
@@ -711,7 +773,6 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             results=result,
             baseline=_baseline_writeback(verified.manifest),
         )
-    run_logger.info(redact(f"service run {run_id} stage={stage} outcome={result['outcome']}", secrets))
     return result, writeback
 
 
@@ -773,6 +834,43 @@ def effective_apply_record(exc: Exception, record: ApplyRecord | None) -> ApplyR
     return carried if isinstance(carried, ApplyRecord) else record
 
 
+@dataclass(frozen=True)
+class RecordedFailure:
+    """What `_record_failure` stored: the run's terminal outcome and the failure's next action.
+
+    `cause` is the operator cause the evidence holds, for a known error class only.
+    """
+
+    outcome: Literal["failed", "ambiguous"]
+    next_action: str | None
+    cause: str | None = None
+
+
+def _next_step(run_id: str, next_action: str | None) -> str:
+    """The operator's next step: the failure's next action, else reading the run's record."""
+    return next_action or f"`infrahub-sync runs show {run_id}`"
+
+
+def final_log_line(run_id: str, stage: str, outcome: str, next_action: str | None) -> str:
+    """The last log line of a stage: its outcome and the operator's next step.
+
+    Without a next action from the failure, the next step is to read the run's record.
+    """
+    return f"service run {run_id} stage={stage} outcome={outcome}; next step: {_next_step(run_id, next_action)}"
+
+
+def result_next_action(result: dict[str, Any]) -> str | None:
+    """The next action a successful stage's result carries for its failure, if any.
+
+    The CLI reads the same `failure.next_action` field from the stored result.
+    """
+    failure = result.get("failure")
+    if not isinstance(failure, dict):
+        return None
+    next_action = failure.get("next_action")
+    return next_action if isinstance(next_action, str) and next_action else None
+
+
 def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     run_id: str,
     stage: Literal["plan", "verify", "apply", "sync"],
@@ -785,8 +883,10 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
     *,
     dispatch_started: bool,
     record: ApplyRecord | None,
-) -> None:
+) -> RecordedFailure | None:
     """Best-effort durable product evidence without masking the worker failure.
+
+    Returns the stored outcome and next action, or `None` when nothing was stored.
 
     `dispatch_started` is the one thing this boundary cannot re-derive: only the stage
     that ran knows whether it proved its hold and began a destination operation. Before
@@ -806,7 +906,7 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
     try:
         stored = projection.lookup_run(run_id).value
         if stored is None:
-            return
+            return None
         described = effective_apply_record(exc, record)
         if described is not None and described.failed_operation is not None:
             ambiguous = described.failed_operation_wrote is not False
@@ -837,7 +937,10 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
                 summary={**stored.summary, "failed_stage": stage, **partial},
                 results={**stored.results, **results},
             )
-        projection.commit_claimed_execution(
+        # Built before the commit: a receipt lookup error falls back to the run's actor
+        # rather than losing the failure evidence.
+        event = _stage_event(projection, stored, flow_run_id, stage, terminal_outcome, run_logger)
+        committed = projection.commit_claimed_execution(
             run_id,
             flow_run_id,
             worker_id=worker_id,
@@ -845,6 +948,7 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
             terminal_state=terminal_state,
             terminal_outcome=terminal_outcome,
             writeback=writeback,
+            event=event,
             secrets=secrets,
         )
     except Exception as persistence_error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
@@ -853,6 +957,107 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
             "service failure evidence could not be persisted (%s)",
             type(persistence_error).__name__,
         )
+        return None
+    if not committed:
+        # The store refused the commit because this worker no longer holds the execution, so
+        # nothing was recorded and the failure takes the unrecorded path.
+        run_logger.log(
+            logging.WARNING, "service failure evidence was not recorded: this worker no longer holds the execution"
+        )
+        return None
+    next_action = evidence.get("next_action")
+    cause = evidence.get("cause")
+    return RecordedFailure(
+        outcome=terminal_outcome,
+        next_action=next_action if isinstance(next_action, str) and next_action else None,
+        cause=cause if isinstance(cause, str) and cause else None,
+    )
+
+
+def known_failure_line(run_id: str, recorded: RecordedFailure | None) -> str | None:
+    """The one ERROR line for a failure whose recorded evidence has a cause, else `None`.
+
+    The same text is the message of the `Failed` state the flow returns. Without a next action
+    from the failure, the next step is to read the run's record, as in the last log line.
+    """
+    if recorded is None or recorded.cause is None:
+        return None
+    return f"{recorded.cause} Next step: {_next_step(run_id, recorded.next_action)}"
+
+
+def _publish_run_summary(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    projection: ProductProjection,
+    run_id: str,
+    stage: str,
+    outcome: str,
+    next_action: str | None,
+    secrets: Sequence[str],
+    run_logger: RunLogger,
+    *,
+    prefect_context: bool,
+) -> None:
+    """Publish the stage's run summary artifact, with the outcome and next action of its last line.
+
+    Only a real Prefect flow run has a place to publish it; elsewhere this does nothing.
+    """
+    if not prefect_context:
+        return
+    publish_run_artifact(
+        projection,
+        run_id,
+        stage,
+        outcome=outcome,
+        next_action=next_action,
+        secrets=secrets,
+        run_logger=run_logger,
+        create=create_markdown_artifact,
+    )
+
+
+def _failure_exit(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    run_id: str,
+    stage: str,
+    failure: Exception,
+    recorded: RecordedFailure | None,
+    lines: SyncFlowLines,
+    secrets: list[str],
+    projection: ProductProjection,
+    *,
+    prefect_context: bool,
+) -> State[Any]:
+    """End a failed stage: write its lines and artifact, clear the secrets, then fail the flow run.
+
+    A failure whose recorded evidence has a cause writes one ERROR line, `<cause> Next step:
+    <next_action>`, and returns `Failed` with the same text, so no traceback passes through
+    Prefect's engine. Any other failure writes its class name as the ERROR line and raises its
+    sanitized copy.
+
+    The lines and the artifact are written before `secrets.clear()`, so they are redacted with
+    this stage's secrets. A recorded failure reports the outcome the store holds. An unrecorded
+    failure reports `failed` and points at `runs show`, while the store keeps the run
+    nonterminal for reconciliation to decide.
+    """
+    if recorded is None:
+        outcome, next_action = "failed", None
+    else:
+        outcome, next_action = recorded.outcome, recorded.next_action
+    known = known_failure_line(run_id, recorded)
+    try:
+        # Best-effort: neither the lines nor the artifact may replace the stage's failure.
+        with suppress(Exception):
+            lines.log(logging.ERROR, "%s", type(failure).__name__ if known is None else known)
+        with suppress(Exception):
+            lines.info(final_log_line(run_id, stage, outcome, next_action))
+            _publish_run_summary(
+                projection, run_id, stage, outcome, next_action, secrets, lines, prefect_context=prefect_context
+            )
+        if known is not None:
+            return Failed(message=redact(known, secrets))
+        # Rebuilt after the original exception context exits.
+        sanitized = sanitize_exception_chain(failure, secrets)
+    finally:
+        secrets.clear()
+    raise sanitized
 
 
 def _service_run_name() -> str:
@@ -872,18 +1077,32 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     expected_checksum: str | None = None,
     confirm_writes: bool = False,
     configuration_name: str | None = None,
-) -> dict[str, Any]:
+) -> dict[str, Any] | State[Any]:
     """Execute one API-reserved stage and publish its durable product data.
 
     `configuration_name` is the configuration's readable name, used only for the run's
     title; the configuration is identified by `config_id`.
+
+    A refused execution claim, and a failure whose recorded evidence has a cause, end the flow
+    run with a returned `Failed` state, so no traceback passes through Prefect's engine; any
+    other failure raises its sanitized copy (plan.md, "Failure exit for known error classes").
     """
     del configuration_name
     run_logger, prefect_context = _run_logger()
     secrets: list[str] = []
+    # Every line this function writes itself goes through `lines`; the bridge below forwards
+    # the `infrahub_sync` logger tree with the same prefix.
+    lines = SyncFlowLines(run_logger, secrets)
     failure: Exception | None = None
     config_directory, projection = _runtime()
-    flow_run_id, worker_id = _claim_current_execution(projection, run_id)
+    try:
+        flow_run_id, worker_id = _claim_current_execution(projection, run_id)
+    except ExecutionClaimRefusedError as refused:
+        # Put the recovery guidance in the flow run log, where an operator who
+        # pressed Retry looks for it, then fail the flow run with a returned state,
+        # so Prefect's engine does not log the refusal a second time with a traceback.
+        lines.log(logging.ERROR, "%s", refused)
+        return Failed(message=str(refused))
     secrets[:] = collect_secret_values()
     # Owned here rather than by the stage, so the failure boundary can read it however the
     # stage ended.
@@ -905,7 +1124,6 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 branch,
                 expected_checksum,
                 confirm_writes=confirm_writes,
-                run_logger=run_logger,
                 secrets=secrets,
                 config_directory=config_directory,
                 projection=projection,
@@ -917,7 +1135,16 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     record_terminal = True
     if failure is None:
         try:
-            _commit_success(projection, run_id, flow_run_id, worker_id=worker_id, writeback=writeback, secrets=secrets)
+            _commit_success(
+                projection,
+                run_id,
+                flow_run_id,
+                stage=stage,
+                worker_id=worker_id,
+                writeback=writeback,
+                secrets=secrets,
+                run_logger=lines,
+            )
         except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             failure = exc
             # A read stage whose success did not store stays nonterminal on purpose: it
@@ -930,12 +1157,13 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
         # product commit that did not store its success — so all of them commit the same
         # ambiguous verdict, the same evidence, the record the scope kept, and
         # `reconciliation_required` together.
+        recorded = None
         if record_terminal:
-            _record_failure(
+            recorded = _record_failure(
                 run_id,
                 stage,
                 failure,
-                run_logger,
+                lines,
                 secrets,
                 projection,
                 flow_run_id,
@@ -943,21 +1171,71 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 dispatch_started=tracker.dispatch_started,
                 record=tracker.applied_record,
             )
-        # Rebuilt after the original exception context exits.
-        sanitized = sanitize_exception_chain(failure, secrets)
-        secrets.clear()
-        raise sanitized
+        return _failure_exit(
+            run_id,
+            stage,
+            failure,
+            recorded,
+            lines,
+            secrets,
+            projection,
+            prefect_context=prefect_context,
+        )
+    outcome, next_action = str(result["outcome"]), result_next_action(result)
+    lines.info(final_log_line(run_id, stage, outcome, next_action))
+    _publish_run_summary(
+        projection, run_id, stage, outcome, next_action, secrets, lines, prefect_context=prefect_context
+    )
     return result
 
 
-def _commit_success(
+def _stage_event(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    projection: ProductProjection,
+    run: ProductRun,
+    flow_run_id: str,
+    stage: str,
+    outcome: str,
+    run_logger: RunLogger,
+) -> AuditEvent:
+    """Build the event of one stage result (spec 017 data model).
+
+    The actor and reason are those of the request whose receipt holds this flow run ID, so an
+    apply an administrator requested names the administrator; when no receipt holds it, the
+    event names the run's actor. When the receipt cannot be read, the event names the run's
+    actor too and a WARNING line names the error class, so a lookup error neither loses a
+    failure's evidence nor turns a success into a failure.
+    """
+    try:
+        request = projection.lookup_mutation_for_execution(run.run_id, flow_run_id, stage).value
+    except Exception as lookup_error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        run_logger.log(
+            logging.WARNING,
+            "the request that started this execution could not be read (%s)",
+            type(lookup_error).__name__,
+        )
+        request = None
+    actor = request.actor if request is not None else run.actor
+    return run_event(
+        run.run_id,
+        run,
+        event_type=stage_result_type(stage, outcome),
+        actor=actor or "unknown",
+        operation=stage,
+        reason=None if request is None else request.reason,
+        outcome=outcome,
+    )
+
+
+def _commit_success(  # pylint: disable=too-many-arguments
     projection: ProductProjection,
     run_id: str,
     flow_run_id: str,
     *,
+    stage: str,
     worker_id: str,
     writeback: ExecutionWriteback,
     secrets: Sequence[str],
+    run_logger: RunLogger,
 ) -> None:
     """Commit this stage's success, tolerating only a commit that actually landed.
 
@@ -966,6 +1244,10 @@ def _commit_success(
     anything else is a failure the scope's one exit path has to handle.
     """
     try:
+        stored = projection.lookup_run(run_id).value
+        if stored is None:
+            _raise_writeback_refused()
+        event = _stage_event(projection, stored, flow_run_id, stage, "succeeded", run_logger)
         if not projection.commit_claimed_execution(
             run_id,
             flow_run_id,
@@ -974,6 +1256,7 @@ def _commit_success(
             terminal_state="completed",
             terminal_outcome="succeeded",
             writeback=writeback,
+            event=event,
             secrets=secrets,
         ):
             _raise_writeback_refused()

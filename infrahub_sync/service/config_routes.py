@@ -1,5 +1,6 @@
 """HTTP-only adapter for the shared configuration application service."""
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from functools import wraps
 from hashlib import sha256
@@ -24,7 +25,6 @@ from infrahub_sync.client.models import (
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_REASON
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
-    AuditEvent,
     MutationReceipt,
     ProductProjection,
     ProductStoreProviderError,
@@ -33,6 +33,13 @@ from infrahub_sync.product_store import (
 from infrahub_sync.product_store.models import MAX_REGISTRY_VERSION
 
 from .auth import Principal
+from .events import (
+    CONFIG_REGISTERED,
+    CONFIG_VERSION_REGISTERED,
+    CONFIG_VERSION_RETRIEVED,
+    config_decision_type,
+    config_event,
+)
 from .models import ConfigMutationRequest
 from .paging import (
     DEFAULT_LIMIT,
@@ -291,58 +298,82 @@ class ConfigurationRoutes:
                 or stored.operation != receipt.operation
                 or stored.request_fingerprint != receipt.request_fingerprint
             ):
-                self._audit(actor, operation, reason, "refused-idempotency")
+                self._audit(actor, operation, reason, "refused-idempotency", *_configuration_of(receipt, None))
                 raise ServiceAPIError(
                     409, "idempotency-conflict", "Idempotency-Key was already used by this actor for different content"
                 )
             if stored.state == "accepted":
                 assert stored.response_status is not None
                 assert stored.response_body is not None
-                self._audit(actor, operation, reason, "replayed")
+                self._audit(actor, operation, reason, "replayed", *_configuration_of(stored, stored.response_body))
                 return stored.response_status, stored.response_body
         if not projection.claim_mutation(stored.receipt_id, secrets=self._secrets):
-            self._audit(actor, operation, reason, "refused-idempotency-in-progress")
+            self._audit(actor, operation, reason, "refused-idempotency-in-progress", *_configuration_of(receipt, None))
             raise ServiceAPIError(409, "idempotency-in-progress", "the matching request is still being processed")
         try:
             if operation == "register-config":
                 result = self.register(package, actor=actor, reason=reason)
                 response_status = 201
+                event_type = CONFIG_REGISTERED
             else:
                 result = self.create_version(resource_id, package, actor=actor, reason=reason)
                 response_status = 201 if result.created else 200
+                event_type = CONFIG_VERSION_REGISTERED if result.created else CONFIG_VERSION_RETRIEVED
         except ConfigurationAPIError as error:
             if error.proven_pre_effect:
                 projection.release_mutation(stored.receipt_id, secrets=self._secrets)
-            self._audit(actor, operation, reason, "unavailable")
+            self._audit(actor, operation, reason, "unavailable", *_configuration_of(receipt, None))
             raise
         response = jsonable_encoder(result)
+        config_id, registry_version = _configuration_of(receipt, response)
         completed = projection.complete_mutation(
             stored.receipt_id,
             response_status=response_status,
             response_body=response,
             flow_run_id=None,
+            event=config_event(
+                event_type=event_type,
+                actor=actor,
+                operation=operation,
+                reason=reason,
+                outcome="accepted",
+                config_id=config_id,
+                registry_version=registry_version,
+            ),
             secrets=self._secrets,
         )
         assert completed.response_body is not None
         assert completed.response_status is not None
-        self._audit(actor, operation, reason, "accepted")
         return completed.response_status, completed.response_body
 
     @_provider_error_boundary
-    def audit_refusal(self, actor: str, operation: str, reason: str | None) -> None:
-        """Record a refused configuration mutation without reserving it."""
-        self._audit(actor, operation, reason, "refused-authorization")
+    def audit_refusal(self, actor: str, operation: str, reason: str | None, *, config_id: str | None = None) -> None:
+        """Record a refused configuration mutation without reserving it.
 
-    def _audit(self, actor: str, operation: str, reason: str | None, outcome: str) -> None:
+        ``config_id`` names the configuration a refused version request was for; a refused
+        registration has none yet.
+        """
+        self._audit(actor, operation, reason, "refused-authorization", config_id)
+
+    def _audit(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        actor: str,
+        operation: str,
+        reason: str | None,
+        outcome: str,
+        config_id: str | None = None,
+        registry_version: int | None = None,
+    ) -> None:
+        """Record the event of a configuration decision that saves nothing else, such as a refusal."""
         self._store_projection().record_audit(
-            AuditEvent(
-                event_id=f"a-{uuid4().hex}",
-                run_id=None,
+            config_event(
+                event_type=config_decision_type(outcome),
                 actor=actor,
                 operation=operation,
                 reason=reason,
                 outcome=outcome,
-                created_at=datetime.now(timezone.utc),
+                config_id=config_id,
+                registry_version=registry_version,
             ),
             secrets=self._secrets,
         )
@@ -350,6 +381,22 @@ class ConfigurationRoutes:
     def _store_projection(self) -> ProductProjection:
         """Return the injected durable projection this server writes receipts and audit to."""
         return self._projection
+
+
+def _configuration_of(receipt: MutationReceipt, response: Mapping[str, Any] | None) -> tuple[str | None, int | None]:
+    """Return the configuration and version a configuration decision is about, where known.
+
+    A stored response names both. Without one, a version request names its configuration
+    and a registration names none yet.
+    """
+    version = None if response is None else response.get("version")
+    if isinstance(version, Mapping):
+        config_id, registry_version = version.get("config_id"), version.get("registry_version")
+        if isinstance(config_id, str) and isinstance(registry_version, int):
+            return config_id, registry_version
+    if receipt.resource_kind == "configuration":
+        return receipt.resource_id, None
+    return None, None
 
 
 def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempotency_key: Any) -> APIRouter:
@@ -388,7 +435,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         key: Annotated[str, Depends(idempotency_key)],
     ) -> Any:
         if not principal.administrator:
-            routes.audit_refusal(principal.actor, "create-config-version", body.reason)
+            routes.audit_refusal(principal.actor, "create-config-version", body.reason, config_id=config_id)
             raise ServiceAPIError(403, "forbidden", "administrator access is required")
         status, content = routes.mutate(
             actor=principal.actor,

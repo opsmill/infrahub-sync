@@ -79,15 +79,19 @@ EXPECTED_PUBLIC_NAMES = {
     "DuplicateConfigurationError",
     "DuplicatePrefectExecutionError",
     "DuplicateRunError",
+    "EventFilters",
+    "EventPage",
     "ExecutionFinishWriteback",
     "ExecutionMergeWriteback",
     "ExecutionWriteback",
     "LookupResult",
     "MutationReceipt",
     "PrefectExecutionLink",
+    "PrimaryResource",
     "ProductProjection",
     "ProductStoreProviderError",
     "ProductRun",
+    "RelatedResource",
     "RunFilters",
     "RunNotFoundError",
     "RunPage",
@@ -4603,6 +4607,11 @@ class _FakePostgreSQLCursor:
                 connection.pending_tables.add(table)
             if table == "mutation_receipts":
                 connection.pending_columns.setdefault(table, set()).update({"resource_kind", "resource_id"})
+            if table == "audit_events" and table not in database.tables:
+                # A fresh table is created with the event columns; a legacy one gains them by ALTER.
+                connection.pending_columns.setdefault(table, set()).update(
+                    {"event_type", "config_id", "registry_version", "branch"}
+                )
             return ()
         if operation.startswith(("CREATE UNIQUE INDEX IF NOT EXISTS", "CREATE INDEX IF NOT EXISTS")):
             return ()
@@ -4618,6 +4627,9 @@ class _FakePostgreSQLCursor:
             connection.pending_columns.setdefault(table, set()).add(column)
             return ()
         if operation.startswith("UPDATE mutation_receipts SET resource_kind"):
+            return ()
+        if operation.startswith(("UPDATE audit_events SET event_type", "INSERT INTO audit_event_resources")):
+            # The audit-event backfill reads stored events; this catalog holds no rows.
             return ()
         if operation.startswith("SELECT configurations.config_id, versions.declared_content"):
             # The configuration-name fill reads stored packages; this catalog holds no rows.
@@ -4718,8 +4730,9 @@ def test_postgresql_repeated_initialization_skips_completed_mutation_receipt_nul
     def connect() -> MagicMock:
         connection = MagicMock()
         # One catalog read per table, in migration order: product_runs, configuration_versions,
-        # configurations; the configuration-name fill's package read; prefect_executions; then
-        # the two nullability reads.
+        # configurations; the configuration-name fill's package read; prefect_executions; the
+        # mutation-receipt nullability read; the audit-event columns; then the audit-event
+        # nullability read.
         connection.cursor.return_value.fetchall.side_effect = [
             (),
             (),
@@ -4733,6 +4746,7 @@ def test_postgresql_repeated_initialization_skips_completed_mutation_receipt_nul
                 ("resource_kind", "NO"),
                 ("run_id", "YES"),
             ),
+            (("event_type",), ("config_id",), ("registry_version",), ("branch",)),
             (("reason", "YES"),),
         ]
         connection.cursor.return_value.fetchone.return_value = (1,)

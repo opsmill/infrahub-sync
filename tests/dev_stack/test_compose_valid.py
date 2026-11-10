@@ -20,6 +20,7 @@ import subprocess  # noqa: S404 -- fixed argv, reading the repository's own Comp
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = REPO_ROOT / "development" / "docker-compose.yml"
@@ -92,3 +93,23 @@ def test_optional_settings_resolve_to_empty(setting: str) -> None:
     if resolved.returncode != 0:
         pytest.skip("the development stack could not be resolved; the validity case reports that")
     assert f'{setting}: ""' in resolved.stdout
+
+
+def _sync_api_environment(path: Path) -> dict[str, object]:
+    """Read the `sync-api` environment as written, before Compose interpolates it."""
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return document["services"]["sync-api"]["environment"]
+
+
+def test_the_development_sync_api_links_to_its_own_prefect_ui() -> None:
+    """US3: the development stack publishes the Prefect UI on loopback, so its links point there."""
+    environment = _sync_api_environment(COMPOSE_FILE)
+
+    assert environment["INFRAHUB_SYNC_PREFECT_UI_URL"] == "http://127.0.0.1:${PREFECT_PORT:-4230}"
+
+
+def test_the_operator_sync_api_takes_its_prefect_ui_url_from_the_operator() -> None:
+    """US3: only the operator knows where its Prefect UI is reachable; unset leaves the link off."""
+    environment = _sync_api_environment(REPO_ROOT / "docker-compose.yml")
+
+    assert environment["INFRAHUB_SYNC_PREFECT_UI_URL"] == "${INFRAHUB_SYNC_PREFECT_UI_URL:-}"
