@@ -1,0 +1,25 @@
+tests/service/test_verify_destination.py
+  s_3026b865c0ab8b::t_25b41165591647 286-291,293-312
+  s_3026b865c0ab8b::t_bd4297b78c968c 341-345
+  s_3026b865c0ab8b::t_2119886bb63bdb 292
+  s_3026b865c0ab8b::t_d38e3bba6a74ae 436-445
+infrahub_sync/execution.py
+  s_3026b865c0ab8b::t_d294941f23ac3b 885-887
+  s_3026b865c0ab8b::t_d339f313329f56 862-868
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "76e7c585fe60bd0f68cec6109847f472170c55e1",
+  "prompts": {},
+  "sessions": {
+    "s_3026b865c0ab8b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "825efe40-61e7-452d-9076-42e4bc5cee3e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
