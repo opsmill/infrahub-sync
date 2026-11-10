@@ -362,6 +362,7 @@ def test_a_registered_saved_apply_runs_without_the_source_credential(
     )
 
     assert writes == [planned.operation_id]
+    assert isinstance(result, dict)
     assert result["outcome"] == "applied"
     assert result["summary"]["create"] == 1
     assert len(constructed) == 1

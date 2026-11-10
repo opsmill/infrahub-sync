@@ -35,6 +35,7 @@ The message wording can change; the code stays the same.
 | --- | --- |
 | No container is running | Run `docker compose up -d --wait`. |
 | `worker.state` is `no-live-worker` | Read the worker logs, then run `docker compose restart sync-api sync-worker`. It keeps the durable records. A paused or hung worker still looks `running` to Docker; only the worker state shows it, after three missed heartbeats or 30 seconds. |
+| `sync-api` stops at start-up, and its log reads `INFRAHUB_SYNC_PREFECT_UI_URL must be an absolute http or https URL without credentials, query or fragment` | The Prefect UI address in `.env` is not valid. Set it to an absolute `http` or `https` URL without a user name, password, query or fragment, or leave it empty, then run `docker compose up -d --wait`. See [Valid values of `INFRAHUB_SYNC_PREFECT_UI_URL`](../compose-deployment#valid-values-of-infrahub_sync_prefect_ui_url). |
 | A changed `.env` value has no effect | A container reads its environment once, when it is created. Run `docker compose up -d --wait`, not `restart`. |
 | You want to delete all data and begin again | Follow the [replacement procedure](../compose-deployment#resetting-this-alpha-to-a-fresh-deployment). `docker compose down --volumes` cannot be undone. |
 

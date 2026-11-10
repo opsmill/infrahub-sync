@@ -15,6 +15,10 @@ from infrahub_sync.client.models import (
     CancelRunRequest,
     ConfigMutationRequest,
     CreateRunRequest,
+    EventPage,
+    EventPrimaryResource,
+    EventRelatedResource,
+    EventResource,
     OrchestrationSummary,
     PublicRunResource,
     VerifyRunRequest,
@@ -184,3 +188,51 @@ def test_a_valid_configuration_reason_is_kept_unchanged() -> None:
     request = ConfigMutationRequest(package={"format_version": 1}, reason="register inventory")
 
     assert request.reason == "register inventory"
+
+
+def test_an_event_page_reads_a_newer_server_and_keeps_its_paging_fields() -> None:
+    """The client tolerates fields and resource kinds a newer server adds to `GET /events`."""
+    page = EventPage.model_validate(
+        {
+            "items": [
+                {
+                    "event_id": "e-1",
+                    "event_type": "infrahub_sync.config.registered",
+                    "occurred_at": "2026-11-06T10:15:02Z",
+                    "actor": "alice",
+                    "operation": "register",
+                    "outcome": "accepted",
+                    "reason": None,
+                    "primary_resource": {"kind": "config", "id": "cfg"},
+                    "related": [{"kind": "account", "id": "alice"}, {"kind": "team", "id": "network"}],
+                    "added_later": True,
+                }
+            ],
+            "limit": 50,
+            "offset": 0,
+            "has_more": False,
+        }
+    )
+
+    (event,) = page.items
+    assert event.occurred_at == datetime(2026, 11, 6, 10, 15, 2, tzinfo=timezone.utc)
+    assert event.primary_resource == EventPrimaryResource(kind="config", id="cfg")
+    assert event.related[1] == EventRelatedResource(kind="team", id="network")
+    assert (page.limit, page.offset, page.has_more) == (50, 0, False)
+
+
+def test_an_event_timestamp_requires_a_timezone() -> None:
+    with pytest.raises(ValidationError):
+        EventResource.model_validate(
+            {
+                "event_id": "e-1",
+                "event_type": "infrahub_sync.run.planned",
+                "occurred_at": "2026-11-06T10:15:02",
+                "actor": "alice",
+                "operation": "plan",
+                "outcome": "succeeded",
+                "reason": None,
+                "primary_resource": None,
+                "related": [],
+            }
+        )

@@ -40,6 +40,18 @@ _VALID_NAME_OPTION = re.compile(
     r"|^#+ `infrahub-sync configs list`\n(?:(?!#)[^\n]*\n)*",
     re.MULTILINE,
 )
+# `events --run-id` filters events by run (spec 017) and is a current option. The retired
+# `--run-id` of the earlier commands stays refused everywhere else.
+_VALID_RUN_ID_OPTION = re.compile(
+    r"(?<![\w-])events\s[^\n]*?(?<![\w-])--run-id(?![\w-])|^#+ `infrahub-sync events`\n(?:(?!#)[^\n]*\n)*",
+    re.MULTILINE,
+)
+
+
+def _without_current_options(text: str) -> str:
+    """Remove the current `configs list --name` and `events --run-id` usages before the removed-option check."""
+    return _VALID_RUN_ID_OPTION.sub("", _VALID_NAME_OPTION.sub("", text))
+
 
 # One row for every CLI consumer in envelope section 12. The HTTP details stay owned by
 # tests/client/test_client.py; this matrix closes the command-to-client side of the boundary.
@@ -187,8 +199,8 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
         path for path in (ROOT / "docs/docs").rglob("*.mdx") if "release-notes" not in path.relative_to(ROOT).parts
     )
     files.extend((ROOT / "examples").rglob("*.md"))
-    # Remove the one valid `--name` usage (`configs list --name`) before the token check.
-    text = _VALID_NAME_OPTION.sub("", "\n".join(path.read_text(encoding="utf-8") for path in files))
+    # Remove the valid `configs list --name` and `events --run-id` usages before the token check.
+    text = _without_current_options("\n".join(path.read_text(encoding="utf-8") for path in files))
     removed_options = (
         "--name",
         "--config-file",
@@ -211,7 +223,7 @@ def test_live_docs_and_examples_close_removed_cli_paths() -> None:
     source_files = []
     for pattern in ("*.yaml", "*.yml", "*.json", "*.py"):
         source_files.extend((ROOT / "examples").rglob(pattern))
-    source_text = _VALID_NAME_OPTION.sub("", "\n".join(path.read_text(encoding="utf-8") for path in source_files))
+    source_text = _without_current_options("\n".join(path.read_text(encoding="utf-8") for path in source_files))
 
     assert not [token for token in removed_options if token in source_text]
 
@@ -254,10 +266,24 @@ def test_active_sources_do_not_teach_removed_commands() -> None:
     offenders = {
         str(path.relative_to(ROOT)): match.group(0)
         for path in files
-        if (match := REMOVED_COMMAND.search(path.read_text(encoding="utf-8"))) is not None
+        if (match := REMOVED_COMMAND.search(_VALID_RUN_ID_OPTION.sub("", path.read_text(encoding="utf-8")))) is not None
     }
 
     assert offenders == {}
+
+
+@pytest.mark.parametrize(
+    ("snippet", "run_id_token_remains"),
+    [
+        ("infrahub-sync events --run-id 20261106T1015-0123abcd", False),
+        ("docker compose run --rm --no-deps -T cli events --type x --run-id RUN_ID", False),
+        ("## `infrahub-sync events`\n\n* `--run-id <str>`: Only events about this run.\n", False),
+        ("infrahub-sync plan --run-id 20261106T1015-0123abcd", True),
+        ("infrahub-sync runs show --run-id 20261106T1015-0123abcd", True),
+    ],
+)
+def test_the_removed_option_rule_exempts_only_events_run_id(snippet: str, *, run_id_token_remains: bool) -> None:
+    assert ("--run-id" in _without_current_options(snippet)) is run_id_token_remains
 
 
 def test_workflows_tasks_and_unreleased_changelog_do_not_invoke_removed_commands() -> None:

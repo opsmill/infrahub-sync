@@ -240,7 +240,9 @@ def _write_plan(run_directory: Path, *, binding: tuple[str, int, str], config_ve
 
 
 def _sync(stage: _SyncStage) -> dict[str, Any]:
-    return service_sync_run.fn(RUN_ID, "sync", *stage.binding, confirm_writes=True)
+    result = service_sync_run.fn(RUN_ID, "sync", *stage.binding, confirm_writes=True)
+    assert isinstance(result, dict)
+    return result
 
 
 def test_sync_publishes_its_plan_checkpoint_before_the_first_dispatch(stage: _SyncStage) -> None:

@@ -22,6 +22,7 @@ from infrahub_sync.service.models import EMITTED_RESOURCES, EmittedArtifactListR
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from infrahub_sync.product_store import ProductProjection
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
         CancellationResult,
         Observation,
         PoolStatus,
+        RunLogRead,
         Submission,
     )
 
@@ -57,6 +59,9 @@ class _StubOrchestration:
         raise NotImplementedError
 
     async def cancel(self, flow_run_id: str) -> CancellationResult:
+        raise NotImplementedError
+
+    async def read_logs(self, flow_run_ids: Sequence[str]) -> RunLogRead:
         raise NotImplementedError
 
 

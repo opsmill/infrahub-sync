@@ -1,0 +1,1 @@
+Publish a markdown summary artifact on each service flow run in Prefect, with the key `sync-run-<run id>-<stage>`. It names the Sync run, the stage, the outcome, the configuration, the destination branch, the operation counts and the CLI commands that show the run. A failure to publish it logs one warning and does not change the run outcome.

@@ -306,7 +306,6 @@ def test_a_registered_stage_reaches_execution_with_its_models_bound(
             None,
             None,
             confirm_writes=True,
-            run_logger=service_flow.logger,
             secrets=[],
             config_directory=str(tmp_path),
             projection=cast("ProductProjection", projection),

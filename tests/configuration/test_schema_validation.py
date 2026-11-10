@@ -29,6 +29,7 @@ from infrahub_sync.configuration import validation as validation_module
 from infrahub_sync.configuration.capabilities import (
     BUILTIN_ADAPTER_CAPABILITIES,
     AdapterConfigurationCapabilities,
+    DestinationSchemaAccessor,
     DestinationSchemaReadError,
 )
 from infrahub_sync.configuration.credentials import CredentialConfigurationError
@@ -711,7 +712,57 @@ def test_a_missing_branch_lands_as_a_typed_finding_not_a_boundary_refusal(
     # generic service-boundary refusal.
     _mock_schema_read_failure(monkeypatch, sdk_exceptions.BranchNotFoundError("no-such-branch"))
 
-    _read_failure_and_write_findings("rejected")
+    _read_failure_and_write_findings("nobranch")
+
+
+def _live_accessor() -> DestinationSchemaAccessor:
+    accessor = BUILTIN_ADAPTER_CAPABILITIES["infrahub"].destination_schema_accessor
+    assert accessor is not None
+    return accessor
+
+
+def test_the_accessor_classifies_a_missing_branch_as_nobranch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """FR-002: the SDK's BranchNotFoundError is a missing branch, not a generic rejection."""
+    _mock_schema_read_failure(monkeypatch, sdk_exceptions.BranchNotFoundError("demo-test"))
+
+    with pytest.raises(DestinationSchemaReadError) as caught:
+        _live_accessor()(package(package_data()), "demo-test")
+
+    assert caught.value.reason == "nobranch"
+    assert caught.value.detail is None
+
+
+def test_an_http_400_on_the_schema_endpoint_reads_as_a_missing_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Critique E9: the installed SDK turns any HTTP 400 on `/api/schema` into BranchNotFoundError.
+
+    The real client runs here; only its HTTP requester is replaced. Infrahub answers 400 on that
+    endpoint for an unknown branch (its own BranchNotFoundError). If the SDK changes that mapping,
+    this test fails and the classification must be revisited.
+    """
+    import infrahub_sdk  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
+    real_client = infrahub_sdk.InfrahubClientSync
+    requested: list[str] = []
+
+    def _answer_400(
+        url: str, method: object, headers: object, timeout: object, payload: object = None
+    ) -> httpx.Response:
+        del method, headers, timeout, payload
+        requested.append(url)
+        return httpx.Response(400, json={"errors": [{"message": "Branch: demo-test not found."}]})
+
+    def _client_with_400(address: str, config: infrahub_sdk.Config) -> infrahub_sdk.InfrahubClientSync:
+        return real_client(address=address, config=config.model_copy(update={"sync_requester": _answer_400}))
+
+    monkeypatch.setattr("infrahub_sdk.InfrahubClientSync", _client_with_400)
+
+    with pytest.raises(DestinationSchemaReadError) as caught:
+        _live_accessor()(package(package_data()), "demo-test")
+
+    assert caught.value.reason == "nobranch"
+    assert len(requested) == 1
+    assert "/api/schema?branch=demo-test" in requested[0]
 
 
 def _pydantic_validation_error() -> pydantic.ValidationError:

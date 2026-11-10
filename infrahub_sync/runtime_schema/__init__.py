@@ -11,6 +11,7 @@ from .domain import (
     normalize_destination_schema,
 )
 from .errors import (
+    DestinationBranchNotFoundError,
     DestinationSchemaUnavailableError,
     MissingMappedKindError,
     RuntimeModelScopeError,
@@ -38,6 +39,7 @@ __all__ = [
     "ATTRIBUTE_TYPE_DOMAIN",
     "CARDINALITIES",
     "STAGE_RUNTIME_MODEL_SCOPE",
+    "DestinationBranchNotFoundError",
     "DestinationSchemaSnapshot",
     "DestinationSchemaUnavailableError",
     "MissingMappedKindError",

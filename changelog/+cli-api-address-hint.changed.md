@@ -1,0 +1,1 @@
+Print a `hint:` line with the `client-input` error when the Sync API address or token is missing, naming `INFRAHUB_SYNC_API_URL` or `--api-url`, or `INFRAHUB_SYNC_API_TOKEN`. The exit code does not change.

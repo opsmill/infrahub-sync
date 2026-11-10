@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import logging
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 from threading import Event, Thread, current_thread
 from types import SimpleNamespace
@@ -44,7 +45,14 @@ from infrahub_sync.plan.errors import (
 )
 from infrahub_sync.plan.models import ApplyRecord, PlanManifest
 from infrahub_sync.plan.review import SavedPlan
-from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
+from infrahub_sync.product_store import (
+    ExecutionFinishWriteback,
+    ExecutionMergeWriteback,
+    MutationReceipt,
+    PrefectExecutionLink,
+    ProductRun,
+    local_product_projection,
+)
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.deploy import CATALOGUE
 from infrahub_sync.service.flow import service_sync_run
@@ -693,6 +701,7 @@ def test_success_writeback_commit_error_preserves_reread_committed_result(
 
     stored = projection.lookup_run(run_id).value
     assert stored is not None
+    assert isinstance(result, dict)
     assert result["outcome"] == "no-change"
     assert (stored.phase, stored.outcome) == ("planned", "no-change")
     assert stored.prefect_executions[0].terminal_state == "completed"
@@ -736,6 +745,7 @@ def test_service_confirmed_sync_retains_the_semantic_sync_operation(
         confirm_writes=True,
     )
 
+    assert isinstance(result, dict)
     assert result["operation"] == "sync"
     stored = projection.lookup_run(run_id).value
     assert stored is not None
@@ -773,6 +783,7 @@ def test_service_plan_worker_updates_the_api_created_run_and_publishes_review(
     )
 
     assert seen == [run_id]
+    assert isinstance(result, dict)
     assert result["run_id"] == run_id
     stored = projection.lookup_run(run_id).value
     assert stored is not None
@@ -812,11 +823,13 @@ def test_service_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.M
     after = projection.lookup_run(run_id).value
     assert after is not None
     assert before is not None
-    assert after.model_dump(exclude={"results", "prefect_executions"}) == before.model_dump(
-        exclude={"results", "prefect_executions"}
+    # The verify result's event (spec 017, FR-012a) is evidence, not a lifecycle change.
+    assert after.model_dump(exclude={"results", "prefect_executions", "audit_links"}) == before.model_dump(
+        exclude={"results", "prefect_executions", "audit_links"}
     )
     assert after.results == {"verification": result}
     assert after.prefect_executions[0].terminal_state == "completed"
+    assert [event.event_type for event in projection.audit_events(run_id)] == ["infrahub_sync.run.verified"]
 
 
 @pytest.mark.usefixtures("_claimed_worker_execution")
@@ -1415,8 +1428,23 @@ def _plan_load_failure(tmp_path: Path, *, resolve: Exception | None = None, load
     return caught.value
 
 
-def _record_plan_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: str, failure: Exception):
-    """Run the plan stage so it fails with `failure`, and return the stored run."""
+def _assert_ends_failed_with_its_cause(state: object, stored: ProductRun, stage: str) -> None:
+    """A known failure returns a `Failed` state whose message is the recorded cause and next step (T026)."""
+    assert isinstance(state, State)
+    assert state.is_failed()
+    evidence = stored.results[f"{stage}_failure"]
+    next_step = evidence.get("next_action") or f"`infrahub-sync runs show {stored.run_id}`"
+    assert state.message == f"{evidence['cause']} Next step: {next_step}"
+
+
+def _record_plan_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: str, failure: Exception, *, known: bool = False
+):
+    """Run the plan stage so it fails with `failure`, and return the stored run.
+
+    A `known` failure (one with a recorded cause) ends with a returned `Failed` state; any other
+    raises its sanitized copy.
+    """
     projection = _create_product_run(tmp_path.resolve(), run_id)
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
     bind_granting_guard(monkeypatch, service_flow)
@@ -1428,22 +1456,32 @@ def _record_plan_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id
         raise failure
 
     monkeypatch.setattr(service_flow, "_plan", fail_plan)
-    with pytest.raises(RuntimeError):
-        service_sync_run.fn(run_id, "plan", *_binding(projection, run_id))
+    if known:
+        state = service_sync_run.fn(run_id, "plan", *_binding(projection, run_id))
+    else:
+        with pytest.raises(RuntimeError):
+            service_sync_run.fn(run_id, "plan", *_binding(projection, run_id))
     stored = projection.lookup_run(run_id).value
     assert stored is not None
+    if known:
+        _assert_ends_failed_with_its_cause(state, stored, "plan")
     return stored
 
 
-def _record_apply_failure(
+def _record_apply_failure(  # noqa: PLR0913 - the stage inputs, its secrets and whether its failure is known
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     run_id: str,
     failure: Exception,
     *,
     secrets: tuple[str, ...] = (),
+    known: bool = False,
 ):
-    """Run the apply stage so the engine fails with `failure`, and return the stored run."""
+    """Run the apply stage so the engine fails with `failure`, and return the stored run.
+
+    A `known` failure (one with a recorded cause) ends with a returned `Failed` state; any other
+    raises its sanitized copy.
+    """
     projection = _create_product_run(tmp_path.resolve(), run_id)
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
     bind_granting_guard(monkeypatch, service_flow)
@@ -1457,12 +1495,16 @@ def _record_apply_failure(
         raise failure
 
     monkeypatch.setattr(service_flow, "execute_run", fail_apply)
-    with pytest.raises(RuntimeError):
-        service_sync_run.fn(
-            run_id, "apply", *_binding(projection, run_id), expected_checksum="a" * 64, confirm_writes=True
-        )
+    binding = _binding(projection, run_id)
+    if known:
+        state = service_sync_run.fn(run_id, "apply", *binding, expected_checksum="a" * 64, confirm_writes=True)
+    else:
+        with pytest.raises(RuntimeError):
+            service_sync_run.fn(run_id, "apply", *binding, expected_checksum="a" * 64, confirm_writes=True)
     stored = projection.lookup_run(run_id).value
     assert stored is not None
+    if known:
+        _assert_ends_failed_with_its_cause(state, stored, "apply")
     return stored
 
 
@@ -1488,7 +1530,7 @@ def test_a_plan_records_a_403_as_a_missing_permission(
         else _plan_load_failure(tmp_path, resolve=sdk_error)
     )
 
-    stored = _record_plan_failure(monkeypatch, tmp_path, f"run-plan-403-{where}", failure)
+    stored = _record_plan_failure(monkeypatch, tmp_path, f"run-plan-403-{where}", failure, known=True)
 
     evidence = stored.results["plan_failure"]
     assert evidence["error_type"] == "ValueError"
@@ -1502,7 +1544,7 @@ def test_an_apply_records_a_403_during_lineage_resolution_as_a_missing_permissio
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The lineage is resolved outside the operation loop, and its 403 is still classified."""
-    stored = _record_apply_failure(monkeypatch, tmp_path, "run-apply-403-lineage", _sdk_403())
+    stored = _record_apply_failure(monkeypatch, tmp_path, "run-apply-403-lineage", _sdk_403(), known=True)
 
     evidence = stored.results["apply_failure"]
     assert evidence["error_type"] == "AuthenticationError"
@@ -1520,7 +1562,7 @@ def test_a_plan_records_a_missing_named_node_with_its_cause_and_next_action(
     refusal = NamedLineageNodeNotFoundError(setting="owner", kind="CoreAccountGroup", name="network-team")
     failure = _plan_load_failure(tmp_path, resolve=refusal)
 
-    stored = _record_plan_failure(monkeypatch, tmp_path, "run-plan-missing-owner", failure)
+    stored = _record_plan_failure(monkeypatch, tmp_path, "run-plan-missing-owner", failure, known=True)
 
     evidence = stored.results["plan_failure"]
     assert evidence["cause"] == "The setting `owner` names `CoreAccountGroup` `network-team`, which does not exist."
@@ -1540,7 +1582,12 @@ def test_an_apply_records_an_account_mismatch_with_both_accounts_and_its_next_ac
         f"with the import account 'other\x1b[2J' (id a-2). {LINEAGE_TOKEN}"
     )
     stored = _record_apply_failure(
-        monkeypatch, tmp_path, "run-apply-mismatch", ImportAccountMismatchError(message), secrets=(LINEAGE_TOKEN,)
+        monkeypatch,
+        tmp_path,
+        "run-apply-mismatch",
+        ImportAccountMismatchError(message),
+        secrets=(LINEAGE_TOKEN,),
+        known=True,
     )
 
     evidence = stored.results["apply_failure"]
@@ -1635,3 +1682,147 @@ def test_an_apply_records_the_next_action_its_error_declares_and_not_its_message
     assert evidence.get("next_action") == expected_next_action
     assert "cause" not in evidence
     assert LINEAGE_TOKEN not in stored.model_dump_json()
+
+
+_EVENT_WORKER_ID = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
+
+
+def _stage_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stage: Literal["plan", "verify", "apply", "sync"],
+    *,
+    requester: str | None,
+) -> tuple[Any, str, str]:
+    """Return a projection holding one claimed ``stage`` execution of a run ``initiator`` started.
+
+    With ``requester``, that actor's accepted receipt holds the execution's flow run ID;
+    without, no receipt holds it.
+    """
+    run_id = f"run-events-{stage}"
+    flow_run_id = f"flow-events-{stage}"
+    projection = local_product_projection(tmp_path)
+    version = projection.create_configuration(package())
+    projection.create_run(
+        ProductRun(
+            run_id=run_id,
+            operation=stage,
+            configuration_reference=f"{version.config_id}@{version.registry_version}",
+            config_id=version.config_id,
+            registry_version=version.registry_version,
+            package_checksum=version.package_checksum,
+            actor="initiator",
+            started_at=datetime.now(timezone.utc),
+            phase="accepted",
+            summary={"sync_name": "inventory"},
+        )
+    )
+    link = PrefectExecutionLink(flow_run_id=flow_run_id, purpose=stage, attempt=1)
+    if requester is None:
+        append_execution(projection, run_id, link)
+    else:
+        now = datetime.now(timezone.utc)
+        receipt = MutationReceipt(
+            receipt_id=f"m-{uuid4().hex}",
+            actor=requester,
+            key_digest=sha256(stage.encode()).hexdigest(),
+            operation=stage,
+            target_run_id=run_id,
+            request_fingerprint=sha256(f"{stage}-request".encode()).hexdigest(),
+            reason=f"{stage} requested",
+            resource_id=run_id,
+            run_id=run_id,
+            prefect_key=sha256(f"{stage}-prefect".encode()).hexdigest(),
+            created_at=now,
+            updated_at=now,
+        )
+        projection.reserve_mutation(receipt, admit_write=stage in {"apply", "sync"})
+        projection.add_prefect_execution(run_id, link, receipt_id=receipt.receipt_id)
+        projection.complete_mutation(
+            receipt.receipt_id, response_status=202, response_body={"run": {"run_id": run_id}}, flow_run_id=flow_run_id
+        )
+    assert projection.claim_execution(run_id, flow_run_id, worker_id=_EVENT_WORKER_ID)
+
+    def outside_the_result(*_args: object, **_kwargs: object) -> NoReturn:
+        msg = "a stage-result event must be written with the result"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(projection, "record_audit", outside_the_result)
+    return projection, run_id, flow_run_id
+
+
+@pytest.mark.parametrize(
+    ("stage", "event_type"),
+    [
+        ("plan", "infrahub_sync.run.planned"),
+        ("verify", "infrahub_sync.run.verified"),
+        ("apply", "infrahub_sync.run.applied"),
+        ("sync", "infrahub_sync.run.synced"),
+    ],
+)
+def test_a_successful_stage_records_its_result_event_with_the_requesting_actor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: Literal["plan", "verify", "apply", "sync"], event_type: str
+) -> None:
+    """FR-012a and FR-014: the success and its event commit together, naming who requested the stage."""
+    projection, run_id, flow_run_id = _stage_execution(tmp_path, monkeypatch, stage, requester="admin")
+    writeback = (
+        ExecutionMergeWriteback(results={})
+        if stage == "verify"
+        else ExecutionFinishWriteback(
+            phase="planned", outcome="planned", finished_at=datetime.now(timezone.utc), summary={}, results={}
+        )
+    )
+
+    service_flow._commit_success(
+        projection,
+        run_id,
+        flow_run_id,
+        stage=stage,
+        worker_id=_EVENT_WORKER_ID,
+        writeback=writeback,
+        secrets=(),
+        run_logger=logging.getLogger("test-service"),
+    )
+
+    (event,) = projection.audit_events(run_id)
+    assert (event.event_type, event.operation, event.outcome, event.actor, event.reason) == (
+        event_type,
+        stage,
+        "succeeded",
+        "admin",
+        f"{stage} requested",
+    )
+    config_id, registry_version, _checksum = _binding(projection, run_id)
+    assert (event.config_id, event.registry_version) == (config_id, registry_version)
+    assert [related.kind for related in event.related] == ["account", "config", "config_version"]
+
+
+@pytest.mark.parametrize(("dispatch_started", "outcome"), [(False, "failed"), (True, "ambiguous")])
+def test_a_failed_or_interrupted_stage_records_a_run_failed_event_with_the_runs_actor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, dispatch_started: bool, outcome: str
+) -> None:
+    """FR-012a: with no receipt holding the flow run ID, the event names the run's actor."""
+    projection, run_id, flow_run_id = _stage_execution(tmp_path, monkeypatch, "apply", requester=None)
+
+    recorded = service_flow._record_failure(
+        run_id,
+        "apply",
+        RuntimeError("apply failed"),
+        _RecordingRunLogger(),
+        (),
+        projection,
+        flow_run_id,
+        _EVENT_WORKER_ID,
+        dispatch_started=dispatch_started,
+        record=None,
+    )
+
+    assert recorded is not None
+    assert recorded.outcome == outcome
+    (event,) = projection.audit_events(run_id)
+    assert (event.event_type, event.operation, event.outcome, event.actor) == (
+        "infrahub_sync.run.failed",
+        "apply",
+        outcome,
+        "initiator",
+    )

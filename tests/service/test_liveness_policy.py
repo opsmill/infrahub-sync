@@ -16,10 +16,20 @@ pytest.importorskip("prefect")
 from prefect.states import Cancelled, Completed, Crashed, Failed, Running
 
 from infrahub_sync.product_store import MutationReceipt, PrefectExecutionLink, ProductRun, local_product_projection
+from infrahub_sync.service.events import RUN_FAILED
 from infrahub_sync.service.liveness import LivenessPolicy, RunLivenessReconciler, select_cancellable_execution
-from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, PoolWorker, Submission
+from infrahub_sync.service.orchestration import (
+    CancellationResult,
+    Observation,
+    PoolStatus,
+    PoolWorker,
+    RunLogRead,
+    Submission,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from opsmill_prefect_extras.executors import RemoteExecutionClient
 
 
@@ -83,6 +93,10 @@ class _Orchestration:
     async def cancel(self, flow_run_id: str) -> CancellationResult:  # noqa: PLR6301
         del flow_run_id
         return CancellationResult(acknowledged=True)
+
+    async def read_logs(self, flow_run_ids: Sequence[str]) -> RunLogRead:  # noqa: PLR6301
+        del flow_run_ids
+        return RunLogRead(expired=False)
 
 
 def _run(run_id: str, link: PrefectExecutionLink) -> ProductRun:
@@ -293,6 +307,9 @@ def test_claimed_execution_requires_its_exact_fresh_owner(tmp_path) -> None:
     assert run is not None
     link = run.prefect_executions[0]
     assert link.terminal_state == "interrupted"
+    # The run.failed event takes its time from the injected clock, the same value as terminal_at.
+    (failed,) = [event for event in projection.audit_events("run-dead-owner") if event.event_type == RUN_FAILED]
+    assert failed.created_at == now == link.terminal_at
 
 
 def test_owner_boundaries_and_clock_reversal_do_not_interrupt_early(tmp_path) -> None:

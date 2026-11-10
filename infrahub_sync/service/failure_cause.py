@@ -1,9 +1,9 @@
 """The cause a failed run records for the operator, beside the error's class name.
 
 The service worker records a failure's class name and the class of its immediate cause. For a
-refused token, a missing permission and a lineage refusal, it also records text the operator
-can act on, which `operator_cause` returns, and for every refusal this repository writes a
-next action for, it records that next action. Every text is redacted, stripped of control
+refused token, a missing permission, a lineage refusal and a destination schema read failure, it
+also records text the operator can act on, which `operator_cause` returns, and for every refusal
+this repository writes a next action for, it records that next action. Every text is redacted, stripped of control
 characters and capped, and none comes from a destination's response except the permission or
 server message `InfrahubErrorClassification.describe` quotes.
 """
@@ -16,6 +16,7 @@ from infrahub_sync.client.models import MAX_FAILURE_CAUSE_TEXT
 from infrahub_sync.execution import redact
 from infrahub_sync.infrahub_errors import cause_chain, classify_infrahub_error_chain, quotable_text
 from infrahub_sync.plan.errors import LINEAGE_REFUSALS, PlanArtifactError
+from infrahub_sync.runtime_schema.errors import DestinationSchemaUnavailableError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -36,6 +37,11 @@ def operator_cause(exc: BaseException, secrets: Sequence[str]) -> dict[str, Any]
     - A lineage refusal (`LINEAGE_REFUSALS`) records its `message` as `cause` and its
       `next_action`. This repository writes those messages, and they
       name settings, kinds, node names, account names and ids only.
+    - A destination schema read failure (`DestinationSchemaUnavailableError`, and its subclass
+      `DestinationBranchNotFoundError` for a missing branch) records its `message` as `cause`
+      and its `next_action` the same way. Both come from one fixed template per reason, filled
+      with the branch and, for a refused token or a missing permission, the cause
+      `InfrahubErrorClassification.describe` returns.
     - Otherwise, the first link that carries a non-empty `next_action` this repository writes
       (a `PlanArtifactError`) records that
       `next_action`, and never its message.
@@ -55,7 +61,7 @@ def operator_cause(exc: BaseException, secrets: Sequence[str]) -> dict[str, Any]
     # `exc` was raised (its `__context__`) must not lend `exc` its next action.
     links = tuple(cause_chain(exc, follow_context=False))
     for link in links:
-        if isinstance(link, LINEAGE_REFUSALS):
+        if isinstance(link, (*LINEAGE_REFUSALS, DestinationSchemaUnavailableError)):
             return {
                 "cause": _recordable(link.message, secrets),
                 "next_action": _recordable(link.next_action, secrets),

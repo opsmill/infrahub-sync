@@ -250,6 +250,7 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
     from infrahub_sdk import Config, InfrahubClientSync
     from infrahub_sdk.exceptions import (
         AuthenticationError,
+        BranchNotFoundError,
         ServerNotReachableError,
         ServerNotResponsiveError,
     )
@@ -278,9 +279,14 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
     except (httpx.TransportError, ServerNotReachableError) as exc:
         msg = f"destination server could not be reached: {type(exc).__name__}"
         raise DestinationSchemaReadError(msg, reason="unreachable") from None
+    except BranchNotFoundError as exc:
+        # The SDK raises this for any HTTP 400 on the schema endpoint, which Infrahub answers
+        # for a branch it does not have; the request sends no other parameter it can refuse.
+        msg = f"destination has no branch to read the schema from: {type(exc).__name__}"
+        raise DestinationSchemaReadError(msg, reason="nobranch") from None
     except InfrahubSdkError as exc:
         # The SDK's own base error: everything it raises that the arms above did not
-        # classify (a missing branch, a GraphQL refusal, undecodable content) is still a
+        # classify (a GraphQL refusal, undecodable content) is still a
         # read the destination rejected, never an untyped escape (review F1).
         msg = f"destination rejected the schema read: {type(exc).__name__}"
         raise DestinationSchemaReadError(msg, reason="rejected") from None

@@ -17,14 +17,20 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
 from infrahub_sync.configuration.models import ValidationFinding
-from infrahub_sync.product_store import ConfigurationPage, ProductRun, local_product_projection
+from infrahub_sync.product_store import (
+    ConfigurationPage,
+    PrimaryResource,
+    ProductRun,
+    RelatedResource,
+    local_product_projection,
+)
 from infrahub_sync.product_store import configs as configs_service
 from infrahub_sync.product_store.configs import ValidationReport
 from infrahub_sync.service import serve
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.config_routes import ConfigurationAPIError, ConfigurationRoutes
-from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, Submission
+from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.serve import build_app
 from infrahub_sync.service.service import RunService, ServiceAPIError
 from tests.configuration.validation_packages import package, package_data
@@ -33,6 +39,7 @@ ADMIN_TOKEN = "admin-token-canary-0003"  # noqa: S105 - deliberate non-secret bo
 OTHER_TOKEN = "reader-token-canary-0004"  # noqa: S105 - deliberate non-secret boundary canary.
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
     from typing import NoReturn
 
     from infrahub_sync.configuration.models import ConfigurationPackage
@@ -54,6 +61,10 @@ class _Orchestration:  # pylint: disable=too-few-public-methods
 
     async def cancel(self, flow_run_id: str) -> CancellationResult:  # noqa: ARG002, PLR6301
         return CancellationResult(acknowledged=True)
+
+    async def read_logs(self, flow_run_ids: Sequence[str]) -> RunLogRead:  # noqa: PLR6301
+        del flow_run_ids
+        return RunLogRead(expired=False)
 
 
 class _UnknownConfigsError(configs_service.ConfigsError):
@@ -1161,6 +1172,60 @@ def test_build_app_uses_the_prefect_worker_query_setting_for_liveness_policy(
 
 
 @pytest.mark.parametrize(
+    ("value", "expected"),
+    [("http://127.0.0.1:4230/", "http://127.0.0.1:4230"), ("", None)],
+    ids=("set", "empty"),
+)
+def test_build_app_passes_the_validated_prefect_ui_url_to_the_run_service(
+    monkeypatch: pytest.MonkeyPatch, value: str, expected: str | None
+) -> None:
+    """US3: the run service builds Prefect UI links from the validated setting, or none when it is empty."""
+    monkeypatch.setenv("INFRAHUB_SYNC_PREFECT_UI_URL", value)
+    received: list[object] = []
+
+    class Resolver:
+        secret_values: tuple[str, ...] = ()
+
+    def run_service_factory(*_args: object, **kwargs: object) -> object:
+        received.append(kwargs["prefect_ui_url"])
+        return object()
+
+    build_app(
+        projection_factory=object,
+        resolver_factory=Resolver,
+        run_service_factory=run_service_factory,
+        configuration_routes_factory=lambda **_kwargs: object(),
+        app_factory=lambda *_args: object(),
+    )
+
+    assert received == [expected]
+
+
+def test_build_app_refuses_an_invalid_prefect_ui_url_before_constructing_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An invalid Prefect UI address stops start-up with a message that does not print the value."""
+    monkeypatch.setenv("INFRAHUB_SYNC_PREFECT_UI_URL", "http://user:secret@prefect")
+    constructed: list[str] = []
+
+    def construct(*_args: object, **_kwargs: object) -> object:
+        constructed.append("dependency")
+        return object()
+
+    with pytest.raises(ValueError, match="INFRAHUB_SYNC_PREFECT_UI_URL") as refused:
+        build_app(
+            projection_factory=construct,
+            resolver_factory=construct,
+            run_service_factory=construct,
+            configuration_routes_factory=construct,
+            app_factory=construct,
+        )
+
+    assert "secret" not in str(refused.value)
+    assert constructed == []
+
+
+@pytest.mark.parametrize(
     ("setting", "value"),
     [
         ("INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS", "0"),
@@ -1483,3 +1548,129 @@ def test_a_cursor_is_refused_by_another_filter_configuration_or_list(
     ):
         assert response.status_code == 422, response.text
         assert response.json()["error"]["code"] == "invalid-cursor"
+
+
+def _event_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, ProductProjection]:
+    """Return a client that holds no token, and the projection both route families use."""
+    monkeypatch.setenv(
+        PRINCIPALS_ENV,
+        json.dumps({"admin": {"token": ADMIN_TOKEN, "administrator": True}, "viewer": {"token": OTHER_TOKEN}}),
+    )
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    projection = local_product_projection(tmp_path)
+    client = TestClient(
+        create_app(
+            RunService(projection, _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(product_projection=projection, secrets=resolver.secret_values),
+        )
+    )
+    return client, projection
+
+
+def _typed_config_events(projection: ProductProjection) -> list[tuple[str | None, str, str, str | None, int | None]]:
+    return [
+        (event.event_type, event.operation, event.outcome, event.config_id, event.registry_version)
+        for event in projection.audit_events()
+    ]
+
+
+def test_configuration_decisions_record_typed_configuration_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FR-012: registration, a new version, a retrieved version and a replay each name the configuration and version."""
+    client, projection = _event_client(tmp_path, monkeypatch)
+    admin = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
+    record_audit = projection.record_audit
+
+    def guarded(event: object, *, secrets: tuple[str, ...] = ()) -> None:
+        assert getattr(event, "outcome", None) != "accepted", "an accepted event must share the decision's transaction"
+        record_audit(event, secrets=secrets)  # ty: ignore[invalid-argument-type]
+
+    monkeypatch.setattr(projection, "record_audit", guarded)
+
+    registered = client.post(
+        "/configs", headers={**admin, "Idempotency-Key": "register"}, json={"package": package_data(), "reason": "new"}
+    )
+    assert registered.status_code == 201
+    config_id = registered.json()["configuration"]["config_id"]
+    version = client.post(
+        f"/configs/{config_id}/versions",
+        headers={**admin, "Idempotency-Key": "version"},
+        json={"package": _named_package("renamed"), "reason": "second"},
+    )
+    assert version.status_code == 201
+    retrieved = client.post(
+        f"/configs/{config_id}/versions",
+        headers={**admin, "Idempotency-Key": "same-content"},
+        json={"package": _named_package("renamed"), "reason": "again"},
+    )
+    assert retrieved.status_code == 200
+    assert (
+        client.post(
+            "/configs",
+            headers={**admin, "Idempotency-Key": "register"},
+            json={"package": package_data(), "reason": "new"},
+        ).status_code
+        == 201
+    )
+
+    assert _typed_config_events(projection) == [
+        ("infrahub_sync.config.registered", "register-config", "accepted", config_id, 1),
+        ("infrahub_sync.config.version_registered", "create-config-version", "accepted", config_id, 2),
+        ("infrahub_sync.config.version_retrieved", "create-config-version", "accepted", config_id, 2),
+        ("infrahub_sync.config.replayed", "register-config", "replayed", config_id, 1),
+    ]
+    for event in projection.audit_events():
+        assert event.run_id is None
+        assert event.primary_resource == PrimaryResource(kind="config", id=config_id)
+        assert event.related == (
+            RelatedResource(kind="account", id="admin"),
+            RelatedResource(kind="config", id=config_id),
+            RelatedResource(kind="config_version", id=f"{config_id}@{event.registry_version}"),
+        )
+
+
+def test_configuration_refusals_record_configuration_refused_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FR-012: an authorization or idempotency refusal is typed `config.refused`; a bad token gets no type."""
+    client, projection = _event_client(tmp_path, monkeypatch)
+    admin = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
+    viewer = {"Authorization": f"Bearer {OTHER_TOKEN}"}
+    body = {"package": package_data(), "reason": "new"}
+    config_id = _register_with(client, admin, body)
+
+    assert client.post("/configs", headers={**viewer, "Idempotency-Key": "v1"}, json=body).status_code == 403
+    assert (
+        client.post(
+            f"/configs/{config_id}/versions", headers={**viewer, "Idempotency-Key": "v2"}, json=body
+        ).status_code
+        == 403
+    )
+    changed = {**body, "reason": "changed"}
+    assert client.post("/configs", headers={**admin, "Idempotency-Key": "register"}, json=changed).status_code == 409
+    assert (
+        client.post("/configs", headers={"Authorization": "Bearer nope", "Idempotency-Key": "x"}, json=body).status_code
+        == 401
+    )
+
+    refusals = [event for event in projection.audit_events() if event.outcome.startswith("refused-")]
+    assert [(event.event_type, event.operation, event.outcome, event.config_id) for event in refusals] == [
+        ("infrahub_sync.config.refused", "register-config", "refused-authorization", None),
+        ("infrahub_sync.config.refused", "create-config-version", "refused-authorization", config_id),
+        ("infrahub_sync.config.refused", "register-config", "refused-idempotency", None),
+        (None, "/configs", "refused-authentication", None),
+    ]
+    version_refusal = refusals[1]
+    assert version_refusal.primary_resource == PrimaryResource(kind="config", id=config_id)
+    assert version_refusal.related == (
+        RelatedResource(kind="account", id="viewer"),
+        RelatedResource(kind="config", id=config_id),
+    )
+
+
+def _register_with(client: TestClient, headers: dict[str, str], body: Mapping[str, object]) -> str:
+    response = client.post("/configs", headers={**headers, "Idempotency-Key": "register"}, json=body)
+    assert response.status_code == 201, response.text
+    return str(response.json()["configuration"]["config_id"])
