@@ -153,14 +153,6 @@ export const runQuery = (runId: string) =>
     }
   );
 
-export const planQuery = (runId: string) =>
-  $api.queryOptions(
-    "get",
-    "/runs/{run_id}/plan",
-    { params: { path: { run_id: runId } } },
-    { retry: false }
-  );
-
 /** The newest run of each configuration, from one page of `GET /runs`. */
 export function latestRunByConfig(runs: Run[]): Map<string, Run> {
   const latest = new Map<string, Run>();

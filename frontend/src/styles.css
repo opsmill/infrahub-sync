@@ -38,3 +38,126 @@ body {
     --tw-exit-scale: 1;
   }
 }
+
+/*
+ * The colours of a plan's actions in a run's change counts and its dock: emerald and sky, the
+ * siblings of the rose and amber the app uses for status, at the lightness of rose-600. Deletes
+ * are never applied, so they stay grey.
+ */
+:root {
+  /* Marks: bars, dots, squares. */
+  --change-create: oklch(0.596 0.145 163.225);
+  --change-update: oklch(0.588 0.158 241.966);
+  --change-delete: var(--subtle-muted);
+  /* Text and signs, one step darker for contrast, as the app's status text uses -700. */
+  --change-create-text: oklch(0.508 0.118 165.612);
+  --change-update-text: oklch(0.5 0.134 242.749);
+  /* A value the plan replaces or removes, in a diff: rose, as the app's danger colour. */
+  --change-remove-text: oklch(0.514 0.222 16.935);
+  /* Backgrounds of chips and highlighted words: the -500 step at 15%. */
+  --change-create-surface: oklch(0.696 0.17 162.48 / 0.15);
+  --change-update-surface: oklch(0.685 0.169 237.323 / 0.15);
+  --change-remove-surface: oklch(0.645 0.246 16.439 / 0.15);
+}
+.dark {
+  --change-create: oklch(0.765 0.177 163.223);
+  --change-update: oklch(0.746 0.16 232.661);
+  --change-create-text: oklch(0.765 0.177 163.223);
+  --change-update-text: oklch(0.746 0.16 232.661);
+  --change-remove-text: oklch(0.712 0.194 13.428);
+  --change-create-surface: oklch(0.765 0.177 163.223 / 0.2);
+  --change-update-surface: oklch(0.746 0.16 232.661 / 0.2);
+  --change-remove-surface: oklch(0.712 0.194 13.428 / 0.2);
+}
+
+/* The changes dock is dark in both themes, so it uses the bright steps of the action colours. */
+.changes-dock {
+  --change-create: oklch(0.765 0.177 163.223);
+  --change-update: oklch(0.746 0.16 232.661);
+  --change-delete: oklch(0.553 0.013 58.071);
+  --dock-fg: oklch(0.985 0.001 106.423);
+  --dock-muted: oklch(0.709 0.01 56.259);
+  --dock-faint: rgb(255 255 255 / 0.1);
+  color: var(--dock-fg);
+  background: oklch(0.216 0.006 56.043);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.12),
+    inset 0 0 0 1px rgb(255 255 255 / 0.07),
+    0 1px 2px rgb(0 0 0 / 0.2),
+    0 10px 28px -8px rgb(0 0 0 / 0.36),
+    0 28px 60px -28px rgb(0 0 0 / 0.42);
+}
+.dark .changes-dock {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.1),
+    0 0 0 1px rgb(255 255 255 / 0.1),
+    0 14px 36px -10px rgb(0 0 0 / 0.6);
+}
+
+/*
+ * The dock and the changes sheet share the name `changes-surface`: opening the sheet grows the
+ * dock into it, closing shrinks it back. Each picture keeps its size, pinned to the top of the
+ * moving box; the fades stay short because halfway through a crossfade the box is see-through.
+ */
+::view-transition-group(changes-surface) {
+  animation-duration: 420ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  overflow: clip;
+  border-radius: 18px;
+}
+::view-transition-image-pair(changes-surface) {
+  overflow: clip;
+}
+::view-transition-old(changes-surface),
+::view-transition-new(changes-surface) {
+  height: auto;
+  width: auto;
+  inset: 0 auto auto 50%;
+  translate: -50% 0;
+  object-fit: none;
+}
+::view-transition-old(changes-surface) {
+  animation: 90ms ease-out both changes-fade-out;
+}
+::view-transition-new(changes-surface) {
+  animation: 150ms ease-out both changes-fade-in;
+}
+::view-transition-group(changes-title),
+::view-transition-group(changes-state),
+::view-transition-group(changes-bar) {
+  animation-duration: 420ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 300ms;
+}
+html:active-view-transition-type(changes-close)::view-transition-group(changes-surface),
+html:active-view-transition-type(changes-close)::view-transition-group(changes-title),
+html:active-view-transition-type(changes-close)::view-transition-group(changes-state),
+html:active-view-transition-type(changes-close)::view-transition-group(changes-bar) {
+  animation-duration: 300ms;
+}
+html:active-view-transition-type(changes-close)::view-transition-old(changes-surface) {
+  animation: 150ms 60ms ease-in both changes-fade-out;
+}
+html:active-view-transition-type(changes-close)::view-transition-new(changes-surface) {
+  animation: 120ms 40ms ease-out both changes-fade-in;
+}
+@keyframes changes-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes changes-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}

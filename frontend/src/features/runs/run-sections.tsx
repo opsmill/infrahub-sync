@@ -1,24 +1,17 @@
-import { Button, Card, LinkButton } from "@infrahub/ui";
+import { Card, LinkButton } from "@infrahub/ui";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { cn } from "tailwind-variants";
 
-import { isEnvelope } from "#/api/errors";
-import { describeError } from "#/api/queries";
 import type { Plan, Run } from "#/api/types";
 import { DownloadIcon } from "#/components/icons";
-import { Bar, CopyButton, ErrorPanel, FOCUS, SectionHeading } from "#/components/page";
+import { CopyButton, FOCUS, SectionHeading } from "#/components/page";
 import { BranchCode, When } from "#/components/run-status";
-import { runCounts } from "#/domain/run-state";
 import { PLAN_ARTIFACT_ID } from "#/domain/run-steps";
 import type { System } from "#/domain/systems";
 import { formatAbsolute, formatDuration } from "#/lib/time";
 
-import { changesSentence, PlanChanges, PlanFacts } from "./PlanReview";
-
 export { PLAN_ARTIFACT_ID };
-
-const MUTED_LINE = "flex flex-wrap items-center gap-3 text-foreground-muted text-sm";
 
 /* ---------- changes ---------- */
 
@@ -27,142 +20,6 @@ export interface PlanRequest {
   error: unknown;
   isPending: boolean;
   refetch: () => unknown;
-}
-
-function PlanSkeleton({ count }: { count?: number }) {
-  return (
-    <section aria-busy="true" className="flex flex-col gap-3">
-      <output className="sr-only">Loading the plan</output>
-      <SectionHeading title="Changes" count={count} />
-      <Card className="overflow-clip">
-        <div className="flex h-11 items-center border-b bg-content-muted px-4 sm:h-10">
-          <Bar className="h-3.5 w-32" />
-        </div>
-        {Array.from({ length: 6 }, (_, i) => (
-          <div
-            key={i}
-            className="flex h-11 items-center gap-3 border-b px-4 last:border-b-0 sm:h-9"
-          >
-            <Bar className="size-4 rounded-[5px]" />
-            <Bar className="h-3.5 w-48 max-w-[60%]" />
-          </div>
-        ))}
-      </Card>
-    </section>
-  );
-}
-
-function PlanError({ run, plan }: { run: Run; plan: PlanRequest }) {
-  const d = describeError(plan.error);
-  const retry = (
-    <Button variant="outline" size="sm" onPress={() => plan.refetch()}>
-      Try again
-    </Button>
-  );
-  let body: ReactNode;
-  if (d.status === 410) {
-    const expires = run.artifact_refs.find((a) => a.artifact_id === PLAN_ARTIFACT_ID)?.expires_at;
-    body = (
-      <p className={MUTED_LINE}>
-        <span>
-          The saved plan expired
-          {expires && (
-            <>
-              {" "}
-              <When iso={expires} />
-            </>
-          )}
-          . Create a new plan to review the changes again.
-        </span>
-      </p>
-    );
-  } else if (d.status === 503) {
-    body = (
-      <div className={MUTED_LINE}>
-        <p className="flex flex-col gap-0.5">
-          The Sync API could not read the saved plan of this run.
-          {isEnvelope(plan.error) && (
-            <span className="text-subtle text-xs">{plan.error.error.message}</span>
-          )}
-        </p>
-        {retry}
-      </div>
-    );
-  } else {
-    body = <ErrorPanel compact error={plan.error} onRetry={() => plan.refetch()} />;
-  }
-  return (
-    <section aria-labelledby="changes" className="flex flex-col gap-3">
-      <SectionHeading id="changes" title="Changes" />
-      {body}
-    </section>
-  );
-}
-
-/** The saved plan: what the run proposes or wrote, then the record that identifies it. */
-export function PlanSection({ run, plan }: { run: Run; plan: PlanRequest }) {
-  if (plan.isPending) return <PlanSkeleton count={runCounts(run)?.total} />;
-  if (!plan.data) return <PlanError run={run} plan={plan} />;
-  const data = plan.data;
-  if (data.summary.total === 0) {
-    return (
-      <section aria-labelledby="changes" className="flex flex-col gap-3">
-        <SectionHeading id="changes" title="Changes" />
-        <div className="flex flex-col gap-1 text-foreground-muted text-sm">
-          <p>
-            The plan found no differences between the source and the destination
-            {data.destination_branch && (
-              <>
-                {" "}
-                on branch <BranchCode branch={data.destination_branch} />
-              </>
-            )}
-            .
-          </p>
-          {!data.summary.delete_operations_computed && (
-            <p className="text-subtle text-xs">
-              Deletes were not listed, because the destination was not read in full.
-            </p>
-          )}
-        </div>
-      </section>
-    );
-  }
-  return (
-    <>
-      <section aria-labelledby="changes" className="flex flex-col gap-3">
-        <SectionHeading id="changes" title="Changes" count={data.summary.total}>
-          {changesSentence(data, run.phase)}
-        </SectionHeading>
-        <PlanChanges plan={data} phase={run.phase} />
-      </section>
-      {data.operations.length > 0 && (
-        <section aria-labelledby="plan-record" className="flex flex-col gap-3">
-          <SectionHeading id="plan-record" title="Plan record" />
-          <Card className="p-4">
-            <PlanFacts plan={data} runBranch={run.destination_branch ?? null} />
-          </Card>
-        </section>
-      )}
-    </>
-  );
-}
-
-/**
- * The changes of the saved plan, as their own section after the timeline. A plan still loading,
- * unreadable or empty falls back to `PlanSection`, which says why. A run with no saved plan has none.
- */
-export function ChangesSection({ run, plan }: { run: Run; plan: PlanRequest }) {
-  const data = plan.data;
-  if (!data || data.summary.total === 0) return <PlanSection run={run} plan={plan} />;
-  return (
-    <section aria-labelledby="changes" className="flex scroll-mt-16 flex-col gap-3">
-      <SectionHeading id="changes" title="Changes" count={data.summary.total}>
-        {changesSentence(data, run.phase)}
-      </SectionHeading>
-      <PlanChanges plan={data} phase={run.phase} />
-    </section>
-  );
 }
 
 /* ---------- files ---------- */

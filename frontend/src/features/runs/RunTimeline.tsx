@@ -382,18 +382,13 @@ function StepDetails({
 /* ---------- the changes, at a glance ---------- */
 
 /**
- * The plan's counts in one line, with a link to the Changes section after the timeline. The counts
- * come from the saved plan when it has loaded, else from the run's summary.
+ * The plan's counts in one line, from the run record, with a link that opens the changes. The run
+ * page never downloads the plan to show them.
  */
-function ChangesGlance({ run, plan }: { run: Run; plan: PlanRequest }) {
-  const by = plan.data?.summary.by_action as Record<string, number> | undefined;
+function ChangesGlance({ run, onOpenChanges }: { run: Run; onOpenChanges: () => void }) {
   const c = runCounts(run);
-  const counts = {
-    create: by?.create ?? c?.create ?? 0,
-    update: by?.update ?? c?.update ?? 0,
-    delete: by?.delete ?? c?.delete ?? 0,
-  };
-  const total = plan.data?.summary.total ?? c?.total ?? 0;
+  const counts = { create: c?.create ?? 0, update: c?.update ?? 0, delete: c?.delete ?? 0 };
+  const total = c?.total ?? 0;
   if (total === 0) return null;
   const parts: [keyof typeof CHANGE_TONE, number, string][] = [
     ["create", counts.create, counts.create === 1 ? "create" : "creates"],
@@ -413,16 +408,17 @@ function ChangesGlance({ run, plan }: { run: Run; plan: PlanRequest }) {
             {word}
           </span>
         ))}
-      <a
-        href="#changes"
+      <button
+        type="button"
+        onClick={onOpenChanges}
         className={cn(
-          "inline-flex items-center gap-1 rounded-sm font-medium text-accent hover:underline",
+          "inline-flex cursor-pointer items-center gap-1 rounded-sm font-medium text-accent hover:underline",
           FOCUS
         )}
       >
-        See the {fmt(total)} {total === 1 ? "change" : "changes"}
-        <ArrowRightIcon className="size-3 rotate-90" />
-      </a>
+        View the {fmt(total)} {total === 1 ? "change" : "changes"}
+        <ArrowRightIcon className="size-3" />
+      </button>
     </p>
   );
 }
@@ -444,9 +440,11 @@ export function RunTimeline({
   label,
   failure,
   focus,
+  onOpenChanges,
 }: {
   run: Run;
   steps: RunStep[];
+  /** The saved plan once this session has downloaded it; the timeline never starts a download. */
   plan: PlanRequest;
   hasPlan: boolean;
   source?: System;
@@ -456,11 +454,13 @@ export function RunTimeline({
   /** The failure notice, shown under the step that failed. */
   failure?: ReactNode;
   focus: StepFocus;
+  /** Opens the changes sheet. */
+  onOpenChanges: () => void;
 }) {
   const failedIndex = steps.findIndex((s) => s.state === "failed");
   const finished = run.finished_at;
-  // A done plan with changes shows their counts and a link to the Changes section, not a sentence.
-  const changeTotal = plan.data?.summary.total ?? runCounts(run)?.total ?? 0;
+  // A done plan with changes shows their counts and a link that opens them, not a sentence.
+  const changeTotal = runCounts(run)?.total ?? 0;
   const glance = (s: RunStep) =>
     s.kind === "plan" && s.state === "done" && hasPlan && changeTotal > 0;
 
@@ -529,7 +529,7 @@ export function RunTimeline({
         }
       >
         {glance(s) ? (
-          <ChangesGlance run={run} plan={plan} />
+          <ChangesGlance run={run} onOpenChanges={onOpenChanges} />
         ) : (
           s.outcome && <p className="text-pretty text-foreground-muted text-sm">{s.outcome}</p>
         )}

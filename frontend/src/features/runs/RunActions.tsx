@@ -10,7 +10,7 @@ import type { Plan, Run } from "#/api/types";
 import { CheckIcon, PlayIcon, StateIcon } from "#/components/icons";
 import { CopyButton, Notice } from "#/components/page";
 import { BranchCode, CHANGE_TONE, When } from "#/components/run-status";
-import { fmt, isVerified, laterWrite, newerPlan } from "#/domain/run-state";
+import { executableCount, fmt, isVerified, laterWrite, newerPlan } from "#/domain/run-state";
 import { describeSystem } from "#/domain/systems";
 
 import {
@@ -23,6 +23,7 @@ import {
   ReasonField,
   resendHint,
 } from "./form";
+import { DownloadProgress, usePlanDownload } from "./plan-download";
 
 const changes = (n: number) => `${fmt(n)} ${n === 1 ? "change" : "changes"}`;
 
@@ -576,6 +577,47 @@ export function CancelDialog({
           cancel.reset();
         }}
       />
+    </DialogFrame>
+  );
+}
+
+/**
+ * The Apply dialog. Apply confirms the plan by its checksum, which only the downloaded plan
+ * carries, so the dialog opens at once and shows the download until the plan is there.
+ */
+export function ApplyWithPlan({
+  run,
+  onClose,
+  onDone,
+}: {
+  run: Run;
+  onClose: () => void;
+  onDone?: () => void;
+}) {
+  const download = usePlanDownload(run, { start: true });
+  if (download.plan)
+    return <ApplyDialog run={run} plan={download.plan} onClose={onClose} onDone={onDone} />;
+  const total = executableCount(run) ?? 0;
+  const words = `${fmt(total)} ${total === 1 ? "change" : "changes"}`;
+  return (
+    <DialogFrame
+      isOpen
+      onOpenChange={(open) => !open && onClose()}
+      title={`Apply ${words}`}
+      ariaLabel={`Apply ${words}`}
+      description="Apply confirms the plan by its checksum, which comes with the plan."
+      submitLabel={`Apply ${words}`}
+      pendingLabel="Applying"
+      isPending={false}
+      isDisabled
+      disabledReason={
+        download.status === "error" ? undefined : "You can apply once the plan has downloaded."
+      }
+      onSubmit={() => {}}
+    >
+      <div className="flex flex-col gap-2 rounded-lg border bg-content-muted p-3">
+        <DownloadProgress state={download} retry={download.start} />
+      </div>
     </DialogFrame>
   );
 }

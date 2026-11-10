@@ -6,16 +6,23 @@ import { formatAbsolute, formatRelative, useNow } from "#/lib/time";
 import { CODE_CHIP } from "./classes";
 import { STATE_TEXT, StateIcon } from "./icons";
 
-/** Sign and colours for counts of changes. Deletes are grey: apply lists them but does not run them. */
+/**
+ * Sign and colours for counts of changes: the app's change colours (`--change-*` in styles.css),
+ * not the diff tokens. Deletes are grey: apply lists them but does not run them.
+ */
 export const CHANGE_TONE: Record<
   "create" | "update" | "delete",
   { sign: string; text: string; chip: string }
 > = {
-  create: { sign: "+", text: "text-diff-added", chip: "bg-diff-added-surface text-diff-added" },
+  create: {
+    sign: "+",
+    text: "text-(--change-create-text)",
+    chip: "bg-(--change-create-surface) text-(--change-create-text)",
+  },
   update: {
     sign: "~",
-    text: "text-diff-updated",
-    chip: "bg-diff-updated-surface text-diff-updated",
+    text: "text-(--change-update-text)",
+    chip: "bg-(--change-update-surface) text-(--change-update-text)",
   },
   delete: { sign: "−", text: "text-subtle", chip: "bg-content-strong text-subtle" },
 };

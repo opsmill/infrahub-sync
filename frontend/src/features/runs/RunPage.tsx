@@ -11,7 +11,6 @@ import {
   isInProgress,
   LIST_REFRESH_MS,
   meQuery,
-  planQuery,
   runQuery,
   runsQuery,
 } from "#/api/queries";
@@ -43,7 +42,10 @@ import {
 import { runStepList } from "#/domain/run-steps";
 import { describeSystem, type System } from "#/domain/systems";
 import { useDocumentTitle } from "#/lib/title";
-import { ApplyButton, ApplyDialog, CancelDialog, VerifyDialog } from "./RunActions";
+import { ChangeCount, ChangesDock, type ChangesState, useChangesShortcut } from "./ChangesDock";
+import { ChangesSheet, useChangesSheet } from "./ChangesSheet";
+import { usePlanDownload } from "./plan-download";
+import { ApplyButton, ApplyWithPlan, CancelDialog, VerifyDialog } from "./RunActions";
 import { RunTimeline, useStepFocus } from "./RunTimeline";
 import { RunTimeStrip } from "./RunTimeStrip";
 import {
@@ -54,7 +56,7 @@ import {
   NewerPlanNotice,
   NewerRunNotice,
 } from "./run-notices";
-import { ChangesSection, Details, PLAN_ARTIFACT_ID, RunFiles } from "./run-sections";
+import { Details, PLAN_ARTIFACT_ID, type PlanRequest, RunFiles } from "./run-sections";
 import { StartRunDialog } from "./StartRunDialog";
 
 const LINK = cn(
@@ -192,6 +194,7 @@ function MetaLine({
   source,
   destination,
   latestVersion,
+  changes,
 }: {
   run: Run;
   state: RunState;
@@ -199,6 +202,8 @@ function MetaLine({
   source?: System;
   destination?: System;
   latestVersion?: number;
+  /** The plan's counts, which open the changes. */
+  changes?: ReactNode;
 }) {
   const items: [string, ReactNode][] = [
     [
@@ -254,6 +259,7 @@ function MetaLine({
       </span>,
     ]);
   }
+  if (changes) items.push(["changes", changes]);
   return (
     <ul className={META_LIST}>
       {items.map(([key, node]) => (
@@ -266,6 +272,27 @@ function MetaLine({
 }
 
 type Dialog = "verify" | "apply" | "cancel" | "plan" | null;
+
+const STOPPED = new Set(["failed", "cancelled", "abandoned", "ambiguous"]);
+
+/**
+ * What the run can show of its changes: a list to open, a plan still running, no differences, or
+ * counts whose saved plan is gone. A run that stopped before saving a plan shows none.
+ */
+function changesState(
+  run: Run,
+  hasPlan: boolean,
+  planExpired: boolean,
+  counts: ReturnType<typeof runCounts>
+): ChangesState | undefined {
+  if (hasPlan && counts && counts.total > 0)
+    return planExpired ? { kind: "unavailable", counts } : { kind: "list", counts };
+  if (hasPlan) return { kind: "none" };
+  if (run.outcome == null) return { kind: "pending" };
+  if (counts && counts.total > 0) return { kind: "unavailable", counts };
+  if (STOPPED.has(run.outcome)) return undefined;
+  return { kind: "none" };
+}
 
 const isWaitingPlan = (resource: RunResource | undefined) =>
   resource?.run.phase === "planned" &&
@@ -297,7 +324,10 @@ export function RunPage({ runId }: { runId: string }) {
     enabled: Boolean(configId) && registryVersion !== undefined,
   });
   const hasPlan = Boolean(run?.artifact_refs.some((a) => a.artifact_id === PLAN_ARTIFACT_ID));
-  const plan = useQuery({ ...planQuery(runId), enabled: hasPlan });
+  // The saved plan downloads only when someone opens the changes or the Apply dialog.
+  const download = usePlanDownload(run);
+  const sheet = useChangesSheet();
+  useChangesShortcut(() => sheet.open(), hasPlan && !sheet.isOpen);
   const me = useQuery(meQuery());
   const running = isInProgress(resource);
   const inFlight =
@@ -407,7 +437,11 @@ export function RunPage({ runId }: { runId: string }) {
 
   const verifyFailed = Boolean(run.results?.verify_failure) && !isVerified(run);
   const reviewable = waitingPlan && !refreshError && !verifyFailed;
-  const planExpired = plan.isError && describeError(plan.error).status === 410;
+  const expiresAt = run.artifact_refs.find((a) => a.artifact_id === PLAN_ARTIFACT_ID)?.expires_at;
+  const planExpired =
+    (expiresAt != null && time(expiresAt) <= Date.now()) ||
+    (download.status === "error" && describeError(download.error).status === 410);
+  const planRefused = download.status === "error" || download.plan?.checksum_ok === false;
   const steps = runStepList(resource, { inFlight, planExpired });
   const executable = executableCount(run) ?? 0;
   const deleteOnly = isDeleteOnlyPlan(run);
@@ -418,14 +452,14 @@ export function RunPage({ runId }: { runId: string }) {
   const wouldCancel = Boolean(open) && !refreshError && !open?.cancellation_requested_at;
   const wouldVerify = reviewable && !isVerified(run) && !planExpired;
   const wouldApply =
-    reviewable && executable > 0 && hasPlan && !plan.isError && plan.data?.checksum_ok !== false;
+    reviewable && executable > 0 && hasPlan && !planExpired && download.plan?.checksum_ok !== false;
   const planVariant: "primary" | "outline" | undefined =
     !configId || running || latestVersion === undefined
       ? undefined
       : reviewable
         ? planExpired || wrote
           ? "primary"
-          : outdated || deleteOnly || plan.isError || plan.data?.checksum_ok === false
+          : outdated || deleteOnly || planRefused
             ? "outline"
             : undefined
         : headerState === "insync" || laterRun
@@ -433,6 +467,17 @@ export function RunPage({ runId }: { runId: string }) {
           : headerState === "failed" || headerState === "idle"
             ? "primary"
             : undefined;
+
+  const counts = runCounts(run);
+  const changes = changesState(run, hasPlan, planExpired, counts);
+  // The branch the run writes to, even when the run records none, as the Apply dialog resolves it.
+  const writesTo = run.destination_branch ?? (destination ? (destination.branch ?? "main") : null);
+  const planRequest: PlanRequest = {
+    data: download.plan,
+    error: download.error,
+    isPending: false,
+    refetch: download.start,
+  };
 
   const close = () => setDialog(null);
   const focusHeading = () => requestAnimationFrame(() => headingRef.current?.focus());
@@ -460,6 +505,11 @@ export function RunPage({ runId }: { runId: string }) {
               source={source}
               destination={destination}
               latestVersion={latestVersion}
+              changes={
+                changes?.kind === "list" ? (
+                  <ChangeCount counts={changes.counts} onOpen={() => sheet.open()} />
+                ) : undefined
+              }
             />
           </div>
           <div
@@ -501,7 +551,6 @@ export function RunPage({ runId }: { runId: string }) {
             {canAct && wouldApply && (
               <ApplyButton
                 label={`Apply ${fmt(executable)} ${executable === 1 ? "change" : "changes"}`}
-                isPending={plan.isPending}
                 variant={wrote ? "outline" : "primary"}
                 onPress={() => setDialog("apply")}
               />
@@ -546,8 +595,9 @@ export function RunPage({ runId }: { runId: string }) {
         <RunTimeline
           run={run}
           steps={steps}
-          plan={plan}
+          plan={planRequest}
           hasPlan={hasPlan}
+          onOpenChanges={() => sheet.open()}
           source={source}
           destination={destination}
           state={headerState}
@@ -559,20 +609,37 @@ export function RunPage({ runId }: { runId: string }) {
                 run={run}
                 f={f}
                 orchestration={orchestration}
-                plan={plan.data}
+                plan={download.plan}
                 source={source}
                 destination={destination}
               />
             )
           }
         />
-        {hasPlan && <ChangesSection run={run} plan={plan} />}
         <RunFiles run={run} />
         <Details run={run} name={name} source={source} destination={destination} />
       </div>
       {dialog === "verify" && <VerifyDialog run={run} onClose={close} onDone={focusHeading} />}
-      {dialog === "apply" && plan.data && (
-        <ApplyDialog run={run} plan={plan.data} onClose={close} onDone={focusHeading} />
+      {dialog === "apply" && <ApplyWithPlan run={run} onClose={close} onDone={focusHeading} />}
+      {changes && !sheet.isOpen && (
+        <ChangesDock
+          run={run}
+          state={changes}
+          branch={writesTo}
+          onOpen={() => sheet.open()}
+          morph={sheet.morph}
+        />
+      )}
+      {sheet.isOpen && changes?.kind === "list" && (
+        <ChangesSheet
+          run={run}
+          counts={changes.counts}
+          branch={writesTo}
+          filter={sheet.filter}
+          onFilterChange={sheet.setFilter}
+          close={sheet.close}
+          morph={sheet.morph}
+        />
       )}
       {dialog === "cancel" && <CancelDialog run={run} onClose={close} onDone={focusHeading} />}
       {dialog === "plan" && configId && latestVersion !== undefined && (

@@ -9,7 +9,7 @@ import { executableCount, type FailureDetail, fmt, phaseLabel } from "#/domain/r
 import type { System } from "#/domain/systems";
 import { formatAbsolute } from "#/lib/time";
 
-import { identityParts } from "./PlanReview";
+import { identityParts } from "./plan-values";
 
 const RUN_LINK = cn("rounded-sm font-mono text-[13px] text-accent hover:underline", FOCUS);
 const LABEL = "block text-subtle text-xs";
