@@ -27,7 +27,11 @@ Order of evaluation:
    given checksum.
 7. Existing approval → 409 `already-approved`, the error `details` carry the existing approval.
 
-Success: `200 OK`, body is the run resource (`RunResource`) with its `approval`. No Prefect flow run is submitted.
+Success: `200 OK`, body is the run resource (`RunResource`) with its `approval`, plus `plan_summary` with the
+approved plan's counts (creates, updates, recorded deletes). The body is stored with the mutation receipt, so a
+retry with the same key returns it unchanged. No Prefect flow run is submitted.
+
+The `run-not-approvable` message names the run's phase, or the active stage when an execution is in progress.
 
 ## `GET /runs/{run_id}` and `GET /runs` (changed, additive)
 

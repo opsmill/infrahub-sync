@@ -114,6 +114,11 @@ migration (`store.py`, the nullable-column list near line 163, and `_migrate_*` 
 update (`... WHERE run_id = ? AND approved_by IS NULL AND phase = 'planned'`) records it, so two concurrent approvals
 cannot both succeed; the loser is answered with `already-approved`.
 
+The conditional update and the completion of the request's mutation receipt run in one store transaction
+(`record_approval`), because approval submits no flow run and so never reaches the receipt completion that
+`_resume_or_replay` performs for stages. A lost response is recovered by retrying with the same idempotency key,
+which replays the stored body (critique E1).
+
 **Alternatives considered**: a JSON column (rejected: the conditional update and future queries such as "approved
 runs not yet applied" read better as columns); a separate `run_approvals` table (rejected: at most one approval per
 run, never changed).

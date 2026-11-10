@@ -8,7 +8,8 @@ infrahub-sync approve RUN_ID --expected-checksum CHECKSUM [--reason TEXT] [--ide
 
 - Calls `POST /runs/{run_id}/approve`. Does not wait: approval completes in the request.
 - Not interactive and needs no `--yes`: it writes nothing to the destination.
-- Prints the run lines that `runs show` prints, including the approval lines below.
+- Prints the run lines that `runs show` prints, including the approval lines below, then the plan's summary
+  counts that were approved: `approved_creates`, `approved_updates`, `approved_deletes_recorded`.
 - Errors are printed through the existing client error path with the service's code and message.
 - Help text: "Record approval of the named run's saved plan without applying it."
 

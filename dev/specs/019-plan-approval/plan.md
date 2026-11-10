@@ -133,13 +133,23 @@ does not read the environment directly.
   the `apply`-scope runtime models (one schema read), `_require_planned_schema`, then
   `PlanApplier.open_existing(...).check_plan()`. Legacy runs keep file checks only (`destination_checked: false`),
   because a legacy run cannot be applied by the service either.
-- **Approval** (`service.py`): order of checks in [contracts/http-api.md](contracts/http-api.md). The store's
-  `record_approval(run_id, approval)` runs a conditional update and returns whether it stored; the receipt and the
-  approval commit together.
+- **Approval** (`service.py`): order of checks in [contracts/http-api.md](contracts/http-api.md). After the checks,
+  the service reserves a mutation receipt (operation `approve`) and calls a new store operation
+  `record_approval(run_id, approval, receipt, response)`. In one transaction it runs the conditional update
+  (`approved_by IS NULL AND phase = 'planned'`) and completes the receipt with the response body; when the update
+  matches no row, it completes the receipt with the `already-approved` error instead. A retry with the same key
+  replays the stored response; no flow run is submitted. Before implementing, check whether
+  `mutation_receipts.operation` is constrained (column check or `Literal` type) and add `approve` to it.
+- **Approve response**: the run resource plus the plan's summary counts (creates, updates, recorded deletes), stored
+  in the receipt so a replay shows the same summary. The CLI prints them.
+- **Refusal wording**: `run-not-approvable` names the phase, or the active stage when an execution is in progress
+  (for example "a verify execution is in progress").
 - **Setting** (`settings.py`): parsed once at start-up for validation, read through a function on each admission so
   tests can patch it.
 - **Docs**: the "Running a sync" page gets a short "Steps after a plan" section that answers "is `verify` an
-  approval?".
+  approval?". It states that `verify` now needs the destination to be reachable with the configured credentials.
+- **Changelog**: one `added` entry (approval and the setting) and one `changed` entry (`verify` checks the
+  destination and fails when it cannot reach it).
 
 ## Complexity Tracking
 
