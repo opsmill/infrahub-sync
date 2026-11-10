@@ -7,18 +7,14 @@ import type { Run } from "#/api/types";
 import { STATE_TEXT, StateIcon } from "#/components/icons";
 import { CLICKABLE, SectionHeading, STRETCHED } from "#/components/page";
 import { When } from "#/components/run-status";
-import { DAY_MS, runKind } from "#/domain/run-history";
 import { useNow } from "#/lib/time";
 import { useRunPreview } from "./RunPreview";
-import { CHART_DAYS, type PreviewHandler, RunsPerDay, RunsPerDayAxis } from "./RunsPerDay";
+import { type PreviewHandler, RunsPerDay, RunsPerDayAxis } from "./RunsPerDay";
 import { LIFT, SearchHint, SystemsLine } from "./row-parts";
 import { type ConfigurationRow, configName, type MatchHint, rowExplanation } from "./rows";
 
 const COLLAPSED_ROWS = 10;
 const COLUMNS = "md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(15rem,1.4fr)]";
-
-const failureText = (n: number) =>
-  `${n} ${n === 1 ? "run" : "runs"} failed in the last ${CHART_DAYS} days`;
 
 function Row({
   row,
@@ -38,10 +34,6 @@ function Row({
   const id = row.summary.config_id;
   const name = configName(row);
   const explanation = rowExplanation(row);
-  const since = now - CHART_DAYS * DAY_MS;
-  const failed = runs.filter(
-    (r) => runKind(r) === "failed" && new Date(r.started_at).getTime() >= since
-  ).length;
   const lastChange = row.run?.phase === "applied" ? undefined : row.lastApplied?.finished_at;
 
   return (
@@ -92,9 +84,6 @@ function Row({
               Last change <When iso={lastChange} className={LIFT} />
             </span>
           )}
-          {failed > 0 && (
-            <span className="whitespace-nowrap text-danger">{failureText(failed)}</span>
-          )}
         </p>
       </div>
       <div className="min-w-0">
@@ -117,7 +106,6 @@ function Row({
 export function InSyncSection({
   id,
   title,
-  note,
   items,
   history,
   loadedSince,
@@ -125,7 +113,6 @@ export function InSyncSection({
 }: {
   id: string;
   title: string;
-  note: string;
   items: { row: ConfigurationRow; hint?: MatchHint }[];
   /** The runs of each configuration, newest first. */
   history: Map<string, Run[]>;
@@ -139,12 +126,17 @@ export function InSyncSection({
 
   return (
     <section aria-labelledby={`group-${id}`} className="flex flex-col gap-2">
-      <SectionHeading id={`group-${id}`} title={title} count={items.length}>
-        {note}
-      </SectionHeading>
+      <SectionHeading id={`group-${id}`} title={title} count={items.length} />
       <Card className="overflow-hidden">
-        <div className={cn("hidden border-b px-4 py-1.5 md:grid md:gap-x-6", COLUMNS)}>
-          <span className="col-span-2" />
+        <div
+          aria-hidden="true"
+          className={cn(
+            "hidden border-b px-4 py-2 font-medium text-subtle text-xs md:grid md:gap-x-6",
+            COLUMNS
+          )}
+        >
+          <span>Configuration</span>
+          <span>Latest run</span>
           <RunsPerDayAxis />
         </div>
         <ul className="divide-y">

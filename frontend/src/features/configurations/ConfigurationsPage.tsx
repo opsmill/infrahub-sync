@@ -292,10 +292,7 @@ function Row({
 
 /* ---------- groups ---------- */
 
-const IN_SYNC_NOTE =
-  "One bar per day for the last 30 days. Its height is the runs of that day; red means a run failed.";
-
-const GROUPS: { id: string; title: string; note: string; states: RunState[] }[] = [
+const GROUPS: { id: string; title: string; note?: string; states: RunState[] }[] = [
   {
     id: "attention",
     title: "Needs your attention",
@@ -317,7 +314,6 @@ const GROUPS: { id: string; title: string; note: string; states: RunState[] }[] 
   {
     id: "insync",
     title: "In sync",
-    note: IN_SYNC_NOTE,
     states: ["insync"],
   },
 ];
@@ -708,7 +704,6 @@ export function ConfigurationsPage({
                         key={g.id}
                         id={g.id}
                         title={g.title}
-                        note={IN_SYNC_NOTE}
                         items={g.items}
                         history={history}
                         loadedSince={loadedSince}
