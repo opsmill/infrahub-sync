@@ -19,6 +19,7 @@ pytest.importorskip("prefect")
 
 from prefect import __version__ as prefect_version
 from prefect.client.schemas.objects import WorkerStatus
+from prefect.states import State
 from prefect.workers.process import ProcessJobConfiguration, ProcessWorker
 
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
@@ -193,8 +194,11 @@ def test_expired_worker_claim_refusal_precedes_all_stage_runtime_construction(
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(service_flow, "_execute_stage", lambda *_args, **_kwargs: constructed.append(stage))
 
-    with pytest.raises(ExecutionClaimRefusedError, match="service worker execution claim was refused"):
-        service_flow.service_sync_run.fn("run-worker-claim", stage)
+    state = service_flow.service_sync_run.fn("run-worker-claim", stage)
+
+    assert isinstance(state, State)
+    assert state.is_failed()
+    assert (state.message or "").startswith("service worker execution claim was refused")
 
     assert constructed == []
 
@@ -220,8 +224,11 @@ def test_claim_refusal_prevents_registry_and_adapter_construction(
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", lambda *_args, **_kwargs: constructed.append(True))
 
-    with pytest.raises(ExecutionClaimRefusedError, match="service worker execution claim was refused"):
-        service_flow.service_sync_run.fn("run-worker-claim", "plan")
+    refusal = service_flow.service_sync_run.fn("run-worker-claim", "plan")
+
+    assert isinstance(refusal, State)
+    assert refusal.is_failed()
+    assert (refusal.message or "").startswith("service worker execution claim was refused")
     assert constructed == []
 
 
@@ -282,7 +289,11 @@ class _LevelRecordingRunLogger:
 def test_claim_refusal_is_logged_at_error_before_the_flow_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The flow run log holds the refusal at ERROR level, and the flow run still fails."""
+    """The flow run log holds the refusal at ERROR level once, and the flow run ends `Failed`.
+
+    The flow returns the `Failed` state instead of raising, so Prefect's engine does not log
+    the refusal a second time with a traceback.
+    """
     run_id = "run-worker-claim"
     run_logger = _LevelRecordingRunLogger()
     refused = ExecutionClaimRefusedError(run_id)
@@ -294,10 +305,11 @@ def test_claim_refusal_is_logged_at_error_before_the_flow_fails(
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (run_logger, True))
     monkeypatch.setattr(service_flow, "_claim_current_execution", refuse)
 
-    with pytest.raises(ExecutionClaimRefusedError) as raised:
-        service_flow.service_sync_run.fn(run_id, "plan")
+    state = service_flow.service_sync_run.fn(run_id, "plan")
 
-    assert raised.value is refused
+    assert isinstance(state, State)
+    assert state.is_failed()
+    assert state.message == str(refused)
     assert run_logger.records == [(logging.ERROR, f"infrahub_sync.service.flow | {refused}")]
 
 

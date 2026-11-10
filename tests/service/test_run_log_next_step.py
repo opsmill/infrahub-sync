@@ -17,6 +17,8 @@ import pytest
 
 pytest.importorskip("prefect")
 
+from prefect.states import State
+
 from infrahub_sync.plan.errors import PlanArtifactError
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from infrahub_sync.service import flow as service_flow
@@ -597,9 +599,10 @@ def test_a_refused_claim_publishes_nothing(
 
     monkeypatch.setattr(service_flow, "_claim_current_execution", refuse)
 
-    with pytest.raises(service_flow.ExecutionClaimRefusedError):
-        service_sync_run.fn("run-refused", "plan", "config-001", 1, "a" * 64)
+    state = service_sync_run.fn("run-refused", "plan", "config-001", 1, "a" * 64)
 
+    assert isinstance(state, State)
+    assert state.is_failed()
     assert created == []
     assert ("artifact",) not in calls
 
@@ -683,9 +686,10 @@ def test_the_refused_claim_line_carries_the_sync_prefix(
 
     monkeypatch.setattr(service_flow, "_claim_current_execution", refuse)
 
-    with pytest.raises(service_flow.ExecutionClaimRefusedError):
-        service_sync_run.fn("run-refused", "plan", "config-001", 1, "a" * 64)
+    state = service_sync_run.fn("run-refused", "plan", "config-001", 1, "a" * 64)
 
+    assert isinstance(state, State)
+    assert state.is_failed()
     errors = [call[2] for call in flow_calls if call[0] == "log" and call[1] == logging.ERROR]
     assert len(errors) == 1
     assert errors[0].startswith(_PREFIX + "service worker execution claim was refused")

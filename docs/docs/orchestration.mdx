@@ -113,7 +113,8 @@ could not be published (<ErrorType>)`, and the run's outcome does not change.
 A Sync run is not replayed from Prefect. The worker refuses a flow run that the Sync API did not
 submit and is not waiting for: a Prefect Retry, a run started by hand from the deployment, or an
 execution whose admission expired. The refused flow run reads and writes nothing, logs one ERROR
-line, then fails. The line reads, on one line in the log:
+line without a Python traceback, then ends `Failed` with the same text as its state message. The line
+reads, on one line in the log:
 
 ```text
 service worker execution claim was refused: this Prefect flow run is not an execution the Sync API submitted

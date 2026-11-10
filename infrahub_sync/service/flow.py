@@ -1083,9 +1083,9 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     `configuration_name` is the configuration's readable name, used only for the run's
     title; the configuration is identified by `config_id`.
 
-    A failure whose recorded evidence has a cause ends the flow run with a returned `Failed`
-    state, so no traceback passes through Prefect's engine; any other failure raises its
-    sanitized copy (plan.md, "Failure exit for known error classes").
+    A refused execution claim, and a failure whose recorded evidence has a cause, end the flow
+    run with a returned `Failed` state, so no traceback passes through Prefect's engine; any
+    other failure raises its sanitized copy (plan.md, "Failure exit for known error classes").
     """
     del configuration_name
     run_logger, prefect_context = _run_logger()
@@ -1099,9 +1099,10 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
         flow_run_id, worker_id = _claim_current_execution(projection, run_id)
     except ExecutionClaimRefusedError as refused:
         # Put the recovery guidance in the flow run log, where an operator who
-        # pressed Retry looks for it, then fail the flow run as before.
+        # pressed Retry looks for it, then fail the flow run with a returned state,
+        # so Prefect's engine does not log the refusal a second time with a traceback.
         lines.log(logging.ERROR, "%s", refused)
-        raise
+        return Failed(message=str(refused))
     secrets[:] = collect_secret_values()
     # Owned here rather than by the stage, so the failure boundary can read it however the
     # stage ended.
