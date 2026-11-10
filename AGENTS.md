@@ -104,12 +104,13 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 - `infrahub-sync configs` — register and inspect configuration packages (safe).
 - `infrahub-sync runs list` — list runs, newest first, optionally for one configuration or version (safe).
 - `infrahub-sync runs show` / `runs plan` / `runs results` / `runs artifacts` — inspect one run, its saved plan, its results and its artifacts (safe).
-- `infrahub-sync whoami` — check which actor the API token belongs to (safe).
+- `infrahub-sync whoami` — check which actor the API token belongs to and whether the Sync API requires an approved plan (`approval_required`) (safe).
 - `infrahub-sync plan` — create a plan run and review its summary (Sync API required). `diff` is a hidden, deprecated alias.
-- `infrahub-sync verify` — check that a run's saved plan files are unchanged; contacts neither source nor destination, and `apply` repeats these checks (Sync API required).
-- `infrahub-sync sync` — perform synchronization (Sync API and approval required).
-- `infrahub-sync apply` — apply a reviewed plan by checksum (Sync API and approval required).
-- `infrahub-sync runs cancel` — cancel a run; cancelling a write can leave an ambiguous outcome (approval required).
+- `infrahub-sync verify` — run every pre-write check of `apply` against the destination without writing; needs to reach the destination and does not approve the plan (Sync API required).
+- `infrahub-sync approve` — record approval of a run's saved plan by checksum without writing; required before `apply` only when the Sync API sets `INFRAHUB_SYNC_REQUIRE_APPROVAL` (Sync API and human approval required).
+- `infrahub-sync sync` — perform synchronization; refused when the Sync API requires approval (Sync API and human approval required).
+- `infrahub-sync apply` — apply a reviewed plan by checksum (Sync API and human approval required).
+- `infrahub-sync runs cancel` — cancel a run's running stage, or withdraw a finished, unapplied plan; cancelling a write can leave an ambiguous outcome (human approval required).
 
 ## Configuration and Examples
 

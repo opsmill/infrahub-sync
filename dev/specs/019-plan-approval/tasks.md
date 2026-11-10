@@ -124,13 +124,13 @@ check reads the approval that US1 stores, and US4's `approve` refusal extends US
 
 ## Phase 7: Polish and cross-cutting
 
-- [ ] T042 [P] Rewrite the steps after `plan` in `docs/docs/running-a-sync.mdx`: `verify` (all pre-write checks, needs the destination), `approve` (records the decision, writes nothing, optional unless the setting is on), `apply`; answer "is `verify` an approval?"; state that `runs cancel` withdraws a finished plan, approved or not, and replace "cancels a run that has not finished"
-- [ ] T043 [P] Document `POST /runs/{run_id}/approve`, the run `approval` field, the `verify` checks and results, the setting's refusals, `GET /me approval_required`, the cancel route's withdraw path (route table line, 409 list with `run-cancelled` and `run-already-cancelled`, recovery table), in `docs/docs/reference/sync-http-api.mdx`
-- [ ] T044 [P] Document `INFRAHUB_SYNC_REQUIRE_APPROVAL` in the service environment of `docs/docs/compose-deployment.mdx`
-- [ ] T045 Regenerate the CLI reference with `uv run invoke docs.generate` (updates `docs/docs/reference/cli.mdx`) and update the `verify`, `approve` and `whoami` lines of the CLI list in `AGENTS.md`
-- [ ] T046 [P] Add changelog fragments: `changelog/+plan-approval.added.md` (approval, the setting, withdrawing a finished plan with `runs cancel`) and `changelog/+verify-destination-checks.changed.md` (`verify` checks the destination and fails when it cannot reach it; `apply` refuses every run in phase `cancelled`)
-- [ ] T047 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`, and the CLI sanity commands from `AGENTS.md`; record the results against the T001 baseline in `dev/specs/019-plan-approval/tasks.md`
-- [ ] T048 Run the live scenarios of `dev/specs/019-plan-approval/quickstart.md` against the development stack and record the outcome in `dev/specs/019-plan-approval/quickstart.md` under "Live results", or record why they could not run
+- [X] T042 [P] Rewrite the steps after `plan` in `docs/docs/running-a-sync.mdx`: `verify` (all pre-write checks, needs the destination), `approve` (records the decision, writes nothing, optional unless the setting is on), `apply`; answer "is `verify` an approval?"; state that `runs cancel` withdraws a finished plan, approved or not, and replace "cancels a run that has not finished"
+- [X] T043 [P] Document `POST /runs/{run_id}/approve`, the run `approval` field, the `verify` checks and results, the setting's refusals, `GET /me approval_required`, the cancel route's withdraw path (route table line, 409 list with `run-cancelled` and `run-already-cancelled`, recovery table), in `docs/docs/reference/sync-http-api.mdx`
+- [X] T044 [P] Document `INFRAHUB_SYNC_REQUIRE_APPROVAL` in the service environment of `docs/docs/compose-deployment.mdx`
+- [X] T045 Regenerate the CLI reference with `uv run invoke docs.generate` (updates `docs/docs/reference/cli.mdx`) and update the `verify`, `approve` and `whoami` lines of the CLI list in `AGENTS.md`
+- [X] T046 [P] Add changelog fragments: `changelog/+plan-approval.added.md` (approval, the setting, withdrawing a finished plan with `runs cancel`) and `changelog/+verify-destination-checks.changed.md` (`verify` checks the destination and fails when it cannot reach it; `apply` refuses every run in phase `cancelled`)
+- [X] T047 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`, and the CLI sanity commands from `AGENTS.md`; record the results against the T001 baseline in `dev/specs/019-plan-approval/tasks.md`
+- [X] T048 Run the live scenarios of `dev/specs/019-plan-approval/quickstart.md` against the development stack and record the outcome in `dev/specs/019-plan-approval/quickstart.md` under "Live results", or record why they could not run
 
 ## Dependencies and execution order
 
@@ -168,3 +168,24 @@ Recorded by T001 on commit `b46ecd79`, Python 3.11.8, after
 - `uv run invoke tests.tests-unit`: 6449 passed, 4 skipped, 1 xfailed, 246 deselected,
   0 failed, 6 warnings, in 180.65 s.
 - `uv run ruff check .`: all checks passed.
+
+## Phase 7 results
+
+Recorded by T047 on 2026-11-10, Python 3.11.8, against the T001 baseline:
+
+- `uv run invoke tests.tests-unit`: 6590 passed, 4 skipped, 1 xfailed, 268 deselected,
+  0 failed, 6 warnings, in 151.47 s (baseline: 6449 passed, 246 deselected).
+- `uv run ruff check .`: all checks passed (unchanged).
+- `uv run invoke format`: no changes. `uv run invoke lint`: exit 0; rumdl no issues in 140
+  files, Pylint 0 diagnostics, yamllint clean, ty 0 errors and 21 `unused-ignore-comment`
+  warnings, none in a file this phase changed.
+- `uv run invoke docs.lint`: no issues. Vale on the three changed pages: 4 warnings, the same
+  4 as before the change.
+- CLI sanity: `--help`, `configs --help`, `runs --help`, `approve --help`, `verify --help`,
+  `whoami --help` and `runs cancel --help` exit 0.
+- The first unit run failed 4 tests: the packaged Compose file
+  (`infrahub_sync/testcontainers/docker-compose.yml`) must be byte-equal to the root file, and
+  `tests/test_service_storage_docs.py` forbids the word "restore" in the HTTP API reference.
+  Both were fixed before the run above.
+
+T048 ran the live scenarios; see "Live results" in [quickstart.md](quickstart.md).
