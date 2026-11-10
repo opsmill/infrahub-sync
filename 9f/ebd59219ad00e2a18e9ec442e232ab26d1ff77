@@ -1,0 +1,43 @@
+tests/service/test_cancel_planned_run.py
+  s_3026b865c0ab8b::t_8cda69ec9fad5c 37,83-85
+  s_3026b865c0ab8b::t_f11ae7bc6aa515 24,35
+  s_3026b865c0ab8b::t_0cbabf5194b6be 578,607
+  s_3026b865c0ab8b::t_94cd5304d4bea9 257-266,295-300,584,587-588,596-597,613,616-617,625-627
+  s_3026b865c0ab8b::t_f8c83907520fcb 86
+infrahub_sync/product_store/store.py
+  s_3026b865c0ab8b::t_21121b79daf184 688,691,699,2285,2299-2300,2324-2326,2345,2353,2364-2365,2390-2391,3765,3768,3771-3772,3777-3782,3792,3795,3798-3799,3803-3808
+dev/specs/019-plan-approval/data-model.md
+  s_3026b865c0ab8b::t_c769e2a2cdd572 84-90
+infrahub_sync/service/service.py
+  s_3026b865c0ab8b::t_ac93edb242fc85 45,585-591,598-599,938-960,963,971-975
+docs/docs/reference/sync-http-api.mdx
+  s_3026b865c0ab8b::t_c769e2a2cdd572 626,635
+infrahub_sync/service/app.py
+  s_3026b865c0ab8b::t_5752a363b4df35 193-207,435
+  s_3026b865c0ab8b::t_702a256db553fb 120-141
+infrahub_sync/service/events.py
+  s_3026b865c0ab8b::t_81cc6e2c0da045 40-42
+tests/service/test_approval_required.py
+  s_3026b865c0ab8b::t_8cda69ec9fad5c 26,31,108-110
+  s_3026b865c0ab8b::t_d3e5247382115c 111
+tests/service/test_approval.py
+  s_3026b865c0ab8b::t_419478441b1701 212-232
+  s_3026b865c0ab8b::t_8cda69ec9fad5c 25,30,68-70
+  s_3026b865c0ab8b::t_f5835b4aa07ad5 71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9febd59219ad00e2a18e9ec442e232ab26d1ff77",
+  "prompts": {},
+  "sessions": {
+    "s_3026b865c0ab8b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "825efe40-61e7-452d-9076-42e4bc5cee3e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
