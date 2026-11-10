@@ -6,7 +6,7 @@
 
 ## Summary
 
-Three changes, each independently shippable:
+Four changes, each independently shippable:
 
 1. **Approval** (US1): a new API-side request `POST /runs/{run_id}/approve` and CLI command `approve` record who
    approved a planned run, when, and which plan checksum, without contacting any system. The approval is stored on
@@ -15,6 +15,9 @@ Three changes, each independently shippable:
    runs, by sharing one pre-write gate split out of `Potenda.apply_plan`, and stops before the write loop.
 3. **Approval-required setting** (US3): `INFRAHUB_SYNC_REQUIRE_APPROVAL` makes `apply` refuse an unapproved plan and
    `sync` refuse to start, at admission, before anything is submitted.
+4. **Withdraw by cancelling** (US4): `runs cancel` on a finished, unapplied plan sets the run's phase to
+   `cancelled` in one store transaction, without Prefect. `approve` and `apply` refuse a cancelled run, at admission
+   and under the store's write-first row lock, so a cancel and an apply or approval cannot both succeed.
 
 Decisions and their rationale are in [research.md](research.md).
 
@@ -92,13 +95,15 @@ infrahub_sync/
 ├── service/
 │   ├── flow.py                    # verify stage: destination scope, schema check, PlanApplier.check_plan
 │   ├── service.py                 # approve_run; approval-required checks in apply_run and create_run(sync);
+│   │                              # cancel_run withdraw path; apply/approve refuse phase cancelled;
 │   │                              # verify passes run.destination_branch
 │   ├── app.py                     # POST /runs/{run_id}/approve; GET /me approval_required
 │   ├── settings.py (new)          # INFRAHUB_SYNC_REQUIRE_APPROVAL parsing, fail closed at start-up
 │   └── models.py                  # approve request model re-export if needed
 ├── product_store/
 │   ├── models.py                  # RunApproval; ProductRun.approval
-│   └── store.py                   # columns, migration, record_approval (conditional update), row mapping
+│   └── store.py                   # columns, migration, record_approval (conditional update), row mapping,
+│                                  # cancel_planned_run; _reservation_refused refuses phase cancelled
 ├── client/
 │   ├── models.py                  # ApproveRunRequest, RunApprovalResource, PrincipalResource.approval_required
 │   └── client.py                  # approve_run / approve
@@ -109,6 +114,8 @@ tests/
 ├── service/test_verify_destination.py (new)
 ├── service/test_approval.py (new)
 ├── service/test_approval_required.py (new)
+├── service/test_cancel_planned_run.py (new)
+├── product_store/test_write_admission.py (extended)
 ├── product_store/test_run_approval.py (new)
 ├── client/ and cli/ (extended)
 └── service/test_http_api.py (extended)
@@ -146,10 +153,21 @@ does not read the environment directly.
   (for example "a verify execution is in progress").
 - **Setting** (`settings.py`): parsed once at start-up for validation, read through a function on each admission so
   tests can patch it.
+- **Withdraw path** (`service.py`, `store.py`): see research R11. `cancel_run` takes the withdraw path only where it
+  answers `execution-terminal` today and the run's phase is `planned`; every other branch of `cancel_run` is
+  unchanged. `cancel_planned_run` uses the existing write-first lock (`UPDATE product_runs SET run_id = run_id`) and
+  the same checks as `_reservation_refused`, then completes the receipt with `200` and the run resource.
+  `_reservation_refused` gains "the locked run's phase is `cancelled`". The existing test
+  `test_cancel_treats_expired_and_terminal_links_as_non_cancellable` and any test expecting `execution-terminal` for
+  a planned run are updated to the new answer, and named in the change (SC-003).
 - **Docs**: the "Running a sync" page gets a short "Steps after a plan" section that answers "is `verify` an
   approval?". It states that `verify` now needs the destination to be reachable with the configured credentials.
-- **Changelog**: one `added` entry (approval and the setting) and one `changed` entry (`verify` checks the
-  destination and fails when it cannot reach it).
+- **Changelog**: one `added` entry (approval, the setting, withdrawing a finished plan with `runs cancel`) and one
+  `changed` entry (`verify` checks the destination and fails when it cannot reach it; `apply` refuses every run in
+  phase `cancelled`).
+- **Cancel docs**: `running-a-sync.mdx` ("`runs cancel RUN_ID` cancels a run that has not finished") and
+  `sync-http-api.mdx` (the route table line "Ask Prefect to cancel only the latest active linked execution", the 409
+  list and the recovery table) describe the withdraw path; the CLI help is regenerated.
 
 ## Complexity Tracking
 

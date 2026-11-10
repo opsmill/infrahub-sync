@@ -20,7 +20,8 @@ Order of evaluation:
 1. Authorization: only the run's actor or an administrator (403 `forbidden`).
 2. Idempotency: a receipt for this actor and key replays the stored response; a different body with the same key
    is refused as for the other commands.
-3. Approvable state: phase `planned` and no active execution, else 409 `run-not-approvable`, message names the phase.
+3. Cancelled run → 409 `run-cancelled`. Otherwise approvable state: phase `planned` and no active execution, else
+   409 `run-not-approvable`, message names the phase.
 4. Plan: the existing plan lookup (404 `run-not-found`, 410 `artifact-expired`, 503 `plan-unavailable`).
 5. Plan checksum state: `checksum_ok == false` → 409 `plan-checksum-unverified`.
 6. Checksum: `expected_checksum != plan.checksum` → 409 `checksum-mismatch`, message shows the expected and the
@@ -61,6 +62,9 @@ The service passes the run's stored `destination_branch` as the stage's branch.
 
 ## `POST /runs/{run_id}/apply` (unchanged unless the setting is on)
 
+Whatever the setting: a run in phase `cancelled` → 409 `run-cancelled`, before the receipt is reserved; the store's
+write admission also refuses it, so a concurrent cancel and apply cannot both succeed.
+
 When `INFRAHUB_SYNC_REQUIRE_APPROVAL` is on, after authorization and idempotency replay and before the receipt is
 reserved:
 
@@ -71,6 +75,20 @@ reserved:
 
 When the setting is on → 409 `approval-required-for-sync` before the run record is created. Message: run `plan`,
 `approve` and `apply` instead. `operation = "plan"` is never affected.
+
+## `POST /runs/{run_id}/cancel` (behaviour extended)
+
+Request unchanged (`reason` optional, `Idempotency-Key` required). Evaluation:
+
+1. Authorization and same-key replay, as today.
+2. A run with an active execution: cancel that execution, as today (`202`, possible `cancellation-ambiguous` for a
+   write).
+3. No active execution and phase `planned`: withdraw the plan. In one store transaction, re-check that no write was
+   admitted and no other stage is reserved or running, set phase `cancelled`, and complete the receipt.
+   `200 OK`, body is the run resource with `phase: "cancelled"` (and its `approval`, if any). Nothing is sent to
+   Prefect. A failed re-check answers 409 `run-execution-conflict`.
+4. No active execution and phase `cancelled` → 409 `run-already-cancelled`.
+5. No active execution, any other phase (`applied`, `plan-failed`, …) → 409 `execution-terminal`, as today.
 
 ## `GET /me` (changed, additive)
 

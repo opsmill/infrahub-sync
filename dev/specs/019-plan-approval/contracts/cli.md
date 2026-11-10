@@ -40,6 +40,14 @@ administrator: false
 approval_required: true
 ```
 
+## `infrahub-sync runs cancel` (help and prompt changed)
+
+- Arguments unchanged; still asks for confirmation unless `--yes`.
+- Help: "Cancel a run. Cancelling a finished plan withdraws it so it cannot be approved or applied; cancelling a
+  write can leave its outcome ambiguous."
+- Prompt: "Cancel run RUN_ID? A finished plan is withdrawn; cancelling a write can leave an ambiguous outcome."
+- After a withdrawal, prints the run lines with `phase: cancelled`.
+
 ## `infrahub-sync apply` and `sync` (unchanged)
 
 Same arguments. When the setting is on, their refusal is printed by the existing error path.

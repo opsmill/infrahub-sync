@@ -32,6 +32,18 @@ and request.expected_checksum == plan.checksum
 
 Any other state refuses with the reason (see [contracts/http-api.md](contracts/http-api.md)).
 
+## Run phase `cancelled` (existing value, new way to reach it)
+
+```text
+planned --(runs cancel, no execution in progress, no write admitted)--> cancelled
+```
+
+- Set by `cancel_planned_run` under the run's write-first row lock: `phase = 'cancelled'`,
+  `outcome = 'cancelled'`, `finished_at = <cancel time>`. `approval`, `summary`, `results` and artifacts are kept.
+- The other ways to reach `cancelled` (Prefect acknowledges the cancellation of an execution) are unchanged.
+- A run in phase `cancelled` cannot be approved, cannot admit an `apply` reservation, and cannot be cancelled again.
+  It can still be read and verified.
+
 ## Verification result (existing `results.verification`, extended)
 
 The `verify` stage already merges `results.verification` with `checksum`, `checksum_ok` and `verification_notes`.
@@ -61,4 +73,8 @@ Read when each `apply` or `sync` request is admitted. A malformed value stops th
 `operation = "approve"`, outcomes: `accepted`, `replayed`, `refused-authorization`, `refused-not-approvable`,
 `refused-checksum`, `refused-already-approved`, `refused-plan-unverified`.
 
-`operation = "apply"` and `"sync"` gain the outcome `refused-approval-required`.
+`operation = "apply"` and `"sync"` gain the outcome `refused-approval-required`; `"apply"` and `"approve"` gain
+`refused-cancelled`.
+
+`operation = "cancel"` gains the outcomes `accepted-withdrawn` (a finished plan was cancelled) and
+`refused-cancelled` (the run was already cancelled).

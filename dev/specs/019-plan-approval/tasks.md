@@ -8,9 +8,9 @@
 **Tests**: included. The constitution (principle V) requires tests for new behaviour, and SC-002 to SC-004 are
 defined as test outcomes.
 
-**Organization**: one phase per user story. US1 (approval), US2 (`verify` checks the destination) and US3
-(approval-required setting) can be implemented and shipped independently, except that US3's `apply` check reads the
-approval that US1 stores.
+**Organization**: one phase per user story. US1 (approval), US2 (`verify` checks the destination), US3
+(approval-required setting) and US4 (withdraw by cancelling) can be shipped independently, except that US3's `apply`
+check reads the approval that US1 stores, and US4's `approve` refusal extends US1's `approve_run`.
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -99,23 +99,47 @@ approval that US1 stores.
 
 **Checkpoint**: all three stories complete.
 
-## Phase 6: Polish and cross-cutting
+## Phase 6: User Story 4 - Withdraw a plan by cancelling the run (Priority: P3)
 
-- [ ] T033 [P] Rewrite the steps after `plan` in `docs/docs/running-a-sync.mdx`: `verify` (all pre-write checks, needs the destination), `approve` (records the decision, writes nothing, optional unless the setting is on), `apply`; answer "is `verify` an approval?"; state that an approval cannot be withdrawn in this version
-- [ ] T034 [P] Document `POST /runs/{run_id}/approve`, the run `approval` field, the `verify` checks and results, the setting's refusals and `GET /me approval_required`, in `docs/docs/reference/sync-http-api.mdx`
-- [ ] T035 [P] Document `INFRAHUB_SYNC_REQUIRE_APPROVAL` in the service environment of `docs/docs/compose-deployment.mdx`
-- [ ] T036 Regenerate the CLI reference with `uv run invoke docs.generate` (updates `docs/docs/reference/cli.mdx`) and update the `verify`, `approve` and `whoami` lines of the CLI list in `AGENTS.md`
-- [ ] T037 [P] Add changelog fragments: `changelog/+plan-approval.added.md` (approval and the setting) and `changelog/+verify-destination-checks.changed.md` (`verify` checks the destination and fails when it cannot reach it)
-- [ ] T038 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`, and the CLI sanity commands from `AGENTS.md`; record the results against the T001 baseline in `dev/specs/019-plan-approval/tasks.md`
-- [ ] T039 Run the live scenarios of `dev/specs/019-plan-approval/quickstart.md` against the development stack and record the outcome in `dev/specs/019-plan-approval/quickstart.md` under "Live results", or record why they could not run
+**Goal**: `runs cancel` on a finished, unapplied plan sets the run's phase to `cancelled`; `approve` and `apply` refuse it afterwards.
+
+**Independent Test**: plan a run, approve it, `runs cancel` it, then try to approve and to apply it; both are refused and the destination is unchanged.
+
+### Tests for User Story 4
+
+- [ ] T033 [P] [US4] Test `cancel_planned_run` on SQLite: sets `phase`/`outcome` to `cancelled` and `finished_at`, keeps the approval columns, completes the receipt with `200` and the run body; completes it with `409 run-execution-conflict` instead when a write was admitted, another non-`cancel` receipt is unresolved or an execution is unfinished; does nothing for a phase other than `planned`; and `_reservation_refused` refuses an `apply` reservation once the phase is `cancelled`, in `tests/product_store/test_write_admission.py`
+- [ ] T034 [P] [US4] Test on PostgreSQL that a concurrent `cancel_planned_run` and `apply` reservation, and a concurrent `cancel_planned_run` and `record_approval`, never both succeed, in `tests/product_store/test_postgresql_isolation.py`
+- [ ] T035 [P] [US4] Test `POST /runs/{run_id}/cancel` per [contracts/http-api.md](contracts/http-api.md): a planned run (approved and unapproved) is withdrawn with `200`, `phase: cancelled`, approval kept, no Prefect call; an active execution is cancelled as today; an already-cancelled run → `409 run-already-cancelled`; an applied run and a plan-failed run → `409 execution-terminal`; same-key replay returns the stored `200`; another non-admin actor → 403; audit outcomes `accepted-withdrawn` and `refused-cancelled`, in `tests/service/test_cancel_planned_run.py`
+- [ ] T036 [P] [US4] Test that `apply` and `approve` refuse a run in phase `cancelled` with `409 run-cancelled` before any receipt is reserved, including a planned run whose `verify` execution was cancelled, and that an approved-then-cancelled run cannot be applied with the setting on or off (SC-006), in `tests/service/test_cancel_planned_run.py`
+- [ ] T037 [P] [US4] Test the `runs cancel` help text, confirmation prompt and `phase: cancelled` output after a withdrawal, in `tests/cli/test_client_commands.py`
+
+### Implementation for User Story 4
+
+- [ ] T038 [US4] Add `cancel_planned_run(run_id, receipt, cancelled_at, response)` using the write-first row lock and the `_reservation_refused` checks, and make `_reservation_refused` refuse when the locked run's phase is `cancelled`, for SQLite and PostgreSQL, in `infrahub_sync/product_store/store.py` (and the projection protocol near `reserve_mutation` in the same file)
+- [ ] T039 [US4] In `cancel_run`, where no execution is cancellable: for phase `planned`, reserve the `cancel` receipt and call `cancel_planned_run`, returning its stored response; for phase `cancelled`, refuse with `409 run-already-cancelled`; keep `execution-terminal` for every other phase and every other branch unchanged; audit `accepted-withdrawn` and `refused-cancelled`, in `infrahub_sync/service/service.py`
+- [ ] T040 [US4] Refuse `phase == "cancelled"` with `409 run-cancelled` in `apply_run` (after replay, before the checksum check) and in `approve_run` (before the approvable-state check), audited `refused-cancelled`; update the existing tests that expected `execution-terminal` when cancelling a planned run, naming each in the commit message, in `infrahub_sync/service/service.py` and `tests/service/test_http_api.py`
+- [ ] T041 [US4] Change the `runs cancel` help text and confirmation prompt to the wording in [contracts/cli.md](contracts/cli.md), in `infrahub_sync/cli.py`
+
+**Checkpoint**: an approval can be withdrawn; a cancelled run is never approved or applied.
+
+## Phase 7: Polish and cross-cutting
+
+- [ ] T042 [P] Rewrite the steps after `plan` in `docs/docs/running-a-sync.mdx`: `verify` (all pre-write checks, needs the destination), `approve` (records the decision, writes nothing, optional unless the setting is on), `apply`; answer "is `verify` an approval?"; state that `runs cancel` withdraws a finished plan, approved or not, and replace "cancels a run that has not finished"
+- [ ] T043 [P] Document `POST /runs/{run_id}/approve`, the run `approval` field, the `verify` checks and results, the setting's refusals, `GET /me approval_required`, the cancel route's withdraw path (route table line, 409 list with `run-cancelled` and `run-already-cancelled`, recovery table), in `docs/docs/reference/sync-http-api.mdx`
+- [ ] T044 [P] Document `INFRAHUB_SYNC_REQUIRE_APPROVAL` in the service environment of `docs/docs/compose-deployment.mdx`
+- [ ] T045 Regenerate the CLI reference with `uv run invoke docs.generate` (updates `docs/docs/reference/cli.mdx`) and update the `verify`, `approve` and `whoami` lines of the CLI list in `AGENTS.md`
+- [ ] T046 [P] Add changelog fragments: `changelog/+plan-approval.added.md` (approval, the setting, withdrawing a finished plan with `runs cancel`) and `changelog/+verify-destination-checks.changed.md` (`verify` checks the destination and fails when it cannot reach it; `apply` refuses every run in phase `cancelled`)
+- [ ] T047 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`, and the CLI sanity commands from `AGENTS.md`; record the results against the T001 baseline in `dev/specs/019-plan-approval/tasks.md`
+- [ ] T048 Run the live scenarios of `dev/specs/019-plan-approval/quickstart.md` against the development stack and record the outcome in `dev/specs/019-plan-approval/quickstart.md` under "Live results", or record why they could not run
 
 ## Dependencies and execution order
 
-- Phase 1 → Phase 2 → US1, US2, US3.
+- Phase 1 → Phase 2 → US1, US2, US3, US4.
 - US1 (Phase 3) needs Phase 2.
 - US2 (Phase 4) needs only Phase 1; it touches no approval code and can run in parallel with Phase 2 and US1.
 - US3 (Phase 5) needs Phase 2 and T012 (the stored approval it reads); T027, T030 and T032 can start after Phase 2.
-- Phase 6 after the stories it documents.
+- US4 (Phase 6) needs Phase 2 and US1's `approve_run` (T012) and `record_approval` (T010); T038 and T040 edit `store.py` and `service.py` after US1 and US3 have.
+- Phase 7 after the stories it documents.
 
 Within each story, tests first (they fail), then models, store, service, route, client, CLI.
 
@@ -125,14 +149,16 @@ Within each story, tests first (they fail), then models, store, service, route, 
 - Within US1: T005–T009 together; T011 alongside T010.
 - Within US2: T017–T021 together.
 - Within US3: T027–T029 together.
-- Phase 6: T033, T034, T035, T037 together.
+- Within US4: T033–T037 together.
+- Phase 7: T042, T043, T044, T046 together.
 
 ## Implementation strategy
 
 1. MVP: Phases 1–3 (approval). It already answers the customer's "the only way to accept a plan is to apply it".
 2. Add US2 (`verify` checks the destination), which gives the "validate" step.
 3. Add US3 (mandatory approval) for sites that want it.
-4. Polish: docs, changelog, full gates, live check.
+4. Add US4 (withdraw by cancelling), so an approval can be taken back.
+5. Polish: docs, changelog, full gates, live check.
 
 ## Baseline
 

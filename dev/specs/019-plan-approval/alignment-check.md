@@ -9,7 +9,8 @@
 
 | Severity | Category | Brief reference | Spec reference | Description |
 | --- | --- | --- | --- | --- |
-| Minor | changed | Edge Cases, "Withdrawing an approval: … the operator cancels the run with `runs cancel`" | Edge Cases "Withdrawing an approval"; Open Questions | The brief's withdrawal path does not exist: `cancel_run` refuses a run with no execution in progress (`no-active-execution`, `execution-terminal`). The spec records "no withdrawal in v1" and raises it as an open question for the user. The decision "no separate withdrawal command" is kept. |
+| Resolved | changed | Edge Cases, "Withdrawing an approval: … the operator cancels the run with `runs cancel`" | User Story 4; FR-019 to FR-022; Edge Cases | First recorded as drift: `cancel_run` refuses a run with no execution in progress, so the brief's path did not exist. The user then chose (2026-11-10) to make it exist: `runs cancel` now cancels a finished, unapplied plan, and `approve` and `apply` refuse a cancelled run. The spec now matches the brief's decision. |
+| Minor | changed | Success Criteria SC-003 | SC-003, FR-020 | One deliberate exception to "apply behaves as before": `apply` refuses every run in phase `cancelled`, including a run whose `verify` execution was cancelled, which today can still be applied. |
 | Minor | added | — | FR-017, `GET /me approval_required` | Operators can read whether approval is required, so a refusal can be predicted. Small, additive, follows from FR-005/FR-006 of the brief. |
 | Minor | added | — | FR-004 | Approving refuses a plan whose recorded checksum check failed or that cannot be read. A safety precondition the brief left implicit; it does not add a check against the source or destination. |
 | Minor | added | — | contracts (approve response `plan_summary`) | From the critique (P1): `approve` shows the counts of what was approved. Output only. |
@@ -21,10 +22,10 @@ No requirement, journey or success criterion of the brief is missing or softened
 - P1 → User Story 1; P2 → User Story 2; P3 → User Story 3.
 - FR-001 to FR-009 of the brief → FR-001, FR-002, FR-009, FR-014, FR-015, FR-016, FR-005, FR-006, FR-007 of the spec.
 - SC-001 to SC-005 carried over unchanged.
-- Out of scope (four-eyes, drift since plan, withdrawal, expiry, web UI) carried over; `apply` arguments unchanged
+- Out of scope (four-eyes, drift since plan, a separate withdrawal command, expiry, web UI) carried over; `apply` arguments unchanged
   added explicitly.
 
 ## Action
 
-Proceed. The withdrawal question is surfaced to the user in the Completion summary. No remediation pass was needed
-(0 of 2 used).
+Proceed. The withdrawal question was answered by the user on 2026-11-10 and is resolved in the spec (User Story 4).
+No remediation pass was needed (0 of 2 used).

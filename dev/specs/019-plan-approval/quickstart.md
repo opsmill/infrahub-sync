@@ -52,4 +52,14 @@ Sync API token in `SYNC_API_TOKEN`.
    infrahub-sync apply RUN_ID --expected-checksum CHECKSUM         # approved: applies
    ```
 
-5. Turn the setting off and confirm `apply` and `sync` behave as before.
+5. Withdraw a plan: plan and approve a new run, then cancel it:
+
+   ```bash
+   infrahub-sync runs cancel NEW_RUN_ID --yes   # phase: cancelled, approval still shown
+   infrahub-sync approve NEW_RUN_ID --expected-checksum CHECKSUM               # refused: run-cancelled
+   infrahub-sync apply NEW_RUN_ID --expected-checksum CHECKSUM                 # refused: run-cancelled
+   infrahub-sync runs cancel NEW_RUN_ID --yes   # refused: run-already-cancelled
+   infrahub-sync runs cancel RUN_ID --yes       # the applied run: refused as before (execution-terminal)
+   ```
+
+6. Turn the setting off and confirm `apply` and `sync` behave as before.

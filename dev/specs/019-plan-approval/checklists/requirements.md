@@ -34,5 +34,5 @@
 - The specification names CLI commands (`approve`, `verify`, `apply`, `runs show`) and one environment variable
   (`INFRAHUB_SYNC_REQUIRE_APPROVAL`). These are the user-facing surface the operator types, not implementation
   choices, so they stay.
-- One open question remains outside the markers: withdrawing an approval. The brief assumed `runs cancel` could do
-  it; the code cannot cancel a finished plan. The specification decides "no withdrawal in v1" and flags it.
+- The withdrawal question raised during specification was answered by the user on 2026-11-10: `runs cancel`
+  withdraws a finished plan (User Story 4, FR-019 to FR-022).

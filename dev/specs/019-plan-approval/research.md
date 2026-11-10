@@ -152,12 +152,54 @@ later change.
 **Decision**: the approval is visible through the run resource and the audit history. When spec 017 merges, an
 `approved` run event is a follow-up task, not part of this feature.
 
-## R11. Withdrawing an approval
+## R11. Withdrawing a plan by cancelling the run
 
-**Finding**: `cancel_run` cancels only the latest active service execution and refuses a run with no execution in
-progress (`no-active-execution`, `execution-terminal`). A planned run whose plan stage finished cannot be cancelled.
+**Finding** (`infrahub_sync/service/service.py`, `cancel_run`; `infrahub_sync/product_store/store.py`):
 
-**Decision**: no withdrawal in v1 (spec edge case and open question). Documented in the user docs.
+- `cancel_run` checks `_owned_run`, replays an accepted receipt for the same key, refuses a run with no execution
+  (`no-active-execution`), then asks `select_cancellable_execution` for the latest active execution. A run whose plan
+  stage finished has a terminal plan execution, so the selection returns `None` and the request is refused with
+  409 `execution-terminal`. No receipt is reserved on that path.
+- When Prefect acknowledges a cancellation, the store sets the run's `phase = 'cancelled', outcome = 'cancelled'`
+  (`_UPDATE_LATEST_EXECUTION_CANCELLED`). So `cancelled` is already a run phase, reached today when any stage's
+  execution, including a `verify`, is cancelled.
+- `apply_run` checks no phase. It refuses on the plan checksum, and the store's write admission
+  (`_reservation_refused`, under the "write-first" row lock `UPDATE product_runs SET run_id = run_id`) refuses a run
+  that already admitted a write, or that has an unresolved receipt or an unfinished execution. A run in phase
+  `cancelled` whose plan is intact is admitted today.
+
+**Decision**:
+
+1. In `cancel_run`, where the selection returns no active execution: when `run.phase == "planned"`, take the new
+   "withdraw" path instead of answering `execution-terminal`. Reserve a `cancel` receipt, then call a new store
+   operation `cancel_planned_run(run_id, receipt, cancelled_at, response)`. In one transaction it takes the same
+   write-first row lock, re-checks phase `planned`, no row in `write_admissions`, no unresolved non-`cancel` receipt
+   and no unfinished execution, sets `phase = 'cancelled', outcome = 'cancelled', finished_at = cancelled_at`, and
+   completes the receipt with `200` and the run resource. If a re-check fails, it completes the receipt with the
+   matching 409 instead (`run-execution-conflict` when another stage is admitted or running). Audit outcome
+   `accepted-withdrawn`.
+2. A run already in phase `cancelled` with no active execution: 409 `run-already-cancelled` (audit
+   `refused-cancelled`). Other phases keep `execution-terminal`.
+3. `apply_run` and `approve_run` refuse `run.phase == "cancelled"` with 409 `run-cancelled` before any receipt is
+   reserved. To close the race with a concurrent cancel, `_reservation_refused` also refuses an arbitrated
+   reservation when the locked run's phase is `cancelled`, and `record_approval` updates only `phase = 'planned'`
+   (R8). Both run under the same row lock as `cancel_planned_run`, so exactly one of them wins (FR-022).
+4. The approval columns are not cleared: the cancelled run shows who approved what before it was withdrawn.
+5. `verify` of a cancelled run stays allowed; it writes nothing.
+
+**Behaviour change**: `apply` now refuses every run in phase `cancelled`, including a run whose `verify` execution
+was cancelled. Today such a run can still be applied. The change makes "cancelled" mean one thing; the `changed`
+changelog entry names it, and SC-003 names it as the one exception.
+
+**Idempotency**: the withdraw path stores its response with the receipt, so a retry with the same key replays it
+(`receipt.state == "accepted"` at the top of `cancel_run`). A new key on a cancelled run gets
+`run-already-cancelled`.
+
+**CLI**: `runs cancel` keeps its confirmation. Its prompt and help text say that cancelling a finished plan withdraws
+it, and that cancelling a write can leave an ambiguous outcome. The command prints the run with `phase: cancelled`.
+
+**Alternatives considered**: a separate `withdraw` command (rejected by the user); clearing the approval instead of
+cancelling the run (rejected: the run would become approvable again, and the approval history would be lost).
 
 ## R12. CLI surface
 
