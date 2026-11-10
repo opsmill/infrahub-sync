@@ -157,10 +157,12 @@ that `apply` uses, so `verify` fails when it cannot reach the destination. The c
 
 On success, `verify` prints one `check: NAME passed` line for each check, in the order it ran
 them, such as `check: destination_schema passed`. When a check fails, `verify` exits with a
-non-zero status and the run's phase stays `planned`. `runs results RUN_ID` then shows the
-failure under `verify_failure`: `failed_checks` names the check, `error_type` names the
-refusal, and `next_action` says what to do. The refusal is the same one that `apply` reports
-when it refuses on that check. A run with no registered configuration
+non-zero status and the run's phase stays `planned`. Before the `error: run-terminal` line,
+`verify` prints `verify failed: ERROR_TYPE`, one `failed_check: NAME` line for each check
+that failed, such as `failed_check: destination_binding`, and, when the run recorded a next
+action, a `hint:` line that says what to do. `runs results RUN_ID` shows the same failure under `verify_failure`: `failed_checks`
+names the check, `error_type` names the refusal, and `next_action` says what to do. The
+refusal is the same one that `apply` reports when it refuses on that check. A run with no registered configuration
 binding cannot be applied by the service; `verify` checks only its saved files, and its
 results report `destination_checked: false`.
 

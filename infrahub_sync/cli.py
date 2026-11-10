@@ -813,6 +813,7 @@ def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
     ):
         return
     typer.echo(f"{stage} failed: {error_type}", err=True)
+    _echo_failed_checks(failure.get("failed_checks"))
     cause = failure.get("cause")
     if isinstance(cause, str) and cause:
         typer.echo(f"cause: {_display(cause[:MAX_FAILURE_CAUSE_TEXT])}", err=True)
@@ -831,6 +832,19 @@ def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
             hint = RECOVERY_NEXT_ACTIONS.get(cast("RecoveryAction", recovery_action))
     if hint is not None:
         typer.echo(f"hint: {hint}", err=True)
+
+
+def _echo_failed_checks(recorded: object) -> None:
+    """Print one `failed_check:` line per pre-write check a failed `verify` recorded (SC-004).
+
+    The names come from this repository's own check vocabulary; a recorded value that is not a
+    short ASCII identifier is skipped, so the record cannot reach the terminal as free text.
+    """
+    if not isinstance(recorded, list):
+        return
+    for name in recorded:
+        if isinstance(name, str) and len(name) <= 128 and name.isascii() and name.isidentifier():
+            typer.echo(f"failed_check: {name}", err=True)
 
 
 def _waiting_client(ctx: typer.Context, *, wait_timeout: float, poll_interval: float) -> SyncClient:
@@ -1064,14 +1078,21 @@ def verify_cmd(
     """Check that the named run's saved plan would apply now, without writing."""
     with _client_errors():
         client = _waiting_client(ctx, wait_timeout=wait_timeout, poll_interval=poll_interval)
-        completed = _submit_and_wait(
-            client,
-            lambda key: client.verify(run_id, cast("VerifyRunRequest", _request(VerifyRunRequest, reason=reason)), key),
-            idempotency_key=idempotency_key,
-            wait=wait,
-            wait_timeout=wait_timeout,
-            poll_interval=poll_interval,
-        )
+        try:
+            # Only the wait raises RunTerminalError; submitting the verification cannot.
+            completed = _submit_and_wait(
+                client,
+                lambda key: client.verify(
+                    run_id, cast("VerifyRunRequest", _request(VerifyRunRequest, reason=reason)), key
+                ),
+                idempotency_key=idempotency_key,
+                wait=wait,
+                wait_timeout=wait_timeout,
+                poll_interval=poll_interval,
+            )
+        except RunTerminalError as error:
+            _echo_stage_failure(client, error.run_id, stage="verify")
+            raise
         if wait:
             _echo_run(completed)
             _echo_verification_checks(completed)

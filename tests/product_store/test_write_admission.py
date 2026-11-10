@@ -192,6 +192,23 @@ def test_an_apply_loses_to_an_unresolved_verify_receipt(projection: ProductProje
     assert _refusal_code(refused) == _CONFLICT_CODE
 
 
+def test_an_unresolved_approve_receipt_does_not_block_an_apply(projection: ProductProjection) -> None:
+    """An approve receipt left reserved, by a crash or a rolled-back approval, must not block every later apply.
+
+    Approving submits no execution, so it cannot race the write; the approval columns, not the
+    receipt, decide whether an apply may proceed.
+    """
+    run_id = _rid("apply-after-stranded-approve")
+    projection.create_run(_run(run_id))
+    stranded, _created = projection.reserve_mutation(_receipt("m-approve", run_id=run_id, operation="approve"))
+    assert stranded.state == "reserved"
+
+    admitted = _admit_write(projection, run_id, "m-apply", operation="apply")
+
+    assert admitted.state == "reserved"
+    assert admitted.response_status is None
+
+
 def test_an_apply_loses_to_a_nonterminal_execution(projection: ProductProjection) -> None:
     """A still-running read execution blocks the write reservation."""
     projection.create_run(_run(_rid("apply-versus-execution")))

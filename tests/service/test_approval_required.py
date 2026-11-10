@@ -285,6 +285,33 @@ def test_plan_is_not_affected_by_the_setting(api: _Api) -> None:
     assert _outcomes(projection, "plan") == ["accepted"]
 
 
+def test_a_retried_apply_whose_submission_failed_is_refused_once_approval_is_required(
+    api: _Api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FR-015: a receipt reserved before the setting was on is not a way past the approval check."""
+    client, projection, orchestration, version = api
+    _stored_plan_run(projection, version)
+    monkeypatch.setenv(REQUIRE_APPROVAL_ENV, "false")
+
+    async def unavailable(parameters: dict[str, object], *, idempotency_key: str) -> Submission:  # noqa: RUF029 - matches the async protocol
+        del parameters, idempotency_key
+        raise ConnectionError
+
+    available = orchestration.submit
+    monkeypatch.setattr(orchestration, "submit", unavailable)
+    first = _apply(client)
+    assert first.status_code == 503, first.text
+    monkeypatch.setattr(orchestration, "submit", available)
+    monkeypatch.setenv(REQUIRE_APPROVAL_ENV, "true")
+
+    retry = _apply(client)
+
+    assert retry.status_code == 409, retry.text
+    assert retry.json()["error"]["code"] == "approval-required"
+    assert orchestration.submissions == []
+    assert _outcomes(projection, "apply", RUN_ID)[-1] == "refused-approval-required"
+
+
 def test_an_apply_accepted_before_the_setting_was_turned_on_still_replays(
     api: _Api, monkeypatch: pytest.MonkeyPatch
 ) -> None:

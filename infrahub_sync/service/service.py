@@ -352,6 +352,10 @@ class RunService:
             body=body,
         )
         if existing is not None:
+            if existing.state != "accepted" and approval_required():
+                # A receipt reserved before the setting was turned on, whose submission failed,
+                # resumes into a submission: it must pass the approval check first (FR-015).
+                self._require_matching_approval(run, request, principal)
             return await self._resume_or_replay(existing, parameters, principal, request.reason)
         self._require_non_secret_parameters(
             principal.actor,
@@ -469,7 +473,18 @@ class RunService:
             return self._stored_response(existing)
         self._refuse_cancelled(run, principal, "approve", request.reason)
         self._require_approvable(run, principal, request.reason)
-        plan = self._plan(run_id)
+        try:
+            plan = self._plan(run_id)
+        except ServiceAPIError:
+            # FR-008: a refused approval is audited too, including a plan that cannot be read.
+            self._audit(
+                run_id,
+                actor=principal.actor,
+                operation="approve",
+                reason=request.reason,
+                outcome="refused-plan-unavailable",
+            )
+            raise
         self._require_approvable_plan(run, plan, request, principal)
         receipt = existing or self._reserve_existing(
             run,

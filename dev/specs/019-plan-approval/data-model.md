@@ -71,7 +71,8 @@ Read when each `apply` or `sync` request is admitted. A malformed value stops th
 ## Audit events (existing `AuditEvent`, new operation)
 
 `operation = "approve"`, outcomes: `accepted`, `replayed`, `refused-authorization`, `refused-not-approvable`,
-`refused-checksum`, `refused-already-approved`, `refused-plan-unverified`.
+`refused-checksum`, `refused-already-approved`, `refused-plan-unverified`, `refused-plan-unavailable` (the saved
+plan has expired or cannot be read).
 
 `operation = "apply"` and `"sync"` gain the outcome `refused-approval-required`; `"apply"` and `"approve"` gain
 `refused-cancelled`.

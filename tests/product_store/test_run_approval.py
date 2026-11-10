@@ -319,6 +319,26 @@ def test_record_approval_does_not_update_a_run_outside_phase_planned(backend: _B
     assert phase in refused.response_body["error"]["message"]
 
 
+def test_record_approval_refuses_a_cancelled_run_with_run_cancelled(backend: _Backend) -> None:
+    """FR-020: a withdrawn plan cannot be approved; the offline tier checks the store's own refusal."""
+    store = backend.make_store()
+    store.create(_planned_run("cancelled"))
+    receipt = _reserved(store, 1)
+
+    stored = store.record_approval(
+        "run-001", _approval(), receipt, _APPROVED_RESPONSE, updated_at=datetime.now(timezone.utc)
+    )
+
+    assert stored is False
+    loaded = store.lookup("run-001").value
+    assert loaded is not None
+    assert loaded.approval is None
+    refused = _stored_receipt(store, receipt)
+    assert refused.response_status == 409
+    assert refused.response_body is not None
+    assert refused.response_body["error"]["code"] == "run-cancelled"
+
+
 def test_record_approval_rolls_back_when_the_receipt_cannot_be_completed(backend: _Backend) -> None:
     """The approval and the receipt completion are one transaction: neither lands alone."""
     store = backend.make_store()

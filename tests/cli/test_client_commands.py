@@ -600,6 +600,7 @@ def _terminal(phase: str) -> RunTerminalError:
         (("diff", "--config-id", "edge-sync", "--version", "1", "--reason", "review"), "plan"),
         (("sync", "--config-id", "edge-sync", "--version", "1", "--reason", "sync now"), "sync"),
         (("apply", "service-run-1", "--expected-checksum", CHECKSUM, "--reason", "apply reviewed plan"), "apply"),
+        (("verify", "service-run-1"), "verify"),
     ],
 )
 def test_a_failed_run_prints_the_recorded_missing_permission(
@@ -1482,6 +1483,60 @@ def test_a_successful_verify_prints_one_line_per_check_that_passed(client: Magic
     assert result.exit_code == 0, result.output
     printed = [line for line in result.output.splitlines() if line.startswith("check: ")]
     assert printed == [f"check: {name} passed" for name in checks]
+
+
+def test_a_failed_verify_names_each_check_it_failed_and_the_next_action(client: MagicMock) -> None:
+    """SC-004: the operator reads which pre-write check would refuse the apply, not only `run-terminal`."""
+    client.wait_for_run.side_effect = _terminal("planned")
+    client.get_results.return_value = ResultsResource(
+        run_id="service-run-1",
+        results={
+            "verify_failure": {
+                "stage": "verify",
+                "outcome": "failed",
+                "error_type": "PlanVerificationError",
+                "failed_checks": ["destination_binding", "lineage"],
+                "next_action": "Create a new plan for this configuration and review it.",
+            }
+        },
+    )
+
+    result = _invoke(client, "verify", "service-run-1")
+
+    assert result.exit_code == 1
+    client.get_results.assert_called_once_with("service-run-1")
+    lines = result.output.splitlines()
+    assert "verify failed: PlanVerificationError" in lines
+    assert [line for line in lines if line.startswith("failed_check: ")] == [
+        "failed_check: destination_binding",
+        "failed_check: lineage",
+    ]
+    assert "hint: Create a new plan for this configuration and review it." in lines
+    assert "error: run-terminal" in lines
+
+
+def test_a_failed_verify_prints_only_check_names_that_are_identifiers(client: MagicMock) -> None:
+    """A recorded name that is not an identifier is dropped, so the record cannot reach the terminal as text."""
+    client.wait_for_run.side_effect = _terminal("planned")
+    client.get_results.return_value = ResultsResource(
+        run_id="service-run-1",
+        results={
+            "verify_failure": {
+                "stage": "verify",
+                "outcome": "failed",
+                "error_type": "PlanVerificationError",
+                "failed_checks": ["run_binding", "bad\x1b[2Jname", 7],
+            }
+        },
+    )
+
+    result = _invoke(client, "verify", "service-run-1")
+
+    assert result.exit_code == 1
+    assert [line for line in result.output.splitlines() if line.startswith("failed_check: ")] == [
+        "failed_check: run_binding"
+    ]
+    assert "\x1b" not in result.output
 
 
 def test_verify_help_says_it_checks_the_plan_would_apply_without_writing() -> None:

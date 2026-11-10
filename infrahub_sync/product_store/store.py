@@ -2064,11 +2064,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         if row is not None and row[0] == "cancelled":
             return True
         # Every stage a run arbitrates is every run mutation except cancellation, which
-        # targets the execution a write already owns rather than reserving a stage.
+        # targets the execution a write already owns rather than reserving a stage, and
+        # approval, which submits no execution: the approval columns decide what an apply
+        # may do, and an approve receipt left reserved by a crash must not block every write.
         cursor.execute(
             self._sql(
                 "SELECT 1 FROM mutation_receipts WHERE run_id = ? AND receipt_id <> ? AND state <> 'accepted' "
-                "AND operation <> 'cancel'"
+                "AND operation NOT IN ('cancel', 'approve')"
             ),
             (run_id, receipt_id),
         )

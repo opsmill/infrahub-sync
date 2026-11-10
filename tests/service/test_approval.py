@@ -307,6 +307,26 @@ def test_a_plan_whose_checksum_was_not_verified_is_refused(api: _Api) -> None:
     assert _outcomes(projection) == ["refused-plan-unverified"]
 
 
+@pytest.mark.parametrize("artifact", [None, b"not a plan"], ids=["missing", "invalid"])
+def test_a_plan_that_cannot_be_read_is_refused_and_the_refusal_is_audited(api: _Api, artifact: bytes | None) -> None:
+    """FR-004 says which case applies; FR-008 records every approval request, refused ones included."""
+    client, projection, _orchestration, version = api
+    _stored_run(projection, version, publish=False)
+    if artifact is not None:
+        projection.publish_artifact(
+            RUN_ID, artifact_id=PLAN_ARTIFACT_ID, kind="saved-plan-review", media_type="application/json", data=artifact
+        )
+
+    response = _approve(client)
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "plan-unavailable"
+    stored = projection.lookup_run(RUN_ID).value
+    assert stored is not None
+    assert stored.approval is None
+    assert _outcomes(projection) == ["refused-plan-unavailable"]
+
+
 def test_a_different_expected_checksum_is_refused_showing_both_checksums(api: _Api) -> None:
     client, projection, _orchestration, version = api
     _stored_run(projection, version)
