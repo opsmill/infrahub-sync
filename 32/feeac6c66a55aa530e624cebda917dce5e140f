@@ -1,0 +1,25 @@
+docs/docs/running-a-sync.mdx
+  s_3026b865c0ab8b::t_dc23c69a40b748 184-185,205-207,243-244,515,522
+changelog/+verify-destination-checks.changed.md
+  s_3026b865c0ab8b::t_252ea0d3c8cd18 1
+AGENTS.md
+  s_3026b865c0ab8b::t_dc23c69a40b748 209
+docs/docs/reference/sync-http-api.mdx
+  s_3026b865c0ab8b::t_dc23c69a40b748 788-789
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "32feeac6c66a55aa530e624cebda917dce5e140f",
+  "prompts": {},
+  "sessions": {
+    "s_3026b865c0ab8b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "825efe40-61e7-452d-9076-42e4bc5cee3e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
