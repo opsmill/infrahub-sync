@@ -88,15 +88,24 @@ planning, verification, approved writes and result persistence.
 <!-- Extracted from dev/specs/archive/016-prefect-run-observability on 2026-11-09 -->
 
 An operator who opens a service flow run in the Prefect UI reads the stage's outcome and the
-next step there. Everything Prefect shows about the outcome comes from the stored run record,
-and the worker produces it only after it stores that record
+next step there. The worker writes what Prefect shows about the outcome only after it has
+stored that outcome in the run record
 ([ADR 0024](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0024-prefect-surfaces-follow-the-stored-run-record.md)).
 
 - **Order.** `service_sync_run` stores the outcome first: `_commit_success` on success, or
   `_record_failure` on failure. `_record_failure` returns a frozen `RecordedFailure`, which
   holds the stored terminal outcome (`failed` or `ambiguous`) and the evidence's redacted
   `next_action`. It returns `None` when it stored nothing. The worker then writes the last log
-  line, and then publishes the run summary artifact.
+  line, and then publishes the run summary artifact. Both receive the same outcome and next
+  action, and the worker does not reread them from the stored record:
+    - On success, they are the stage result's `outcome` and next action. The stored terminal
+  outcome is `succeeded`, so the log line can name a more specific outcome, such as
+  `verified`.
+    - On a stored failure, they are the outcome and `next_action` of the `RecordedFailure`.
+    - On a failure that was not stored, `_failure_exit` writes `outcome=failed` with
+  `infrahub-sync runs show <run_id>` as the next step, and the run record stays nonterminal
+  for reconciliation to decide. This happens when `_record_failure` returns `None`, or when
+  a read stage's success commit fails.
 - **Last log line.** `final_log_line` writes
   `service run <run_id> stage=<stage> outcome=<outcome>; next step: <next step>`. The next
   step is the failure's `next_action`. A stage that succeeds with a failure in its result,
@@ -105,9 +114,10 @@ and the worker produces it only after it stores that record
   `infrahub-sync runs show <run_id>`.
 - **Run summary artifact.** `infrahub_sync/service/run_artifact.py` publishes one markdown
   artifact for each stage, and only when the stage runs inside a real Prefect flow run (the
-  `prefect_context` flag of `_run_logger`). The artifact holds the run ID, the stage, the
-  outcome, `config_id@registry_version`, the destination branch, the operation counts by
-  action and by kind, and the next steps: `runs show`, `runs plan <id> --detail` when the run
+  `prefect_context` flag of `_run_logger`). The artifact always holds the run ID, the stage
+  and the outcome. It also holds `config_id@registry_version`, the destination branch, and
+  the operation counts by action and by kind, each only when the run record has that value.
+  It ends with the next steps: `runs show`, `runs plan <id> --detail` when the run
   holds a saved plan review, then the next action. The key is `sync-run-<run_id>-<stage>`,
   lowercased, with every character other than `a-z`, `0-9` and `-` replaced by a dash,
   because Prefect artifact keys accept only those characters. A later flow run of the same
