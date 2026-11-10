@@ -37,7 +37,7 @@ _REASON_TEXT: MappingProxyType[str, tuple[str, str]] = MappingProxyType(
         ),
         "forbidden": (
             "The account of the destination token cannot read the schema for branch `{branch}`.",
-            "Give the account the permission Infrahub names, then start the run again.",
+            "Give the account the permission named in the cause, or the access Infrahub reports, then start the run again.",
         ),
         "credentials": (
             "Sync could not resolve the destination token credential to read the schema for branch `{branch}`.",

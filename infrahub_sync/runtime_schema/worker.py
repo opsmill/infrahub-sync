@@ -141,8 +141,11 @@ def build_runtime_model_plan(
     Raises:
         UnsupportedDestinationProfileError: the destination is outside the admitted
             profile; raised before any schema I/O.
+        DestinationBranchNotFoundError: the destination branch does not exist in Infrahub
+            (accessor reason "nobranch").
         DestinationSchemaUnavailableError: the declared accessor could not deliver a
-            snapshot. Carries the accessor's short reason and nothing else from the read.
+            snapshot. Carries the accessor's short reason and, for a refused token or a
+            missing permission, the cause Infrahub states.
         UnsupportedSchemaSemanticsError: the snapshot, or a mapped attribute's kind, is
             outside the closed schema domain.
         MissingMappedKindError: a plan or sync schema declares no kind for a configured

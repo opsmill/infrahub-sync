@@ -139,7 +139,7 @@ changelog/                          # one fragment per user-visible change
 | --- | --- | --- |
 | Known class (`operator_cause` returns a `cause`) | One ERROR line: `<cause> Next step: <next_action>`, then the last log line | `return Failed(message=<same text>)` |
 | Unknown class | One ERROR line: `<error_type>`, then the last log line | `raise sanitized`, as today |
-| Refused claim | The existing ERROR line, with the Sync prefix | `raise`, as today |
+| Refused claim | The existing ERROR line, with the Sync prefix | `return Failed(message=<same text>)`, so Prefect does not log the refusal a second time with a traceback |
 
 The result dictionary that a successful stage returns does not change. `secrets.clear()` still runs after the
 line is written.
@@ -154,7 +154,8 @@ in `tests/service/` call `service_sync_run`; those with the most `pytest.raises`
 
 Which of these checks use a known error class was not checked. The first task of that group lists them by running
 the unit tier against the new behaviour, and each one is updated to assert the returned `Failed` state. The
-unknown-class path and the refused claim keep their tests unchanged.
+unknown-class path keeps its tests unchanged. The refused-claim tests in `tests/service/test_worker_claim.py` and
+`tests/service/test_run_log_next_step.py` assert the returned `Failed` state.
 
 ## Messages that name Prefect today (FR-006)
 
