@@ -310,16 +310,21 @@ response holds orchestration entries returns it: `POST /runs`, `GET /runs/{run_i
 }
 ```
 
-`reads` is `null` in three cases:
+`reads` is `null` in four cases:
 
 - For a `verify` or `apply` execution, which reads neither side.
 - For an execution recorded before the Sync API stored the read state.
 - For a `plan` or `sync` execution that the worker has not started yet.
+- For a `plan` or `sync` execution in which the worker could not store the read state of
+  either side. The worker logs a warning when a write fails and continues the stage, so
+  `reads` can stay `null` after the stage has started.
 
 When the worker starts a `plan` or `sync` stage, it records both sides as `waiting` before
 it reads the destination schema and, for a `sync`, before it waits for the configuration's
-write guard. `source` and `destination` are both present from that moment, so a stage that
-fails before either read returns both sides as `not_started`.
+write guard. When that write succeeds, `source` and `destination` are both present from that
+moment, so a stage that fails before either read returns both sides as `not_started`. When
+`reads` is not `null`, `source` or `destination` is `null` when the worker could not store
+that side's read state, and in the cases that the list after the table describes.
 
 | `state` | Meaning |
 | --- | --- |

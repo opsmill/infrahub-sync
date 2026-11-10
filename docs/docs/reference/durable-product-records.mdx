@@ -199,12 +199,18 @@ Each `PrefectExecutionLink` records:
 
 The worker records both sides as `waiting`, in one write, as soon as it starts the stage,
 before the destination schema read and before a `sync` waits for its write guard. It then writes each
-side's document when its read starts and when it ends. A document records the state, the
-start and end times, and either the read mode and the node count of each kind or the class
-name of the error that ended the read. It never holds an exception message. A write to an
-execution that has a terminal verdict changes nothing. An execution recorded before the read
-state was stored has neither document. The run resource derives what it returns from these
-documents and the execution's terminal state; see
+side's document when its read starts and when it ends. A document always records the state.
+A `waiting` document holds nothing else. A `reading` document adds the start time. A
+`succeeded` or `failed` document adds the end time, the start time when the worker recorded
+it, and either the read mode
+and the node count of each kind or the class name of the error that ended the read. It never
+holds an exception message. A write to an execution that has a terminal verdict changes
+nothing. When a write fails, the worker logs a warning and continues the stage, so a side
+whose writes all failed has no document. An execution recorded before the read state was
+stored has neither document. The run resource derives what it returns from these documents,
+the execution's terminal state and, when the execution has no terminal state yet, the flow
+run state it last observed in Prefect: a flow run that Prefect reports as `failed`, `crashed`
+or `cancelled` is treated as a `failed` execution. See
 [Read state of each side](./sync-http-api.mdx#read-state-of-each-side).
 
 Duplicate Sync run IDs and duplicate flow-run IDs within one record are rejected. A
