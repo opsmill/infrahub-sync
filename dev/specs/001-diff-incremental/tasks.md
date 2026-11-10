@@ -23,7 +23,7 @@ Independent test: missing cursor and unsupported tier each emit side, resource, 
 ## Phase 4: Documentation and verification
 
 - [X] T006 Update docs/docs/reference/incremental-extraction.mdx and add changelog/403.fixed.md.
-- [ ] T007 Run required format, lint, CLI sanity, docs validation, ty, full pytest suite, and touched-file Pylint comparison; record evidence in opsmill-implement-report.md.
+- [X] T007 Run required format, lint, CLI sanity, docs validation, ty, full pytest suite, and touched-file Pylint comparison; record evidence in opsmill-implement-report.md.
 
 ## Dependencies and delivery
 
