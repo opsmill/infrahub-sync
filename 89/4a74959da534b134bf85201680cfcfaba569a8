@@ -1,0 +1,35 @@
+dev/specs/019-plan-problem-reporting/contracts/sync-api.md
+  s_d199771aa41449::t_c0a72d02dc9810 131-132
+  s_d199771aa41449::t_43ec30351f55d0 1-130,133-147
+dev/specs/019-plan-problem-reporting/quickstart.md
+  s_d199771aa41449::t_5f010375b6e3e9 1-61
+dev/specs/019-plan-problem-reporting/data-model.md
+  s_d199771aa41449::t_3f8699af906b6d 1-173
+dev/specs/019-plan-problem-reporting/research.md
+  s_d199771aa41449::t_fe706637107f17 1-294
+dev/specs/019-plan-problem-reporting/plan.md
+  s_d199771aa41449::t_c0ea141e6a0ba4 1-187
+dev/specs/019-plan-problem-reporting/contracts/cli.md
+  s_d199771aa41449::t_7fb6be6c677c79 1-80,82,86-88
+  s_d199771aa41449::t_0bb90fdaf8176c 81,83-85
+dev/specs/019-plan-problem-reporting/contracts/plan-artifact-format-4.md
+  s_d199771aa41449::t_e098a887445494 1-43
+CLAUDE.md
+  s_d199771aa41449::t_5439312e26a9b2 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "894a74959da534b134bf85201680cfcfaba569a8",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
