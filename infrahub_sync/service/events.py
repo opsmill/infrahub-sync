@@ -94,8 +94,12 @@ def run_event(  # pylint: disable=too-many-arguments
     config_id: str | None = None,
     registry_version: int | None = None,
     branch: str | None = None,
+    created_at: datetime | None = None,
 ) -> AuditEvent:
-    """Build one run event; the configuration, version and branch come from ``run`` when it is given."""
+    """Build one run event; the configuration, version and branch come from ``run`` when it is given.
+
+    ``created_at`` defaults to the current UTC time; a caller with an injected clock passes its value.
+    """
     if run is not None:
         config_id, registry_version, branch = run.config_id, run.registry_version, run.destination_branch
     return AuditEvent(
@@ -105,7 +109,7 @@ def run_event(  # pylint: disable=too-many-arguments
         operation=operation,
         reason=reason,
         outcome=outcome,
-        created_at=datetime.now(timezone.utc),
+        created_at=created_at or datetime.now(timezone.utc),
         event_type=event_type,
         config_id=config_id,
         registry_version=registry_version,
@@ -123,8 +127,12 @@ def config_event(
     outcome: str,
     config_id: str | None,
     registry_version: int | None = None,
+    created_at: datetime | None = None,
 ) -> AuditEvent:
-    """Build one configuration event, whose primary resource is the configuration when it is known."""
+    """Build one configuration event, whose primary resource is the configuration when it is known.
+
+    ``created_at`` defaults to the current UTC time; a caller with an injected clock passes its value.
+    """
     return AuditEvent(
         event_id=f"a-{uuid4().hex}",
         run_id=None,
@@ -132,7 +140,7 @@ def config_event(
         operation=operation,
         reason=reason,
         outcome=outcome,
-        created_at=datetime.now(timezone.utc),
+        created_at=created_at or datetime.now(timezone.utc),
         event_type=event_type,
         config_id=config_id,
         registry_version=registry_version if config_id is not None else None,

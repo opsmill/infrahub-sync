@@ -1247,6 +1247,7 @@ class RunService:
             config_id=config_id,
             registry_version=registry_version,
             branch=branch,
+            created_at=self._clock(),
         )
 
     def _audit(

@@ -203,7 +203,7 @@ class RunLivenessReconciler:
                     run_id,
                     link.flow_run_id,
                     terminal_at=now,
-                    event=self._cancelled_event(refreshed_run, link.flow_run_id),
+                    event=self._cancelled_event(refreshed_run, link.flow_run_id, now),
                 )
             ):
                 return observed
@@ -224,18 +224,18 @@ class RunLivenessReconciler:
             return observed
         if observed.available and observed.state in _TERMINAL_STATES:
             self._projection.interrupt_execution(
-                run_id, link.flow_run_id, terminal_at=now, event=self._interrupted_event(refreshed_run, link)
+                run_id, link.flow_run_id, terminal_at=now, event=self._interrupted_event(refreshed_run, link, now)
             )
             return observed
         if link.claimed_at is None or age(now, link.claimed_at) < self._policy.stall_threshold_seconds:
             return observed
         if pool.detail_available and not _owner_is_fresh(link.claiming_worker_id, pool, now):
             self._projection.interrupt_execution(
-                run_id, link.flow_run_id, terminal_at=now, event=self._interrupted_event(refreshed_run, link)
+                run_id, link.flow_run_id, terminal_at=now, event=self._interrupted_event(refreshed_run, link, now)
             )
         return observed
 
-    def _interrupted_event(self, run: ProductRun, link: PrefectExecutionLink) -> AuditEvent:
+    def _interrupted_event(self, run: ProductRun, link: PrefectExecutionLink, now: datetime) -> AuditEvent:
         """Build the `run.failed` event of an interrupted stage, outcome `ambiguous` (data-model.md).
 
         The actor and reason are those of the request whose receipt holds this execution, else
@@ -251,9 +251,10 @@ class RunLivenessReconciler:
             operation=link.purpose,
             reason=None if request is None else request.reason,
             outcome="ambiguous",
+            created_at=now,
         )
 
-    def _cancelled_event(self, run: ProductRun, flow_run_id: str) -> AuditEvent:
+    def _cancelled_event(self, run: ProductRun, flow_run_id: str, now: datetime) -> AuditEvent:
         """Build the `run.cancelled` event: the actor and reason of the cancel request, else the run's actor."""
         request = self._projection.lookup_mutation_for_execution(run.run_id, flow_run_id, "cancel").value
         actor = request.actor if request is not None else run.actor
@@ -265,6 +266,7 @@ class RunLivenessReconciler:
             operation="cancel",
             reason=None if request is None else request.reason,
             outcome="cancelled",
+            created_at=now,
         )
 
 

@@ -16,6 +16,7 @@ pytest.importorskip("prefect")
 from prefect.states import Cancelled, Completed, Crashed, Failed, Running
 
 from infrahub_sync.product_store import MutationReceipt, PrefectExecutionLink, ProductRun, local_product_projection
+from infrahub_sync.service.events import RUN_FAILED
 from infrahub_sync.service.liveness import LivenessPolicy, RunLivenessReconciler, select_cancellable_execution
 from infrahub_sync.service.orchestration import (
     CancellationResult,
@@ -306,6 +307,9 @@ def test_claimed_execution_requires_its_exact_fresh_owner(tmp_path) -> None:
     assert run is not None
     link = run.prefect_executions[0]
     assert link.terminal_state == "interrupted"
+    # The run.failed event takes its time from the injected clock, the same value as terminal_at.
+    (failed,) = [event for event in projection.audit_events("run-dead-owner") if event.event_type == RUN_FAILED]
+    assert failed.created_at == now == link.terminal_at
 
 
 def test_owner_boundaries_and_clock_reversal_do_not_interrupt_early(tmp_path) -> None:
