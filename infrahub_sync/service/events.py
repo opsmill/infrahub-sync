@@ -25,6 +25,8 @@ RUN_CANCELLED = f"{_RUN_PREFIX}cancelled"
 RUN_FAILED = f"{_RUN_PREFIX}failed"
 CONFIG_REGISTERED = f"{_CONFIG_PREFIX}registered"
 CONFIG_VERSION_REGISTERED = f"{_CONFIG_PREFIX}version_registered"
+# A version request whose content matches an existing version returns that version.
+CONFIG_VERSION_RETRIEVED = f"{_CONFIG_PREFIX}version_retrieved"
 
 
 def _decision_action(outcome: str) -> str | None:

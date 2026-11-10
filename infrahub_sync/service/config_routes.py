@@ -33,7 +33,13 @@ from infrahub_sync.product_store import (
 from infrahub_sync.product_store.models import MAX_REGISTRY_VERSION
 
 from .auth import Principal
-from .events import CONFIG_REGISTERED, CONFIG_VERSION_REGISTERED, config_decision_type, config_event
+from .events import (
+    CONFIG_REGISTERED,
+    CONFIG_VERSION_REGISTERED,
+    CONFIG_VERSION_RETRIEVED,
+    config_decision_type,
+    config_event,
+)
 from .models import ConfigMutationRequest
 from .paging import (
     DEFAULT_LIMIT,
@@ -308,9 +314,11 @@ class ConfigurationRoutes:
             if operation == "register-config":
                 result = self.register(package, actor=actor, reason=reason)
                 response_status = 201
+                event_type = CONFIG_REGISTERED
             else:
                 result = self.create_version(resource_id, package, actor=actor, reason=reason)
                 response_status = 201 if result.created else 200
+                event_type = CONFIG_VERSION_REGISTERED if result.created else CONFIG_VERSION_RETRIEVED
         except ConfigurationAPIError as error:
             if error.proven_pre_effect:
                 projection.release_mutation(stored.receipt_id, secrets=self._secrets)
@@ -324,7 +332,7 @@ class ConfigurationRoutes:
             response_body=response,
             flow_run_id=None,
             event=config_event(
-                event_type=CONFIG_REGISTERED if operation == "register-config" else CONFIG_VERSION_REGISTERED,
+                event_type=event_type,
                 actor=actor,
                 operation=operation,
                 reason=reason,

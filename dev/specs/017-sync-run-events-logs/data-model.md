@@ -40,6 +40,7 @@ Storage, for both SQLite and PostgreSQL:
 | `infrahub_sync.run.cancelled` | Sync API | A cancellation is recorded as the run's end. |
 | `infrahub_sync.config.registered` | Sync API | A configuration is registered (`register-config`). |
 | `infrahub_sync.config.version_registered` | Sync API | A configuration version is created. |
+| `infrahub_sync.config.version_retrieved` | Sync API | A `create-config-version` request has the same content as an existing version, and the Sync API returns that version. |
 | `infrahub_sync.config.refused` | Sync API | A configuration request is refused (`refused-authorization`, `refused-idempotency*`). |
 | `infrahub_sync.config.replayed` / `.unavailable` | Sync API | As for runs. |
 

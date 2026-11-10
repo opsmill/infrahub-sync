@@ -1578,7 +1578,7 @@ def _typed_config_events(projection: ProductProjection) -> list[tuple[str | None
 def test_configuration_decisions_record_typed_configuration_events(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """FR-012: registration, a new version and a replay each name the configuration and its version."""
+    """FR-012: registration, a new version, a retrieved version and a replay each name the configuration and version."""
     client, projection = _event_client(tmp_path, monkeypatch)
     admin = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
     record_audit = projection.record_audit
@@ -1600,6 +1600,12 @@ def test_configuration_decisions_record_typed_configuration_events(
         json={"package": _named_package("renamed"), "reason": "second"},
     )
     assert version.status_code == 201
+    retrieved = client.post(
+        f"/configs/{config_id}/versions",
+        headers={**admin, "Idempotency-Key": "same-content"},
+        json={"package": _named_package("renamed"), "reason": "again"},
+    )
+    assert retrieved.status_code == 200
     assert (
         client.post(
             "/configs",
@@ -1612,6 +1618,7 @@ def test_configuration_decisions_record_typed_configuration_events(
     assert _typed_config_events(projection) == [
         ("infrahub_sync.config.registered", "register-config", "accepted", config_id, 1),
         ("infrahub_sync.config.version_registered", "create-config-version", "accepted", config_id, 2),
+        ("infrahub_sync.config.version_retrieved", "create-config-version", "accepted", config_id, 2),
         ("infrahub_sync.config.replayed", "register-config", "replayed", config_id, 1),
     ]
     for event in projection.audit_events():

@@ -542,6 +542,7 @@ destination branch. The event types are:
 | `infrahub_sync.run.cancelled` | An execution that a cancel request stopped ended cancelled. `actor` and `reason` come from the cancel request. |
 | `infrahub_sync.config.registered` | A configuration was registered as version 1. |
 | `infrahub_sync.config.version_registered` | A new version of a configuration was registered. |
+| `infrahub_sync.config.version_retrieved` | A version request had the same content as an existing version of the configuration, and the Sync API returned that version with status 200. No version was created. |
 | `infrahub_sync.config.refused`, `.replayed`, `.unavailable` | The same decisions as for a run, on a configuration request. |
 
 A request refused for a missing or invalid token is not an event, and `GET /events` never
