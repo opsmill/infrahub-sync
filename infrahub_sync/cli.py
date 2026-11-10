@@ -71,6 +71,7 @@ if TYPE_CHECKING:
         RunLogLine,
         RunLogPage,
         RunReference,
+        SideRead,
     )
 
 _Resource = TypeVar("_Resource")
@@ -638,6 +639,37 @@ def _echo_run(resource: RunResource) -> None:
     )
 
 
+def _echo_reads(resource: RunResource) -> None:
+    """Print each side's read state for `runs show`.
+
+    `verify` and `apply` run as later executions of the same run and read no side, so the
+    read state comes from the latest execution that reads, not from the selected one.
+    """
+    reading = next((entry for entry in reversed(resource.orchestration) if entry.purpose in {"plan", "sync"}), None)
+    if reading is not None and reading.reads is not None:
+        _echo_fields(
+            (
+                ("source_read", _side_read_text(reading.reads.source)),
+                ("destination_read", _side_read_text(reading.reads.destination)),
+            )
+        )
+
+
+def _side_read_text(side: SideRead | None) -> str | None:
+    """Render one side's read state as `key=value` pairs, leaving out the keys with no value."""
+    if side is None:
+        return None
+    pairs = (
+        ("state", side.state),
+        ("mode", side.read_mode),
+        ("started_at", side.started_at.isoformat() if side.started_at is not None else None),
+        ("ended_at", side.ended_at.isoformat() if side.ended_at is not None else None),
+        ("nodes", ",".join(f"{kind}:{count}" for kind, count in side.nodes_by_kind.items()) or None),
+        ("error", side.error_class),
+    )
+    return " ".join(f"{key}={value}" for key, value in pairs if value is not None)
+
+
 def _wait(
     client: SyncClient,
     accepted: RunResource,
@@ -1168,11 +1200,17 @@ def runs_show(
     """Show one run's service record and its selected execution.
 
     `prefect_flow_run_url` links the flow run in the Prefect UI; it reads <none> when the Sync API has no UI address.
+    For a run with a `plan` or `sync` stage, `source_read` and `destination_read` show the read state of each side
+    in that stage's latest execution: `state`, `mode`, `started_at`, `ended_at`, `nodes` and `error`, without the
+    keys that have no value. A side with no read state to return reads <none>. Neither line is printed when that
+    execution has no read state: a run recorded before the read state, a stage the worker has not started, or a
+    stage whose read state the worker could not store.
     A failed stage adds its error type and, when the run recorded them, a `cause:` and a `hint:` line.
     """
     with _client_errors():
         resource = _client(ctx).get_run(run_id)
     _echo_run(resource)
+    _echo_reads(resource)
     # The latest execution of each stage; the orchestration list is in run order.
     latest_by_stage = {execution.purpose: execution for execution in resource.orchestration}
     # A failed stage's cause and next action, as the run's results recorded them (FR-002).

@@ -16,7 +16,7 @@ from math import isfinite
 from pathlib import Path, PurePosixPath
 from tempfile import mkdtemp
 from time import sleep
-from typing import Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from uuid import UUID
 
 from pydantic import TypeAdapter
@@ -55,6 +55,10 @@ from infrahub_sync.product_store.models import (
     RunReference,
 )
 
+if TYPE_CHECKING:
+    # Typing only: importing the engine package at runtime would load the whole engine into the store.
+    from infrahub_sync.potenda.read_progress import Side
+
 logger = logging.getLogger(__name__)
 
 _SCHEMA = """
@@ -89,7 +93,7 @@ CREATE TABLE IF NOT EXISTS prefect_executions (
     claimed_at TEXT, claiming_worker_id TEXT, stalled_at TEXT, cancellation_requested_at TEXT,
     cancellation_recovery_deadline_at TEXT, cancellation_receipt_id TEXT, cancellation_acknowledged_at TEXT,
     terminal_at TEXT, terminal_state TEXT, terminal_outcome TEXT, position INTEGER NOT NULL,
-    mutation_receipt_id TEXT UNIQUE,
+    mutation_receipt_id TEXT UNIQUE, source_read TEXT, destination_read TEXT,
     PRIMARY KEY (run_id, flow_run_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id),
     FOREIGN KEY (mutation_receipt_id) REFERENCES mutation_receipts(receipt_id)
 );
@@ -208,6 +212,19 @@ _PREFECT_EXECUTION_LIVENESS_COLUMNS: tuple[tuple[str, str], ...] = (
     ("terminal_at", "TEXT"),
     ("terminal_state", "TEXT"),
     ("terminal_outcome", "TEXT"),
+)
+# The read state of each side of a plan or sync execution: one JSON document per side, so the
+# two read threads never write the same column (spec 018, research R3).
+_SIDE_READ_COLUMNS: dict[Side, str] = {"source": "source_read", "destination": "destination_read"}
+# The fields and values a side's read document may hold. The store checks them before it writes,
+# so a document cannot carry an exception message, an address, or a secret into the run record.
+# The read modes repeat `ReadMode` in the engine, which the store does not import at run time.
+_SIDE_READ_FIELDS = frozenset({"state", "started_at", "ended_at", "read_mode", "nodes_by_kind", "error_class"})
+_SIDE_READ_STATES = frozenset({"waiting", "reading", "succeeded", "failed"})
+_SIDE_READ_MODES = frozenset({"full", "incremental"})
+_SIDE_READ_ERROR_CLASS_MAX_LENGTH = 200
+_PREFECT_EXECUTION_READ_COLUMNS: tuple[tuple[str, str], ...] = tuple(
+    (column, "TEXT") for column in _SIDE_READ_COLUMNS.values()
 )
 _CONFIGURATION_BINDING_CONSTRAINT = "product_runs_configuration_binding_consistent"
 _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
@@ -413,12 +430,12 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _SELECT_PREFECT_EXECUTIONS = """SELECT run_id, flow_run_id, deployment_id, purpose, attempt, last_observed_state,
 last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at, cancellation_requested_at,
 cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at, terminal_at, terminal_state,
-terminal_outcome, position FROM prefect_executions WHERE run_id = ? ORDER BY position"""
+terminal_outcome, position, source_read, destination_read FROM prefect_executions WHERE run_id = ? ORDER BY position"""
 _INSERT_PREFECT_EXECUTION = """INSERT INTO prefect_executions (run_id, flow_run_id, deployment_id, purpose, attempt,
 last_observed_state, last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at,
 cancellation_requested_at, cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at,
-terminal_at, terminal_state, terminal_outcome, position, mutation_receipt_id)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+terminal_at, terminal_state, terminal_outcome, position, mutation_receipt_id, source_read, destination_read)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _INSERT_MUTATION_RECEIPT = """INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation,
 target_run_id, request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body,
 flow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
@@ -571,6 +588,8 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def observe_prefect_execution(
         self, run_id: str, flow_run_id: str, *, state: str | None, observed_at: datetime
     ) -> None: ...
+
+    def record_side_reads(self, run_id: str, flow_run_id: str, documents: Mapping[Side, Mapping[str, Any]]) -> bool: ...
 
     def claim_execution(
         self,
@@ -849,9 +868,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             cursor.execute(statement)
 
     def _migrate_prefect_execution_columns(self, cursor: _Cursor) -> None:
-        """Add liveness columns without fabricating timestamps for legacy links."""
+        """Add liveness and read-state columns without fabricating values for legacy links."""
         existing = self._read_table_columns(cursor, "prefect_executions")
-        for column, sql_type in _PREFECT_EXECUTION_LIVENESS_COLUMNS:
+        for column, sql_type in (*_PREFECT_EXECUTION_LIVENESS_COLUMNS, *_PREFECT_EXECUTION_READ_COLUMNS):
             if column not in existing:
                 cursor.execute(f"ALTER TABLE prefect_executions ADD COLUMN {column} {sql_type}")
 
@@ -1355,6 +1374,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 link.terminal_outcome,
                 position,
                 mutation_receipt_id,
+                None if link.source_read is None else _json(link.source_read),
+                None if link.destination_read is None else _json(link.destination_read),
             ),
         )
 
@@ -1424,6 +1445,26 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         return self._execution_update(
             statement,
             (claimed_at.isoformat(), worker_id, run_id, flow_run_id, admission_deadline_at.isoformat()),
+        )
+
+    def record_side_reads(self, run_id: str, flow_run_id: str, documents: Mapping[Side, Mapping[str, Any]]) -> bool:
+        """Store one or both sides' read documents in one write while the execution is not terminal.
+
+        Returns whether a row changed. A write that arrives after the execution ended, for
+        example from a worker that kept running after it was marked interrupted, changes
+        nothing. Each side selects a column, so the sides are checked before any SQL runs.
+        """
+        if not documents:
+            msg = "record_side_reads needs at least one side"
+            raise ValueError(msg)
+        columns = [_side_read_column(side) for side in documents]
+        for side, document in documents.items():
+            _check_side_read_document(side, document)
+        assignments = ", ".join(f"{column} = ?" for column in columns)
+        return self._execution_update(
+            f"UPDATE prefect_executions SET {assignments} "  # noqa: S608 - columns from a fixed two-name map
+            "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL",
+            (*(_json(dict(document)) for document in documents.values()), run_id, flow_run_id),
         )
 
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime) -> bool:
@@ -3220,6 +3261,14 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             admission_deadline_at=admission_deadline_at,
         )
 
+    def record_side_reads(self, run_id: str, flow_run_id: str, documents: Mapping[Side, Mapping[str, Any]]) -> bool:
+        """Store read documents, keyed by side, on a non-terminal execution; return whether it changed.
+
+        Each document holds a state, times, a read mode, node counts and an error class name,
+        never an exception message (spec 018 data-model.md). An unknown side is refused.
+        """
+        return self._records.record_side_reads(run_id, flow_run_id, documents)
+
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime | None = None) -> bool:
         """Set the first stall marker while leaving a pre-TTL execution claimable."""
         effective_stalled_at = stalled_at if stalled_at is not None else datetime.now(timezone.utc)
@@ -3786,6 +3835,65 @@ def production_product_projection(
     )
 
 
+def _side_read_column(side: str) -> str:
+    """The column that stores `side`'s read document; refuses any other side name."""
+    # Compared, not looked up: `side` comes from a caller and may be any string.
+    column = next((column for name, column in _SIDE_READ_COLUMNS.items() if name == side), None)
+    if column is None:
+        msg = f"unknown read side {side!r}; expected 'source' or 'destination'"
+        raise ValueError(msg)
+    return column
+
+
+def _check_side_read_document(side: str, document: Mapping[str, Any]) -> None:
+    """Refuse a read document that holds a field or a value the read state does not allow.
+
+    The error names the side and the field, never the value, because a refused value may be
+    an exception message or a secret.
+    """
+    if not isinstance(document, Mapping):
+        msg = f"the {side} read document is not a mapping"
+        raise ValueError(msg)  # noqa: TRY004 - one error type for every refused document
+    for key in document:
+        if not isinstance(key, str) or key not in _SIDE_READ_FIELDS:
+            msg = f"the {side} read document holds a field that is not allowed"
+            raise ValueError(msg)
+    for key, value in document.items():
+        if not _side_read_value_allowed(key, value):
+            msg = f"the {side} read document has a value for {key!r} that is not allowed"
+            raise ValueError(msg)
+    if "state" not in document:
+        msg = f"the {side} read document has no 'state'"
+        raise ValueError(msg)
+
+
+def _side_read_value_allowed(key: str, value: Any) -> bool:
+    """Whether `value` is an allowed value for the read-document field `key`."""
+    if key == "state":
+        return isinstance(value, str) and value in _SIDE_READ_STATES
+    if key == "nodes_by_kind":
+        return isinstance(value, Mapping) and all(
+            isinstance(kind, str) and isinstance(count, int) and not isinstance(count, bool) and count >= 0
+            for kind, count in value.items()
+        )
+    if value is None or not isinstance(value, str):
+        return value is None
+    if key == "read_mode":
+        return value in _SIDE_READ_MODES
+    if key == "error_class":
+        return len(value) <= _SIDE_READ_ERROR_CLASS_MAX_LENGTH and value.isidentifier()
+    return _is_iso_timestamp(value)
+
+
+def _is_iso_timestamp(value: str) -> bool:
+    """Whether `value` is an ISO 8601 timestamp, the form of `started_at` and `ended_at`."""
+    try:
+        datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _json(value: Any) -> str:
     return canonical_json_bytes(value).decode()
 
@@ -3819,6 +3927,35 @@ def _is_canonical_uuid(value: str) -> bool:
         return str(UUID(value)) == value
     except ValueError:
         return False
+
+
+def _stored_side_read(value: str | None, *, run_id: str, column: str) -> dict[str, Any] | None:
+    """Parse one stored side-read column; a value that is not a JSON object reads as ``None``.
+
+    A side's read state is a progress report, so a damaged value must not stop a run from being
+    read. The warning names the run, the column and the error class, never the stored text.
+    """
+    if value is None:
+        return None
+    try:
+        document = json.loads(value)
+    except (json.JSONDecodeError, TypeError) as exc:
+        logger.warning(
+            "Ignoring an unreadable side-read column: run_id=%s column=%s error=%s",
+            run_id,
+            column,
+            type(exc).__name__,
+        )
+        return None
+    if not isinstance(document, dict):
+        logger.warning(
+            "Ignoring a side-read column that is not a JSON object: run_id=%s column=%s type=%s",
+            run_id,
+            column,
+            type(document).__name__,
+        )
+        return None
+    return document
 
 
 def _run_from_rows(
@@ -3867,6 +4004,8 @@ def _run_from_rows(
                     "terminal_at": item[15],
                     "terminal_state": item[16],
                     "terminal_outcome": item[17],
+                    "source_read": _stored_side_read(item[19], run_id=row[0], column="source_read"),
+                    "destination_read": _stored_side_read(item[20], run_id=row[0], column="destination_read"),
                 }
                 for item in links
             ],

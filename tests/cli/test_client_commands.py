@@ -54,6 +54,8 @@ from infrahub_sync.client import (
     RunResource,
     RunTerminalError,
     RunWaitTimeoutError,
+    SideRead,
+    StageReads,
     SyncClient,
     TransportError,
     ValidationFindingResource,
@@ -744,6 +746,133 @@ def test_runs_show_prints_no_prefect_flow_run_link_when_the_response_omits_it(cl
     assert result.exit_code == 0, result.output
     lines = result.output.splitlines()
     assert lines[lines.index("flow_run_id: flow-service-1") + 1] == "prefect_flow_run_url: <none>"
+
+
+READ_STARTED = datetime(2026, 11, 9, 10, 0, 1, tzinfo=timezone.utc)
+
+
+def _with_reads(resource: RunResource, reads: StageReads | None) -> RunResource:
+    execution = resource.orchestration[0].model_copy(update={"reads": reads})
+    return resource.model_copy(update={"orchestration": (execution,)})
+
+
+@pytest.mark.parametrize("command", ["plan", "sync", "apply"])
+def test_only_runs_show_prints_the_side_reads(client: MagicMock, command: Literal["plan", "sync", "apply"]) -> None:
+    """The other commands share the run printout, but the reads belong to the plan or sync execution only."""
+    reads = StageReads(source=SideRead(state="waiting"), destination=SideRead(state="waiting"))
+    getattr(client, command).return_value = _with_reads(_run(operation=command), reads)
+    arguments = {
+        "plan": ("--config-id", "edge-sync", "--version", "1", "--reason", "review", "--no-wait"),
+        "sync": ("--config-id", "edge-sync", "--version", "1", "--reason", "sync", "--no-wait"),
+        "apply": ("service-run-1", "--expected-checksum", CHECKSUM, "--reason", "apply", "--no-wait"),
+    }[command]
+
+    result = _invoke(client, command, *arguments)
+
+    assert result.exit_code == 0, result.output
+    assert "source_read" not in result.output
+    assert "destination_read" not in result.output
+
+
+def test_runs_show_prints_each_side_read_after_the_prefect_flow_run_link(client: MagicMock) -> None:
+    """FR-012: an operator reads each side's read state where the run's other fields are."""
+    reads = StageReads(
+        source=SideRead(
+            state="succeeded",
+            read_mode="full",
+            started_at=READ_STARTED,
+            ended_at=READ_STARTED + timedelta(seconds=12),
+            nodes_by_kind={"DcimDevice": 3, "LocationSite": 2},
+        ),
+        destination=SideRead(
+            state="failed",
+            started_at=READ_STARTED,
+            ended_at=READ_STARTED + timedelta(seconds=3),
+            error_class="ConnectionError",
+        ),
+    )
+    client.get_run.return_value = _with_reads(_run(), reads)
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    link_line = next(index for index, line in enumerate(lines) if line.startswith("prefect_flow_run_url: "))
+    assert lines[link_line + 1 : link_line + 3] == [
+        "source_read: state=succeeded mode=full started_at=2026-11-09T10:00:01+00:00"
+        " ended_at=2026-11-09T10:00:13+00:00 nodes=DcimDevice:3,LocationSite:2",
+        "destination_read: state=failed started_at=2026-11-09T10:00:01+00:00"
+        " ended_at=2026-11-09T10:00:04+00:00 error=ConnectionError",
+    ]
+
+
+def test_runs_show_prints_only_the_state_of_a_side_that_has_not_started_reading(client: MagicMock) -> None:
+    """A key with no value is left out, and a side the response does not hold prints `<none>`."""
+    client.get_run.return_value = _with_reads(_run(), StageReads(source=SideRead(state="waiting")))
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert "source_read: state=waiting" in lines
+    assert "destination_read: <none>" in lines
+
+
+def test_runs_show_prints_the_plan_read_state_when_a_verify_execution_follows_it(client: MagicMock) -> None:
+    """Critique M1: `verify` and `apply` run as later executions of the run, and they read no side."""
+    plan_run = _with_reads(_run(), StageReads(source=SideRead(state="succeeded", read_mode="incremental")))
+    verify = plan_run.orchestration[0].model_copy(
+        update={"flow_run_id": "flow-service-2", "purpose": "verify", "attempt": 1, "reads": None}
+    )
+    client.get_run.return_value = plan_run.model_copy(update={"orchestration": (*plan_run.orchestration, verify)})
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    # The other fields keep describing the latest execution.
+    assert "flow_run_id: flow-service-2" in lines
+    assert lines[lines.index("prefect_flow_run_url: <none>") + 1] == "source_read: state=succeeded mode=incremental"
+    assert "destination_read: <none>" in lines
+
+
+def test_runs_show_prints_no_read_fields_when_the_newest_plan_execution_has_no_read_state(client: MagicMock) -> None:
+    """FR-011, cli-output.md: the newest `plan` execution is selected, not an older one with reads."""
+    older = _with_reads(_run(), StageReads(source=SideRead(state="succeeded", read_mode="full")))
+    queued = older.orchestration[0].model_copy(update={"flow_run_id": "flow-service-2", "attempt": 2, "reads": None})
+    client.get_run.return_value = older.model_copy(update={"orchestration": (*older.orchestration, queued)})
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert "flow_run_id: flow-service-2" in lines
+    assert not [line for line in lines if line.startswith(("source_read", "destination_read"))]
+
+
+def test_runs_show_prints_no_read_fields_for_a_run_without_read_state(client: MagicMock) -> None:
+    """A run recorded before read state existed keeps its output and exit code unchanged."""
+    resource = _with_reads(_run(), None)
+    client.get_run.return_value = resource
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert not [line for line in lines if line.startswith(("source_read", "destination_read"))]
+    assert lines == [
+        "run_id: service-run-1",
+        "operation: plan",
+        "config_id: edge-sync",
+        "registry_version: 1",
+        f"package_checksum: {CHECKSUM}",
+        "phase: accepted",
+        "outcome: <none>",
+        "reconciliation_required: false",
+        "execution_state: pending",
+        "flow_run_id: flow-service-1",
+        "prefect_flow_run_url: <none>",
+    ]
 
 
 @pytest.mark.parametrize(

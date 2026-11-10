@@ -280,6 +280,94 @@ with a host, or when it holds credentials, a query or a fragment. The refusal me
 the setting and does not repeat its value. A client from an earlier release accepts a
 response that holds the field.
 
+### Read state of each side
+
+Each orchestration entry also carries `reads`: the state of the source read and the
+destination read of a `plan` or `sync` execution. Read the run while the stage runs to follow
+each side, and after it ends to find which side failed or did not start. Every route whose
+response holds orchestration entries returns it: `POST /runs`, `GET /runs/{run_id}`,
+`POST /runs/{run_id}/verify`, `POST /runs/{run_id}/apply` and `POST /runs/{run_id}/cancel`.
+`GET /runs` does not return it, because its items hold no orchestration entries.
+
+```json
+"reads": {
+  "source": {
+    "state": "succeeded",
+    "started_at": "2026-11-09T10:00:01Z",
+    "ended_at": "2026-11-09T10:00:13Z",
+    "read_mode": "full",
+    "nodes_by_kind": {"DcimDevice": 3, "LocationSite": 2},
+    "error_class": null
+  },
+  "destination": {
+    "state": "reading",
+    "started_at": "2026-11-09T10:00:01Z",
+    "ended_at": null,
+    "read_mode": null,
+    "nodes_by_kind": {},
+    "error_class": null
+  }
+}
+```
+
+`reads` is `null` in four cases:
+
+- For a `verify` or `apply` execution, which reads neither side.
+- For an execution recorded before the Sync API stored the read state.
+- For a `plan` or `sync` execution that the worker has not started yet.
+- For a `plan` or `sync` execution in which the worker could not store the read state of
+  either side. The worker logs a warning when a write fails and continues the stage, so
+  `reads` can stay `null` after the stage has started.
+
+When the worker starts a `plan` or `sync` stage, it records both sides as `waiting` before
+it reads the destination schema and, for a `sync`, before it waits for the configuration's
+write guard. When that write succeeds, `source` and `destination` are both present from that
+moment, so a stage that fails before either read returns both sides as `not_started`. When
+`reads` is not `null`, `source` or `destination` is `null` when the worker could not store
+that side's read state, and in the cases that the list after the table describes.
+
+| `state` | Meaning |
+| --- | --- |
+| `waiting` | The worker started the stage and has not started reading this side. |
+| `reading` | The read of this side has started and has not ended. `started_at` is set. |
+| `succeeded` | The read ended without an error. `ended_at`, `read_mode` and `nodes_by_kind` are set. |
+| `failed` | The read ended with an error. `ended_at` and `error_class` are set. |
+| `not_started` | The execution ended without completing before this side's read started. |
+| `interrupted` | The execution ended without completing while this side was being read. |
+
+The Sync API stores only `waiting`, `reading`, `succeeded` and `failed`. It derives the
+returned state from the stored state, the execution's `terminal_state`, and the flow run
+state it last observed in Prefect:
+
+- When `terminal_state` is set to anything other than `completed`, a side stored as `waiting`
+  is returned as `not_started`, and a side stored as `reading` is returned as `interrupted`.
+  `ended_at` is `null` for both.
+- When `terminal_state` is not set yet, but Prefect reports the flow run as `failed`,
+  `crashed` or `cancelled`, the Sync API returns the sides the same way. This covers a worker
+  that stopped before the service recorded its execution's verdict.
+- When `terminal_state` is `completed`, a side still stored as `waiting` or `reading` is
+  returned as `null`, because the end of its read was not recorded. The Sync API logs a
+  warning.
+- A stored state that does not parse, or that holds a state or read mode the Sync API does
+  not store, is returned as `null`, and the Sync API logs a warning.
+
+`state` and `read_mode` are strings in the client model, so a client from this release
+reads a run response that holds a state or a read mode added by a later release.
+
+`read_mode` is `full` when the worker extracted every top-level kind of the side in full,
+and `incremental` otherwise, including for a side that mixes kinds extracted in full and
+kinds read incrementally. `nodes_by_kind` counts the nodes read for each
+top-level kind of the side and each other kind the side holds, sorted by kind name; a
+top-level kind with no node counts `0`. It is `{}` for every state other than `succeeded`,
+and for a succeeded read whose nodes could not be counted, in which case the worker logs a
+warning. `error_class` is the class name of the error that
+ended the read, such as `ConnectionError`, and is `null` for every state other than `failed`.
+No field holds an exception message, an address, a secret or configuration content.
+
+A run can hold `plan`, `verify` and `apply` entries in order. To show one read state for a
+run, use the latest entry whose `purpose` is `plan` or `sync`. The change is additive:
+existing fields keep their meaning and order.
+
 ## Routes
 
 Every route below requires `Authorization: Bearer <token>`. Every `POST` route that writes or
