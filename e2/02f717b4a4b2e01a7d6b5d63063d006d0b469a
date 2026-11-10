@@ -1,0 +1,19 @@
+docs/docs/development/guidelines/secret-redaction.md
+  s_0992c1a3c9243e::t_17e80dd278f199 27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e202f717b4a4b2e01a7d6b5d63063d006d0b469a",
+  "prompts": {},
+  "sessions": {
+    "s_0992c1a3c9243e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d5cdd1d7-2732-4d52-964e-330ab3708180",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
