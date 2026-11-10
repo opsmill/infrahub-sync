@@ -1,13 +1,4 @@
-import {
-  Button,
-  Card,
-  Label,
-  Select,
-  SelectItem,
-  SelectList,
-  SelectTrigger,
-  Tooltip,
-} from "@infrahub/ui";
+import { Button, Card, Label, Select, SelectItem, SelectList, SelectTrigger } from "@infrahub/ui";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   type KeyboardEvent,
@@ -23,13 +14,7 @@ import { cn } from "tailwind-variants";
 
 import { describeError } from "#/api/queries";
 import type { Run } from "#/api/types";
-import {
-  ArrowRightIcon,
-  BranchIcon,
-  ChevronRightIcon,
-  STATE_TEXT,
-  StateIcon,
-} from "#/components/icons";
+import { ChevronRightIcon, STATE_TEXT, StateIcon } from "#/components/icons";
 import {
   Bar,
   CLICKABLE,
@@ -44,10 +29,13 @@ import {
   textAction,
 } from "#/components/page";
 import { Stepper, When } from "#/components/run-status";
+import { runsByConfig } from "#/domain/run-history";
 import { failureDetail, type RunState, stepNames } from "#/domain/run-state";
-import type { System } from "#/domain/systems";
 import { StartRunDialog, type StartRunTarget } from "#/features/runs/StartRunDialog";
 import { useDocumentTitle } from "#/lib/title";
+
+import { InSyncSection } from "./InSyncSection";
+import { LIFT, SearchHint, SystemsLine } from "./row-parts";
 
 import {
   byUrgency,
@@ -71,82 +59,7 @@ const TABLE =
 const SUBGRID = "md:col-span-full md:grid md:grid-cols-subgrid";
 const ROW = cn("flex flex-col gap-y-2 px-4 py-3.5 md:items-start", SUBGRID);
 
-// Tooltip triggers sit above the stretched row link for a mouse; on a touch screen a tap on them
-// opens the configuration, because touch does not open tooltips.
-const LIFT = "pointer-fine:relative pointer-fine:z-10";
-
 /* ---------- row ---------- */
-
-function HostTip({ system }: { system: System }) {
-  if (!system.host) return <span>{system.label}</span>;
-  return (
-    <Tooltip
-      nonInteractiveTrigger
-      placement="top"
-      message={<span className="font-mono">{system.host}</span>}
-    >
-      <span className={cn(LIFT, "cursor-default")}>{system.label}</span>
-    </Tooltip>
-  );
-}
-
-function SystemsLine({ row }: { row: ConfigurationRow }) {
-  if (row.latestVersion === undefined)
-    return <span className="text-subtle">Latest version not known</span>;
-  if (row.versionError)
-    return <span className="text-subtle">Could not read the configuration package</span>;
-  if (!row.source || !row.destination) return <Bar className="my-0.5 h-3.5 w-36" />;
-  const branch = defaultBranch(row);
-  const fromRun = Boolean(row.run?.destination_branch);
-  return (
-    <span className="inline-flex max-w-full flex-wrap items-center gap-x-1.5">
-      <HostTip system={row.source} />
-      <ArrowRightIcon />
-      <span className="sr-only">to</span>
-      <HostTip system={row.destination} />
-      {branch && branch !== "main" && (
-        <Tooltip
-          nonInteractiveTrigger
-          placement="top"
-          message={fromRun ? "Branch of the latest run" : "Branch declared in the configuration"}
-        >
-          <span
-            className={cn(
-              LIFT,
-              "inline-flex min-w-0 max-w-full cursor-default items-center gap-1 font-mono text-[12px] text-subtle"
-            )}
-          >
-            <BranchIcon className="size-3.5 shrink-0" />
-            <span className="sr-only">{fromRun ? "latest run on branch" : "on branch"}</span>
-            <span className="min-w-0 [overflow-wrap:anywhere]">{branch}</span>
-          </span>
-        </Tooltip>
-      )}
-      <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-        <span aria-hidden="true" className="text-subtle">
-          ·
-        </span>
-        <KindsCount kinds={row.kinds} />
-      </span>
-    </span>
-  );
-}
-
-const HINT_WORDS: Record<MatchHint["field"], string> = {
-  id: "Matches ID ",
-  branch: "Matches branch ",
-  host: "Matches host ",
-  kind: "Maps the kind ",
-};
-
-function SearchHint({ hint }: { hint: MatchHint }) {
-  return (
-    <p className="mt-0.5 text-subtle text-xs [overflow-wrap:anywhere]">
-      {HINT_WORDS[hint.field]}
-      <code className="font-mono">{hint.value}</code>
-    </p>
-  );
-}
 
 /**
  * When the configuration last wrote to the destination, for rows that wait on a person. "Never" is
@@ -379,6 +292,9 @@ function Row({
 
 /* ---------- groups ---------- */
 
+const IN_SYNC_NOTE =
+  "One bar per day for the last 30 days. Its height is the runs of that day; red means a run failed.";
+
 const GROUPS: { id: string; title: string; note: string; states: RunState[] }[] = [
   {
     id: "attention",
@@ -400,8 +316,8 @@ const GROUPS: { id: string; title: string; note: string; states: RunState[] }[] 
   },
   {
     id: "insync",
-    title: "Applied or no differences",
-    note: "The latest run applied its changes or found no differences",
+    title: "In sync",
+    note: IN_SYNC_NOTE,
     states: ["insync"],
   },
 ];
@@ -411,7 +327,7 @@ const FILTERS: { id: RunState; label: string }[] = [
   { id: "review", label: "Waiting for review" },
   { id: "running", label: "Running" },
   { id: "idle", label: "No current plan" },
-  { id: "insync", label: "Applied or no differences" },
+  { id: "insync", label: "In sync" },
 ];
 
 /** Names the three steps over the stepper column; each dot also carries its name for screen readers. */
@@ -609,6 +525,7 @@ export function ConfigurationsPage({
     settled,
     failureCount,
     failureReason,
+    runs,
     runsTruncated,
     configsTruncated,
     refetch,
@@ -620,6 +537,9 @@ export function ConfigurationsPage({
   const focusFilter = useRef(false);
   const narrow = useNarrow();
   const groupsRef = useRef<HTMLDivElement>(null);
+  const history = runsByConfig(runs);
+  const oldestLoaded = runs.at(-1)?.started_at;
+  const loadedSince = runsTruncated && oldestLoaded ? new Date(oldestLoaded).getTime() : undefined;
 
   const attention = rows.filter((r) => r.state === "failed" || r.state === "review").length;
   useDocumentTitle(attention > 0 ? `(${attention}) Configurations` : "Configurations");
@@ -783,7 +703,18 @@ export function ConfigurationsPage({
               ) : (
                 <div className="flex flex-col gap-8">
                   {groups.map((g) =>
-                    g.items.length === 0 ? null : (
+                    g.items.length === 0 ? null : g.id === "insync" ? (
+                      <InSyncSection
+                        key={g.id}
+                        id={g.id}
+                        title={g.title}
+                        note={IN_SYNC_NOTE}
+                        items={g.items}
+                        history={history}
+                        loadedSince={loadedSince}
+                        showAll={query.trim() !== "" || state === "insync"}
+                      />
+                    ) : (
                       <Group
                         key={g.id}
                         id={g.id}
@@ -899,32 +830,5 @@ function NoMatches({
         {filtering ? "Clear search and filter" : "Clear search"}
       </Button>
     </EmptyPanel>
-  );
-}
-
-function KindsCount({ kinds }: { kinds: string[] }) {
-  const label = `${kinds.length} ${kinds.length === 1 ? "kind" : "kinds"}`;
-  if (kinds.length === 0) return <span>{label}</span>;
-  const shown = kinds.slice(0, 14);
-  return (
-    <Tooltip
-      nonInteractiveTrigger
-      placement="top"
-      message={
-        <span className="block max-w-72 font-mono text-[11px] leading-5">
-          {shown.join(", ")}
-          {kinds.length > shown.length && ` and ${kinds.length - shown.length} more`}
-        </span>
-      }
-    >
-      <span
-        className={cn(
-          LIFT,
-          "cursor-default tabular-nums underline decoration-subtle-muted decoration-dotted underline-offset-4"
-        )}
-      >
-        {label}
-      </span>
-    </Tooltip>
   );
 }

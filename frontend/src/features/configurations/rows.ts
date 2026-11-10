@@ -215,6 +215,8 @@ export function useConfigurationRows() {
     settled,
     failureCount: Math.max(configs.failureCount, runs.failureCount),
     failureReason: configs.failureReason ?? runs.failureReason,
+    /** The newest runs of every configuration, as the first page of `GET /runs` returns them. */
+    runs: runItems,
     /** Older runs exist than the first page holds; "Never applied" cannot be stated then. */
     runsTruncated,
     /** More configurations exist than the first page holds. */
