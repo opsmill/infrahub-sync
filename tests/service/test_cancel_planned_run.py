@@ -188,8 +188,10 @@ def _finish_execution(projection: ProductProjection, purpose: str) -> None:
     )
 
 
-def _stored_run(projection: ProductProjection, version: ConfigurationVersion, *, phase: str = "planned") -> None:
-    """Store a run whose plan stage finished and whose saved plan is published."""
+def _stored_run(
+    projection: ProductProjection, version: ConfigurationVersion, *, phase: str = "planned", execution: bool = True
+) -> None:
+    """Store a run whose saved plan is published, with a finished plan execution unless ``execution`` is false."""
     projection.create_run(
         ProductRun(
             run_id=RUN_ID,
@@ -203,7 +205,8 @@ def _stored_run(projection: ProductProjection, version: ConfigurationVersion, *,
             phase=phase,
         )
     )
-    _finish_execution(projection, "plan")
+    if execution:
+        _finish_execution(projection, "plan")
     plan = PlanResource(
         run_id=RUN_ID,
         checksum=CHECKSUM,
@@ -342,6 +345,49 @@ def test_cancelling_an_applied_or_plan_failed_run_is_refused_as_before(api: _Api
     assert stored.phase == phase
     assert orchestration.cancelled == []
     assert _outcomes(projection, "cancel") == ["refused-terminal"]
+
+
+def test_a_planned_run_with_no_execution_record_is_withdrawn(api: _Api) -> None:
+    client, projection, orchestration, version = api
+    _stored_run(projection, version, execution=False)
+
+    response = _cancel(client)
+    replayed = _cancel(client)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["run"]["phase"] == "cancelled"
+    assert replayed.json() == response.json()
+    stored = projection.lookup_run(RUN_ID).value
+    assert stored is not None
+    assert (stored.phase, stored.outcome) == ("cancelled", "cancelled")
+    assert orchestration.cancelled == []
+    assert _outcomes(projection, "cancel") == ["accepted-withdrawn", "replayed"]
+    assert len(_cancelled_events(projection)) == 1
+
+
+def test_a_cancelled_run_with_no_execution_record_is_refused_as_already_cancelled(api: _Api) -> None:
+    client, projection, _orchestration, version = api
+    _stored_run(projection, version, phase="cancelled", execution=False)
+
+    response = _cancel(client)
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "run-already-cancelled"
+    assert _receipt_for(projection, "cancel-key-1") is None
+    assert _outcomes(projection, "cancel") == ["refused-cancelled"]
+
+
+@pytest.mark.parametrize("phase", ["applied", "failed"])
+def test_a_run_in_another_phase_with_no_execution_record_has_no_execution_to_cancel(api: _Api, phase: str) -> None:
+    client, projection, _orchestration, version = api
+    _stored_run(projection, version, phase=phase, execution=False)
+
+    response = _cancel(client)
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "no-active-execution"
+    assert _receipt_for(projection, "cancel-key-1") is None
+    assert _outcomes(projection, "cancel") == ["refused-no-execution"]
 
 
 def test_a_withdrawal_retried_with_the_same_key_replays_the_stored_response(api: _Api) -> None:

@@ -692,6 +692,12 @@ class RunService:
             self._audit(run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="replayed")
             return self._stored_response(receipt)
         if not run.prefect_executions:
+            # A run with no execution record follows the same phase rules as one whose
+            # executions all ended: approve accepts such a planned run, so cancel withdraws it.
+            if run.phase == "planned":
+                return self._withdraw_planned_run(run, request, principal, idempotency_key, receipt)
+            if run.phase == "cancelled":
+                self._refuse_already_cancelled(run_id, principal, request.reason)
             self._audit(
                 run_id,
                 actor=principal.actor,
@@ -723,14 +729,7 @@ class RunService:
             if run.phase == "planned":
                 return self._withdraw_planned_run(run, request, principal, idempotency_key, receipt)
             if run.phase == "cancelled":
-                self._audit(
-                    run_id,
-                    actor=principal.actor,
-                    operation="cancel",
-                    reason=request.reason,
-                    outcome="refused-cancelled",
-                )
-                raise self._error(409, "run-already-cancelled", RUN_ALREADY_CANCELLED_MESSAGE, run_id=run_id)
+                self._refuse_already_cancelled(run_id, principal, request.reason)
             self._audit(
                 run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="refused-terminal"
             )
@@ -903,6 +902,11 @@ class RunService:
                 )
         # An acknowledged cancellation wrote its accepted event with the 202 it stored.
         return self._stored_response(completed)
+
+    def _refuse_already_cancelled(self, run_id: str, principal: Principal, reason: str | None) -> NoReturn:
+        """Audit and refuse a cancel request for a run that is already cancelled."""
+        self._audit(run_id, actor=principal.actor, operation="cancel", reason=reason, outcome="refused-cancelled")
+        raise self._error(409, "run-already-cancelled", RUN_ALREADY_CANCELLED_MESSAGE, run_id=run_id)
 
     def _withdraw_planned_run(
         self,
