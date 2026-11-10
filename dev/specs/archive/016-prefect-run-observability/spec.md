@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-05
 
-**Status**: Draft
+**Status**: Extracted
 
 **Input**: User description: "Restore the Prefect run-observability behaviour that never reached
 feature/v3-develop, and make the CLI name the missing Sync API address. Use test-driven development."
