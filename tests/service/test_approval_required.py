@@ -23,11 +23,12 @@ from infrahub_sync.product_store import ProductProjection, ProductRun, RunFilter
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
-from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, Submission
+from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV, approval_required, validate_settings
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from httpx import Response
@@ -103,6 +104,10 @@ class _RecordingOrchestration:
     async def cancel(self, flow_run_id: str) -> CancellationResult:  # noqa: PLR6301
         del flow_run_id
         return CancellationResult(acknowledged=False, reason="not-used")
+
+    async def read_logs(self, flow_run_ids: Sequence[str]) -> RunLogRead:  # noqa: PLR6301
+        del flow_run_ids
+        return RunLogRead(expired=False)
 
 
 def _registered_package() -> ConfigurationPackage:

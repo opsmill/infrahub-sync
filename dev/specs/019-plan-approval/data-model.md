@@ -81,3 +81,10 @@ plan has expired or cannot be read).
 
 `operation = "cancel"` gains the outcomes `accepted-withdrawn` (a finished plan was cancelled) and
 `refused-cancelled` (the run was already cancelled).
+
+Event types (spec 017): an `approve` decision gets the type its outcome gives, as for every run request:
+`infrahub_sync.run.accepted`, `.replayed` or `.refused`. `accepted-withdrawn` is typed
+`infrahub_sync.run.accepted`. A withdrawal also records `infrahub_sync.run.cancelled` (outcome `cancelled`,
+`created_at` equal to the run's `finished_at`), because no Prefect acknowledgement follows it. The accepted
+approval event and both withdrawal events are written in the store transaction that stores the approval or
+the withdrawal; refusal events are written after that transaction, as before.

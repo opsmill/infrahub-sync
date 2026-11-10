@@ -117,6 +117,28 @@ def _log_limit(value: str | None) -> int:
     return parse_bounded_integer(value, minimum=MIN_LIMIT, maximum=MAX_LOG_LIMIT)
 
 
+def approve_router(
+    service: RunService, authenticate: Callable[..., Principal], idempotency_key: Callable[..., str]
+) -> APIRouter:
+    """Return the authenticated ``POST /runs/{run_id}/approve`` route (spec 019, contracts/http-api.md)."""
+    router = APIRouter()
+
+    @router.post(
+        "/runs/{run_id}/approve", status_code=200, response_model=ApprovedRunResource, responses=ERROR_RESPONSES
+    )
+    async def approve_run(
+        run_id: str,
+        body: ApproveRunRequest,
+        principal: Annotated[Principal, Depends(authenticate)],
+        key: Annotated[str, Depends(idempotency_key)],
+    ) -> JSONResponse:
+        """Record approval of the run's saved plan without applying it; submits no execution."""
+        status, content = await service.approve_run(run_id, body, principal, key)
+        return JSONResponse(status_code=status, content=content)
+
+    return router
+
+
 def run_logs_router(service: RunService, authenticate: Callable[..., Principal]) -> APIRouter:
     """Return the authenticated ``GET /runs/{run_id}/logs`` route (spec 017, contracts/logs-route.md)."""
     router = APIRouter()
@@ -166,6 +188,21 @@ def events_router(service: RunService, authenticate: Callable[..., Principal]) -
         )
 
     return router
+
+
+def _include_routers(
+    application: FastAPI,
+    service: RunService,
+    authenticate: Callable[..., Principal],
+    idempotency_key: Callable[..., str],
+    configuration_routes: ConfigurationRoutes | None,
+) -> None:
+    """Add the routes built outside ``create_app``: configurations, approval, events and run logs."""
+    if configuration_routes is not None:
+        application.include_router(configuration_router(configuration_routes, authenticate, idempotency_key))
+    application.include_router(approve_router(service, authenticate, idempotency_key))
+    application.include_router(events_router(service, authenticate))
+    application.include_router(run_logs_router(service, authenticate))
 
 
 def create_app(
@@ -377,19 +414,6 @@ def create_app(
         return JSONResponse(status_code=status, content=content)
 
     @application.post(
-        "/runs/{run_id}/approve", status_code=200, response_model=ApprovedRunResource, responses=ERROR_RESPONSES
-    )
-    async def approve_run(
-        run_id: str,
-        body: ApproveRunRequest,
-        principal: Annotated[Principal, Depends(authenticate)],
-        key: Annotated[str, Depends(idempotency_key)],
-    ) -> JSONResponse:
-        """Record approval of the run's saved plan without applying it; submits no execution."""
-        status, content = await service.approve_run(run_id, body, principal, key)
-        return JSONResponse(status_code=status, content=content)
-
-    @application.post(
         "/runs/{run_id}/cancel",
         status_code=202,
         response_model=RunResource,
@@ -408,9 +432,6 @@ def create_app(
         status, content = await service.cancel_run(run_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
-    if configuration_routes is not None:
-        application.include_router(configuration_router(configuration_routes, authenticate, idempotency_key))
-    application.include_router(events_router(service, authenticate))
-    application.include_router(run_logs_router(service, authenticate))
+    _include_routers(application, service, authenticate, idempotency_key, configuration_routes)
 
     return application

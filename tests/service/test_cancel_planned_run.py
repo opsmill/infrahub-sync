@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 
 from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.product_store import (
+    AuditEvent,
     ExecutionMergeWriteback,
     LookupResult,
     MutationReceipt,
@@ -31,8 +32,9 @@ from infrahub_sync.product_store import (
 )
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
+from infrahub_sync.service.events import RUN_CANCELLED
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
-from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, Submission
+from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
 
@@ -77,6 +79,10 @@ class _RecordingOrchestration:
     async def cancel(self, flow_run_id: str) -> CancellationResult:
         self.cancelled.append(flow_run_id)
         return CancellationResult(acknowledged=True)
+
+    async def read_logs(self, flow_run_ids: Sequence[str]) -> RunLogRead:  # noqa: PLR6301
+        del flow_run_ids
+        return RunLogRead(expired=False)
 
 
 def _registered_package() -> ConfigurationPackage:
@@ -248,7 +254,16 @@ def _apply(client: TestClient, *, key: str = "apply-key-1") -> Response:
 
 
 def _outcomes(projection: ProductProjection, operation: str) -> list[str]:
-    return [event.outcome for event in projection.audit_events(RUN_ID) if event.operation == operation]
+    """The outcomes of the request decisions for ``operation``, without the run's end event."""
+    return [
+        event.outcome
+        for event in projection.audit_events(RUN_ID)
+        if event.operation == operation and event.event_type != RUN_CANCELLED
+    ]
+
+
+def _cancelled_events(projection: ProductProjection) -> list[AuditEvent]:
+    return [event for event in projection.audit_events(RUN_ID) if event.event_type == RUN_CANCELLED]
 
 
 def _receipt_for(projection: ProductProjection, key: str) -> MutationReceipt | None:
@@ -277,6 +292,12 @@ def test_cancelling_a_planned_run_withdraws_it_without_calling_prefect(api: _Api
     assert orchestration.submissions == []
     assert orchestration.cancelled == []
     assert _outcomes(projection, "cancel") == ["accepted-withdrawn"]
+    decision = next(event for event in projection.audit_events(RUN_ID) if event.outcome == "accepted-withdrawn")
+    assert decision.event_type == "infrahub_sync.run.accepted"
+    # No Prefect acknowledgement follows a withdrawal, so the Sync API records the run's end event.
+    [ended] = _cancelled_events(projection)
+    assert (ended.operation, ended.outcome, ended.actor) == ("cancel", "cancelled", "owner")
+    assert ended.created_at == stored.finished_at
 
 
 def test_cancelling_a_run_with_an_active_execution_cancels_that_execution_as_before(api: _Api) -> None:
@@ -554,16 +575,17 @@ def test_an_approval_whose_receipt_a_concurrent_retry_answered_first_replays_tha
     _stored_run(projection, version)
     record_approval = projection.record_approval
 
-    def answered_first(
+    def answered_first(  # noqa: PLR0913 - mirrors the store method
         run_id: str,
         approval: RunApproval,
         receipt: MutationReceipt,
         response: Mapping[str, Any],
         *,
+        events: Sequence[AuditEvent] = (),
         secrets: Sequence[str] = (),
     ) -> bool:
-        record_approval(run_id, approval, receipt, response, secrets=secrets)  # the concurrent retry
-        return record_approval(run_id, approval, receipt, response, secrets=secrets)
+        record_approval(run_id, approval, receipt, response, events=events, secrets=secrets)  # the concurrent retry
+        return record_approval(run_id, approval, receipt, response, events=events, secrets=secrets)
 
     monkeypatch.setattr(projection, "record_approval", answered_first)
 
@@ -571,7 +593,8 @@ def test_an_approval_whose_receipt_a_concurrent_retry_answered_first_replays_tha
 
     assert response.status_code == 200, response.text
     assert response.json()["run"]["approval"]["approved_by"] == "owner"
-    assert _outcomes(projection, "approve") == ["replayed"]
+    # The concurrent retry stored the approval and its event; this request replays it.
+    assert _outcomes(projection, "approve") == ["accepted", "replayed"]
 
 
 def test_a_withdrawal_whose_receipt_a_concurrent_retry_answered_first_replays_that_answer(
@@ -581,16 +604,17 @@ def test_a_withdrawal_whose_receipt_a_concurrent_retry_answered_first_replays_th
     _stored_run(projection, version)
     cancel_planned_run = projection.cancel_planned_run
 
-    def answered_first(
+    def answered_first(  # noqa: PLR0913 - mirrors the store method
         run_id: str,
         receipt: MutationReceipt,
         response: Mapping[str, Any],
         *,
         cancelled_at: datetime,
+        events: Sequence[AuditEvent] = (),
         secrets: Sequence[str] = (),
     ) -> bool:
-        cancel_planned_run(run_id, receipt, response, cancelled_at=cancelled_at, secrets=secrets)  # the retry
-        return cancel_planned_run(run_id, receipt, response, cancelled_at=cancelled_at, secrets=secrets)
+        cancel_planned_run(run_id, receipt, response, cancelled_at=cancelled_at, events=events, secrets=secrets)
+        return cancel_planned_run(run_id, receipt, response, cancelled_at=cancelled_at, events=events, secrets=secrets)
 
     monkeypatch.setattr(projection, "cancel_planned_run", answered_first)
 
@@ -598,4 +622,6 @@ def test_a_withdrawal_whose_receipt_a_concurrent_retry_answered_first_replays_th
 
     assert response.status_code == 200, response.text
     assert response.json()["run"]["phase"] == "cancelled"
-    assert _outcomes(projection, "cancel") == ["replayed"]
+    # The concurrent retry withdrew the run and stored its events once; this request replays it.
+    assert _outcomes(projection, "cancel") == ["accepted-withdrawn", "replayed"]
+    assert len(_cancelled_events(projection)) == 1

@@ -685,9 +685,10 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         response: Mapping[str, Any],
         *,
         updated_at: datetime,
+        events: Sequence[AuditEvent] = (),
     ) -> bool: ...
 
-    def cancel_planned_run(
+    def cancel_planned_run(  # pylint: disable=too-many-arguments
         self,
         run_id: str,
         receipt: MutationReceipt,
@@ -695,6 +696,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
         *,
         cancelled_at: datetime,
         updated_at: datetime,
+        events: Sequence[AuditEvent] = (),
     ) -> bool: ...
 
     def lookup_mutation_for_execution(
@@ -2280,6 +2282,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         response: Mapping[str, Any],
         *,
         updated_at: datetime,
+        events: Sequence[AuditEvent] = (),
     ) -> bool:
         """Store a run's one approval and complete its request's receipt in one transaction.
 
@@ -2293,7 +2296,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         refusal instead: ``already-approved`` with the approval that won, ``run-cancelled`` for
         a withdrawn run, or ``run-not-approvable`` when an execution is unfinished or the run
         left phase ``planned``. Either way a retry with the same key replays what this
-        transaction stored.
+        transaction stored. ``events`` are written only with a stored approval, in the same
+        transaction (spec 017, FR-014).
 
         Returns:
             Whether this call stored the approval.
@@ -2317,6 +2321,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         (*_approval_columns(approval), run_id),
                     )
                     stored = cursor.rowcount == 1
+                if stored:
+                    for event in events:
+                        self._insert_event(cursor, event)
                 status, body = (
                     (200, response)
                     if stored
@@ -2335,7 +2342,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             connection.close()
         return stored
 
-    def cancel_planned_run(
+    def cancel_planned_run(  # pylint: disable=too-many-arguments
         self,
         run_id: str,
         receipt: MutationReceipt,
@@ -2343,6 +2350,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         *,
         cancelled_at: datetime,
         updated_at: datetime,
+        events: Sequence[AuditEvent] = (),
     ) -> bool:
         """Withdraw a finished plan: set phase ``cancelled`` and complete the cancel receipt, in one transaction.
 
@@ -2353,7 +2361,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         unfinished execution. Otherwise the run is left unchanged and the receipt is completed
         with the matching refusal: ``run-execution-conflict`` when other work holds the run,
         ``run-already-cancelled`` for a cancelled run, ``execution-terminal`` for any other phase.
-        A retry with the same key replays what this transaction stored.
+        A retry with the same key replays what this transaction stored. ``events`` are written
+        only with a withdrawal, in the same transaction (spec 017, FR-014).
 
         Returns:
             Whether this call withdrew the run.
@@ -2378,6 +2387,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         ),
                         (_utc_iso(cancelled_at), run_id),
                     )
+                    for event in events:
+                        self._insert_event(cursor, event)
                     status, body = 200, response
                 else:
                     status, body = refusal
@@ -3751,17 +3762,24 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         receipt: MutationReceipt,
         response: Mapping[str, Any],
         *,
+        events: Sequence[AuditEvent] = (),
         secrets: Sequence[str] = (),
     ) -> bool:
-        """Store a run's one approval with its request's secret-safe response, or the stored refusal.
+        """Store a run's one approval with its request's secret-safe response and events, or the stored refusal.
 
         Returns:
-            Whether this call stored the approval; when it did not, the receipt holds the refusal.
+            Whether this call stored the approval; when it did not, the receipt holds the refusal
+            and no event of ``events`` is written.
         """
         sanitized_approval = RunApproval.model_validate(_redact_value(approval.model_dump(mode="json"), secrets))
         sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(response), secrets))
         return self._records.record_approval(
-            run_id, sanitized_approval, receipt, sanitized, updated_at=datetime.now(timezone.utc)
+            run_id,
+            sanitized_approval,
+            receipt,
+            sanitized,
+            updated_at=datetime.now(timezone.utc),
+            events=tuple(_redact_event(event, secrets) for event in events),
         )
 
     def cancel_planned_run(
@@ -3771,16 +3789,23 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         response: Mapping[str, Any],
         *,
         cancelled_at: datetime,
+        events: Sequence[AuditEvent] = (),
         secrets: Sequence[str] = (),
     ) -> bool:
-        """Withdraw a finished plan with its request's secret-safe response, or store the refusal.
+        """Withdraw a finished plan with its request's secret-safe response and events, or store the refusal.
 
         Returns:
-            Whether this call withdrew the run; when it did not, the receipt holds the refusal.
+            Whether this call withdrew the run; when it did not, the receipt holds the refusal
+            and no event of ``events`` is written.
         """
         sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(response), secrets))
         return self._records.cancel_planned_run(
-            run_id, receipt, sanitized, cancelled_at=cancelled_at, updated_at=datetime.now(timezone.utc)
+            run_id,
+            receipt,
+            sanitized,
+            cancelled_at=cancelled_at,
+            updated_at=datetime.now(timezone.utc),
+            events=tuple(_redact_event(event, secrets) for event in events),
         )
 
     def lookup_mutation_for_execution(

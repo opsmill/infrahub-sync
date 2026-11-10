@@ -37,6 +37,9 @@ def _decision_action(outcome: str) -> str | None:
         return "refused"
     if outcome in {"accepted", "replayed", "unavailable"}:
         return outcome
+    # A cancel that withdraws a finished plan is an accepted request (spec 019).
+    if outcome == "accepted-withdrawn":
+        return "accepted"
     msg = f"no event type for the request outcome {outcome!r}"
     raise ValueError(msg)
 

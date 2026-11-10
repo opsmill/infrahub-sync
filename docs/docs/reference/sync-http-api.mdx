@@ -623,7 +623,7 @@ destination branch. The event types are:
 
 | Event type | Recorded when |
 | --- | --- |
-| `infrahub_sync.run.accepted` | The Sync API accepted a plan, sync, verify or apply request, or a cancel request. For a cancel request, `operation` is `cancel`. |
+| `infrahub_sync.run.accepted` | The Sync API accepted a plan, sync, verify, approve or apply request, or a cancel request. For a cancel request, `operation` is `cancel`; for a cancel that withdrew a finished plan, `outcome` is `accepted-withdrawn`. |
 | `infrahub_sync.run.replayed` | A retry with the same idempotency key received the stored answer. |
 | `infrahub_sync.run.refused` | The Sync API refused a run request. `outcome` names the reason, for example `refused-checksum`. |
 | `infrahub_sync.run.unavailable` | The orchestrator could not confirm a submission or a cancellation request. |
@@ -632,7 +632,7 @@ destination branch. The event types are:
 | `infrahub_sync.run.applied` | An apply stage succeeded. |
 | `infrahub_sync.run.synced` | A sync stage succeeded. |
 | `infrahub_sync.run.failed` | A stage failed, or was interrupted. `outcome` is `failed`, or `ambiguous` when the stage may have written to the destination. The Sync API records this event, with `outcome` `ambiguous`, when it ends an execution whose worker stopped without recording a result. |
-| `infrahub_sync.run.cancelled` | An execution that a cancel request stopped ended cancelled. `actor` and `reason` come from the cancel request. |
+| `infrahub_sync.run.cancelled` | An execution that a cancel request stopped ended cancelled, or a cancel request withdrew a finished plan. `actor` and `reason` come from the cancel request. For a withdrawal, the Sync API records this event itself, with the `run.accepted` event of the request. |
 | `infrahub_sync.config.registered` | A configuration was registered as version 1. |
 | `infrahub_sync.config.version_registered` | A new version of a configuration was registered. |
 | `infrahub_sync.config.version_retrieved` | A version request had the same content as an existing version of the configuration, and the Sync API returned that version with status 200. No version was created. |

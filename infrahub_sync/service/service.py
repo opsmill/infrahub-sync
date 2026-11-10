@@ -42,7 +42,7 @@ from infrahub_sync.product_store.models import (
     not_approvable_message,
 )
 
-from .events import run_decision_type, run_event
+from .events import RUN_CANCELLED, run_decision_type, run_event
 from .liveness import CancellationSelectionUnavailableError, select_cancellable_execution
 from .models import (
     ApplyRunRequest,
@@ -582,15 +582,21 @@ class RunService:
             ),
         ).model_dump(mode="json")
         try:
-            stored = self._projection.record_approval(run_id, approval, receipt, response, secrets=self._secrets)
+            # The accepted event is written in the approval's transaction (spec 017, FR-014).
+            accepted = self._event(
+                run_id, actor=principal.actor, operation="approve", reason=request.reason, outcome="accepted", run=run
+            )
+            stored = self._projection.record_approval(
+                run_id, approval, receipt, response, events=(accepted,), secrets=self._secrets
+            )
         except ValueError as refusal:
             return self._replay_answered(receipt, principal, request.reason, refusal)
         completed = self._projection.lookup_mutation(receipt.actor, receipt.key_digest).value
         assert completed is not None  # record_approval completed this receipt or raised.
         status, content = self._stored_response(completed)
         if stored:
-            outcome = "accepted"
-        elif content["error"]["code"] == "already-approved":
+            return status, content
+        if content["error"]["code"] == "already-approved":
             outcome = "refused-already-approved"
         elif content["error"]["code"] == "run-cancelled":
             outcome = "refused-cancelled"
@@ -929,9 +935,32 @@ class RunService:
         cancelled_at = self._clock()
         withdrawn = run.model_copy(update={"phase": "cancelled", "outcome": "cancelled", "finished_at": cancelled_at})
         response = self._resource_with_observations(self._redacted_links(withdrawn), {}).model_dump(mode="json")
+        # The request's accepted event and the run's `run.cancelled` end event are written in
+        # the withdrawal's transaction (spec 017, FR-014). No Prefect acknowledgement follows a
+        # withdrawal, so the Sync API records the end event itself.
+        events = (
+            self._event(
+                run.run_id,
+                actor=principal.actor,
+                operation="cancel",
+                reason=request.reason,
+                outcome="accepted-withdrawn",
+                run=run,
+            ),
+            run_event(
+                run.run_id,
+                run,
+                event_type=RUN_CANCELLED,
+                actor=principal.actor,
+                operation="cancel",
+                reason=request.reason,
+                outcome="cancelled",
+                created_at=cancelled_at,
+            ),
+        )
         try:
             stored = self._projection.cancel_planned_run(
-                run.run_id, receipt, response, cancelled_at=cancelled_at, secrets=self._secrets
+                run.run_id, receipt, response, cancelled_at=cancelled_at, events=events, secrets=self._secrets
             )
         except ValueError as refusal:
             return self._replay_answered(receipt, principal, request.reason, refusal)
@@ -939,12 +968,11 @@ class RunService:
         assert completed is not None  # cancel_planned_run completed this receipt or raised.
         status, content = self._stored_response(completed)
         if stored:
-            outcome = "accepted-withdrawn"
-        else:
-            outcome = {
-                "run-already-cancelled": "refused-cancelled",
-                "execution-terminal": "refused-terminal",
-            }.get(content["error"]["code"], "refused-run-execution-conflict")
+            return status, content
+        outcome = {
+            "run-already-cancelled": "refused-cancelled",
+            "execution-terminal": "refused-terminal",
+        }.get(content["error"]["code"], "refused-run-execution-conflict")
         self._audit(run.run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome=outcome)
         return status, content
 

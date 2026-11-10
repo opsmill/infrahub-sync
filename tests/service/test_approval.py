@@ -22,11 +22,12 @@ from infrahub_sync.product_store import PrefectExecutionLink, ProductProjection,
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
-from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, Submission
+from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from tests.service.execution_fixtures import append_execution
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from httpx import Response
@@ -63,6 +64,10 @@ class _RecordingOrchestration:
     async def cancel(self, flow_run_id: str) -> CancellationResult:  # noqa: PLR6301
         del flow_run_id
         return CancellationResult(acknowledged=False, reason="not-used")
+
+    async def read_logs(self, flow_run_ids: Sequence[str]) -> RunLogRead:  # noqa: PLR6301
+        del flow_run_ids
+        return RunLogRead(expired=False)
 
 
 def _registered_package() -> ConfigurationPackage:
@@ -202,6 +207,27 @@ def test_approve_records_the_approval_and_returns_the_run_with_the_plan_summary(
     assert stored.approval is not None
     assert stored.approval.approved_by == "owner"
     assert _outcomes(projection) == ["accepted"]
+
+
+def test_an_approval_and_its_refusal_are_listed_as_typed_run_events(api: _Api) -> None:
+    """Spec 017's event list shows the approve request as `run.accepted`, a refused one as `run.refused`."""
+    client, projection, _orchestration, version = api
+    _stored_run(projection, version)
+    assert _approve(client).status_code == 200
+    assert (
+        _approve(client, key="approve-key-2", token=ADMIN_TOKEN, body={"expected_checksum": CHECKSUM}).status_code
+        == 409
+    )
+
+    response = client.get("/events", params={"run_id": RUN_ID}, headers={"Authorization": f"Bearer {OWNER_TOKEN}"})
+
+    assert response.status_code == 200, response.text
+    approvals = [item for item in response.json()["items"] if item["operation"] == "approve"]
+    assert [(item["event_type"], item["outcome"], item["actor"]) for item in approvals] == [
+        ("infrahub_sync.run.accepted", "accepted", "owner"),
+        ("infrahub_sync.run.refused", "refused-already-approved", "admin"),
+    ]
+    assert approvals[0]["primary_resource"] == {"kind": "run", "id": RUN_ID}
 
 
 def test_get_run_and_the_run_list_carry_the_approval_or_null(api: _Api) -> None:
