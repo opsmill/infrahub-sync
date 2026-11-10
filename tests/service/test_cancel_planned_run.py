@@ -298,6 +298,7 @@ def test_cancelling_a_planned_run_withdraws_it_without_calling_prefect(api: _Api
     [ended] = _cancelled_events(projection)
     assert (ended.operation, ended.outcome, ended.actor) == ("cancel", "cancelled", "owner")
     assert ended.created_at == stored.finished_at
+    assert decision.created_at <= ended.created_at, "the request is listed before the run's end"
 
 
 def test_cancelling_a_run_with_an_active_execution_cancels_that_execution_as_before(api: _Api) -> None:

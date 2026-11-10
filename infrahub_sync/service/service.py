@@ -932,21 +932,23 @@ class RunService:
                     run.run_id, actor=principal.actor, operation="cancel", reason=request.reason, outcome="replayed"
                 )
                 return self._stored_response(receipt)
+        # The request's accepted event and the run's `run.cancelled` end event are written in
+        # the withdrawal's transaction (spec 017, FR-014). No Prefect acknowledgement follows a
+        # withdrawal, so the Sync API records the end event itself. The run ends after the
+        # decision is taken, so the event list shows the request before the run's end.
+        accepted = self._event(
+            run.run_id,
+            actor=principal.actor,
+            operation="cancel",
+            reason=request.reason,
+            outcome="accepted-withdrawn",
+            run=run,
+        )
         cancelled_at = self._clock()
         withdrawn = run.model_copy(update={"phase": "cancelled", "outcome": "cancelled", "finished_at": cancelled_at})
         response = self._resource_with_observations(self._redacted_links(withdrawn), {}).model_dump(mode="json")
-        # The request's accepted event and the run's `run.cancelled` end event are written in
-        # the withdrawal's transaction (spec 017, FR-014). No Prefect acknowledgement follows a
-        # withdrawal, so the Sync API records the end event itself.
         events = (
-            self._event(
-                run.run_id,
-                actor=principal.actor,
-                operation="cancel",
-                reason=request.reason,
-                outcome="accepted-withdrawn",
-                run=run,
-            ),
+            accepted,
             run_event(
                 run.run_id,
                 run,
