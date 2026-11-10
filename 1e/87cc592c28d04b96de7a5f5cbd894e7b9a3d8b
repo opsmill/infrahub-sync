@@ -1,0 +1,23 @@
+dev/specs/019-plan-approval/spec.md
+  s_3026b865c0ab8b::t_b594acced79353 1-238
+CLAUDE.md
+  s_3026b865c0ab8b::t_794ffe063b6ed9 6
+dev/specs/019-plan-approval/checklists/requirements.md
+  s_3026b865c0ab8b::t_f20a9b81ffe600 1-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1e87cc592c28d04b96de7a5f5cbd894e7b9a3d8b",
+  "prompts": {},
+  "sessions": {
+    "s_3026b865c0ab8b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "825efe40-61e7-452d-9076-42e4bc5cee3e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
