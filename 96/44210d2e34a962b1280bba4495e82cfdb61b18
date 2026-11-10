@@ -1,0 +1,33 @@
+dev/specs/019-plan-approval/plan.md
+  s_3026b865c0ab8b::t_4c04a0623f0ccd 1-146
+dev/specs/019-plan-approval/data-model.md
+  s_3026b865c0ab8b::t_944fe43a4f6aa5 1-64
+dev/specs/019-plan-approval/contracts/http-api.md
+  s_3026b865c0ab8b::t_bae49388b09493 1-75
+dev/specs/019-plan-approval/contracts/cli.md
+  s_3026b865c0ab8b::t_3b01f957e2e03f 1-44
+dev/specs/019-plan-approval/spec.md
+  s_3026b865c0ab8b::t_d856d69c7cdf07 146-148
+dev/specs/019-plan-approval/research.md
+  s_3026b865c0ab8b::t_ee56b743e5bec3 1-90,93-164
+  s_3026b865c0ab8b::t_e6efa438427029 91-92
+  s_3026b865c0ab8b::t_37894376586422 165-166
+dev/specs/019-plan-approval/quickstart.md
+  s_3026b865c0ab8b::t_057fb9f4b337bb 1-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9644210d2e34a962b1280bba4495e82cfdb61b18",
+  "prompts": {},
+  "sessions": {
+    "s_3026b865c0ab8b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "825efe40-61e7-452d-9076-42e4bc5cee3e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
