@@ -6,7 +6,7 @@
 - **Base commit:** `b46ecd79`
 - **Head commit:** `2a4cdc73`
 - **Wall-clock time:** about 1 hour 50 minutes, from the baseline run to the review fixes (2026-11-10, 14:50Z to 16:45Z).
-- **Status:** DONE. Every task is ticked. Two preview tests are deferred because the local preview stack could not start (see §4 and §6).
+- **Status:** DONE. Every task is ticked. The two preview tests deferred in the first pass ran in the follow-up review and passed (see §4).
 
 ## 1. Summary
 
@@ -17,7 +17,7 @@
 | Unit tier at the base | 6449 passed, 4 skipped, 1 xfailed, 0 failed |
 | Unit tier at the head | 6598 passed, 4 skipped, 1 xfailed, 0 failed |
 | Review findings fixed | 5 high (4 code, 1 test gap) |
-| Review findings deferred | 6 medium, 12 low |
+| Review findings deferred | 12 low; the 6 medium findings were fixed in the follow-up review |
 
 ## 2. Chunk ledger
 
@@ -118,8 +118,9 @@ The environment was macOS with Python 3.11.8, in the worktree virtual environmen
 | Review fixes: 2 failed-`verify` CLI tests and 1 modified missing-permission test | unit | `uv run pytest tests/cli/test_client_commands.py -k "failed_verify or missing_permission"` | 2026-11-10T16:35:26Z | n/a | `6 passed, 154 deselected in 0.24s` |
 | Review fixes: `test_approval.py::test_a_plan_that_cannot_be_read_is_refused_and_the_refusal_is_audited[*]` (2); `test_write_admission.py::test_an_unresolved_approve_receipt_does_not_block_an_apply[*]` (2); `test_run_approval.py::test_record_approval_refuses_a_cancelled_run_with_run_cancelled[*]` (2) | unit | `uv run pytest` on the store and service tests | 2026-11-10T16:40:22Z | SQLite and PostgreSQL 16 | `PASSED` for each; the PostgreSQL run gave `909 passed, 2 warnings in 27.84s` |
 | Review fix: `test_approval_required.py::test_a_retried_apply_whose_submission_failed_is_refused_once_approval_is_required` | unit | `uv run pytest tests/service/test_approval_required.py -k retried_apply` | 2026-11-10T16:43:26Z | n/a | `1 passed, 27 deselected, 1 warning in 0.68s` |
-| `tests/preview/test_run_completion.py::test_the_python_client_cancels_a_run_it_has_just_admitted` (modified) | e2e | `uv run invoke preview.up && uv run pytest tests/preview/test_run_completion.py -m preview` | deferred — local E2E not supported | The preview stack needs port 8080, which another project's container uses | not run |
-| `tests/preview/test_run_completion.py::test_raw_http_cancels_a_run_it_has_just_admitted` (modified) | e2e | Same command as the previous row | deferred — local E2E not supported | Same as the previous row | not run |
+| `tests/preview/test_run_completion.py::test_the_python_client_cancels_a_run_it_has_just_admitted` (modified) | e2e | `uv run invoke preview.up && uv run invoke preview.smoke`, with `PREVIEW_INFRAHUB_PORT=18080` in `development/preview.local.env` | 2026-11-10, follow-up review, before and after its fixes | Preview stack; Infrahub on port 18080 because port 8080 is in use | `test_run_completion.py .....`; the cancel took the `202` branch both times |
+| `tests/preview/test_run_completion.py::test_raw_http_cancels_a_run_it_has_just_admitted` (modified) | e2e | Same command as the previous row | Same as the previous row | Same as the previous row | Passed; the cancel took the `202` branch both times, so the `200` withdrawal branch was not reached |
+| Whole preview tier (`-m preview`, 23 tests) | e2e | `uv run invoke preview.smoke` | 2026-11-10, follow-up review, after its fixes | Same as the previous row | `1 failed, 22 passed`. `test_schema_drift.py` fails when it loads a schema change through the Infrahub SDK: Infrahub answers `500` (`'Node' object has no attribute 'ordered'`), before any Sync API call. In the run before the fixes, `test_python_client.py` also failed once and passed when run again (see the follow-up review notes in §6) |
 | Live quickstart, 6 scenarios: plan, approve, verify passing and failing, setting on, withdraw, setting off | live | Steps in `quickstart.md`, results under "Live results" | 2026-11-10T16:25Z to 16:30Z | Development stack `infrahub-sync-dev`, stopped afterwards | 6 of 6 scenarios passed |
 
 Unit tier after each chunk:
@@ -146,27 +147,27 @@ Unit tier after each chunk:
 | High | `infrahub_sync/service/service.py:472` | Approving a plan that had expired or could not be read left no audit record (FR-008) | Fixed in `2a4cdc73` with the new outcome `refused-plan-unavailable`, added to `data-model.md` |
 | High | `infrahub_sync/cli.py:1054` | A failed `verify` did not name the failed check (SC-004) | Fixed in `2a4cdc73`: the CLI prints `verify failed:`, one `failed_check:` line per check, and the `cause:` and `hint:` lines when recorded |
 | High (test gap) | `tests/product_store/test_run_approval.py:301` | The store's refusal to approve a cancelled run was tested only on PostgreSQL | Fixed in `2a4cdc73` |
-| Medium | `infrahub_sync/product_store/store.py:2127` | An approval can be stored while an `apply` is admitted but not yet running; only the audit record is affected | Deferred |
-| Medium | `infrahub_sync/service/service.py:505-515` | No test covers how store refusals map to audit outcomes | Deferred |
-| Medium | `infrahub_sync/service/app.py:308` | OpenAPI lists only `202` for the cancel route; a withdrawal returns `200` | Deferred |
-| Medium | `infrahub_sync/service/flow.py:298` | A run-binding mismatch during `verify` records no failed check | Deferred |
-| Medium | `infrahub_sync/service/service.py:585` | The `cancel_run` docstring is out of date | Deferred |
-| Medium | `infrahub_sync/plan/errors.py:399,500` | Check names are typed `str` rather than `PreWriteCheck` | Deferred |
+| Medium | `infrahub_sync/product_store/store.py:2127` | An approval can be stored while an `apply` is admitted but not yet running; only the audit record is affected | Fixed in the follow-up review: the store locks the run's row and refuses the approval while an execution is unfinished. A write admitted but never submitted still allows it, so a retried `apply` can be approved |
+| Medium | `infrahub_sync/service/service.py:505-515` | No test covers how store refusals map to audit outcomes | Fixed in the follow-up review: tests in `tests/service/test_cancel_planned_run.py` |
+| Medium | `infrahub_sync/service/app.py:308` | OpenAPI lists only `202` for the cancel route; a withdrawal returns `200` | Fixed in the follow-up review |
+| Medium | `infrahub_sync/service/flow.py:298` | A run-binding mismatch during `verify` records no failed check | Fixed in the follow-up review: `verify` and `apply` both name `run_binding`, and `apply` records the `rebuild` recovery action |
+| Medium | `infrahub_sync/service/service.py:585` | The `cancel_run` docstring is out of date | Fixed in the follow-up review |
+| Medium | `infrahub_sync/plan/errors.py:399,500` | Check names are typed `str` rather than `PreWriteCheck` | Fixed in the follow-up review with `CheckName`. `PreWriteCheck` alone is too narrow: a failure can name `torn_operations` or `last_changes` |
 | Low | various | Wrong audit outcome for `run-not-found`; three out-of-date comments; five simplifications; three gaps in CLI and model tests | Deferred |
+| Medium (follow-up review) | `infrahub_sync/service/service.py` | Two `approve` or withdrawal requests with the same idempotency key at the same time: the second could not complete the receipt the first had answered and returned `500` | Fixed: the second request replays the stored answer |
 
 ## 6. Decisions made during the run
 
 - **Chunking:** user story 1 ran as one chunk of 12 tasks instead of being split into tests and code. A chunk with only tests could not have shown its tests passing locally. User stories 2 (10 tasks) and 4 (9 tasks) also ran as one chunk each.
 - **Order of work in chunk 4:** the tests were not written first. The parity test's control case reduces the risk that a test passes for the wrong reason.
-- **Deferred preview tests:** the two tests in `tests/preview/test_run_completion.py` were changed to accept a withdrawal and were not run. The preview stack needs port 8080, which another project's running container uses, and the agent did not stop it. Run `uv run invoke preview.up && uv run pytest tests/preview/test_run_completion.py -m preview` when the port is free, or rely on CI.
+- **Deferred preview tests:** the two tests in `tests/preview/test_run_completion.py` were changed to accept a withdrawal and were not run in the first pass, because port 8080 was in use. The follow-up review ran the whole preview tier with Infrahub on port 18080 (`development/preview.local.env`, which git ignores).
+- **Follow-up review, preview failure not caused by this branch:** in the first preview run, `test_python_client.py` saw the applied run in phase `planned` with its execution already terminal, and passed when run again. `_RelationalRunStore.lookup` reads `product_runs` and `prefect_executions` in separate statements; on PostgreSQL a commit between them gives a mixed read, and `SyncClient.wait_for_run` returns on the execution's terminal state. The lookup is unchanged by this branch.
 - **Narrower FR-022 check:** see chunk 6.
 - **Compose files and changelog:** see chunk 7. The Compose change touches the operator deployment file `docker-compose.yml`.
 - **Review triage:** only high findings were fixed. The medium findings are real but don't affect what an operator sees, except the OpenAPI `200` and the run-binding case. Those two are small follow-ups.
 
 ## 7. Suggested next steps
 
-1. Run the two preview tests once port 8080 is free, or let CI run them.
-2. Fix the two medium findings an operator can see: the OpenAPI response for a withdrawal (`app.py:308`) and the failed check name for a run-binding mismatch in `verify` (`flow.py:298`).
-3. Push `verify-apply-approval` and open a draft pull request into `feature/v3-develop`. It needs one `changes/*` label only if it targets `main`.
-4. After the pull request merges, run `speckit-opsmill-extract` to move the approval and withdrawal decisions into the developer docs, and record an ADR for "approval is optional and set for the whole service".
-5. Reply to the customer with the new flow: plan, review, verify, approve, then apply. The approval requirement is optional.
+1. Push `verify-apply-approval` and open a draft pull request into `feature/v3-develop`. It needs one `changes/*` label only if it targets `main`.
+2. After the pull request merges, run `speckit-opsmill-extract` to move the approval and withdrawal decisions into the developer docs, and record an ADR for "approval is optional and set for the whole service".
+3. Reply to the customer with the new flow: plan, review, verify, approve, then apply. The approval requirement is optional.
