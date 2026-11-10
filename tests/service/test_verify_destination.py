@@ -283,6 +283,33 @@ def _break_format_version(harness: _Harness) -> None:
     harness.rewrite_manifest(format_version=99)
 
 
+def _break_format_version_declaration(harness: _Harness) -> None:
+    # Not an integer, so no writer can be identified from it.
+    harness.rewrite_manifest(format_version="3")
+
+
+def _drop_format_version(harness: _Harness) -> None:
+    manifest_path = harness.run_dir / PLAN_DIR_NAME / MANIFEST_FILE_NAME
+    mapping = json.loads(manifest_path.read_bytes())
+    del mapping["format_version"]
+    operations = (harness.run_dir / PLAN_DIR_NAME / OPERATIONS_FILE_NAME).read_bytes()
+    mapping["plan_checksum"] = compute_plan_checksum(mapping, operations)
+    manifest_path.write_bytes(canonical_json_bytes(mapping))
+
+
+def _tear_operations(harness: _Harness) -> None:
+    # One more operation line than the manifest records; the manifest itself is untouched.
+    operations_path = harness.run_dir / PLAN_DIR_NAME / OPERATIONS_FILE_NAME
+    operations_path.write_bytes(operations_path.read_bytes() * 2)
+
+
+def _break_last_changes(harness: _Harness) -> None:
+    # The manifest records a `last_changes.jsonl` that the plan directory does not hold.
+    harness.rewrite_manifest(
+        last_changes={"path": "last_changes.jsonl", "sha256": "0" * 64, "count": 1, "metadata_read": True}
+    )
+
+
 def _break_destination_schema(harness: _Harness) -> None:
     harness.live_fingerprint = "e" * 64
 
@@ -311,6 +338,11 @@ _BREAKS: dict[str, tuple[str, Callable[[_Harness], None]]] = {
     "source_snapshot": ("source_snapshot", _break_source_snapshot),
     "config_version": ("config_version", _break_config_version),
     "format_version": ("format_version", _break_format_version),
+    # A damaged plan file: the reader would refuse these too, without naming a check.
+    "malformed_format_version": ("format_version", _break_format_version_declaration),
+    "missing_format_version": ("format_version", _drop_format_version),
+    "torn_operations": ("torn_operations", _tear_operations),
+    "last_changes": ("last_changes", _break_last_changes),
     "destination_schema": ("destination_schema", _break_destination_schema),
     "destination_binding": ("destination_binding", _break_destination_binding),
     "write_surface": ("write_surface", _break_write_surface),
@@ -399,6 +431,16 @@ def test_a_failing_verify_merges_its_failure_and_leaves_the_phase(
     assert "verification" not in stored.results
     assert stored.phase == "planned"
     assert harness.writes == []
+
+
+def test_a_verify_of_a_torn_plan_records_the_failed_check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    harness = _harness(tmp_path, monkeypatch)
+    _tear_operations(harness)
+
+    with pytest.raises(RuntimeError):
+        _verify(harness)
+
+    assert _stored(harness).results["verify_failure"]["failed_checks"] == ["torn_operations"]
 
 
 def test_an_unreachable_destination_fails_and_reports_no_destination_check(
