@@ -56,6 +56,7 @@ from .models import (
 )
 from .orchestration import Observation, PoolStatus, ServiceOrchestration, normalized_pool_status
 from .paging import FilterValue, decode_cursor, timestamp_cursor, timestamp_key, validate_limit
+from .settings import approval_required
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -203,6 +204,20 @@ class RunService:
                 outcome="refused-confirmation",
             )
             raise self._error(409, "confirmation-required", "confirm_writes=true is required for sync")
+        if request.operation == "sync" and approval_required():
+            self._audit(
+                None,
+                actor=principal.actor,
+                operation="sync",
+                reason=request.reason,
+                outcome="refused-approval-required",
+            )
+            raise self._error(
+                409,
+                "approval-required-for-sync",
+                "this Sync API requires an approved plan before any write, so sync is refused; "
+                "run plan, approve and apply instead",
+            )
 
         run = ProductRun(
             run_id=run_id,
@@ -348,6 +363,8 @@ class RunService:
                 outcome="refused-confirmation",
             )
             raise self._error(409, "confirmation-required", "confirm_writes=true is required for apply", run_id=run_id)
+        if approval_required():
+            self._require_matching_approval(run, request, principal)
         self._require_supported_run_configuration(run)
         plan = self._plan(run_id)
         if not plan.checksum_ok or plan.checksum != request.expected_checksum:
@@ -374,6 +391,41 @@ class RunService:
             admit_write=True,
         )
         return await self._resume_or_replay(receipt, parameters, principal, request.reason)
+
+    def _require_matching_approval(self, run: ProductRun, request: ApplyRunRequest, principal: Principal) -> None:
+        """Refuse an ``apply`` whose run has no approval, or an approval of another checksum.
+
+        Called only when ``INFRAHUB_SYNC_REQUIRE_APPROVAL`` is on, before the receipt is reserved,
+        so a refusal submits nothing.
+
+        Raises:
+            ServiceAPIError: ``409 approval-required`` or ``409 approval-checksum-mismatch``.
+        """
+        approval = run.approval
+        if approval is not None and approval.plan_checksum == request.expected_checksum:
+            return
+        self._audit(
+            run.run_id,
+            actor=principal.actor,
+            operation="apply",
+            reason=request.reason,
+            outcome="refused-approval-required",
+        )
+        if approval is None:
+            raise self._error(
+                409,
+                "approval-required",
+                "this Sync API requires an approved plan before apply; approve the plan with "
+                f"`infrahub-sync approve {run.run_id} --expected-checksum {request.expected_checksum}`",
+                run_id=run.run_id,
+            )
+        raise self._error(
+            409,
+            "approval-checksum-mismatch",
+            f"expected_checksum {request.expected_checksum} does not match the approved checksum "
+            f"{approval.plan_checksum}",
+            run_id=run.run_id,
+        )
 
     async def approve_run(
         self, run_id: str, request: ApproveRunRequest, principal: Principal, idempotency_key: str

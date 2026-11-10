@@ -1093,7 +1093,13 @@ def whoami_cmd(ctx: typer.Context) -> None:
     """Show the actor the API token authenticates as and whether it is an administrator."""
     with _client_errors():
         principal = _client(ctx).me()
-        _echo_fields((("actor", principal.actor), ("administrator", principal.administrator)))
+        _echo_fields(
+            (
+                ("actor", principal.actor),
+                ("administrator", principal.administrator),
+                ("approval_required", principal.approval_required),
+            )
+        )
 
 
 def _run_row(run: PublicRunResource) -> str:

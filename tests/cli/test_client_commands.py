@@ -1605,14 +1605,23 @@ def test_runs_cancel_prompts_when_interactive(
     assert result.exit_code == (0 if cancelled else 1), result.output
 
 
-def test_whoami_prints_actor_and_administrator(client: MagicMock) -> None:
-    client.me.return_value = PrincipalResource(actor="operator", administrator=False)
+@pytest.mark.parametrize(("approval_required", "rendered"), [(True, "true"), (False, "false")])
+def test_whoami_prints_actor_administrator_and_approval_required(
+    client: MagicMock, *, approval_required: bool, rendered: str
+) -> None:
+    client.me.return_value = PrincipalResource(
+        actor="operator", administrator=False, approval_required=approval_required
+    )
 
     result = _invoke(client, "whoami")
 
     assert result.exit_code == 0, result.output
     client.me.assert_called_once_with()
-    assert result.stdout.splitlines() == ["actor: operator", "administrator: false"]
+    assert result.stdout.splitlines() == [
+        "actor: operator",
+        "administrator: false",
+        f"approval_required: {rendered}",
+    ]
 
 
 def test_configs_list_filters_by_name_and_prints_the_name(client: MagicMock) -> None:

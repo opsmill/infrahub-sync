@@ -48,6 +48,7 @@ from .models import (
 )
 from .paging import InvalidCursorError
 from .service import RunService, ServiceAPIError
+from .settings import approval_required, validate_settings
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,13 @@ def create_app(
     configuration_routes: ConfigurationRoutes | None = None,
     reconciler: RunLivenessReconciler | None = None,
 ) -> FastAPI:
-    """Create the service application from explicit providers."""
+    """Create the service application from explicit providers.
+
+    Raises:
+        ValueError: A service setting such as ``INFRAHUB_SYNC_REQUIRE_APPROVAL`` holds a value that
+            is not accepted, so the service does not start.
+    """
+    validate_settings()
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI):
@@ -204,8 +211,12 @@ def create_app(
 
     @application.get("/me", responses=ERROR_RESPONSES)
     def get_me(principal: Annotated[Principal, Depends(authenticate)]) -> PrincipalResource:
-        """Return the caller's actor name and administrator flag; performs no other action."""
-        return PrincipalResource(actor=principal.actor, administrator=principal.administrator)
+        """Return the caller's actor name, administrator flag and the approval setting; performs no other action."""
+        return PrincipalResource(
+            actor=principal.actor,
+            administrator=principal.administrator,
+            approval_required=approval_required(),
+        )
 
     @application.post("/runs", status_code=202, response_model=RunResource, responses=ERROR_RESPONSES)
     async def create_run(

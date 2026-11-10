@@ -87,15 +87,15 @@ check reads the approval that US1 stores, and US4's `approve` refusal extends US
 
 ### Tests for User Story 3
 
-- [ ] T027 [P] [US3] Test setting parsing: unset is off; `true`/`1`/`yes`/`on` and `false`/`0`/`no`/`off` in any case; any other value raises at start-up with a message naming the variable, in `tests/service/test_approval_required.py`
-- [ ] T028 [P] [US3] Test admission with the setting on: `apply` of an unapproved run → 409 `approval-required`; approval checksum differing from `expected_checksum` → 409 `approval-checksum-mismatch`; approved run with the matching checksum → accepted; `POST /runs` with `operation = "sync"` → 409 `approval-required-for-sync` and no run record; `operation = "plan"` unaffected; an idempotent replay of an `apply` accepted before the setting was turned on still replays; nothing is submitted on a refusal; audit outcome `refused-approval-required`, in `tests/service/test_approval_required.py`
-- [ ] T029 [P] [US3] Test `GET /me` returns `approval_required` and `whoami` prints it, in `tests/service/test_http_api.py` and `tests/cli/test_client_commands.py`
+- [X] T027 [P] [US3] Test setting parsing: unset is off; `true`/`1`/`yes`/`on` and `false`/`0`/`no`/`off` in any case; any other value raises at start-up with a message naming the variable, in `tests/service/test_approval_required.py`
+- [X] T028 [P] [US3] Test admission with the setting on: `apply` of an unapproved run → 409 `approval-required`; approval checksum differing from `expected_checksum` → 409 `approval-checksum-mismatch`; approved run with the matching checksum → accepted; `POST /runs` with `operation = "sync"` → 409 `approval-required-for-sync` and no run record; `operation = "plan"` unaffected; an idempotent replay of an `apply` accepted before the setting was turned on still replays; nothing is submitted on a refusal; audit outcome `refused-approval-required`, in `tests/service/test_approval_required.py`
+- [X] T029 [P] [US3] Test `GET /me` returns `approval_required` and `whoami` prints it, in `tests/service/test_http_api.py` and `tests/cli/test_client_commands.py`
 
 ### Implementation for User Story 3
 
-- [ ] T030 [US3] Create the setting module: parse `INFRAHUB_SYNC_REQUIRE_APPROVAL`, validate it when the app is created (fail closed), and expose `approval_required() -> bool`, in `infrahub_sync/service/settings.py`; call the validation from the app factory in `infrahub_sync/service/app.py`
-- [ ] T031 [US3] In `apply_run`, after authorization and receipt replay and before reserving a receipt, refuse when the setting is on and the run has no approval or a different approved checksum; in `create_run`, refuse `operation == "sync"` when the setting is on, before the run record is created; audit both refusals, in `infrahub_sync/service/service.py`
-- [ ] T032 [US3] Add `approval_required` to `PrincipalResource`, return it from `GET /me`, and print it in `whoami`, in `infrahub_sync/client/models.py`, `infrahub_sync/service/app.py` and `infrahub_sync/cli.py`
+- [X] T030 [US3] Create the setting module: parse `INFRAHUB_SYNC_REQUIRE_APPROVAL`, validate it when the app is created (fail closed), and expose `approval_required() -> bool`, in `infrahub_sync/service/settings.py`; call the validation from the app factory in `infrahub_sync/service/app.py`
+- [X] T031 [US3] In `apply_run`, after authorization and receipt replay and before reserving a receipt, refuse when the setting is on and the run has no approval or a different approved checksum; in `create_run`, refuse `operation == "sync"` when the setting is on, before the run record is created; audit both refusals, in `infrahub_sync/service/service.py`
+- [X] T032 [US3] Add `approval_required` to `PrincipalResource`, return it from `GET /me`, and print it in `whoami`, in `infrahub_sync/client/models.py`, `infrahub_sync/service/app.py` and `infrahub_sync/cli.py`
 
 **Checkpoint**: all three stories complete.
 

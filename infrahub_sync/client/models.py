@@ -376,10 +376,15 @@ class ServiceStatusResource(_ResourceModel):
 
 
 class PrincipalResource(_ResourceModel):
-    """Name the authenticated caller and whether it is an administrator."""
+    """Name the authenticated caller, whether it is an administrator, and whether the site requires approval.
+
+    ``approval_required`` defaults to ``False`` for a Sync API that predates the setting, since such a
+    service never requires approval.
+    """
 
     actor: str
     administrator: bool
+    approval_required: bool = False
 
 
 class RunResource(_ResourceModel):

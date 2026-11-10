@@ -2427,8 +2427,8 @@ def test_a_run_stored_without_a_branch_shows_null(
 @pytest.mark.parametrize(
     ("token", "expected"),
     [
-        (OWNER_TOKEN, {"actor": "owner", "administrator": False}),
-        (ADMIN_TOKEN, {"actor": "admin", "administrator": True}),
+        (OWNER_TOKEN, {"actor": "owner", "administrator": False, "approval_required": False}),
+        (ADMIN_TOKEN, {"actor": "admin", "administrator": True, "approval_required": False}),
     ],
     ids=["owner", "admin"],
 )
@@ -2437,7 +2437,7 @@ def test_the_token_check_returns_exactly_the_actor_and_administrator_flag(
     token: str,
     expected: dict[str, object],
 ) -> None:
-    """Spec US4 scenario 1: the body names the actor and the flag, and nothing else."""
+    """Spec US4 scenario 1: the body names the actor, the flag and the approval setting, and nothing else."""
     client, projection, orchestration = service_api
 
     response = client.get("/me", headers={"Authorization": f"Bearer {token}"})
@@ -2447,6 +2447,24 @@ def test_the_token_check_returns_exactly_the_actor_and_administrator_flag(
     assert token not in response.text
     assert projection.audit_events() == ()
     assert orchestration.submissions == []
+
+
+@pytest.mark.parametrize(("value", "expected"), [("true", True), ("off", False)], ids=["on", "off"])
+def test_the_token_check_reports_whether_the_site_requires_approval(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+    *,
+    expected: bool,
+) -> None:
+    """Spec 019 FR-017: `GET /me` reports `INFRAHUB_SYNC_REQUIRE_APPROVAL`, read per request."""
+    client, _projection, _orchestration = service_api
+    monkeypatch.setenv("INFRAHUB_SYNC_REQUIRE_APPROVAL", value)
+
+    response = client.get("/me", headers={"Authorization": f"Bearer {OWNER_TOKEN}"})
+
+    assert response.status_code == 200
+    assert response.json()["approval_required"] is expected
 
 
 @pytest.mark.parametrize(
