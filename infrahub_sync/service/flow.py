@@ -942,9 +942,11 @@ def _failure_evidence(
     if isinstance(exc, UnsupportedSyncStoreError):
         evidence.update(reason=UNSUPPORTED_STORE_REASON, message=UNSUPPORTED_STORE_MESSAGE)
     evidence.update(operator_cause(exc, secrets))
-    if stage == "verify":
-        # The check a verify failed on, by name, so an operator reads which pre-write check
-        # would refuse the apply. Names from this repository's own vocabulary, never a message.
+    if stage in ("verify", "apply"):
+        # The pre-write check a verify or an apply failed on, by name, so an operator reads
+        # which check refuses the apply, and both stages name the same one (SC-004). Both
+        # rehydrate the plan checkpoint first. Names from this repository's own vocabulary,
+        # never a message.
         named = ("checkpoint",) if isinstance(exc, CheckpointUnavailableError) else failed_checks(exc)
         if named:
             evidence["failed_checks"] = list(named)

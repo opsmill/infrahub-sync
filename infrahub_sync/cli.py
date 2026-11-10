@@ -889,7 +889,7 @@ def _echo_failure_record(failure: Mapping[str, Any], *, stage: str, err: bool) -
 
 
 def _echo_failed_checks(recorded: object, *, err: bool = True) -> None:
-    """Print one `failed_check:` line per pre-write check a failed `verify` recorded (SC-004).
+    """Print one `failed_check:` line per pre-write check a failed `verify` or `apply` recorded (SC-004).
 
     The names come from this repository's own check vocabulary; a recorded value that is not a
     short ASCII identifier is skipped, so the record cannot reach the terminal as free text.

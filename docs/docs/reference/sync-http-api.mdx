@@ -661,6 +661,10 @@ A failure to read the destination schema also records a cause and a next action,
 refused token or a missing permission. An error that Sync does not know records its class name
 only.
 
+When `verify` or `apply` fails on a check that runs before the first write, `verify_failure` or
+`apply_failure` also holds `failed_checks`: the name of each check that failed, such as
+`destination_schema`. Both stages record the same name for the same problem.
+
 ### Create a plan
 
 Address the exact registered configuration revision by its `config_id` and

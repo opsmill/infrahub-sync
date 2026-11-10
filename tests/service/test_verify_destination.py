@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -441,6 +441,24 @@ def test_a_verify_of_a_torn_plan_records_the_failed_check(tmp_path: Path, monkey
         _verify(harness)
 
     assert _stored(harness).results["verify_failure"]["failed_checks"] == ["torn_operations"]
+
+
+@pytest.mark.parametrize("case", ["torn_operations", "destination_binding", "lineage"])
+def test_a_refused_apply_records_the_failed_check(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str) -> None:
+    harness = _harness(tmp_path, monkeypatch, purpose="apply")
+    approved = harness.recorded_checksum
+    check, breaks = _BREAKS[case]
+    breaks(harness)
+    publish_plan_directory(harness.projection, RUN_ID, harness.run_dir)
+
+    # A refusal with a recorded next action ends as a Failed state; any other one raises.
+    with suppress(RuntimeError):
+        service_sync_run.fn(RUN_ID, "apply", *harness.binding, expected_checksum=approved, confirm_writes=True)
+
+    stored = _stored(harness)
+    assert stored.phase == "apply-failed"
+    assert stored.results["apply_failure"]["failed_checks"] == [check]
+    assert harness.writes == []
 
 
 def test_an_unreachable_destination_fails_and_reports_no_destination_check(

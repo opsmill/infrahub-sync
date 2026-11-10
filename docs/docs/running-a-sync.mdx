@@ -379,7 +379,11 @@ next step, and the flow run's Artifacts tab holds a summary of the Sync run. See
 
 `plan`, `verify`, `sync`, and `apply` print the final phase and outcome of a failed run, such
 as `phase: plan-failed`. When the run recorded the class of the error, the command also prints
-`<stage> failed: <ErrorClass>`, for example `plan failed: ValueError`.
+`<stage> failed: <ErrorClass>`, for example `plan failed: ValueError`. When `verify` or `apply`
+fails on a check that runs before the first write, the command then prints one
+`failed_check: NAME` line for each check that failed, such as `failed_check: destination_schema`,
+and `runs results RUN_ID` lists the same names under `failed_checks`. `verify` and `apply` name
+the same check for the same problem.
 
 For some failures the run also records a cause that you can act on, and the command prints it
 on a `cause:` line:
