@@ -1,0 +1,135 @@
+infrahub_sync/configuration/infrahub_lineage.py
+  s_d199771aa41449::t_ac7ff2c4d8dedf 20-21
+  s_d199771aa41449::t_a6011dd7bd9eb1 149-235
+tests/service/test_worker_environment.py
+  s_d199771aa41449::t_38479c35e1e3bd 51,139-154,178,180,242,337,347-363,365-390
+  s_d199771aa41449::t_2c433a06d9bc5a 177,364,391-393
+infrahub_sync/configuration/capabilities.py
+  s_d199771aa41449::t_f7bcd4060d10d2 305,312-455,481-482,484-487
+  s_d199771aa41449::t_240d4a87b50855 456-480,483
+  s_d199771aa41449::t_175fc27bdc2d0b 75-77
+  s_d199771aa41449::t_8c24765f58e8b0 281,283,288
+  s_d199771aa41449::t_0a5246b098b5eb 249-259
+  s_d199771aa41449::t_ef70845ad160f7 756
+infrahub_sync/product_store/__init__.py
+  s_d199771aa41449::t_5fd1e29a505912 27,83
+infrahub_sync/service/config_routes.py
+  s_d199771aa41449::t_cc65168f1f8692 3,26,45,107-120,456
+  s_d199771aa41449::t_f509110fbaf834 135,140-148,254-260,267-270,273-278,280-284,542,549
+tests/service/test_config_routes.py
+  s_d199771aa41449::t_300315c2ec9629 1713-1715
+infrahub_sync/product_store/configs.py
+  s_d199771aa41449::t_a35f45a3f94904 973-976
+  s_d199771aa41449::t_102eb9609de228 892-898,900-926
+  s_d199771aa41449::t_f52962967e6c93 937
+  s_d199771aa41449::t_d6bd90327bf5bc 955-958
+  s_d199771aa41449::t_386078c9bae6ba 55
+  s_d199771aa41449::t_58ab816925eeb0 27
+  s_d199771aa41449::t_aa65c2d28f0708 148-150
+  s_d199771aa41449::t_f15c260fb9c6cb 899,977
+  s_d199771aa41449::t_5458de2e1d7c5e 56,927-928
+infrahub_sync/client/models.py
+  s_d199771aa41449::t_6e130e0b5ab545 872-892,894,897,901,903
+infrahub_sync/client/__init__.py
+  s_d199771aa41449::t_eca143929557ec 26,80
+tests/test_writable_convergence_identity.py
+  s_d199771aa41449::t_300315c2ec9629 291-293,295
+  s_d199771aa41449::t_e8346e08fb5d51 294
+  s_7b55ef11f59546::t_d7b2755de59798 189-190
+infrahub_sync/client/client.py
+  s_d199771aa41449::t_9cf4524a81e9d7 303,305-309,317-318,325-327
+  s_d199771aa41449::t_5bcdde1446e1a2 84
+dev/specs/019-plan-problem-reporting/research.md
+  s_d199771aa41449::t_1586fc3cfef77a 334-347
+docs/docs/reference/durable-product-records.mdx
+  s_d199771aa41449::t_69d2d28b556fa4 109-122
+  s_d199771aa41449::t_473653cf2c939a 125-128
+  s_d199771aa41449::t_f91fa231df6539 50-53
+  s_d199771aa41449::t_69f0831f69a652 82-87,91-96
+changelog/+019-register-response.changed.md
+  s_d199771aa41449::t_d36b5e2db74eff 1
+infrahub_sync/product_store/store.py
+  s_d199771aa41449::t_a4ec8d012901f1 1672-1717
+  s_d199771aa41449::t_857465e4034c8c 136-138,434-439,601-603
+  s_d199771aa41449::t_5879ca7d4cf7ee 3790-3813
+  s_d199771aa41449::t_d71edd4daf6ab9 342
+  s_d199771aa41449::t_16488497cf48bf 11
+  s_d199771aa41449::t_e11c964c393ce7 56
+  s_d199771aa41449::t_0388771eb0da8c 604
+infrahub_sync/service/worker.py
+  s_d199771aa41449::t_caef305601b2b4 349-371
+  s_d199771aa41449::t_eead5823caddff 8,27-28,30,41
+  s_d199771aa41449::t_dc622f47411439 251-253,373-375
+  s_d199771aa41449::t_a27ff6bf75f4dc 42
+tests/product_store/test_contract.py
+  s_d199771aa41449::t_394b10ba72556f 100
+changelog/+019-validate-branch.added.md
+  s_d199771aa41449::t_d36b5e2db74eff 1
+dev/specs/019-plan-problem-reporting/tasks.md
+  s_d199771aa41449::t_abe4c2fbdebac3 174-179
+tests/configuration/test_schema_validation.py
+  s_d199771aa41449::t_14d08b6db38a2f 32,35
+  s_d199771aa41449::t_f72edf36c26b2a 613-620
+  s_d199771aa41449::t_300315c2ec9629 122-124
+  s_d199771aa41449::t_759335c83e3384 532-537,542-559
+  s_d199771aa41449::t_1535a1f8ab1e54 560-561
+tests/cli/test_client_commands.py
+  s_d199771aa41449::t_394b10ba72556f 32,87-92,205,207
+changelog/+019-validate-identifiers.changed.md
+  s_d199771aa41449::t_d36b5e2db74eff 1
+infrahub_sync/product_store/models.py
+  s_d199771aa41449::t_ed62e3472b306a 12,272,286-287
+  s_d199771aa41449::t_5fa0b378433441 269-271,273-285,288-291
+docs/docs/reference/sync-http-api.mdx
+  s_d199771aa41449::t_6e219a7b5f1feb 383-384,390,420
+infrahub_sync/cli.py
+  s_d199771aa41449::t_60d7426b7e2bf0 67
+  s_d199771aa41449::t_5d5227af441633 464
+  s_d199771aa41449::t_86007e71f80914 449-451
+  s_d199771aa41449::t_9d15b1f8e00d96 462-463,468,470,474
+  s_d199771aa41449::t_5db2e5968c16e2 618
+  s_d199771aa41449::t_2692283ec20139 621-628,633-640
+  s_d199771aa41449::t_460e12e647a86c 465-466
+infrahub_sync/configuration/schema_validation.py
+  s_d199771aa41449::t_26b9132c12df57 45,48,56,62-65,73-78
+  s_d199771aa41449::t_cda0cbe87e9a60 89-91,94
+  s_d199771aa41449::t_c00f73695ab782 23-27
+  s_d199771aa41449::t_023f0f50ed9c31 202-326,334-336
+  s_d199771aa41449::t_53462d3b2e5c42 388-389
+  s_d199771aa41449::t_caf2bb73a749e9 404
+  s_d199771aa41449::t_a49c48f8d7ccb2 369-371
+  s_d199771aa41449::t_1dc735533e364c 95
+infrahub_sync/configuration/worker_credentials.py
+  s_d199771aa41449::t_ed62e3472b306a 1,5,7
+  s_d199771aa41449::t_b2b9e96d9fc251 2-4,6,8-70
+tests/product_store/test_validate_destination_schema.py
+  s_d199771aa41449::t_4a67399b08dece 80-82,88
+  s_d199771aa41449::t_5d5227af441633 26,83-87
+  s_d199771aa41449::t_300315c2ec9629 65-67,218-220,252-254
+docs/docs/reference/cli.mdx
+  s_7b55ef11f59546::t_ebb88286eeaece 308
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8f1121d3e1bb6097197bc8616f01e4be30cf818c",
+  "prompts": {},
+  "sessions": {
+    "s_7b55ef11f59546": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a64d9d7afd4f199b6",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
