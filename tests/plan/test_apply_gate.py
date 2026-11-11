@@ -14,6 +14,7 @@ the confirmation.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import pytest
@@ -92,7 +93,7 @@ def test_an_unconfirmed_apply_of_a_plan_that_leaves_out_records_is_refused_befor
     assert ownership.proofs == 0, "No hold was proven, so no operation was dispatched."
     assert destination.applied == []
     message = str(outcome)
-    assert "2" in message, "The refusal states the count of records left out."
+    assert re.search(r"\b2 records\b", message), "The refusal states the count of records left out."
     next_action = str(getattr(outcome, "next_action", ""))
     assert "confirm" in f"{message} {next_action}".lower()
 

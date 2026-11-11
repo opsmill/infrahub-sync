@@ -16,15 +16,18 @@ FR-010, FR-011 and FR-026, contracts/sync-api.md "Apply request" and research R1
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from pydantic import ValidationError
 
 pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
 pytest.importorskip("fastapi")
 
 from infrahub_sync.plan.errors import PlanFormatApplyUnsupportedError
+from infrahub_sync.product_store import ExecutionFinishWriteback
 from infrahub_sync.service.models import (
     PlanOperationResource,
     PlanResource,
@@ -43,7 +46,9 @@ from tests.plan.test_plan_format_3 import (
     update_record,
 )
 from tests.service.test_http_api import (
+    _PLAN_WORKER_ID,
     AUTH,
+    OWNER_TOKEN,
     _create,
     _FakeOrchestration,
     _settle_open_executions,
@@ -261,7 +266,69 @@ def test_a_format_3_plan_is_refused_before_any_write(tmp_path: Path) -> None:
         outcome = exc
 
     assert isinstance(outcome, PlanFormatApplyUnsupportedError), "A format 3 plan was applied."
-    assert "3" in str(outcome)
+    assert "format version 3" in str(outcome)
     assert "`plan`" in str(outcome)
     assert ownership.proofs == 0
     assert destination.applied == []
+
+
+def _stopped_sync(api: _API) -> str:
+    """A `sync` run admitted through the Sync API, whose worker stopped after a plan that leaves out records."""
+    client, projection, _orchestration = api
+    version = client.app.state.run_binding
+    accepted = client.post(
+        "/runs",
+        headers={"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": "stopped-sync"},
+        json={
+            "operation": "sync",
+            "config_id": version.config_id,
+            "registry_version": version.registry_version,
+            "confirm_writes": True,
+            "reason": "first import",
+        },
+    )
+    assert accepted.status_code == 202, accepted.text
+    run_id = accepted.json()["run"]["run_id"]
+    _publish_plan(projection, run_id, left_out=12)
+    stop = ExecutionFinishWriteback(
+        phase="planned",
+        outcome="left-out-review-required",
+        finished_at=datetime.now(timezone.utc),
+        summary={"sync_name": "registered-inventory", "left_out": 12},
+        results={"stage": "sync", "outcome": "left-out-review-required"},
+        release_write_admission=True,  # ty: ignore[unknown-argument] - added by T039.
+    )
+    run = projection.lookup_run(run_id).value
+    assert run is not None
+    (link,) = run.prefect_executions
+    projection.claim_execution(run_id, link.flow_run_id, worker_id=_PLAN_WORKER_ID)
+    projection.commit_claimed_execution(
+        run_id,
+        link.flow_run_id,
+        worker_id=_PLAN_WORKER_ID,
+        terminal_at=datetime.now(timezone.utc),
+        terminal_state="completed",
+        terminal_outcome="succeeded",
+        writeback=stop,
+    )
+    return run_id
+
+
+@pytest.mark.xfail(strict=True, raises=ValidationError, reason=_NOT_IMPLEMENTED)
+def test_a_stopped_sync_is_applied_through_the_api_with_the_confirmation_once(
+    service_api: _API,  # noqa: F811 - the imported fixture.
+) -> None:
+    """FR-012 and FR-023 through the real `apply_run` path: refused, then admitted once, then refused."""
+    client, _projection, orchestration = service_api
+    run_id = _stopped_sync(service_api)
+
+    unconfirmed = _apply(client, run_id, "stopped-unconfirmed")
+    confirmed = _apply(client, run_id, "stopped-confirmed", confirm_left_out=True)
+    again = _apply(client, run_id, "stopped-again", confirm_left_out=True)
+
+    assert unconfirmed.status_code == 409
+    assert unconfirmed.json()["error"]["code"] == "left-out-confirmation-required"
+    assert confirmed.status_code == 202, confirmed.text
+    assert again.status_code == 409
+    assert again.json()["error"]["code"] == "run-execution-conflict"
+    assert _stages(orchestration) == ["sync", "apply"]

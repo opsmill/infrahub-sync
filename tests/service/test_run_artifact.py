@@ -163,7 +163,8 @@ _LEFT_OUT_SUMMARY = {
     "left_out": 6,
     "left_out_with_problem": 1,
     "left_out_dependent": 5,
-    "problems": 1,
+    # Not the count of records with a problem, so a line of left-out counts cannot stand in for it.
+    "problems": 3,
 }
 
 
@@ -180,7 +181,7 @@ def test_a_plan_that_leaves_out_records_shows_both_counts(stage: str, outcome: s
     markdown = run_markdown(run, stage, outcome, None)
 
     assert _count_line(markdown, "left out", 6), markdown
-    assert _count_line(markdown, "problem", 1), markdown
+    assert _count_line(markdown, "problem", 3), markdown
 
 
 @pytest.mark.xfail(strict=True, raises=AssertionError, reason="spec 019 US2 not implemented")

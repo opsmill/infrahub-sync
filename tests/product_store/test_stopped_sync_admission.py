@@ -72,9 +72,9 @@ def projection(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Produ
         yield ProductProjection(SQLiteRunStore(tmp_path / "records.sqlite3"), artifacts)
         return
     schema = request.getfixturevalue("_postgresql_schema")
+    # Installed only on Python 3.11 and later, with the service profile.
+    psycopg: Any = pytest.importorskip("psycopg")
     # pylint: disable-next=import-outside-toplevel
-    import psycopg
-
     from infrahub_sync.service.storage import PsycopgConnectionFactory
 
     def connect() -> Any:  # noqa: ANN401 - the store's own DB-API connection protocol.
