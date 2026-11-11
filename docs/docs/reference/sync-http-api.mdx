@@ -97,7 +97,7 @@ or start a worker.
 
 Apply the deployment again each time you install a new release, before you start that
 release's Sync API. The deployment records the parameters the service flow accepts, and a
-newer Sync API can send a parameter that an older deployment does not know, such as
+newer Sync API can send a parameter that is missing from an older deployment's list, such as
 `confirm_left_out`.
 
 The deployment's entrypoint is the installed module path
@@ -671,11 +671,15 @@ only.
 A failure record written by this release also holds these fields. A field that does not apply
 is `null` or absent:
 
-- `failure_type`: one of `destination_rejected_write`, `system_unreachable`, `system_timeout`,
-  `token_rejected`, `permission_missing`, `tls_certificate_rejected`, `record_load_failed`,
-  `transform_failed`, `credential_missing`, `verification_failed`, `apply_refused`,
-  `destination_peer_missing`, `destination_peer_ambiguous`, `lineage_refused`,
-  `destination_schema_unavailable` or `internal_error`.
+- `failure_type`: one of these types, grouped by what failed:
+    - a credential or the connection to a source or the destination: `system_unreachable`,
+      `system_timeout`, `token_rejected`, `permission_missing`, `tls_certificate_rejected`,
+      `credential_missing`;
+    - reading a source record: `record_load_failed`, `transform_failed`;
+    - the destination's answer: `destination_rejected_write`, `destination_peer_missing`,
+      `destination_peer_ambiguous`, `lineage_refused`, `destination_schema_unavailable`;
+    - the checks of a saved plan: `verification_failed`, `apply_refused`;
+    - any other error: `internal_error`.
 - `system`: `{"role": "source" or "destination", "adapter": <name>}`.
 - `error_code`, `node_kind`, `attribute` and `infrahub_message`: Infrahub's error code, node
   kind, field name and message of a rejected write. `infrahub_message` is set only for

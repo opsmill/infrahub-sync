@@ -70,7 +70,7 @@ out (spec 019). The API adds it to the flow parameters only when it is true, so 
 confirms nothing keeps the parameters of earlier releases. The worker passes it to
 `Potenda.apply_plan`, which checks it again against the plan manifest's left-out count and
 raises `LeftOutConfirmationRequiredError` before any write when it is missing. Because the
-deployment's parameter schema must know the parameter, the deployment is applied again
+deployment's parameter schema must list the parameter, the deployment is applied again
 (`python -m infrahub_sync.service.deploy`, or the Compose `sync-bootstrap` job) before or
 together with the Sync API of the release that sends it.
 

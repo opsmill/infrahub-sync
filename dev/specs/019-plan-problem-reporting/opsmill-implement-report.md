@@ -113,6 +113,10 @@ documentation and test changes of T074 to T079.
 | `uv run ty check .` | exit 0, 20 warnings (`unused-ignore-comment`, files not touched by spec 019), no error |
 | `uv run invoke tests.tests-unit` | exit 0, `7365 passed, 4 skipped, 285 deselected, 5 xfailed, 9 warnings in 215.22s (0:03:35)`, finished 2026-11-11T06:57:19Z |
 | `uv run rumdl check` on the changed Markdown files | `No issues found` |
+| `uv run invoke docs.lint` | exit 0, rumdl `No issues found in 144 files` |
+| `vale` on the changed user pages | 0 errors; 4 sentence-case warnings on headings that this chunk did not change |
+| `cd docs && pnpm install --frozen-lockfile`, then `uv run invoke docs.docusaurus` | exit 0, `[SUCCESS] Generated static files in "build"`, no broken link or anchor reported |
+| `uv run invoke docs.generate` | exit 0; `docs/docs/reference/cli.mdx` was already current (no diff). The task only regenerates the CLI reference; the Sync HTTP API reference is written by hand and was edited |
 
 The five expected failures:
 
