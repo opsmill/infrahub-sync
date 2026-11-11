@@ -22,9 +22,9 @@ named `+019-<topic>.<type>.md` under `changelog/` for each user-visible change.
 
 ## Phase 1: Setup
 
-- [ ] T001 Pin today's behavior for the three unverified problem types (research R1): add characterization tests that pass today and show that a duplicate source identity raises `ObjectAlreadyExists`, a `2.5` for a `Number` attribute raises `pydantic.ValidationError` (`int_from_float`), and a Dropdown value outside its choices is accepted by the plan, in `tests/plan/test_problem_baseline.py`; each names the FR whose task will change its expectation (FR-002)
-- [ ] T002 [P] Build the shared problem fixture: one record of each of the nine problem types plus valid records and dependents (a device with five interfaces, an IP address with an optional device relationship, a device whose site is missing, an IP address whose VRF is missing), in `tests/data/plan_problems/` with a fixture loader in `tests/plan/conftest.py`
-- [ ] T003 [P] Record the plan bytes of the existing valid fixtures before any change, in `tests/plan/test_valid_plan_unchanged.py`, so later phases prove that a plan of valid data keeps its bytes apart from the format version and the empty report (research R3)
+- [X] T001 Pin today's behavior for the three unverified problem types (research R1): add characterization tests that pass today and show that a duplicate source identity raises `ObjectAlreadyExists`, a `2.5` for a `Number` attribute raises `pydantic.ValidationError` (`int_from_float`), and a Dropdown value outside its choices is accepted by the plan, in `tests/plan/test_problem_baseline.py`; each names the FR whose task will change its expectation (FR-002)
+- [X] T002 [P] Build the shared problem fixture: one record of each of the nine problem types plus valid records and dependents (a device with five interfaces, an IP address with an optional device relationship, a device whose site is missing, an IP address whose VRF is missing), in `tests/data/plan_problems/` with a fixture loader in `tests/plan/conftest.py`
+- [X] T003 [P] Record the plan bytes of the existing valid fixtures before any change, in `tests/plan/test_valid_plan_unchanged.py`, so later phases prove that a plan of valid data keeps its bytes apart from the format version and the empty report (research R3)
 
 ## Phase 2: Foundational (blocks every user story)
 

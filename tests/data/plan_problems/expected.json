@@ -1,0 +1,47 @@
+{
+  "problems": [
+    {"problem_type": "dropdown_value_not_in_choices", "kind": "LocationSite", "source_ids": ["3"], "field": "status"},
+    {"problem_type": "duplicate_source_identity", "kind": "LocationSite", "source_ids": ["4", "5"], "field": null},
+    {"problem_type": "destination_identity_collision", "kind": "DcimDevice", "source_ids": ["33", "34"], "field": null},
+    {"problem_type": "wrong_value_type", "kind": "DcimDevice", "source_ids": ["30"], "field": "position"},
+    {
+      "problem_type": "required_peer_excluded_by_filter",
+      "kind": "InterfacePhysical",
+      "source_ids": ["60"],
+      "field": "device"
+    },
+    {
+      "problem_type": "identities_merge_in_destination",
+      "kind": "LocationRack",
+      "source_ids": ["21", "22"],
+      "field": null
+    },
+    {"problem_type": "peer_not_found_in_source", "kind": "DcimDevice", "source_ids": ["36"], "field": "site"},
+    {"problem_type": "peer_not_found_in_source", "kind": "IpamIPAddress", "source_ids": ["82"], "field": "vrf"},
+    {"problem_type": "destination_identity_ambiguous", "kind": "LocationSite", "source_ids": ["6"], "field": null},
+    {"problem_type": "transform_failed", "kind": "IpamVRF", "source_ids": ["11"], "field": "name"}
+  ],
+  "left_out_dependents": [
+    {"kind": "InterfacePhysical", "source_id": "40", "depends_on": {"kind": "DcimDevice", "source_id": "30"}},
+    {"kind": "InterfacePhysical", "source_id": "41", "depends_on": {"kind": "DcimDevice", "source_id": "30"}},
+    {"kind": "InterfacePhysical", "source_id": "42", "depends_on": {"kind": "DcimDevice", "source_id": "30"}},
+    {"kind": "InterfacePhysical", "source_id": "43", "depends_on": {"kind": "DcimDevice", "source_id": "30"}},
+    {"kind": "InterfacePhysical", "source_id": "44", "depends_on": {"kind": "DcimDevice", "source_id": "30"}}
+  ],
+  "kept": [
+    {
+      "kind": "IpamIPAddress",
+      "source_id": "81",
+      "cause": "peer_left_out",
+      "relationship": "device",
+      "peer": {"kind": "DcimDevice", "source_id": "30"}
+    },
+    {
+      "kind": "IpamIPAddress",
+      "source_id": "82",
+      "cause": "peer_not_found_in_source",
+      "relationship": "vrf",
+      "peer": {"kind": "IpamVRF", "source_id": "998"}
+    }
+  ]
+}

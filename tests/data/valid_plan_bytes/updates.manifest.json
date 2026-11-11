@@ -1,0 +1,23 @@
+{
+  "config_version": "9f8638a66be8816ecd610b26d540f4984579059b3f4bf9f8df304e884d493133",
+  "delete_operations_computed": true,
+  "operations_count": 4,
+  "source_snapshot": [
+    {
+      "path": "A/BuiltinTag.parquet",
+      "row_count": 3
+    },
+    {
+      "path": "A/DcimDevice.parquet",
+      "row_count": 1
+    },
+    {
+      "path": "A/LocationRack.parquet",
+      "row_count": 1
+    },
+    {
+      "path": "A/LocationSite.parquet",
+      "row_count": 1
+    }
+  ]
+}

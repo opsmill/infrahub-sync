@@ -1,0 +1,85 @@
+{
+  "LocationSite": {
+    "human_friendly_id": ["name__value"],
+    "uniqueness_constraints": [],
+    "attributes": {
+      "name": {"kind": "Text", "optional": false, "default_value": null, "unique": true, "read_only": false},
+      "status": {
+        "kind": "Dropdown",
+        "optional": false,
+        "default_value": null,
+        "unique": false,
+        "read_only": false,
+        "choices": ["active", "planned"]
+      }
+    },
+    "relationships": {}
+  },
+  "IpamVRF": {
+    "human_friendly_id": ["name__value"],
+    "uniqueness_constraints": [],
+    "attributes": {
+      "name": {"kind": "Text", "optional": false, "default_value": null, "unique": true, "read_only": false}
+    },
+    "relationships": {}
+  },
+  "LocationRack": {
+    "human_friendly_id": ["name__value"],
+    "uniqueness_constraints": [],
+    "attributes": {
+      "name": {"kind": "Text", "optional": false, "default_value": null, "unique": false, "read_only": false},
+      "facility_id": {"kind": "Text", "optional": false, "default_value": null, "unique": false, "read_only": false},
+      "description": {"kind": "Text", "optional": true, "default_value": null, "unique": false, "read_only": false}
+    },
+    "relationships": {}
+  },
+  "DcimDevice": {
+    "human_friendly_id": ["name__value"],
+    "uniqueness_constraints": [],
+    "attributes": {
+      "name": {"kind": "Text", "optional": false, "default_value": null, "unique": false, "read_only": false},
+      "serial": {"kind": "Text", "optional": false, "default_value": null, "unique": false, "read_only": false},
+      "position": {"kind": "Number", "optional": true, "default_value": null, "unique": false, "read_only": false}
+    },
+    "relationships": {
+      "site": {"peer": "LocationSite", "cardinality": "one", "optional": false, "kind": "Attribute", "read_only": false}
+    }
+  },
+  "InterfacePhysical": {
+    "human_friendly_id": ["device__name__value", "name__value"],
+    "uniqueness_constraints": [],
+    "attributes": {
+      "name": {"kind": "Text", "optional": false, "default_value": null, "unique": false, "read_only": false}
+    },
+    "relationships": {
+      "device": {"peer": "DcimDevice", "cardinality": "one", "optional": false, "kind": "Parent", "read_only": false}
+    }
+  },
+  "InterfaceVirtual": {
+    "human_friendly_id": ["parent__name__value", "name__value"],
+    "uniqueness_constraints": [],
+    "attributes": {
+      "name": {"kind": "Text", "optional": false, "default_value": null, "unique": false, "read_only": false}
+    },
+    "relationships": {
+      "parent": {
+        "peer": "InterfacePhysical",
+        "cardinality": "one",
+        "optional": false,
+        "kind": "Parent",
+        "read_only": false
+      }
+    }
+  },
+  "IpamIPAddress": {
+    "human_friendly_id": ["address__value"],
+    "uniqueness_constraints": [],
+    "attributes": {
+      "address": {"kind": "IPHost", "optional": false, "default_value": null, "unique": true, "read_only": false}
+    },
+    "relationships": {
+      "device": {"peer": "DcimDevice", "cardinality": "one", "optional": true, "kind": "Attribute", "read_only": false},
+      "vrf": {"peer": "IpamVRF", "cardinality": "one", "optional": true, "kind": "Attribute", "read_only": false}
+    }
+  }
+}
