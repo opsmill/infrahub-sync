@@ -1,0 +1,45 @@
+tests/service/test_apply_left_out_confirmation.py
+  s_d199771aa41449::t_5dc7e7c8146f87 1-26,29-32,39-44,46,50-267
+  s_d199771aa41449::t_b3a8c6d89c7a45 27-28,33-38,45,47-49
+tests/service/test_sync_left_out_stop.py
+  s_d199771aa41449::t_0cacdd16de615e 1-30,39-44,51-52,56-134,136-279,291,299,302,305-382
+  s_d199771aa41449::t_36da766f758676 280-290,293,298,300
+  s_d199771aa41449::t_31bcda63e022ce 292,294-297,301
+  s_d199771aa41449::t_a0ef330d526ff4 303-304
+  s_d199771aa41449::t_2f5f6837ecdbf9 135
+  s_d199771aa41449::t_b3a8c6d89c7a45 31-38,45-50,53-55
+tests/service/test_run_artifact.py
+  s_d199771aa41449::t_0716a9a65e7f06 11
+  s_d199771aa41449::t_22be5ea2b52c66 154-206
+tests/cli/test_apply_confirm_left_out.py
+  s_d199771aa41449::t_c123b6076d1180 1-28,31,33-34,40-145
+  s_d199771aa41449::t_b3a8c6d89c7a45 29-30,32,35-39
+tests/product_store/test_stopped_sync_admission.py
+  s_d199771aa41449::t_62c521899f33ab 32
+  s_d199771aa41449::t_2b5d92f1e6e938 1-31,33-75,77-175,177-395,397-445,449-494
+  s_d199771aa41449::t_832ea0e0ff6557 176
+  s_d199771aa41449::t_217d253cb56d0a 76
+  s_d199771aa41449::t_b3a8c6d89c7a45 396,448
+  s_d199771aa41449::t_3c2364cc070f5e 446
+  s_d199771aa41449::t_c7eb7c121b0507 447
+tests/plan/test_apply_gate.py
+  s_d199771aa41449::t_59e8c213881230 1-140
+dev/specs/019-plan-problem-reporting/tasks.md
+  s_d199771aa41449::t_28bae306f39952 93-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "632bda07a545c73e3757a14037323684881d9edb",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
