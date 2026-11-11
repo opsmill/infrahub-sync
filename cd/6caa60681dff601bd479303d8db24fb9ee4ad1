@@ -1,0 +1,23 @@
+tests/plan/test_plan_writes_nothing.py
+  s_d199771aa41449::t_7761c07b65e296 1-63,67-75
+  s_d199771aa41449::t_cb4c36a19dd2ae 64-66
+tests/cache/test_apply_plan.py
+  s_d199771aa41449::t_bd623f15308cf5 571-579,581-609
+  s_d199771aa41449::t_2878964f620b57 580
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cd6caa60681dff601bd479303d8db24fb9ee4ad1",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
