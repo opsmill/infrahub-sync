@@ -48,7 +48,8 @@ pytestmark = pytest.mark.xfail(
 
 RUN_ID = "service-run-1"
 
-# Pages of two entries, so a command that reads one page only misses entries.
+# A server page size smaller than any limit the CLI asks for, so a command that reads one page
+# only misses entries. Used only where a test checks that every page is read.
 PAGE_SIZE = 2
 
 
@@ -149,8 +150,13 @@ def _summary(**additions: Any) -> PlanSummaryResource:  # noqa: ANN401
     return PlanSummaryResource.model_construct(**base, **counts)
 
 
-def _pages(entries: list[dict[str, Any]], *, filters: tuple[str, ...]) -> Callable[..., SimpleNamespace]:
-    """A paged read over `entries`: pages of `PAGE_SIZE`, filtered by the given keywords."""
+def _pages(
+    entries: list[dict[str, Any]], *, filters: tuple[str, ...], page_size: int | None = None
+) -> Callable[..., SimpleNamespace]:
+    """A paged read over `entries`, filtered by the given keywords.
+
+    A page holds `limit` entries, or fewer when `page_size` is smaller, as a server may answer.
+    """
 
     def read(run_id: str, *, offset: int = 0, limit: int = 500, **given: Any) -> SimpleNamespace:  # noqa: ANN401
         assert run_id == RUN_ID
@@ -161,7 +167,7 @@ def _pages(entries: list[dict[str, Any]], *, filters: tuple[str, ...]) -> Callab
             if (given.get("problem_type") is None or entry.get("problem_type") == given["problem_type"])
             and (given.get("kind") is None or entry["record"]["kind"] == given["kind"])
         ]
-        size = min(limit, PAGE_SIZE)
+        size = limit if page_size is None else min(limit, page_size)
         page = selected[offset : offset + size]
         next_offset = offset + size if offset + size < len(selected) else None
         return SimpleNamespace(
@@ -183,14 +189,19 @@ def _with_report(
     problem_entries: list[dict[str, Any]],
     left_out_entries: list[dict[str, Any]] | None = None,
     kept_entries: list[dict[str, Any]] | None = None,
+    page_size: int | None = None,
     **summary: Any,  # noqa: ANN401
 ) -> None:
     """Make the mocked client serve a plan summary with these counts and the three paged lists."""
     plan = _plan()
     client.get_plan.return_value = plan.model_copy(update={"summary": _summary(**summary)})
-    client.get_plan_problems = MagicMock(side_effect=_pages(problem_entries, filters=("problem_type", "kind")))
-    client.get_plan_left_out = MagicMock(side_effect=_pages(left_out_entries or [], filters=("kind",)))
-    client.get_plan_kept = MagicMock(side_effect=_pages(kept_entries or [], filters=("kind",)))
+    client.get_plan_problems = MagicMock(
+        side_effect=_pages(problem_entries, filters=("problem_type", "kind"), page_size=page_size)
+    )
+    client.get_plan_left_out = MagicMock(
+        side_effect=_pages(left_out_entries or [], filters=("kind",), page_size=page_size)
+    )
+    client.get_plan_kept = MagicMock(side_effect=_pages(kept_entries or [], filters=("kind",), page_size=page_size))
 
 
 def _lines_starting(output: str, prefix: str) -> list[str]:
@@ -269,7 +280,9 @@ def test_plan_prints_the_first_20_problems_and_the_command_for_the_rest(client: 
 def test_runs_plan_problems_reads_every_page(client: MagicMock) -> None:
     """`--problems` prints one line per problem across pages of two entries."""
     problems = [_problem(index) for index in range(5)]
-    _with_report(client, problem_entries=problems, problems=5, problems_by_type={"wrong_value_type": 5})
+    _with_report(
+        client, problem_entries=problems, page_size=PAGE_SIZE, problems=5, problems_by_type={"wrong_value_type": 5}
+    )
 
     result = _invoke(client, "runs", "plan", RUN_ID, "--problems")
 
@@ -305,6 +318,7 @@ def test_runs_plan_left_out_and_kept_print_one_line_per_entry(client: MagicMock)
         problem_entries=[DROPDOWN_PROBLEM],
         left_out_entries=LEFT_OUT,
         kept_entries=KEPT,
+        page_size=PAGE_SIZE,
         left_out=3,
         left_out_with_problem=1,
         left_out_dependent=2,

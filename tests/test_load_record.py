@@ -229,6 +229,39 @@ def test_any_other_error_is_raised_as_record_load_error() -> None:
     assert isinstance(error.__cause__, RuntimeError)
 
 
+class _MissingNameSource(FixtureSource):
+    """A source whose conversion leaves out the required `name` of one site."""
+
+    def record_to_data(
+        self, record: Mapping[str, Any], element: SchemaMappingModel, model: type[DiffSyncModel]
+    ) -> dict[str, Any]:
+        data = super().record_to_data(record, element, model)
+        if str(record["id"]) == "2":
+            data.pop("name")
+        return data
+
+
+def test_a_missing_required_value_is_raised_as_record_load_error() -> None:
+    """A `ValidationError` for a missing required value is not `wrong_value_type`: it stops the read."""
+    fixture = load_plan_problem_fixture()
+    config = fixture.config()
+    source = _MissingNameSource(config=config, records=_records(fixture, {"LocationSite": [1, 2]}), order=fixture.order)
+    bind_runtime_models(source, fixture.build_models(model_base=PlanProblemModel, config=config))
+
+    # `RecordLoadError` does not exist before T017; see the test above.
+    try:
+        _read(source, "LocationSite")
+    except NotImplementedError:
+        raise
+    except Exception as raised:  # noqa: BLE001
+        error = raised
+    else:
+        pytest.fail("the read did not stop on the missing value")
+
+    assert type(error).__name__ == "RecordLoadError"
+    assert (error.kind, error.source_id, error.field) == ("LocationSite", "2", "name")  # ty: ignore[unresolved-attribute]
+
+
 def test_the_destination_side_catches_nothing() -> None:
     """On the destination side a duplicate identity still raises `ObjectAlreadyExists`."""
     fixture = load_plan_problem_fixture()

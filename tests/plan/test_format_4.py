@@ -94,7 +94,8 @@ def test_the_manifest_is_format_4_and_records_the_report(plan_problems: PlanProb
 
     assert planned.manifest["format_version"] == 4
     assert sorted(path.name for path in _plan_dir(planned).iterdir()) == sorted(
-        [MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, REPORT_FILE_NAME]
+        # The Infrahub adapter keeps last changes, so the format 3 file `last_changes.jsonl` stays.
+        [LAST_CHANGES_FILE_NAME, MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, REPORT_FILE_NAME]
     )
     left_out = planned.left_out
     assert planned.manifest["report"] == {
