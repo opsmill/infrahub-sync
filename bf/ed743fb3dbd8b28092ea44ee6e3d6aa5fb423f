@@ -1,0 +1,30 @@
+docs/docs/configuration-package.mdx
+  s_d199771aa41449::t_daa587d6c1e18f 107-110
+changelog/+019-register-response.changed.md
+  s_d199771aa41449::t_bd8d24aecee963 1
+tests/product_store/test_worker_environments.py
+  s_d199771aa41449::t_218f325954dc5a 1-84
+tests/service/test_worker_environment.py
+  s_d199771aa41449::t_743cbd55243f0c 394-420
+tests/cli/test_client_commands.py
+  s_d199771aa41449::t_242bc6d760b2db 327-336,338-359
+  s_d199771aa41449::t_8e15edafb170fb 337
+tests/configuration/test_validate_permissions.py
+  s_d199771aa41449::t_242bc6d760b2db 314-329
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bfed743fb3dbd8b28092ea44ee6e3d6aa5fb423f",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
