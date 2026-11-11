@@ -1,0 +1,20 @@
+dev/specs/019-plan-problem-reporting/tasks.md
+  s_d199771aa41449::t_2cbf968d064caf 97
+  s_d199771aa41449::t_46f658cee7e10f 194-195
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2c7caaee18fc1be72d83f0d3b9aaf9ef6acf9c8f",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
