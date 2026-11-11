@@ -376,8 +376,9 @@ Compared field by field with old `data-model.md` and `contracts/plan-artifact-fo
 - **`deletes_withheld_by_kind`: kept.** A left-out record whose identity cannot be computed (the
   load could not build it) cannot be matched to its Infrahub node. If the plan computed deletes
   for its kind, that node would look absent from the source and be planned as a delete, which
-  breaks FR-008. So the plan computes no delete for such a kind, nor for a
-  `destination_identity_ambiguous` identity, and the summary counts these records per kind in
+  breaks FR-008. So the plan computes no delete for such a kind, nor for the kind of a
+  `destination_identity_ambiguous` identity (the whole kind, as data-model.md states, not only
+  that identity), and the summary counts these records per kind in
   `deletes_withheld_by_kind`. The CLI prints one line per kind ("deletes not computed for
   `<kind>`: N records without identity").
 - **Reserved `cleared_relationships` field: not carried over.** Old 009 reserved it on updates

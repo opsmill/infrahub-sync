@@ -40,4 +40,6 @@ The manifest also keeps every format 3 key, including `lineage` (spec 014) when 
   every format 4 plan has one shape.
 - `SUPPORTED_FORMAT_VERSIONS` becomes `{2, 3, 4}`. Formats 2 and 3 stay readable for review. Apply
   refuses them with `PlanFormatApplyUnsupportedError`.
-- A canonical plan fingerprint (ADR 0007) of a format 4 plan covers the report.
+- The canonical plan fingerprint of ADR 0007 does not cover the report: it hashes `plan.parquet`,
+  which is written from the comparison before the problem pass. The plan checksum is what binds
+  the report to the plan the team confirms (ADR 0022, decided while implementing T028).
