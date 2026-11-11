@@ -10,6 +10,7 @@ def _write_run(cache_root: Path, run_id: str, status: str) -> Path:
     run_dir = cache_root / run_id
     run_dir.mkdir(parents=True)
     (run_dir / "run.json").write_text(json.dumps({"status": status}))
+    (run_dir / "cursors.json").write_text("{}")
     return run_dir
 
 
@@ -191,3 +192,25 @@ def test_force_full_when_cadence_exceeded(tmp_path: Path) -> None:
         cadence=10,
     )
     assert decision is False
+
+
+def test_skips_newer_dry_run(tmp_path: Path) -> None:
+    baseline = _write_run(tmp_path, "2026-05-17T10-00-00Z", "applied")
+    _write_run(tmp_path, "2026-05-18T10-00-00Z", "dry-run")
+    _write_run(tmp_path, "2026-05-19T10-00-00Z", "failed")
+
+    assert previous_successful_run_dir(tmp_path) == baseline
+
+
+def test_selects_newest_applied_run_without_cursors(tmp_path: Path) -> None:
+    _write_run(tmp_path, "2026-05-17T10-00-00Z", "applied")
+    latest = _write_run(tmp_path, "2026-05-18T10-00-00Z", "applied")
+    (latest / "cursors.json").unlink()
+
+    assert previous_successful_run_dir(tmp_path) == latest
+
+
+def test_returns_none_when_only_dry_run_exists(tmp_path: Path) -> None:
+    _write_run(tmp_path, "2026-05-18T10-00-00Z", "dry-run")
+
+    assert previous_successful_run_dir(tmp_path) is None

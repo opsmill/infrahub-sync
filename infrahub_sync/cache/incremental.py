@@ -21,12 +21,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-_SUCCESS_STATUSES = frozenset({"applied", "dry-run"})
+_SUCCESS_STATUSES = frozenset({"applied"})
 
 
 def previous_successful_run_dir(cache_root: Path) -> Path | None:
-    """Return the most recent `<run_id>/` whose run.json status is
-    'applied' or 'dry-run'. Returns None when no such run exists.
+    """Return the most recent `<run_id>/` whose run.json status is 'applied'.
+
+    Returns None when no such run exists.
     """
     if not cache_root.exists():
         return None
