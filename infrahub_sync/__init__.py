@@ -103,6 +103,30 @@ def new_transform_environment() -> SandboxedNativeEnvironment:
     )
 
 
+class TransformError(ValueError):
+    """A configured transform failed for one record (spec 019 research R7).
+
+    `field` is the field the transform writes and `position` the transform's position in the
+    mapping entry's `transforms` list, or `None` when the transform was applied on its own.
+    Neither holds the record's value nor the error text. The message is kept for the worker
+    log only; a failure record reads the named attributes. A subclass of `ValueError`, so every
+    handler that matches `ValueError` still matches it.
+    """
+
+    def __init__(self, message: str, *, field: str, position: int | None = None) -> None:
+        super().__init__(message)
+        self.field = field
+        self.position = position
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Keep the named attributes when the error is pickled, as it is across a process boundary.
+        return (_rebuild_transform_error, (str(self), self.field, self.position))
+
+
+def _rebuild_transform_error(message: str, field: str, position: int | None) -> TransformError:
+    return TransformError(message, field=field, position=position)
+
+
 class SchemaMappingFilter(pydantic.BaseModel):
     field: str
     operation: str
@@ -437,18 +461,25 @@ class DiffSyncModelMixin:
 
         except SecurityError as exc:
             msg = f"Failed to transform '{field}' with '{transform_expr}': not allowed in the transform sandbox: {exc}"
-            raise ValueError(msg) from exc
+            raise TransformError(msg, field=field) from exc
         except Exception as exc:
             msg = f"Failed to transform '{field}' with '{transform_expr}': {exc}"
-            raise ValueError(msg) from exc
+            raise TransformError(msg, field=field) from exc
 
     @classmethod
     def apply_transforms(cls, item: dict[str, Any], transforms: list[SchemaMappingTransform]) -> dict[str, Any]:
-        """Apply a list of structured transformations to an item."""
-        for transform_obj in transforms:
+        """Apply a list of structured transformations to an item.
+
+        A failed transform raises `TransformError` with its position in `transforms`.
+        """
+        for position, transform_obj in enumerate(transforms):
             field = transform_obj.field
             expr = transform_obj.expression
-            cls.apply_transform(item=item, transform_expr=expr, field=field)
+            try:
+                cls.apply_transform(item=item, transform_expr=expr, field=field)
+            except TransformError as exc:
+                exc.position = position
+                raise
         return item
 
     @classmethod

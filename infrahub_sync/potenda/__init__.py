@@ -72,6 +72,39 @@ OPERATIONAL_APPLY_FAILURES: tuple[type[Exception], ...] = (
     InfrahubSDKError,
 )
 
+
+class SideLoadError(ValueError):
+    """Reading one side of the sync failed (spec 019 research R12).
+
+    `role` is `source` or `destination`, and `adapter` the adapter name the sync configuration
+    declares, else the adapter's type. The error that stopped the read is kept as `__cause__`.
+    A subclass of `ValueError`, so every handler that matches `ValueError` still matches it.
+    """
+
+    def __init__(self, message: str, *, role: Side, adapter: str) -> None:
+        super().__init__(message)
+        self.role: Side = role
+        self.adapter = adapter
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Keep the named attributes when the error is pickled, as it is across a process boundary.
+        return (_rebuild_side_load_error, (str(self), self.role, self.adapter))
+
+
+def _rebuild_side_load_error(message: str, role: Side, adapter: str) -> SideLoadError:
+    return SideLoadError(message, role=role, adapter=adapter)
+
+
+def _side_adapter_name(config: SyncInstance | None, role: Side, adapter: Adapter) -> str:
+    """The adapter name of one side: the configured name, else the adapter's type or class name."""
+    declared = getattr(config, role, None) if config is not None else None
+    name = getattr(declared, "name", None)
+    if isinstance(name, str) and name:
+        return name
+    adapter_type = getattr(type(adapter), "type", None)
+    return adapter_type if isinstance(adapter_type, str) and adapter_type else type(adapter).__name__
+
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
@@ -536,7 +569,9 @@ class Potenda:
             # The class name only: the message can hold an address or a secret (FR-013).
             self._end_read(side_name, SideReadReport(succeeded=False, error_class=type(exc).__name__))
             msg = f"An error occurred while loading {adapter}: {exc!s}"
-            raise ValueError(msg) from exc
+            raise SideLoadError(
+                msg, role=side_name, adapter=_side_adapter_name(self.config, side_name, adapter)
+            ) from exc
         finally:
             if not completed:
                 self._side_cursors.pop(side, None)

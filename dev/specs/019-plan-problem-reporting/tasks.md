@@ -28,11 +28,11 @@ named `+019-<topic>.<type>.md` under `changelog/` for each user-visible change.
 
 ## Phase 2: Foundational (blocks every user story)
 
-- [ ] T004 Add the source record reference, plan problem, left-out record and kept record models, with the nine stable problem type names, in `infrahub_sync/plan/models.py` (data-model.md)
-- [ ] T005 Add the load report entry model and per-adapter load report in new `infrahub_sync/load_report.py` (research R2; reference `load_report.py` on the old branch)
-- [ ] T006 Add `TransformError` (field and transform position, never the value or error text) in `infrahub_sync/__init__.py` and raise it from the transform step (research R7)
-- [ ] T007 Add `SideLoadError(role, adapter)` as a subclass of `ValueError` and use it where the plan wraps each side's read failure today, in `infrahub_sync/potenda/__init__.py` (research R12)
-- [ ] T008 Add the stage failure record fields and the failure type names to the client models (`failure_type`, `system`, `error_code`, `node_kind`, `attribute`, `infrahub_message`, `record`, `field`, `operations_total`, `failed_operation_detail`) in `infrahub_sync/client/models.py` (data-model.md)
+- [X] T004 Add the source record reference, plan problem, left-out record and kept record models, with the nine stable problem type names, in `infrahub_sync/plan/models.py` (data-model.md)
+- [X] T005 Add the load report entry model and per-adapter load report in new `infrahub_sync/load_report.py` (research R2; reference `load_report.py` on the old branch)
+- [X] T006 Add `TransformError` (field and transform position, never the value or error text) in `infrahub_sync/__init__.py` and raise it from the transform step (research R7)
+- [X] T007 Add `SideLoadError(role, adapter)` as a subclass of `ValueError` and use it where the plan wraps each side's read failure today, in `infrahub_sync/potenda/__init__.py` (research R12)
+- [X] T008 Add the stage failure record fields and the failure type names to the client models (`failure_type`, `system`, `error_code`, `node_kind`, `attribute`, `infrahub_message`, `record`, `field`, `operations_total`, `failed_operation_detail`) in `infrahub_sync/client/models.py` (data-model.md)
 
 **Checkpoint**: the models exist; no behavior has changed; T003 still passes.
 

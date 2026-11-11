@@ -7,13 +7,14 @@ the same `Adapter.count` the engine uses. The observer only records what it rece
 from __future__ import annotations
 
 import logging
+import pickle  # noqa: S403 - the tests pickle errors they built themselves
 import threading
 from typing import TYPE_CHECKING, ClassVar
 
 import pytest
 from diffsync import Adapter, DiffSyncModel
 
-from infrahub_sync.potenda import Potenda
+from infrahub_sync.potenda import Potenda, SideLoadError
 from infrahub_sync.potenda.read_progress import SideReadReport
 
 if TYPE_CHECKING:
@@ -300,3 +301,30 @@ def test_a_store_that_cannot_be_counted_does_not_fail_the_read(caplog: pytest.Lo
     assert warnings == ["Load: could not count the source side's nodes (AttributeError)"]
     assert "Load: source read succeeded (full): 0 nodes" in caplog.text
     assert _SECRET_DETAIL not in caplog.text
+
+
+@pytest.mark.parametrize("concurrent_load", [True, False])
+def test_a_failing_side_raises_a_side_load_error_naming_its_role_and_adapter(*, concurrent_load: bool) -> None:
+    """Spec 019 research R12: the read failure names the side; the error stays its cause."""
+    cause = ConnectionError(_SECRET_DETAIL)
+    ptd = _engine(
+        _FakeAdapter(devices=1),
+        _FakeAdapter(error=cause),
+        top_level=["DcimDevice"],
+        concurrent_load=concurrent_load,
+    )
+
+    with pytest.raises(SideLoadError) as excinfo:
+        ptd.load_both_sides()
+
+    assert isinstance(excinfo.value, ValueError)
+    assert (excinfo.value.role, excinfo.value.adapter) == ("destination", "_FakeAdapter")
+    assert excinfo.value.__cause__ is cause
+
+
+def test_a_side_load_error_keeps_its_fields_when_pickled() -> None:
+    error = SideLoadError("An error occurred while loading", role="source", adapter="netbox")
+
+    copy = pickle.loads(pickle.dumps(error))  # noqa: S301 - the bytes come from this test
+
+    assert (str(copy), copy.role, copy.adapter) == (str(error), "source", "netbox")

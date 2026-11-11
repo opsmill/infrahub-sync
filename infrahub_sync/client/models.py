@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 - Pydantic resolves resource annotations at runtime.
 from math import isfinite
-from typing import Annotated, Any, Literal, Protocol, TypeVar, cast
+from typing import Annotated, Any, Literal, Protocol, TypeVar, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
@@ -591,6 +591,87 @@ class PlanResource(_ResourceModel):
     # Who last changed each field each update proposes to change, from the plan's
     # `last_changes.jsonl`. `None` for a plan made without the file. Optional, like `lineage`.
     last_changes: tuple[PlanLastChangeResource, ...] | None = None
+
+
+FailureType = Literal[
+    "destination_rejected_write",
+    "system_unreachable",
+    "system_timeout",
+    "token_rejected",
+    "permission_missing",
+    "tls_certificate_rejected",
+    "record_load_failed",
+    "transform_failed",
+    "credential_missing",
+    "verification_failed",
+    "apply_refused",
+    "left_out_review_required",
+    "destination_peer_missing",
+    "destination_peer_ambiguous",
+    "lineage_refused",
+    "destination_schema_unavailable",
+    "internal_error",
+]
+"""The failure type names a stage failure record holds (spec 019 data-model.md, FR-014)."""
+
+FAILURE_TYPES: tuple[FailureType, ...] = get_args(FailureType)
+
+# The longest Infrahub error code, node kind and attribute name a stage failure record holds.
+MAX_FAILURE_NAME_TEXT = 128
+
+
+class FailureSystemResource(_ResourceModel):
+    """The system a stage failure came from: its role in the sync and its adapter name."""
+
+    role: Literal["source", "destination"]
+    adapter: str = Field(min_length=1)
+
+
+class FailureRecordReferenceResource(_ResourceModel):
+    """Name one source record by destination kind, source identity and source record ID."""
+
+    kind: str = Field(min_length=1)
+    identity: dict[str, Any] | None = None
+    source_id: str | None = None
+
+
+class FailedOperationDetailResource(_ResourceModel):
+    """The action, kind and identity of the plan operation a stopped apply was writing."""
+
+    action: str = Field(min_length=1)
+    kind: str = Field(min_length=1)
+    identity: dict[str, Any] | None = None
+
+
+class StageFailureResource(_ResourceModel):
+    """One `<stage>_failure` record of a run's results.
+
+    The keys a record held before spec 019 keep their meaning and stay optional, so a record
+    written by an older Sync API validates. The spec 019 fields are optional too, and
+    `failure_type` is a string rather than `FailureType`: a later server may add a name. No
+    field holds the text of an exception, apart from Infrahub's own message of a rejected write.
+    """
+
+    stage: str | None = None
+    outcome: str | None = None
+    error_type: str | None = None
+    cause_type: str | None = None
+    cause: str | None = None
+    next_action: str | None = None
+    infrahub_error: Any = None
+    recovery_action: str | None = None
+    reason: str | None = None
+    message: str | None = None
+    failure_type: str | None = None
+    system: FailureSystemResource | None = None
+    error_code: str | None = Field(default=None, max_length=MAX_FAILURE_NAME_TEXT)
+    node_kind: str | None = Field(default=None, max_length=MAX_FAILURE_NAME_TEXT)
+    attribute: str | None = Field(default=None, max_length=MAX_FAILURE_NAME_TEXT)
+    infrahub_message: str | None = Field(default=None, max_length=MAX_FAILURE_CAUSE_TEXT)
+    record: FailureRecordReferenceResource | None = None
+    field: str | None = None
+    operations_total: int | None = Field(default=None, ge=0)
+    failed_operation_detail: FailedOperationDetailResource | None = None
 
 
 class ResultsResource(_ResourceModel):

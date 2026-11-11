@@ -692,3 +692,141 @@ class VerificationFailure(BaseModel):
     expected: str | None = None
     found: str | None = None
     next_action: str = Field(min_length=1)
+
+
+# --- The plan report (spec 019 data-model.md) ----------------------------------------------
+#
+# The records the plan writes for source data it cannot plan. Nothing builds them yet: the
+# plan step that finds problems and the format 4 report file come with later tasks.
+
+ProblemType: TypeAlias = Literal[
+    "dropdown_value_not_in_choices",
+    "duplicate_source_identity",
+    "destination_identity_collision",
+    "wrong_value_type",
+    "required_peer_excluded_by_filter",
+    "identities_merge_in_destination",
+    "peer_not_found_in_source",
+    "destination_identity_ambiguous",
+    "transform_failed",
+]
+"""The stable problem type names (FR-002, FR-025). A later release may add a name; an
+existing name is never renamed or removed."""
+
+PROBLEM_TYPES: tuple[ProblemType, ...] = get_args(ProblemType)
+
+# The longest reason a problem holds, and the longest string the report keeps of a source value.
+REPORT_REASON_LIMIT = 512
+REPORT_VALUE_LIMIT = 256
+
+
+def limited_report_value(value: Any) -> Any:  # a source value can be any JSON value
+    """Return `value` with every string limited to `REPORT_VALUE_LIMIT` characters.
+
+    A value outside JSON's types is kept as its limited text, so the report stays encodable
+    whatever the source returned.
+    """
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:REPORT_VALUE_LIMIT]
+    if isinstance(value, Mapping):
+        return {str(key)[:REPORT_VALUE_LIMIT]: limited_report_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [limited_report_value(item) for item in value]
+    return str(value)[:REPORT_VALUE_LIMIT]
+
+
+class SourceRecordReference(BaseModel):
+    """Names a source record by destination kind, source identity and source record ID.
+
+    `identity` is the source identity as plan operations show it, or `None` when the record
+    could not be converted far enough to compute it. `source_id` is the adapter's record ID
+    (`local_id`).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: str = Field(min_length=1)
+    identity: dict[str, Any] | None = None
+    source_id: str | None = None
+
+
+class PlanProblem(BaseModel):
+    """One problem the plan found in one source record (FR-003).
+
+    A record with several problems has one entry per problem.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    problem_type: ProblemType
+    record: SourceRecordReference
+    # The attribute or relationship involved.
+    field: str | None = None
+    # The source value; `None` for `transform_failed`.
+    value: Any = None
+    # The Dropdown choices (`dropdown_value_not_in_choices`).
+    allowed: list[str] | None = None
+    # The excluded or missing peer.
+    peer: SourceRecordReference | None = None
+    # The other records of an identity problem.
+    other_records: list[SourceRecordReference] = Field(default_factory=list)
+    # The Infrahub node IDs that hold one identity (`destination_identity_ambiguous` only).
+    destination_ids: list[str] | None = None
+    # The position of the transform (`transforms[0]`) or filter (`filters[0]`), never its expression.
+    config_entry: str | None = None
+    reason: str = Field(min_length=1, max_length=REPORT_REASON_LIMIT)
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _limit_value(cls, value: Any) -> Any:
+        return limited_report_value(value)
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_optional_fields(self, handler: Any) -> Any:
+        # `destination_ids` and `config_entry` are absent, not null, when they do not apply.
+        data = handler(self)
+        if isinstance(data, dict):
+            for name in ("destination_ids", "config_entry"):
+                if data.get(name) is None:
+                    data.pop(name, None)
+        return data
+
+
+class LeftOutRecord(BaseModel):
+    """One source record the plan leaves out, counted once (FR-005, FR-006)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    record: SourceRecordReference
+    cause: Literal["has_problem", "depends_on_left_out"]
+    problem_types: list[ProblemType] = Field(default_factory=list)
+    depends_on: SourceRecordReference | None = None
+    # The required relationship the record depends through.
+    relationship: str | None = None
+    # False when the record could not be built.
+    loaded: bool
+
+    @model_validator(mode="after")
+    def _require_cause_fields(self) -> LeftOutRecord:
+        if self.cause == "has_problem" and not self.problem_types:
+            msg = "a record left out because of a problem names its problem types"
+            raise ValueError(msg)
+        if self.cause == "depends_on_left_out" and self.depends_on is None:
+            msg = "a record left out as a dependent names the record it depends on"
+            raise ValueError(msg)
+        return self
+
+
+class KeptRecord(BaseModel):
+    """A source record the plan keeps without one optional relationship (FR-005, FR-024)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    record: SourceRecordReference
+    cause: Literal["peer_left_out", "peer_not_found_in_source"]
+    # The optional relationship written without the peer.
+    relationship: str = Field(min_length=1)
+    # The left-out record, or the missing peer with `identity` null.
+    left_out_peer: SourceRecordReference
