@@ -95,6 +95,11 @@ The command validates and applies `infrahub-sync-service/run` through OpsMill Pr
 Extras, then drives the deployment's pull steps to empty. It does not create a work pool
 or start a worker.
 
+Apply the deployment again each time you install a new release, before you start that
+release's Sync API. The deployment records the parameters the service flow accepts, and a
+newer Sync API can send a parameter that an older deployment does not know, such as
+`confirm_left_out`.
+
 The deployment's entrypoint is the installed module path
 `infrahub_sync.service.flow.service_sync_run`. A worker resolves it by importing the
 installed `infrahub-sync` distribution, so it needs no repository checkout, no declared
@@ -392,6 +397,9 @@ an absent reason and a `null` reason are the same value, and both differ from an
 | `POST /runs` | Create one Sync run and accept `plan` or confirmed composed `sync`. |
 | `GET /runs/{run_id}` | Return the durable product record, with current linked Prefect detail for non-terminal executions. |
 | `GET /runs/{run_id}/plan` | Return retained saved-plan review data. |
+| `GET /runs/{run_id}/plan/problems` | List the problems the plan found, one page at a time. Filter by `problem_type` and `kind`. |
+| `GET /runs/{run_id}/plan/left-out` | List the records the plan leaves out, one page at a time. Filter by `kind`. |
+| `GET /runs/{run_id}/plan/kept` | List the records the plan writes without one optional relationship, one page at a time. Filter by `kind`. |
 | `GET /runs/{run_id}/results` | Return retained results independently of Prefect result retention. |
 | `GET /runs/{run_id}/artifacts` | List immutable run-owned artifact references. |
 | `GET /runs/{run_id}/artifacts/{artifact_id}` | Return verified artifact bytes with their media type and `Digest` header. |
@@ -425,6 +433,9 @@ lists their identifiers.
 | `infrahub-sync runs list` | `GET /runs` |
 | `infrahub-sync runs show RUN_ID` | `GET /runs/{run_id}` |
 | `infrahub-sync runs plan RUN_ID` | `GET /runs/{run_id}/plan` |
+| `infrahub-sync runs plan RUN_ID --problems` | `GET /runs/{run_id}/plan/problems`, every page |
+| `infrahub-sync runs plan RUN_ID --left-out` | `GET /runs/{run_id}/plan/left-out`, every page |
+| `infrahub-sync runs plan RUN_ID --kept` | `GET /runs/{run_id}/plan/kept`, every page |
 | `infrahub-sync runs results RUN_ID` | `GET /runs/{run_id}/results` |
 | `infrahub-sync runs artifacts RUN_ID` | `GET /runs/{run_id}/artifacts` |
 | `infrahub-sync runs logs RUN_ID` | `GET /runs/{run_id}/logs` |
@@ -657,6 +668,31 @@ A failure to read the destination schema also records a cause and a next action,
 refused token or a missing permission. An error that Sync does not know records its class name
 only.
 
+A failure record written by this release also holds these fields. A field that does not apply
+is `null` or absent:
+
+- `failure_type`: one of `destination_rejected_write`, `system_unreachable`, `system_timeout`,
+  `token_rejected`, `permission_missing`, `tls_certificate_rejected`, `record_load_failed`,
+  `transform_failed`, `credential_missing`, `verification_failed`, `apply_refused`,
+  `destination_peer_missing`, `destination_peer_ambiguous`, `lineage_refused`,
+  `destination_schema_unavailable` or `internal_error`.
+- `system`: `{"role": "source" or "destination", "adapter": <name>}`.
+- `error_code`, `node_kind`, `attribute` and `infrahub_message`: Infrahub's error code, node
+  kind, field name and message of a rejected write. `infrahub_message` is set only for
+  `destination_rejected_write`.
+- `record` and `field`: the source record (`kind`, `identity`, `source_id`) and the field that a
+  load or transform failure names.
+- `operations_total` and `failed_operation_detail`: for a stopped apply, the number of
+  operations in the plan, and the `action`, `kind` and `identity` of the failed operation.
+
+The record never holds the text of another error, so no credential reaches it. A record
+written by an earlier release has none of these fields.
+
+A `sync` that stops after its plan because the plan leaves out records records no stage
+failure. Its stage result in `GET /runs/{run_id}/results` holds a `failure` object instead,
+with `failure_type: left_out_review_required`, `stage: sync`, the `left_out` count and the
+`next_action`. The run ends with phase `planned` and outcome `left-out-review-required`.
+
 ### Create a plan
 
 Address the exact registered configuration revision by its `config_id` and
@@ -698,6 +734,34 @@ notes, per-object operations, and `schema_fingerprint`. For a registered plan,
 semantics consumed by that configuration. It is `null` only for a legacy unregistered
 plan.
 
+### Review the problems of a plan
+
+The plan `summary` also holds the counts of the plan's problem check:
+
+- `left_out`, `left_out_with_problem`, `left_out_dependent` and `left_out_by_kind`: the records
+  the plan does not write, because they have a problem or depend on a left-out record through a
+  required relationship.
+- `problems` and `problems_by_type`: the problems found.
+- `kept`: the records written without one optional relationship.
+- `deletes_withheld_by_kind`: the kinds for which the plan computes no delete.
+- `dropdown_values_checked`: `false` when the run had no destination schema snapshot.
+
+Three routes list the entries, in the order of the saved plan:
+
+```bash
+curl --header "Authorization: Bearer $SYNC_API_TOKEN" \
+  "http://127.0.0.1:8000/runs/20260810T1500-0123abcd/plan/problems?offset=0&limit=500&problem_type=dropdown_value_not_in_choices"
+```
+
+`GET /runs/{run_id}/plan/problems`, `/plan/left-out` and `/plan/kept` take `offset` and `limit`
+(1 to 500) and the filter `kind`; `/plan/problems` also takes `problem_type`. Each returns the
+`run_id`, the `plan_checksum`, the `entries`, `offset`, `limit`, `total` and `next_offset`,
+which is `null` on the last page. A problem entry holds the `problem_type`, the source `record`
+(`kind`, `identity`, `source_id`), the `field`, the source `value`, the Dropdown choices in
+`allowed`, the `peer`, the `other_records` and a `reason`. It never holds the expression of a
+transform or a filter. A plan saved in format 2 or 3 returns empty lists. An unknown
+`problem_type` is `422`.
+
 ### Verify and apply the reviewed plan
 
 Verification is read-only and retains verification evidence without finishing or otherwise
@@ -730,6 +794,20 @@ curl --request POST \
 The worker verifies the saved plan again before its first destination write. Destination
 deletes remain disabled.
 
+When the plan leaves out records (`summary.left_out` greater than 0), the request must also
+hold `"confirm_left_out": true`, the confirmation that the person reviewed the left-out
+records. Without it, the service answers `409 left-out-confirmation-required` before any
+write, with the count in the error's `left_out` field and the message `this plan leaves out
+6 records; confirm with confirm_left_out=true`. The worker checks the confirmation again.
+`confirm_left_out` must be a JSON boolean; any other value is `422`. On a plan that leaves out
+nothing, it has no effect.
+
+A `sync` run that stopped after its plan because the plan leaves out records is applied the
+same way, once, with its plan checksum and `confirm_left_out: true`.
+
+A plan saved in format 2 or 3 by an earlier release is refused before any write with
+`PlanFormatApplyUnsupportedError`: create a new plan and apply that one.
+
 `PlanSchemaChangedError` means the live destination-schema semantics no longer match the
 reviewed plan's `schema_fingerprint`. The worker refuses the retained plan before any
 destination write. Create a new plan against the current schema, review its
@@ -755,7 +833,11 @@ for a new intent.
 The first confirmed composed `sync` or reviewed `apply` permanently consumes that run's
 single write admission, including when the execution later fails, crashes, or is cancelled.
 Retry an uncertain request with its original idempotency key. To make another write attempt
-after a terminal failure or cancellation, create and review a new plan run.
+after a terminal failure or cancellation, create and review a new plan run. One case releases
+the admission: a `sync` that stops after its plan because the plan leaves out records
+dispatched no operation, so the service releases its write admission when the stop is
+recorded. That run then admits one confirmed apply, and every later submission is refused as
+below.
 
 A run admits its one write only while nothing else is in flight on it: no other write
 admission, no other unresolved plan, verify, apply, or sync submission, and no unfinished
@@ -827,7 +909,7 @@ Every error uses the same envelope:
 | `401` | Missing or invalid authentication. |
 | `403` | The actor does not own the mutation and is not an administrator. |
 | `404` | The Sync run or run-owned artifact does not exist, or a list filter names an unknown configuration (`configuration-not-found`) or configuration version (`configuration-version-not-found`). |
-| `409` | Idempotency conflict, missing confirmation, stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). |
+| `409` | Idempotency conflict, missing confirmation, an apply of a plan that leaves out records without `confirm_left_out` (`left-out-confirmation-required`), stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). |
 | `410` | The retained plan or artifact has expired, or the orchestrator no longer holds a flow run whose log `GET /runs/{run_id}/logs` reads (`log-expired`). |
 | `422` | Invalid request schema or query parameter (`request-invalid`), a list cursor that does not decode or was issued for another list or other filters (`invalid-cursor`), missing idempotency key, or a secret-bearing flow parameter. |
 | `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved, or the orchestrator cannot be reached to read a run's log (`log-unavailable`). |

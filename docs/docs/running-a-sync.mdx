@@ -79,6 +79,23 @@ infrahub-sync configs show CONFIG_ID --version 1
 `configs validate` reports findings in the declared content. It does not connect to the
 source or the destination.
 
+To check the version against the Infrahub branch that the run will write to, add `--branch`:
+
+```bash
+infrahub-sync configs validate CONFIG_ID 1 --branch BRANCH
+```
+
+With `--branch`, validation also reads that branch and reports:
+
+- each mapped kind, attribute or relationship that the branch schema does not hold;
+- each literal Dropdown value in the mapping that is not one of the attribute's choices;
+- each permission that the import account lacks to view, create or update a mapped kind;
+- a `source` or `owner` setting that names no node, or more than one node;
+- each `$credential` variable that no running worker holds.
+
+The command exits with code 1 when one of these findings is an error. The finding codes are
+listed in [Durable product records](./reference/durable-product-records.mdx).
+
 `configs show --version` prints the registered content. Check
 `configuration.destination.settings.branch`:
 
@@ -103,6 +120,22 @@ infrahub-sync plan --config-id CONFIG_ID --version 1 \
 and saves the plan. It writes nothing to the destination. By default, `plan` waits for the
 plan, then prints the `run_id`, the `plan_checksum`, and the operation counts by action and
 by kind.
+
+The plan checks every source record before it saves anything. A record that cannot be written
+as it is, such as a Dropdown value that is not one of the attribute's choices, is a problem.
+The plan leaves that record out, and every record that depends on it, and plans the rest.
+After the counts, `plan` prints how many records it left out, the number of problems, and the
+first 20 problems:
+
+```text
+left_out: 6 (with a problem: 1, depending on one: 5)
+problems: 1
+kept_without_relationship: 0
+dropdown_value_not_in_choices  DcimDevice  location=r1 name=rtr1  DcimDevice record source ID 42: the value "planned" of status is not one of the choices of the Dropdown attribute: ["active","maintenance","provisioning"].
+```
+
+[Review the problems and the left-out records](#review-the-problems-and-the-left-out-records)
+explains each line and how to list every entry.
 
 ### Follow the read of each side
 
@@ -173,6 +206,64 @@ contain. Apply never executes a delete. The detailed output marks each delete as
 destination side was not read in full, the plan contains no deletes and the review says so.
 See [Deletes in a plan](./reference/cache-layout#deletes-in-a-plan).
 
+### Review the problems and the left-out records
+
+`runs plan` prints the same counts as `plan`:
+
+- `left_out`: the records the plan does not write. Each record counts once, either because it
+  has a problem or because it depends on a left-out record through a required relationship.
+- `problems`: the number of problems. One problem can name several records, for example two
+  source records with the same identity.
+- `kept_without_relationship`: the records the plan writes without one optional relationship,
+  because that relationship refers to a left-out record or to a record the source does not
+  return.
+
+Two more lines appear only when they apply. `deletes not computed for <kind>` names a kind for
+which the plan computes no delete, because a left-out record of that kind has no known
+identity, or because Infrahub holds several nodes with the same identity. `Dropdown values were
+not checked` means the run had no destination schema snapshot, so the plan did not compare
+Dropdown values with their choices.
+
+To list every entry, use one of these options of `runs plan`:
+
+```bash
+infrahub-sync runs plan RUN_ID --problems
+infrahub-sync runs plan RUN_ID --problems --type dropdown_value_not_in_choices
+infrahub-sync runs plan RUN_ID --left-out --kind DcimDevice
+infrahub-sync runs plan RUN_ID --kept
+```
+
+Each option reads every page and prints one line per entry: the problem type or the cause, the
+kind, the record's identity (or its source ID when the identity is not known), and the reason.
+`--kind` limits a list to one kind, and `--type` limits `--problems` to one problem type.
+`--problems`, `--left-out`, `--kept` and `--detail` cannot be combined.
+
+The problem types are:
+
+- `dropdown_value_not_in_choices`: a mapped value of a Dropdown attribute is not one of its
+  choices in the destination schema.
+- `duplicate_source_identity`: two or more source records of one kind have the same identity.
+- `destination_identity_collision`: two or more creates would form the same Infrahub
+  human-friendly ID.
+- `wrong_value_type`: a value does not have the type the attribute needs.
+- `required_peer_excluded_by_filter`: a configured filter removed the peer of a required
+  relationship.
+- `identities_merge_in_destination`: two or more source records with different identities
+  would be stored as one Infrahub node.
+- `peer_not_found_in_source`: a record refers to a peer that the source does not return.
+- `destination_identity_ambiguous`: Infrahub holds two or more nodes of one kind with the same
+  identity.
+- `transform_failed`: a configured transform failed for one record.
+
+Fix each problem in the source data or in the package, then create a new plan. When the plan
+leaves out records that you accept to leave out for now, apply it with the confirmation that
+[Apply the reviewed plan](#apply-the-reviewed-plan) describes.
+
+The Sync API serves the same lists at `GET /runs/{run_id}/plan/problems`, `/plan/left-out` and
+`/plan/kept`; see the [Sync HTTP API reference](./reference/sync-http-api.mdx#review-the-problems-of-a-plan).
+
+### Check the saved plan against the destination
+
 To check the saved plan against the current destination without writing, run:
 
 ```bash
@@ -196,17 +287,43 @@ The service compares the checksum with the saved plan and refuses a mismatch bef
 writes. The CLI never reads or builds a local plan. When `runs show` reports
 `phase: applied` and `execution_state: completed`, the apply is finished.
 
+When the plan leaves out records, the apply needs your confirmation that you reviewed them.
+Add `--confirm-left-out`:
+
+```bash
+infrahub-sync apply RUN_ID --expected-checksum CHECKSUM --confirm-left-out \
+  --branch BRANCH --reason "apply reviewed inventory import, left-out records reviewed"
+```
+
+Without it, the command stops before any write and prints the number of left-out records:
+
+```text
+apply refused: this plan leaves out 6 records; confirm with --confirm-left-out
+```
+
+The left-out count is part of the plan that the checksum identifies, so the confirmation always
+refers to the plan you reviewed. On a plan that leaves out nothing, `--confirm-left-out` has no
+effect.
+
+A plan saved in format 2 or 3, by a release earlier than the one that added problem reporting,
+can still be reviewed, but it cannot be applied, because it was never checked for problems. The
+apply stops before any write with `PlanFormatApplyUnsupportedError`. Create a new plan and
+apply that one.
+
 Before the first write, apply checks every planned field against the current destination
 schema. It repeats the check for each operation before that operation's write. If a field is
 no longer writable, or a planned value would be dropped, apply refuses the write and names
 the kind and the field. Create and review a new plan in that case. Operations applied before
 a refusal stay applied.
 
-The check does not compare a value with the choices of a Dropdown attribute. A plan can
-therefore hold a value the destination schema does not offer, such as a NetBox device status
-`planned` for a `status` attribute whose choices are `active`, `provisioning`, `maintenance`,
-`deprecated`, and `reserved`. Infrahub rejects that write during the apply, and the apply stops
-there. Translate such values with a transform in the package; see the
+The check before each write does not compare a value with the choices of a Dropdown attribute.
+The plan does that instead, when the run has a destination schema snapshot: a value that is not
+one of the choices, such as a NetBox device status `planned` for a `status` attribute whose
+choices are `active`, `provisioning`, `maintenance`, `deprecated`, and `reserved`, is a
+`dropdown_value_not_in_choices` problem, and the plan leaves that record out. When the plan
+prints `Dropdown values were not checked`, the run had no snapshot, so the plan can hold such a
+value. Infrahub then rejects that write during the apply, and the apply stops there. In both
+cases, translate such values with a transform in the package; see the
 [Schema mapping reference](./reference/schema-mapping.mdx).
 
 ## Find runs
@@ -297,6 +414,37 @@ releases did. `runs results RUN_ID`
 prints the same fields, as `cause`, `next_action` and `infrahub_error`, under `plan_failure`,
 `sync_failure` or `apply_failure`.
 
+### Read the failure type and the record that failed
+
+A run recorded by this release also holds a failure type, and the command prints it after
+`<stage> failed:`, with the system involved. The lines after `cause:` name what failed: Infrahub's
+own message for a rejected write, the source record and field for a record that could not be
+loaded or transformed, and, for a stopped apply, how many operations were written and which
+operation failed. An apply that Infrahub stopped prints, for example:
+
+```text
+apply failed: OperationApplyFailedError
+failure type: destination_rejected_write (destination infrahub)
+cause: Infrahub rejected a write to DcimDevice attribute status (ATTRIBUTE_CONSTRAINT_VIOLATION)
+Infrahub message: planned is not a valid value for status
+written: 692 of 2291 operations
+failed operation: op_518aada155d790ad update DcimDevice location=r1 name=rtr1 (may have written part of its change)
+hint: Nothing was rolled back: the operations applied before this one stay written, ...
+```
+
+The `hint:` line is shortened here. The error code and message come from Infrahub and vary.
+
+The failure types are `destination_rejected_write`, `system_unreachable`, `system_timeout`,
+`token_rejected`, `permission_missing`, `tls_certificate_rejected`, `record_load_failed`,
+`transform_failed`, `credential_missing`, `verification_failed`, `apply_refused`,
+`destination_peer_missing`, `destination_peer_ambiguous`, `lineage_refused`,
+`destination_schema_unavailable` and `internal_error`. The record holds only these fields and
+fixed text: it never holds the text of another error, so it holds no credential. `runs results
+RUN_ID` prints the same fields as `failure_type`, `system`, `error_code`, `node_kind`,
+`attribute`, `infrahub_message`, `record`, `field`, `operations_total` and
+`failed_operation_detail`. A run recorded by an earlier release has none of them and prints as
+before.
+
 When the destination branch does not exist, the `cause:` line names the branch, and the
 `hint:` line says to create it or to start the run with `--branch <existing branch>`. A
 failure to read the destination schema also prints a `cause:` and a `hint:` line.
@@ -363,6 +511,22 @@ infrahub-sync sync --config-id CONFIG_ID --version 1 --branch BRANCH \
 The worker saves the plan before the first write, so you can read it afterwards with
 `runs plan`. `sync` does not apply a plan that you reviewed earlier; it creates a new one. To
 approve the exact operations before they are written, use `plan`, `runs plan`, and `apply`.
+
+### When the sync stops after its plan
+
+When the plan of a `sync` leaves out records, the run stops after the plan, before any write.
+It ends with phase `planned` and outcome `left-out-review-required`, and the command prints:
+
+```text
+sync stopped: left_out_review_required (6 records left out)
+hint: Review the plan with `infrahub-sync runs plan <run_id> --problems` and `--left-out`, then apply it with `infrahub-sync apply <run_id> --expected-checksum <checksum> --confirm-left-out`.
+```
+
+`runs show RUN_ID` prints the same lines, and the run's last log line and its Prefect artifact
+name the same next step. No option of `sync` skips the stop. Review the plan, then apply the
+run with `--confirm-left-out` as [Apply the reviewed plan](#apply-the-reviewed-plan)
+describes. The stopped run can be applied once. To write the left-out records instead, fix
+their problems and start a new `sync`.
 
 ## Reference
 

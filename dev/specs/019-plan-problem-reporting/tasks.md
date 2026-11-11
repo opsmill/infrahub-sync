@@ -191,10 +191,10 @@ the register response holds no redacted content (FR-034 to FR-038).
 
 ## Phase 9: Polish and cross-cutting
 
-- [ ] T074 [P] Update the user guide for reviewing problems, confirming left-out records, the stopped `sync`, and reading a failure, in `docs/docs/` (the plan-and-apply guide), and regenerate the CLI and HTTP API references with `uv run invoke docs.generate`
-- [ ] T075 [P] Add to the upgrade documentation and a changelog fragment that plans saved in format 3 before the upgrade must be planned again before apply, and that the new `worker_environments` table stays unused after a rollback (critique P3, E6)
-- [ ] T076 [P] Update `docs/docs/development/knowledge/orchestration-prefect.md` and `docs/docs/development/knowledge/repository-tour.md` for the new modules, the stopped `sync` and the artifact lines
-- [ ] T079 [P] Find the tests on `feature/v3-develop` that prove old FR-004 (a plan writes nothing to the destination) and old FR-013 (a rejected write stops the apply); if a case has no test, add one
+- [X] T074 [P] Update the user guide for reviewing problems, confirming left-out records, the stopped `sync`, and reading a failure, in `docs/docs/` (the plan-and-apply guide), and regenerate the CLI and HTTP API references with `uv run invoke docs.generate`
+- [X] T075 [P] Add to the upgrade documentation and a changelog fragment that plans saved in format 3 before the upgrade must be planned again before apply, and that the new `worker_environments` table stays unused after a rollback (critique P3, E6)
+- [X] T076 [P] Update `docs/docs/development/knowledge/orchestration-prefect.md` and `docs/docs/development/knowledge/repository-tour.md` for the new modules, the stopped `sync` and the artifact lines
+- [X] T079 [P] Find the tests on `feature/v3-develop` that prove old FR-004 (a plan writes nothing to the destination) and old FR-013 (a rejected write stops the apply); if a case has no test, add one
 - [ ] T080 SIGN-OFF gate (merge blocker, not implementation work): the product owner accepts ADR 0020, ADR 0021 and ADR 0022, written with the status Proposed (decision 3 of 2026-11-11). Leave unticked until that sign-off is recorded
 - [ ] T077 Run the full quickstart (offline and live), the required workflow of AGENTS.md, and the CLI sanity commands; record results in `dev/specs/019-plan-problem-reporting/opsmill-implement-report.md`
 

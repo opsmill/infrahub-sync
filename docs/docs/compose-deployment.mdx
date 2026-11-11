@@ -755,6 +755,9 @@ Review the saved plan before every apply:
 - the run, the configuration identifier and registry version, the branch, and
   the exact checksum;
 - the creates, the updates, and the recorded deletes;
+- the problems, the records the plan leaves out, and the records it writes without a
+  relationship (`runs plan RUN_ID --problems`, `--left-out` and `--kept`); an apply of a plan
+  that leaves out records needs `--confirm-left-out`;
 - relationships that could point at the wrong object;
 - validation findings;
 - any evidence of a partial write from an earlier run.

@@ -63,6 +63,37 @@ See [Choose an image](../compose-deployment#choose-an-image). This release has n
 in-place state migration, so a release that needs a new state requires a fresh
 deployment.
 
+### Changes when you move to the release that reports plan problems
+
+The release that checks each plan for problems and leaves out the records that have one
+changes these steps of an image change:
+
+- Saved plans: a plan saved in format 2 or 3 by an earlier release can still be reviewed,
+  but its apply is refused with `PlanFormatApplyUnsupportedError` before any write, because it
+  was never checked for problems. Create a new plan for each reviewed plan that you have not
+  applied yet, review it, and apply that one.
+- The worker's Prefect deployment: an apply of a plan that leaves out records sends the
+  parameter `confirm_left_out` to the worker. The Prefect deployment must be applied again with
+  the new release before the Sync API of the new release accepts requests, so that the
+  deployment accepts that parameter. In this Compose deployment, `docker compose up -d --wait`
+  runs the `sync-bootstrap` job again when its image changes, and that job applies the
+  deployment before `sync-api` starts. A deployment that is not run through this Compose file
+  applies it with `python -m infrahub_sync.service.deploy`; see
+  [Deploy the service flow](../reference/sync-http-api.mdx#deploy-the-service-flow).
+- The CLI: upgrade the CLI together with the Sync API. An earlier CLI cannot read the new
+  response of `configs register` and `configs version`: the command stores the version and then
+  fails. The registration is kept; read it with `configs show CONFIG_ID --version VERSION`.
+- The `worker_environments` table: each worker writes the names of its credential variables
+  to this new table, never their values. Each worker restart adds a row under a new worker name,
+  and the rows of earlier worker processes stay in the table. If you return to an earlier
+  image, the table stays in the database and the earlier release does not read it.
+- Warm incremental reads: a source adapter that reads only the records changed since the
+  last run does not check those records for problems. No adapter bundled with Sync reads this
+  way; a custom adapter that defines `safe_cursor_before_load` does.
+
+No in-place upgrade or return to an earlier release is verified; see
+[Supported platforms and limits](./supported-platforms-and-limits.mdx).
+
 ## Replace a deployment with a fresh one
 
 Delete the volumes only when you intend to delete the deployment's data. V3 releases
