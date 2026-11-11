@@ -1,0 +1,31 @@
+tests/integration/test_destination_schema_live_read.py
+  s_d199771aa41449::t_6e54261a23d77e 82,84
+infrahub_sync/configuration/capabilities.py
+  s_d199771aa41449::t_d8615b03f44a76 373-374,377-379,386
+tests/plan/test_problem_pass.py
+  s_d199771aa41449::t_5522c794e7b51e 43-45,409-424
+  s_d199771aa41449::t_b6ffd0e89d281b 362-408
+tests/runtime_schema/test_dropdown_choices.py
+  s_d199771aa41449::t_b6ffd0e89d281b 14
+  s_d199771aa41449::t_6e54261a23d77e 17,130-151
+infrahub_sync/plan/models.py
+  s_d199771aa41449::t_d8615b03f44a76 896-899
+infrahub_sync/plan/problems.py
+  s_d199771aa41449::t_d8615b03f44a76 24-25,663-700,746-747,773-774
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "babe8b0dd14ef4d809649b9f8d99da8271948a9e",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
