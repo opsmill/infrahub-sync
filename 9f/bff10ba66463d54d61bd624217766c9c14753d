@@ -1,0 +1,43 @@
+tests/plan/test_report_credentials_absent.py
+  s_d199771aa41449::t_26e94f07ef0193 88,128
+  s_d199771aa41449::t_d1bdc25d2706df 25,98,107
+  s_d199771aa41449::t_a4e526e7343428 1-24,26-87,89-97,99-106,108-127,129-132,134-140
+  s_d199771aa41449::t_7998c2ead4bb09 133
+tests/cli/test_failure_output.py
+  s_d199771aa41449::t_80402765720dc4 1-34,37-61,63-90,93-99,102-168
+  s_d199771aa41449::t_26e94f07ef0193 35-36,91-92,100-101
+  s_d199771aa41449::t_2d6771ec12038c 62
+tests/service/test_failure_record_compat.py
+  s_d199771aa41449::t_28cf5ca19e27dd 1-105,107,109-222
+  s_d199771aa41449::t_8a2fab14a02db5 106,108
+tests/service/test_failure_cause_credentials.py
+  s_d199771aa41449::t_0c000e044878b5 1-183
+tests/service/failure_cases.py
+  s_d199771aa41449::t_e5e14ee8ffc777 349
+  s_d199771aa41449::t_2adcf21be631d4 1-166,168-178,180-301,303-348,350-375
+  s_d199771aa41449::t_4855d6092f91f4 167
+  s_d199771aa41449::t_c9bb1428c5359e 179
+  s_d199771aa41449::t_595fe719a75d5e 302
+tests/service/test_failure_cause.py
+  s_d199771aa41449::t_d86287f0002dac 1-6,10-11,14,18-21
+  s_d199771aa41449::t_fc0c7d06333322 103-115,117,119-171
+  s_d199771aa41449::t_8a2fab14a02db5 116,118
+dev/specs/019-plan-problem-reporting/tasks.md
+  s_d199771aa41449::t_f3f34c2993c792 125-129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9fbff10ba66463d54d61bd624217766c9c14753d",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
