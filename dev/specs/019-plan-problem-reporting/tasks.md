@@ -147,9 +147,9 @@ the remaining operations (FR-021 to FR-023).
 
 **Independent test**: stop an apply at a known operation and plan again.
 
-- [ ] T058 [P] [US4] Test that planning again after an apply stopped at a known operation holds only the remaining operations, minus any the destination now matches (SC-004), in `tests/plan/test_replan_after_stopped_apply.py`
-- [ ] T059 [P] [US4] Test that `runs show` prints written of total and the failed operation's action, kind and identity, and that a second apply prints the `run-execution-conflict` refusal with "create and review a new plan", in `tests/cli/test_stopped_apply_output.py`
-- [ ] T060 [US4] Print the `run-execution-conflict` refusal with its next step when `apply` meets it, in `infrahub_sync/cli.py`
+- [X] T058 [P] [US4] Test that planning again after an apply stopped at a known operation holds only the remaining operations, minus any the destination now matches (SC-004), in `tests/plan/test_replan_after_stopped_apply.py`
+- [X] T059 [P] [US4] Test that `runs show` prints written of total and the failed operation's action, kind and identity, and that a second apply prints the `run-execution-conflict` refusal with "create and review a new plan", in `tests/cli/test_stopped_apply_output.py`
+- [X] T060 [US4] Print the `run-execution-conflict` refusal with its next step when `apply` meets it, in `infrahub_sync/cli.py`
 
 **Checkpoint**: T058 and T059 pass (the record fields come from T054).
 

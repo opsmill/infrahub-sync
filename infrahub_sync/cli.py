@@ -1018,6 +1018,13 @@ def _echo_failure_record(failure: Mapping[str, Any], *, stage: str, err: bool) -
 # The `failure_type` of a `sync` stage that stopped after a plan that leaves out records.
 _LEFT_OUT_STOP_FAILURE_TYPE = "left_out_review_required"
 _LEFT_OUT_CONFIRMATION_REQUIRED = "left-out-confirmation-required"
+# The refusal of a stage on a run that already admitted a write, or that has an unresolved
+# submission or a running execution (spec 019 FR-023 keeps the code, decision 4).
+_RUN_EXECUTION_CONFLICT = "run-execution-conflict"
+_RUN_EXECUTION_CONFLICT_NEXT_ACTION = (
+    "This run already admitted a write or is still running, so its plan is not applied again. "
+    "Review the run with `infrahub-sync runs show`, then create and review a new plan with `infrahub-sync plan`."
+)
 
 
 def _echo_left_out_stop(failure: Mapping[str, Any], *, stage: str, err: bool) -> bool:
@@ -1251,6 +1258,15 @@ def apply_cmd(
                 poll_interval=poll_interval,
             )
         except APIError as error:
+            if error.code == _RUN_EXECUTION_CONFLICT:
+                # The run already admitted a write or is still running: its plan is never
+                # applied again (spec 019 FR-023). Print the refusal as for any API refusal,
+                # then the next step.
+                label, fields = _error_fields(error)
+                typer.echo(f"error: {label}", err=True)
+                _echo_fields(fields, err=True)
+                typer.echo(f"hint: {_RUN_EXECUTION_CONFLICT_NEXT_ACTION}", err=True)
+                raise typer.Exit(1) from None
             if error.code != _LEFT_OUT_CONFIRMATION_REQUIRED:
                 raise
             # Refused before any write: the plan leaves out records (spec 019 FR-010).
