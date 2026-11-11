@@ -1,0 +1,80 @@
+infrahub_sync/service/flow.py
+  s_d199771aa41449::t_57c6c2d859a066 13
+  s_d199771aa41449::t_c407e417edb821 81,882-885,889-890,896-900,902-907,913,919,923-941
+  s_d199771aa41449::t_47083ca3771748 961-962,1090-1093
+  s_d199771aa41449::t_701f7119bb7f53 942-943
+docs/docs/development/guidelines/secret-redaction.md
+  s_d199771aa41449::t_c4a8edd15a96b6 38
+  s_d199771aa41449::t_5a57ece9838ee2 35-37,39-63
+dev/adr/0021-a-failure-record-holds-a-structured-cause.md
+  s_d199771aa41449::t_454446d45c0777 1-83
+tests/cache/test_apply_plan.py
+  s_d199771aa41449::t_f5711bc48b022f 490-510
+changelog/+019-failure-cause.added.md
+  s_d199771aa41449::t_90ce43ffa7b9ea 1
+infrahub_sync/service/failure_cause.py
+  s_d199771aa41449::t_18930261d4fba7 55,163,295-364,366-368,370
+  s_d199771aa41449::t_406914eb828cbb 291
+  s_d199771aa41449::t_dd574cbdd3bdb9 439-454,456-460,464-476
+  s_d199771aa41449::t_8511bd3e79e64d 3-15,20-21,24-30,32-51,56-74,82-90,94-96,145-162,164-198,202-290,292-294,365,369,371-438,455,461-463,477
+  s_d199771aa41449::t_0df1db99312490 199-201
+infrahub_sync/potenda/__init__.py
+  s_d199771aa41449::t_d74944427214d0 1054-1055,1070,1089-1094
+dev/adr/README.md
+  s_d199771aa41449::t_9ad6afae874645 59-61
+infrahub_sync/adapters/infrahub.py
+  s_d199771aa41449::t_3b21cb06011178 578,594,600
+infrahub_sync/plan/errors.py
+  s_d199771aa41449::t_3b21cb06011178 292-296,310-313
+  s_d199771aa41449::t_bc3c4caab0d545 314
+tests/service/test_failure_cause.py
+  s_d199771aa41449::t_63821dd94d7616 131,146,163
+  s_d199771aa41449::t_8be9ac69d8718c 15-17,20-21,24,177-226
+  s_d199771aa41449::t_34487a9cb97863 14
+  s_d199771aa41449::t_3b575c81890362 18-19
+tests/service/test_flow_and_prefect.py
+  s_d199771aa41449::t_53f54c45e6e96a 541-542,550-553,608-617
+  s_d199771aa41449::t_616beb8d2375d1 1233,1237,1239-1241,1245,1256-1261,1278-1281
+dev/specs/019-plan-problem-reporting/tasks.md
+  s_d199771aa41449::t_1e2cdf6e47224d 133-139
+infrahub_sync/plan/models.py
+  s_d199771aa41449::t_4e704b0bbfabf8 21,673-674
+  s_d199771aa41449::t_4d9eed5e0bba24 669-672
+infrahub_sync/infrahub_errors.py
+  s_d199771aa41449::t_a911a2ec8e74f5 248
+  s_d199771aa41449::t_e351fba86b0634 217-247,249-270
+infrahub_sync/client/models.py
+  s_d199771aa41449::t_decd48521f0fc1 709-714,745-757
+  s_d199771aa41449::t_5fe2c4fb6307f3 16
+  s_d199771aa41449::t_3aeda4dd3c0d3f 758
+tests/service/test_failure_record_compat.py
+  s_d199771aa41449::t_20b74ce46e560a 146-159
+tests/service/test_failure_cause_credentials.py
+  s_d199771aa41449::t_20b74ce46e560a 165-169
+  s_d199771aa41449::t_545fc37467413f 54,68
+tests/service/failure_cases.py
+  s_d199771aa41449::t_24411fcff30f5c 367-373
+infrahub_sync/cli.py
+  s_d199771aa41449::t_db8fb528780a79 937-939
+  s_d199771aa41449::t_02bd76953364f1 960,971
+  s_d199771aa41449::t_5fe2c4fb6307f3 56-57,952-959,961-970,972-975,977-983,992-995,999-1000
+  s_d199771aa41449::t_8c29ab419265bc 1283-1296
+tests/cli/test_failure_output.py
+  s_d199771aa41449::t_63821dd94d7616 131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fb292ac06839602216e01552f0d45e7e31a4888b",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
