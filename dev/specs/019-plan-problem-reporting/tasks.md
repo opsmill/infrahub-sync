@@ -163,11 +163,11 @@ the register response holds no redacted content (FR-034 to FR-038).
 
 ### Tests for User Story 5
 
-- [ ] T061 [P] [US5] Test `configs validate --branch` and the route's `branch` parameter: missing kind, attribute and relationship; Dropdown literal outside choices; unchanged result without a branch, in `tests/service/test_config_routes.py` and `tests/configuration/test_schema_validation.py`
-- [ ] T062 [P] [US5] Test the permission and lineage findings (`destination-permission-missing`, `destination-lineage-node-not-found`, `-ambiguous`) on the current lineage code, in `tests/configuration/test_validate_permissions.py` (reference commit `a154b907` on the old branch)
-- [ ] T063 [P] [US5] Test the worker environment: names published, never values; an empty value counts as unset; `credential-not-set-in-worker` per variable; `worker-environment-unknown` when no live worker published, in `tests/service/test_worker_environment.py`
-- [ ] T064 [P] [US5] Test that validation and the plan give the same answer for each kind without a writable human-friendly ID (SYNC-147), parametrized over the same kinds, in `tests/test_writable_convergence_identity.py`
-- [ ] T065 [P] [US5] Test that the register and new-version responses hold `package_checksum` and no `declared_content`, and that a replayed request returns the same body (SYNC-107), in `tests/service/test_config_routes.py`
+- [X] T061 [P] [US5] Test `configs validate --branch` and the route's `branch` parameter: missing kind, attribute and relationship; Dropdown literal outside choices; unchanged result without a branch, in `tests/service/test_config_routes.py` and `tests/configuration/test_schema_validation.py`
+- [X] T062 [P] [US5] Test the permission and lineage findings (`destination-permission-missing`, `destination-lineage-node-not-found`, `-ambiguous`) on the current lineage code, in `tests/configuration/test_validate_permissions.py` (reference commit `a154b907` on the old branch)
+- [X] T063 [P] [US5] Test the worker environment: names published, never values; an empty value counts as unset; `credential-not-set-in-worker` per variable; `worker-environment-unknown` when no live worker published, in `tests/service/test_worker_environment.py`
+- [X] T064 [P] [US5] Test that validation and the plan give the same answer for each kind without a writable human-friendly ID (SYNC-147), parametrized over the same kinds, in `tests/test_writable_convergence_identity.py`
+- [X] T065 [P] [US5] Test that the register and new-version responses hold `package_checksum` and no `declared_content`, and that a replayed request returns the same body (SYNC-107), in `tests/service/test_config_routes.py`
 
 ### Implementation for User Story 5
 

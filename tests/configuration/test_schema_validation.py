@@ -991,3 +991,47 @@ def test_a_snapshot_outside_the_closed_domain_reports_a_finding(monkeypatch: pyt
     assert result.schema_fingerprint is None
     assert "destination-schema-unsupported-semantics" in {finding.code for finding in result.findings}
     assert all(finding.severity == "error" for finding in result.findings)
+
+
+# --- Spec 019 FR-034 (T061): a literal Dropdown value outside the attribute's choices ----
+#
+# The new code `destination-dropdown-value-not-in-choices` is not in `FROZEN_SCHEMA_CODES` yet:
+# T067 adds it there, to the reachability test and to the operator documentation.
+
+
+def _dropdown_snapshot(choices: list[str] | None) -> dict[str, Any]:
+    snapshot = copy.deepcopy(_SNAPSHOT)
+    status = _attribute("Dropdown")
+    if choices is not None:
+        status["choices"] = choices
+    snapshot["InfraDevice"]["attributes"]["status"] = status
+    return snapshot
+
+
+def _dropdown_findings(monkeypatch: pytest.MonkeyPatch, *, choices: list[str] | None, value: str) -> list[Any]:
+    _inject(monkeypatch, _table_with_accessor(_SpiedAccessor(_dropdown_snapshot(choices))))
+    data = _mapping_package_data([{"name": "name", "mapping": "name"}, {"name": "status", "static": value}])
+    findings = collect_destination_schema_findings(package(data)).findings
+    assert "destination-schema-read-failed" not in {finding.code for finding in findings}
+    return [finding for finding in findings if finding.code == "destination-dropdown-value-not-in-choices"]
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="spec 019 US5 not implemented")
+def test_a_literal_dropdown_value_outside_the_choices_names_kind_attribute_value_and_choices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    found = _dropdown_findings(monkeypatch, choices=["active", "planned"], value="decommissioning")
+
+    assert [(finding.severity, finding.location) for finding in found] == [
+        ("error", "/configuration/schema_mapping/0/fields/1/static")
+    ]
+    for named in ("InfraDevice", "status", "decommissioning", "active", "planned"):
+        assert named in found[0].message
+
+
+def test_a_literal_dropdown_value_among_the_choices_gives_no_finding(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _dropdown_findings(monkeypatch, choices=["active", "planned"], value="planned") == []
+
+
+def test_a_dropdown_whose_choices_the_schema_does_not_state_gives_no_finding(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _dropdown_findings(monkeypatch, choices=None, value="anything") == []

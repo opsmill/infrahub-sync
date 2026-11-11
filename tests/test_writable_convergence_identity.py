@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from infrahub_sync.configuration import schema_validation
+from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES
+from infrahub_sync.configuration.schema_validation import collect_destination_schema_findings
 from infrahub_sync.plan.derive import warn_missing_convergence_key
 from infrahub_sync.plan.errors import UnkeyedCreateRefusedError
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.keying import unkeyed_create_reason, writable_convergence_reason
 from infrahub_sync.plan.models import PlannedOperation
+from infrahub_sync.runtime_schema import normalize_destination_schema
+from tests.configuration.validation_packages import package, package_data
 
 
 def _node(*, constraint: list[str] | None = None) -> SimpleNamespace:
@@ -175,3 +181,142 @@ def test_read_only_relationship_cannot_supply_a_key(component: str) -> None:
 
     assert reason is not None
     assert component in reason
+
+
+# Spec 019 FR-037 (SYNC-147, T064): validation and the plan give the same answer on whether a
+# kind without a writable human-friendly ID can be created. Each case is one destination kind,
+# the fields the mapping selects as its identity (`identifiers`, which the plan keys each create
+# on) and the fields it maps. Validation judges the mapped fields today, so the cases where the
+# mapping maps a key component it does not select disagree; those carry a strict xfail. No task
+# of T066-T070 changes either side yet.
+_DISAGREE = pytest.mark.xfail(
+    strict=True, raises=AssertionError, reason="spec 019 US5 not implemented: validation and plan disagree"
+)
+
+
+def _kind_without_writable_hfid(
+    *, hfid: list[str], constraints: list[list[str]], read_only: frozenset[str] = frozenset()
+) -> dict[str, Any]:
+    def attribute(name: str) -> dict[str, Any]:
+        return {
+            "kind": "Text",
+            "optional": True,
+            "default_value": None,
+            "unique": False,
+            "read_only": name in read_only,
+        }
+
+    return {
+        "InfraDevice": {
+            "human_friendly_id": hfid,
+            "uniqueness_constraints": constraints,
+            "attributes": {name: attribute(name) for name in ("name", "serial")},
+            "relationships": {},
+        }
+    }
+
+
+_KINDS_WITHOUT_WRITABLE_HFID = [
+    pytest.param(
+        _kind_without_writable_hfid(hfid=["name__value"], constraints=[], read_only=frozenset({"name"})),
+        ["name"],
+        ["name"],
+        id="read-only-hfid-only",
+    ),
+    pytest.param(
+        _kind_without_writable_hfid(
+            hfid=["name__value"], constraints=[["serial__value"]], read_only=frozenset({"name"})
+        ),
+        ["serial"],
+        ["serial"],
+        id="read-only-hfid-and-a-selected-constraint",
+    ),
+    pytest.param(
+        _kind_without_writable_hfid(
+            hfid=["name__value"], constraints=[["serial__value"]], read_only=frozenset({"name"})
+        ),
+        ["name"],
+        ["name", "serial"],
+        id="read-only-hfid-and-a-mapped-but-unselected-constraint",
+        marks=_DISAGREE,
+    ),
+    pytest.param(_kind_without_writable_hfid(hfid=[], constraints=[]), ["name"], ["name"], id="no-declared-key"),
+    pytest.param(
+        _kind_without_writable_hfid(hfid=[], constraints=[["serial__value"]]),
+        ["serial"],
+        ["serial"],
+        id="no-hfid-and-a-selected-constraint",
+    ),
+    pytest.param(
+        _kind_without_writable_hfid(hfid=[], constraints=[["serial__value"]]),
+        ["name"],
+        ["name", "serial"],
+        id="no-hfid-and-a-mapped-but-unselected-constraint",
+        marks=_DISAGREE,
+    ),
+    pytest.param(
+        _kind_without_writable_hfid(hfid=[], constraints=[["name__value", "serial__value"]]),
+        ["name"],
+        ["name"],
+        id="no-hfid-and-a-partly-selected-constraint",
+    ),
+    pytest.param(
+        _kind_without_writable_hfid(hfid=[], constraints=[["name__value", "serial__value"]]),
+        ["name"],
+        ["name", "serial"],
+        id="no-hfid-and-a-partly-selected-but-fully-mapped-constraint",
+        marks=_DISAGREE,
+    ),
+]
+
+
+def _plan_refuses_a_create(snapshot: dict[str, Any], identifiers: list[str], fields: list[str]) -> bool:
+    """Whether the plan refuses a create of the kind, keyed on the selected identifiers."""
+    node = normalize_destination_schema(snapshot).kinds["InfraDevice"]
+    identity = {field: f"{field}-1" for field in identifiers}
+    key = canonical_identity(identity, kind="InfraDevice")
+    operation = PlannedOperation(
+        operation_id=operation_id("create", "InfraDevice", key),
+        action="create",
+        kind="InfraDevice",
+        identity=key,
+        tier=0,
+        payload={field: f"{field}-1" for field in fields},
+        relationships=None,
+        destination_id=None,
+    )
+    try:
+        warn_missing_convergence_key(destination=SimpleNamespace(schema={"InfraDevice": node}), operations=[operation])
+    except UnkeyedCreateRefusedError:
+        return True
+    return False
+
+
+def _validation_refuses_the_kind(
+    monkeypatch: pytest.MonkeyPatch, snapshot: dict[str, Any], identifiers: list[str], fields: list[str]
+) -> bool:
+    """Whether destination validation reports that the kind has no usable identity."""
+    table = dict(BUILTIN_ADAPTER_CAPABILITIES)
+    table["infrahub"] = replace(table["infrahub"], destination_schema_accessor=lambda _package, _branch: snapshot)
+    monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
+    content = package_data()
+    content["configuration"]["schema_mapping"] = [
+        {
+            "name": "InfraDevice",
+            "mapping": "dcim.devices",
+            "identifiers": identifiers,
+            "fields": [{"name": field, "mapping": field} for field in fields],
+        }
+    ]
+    findings = collect_destination_schema_findings(package(content)).findings
+    assert "destination-schema-read-failed" not in {finding.code for finding in findings}
+    return any(finding.location == "/configuration/schema_mapping/0/identifiers" for finding in findings)
+
+
+@pytest.mark.parametrize(("snapshot", "identifiers", "fields"), _KINDS_WITHOUT_WRITABLE_HFID)
+def test_validation_and_the_plan_agree_on_whether_a_kind_without_a_writable_hfid_can_be_created(
+    monkeypatch: pytest.MonkeyPatch, snapshot: dict[str, Any], identifiers: list[str], fields: list[str]
+) -> None:
+    plan_refuses = _plan_refuses_a_create(snapshot, identifiers, fields)
+
+    assert _validation_refuses_the_kind(monkeypatch, snapshot, identifiers, fields) == plan_refuses

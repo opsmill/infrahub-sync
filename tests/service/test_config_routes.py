@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -16,7 +17,11 @@ pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient
 
+from infrahub_sync.client import RegisteredConfigurationResource, RegisteredVersionResource
+from infrahub_sync.configuration import schema_validation
+from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES
 from infrahub_sync.configuration.models import ValidationFinding
+from infrahub_sync.configuration.validation import collect_findings
 from infrahub_sync.product_store import (
     ConfigurationPage,
     PrimaryResource,
@@ -1674,3 +1679,174 @@ def _register_with(client: TestClient, headers: dict[str, str], body: Mapping[st
     response = client.post("/configs", headers={**headers, "Idempotency-Key": "register"}, json=body)
     assert response.status_code == 201, response.text
     return str(response.json()["configuration"]["config_id"])
+
+
+# Spec 019 US5 (T061, T065): `configs validate --branch` and the registration responses.
+
+_US5_NOT_IMPLEMENTED = "spec 019 US5 not implemented"
+_BRANCH_SNAPSHOT: dict[str, object] = {
+    "InfraDevice": {
+        "human_friendly_id": ["name__value"],
+        "uniqueness_constraints": [["name__value"]],
+        "attributes": {"name": {"kind": "Text", "optional": False, "default_value": None, "unique": True}},
+        "relationships": {
+            "site": {"peer": "LocationSite", "cardinality": "one", "optional": True, "kind": "Attribute"},
+        },
+    },
+    "LocationSite": {
+        "human_friendly_id": ["name__value"],
+        "uniqueness_constraints": [["name__value"]],
+        "attributes": {"name": {"kind": "Text", "optional": False, "default_value": None, "unique": True}},
+        "relationships": {},
+    },
+}
+
+
+def _spied_schema_reads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Replace the destination schema read with a fixed snapshot; return the branches it is asked for."""
+    branches: list[str] = []
+
+    def accessor(_package: object, branch: str) -> dict[str, object]:
+        branches.append(branch)
+        return _BRANCH_SNAPSHOT
+
+    table = dict(BUILTIN_ADAPTER_CAPABILITIES)
+    table["infrahub"] = replace(table["infrahub"], destination_schema_accessor=accessor)
+    monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
+    return branches
+
+
+def _package_with_missing_kind_attribute_and_relationship() -> dict[str, object]:
+    """A package whose declared branch is `staging`, mapping one missing kind, attribute and relationship."""
+    data = package_data()
+    data["configuration"]["destination"]["settings"]["branch"] = "staging"
+    data["configuration"]["schema_mapping"] = [
+        {
+            "name": "InfraDevice",
+            "mapping": "dcim.devices",
+            "identifiers": ["name"],
+            "fields": [
+                {"name": "name", "mapping": "name"},
+                {"name": "serial", "mapping": "serial"},
+                {"name": "rack", "mapping": "rack.name", "reference": "LocationSite"},
+            ],
+        },
+        {"name": "LocationSite", "mapping": "dcim.sites", "fields": [{"name": "name", "mapping": "name"}]},
+        {"name": "InfraCircuit", "mapping": "circuits.circuits", "fields": [{"name": "cid", "mapping": "cid"}]},
+    ]
+    return data
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_US5_NOT_IMPLEMENTED)
+def test_validate_with_a_branch_checks_the_mapping_against_that_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FR-034: the named branch, not the declared one, is read; each missing kind and field is named."""
+    branches = _spied_schema_reads(monkeypatch)
+    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    config_id = _register(client, _package_with_missing_kind_attribute_and_relationship(), "branch-validate")
+
+    response = client.post(f"/configs/{config_id}/versions/1/validate", params={"branch": "review"})
+
+    assert response.status_code == 200, response.text
+    assert branches == ["review"]
+    body = response.json()
+    mismatches = {
+        (finding["location"], finding["message"])
+        for finding in body["findings"]
+        if finding["code"] == "destination-schema-mismatch"
+    }
+    locations = {location for location, _message in mismatches}
+    assert {
+        "/configuration/schema_mapping/0/fields/1/name",
+        "/configuration/schema_mapping/0/fields/2/name",
+        "/configuration/schema_mapping/2/name",
+    } <= locations
+    named = " ".join(message for _location, message in mismatches)
+    for name in ("serial", "rack", "InfraCircuit"):
+        assert name in named
+    assert body["destination_schema_fingerprint"] is None or isinstance(body["destination_schema_fingerprint"], str)
+
+
+def test_validate_without_a_branch_reads_no_schema_and_is_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FR-034: without a branch, validation judges declared content only, as before."""
+    branches = _spied_schema_reads(monkeypatch)
+    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    data = _package_with_missing_kind_attribute_and_relationship()
+    config_id = _register(client, data, "plain-validate")
+
+    response = client.post(f"/configs/{config_id}/versions/1/validate")
+
+    assert response.status_code == 200, response.text
+    assert branches == []
+    body = response.json()
+    assert body["destination_schema_fingerprint"] is None
+    assert body["findings"] == [finding.model_dump(mode="json") for finding in collect_findings(package(data))]
+
+
+def _without_content(body: object) -> bool:
+    """Whether no mapping anywhere in a JSON body has a `declared_content` key."""
+    if isinstance(body, dict):
+        return "declared_content" not in body and all(_without_content(value) for value in body.values())
+    if isinstance(body, list):
+        return all(_without_content(item) for item in body)
+    return True
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_US5_NOT_IMPLEMENTED)
+def test_the_register_response_shows_the_checksum_and_no_declared_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FR-038 (SYNC-107): the response holds `package_checksum` and no redacted content beside it."""
+    client, projection = _discovery_client(tmp_path, monkeypatch)
+    body = {"package": package_data(), "reason": "register"}
+    headers = {"Idempotency-Key": "register-reference"}
+
+    first = client.post("/configs", headers=headers, json=body)
+    replay = client.post("/configs", headers=headers, json=body)
+
+    assert first.status_code == replay.status_code == 201, first.text
+    config_id = first.json()["configuration"]["config_id"]
+    stored = projection.lookup_configuration_version(config_id, 1).value
+    assert stored is not None
+    assert first.json()["version"]["package_checksum"] == stored.package_checksum
+    assert _without_content(first.json())
+    assert replay.json() == first.json()
+    RegisteredConfigurationResource.model_validate(first.json())
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_US5_NOT_IMPLEMENTED)
+def test_the_new_version_response_shows_the_checksum_and_no_declared_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FR-038: a created version (201), an identical version (200) and a replay hold no content."""
+    client, projection = _discovery_client(tmp_path, monkeypatch)
+    config_id = _register(client, package_data(), "register-first")
+    changed = _named_package("from-netbox", url="https://netbox.example.test")
+    body = {"package": changed, "reason": "second version"}
+
+    created = client.post(f"/configs/{config_id}/versions", headers={"Idempotency-Key": "v2"}, json=body)
+    replay = client.post(f"/configs/{config_id}/versions", headers={"Idempotency-Key": "v2"}, json=body)
+    same = client.post(f"/configs/{config_id}/versions", headers={"Idempotency-Key": "v2-again"}, json=body)
+
+    assert (created.status_code, replay.status_code, same.status_code) == (201, 201, 200), created.text
+    stored = projection.lookup_configuration_version(config_id, 2).value
+    assert stored is not None
+    for response in (created, replay, same):
+        assert response.json()["version"]["package_checksum"] == stored.package_checksum
+        assert _without_content(response.json())
+        RegisteredVersionResource.model_validate(response.json())
+    assert replay.json() == created.json()
+
+
+def test_reading_a_version_still_returns_its_declared_content(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """FR-038 changes the registration responses only; `GET` of a version keeps the content."""
+    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    config_id = _register(client, package_data(), "register-read")
+
+    response = client.get(f"/configs/{config_id}/versions/1")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["declared_content"]["configuration"]["name"] == "from-netbox"

@@ -307,6 +307,17 @@ def test_configuration_reads_and_validation_keep_machine_fields_and_finding_orde
     assert validated.output.index("first finding") < validated.output.index("second finding")
 
 
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="spec 019 US5 not implemented")
+def test_configs_validate_passes_the_named_branch_to_the_service(client: MagicMock) -> None:
+    """Spec 019 FR-034 (T061): `--branch` is the only new option; the service receives the branch."""
+    validated = _invoke(client, "configs", "validate", "edge-sync", "1", "--branch", "review")
+
+    # The exit code on an error finding is not pinned here: contracts/cli.md says 1, and the
+    # test above pins 0 for today's report, which holds an error finding.
+    assert "No such option" not in validated.output
+    client.validate_config.assert_called_once_with("edge-sync", 1, offset=0, limit=256, branch="review")
+
+
 def test_plan_uses_registered_tuple_waits_and_renders_service_plan(client: MagicMock) -> None:
     result = _invoke(
         client,
