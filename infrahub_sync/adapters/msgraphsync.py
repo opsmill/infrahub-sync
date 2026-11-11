@@ -477,7 +477,8 @@ class MsgraphClient:
             group = self.sdk.groups.by_group_id(collection.member_of)
             members = group.transitive_members if self.settings.membership == MEMBERSHIP_TRANSITIVE else group.members
             builder = members.graph_user
-        eventual = collection.advanced_query or bool(collection.member_of and collection.filter)
+        # Graph requires `$count` and `ConsistencyLevel: eventual` for the OData cast that every `member_of` read uses.
+        eventual = collection.advanced_query or bool(collection.member_of)
         info = builder.to_get_request_information(
             _request_configuration(
                 builder,

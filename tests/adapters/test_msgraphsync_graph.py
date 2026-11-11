@@ -591,17 +591,18 @@ def test_error_messages_and_logs_never_contain_the_token(
 
 @pytest.mark.parametrize("membership", ["direct", "transitive"])
 @pytest.mark.parametrize(
-    ("query_filter", "advanced_query", "eventual"),
+    ("query_filter", "advanced_query"),
     [
-        (None, False, False),
-        (None, True, True),
-        ("startswith(userPrincipalName,'room')", False, True),
-        ("startswith(userPrincipalName,'room')", True, True),
+        (None, False),
+        (None, True),
+        ("startswith(userPrincipalName,'room')", False),
+        ("startswith(userPrincipalName,'room')", True),
     ],
 )
 def test_member_of_reads_user_cast_with_paging_and_query_options(
-    membership: str, query_filter: str | None, *, advanced_query: bool, eventual: bool
+    membership: str, query_filter: str | None, *, advanced_query: bool
 ) -> None:
+    # Graph requires $count and ConsistencyLevel: eventual for an OData cast, so every member_of read sends them.
     router = GraphRouter()
     path = router.members_path(graph_id(11), transitive=membership == "transitive") + "/microsoft.graph.user"
     records = [user_record(1, "room1@example.com"), user_record(2, "room2@example.com")]
@@ -624,8 +625,8 @@ def test_member_of_reads_user_cast_with_paging_and_query_options(
         assert request.url.params["$select"] == "id,userPrincipalName"
         assert request.url.params["$top"] == "25"
         assert request.url.params.get("$filter") == query_filter
-        assert request.url.params.get("$count") == ("true" if eventual else None)
-        assert request.headers.get("ConsistencyLevel") == ("eventual" if eventual else None)
+        assert request.url.params.get("$count") == "true"
+        assert request.headers.get("ConsistencyLevel") == "eventual"
 
 
 @pytest.mark.parametrize("page", [0, 1])
