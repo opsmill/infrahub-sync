@@ -5,9 +5,8 @@ A spec-kit preset that **overrides** the native `speckit.taskstoissues` command 
 ## Install
 
 ```bash
-specify preset add taskstoissues-jira \
-  --from https://github.com/opsmill/opsmill-speckit/archive/refs/heads/main.zip \
-  --subdir presets/taskstoissues-jira
+git clone -b v1.3.2 https://github.com/opsmill/opsmill-speckit
+specify preset add --dev opsmill-speckit/presets/taskstoissues-jira
 ```
 
 Local development install (from a working tree):
