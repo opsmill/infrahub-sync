@@ -568,6 +568,45 @@ def test_a_known_destination_failure_is_wrapped_with_the_operation_and_run_conte
     assert "Next action:" in message
 
 
+class SecondOperationRejectingDestination(RecordingDestination):
+    """A destination where Infrahub rejects the second operation only, and every attempt is recorded."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.attempted: list[str] = []
+
+    def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
+        self.attempted.append(operation.operation_id)
+        if len(self.attempted) == 2:
+            raise GraphQLError([{"message": "planned is not a valid value for status"}])
+        return super().apply_planned_operation(operation=operation, peers=peers)
+
+
+def test_an_infrahub_rejection_stops_the_apply_before_the_next_operation(tmp_path: Path) -> None:
+    """Old 009 FR-013 (spec 019 T079): a rejected write stops the apply; no later operation is attempted.
+
+    The left-out policy of the plan does not apply during an apply, so the rejected operation is
+    not skipped: the third operation, which the destination would accept, is never sent.
+    """
+    directory = _run_dir(tmp_path)
+    records = [
+        operation_record(identity={"name": "first"}),
+        operation_record(identity={"name": "second"}),
+        operation_record(identity={"name": "third"}),
+    ]
+    write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
+    destination = SecondOperationRejectingDestination()
+
+    with pytest.raises(OperationApplyFailedError) as caught:
+        _potenda(directory, destination).apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
+
+    first, second, third = (str(record["operation_id"]) for record in records)
+    assert destination.attempted == [first, second], "the apply stops at the rejection"
+    assert third not in destination.dispatched
+    assert caught.value.apply_record.applied_operations == (first,)
+    assert caught.value.apply_record.failed_operation == second
+
+
 CODE_DEFECTS = (
     pytest.param(TypeError("Expected NodeSchemaAPI for BuiltinTag, got NoneType"), id="type-error"),
     pytest.param(AttributeError("'NoneType' object has no attribute 'peers'"), id="attribute-error"),
