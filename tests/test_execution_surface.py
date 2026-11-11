@@ -1476,7 +1476,7 @@ def test_branch_reaches_the_factory_from_run_remote_request(
     # Remote runs pin the CLI engine defaults, with progress display disabled.
     assert call["show_progress"] is False
     assert call["concurrent_load"] is True
-    assert call["continue_on_error"] is False
+    assert "continue_on_error" not in call
     assert call["run_id"] is None
     assert call["verbosity"] == logging.INFO
 
@@ -1519,7 +1519,7 @@ def test_the_read_observer_seam_reaches_the_engine_without_changing_the_factory_
     assert getattr(factory.engine, "read_observer", None) is observer
     recorded = factory.calls[0]
     assert set(recorded) == set(inspect.signature(get_potenda_from_instance).parameters)
-    assert len(recorded) == 8
+    assert len(recorded) == 7  # spec 019 removed `continue_on_error`
 
 
 def test_successful_plan_writes_the_diff_lifecycle(

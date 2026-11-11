@@ -10,7 +10,7 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from diffsync import Adapter, DiffSyncModel
-from diffsync.exceptions import ObjectNotFound
+from diffsync.exceptions import ObjectAlreadyExists, ObjectNotFound
 from infrahub_sdk import (
     Config,
     InfrahubClientSync,
@@ -18,11 +18,11 @@ from infrahub_sdk import (
 from infrahub_sdk.exceptions import AuthenticationError, GraphQLError, NodeNotFoundError, SchemaNotFoundError
 from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
 from packaging.version import InvalidVersion, Version
-from pydantic import ValidationError
 
 from infrahub_sync import (
     DiffSyncMixin,
     DiffSyncModelMixin,
+    SchemaMappingModel,
     SyncAdapter,
     SyncConfig,
 )
@@ -910,10 +910,22 @@ def _latest_change(changes: Iterable[LastChange]) -> LastChange:
     return max(recorded, key=_change_time)
 
 
+@dataclass(frozen=True)
+class DestinationIdentityAmbiguity:
+    """One mapped identity that two or more Infrahub nodes of one kind hold (`destination_identity_ambiguous`).
+
+    It holds the kind, the DiffSync unique ID of the identity and the node IDs, never another
+    attribute value.
+    """
+
+    kind: str
+    unique_id: str
+    node_ids: tuple[str, ...]
+
+
 class InfrahubAdapter(DiffSyncMixin, Adapter):
     type = "Infrahub"
 
-    continue_on_error: bool = False
     # Class defaults so an adapter built without `__init__` (tests of the write path) has
     # no lineage until `resolve_lineage` runs or a caller sets it.
     lineage_settings: InfrahubLineageSettings = InfrahubLineageSettings()
@@ -1225,66 +1237,107 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             yield model_cls(**payload).get_unique_id()
 
     def model_loader(self, model_name: str, model: type[InfrahubModel]) -> None:
-        """
-        Load and process models using schema mapping filters and transformations.
+        """Read every node of `model_name` and admit each one through `load_record`.
 
-        This method retrieves data from Infrahub, applies filters and transformations
-        as specified in the schema mapping, and loads the processed data into the adapter.
+        The adapter keeps its own read loop, because each admitted record also fills the SDK
+        store with its node. Nodes are converted to model data first; on the source side the
+        configured filters and transforms then apply to that data, as before. On the
+        destination side, two nodes with one mapped identity are recorded as a destination
+        identity ambiguity (`destination_identity_ambiguities`) and the stored record is updated
+        with the later node's values, as before; this full read is the only one that detects it
+        (research R6).
         """
         element = next((el for el in self.config.schema_mapping if el.name == model_name), None)
-        if element:
-            # Retrieve all nodes corresponding to model_name (list of InfrahubNodeSync)
-            # With `include_metadata`, the same read also returns `updated_by` and `updated_at` for
-            # each attribute and each edge, cardinality-many edges included, because they are named
-            # in `include`. No request is added.
-            nodes = self.client.all(
-                kind=model_name,
-                include=identifier_and_attribute_fields(model),
-                populate_store=True,
-                include_metadata=self.metadata_read,
-            )
+        if not element:
+            return
+        # Retrieve all nodes corresponding to model_name (list of InfrahubNodeSync)
+        # With `include_metadata`, the same read also returns `updated_by` and `updated_at` for
+        # each attribute and each edge, cardinality-many edges included, because they are named
+        # in `include`. No request is added.
+        nodes = self.client.all(
+            kind=model_name,
+            include=identifier_and_attribute_fields(model),
+            populate_store=True,
+            include_metadata=self.metadata_read,
+        )
 
-            # Transform the list of InfrahubNodeSync into a list of (node, dict) tuples
-            # The mapped fields of each kind are computed once for this read, not once per node.
-            mapped: dict[str, MappedFields] = {}
-            node_dict_pairs = [(node, self.infrahub_node_to_diffsync(node=node, mapped=mapped)) for node in nodes]
-            if self.metadata_read:
-                for node in nodes:
-                    self._record_last_changes(node, mapped=mapped)
-            total = len(node_dict_pairs)
+        # The mapped fields of each kind are computed once for this read, not once per node.
+        mapped: dict[str, MappedFields] = {}
+        node_dict_pairs = [(node, self.infrahub_node_to_diffsync(node=node, mapped=mapped)) for node in nodes]
+        if self.metadata_read:
+            for node in nodes:
+                self._record_last_changes(node, mapped=mapped)
+        total = len(node_dict_pairs)
+        records = [pair[1] for pair in node_dict_pairs]
 
-            # Extract the list of dicts for filtering and transforming
-            list_obj = [pair[1] for pair in node_dict_pairs]
+        if self.target == "source":
+            records = self.filter_source_records(model, element, records)
+            logger.info("%s: Loading %d/%d %s", self.type, len(records), total, model_name)
+            self._read_state.read_kinds.add(model_name)
+        else:
+            logger.info("%s: Loading all %d %s", self.type, total, model_name)
 
-            if self.target == "source":
-                # Filter records
-                filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
-                logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, model_name)
-                # Transform records
-                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
-            else:
-                logger.info("%s: Loading all %d %s", self.type, total, model_name)
-                transformed_objs = list_obj
+        # A transform changes a record in place, so the record keeps its identity.
+        node_by_record = {id(record): node for node, record in node_dict_pairs}
 
-            # Create model instances after filtering and transforming
-            for transformed_obj in transformed_objs:
-                original_node: InfrahubNodeSync = next(node for node, obj in node_dict_pairs if obj == transformed_obj)
-                try:
-                    item = model(**transformed_obj)
-                except ValidationError as exc:
-                    if not self.continue_on_error:
-                        raise
-                    logger.warning(
-                        "Skipping %s[%s]: cannot build DiffSync model "
-                        "(likely a required peer was skipped earlier). Pydantic errors: %s",
-                        model_name,
-                        transformed_obj.get("local_id"),
-                        exc.errors(include_url=False),
-                    )
-                    continue
-                unique_id = item.get_unique_id()
-                self.client.store.set(key=unique_id, node=original_node)
-                self.update_or_add_model_instance(item)
+        def fill_sdk_store(item: InfrahubModel, record: dict[str, Any]) -> None:
+            self.client.store.set(key=item.get_unique_id(), node=node_by_record[id(record)])
+
+        for record in records:
+            self.load_record(model, element, record, store_item=self._store_node, after_add=fill_sdk_store)
+
+    def record_to_data(
+        self,
+        record: dict[str, Any],
+        element: SchemaMappingModel,  # noqa: ARG002
+        model: type[DiffSyncModel],  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Return the record unchanged: `model_loader` converts each node to model data before filtering."""
+        return dict(record)
+
+    def _store_node(self, item: DiffSyncModel) -> DiffSyncModel:
+        """Store `item` as `update_or_add_model_instance` does, and detect a second node with its identity.
+
+        A record stored earlier with the same `local_id` is the same node (a peer stored while
+        resolving a reference), and is updated. A record from another node with the same unique
+        ID is, on the source side, a `duplicate_source_identity` (`ObjectAlreadyExists`), and,
+        on the destination side, a destination identity ambiguity; the stored record is updated
+        with the later node's values, as before.
+        """
+        kind, unique_id = item.get_type(), item.get_unique_id()
+        try:
+            existing = self.store.get(model=kind, identifier=unique_id)
+        except ObjectNotFound:
+            existing = None
+        if existing is not None:
+            existing_id, node_id = getattr(existing, "local_id", None), getattr(item, "local_id", None)
+            if existing_id is not None and node_id is not None and str(existing_id) != str(node_id):
+                if self.target == "source":
+                    msg = f"Object {unique_id} already present"
+                    raise ObjectAlreadyExists(msg, item)
+                seen = self._identity_nodes.setdefault((kind, unique_id), [])
+                for value in (str(existing_id), str(node_id)):
+                    if value not in seen:
+                        seen.append(value)
+        stored, _ = self.update_or_add_model_instance(item)
+        return stored
+
+    @property
+    def _identity_nodes(self) -> dict[tuple[str, str], list[str]]:
+        """The node IDs of each (kind, unique ID) that more than one destination node holds, in read order."""
+        return self.__dict__.setdefault("_destination_identity_nodes", {})
+
+    @property
+    def destination_identity_ambiguities(self) -> list[DestinationIdentityAmbiguity]:
+        """Each mapped identity that two or more destination nodes hold, in the order they were read.
+
+        Only the full read of a kind by `model_loader` records them; an incremental read
+        through the cache does not (spec 019, `destination_identity_ambiguous`).
+        """
+        return [
+            DestinationIdentityAmbiguity(kind=kind, unique_id=unique_id, node_ids=tuple(node_ids))
+            for (kind, unique_id), node_ids in self._identity_nodes.items()
+        ]
 
     def _resolve_peer_unique_id(
         self,
@@ -1295,8 +1348,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     ) -> str | None:
         """Resolve a peer node to its DiffSync unique_id.
 
-        Returns None if the peer cannot be mapped (no DiffSync model, or
-        `continue_on_error` is set and the peer is missing identifier values).
+        Returns None if the peer cannot be mapped (no DiffSync model).
         Raises ``PeerIdentifierError`` otherwise so the operator sees actionable
         context instead of a bare ``KeyError``.
         """
@@ -1376,10 +1428,6 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 present_keys=tuple(peer_data.keys()),
             )
             self._peer_unique_ids[cache_key] = None
-            if self.continue_on_error:
-                if not hydration_attempted:
-                    logger.warning("Skipping peer relationship: %s", err)
-                return None
             raise err
 
         unique_id = peer_model.create_unique_id(**{k: peer_data[k] for k in identifiers})

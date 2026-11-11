@@ -10,8 +10,10 @@ Each adapter runs through its own `record_to_data` and the base-class read loop;
 `list_records`, the call to the provider, is replaced on the instance and returns the recorded
 responses. The adapter is built without its `__init__`, which connects to the provider.
 
-Spec 019 T017 to T021 implement the behavior: today each adapter has its own `model_loader` and no
-`record_to_data`, so each case is an expected failure on that first check (`AssertionError`).
+Spec 019 T017 to T021 implement the read: `test_the_read_records_each_missing_peer` checks the
+load report each adapter writes. The plan problems, left-out and kept entries come with the problem
+pass and plan format 4 (T025 to T028); until then the plan test is an expected failure, because the
+plan writer writes no `plan/report.jsonl` (`FileNotFoundError`).
 """
 
 from __future__ import annotations
@@ -24,7 +26,14 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from diffsync import Adapter
 
-from infrahub_sync import DiffSyncMixin, SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncInstance
+from infrahub_sync import (
+    DiffSyncMixin,
+    SchemaMappingField,
+    SchemaMappingModel,
+    SyncAdapter,
+    SyncInstance,
+    is_not_in_source_placeholder,
+)
 from infrahub_sync.adapters.infrahub import InfrahubModel
 from infrahub_sync.cache.paths import cache_root_for
 from infrahub_sync.potenda import Potenda
@@ -202,18 +211,8 @@ def _recorded_adapter(name: str, recorded: RecordedSource, config: SyncInstance)
     return adapter
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="spec 019 US1 not implemented: the adapters still read with their own loops (T017 to T021)",
-)
-@pytest.mark.parametrize("name", sorted(SOURCES))
-def test_a_peer_the_source_does_not_return_is_listed_and_the_plan_finishes(
-    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Two `peer_not_found_in_source` problems; the device is left out, the address is kept without `vrf`."""
-    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "cache"))
-    recorded = SOURCES[name]
+def _potenda(name: str, recorded: RecordedSource) -> Potenda:
+    """Both sides of `recorded`: the adapter as the source, an empty Infrahub as the destination."""
     config = _config(name)
     source = _recorded_adapter(name, recorded, config)
     snapshot = normalize_destination_schema(_schema())
@@ -223,7 +222,7 @@ def test_a_peer_the_source_does_not_return_is_listed_and_the_plan_finishes(
     )
     run_dir = cache_root_for(config.name) / RUN_ID
     run_dir.mkdir(parents=True, exist_ok=True)
-    potenda = Potenda(
+    return Potenda(
         source=source,  # ty: ignore[invalid-argument-type]
         destination=destination,
         config=config,
@@ -233,6 +232,47 @@ def test_a_peer_the_source_does_not_return_is_listed_and_the_plan_finishes(
         show_progress=False,
         concurrent_load=False,
     )
+
+
+@pytest.mark.parametrize("name", sorted(SOURCES))
+def test_the_read_records_each_missing_peer(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The device is not loaded; the address is loaded with a placeholder `vrf`; both are in the load report."""
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "cache"))
+    recorded = SOURCES[name]
+    potenda = _potenda(name, recorded)
+
+    load_both_sides(potenda)
+
+    source = potenda.source
+    entries = sorted(source.load_report.entries, key=lambda entry: entry.record.kind)  # ty: ignore[unresolved-attribute]
+    assert [
+        (entry.reason, entry.record.kind, entry.field, entry.peer.kind, entry.peer.source_id, entry.loaded)
+        for entry in entries
+        if entry.peer is not None
+    ] == [
+        ("peer_not_found_in_source", "DcimDevice", "site", "LocationSite", recorded.missing_site, False),
+        ("peer_not_found_in_source", "IpamIPAddress", "vrf", "IpamVRF", recorded.missing_vrf, True),
+    ]
+    assert [device.model_dump()["name"] for device in source.get_all("DcimDevice")] == ["r2"]
+    vrfs = {row["address"]: row["vrf"] for row in (item.model_dump() for item in source.get_all("IpamIPAddress"))}
+    assert set(vrfs) == {"10.0.0.9/32", "10.0.0.1/32"}
+    assert is_not_in_source_placeholder(vrfs["10.0.0.9/32"])
+    assert not is_not_in_source_placeholder(vrfs["10.0.0.1/32"])
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=FileNotFoundError,
+    reason="spec 019 US1 not implemented: the plan writer writes no plan/report.jsonl (T025 to T028)",
+)
+@pytest.mark.parametrize("name", sorted(SOURCES))
+def test_a_peer_the_source_does_not_return_is_listed_and_the_plan_finishes(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two `peer_not_found_in_source` problems; the device is left out, the address is kept without `vrf`."""
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "cache"))
+    recorded = SOURCES[name]
+    potenda = _potenda(name, recorded)
 
     load_both_sides(potenda)
     planned = finish_plan(potenda)

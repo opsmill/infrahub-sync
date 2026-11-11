@@ -1,10 +1,10 @@
-"""Today's behavior for three problem types that spec 019 changes (T001, research R1).
+"""Three problem types that spec 019 changes, through the real NetBox read (T001, research R1).
 
-These characterization tests pass before spec 019 and pin what a source read does today with
-a duplicate source identity, a value of the wrong type and a Dropdown value outside its
-choices. Each test drives the real NetBox read loop, with a mocked client, over records of the
-shared problem fixture (`tests/plan/conftest.py`). Each docstring names the requirement and
-the tasks that change its expectation; those tasks rewrite or remove the test.
+T001 pinned what a source read did before spec 019 with a duplicate source identity, a value of
+the wrong type and a Dropdown value outside its choices. T017 rewrote the first two: the read
+records the record in the load report and continues. The Dropdown test still pins the behavior
+before T023 and T026. Each test drives the NetBox adapter, with a mocked client, over records of
+the shared problem fixture (`tests/plan/conftest.py`).
 """
 
 from __future__ import annotations
@@ -14,8 +14,6 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
-from diffsync.exceptions import ObjectAlreadyExists
-from pydantic import ValidationError
 
 from infrahub_sync import SyncAdapter
 from infrahub_sync.plan.derive import operations_from_diff
@@ -57,13 +55,13 @@ def _load(adapter: NetboxAdapter, kind: str) -> None:
     adapter.model_loader(kind, getattr(adapter, kind))
 
 
-def test_duplicate_source_identity_stops_the_source_read(
+def test_duplicate_source_identity_is_recorded_and_the_read_continues(
     monkeypatch: pytest.MonkeyPatch, plan_problems: PlanProblemFixture
 ) -> None:
-    """Two `LocationSite` records named `dup` raise `ObjectAlreadyExists` and stop the read.
+    """The second `LocationSite` named `dup` is `duplicate_source_identity`; the store keeps the first.
 
-    FR-002 (`duplicate_source_identity`): T009 and T010 change this expectation, and T017
-    implements the change (the record becomes a plan problem and the read continues).
+    FR-002 (`duplicate_source_identity`), implemented by T017. Before spec 019 the read raised
+    `ObjectAlreadyExists` and stopped.
     """
     records = {
         "LocationSite": [site for site in plan_problems.source_records()["LocationSite"] if site["name"] == "dup"]
@@ -71,19 +69,24 @@ def test_duplicate_source_identity_stops_the_source_read(
     assert [site["id"] for site in records["LocationSite"]] == [4, 5]
     adapter = _netbox_adapter(monkeypatch, plan_problems, target="source", records=records)
 
-    with pytest.raises(ObjectAlreadyExists):
-        _load(adapter, "LocationSite")
+    _load(adapter, "LocationSite")
 
     assert [site.model_dump()["local_id"] for site in adapter.get_all("LocationSite")] == ["4"]
+    (entry,) = adapter.load_report.entries
+    assert (entry.reason, entry.record.source_id, entry.existing.source_id if entry.existing else None) == (
+        "duplicate_source_identity",
+        "5",
+        "4",
+    )
 
 
-def test_number_given_a_float_stops_the_source_read(
+def test_number_given_a_float_is_recorded_and_the_read_continues(
     monkeypatch: pytest.MonkeyPatch, plan_problems: PlanProblemFixture
 ) -> None:
-    """`position` 2.5 for a `Number` attribute raises `ValidationError` (`int_from_float`).
+    """`position` 2.5 for a `Number` attribute is `wrong_value_type`; the device is not stored.
 
-    FR-002 (`wrong_value_type`): T009 and T010 change this expectation, and T017 implements the
-    change (the record becomes a plan problem and the read continues).
+    FR-002 (`wrong_value_type`), implemented by T017. Before spec 019 the read raised
+    `ValidationError` (`int_from_float`) and stopped.
     """
     source = plan_problems.source_records()
     records = {
@@ -93,10 +96,11 @@ def test_number_given_a_float_stops_the_source_read(
     adapter = _netbox_adapter(monkeypatch, plan_problems, target="source", records=records)
     _load(adapter, "LocationSite")
 
-    with pytest.raises(ValidationError) as err:
-        _load(adapter, "DcimDevice")
+    _load(adapter, "DcimDevice")
 
-    assert [(error["loc"], error["type"]) for error in err.value.errors()] == [(("position",), "int_from_float")]
+    assert [(entry.reason, entry.record.kind, entry.field) for entry in adapter.load_report.entries] == [
+        ("wrong_value_type", "DcimDevice", "position")
+    ]
     assert adapter.get_all("DcimDevice") == []
 
 

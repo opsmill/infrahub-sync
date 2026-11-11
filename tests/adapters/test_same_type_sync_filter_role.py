@@ -6,6 +6,11 @@ Filters and transforms must run only for the adapter instance built with
 configured adapter *name* against the adapter *type* breaks as soon as both
 sides of a sync use the same adapter type (NetBox-to-NetBox, and so on),
 because the predicate is then true for both instances.
+
+Since spec 019 (T017 to T020) every bundled adapter reads through the base-class read loop:
+`DiffSyncMixin.model_loader` filters through `filter_source_records`, and `load_record` runs
+the transforms, both on the source side only (`tests/test_load_record.py` covers the
+transforms). These tests check that the role reaches that loop for each adapter.
 """
 
 from __future__ import annotations
@@ -113,10 +118,7 @@ def _config(source_name: str, dest_name: str, *, fields: list[dict] | None = Non
 
 
 def _fake_model() -> MagicMock:
-    model = MagicMock()
-    model.filter_records.return_value = []
-    model.transform_records.return_value = []
-    return model
+    return MagicMock()
 
 
 def _build_netbox(target: str, config: SyncConfig, _importer: _SDKImporter) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
@@ -260,8 +262,10 @@ def _run_model_loader(
         config.schema_mapping[0].mapping = "fake_resource"
         adapter.fake_resource = list
 
+    filter_step = MagicMock(side_effect=adapter.filter_source_records)
+    adapter.filter_source_records = filter_step
     adapter.model_loader(_ELEMENT_NAME, model)
-    return model
+    return filter_step
 
 
 @pytest.mark.parametrize("adapter_key", sorted(_ADAPTER_BUILDERS))
@@ -276,8 +280,7 @@ def test_filters_and_transforms_run_only_for_source_role_in_same_type_sync(
         dest_name=adapter_key,
         importer=optional_sdk_importer,
     )
-    assert source.filter_records.called
-    assert source.transform_records.called
+    assert source.called
 
     destination = _run_model_loader(
         adapter_key,
@@ -286,8 +289,7 @@ def test_filters_and_transforms_run_only_for_source_role_in_same_type_sync(
         dest_name=adapter_key,
         importer=optional_sdk_importer,
     )
-    assert not destination.filter_records.called
-    assert not destination.transform_records.called
+    assert not destination.called
 
 
 @pytest.mark.parametrize("adapter_key", sorted(_ADAPTER_BUILDERS))
@@ -302,8 +304,7 @@ def test_filters_and_transforms_unchanged_for_heterogeneous_sync(
         dest_name="infrahub",
         importer=optional_sdk_importer,
     )
-    assert source.filter_records.called
-    assert source.transform_records.called
+    assert source.called
 
     destination = _run_model_loader(
         adapter_key,
@@ -312,8 +313,7 @@ def test_filters_and_transforms_unchanged_for_heterogeneous_sync(
         dest_name=adapter_key,
         importer=optional_sdk_importer,
     )
-    assert not destination.filter_records.called
-    assert not destination.transform_records.called
+    assert not destination.called
 
 
 @pytest.mark.parametrize(("adapter_name", "sdk_name"), [("ipfabricsync", "ipfabric"), ("slurpitsync", "slurpit")])

@@ -25,7 +25,7 @@ import pytest
 
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
-from infrahub_sync.plan.errors import PlanVerificationError
+from infrahub_sync.plan.errors import DestinationIdentityCollisionError, PlanVerificationError
 from infrahub_sync.plan.models import LineageAccountRecord, LineageNodeRecord, PlanLineageRecord
 from infrahub_sync.plan.reader import load_plan_artifact
 from infrahub_sync.plan.review import resolve_run_directory
@@ -49,8 +49,11 @@ if TYPE_CHECKING:
 
 NOT_IMPLEMENTED = pytest.mark.xfail(
     strict=True,
-    raises=NotImplementedError,
-    reason="spec 019 US1 not implemented: DiffSyncMixin.model_loader has no default read loop (T017)",
+    raises=(DestinationIdentityCollisionError, FileNotFoundError),
+    reason=(
+        "spec 019 US1 not implemented: the plan raises on identity collisions (T024) and writes no "
+        "plan/report.jsonl (T026 to T028)"
+    ),
 )
 
 ZERO_COUNTS = {"problems": 0, "left_out": 0, "left_out_with_problem": 0, "left_out_dependent": 0, "kept": 0}

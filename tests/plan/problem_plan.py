@@ -18,23 +18,15 @@ with `Potenda.write_plan`, the path a `plan` run takes. The tests read the resul
 saved plan: `plan/manifest.json`, `plan/operations.jsonl` and `plan/report.jsonl` (format 4,
 contracts/plan-artifact-format-4.md).
 
-Calls into code that spec 019 has not built yet, all in this module so the next chunk adjusts
-them in one place:
-
-- `DiffSyncMixin.model_loader` and `load_record` (T017): today `model_loader` raises
-  `NotImplementedError`.
-- `infrahub_sync.adapters.references.peer_unique_id(adapter, peer_kind, peer_source_id, *,
-  owner, field, required)` (T021). The signature is this harness's assumption; T021 may name
-  the arguments differently and update `FixtureSource._peer` to match.
-- `adapter.load_report`, the `LoadReport` of `infrahub_sync/load_report.py` that the read loop
-  writes to. The attribute name is this harness's assumption.
+The read uses `DiffSyncMixin.model_loader` and `load_record` (T017), the reference helper
+`infrahub_sync.adapters.references.peer_unique_id` (T021) and `adapter.load_report`, the
+`LoadReport` of `infrahub_sync/load_report.py` that the read loop writes to.
 """
 
 from __future__ import annotations
 
 import copy
 import hashlib
-import importlib
 import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, get_args
@@ -43,11 +35,12 @@ from diffsync import Adapter
 
 from infrahub_sync import DiffSyncMixin, SyncInstance
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, InfrahubModel
+from infrahub_sync.adapters.references import peer_unique_id
 from infrahub_sync.adapters.utils import get_value
 from infrahub_sync.cache.paths import cache_root_for
 from infrahub_sync.plan.reader import load_plan_artifact
 from infrahub_sync.plan.writer import PLAN_DIR_NAME
-from infrahub_sync.potenda import Potenda, SideLoadError
+from infrahub_sync.potenda import Potenda
 from infrahub_sync.runtime_schema.models import build_runtime_models
 from infrahub_sync.runtime_schema.worker import RuntimeModelPlan, RuntimeSideModels, bind_runtime_models
 from tests.plan.conftest import PlanProblemFixture, PlanProblemModel, Variant
@@ -124,9 +117,8 @@ class FixtureSource(DiffSyncMixin, Adapter):
         return data
 
     def _peer(self, peer_kind: str, peer_source_id: str, *, owner: tuple[str, str], field: str, required: bool) -> Any:  # noqa: ANN401
-        """Resolve one reference through the shared helper of T021 (imported when first needed)."""
-        references = importlib.import_module("infrahub_sync.adapters.references")
-        return references.peer_unique_id(self, peer_kind, peer_source_id, owner=owner, field=field, required=required)
+        """Resolve one reference through the shared helper of T021."""
+        return peer_unique_id(self, peer_kind, peer_source_id, owner=owner, field=field, required=required)
 
 
 @dataclass
@@ -333,19 +325,8 @@ def report_digest(report_bytes: bytes) -> str:
 
 
 def load_both_sides(potenda: Potenda) -> None:
-    """Load both sides through `Potenda.load_both_sides`.
-
-    Until spec 019 T017 adds the base-class read loop, the fixture source's read fails with
-    `NotImplementedError`, which `Potenda` wraps in `SideLoadError`. That one cause is raised
-    unwrapped, so the expected failures of the User Story 1 tests name it exactly. T017 removes
-    this unwrapping.
-    """
-    try:
-        potenda.load_both_sides()
-    except SideLoadError as exc:
-        if isinstance(exc.__cause__, NotImplementedError):
-            raise exc.__cause__ from exc
-        raise
+    """Load both sides through `Potenda.load_both_sides`."""
+    potenda.load_both_sides()
 
 
 def finish_plan(potenda: Potenda, diff: Any = None) -> PlannedFixture:  # noqa: ANN401 - a DiffSync Diff

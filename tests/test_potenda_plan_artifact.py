@@ -1369,7 +1369,7 @@ ADAPTERS_DIR = Path(__file__).resolve().parent.parent / "infrahub_sync" / "adapt
 
 # `rest_api_client.py` is a shared HTTP helper and `utils.py` a shared value helper;
 # neither is an adapter.
-NON_ADAPTER_MODULES = frozenset({"__init__", "rest_api_client", "utils"})
+NON_ADAPTER_MODULES = frozenset({"__init__", "references", "rest_api_client", "utils"})
 
 
 def manifest_path(potenda: Potenda) -> Path:

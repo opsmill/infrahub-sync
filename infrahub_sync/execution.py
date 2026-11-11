@@ -107,7 +107,6 @@ class PotendaFactory(Protocol):
         show_progress: bool | None = ...,
         verbosity: int = ...,
         run_id: str | None = ...,
-        continue_on_error: bool = ...,
         concurrent_load: bool = ...,
         base_directory: Path | None = ...,
     ) -> Potenda: ...
@@ -1126,7 +1125,6 @@ def execute_run(
     run_id: str | None = None,
     concurrent_load: bool = True,
     full_extract: bool = True,
-    continue_on_error: bool = False,
     print_diff: bool = True,
     potenda_factory: PotendaFactory | None = None,
     allow_destination_change: bool = False,
@@ -1226,7 +1224,6 @@ def execute_run(
             show_progress=show_progress,
             verbosity=verbosity,
             run_id=run_id,
-            continue_on_error=continue_on_error,
             concurrent_load=concurrent_load,
             base_directory=base_directory,
         )

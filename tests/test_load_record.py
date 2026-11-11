@@ -19,8 +19,7 @@ side nothing is caught.
 The source adapter is the fixture adapter of `tests/plan/problem_plan.py`, which implements only
 `list_records` and `record_to_data`; the records come from the shared problem fixture.
 
-Spec 019 T017 (and T021 for the peer errors) implements the behavior. Until then each test is
-an expected failure: `DiffSyncMixin.model_loader` raises `NotImplementedError`.
+Spec 019 T017 (and T021 for the peer errors) implements the behavior.
 """
 
 from __future__ import annotations
@@ -30,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from diffsync.exceptions import ObjectAlreadyExists
 
+from infrahub_sync import RecordLoadError
 from infrahub_sync.runtime_schema.worker import bind_runtime_models
 from tests.plan.conftest import PlanProblemModel, Variant, load_plan_problem_fixture
 from tests.plan.problem_plan import FixtureSource, build_source
@@ -41,12 +41,6 @@ if TYPE_CHECKING:
 
     from infrahub_sync import SchemaMappingModel
     from tests.plan.conftest import PlanProblemFixture
-
-pytestmark = pytest.mark.xfail(
-    strict=True,
-    raises=NotImplementedError,
-    reason="spec 019 US1 not implemented: DiffSyncMixin.model_loader has no default read loop (T017)",
-)
 
 
 def _records(fixture: PlanProblemFixture, picks: Mapping[str, Iterable[int]]) -> dict[str, list[dict[str, Any]]]:
@@ -72,7 +66,7 @@ def _loaded(source: FixtureSource, kind: str) -> list[str]:
 
 def _entries(source: FixtureSource) -> list[tuple[Any, ...]]:
     """The load report as (reason, kind, source ID, field, peer, config entry, existing, loaded)."""
-    report = source.load_report  # ty: ignore[unresolved-attribute] -- added by spec 019 T017
+    report = source.load_report
     return [
         (
             entry.reason,
@@ -120,7 +114,7 @@ def test_required_peer_excluded_by_a_filter_is_recorded_and_the_read_continues()
 
     _read(source, "LocationSite", "DcimDevice", "InterfacePhysical")
 
-    report = source.load_report  # ty: ignore[unresolved-attribute] -- added by spec 019 T017
+    report = source.load_report
     assert report.was_filtered("DcimDevice", "35")
     assert report.filter_position("DcimDevice", "35") == 0
     assert _entries(source) == [
@@ -187,7 +181,7 @@ def test_no_entry_holds_the_error_text_or_the_transform_expression() -> None:
 
     _read(source, "IpamVRF")
 
-    report = source.load_report  # ty: ignore[unresolved-attribute] -- added by spec 019 T017
+    report = source.load_report
     dumped = [entry.model_dump_json() for entry in report.entries]
     assert len(dumped) == 1
     assert "{{" not in dumped[0]
@@ -213,19 +207,11 @@ def test_any_other_error_is_raised_as_record_load_error() -> None:
     source = _BrokenSource(config=config, records=_records(fixture, {"LocationSite": [1, 2]}), order=fixture.order)
     bind_runtime_models(source, fixture.build_models(model_base=PlanProblemModel, config=config))
 
-    # `RecordLoadError` does not exist before T017, so the test cannot name it in `pytest.raises`;
-    # the missing read loop's `NotImplementedError` passes through unchanged.
-    try:
+    with pytest.raises(RecordLoadError) as raised:
         _read(source, "LocationSite")
-    except NotImplementedError:
-        raise
-    except Exception as raised:  # noqa: BLE001
-        error = raised
-    else:
-        pytest.fail("the read did not stop on the conversion error")
 
-    assert type(error).__name__ == "RecordLoadError"
-    assert (error.kind, error.source_id) == ("LocationSite", "2")  # ty: ignore[unresolved-attribute]
+    error = raised.value
+    assert (error.kind, error.source_id) == ("LocationSite", "2")
     assert isinstance(error.__cause__, RuntimeError)
 
 
@@ -248,18 +234,11 @@ def test_a_missing_required_value_is_raised_as_record_load_error() -> None:
     source = _MissingNameSource(config=config, records=_records(fixture, {"LocationSite": [1, 2]}), order=fixture.order)
     bind_runtime_models(source, fixture.build_models(model_base=PlanProblemModel, config=config))
 
-    # `RecordLoadError` does not exist before T017; see the test above.
-    try:
+    with pytest.raises(RecordLoadError) as raised:
         _read(source, "LocationSite")
-    except NotImplementedError:
-        raise
-    except Exception as raised:  # noqa: BLE001
-        error = raised
-    else:
-        pytest.fail("the read did not stop on the missing value")
 
-    assert type(error).__name__ == "RecordLoadError"
-    assert (error.kind, error.source_id, error.field) == ("LocationSite", "2", "name")  # ty: ignore[unresolved-attribute]
+    error = raised.value
+    assert (error.kind, error.source_id, error.field) == ("LocationSite", "2", "name")
 
 
 def test_the_destination_side_catches_nothing() -> None:

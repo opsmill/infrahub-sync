@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from infrahub_sync.plan.errors import DestinationIdentityCollisionError
+
 pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
 pytest.importorskip("fastapi")
@@ -52,8 +54,11 @@ ROUTES = [("problems", "problem"), ("left-out", "left_out"), ("kept", "kept")]
 
 NOT_IMPLEMENTED = pytest.mark.xfail(
     strict=True,
-    raises=NotImplementedError,
-    reason="spec 019 US1 not implemented: DiffSyncMixin.model_loader has no default read loop (T017)",
+    raises=(DestinationIdentityCollisionError, FileNotFoundError),
+    reason=(
+        "spec 019 US1 not implemented: the plan raises on identity collisions (T024) and writes no "
+        "plan/report.jsonl (T026 to T028)"
+    ),
 )
 NO_ROUTE = pytest.mark.xfail(
     strict=True,

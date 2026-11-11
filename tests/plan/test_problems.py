@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from infrahub_sync.plan.errors import DestinationIdentityCollisionError
 from tests.plan.conftest import PROBLEM_TYPES, TWIN_SITE_NAME
 from tests.plan.problem_plan import PlannedFixture, plan_fixture, problem_source_ids
 
@@ -30,8 +31,11 @@ pytestmark = [
     pytest.mark.usefixtures("_cache_dir"),
     pytest.mark.xfail(
         strict=True,
-        raises=NotImplementedError,
-        reason="spec 019 US1 not implemented: DiffSyncMixin.model_loader has no default read loop (T017)",
+        raises=(DestinationIdentityCollisionError, FileNotFoundError),
+        reason=(
+            "spec 019 US1 not implemented: the plan raises on identity collisions (T024) and writes no "
+            "plan/report.jsonl (T026 to T028)"
+        ),
     ),
 ]
 

@@ -318,13 +318,11 @@ class Potenda:
         run_id: str | None = None,
         cache_root: Path | None = None,
         schema_subhash: str = "",
-        continue_on_error: bool = False,
         concurrent_load: bool = True,
     ):
         """Initialize adapters, execution options, and per-run cache state."""
         self.top_level = top_level
         self.tiers: list[set[str]] | None = tiers
-        self.continue_on_error = continue_on_error
         self.concurrent_load = concurrent_load
         # Cache/run identity — passed at construction so the object is fully
         # valid on return rather than mutated into shape by the caller.
@@ -370,11 +368,6 @@ class Potenda:
         # diffsync's `Adapter.top_level` is a ClassVar but the library supports per-instance overrides.
         self.source.top_level = top_level  # ty: ignore[invalid-attribute-access]
         self.destination.top_level = top_level  # ty: ignore[invalid-attribute-access]
-
-        # Propagate continue_on_error so adapters can skip bad peers in-loop.
-        # Adapters that don't read the attribute just ignore it.
-        self.source.continue_on_error = continue_on_error  # ty: ignore[unresolved-attribute]
-        self.destination.continue_on_error = continue_on_error  # ty: ignore[unresolved-attribute]
 
         self.partition = partition
         self.progress_bar = None
