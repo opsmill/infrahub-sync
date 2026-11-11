@@ -761,11 +761,28 @@ specification 009".
 | Commit `a154b907` on the old branch | FR-036 | Decision 9 |
 | SC-001 to SC-010 | SC-001 to SC-010 | Kept; SC-011 added for FR-036 |
 
-## Open questions for the product owner
+## Decisions taken before implementation (2026-11-11, to confirm at review)
 
-1. Does the sign-off of 2026-10-17 on ADR 0020 and ADR 0021 cover the rewritten records, which
-   extend `<stage>_failure` instead of adding a `failure` field?
-2. A `sync` run that stops after its plan gives back its write admission when it dispatched no
-   operation, so the confirmed apply can run on the same run (old 009's design; plan research
-   R11). This changes the rule that a run that admitted a write never admits another stage, for
-   that one case. Is that acceptable?
+These decisions answer the questions this specification left open. They were taken on 2026-11-11
+to start implementation and are confirmed or changed at review.
+
+1. **The decisions in "Decisions that change old specification 009" stand as written.**
+   `--confirm-left-out` stays a yes-or-no flag, and the refusal states the count of records left
+   out. The problem and left-out lists are options of `runs plan`.
+2. **A stopped `sync` gives back its write admission.** This is old 009's design (research R11).
+   Running the confirmed apply as a new run is not possible, because an apply is a stage of the
+   run that made the plan (`apply_run` in `infrahub_sync/service/service.py`). Conditions:
+   - The admission is given back only when the run record shows that no operation was
+     dispatched.
+   - Giving back the admission and recording the stop are one state transition.
+   - The confirmed apply takes the admission again through the normal `apply_run` path.
+   - A test covers another run that takes the admission between the stop and the confirmed
+     apply.
+3. **The sign-off of 2026-10-17 does not cover the rewritten records.** ADR 0020, ADR 0021 and
+   ADR 0022 are written with the status Proposed. The sign-off task stays open and blocks the
+   merge, not the implementation.
+4. **Plan format 4 does not reserve `cleared_relationships`.** A field that nothing writes cannot
+   be tested, and a reader that ignored it would skip relationship clears without saying so. The
+   rebuild of old specification 010 adds its own plan format.
+5. **Decision records use the numbers 0020, 0021 and 0022.** 0023 stays free for the rebuild of
+   old specification 013. The records cite no internal tracker, chat or wiki pages.
