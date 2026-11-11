@@ -1,0 +1,29 @@
+tests/service/test_failure_cause.py
+  s_d199771aa41449::t_46b4bd6003214c 312-329
+  s_d199771aa41449::t_1de4f90bec5173 24
+infrahub_sync/infrahub_errors.py
+  s_d199771aa41449::t_70954cee71c0f2 262-264
+  s_d199771aa41449::t_48309438424c60 240-243
+tests/service/test_config_routes.py
+  s_d199771aa41449::t_492d7891de2c20 1771-1787
+infrahub_sync/service/failure_cause.py
+  s_d199771aa41449::t_b6f878bcc5ba82 438-440
+  s_d199771aa41449::t_f9ff5cc812b7e2 437,441-444
+  s_d199771aa41449::t_46b4bd6003214c 34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dbfcd03854636c5d62903c47394ec455dc48534a",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
