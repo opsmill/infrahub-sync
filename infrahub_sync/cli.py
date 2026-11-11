@@ -833,7 +833,7 @@ def _kept_line(entry: Mapping[str, Any]) -> str:
         named = f"{peer.get('kind')} source ID {peer.get('source_id')}, which is not in the source"
     else:
         named = f"{peer.get('kind')} {_report_record(peer)}, which the plan leaves out"
-    text = f"{entry.get('relationship')} refers to {named}; written without it"
+    text = f"{entry.get('relationship')} refers to {named}"
     return _report_line(entry.get("cause"), entry.get("record") or {}, text)
 
 
