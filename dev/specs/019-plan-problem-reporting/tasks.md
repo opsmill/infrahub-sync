@@ -90,13 +90,13 @@ the fixture and apply the stopped run.
 
 ### Tests for User Story 2
 
-- [ ] T033 [US2] Test, before any change, the store's admission rule for a stopped `sync` run (research R11): the stop's writeback releases the run's write admission in the same transaction only when no operation was dispatched; a confirmed apply is then admitted; a second apply, and an apply on a `sync` run that dispatched any operation, are refused with `run-execution-conflict`, in `tests/product_store/test_stopped_sync_admission.py` (reference: the old branch's `tests/service/test_sync_left_out_stop.py`)
-- [ ] T034 [P] [US2] Test the apply gate: refusal before any write with the count and audit outcome `refused-left-out-not-confirmed`; confirmation accepted and ignored when nothing is left out; strict boolean (422); a request without the field keeps working; format 3 apply refused with `PlanFormatApplyUnsupportedError` (SC-006), in `tests/service/test_apply_left_out_confirmation.py`
-- [ ] T035 [P] [US2] Test the engine's own check for direct callers, in `tests/plan/test_apply_gate.py`
-- [ ] T036 [P] [US2] Test the `sync` stop: phase `planned`, outcome `left-out-review-required`, `failure` in the stage result with the run ID, the checksum and `--confirm-left-out` in `next_action`, no destination call, the last log line, in `tests/service/test_sync_left_out_stop.py`
-- [ ] T037 [P] [US2] Test the CLI: `--confirm-left-out` sends `confirm_left_out: true`, the refusal line and exit code 1, and the stopped `sync` hint read from `results.failure`, in `tests/cli/test_apply_confirm_left_out.py`
-- [ ] T038 [P] [US2] Test the Prefect run artifact lines for left-out and problem counts and the `runs plan --problems` next step, in `tests/service/test_run_artifact.py`
-- [ ] T078 [US2] Test that another run that takes the configuration's write admission between a stopped `sync` and its confirmed apply makes that apply wait or be refused, never write alongside it (decision 2 of 2026-11-11), next to T033's test
+- [X] T033 [US2] Test, before any change, the store's admission rule for a stopped `sync` run (research R11): the stop's writeback releases the run's write admission in the same transaction only when no operation was dispatched; a confirmed apply is then admitted; a second apply, and an apply on a `sync` run that dispatched any operation, are refused with `run-execution-conflict`, in `tests/product_store/test_stopped_sync_admission.py` (reference: the old branch's `tests/service/test_sync_left_out_stop.py`)
+- [X] T034 [P] [US2] Test the apply gate: refusal before any write with the count and audit outcome `refused-left-out-not-confirmed`; confirmation accepted and ignored when nothing is left out; strict boolean (422); a request without the field keeps working; format 3 apply refused with `PlanFormatApplyUnsupportedError` (SC-006), in `tests/service/test_apply_left_out_confirmation.py`
+- [X] T035 [P] [US2] Test the engine's own check for direct callers, in `tests/plan/test_apply_gate.py`
+- [X] T036 [P] [US2] Test the `sync` stop: phase `planned`, outcome `left-out-review-required`, `failure` in the stage result with the run ID, the checksum and `--confirm-left-out` in `next_action`, no destination call, the last log line, in `tests/service/test_sync_left_out_stop.py`
+- [X] T037 [P] [US2] Test the CLI: `--confirm-left-out` sends `confirm_left_out: true`, the refusal line and exit code 1, and the stopped `sync` hint read from `results.failure`, in `tests/cli/test_apply_confirm_left_out.py`
+- [X] T038 [P] [US2] Test the Prefect run artifact lines for left-out and problem counts and the `runs plan --problems` next step, in `tests/service/test_run_artifact.py`
+- [X] T078 [US2] Test that another run that takes the configuration's write admission between a stopped `sync` and its confirmed apply makes that apply wait or be refused, never write alongside it (decision 2 of 2026-11-11), next to T033's test
 
 ### Implementation for User Story 2
 
