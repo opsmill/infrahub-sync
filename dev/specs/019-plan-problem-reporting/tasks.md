@@ -47,14 +47,14 @@ left-out and kept lists and counts, and no write.
 
 ### Tests for User Story 1
 
-- [ ] T009 [P] [US1] Test the base-class read loop and `load_record` for each caught error (wrong type, duplicate identity, excluded required peer, missing required peer, peer not loaded, failed transform), that the read continues with the next record, and that any other error is raised as `RecordLoadError`, in `tests/test_load_record.py`
-- [ ] T010 [P] [US1] Test each of the nine problem types, one test per type, against the T002 fixture, in `tests/plan/test_problems.py`
-- [ ] T011 [P] [US1] Test the dependency walk at any depth, the two kept cases of FR-005, a record with two problems counted once, and the edge cases of spec.md (both records of a duplicate pair left out; a left-out record that exists in Infrahub gets no update or delete; every record left out), in `tests/plan/test_left_out_walk.py`
-- [ ] T012 [P] [US1] Test that the stores and the DiffSync diff are unchanged after the problem pass and the selection step, in `tests/plan/test_stores_unchanged.py`
-- [ ] T013 [P] [US1] Test plan format 4: report written in canonical order, digest and counts in the manifest, checksum covers the report, a mismatch is `PlanVerificationError`, an empty report on a plan with no problems, format 3 fields kept (destination IDs, `lineage`, `last_changes.jsonl`), in `tests/plan/test_format_4.py`
-- [ ] T014 [P] [US1] Test `peer_not_found_in_source` for each adapter that resolves references while it reads (NetBox, Nautobot, ACI, generic REST): one problem, the plan finishes (SC-010), in `tests/adapters/test_peer_not_found_in_source.py`
-- [ ] T015 [P] [US1] Test the three paged list routes: order, filters, `expected_checksum` 409 `plan-changed`, 422 on an unknown type, empty lists on a format 3 plan, in `tests/service/test_plan_report_routes.py`
-- [ ] T016 [P] [US1] Test the CLI summary lines, the first 20 problems after `plan`, and `runs plan --problems`, `--left-out`, `--kept` with filters and exclusivity, in `tests/cli/test_plan_problem_output.py`
+- [X] T009 [P] [US1] Test the base-class read loop and `load_record` for each caught error (wrong type, duplicate identity, excluded required peer, missing required peer, peer not loaded, failed transform), that the read continues with the next record, and that any other error is raised as `RecordLoadError`, in `tests/test_load_record.py`
+- [X] T010 [P] [US1] Test each of the nine problem types, one test per type, against the T002 fixture, in `tests/plan/test_problems.py`
+- [X] T011 [P] [US1] Test the dependency walk at any depth, the two kept cases of FR-005, a record with two problems counted once, and the edge cases of spec.md (both records of a duplicate pair left out; a left-out record that exists in Infrahub gets no update or delete; every record left out), in `tests/plan/test_left_out_walk.py`
+- [X] T012 [P] [US1] Test that the stores and the DiffSync diff are unchanged after the problem pass and the selection step, in `tests/plan/test_stores_unchanged.py`
+- [X] T013 [P] [US1] Test plan format 4: report written in canonical order, digest and counts in the manifest, checksum covers the report, a mismatch is `PlanVerificationError`, an empty report on a plan with no problems, format 3 fields kept (destination IDs, `lineage`, `last_changes.jsonl`), in `tests/plan/test_format_4.py`
+- [X] T014 [P] [US1] Test `peer_not_found_in_source` for each adapter that resolves references while it reads (NetBox, Nautobot, ACI, generic REST): one problem, the plan finishes (SC-010), in `tests/adapters/test_peer_not_found_in_source.py`
+- [X] T015 [P] [US1] Test the three paged list routes: order, filters, `expected_checksum` 409 `plan-changed`, 422 on an unknown type, empty lists on a format 3 plan, in `tests/service/test_plan_report_routes.py`
+- [X] T016 [P] [US1] Test the CLI summary lines, the first 20 problems after `plan`, and `runs plan --problems`, `--left-out`, `--kept` with filters and exclusivity, in `tests/cli/test_plan_problem_output.py`
 
 ### Implementation for User Story 1
 
