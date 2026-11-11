@@ -27,7 +27,8 @@ When `--no-full-extract` is set, the engine takes the cursor path **if
 all** of these hold:
 
 1. A prior run exists under `.infrahub-sync-cache/<sync_name>/` with
-   `run.json` status `applied` (or `dry-run`).
+   `run.json` status `applied`. A `diff` run has status `dry-run` and is
+   never used as the baseline.
 2. `schema-sub-hash.txt` from that run matches the current schema
    mapping + destination schema. Any mapping change forces a full
    extract.
@@ -38,7 +39,9 @@ all** of these hold:
    `config.yml`).
 
 If any condition fails the engine falls back to the full extract path
-for that side / resource.
+for that side / resource and logs an `Incremental disabled: ...` reason.
+Missing per-resource cursors and unsupported cursor tiers include the side
+and resource in the message.
 
 ## When to keep `--full-extract`
 
