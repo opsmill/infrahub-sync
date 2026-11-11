@@ -1,0 +1,23 @@
+tests/cli/test_plan_problem_output.py
+  s_d199771aa41449::t_3add5d1ace2f9a 51-52,153-159,170,192,198-204,283-285,321
+tests/plan/test_format_4.py
+  s_d199771aa41449::t_3add5d1ace2f9a 97-98
+tests/test_load_record.py
+  s_d199771aa41449::t_3add5d1ace2f9a 232-264
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b665936c8638eb02f8045812952b97988452a6ff",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
