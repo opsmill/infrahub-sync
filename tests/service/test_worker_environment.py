@@ -391,3 +391,30 @@ async def test_one_validation_reports_a_missing_attribute_an_unset_credential_an
     runs = client.get("/runs")
     assert runs.status_code == 200, runs.text
     assert runs.json()["items"] == []
+
+
+async def test_a_store_that_fails_the_write_does_not_stop_the_poll_and_is_built_again(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A write the store refuses leaves the poll running; the next poll opens the store again."""
+    built: list[str] = []
+
+    class _RefusingProjection:
+        def publish_worker_environment(self, *_args: object, **_kwargs: object) -> None:  # noqa: PLR6301
+            raise ProductStoreProviderError(sqlstate="40001")
+
+    def factory(*_args: object, **_kwargs: object) -> _RefusingProjection:
+        built.append("store")
+        return _RefusingProjection()
+
+    monkeypatch.setattr(service_storage, "service_product_projection", factory)
+    monkeypatch.setattr(service_worker, "service_product_projection", factory, raising=False)
+    _set_worker_environment(monkeypatch, _WORKER_VARIABLES)
+    worker = _worker()
+
+    with caplog.at_level("DEBUG"):
+        await _poll(worker)
+        await _poll(worker)
+
+    assert built == ["store", "store"]
+    _assert_no_value(caplog.text)

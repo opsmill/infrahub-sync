@@ -324,6 +324,39 @@ def test_configs_validate_passes_the_named_branch_to_the_service(client: MagicMo
     client.validate_config.assert_called_once_with("edge-sync", 1, offset=0, limit=256, branch="review")
 
 
+@pytest.mark.parametrize(
+    ("arguments", "severities", "exit_code"),
+    [
+        (("--branch", "review"), ("warning", "error"), 1),
+        (("--branch", "review"), ("warning",), 0),
+        ((), ("warning", "error"), 0),
+    ],
+    ids=["branch-with-an-error", "branch-with-warnings-only", "no-branch-with-an-error"],
+)
+def test_configs_validate_exits_1_on_an_error_finding_only_with_a_branch(
+    client: MagicMock, arguments: tuple[str, ...], severities: tuple[Literal["error", "warning"], ...], exit_code: int
+) -> None:
+    """contracts/cli.md: with `--branch`, an error finding exits 1; without it the exit code is unchanged."""
+    client.validate_config.return_value = ValidationReportResource(
+        config_id="edge-sync",
+        registry_version=1,
+        package_checksum=CHECKSUM,
+        findings=tuple(
+            ValidationFindingResource(code="finding", severity=severity, location="/a", message="a finding")
+            for severity in severities
+        ),
+        offset=0,
+        limit=256,
+        total_findings=len(severities),
+        next_offset=None,
+    )
+
+    result = _invoke(client, "configs", "validate", "edge-sync", "1", *arguments)
+
+    assert result.exit_code == exit_code, result.output
+    assert "code=finding" in result.output
+
+
 def test_plan_uses_registered_tuple_waits_and_renders_service_plan(client: MagicMock) -> None:
     result = _invoke(
         client,

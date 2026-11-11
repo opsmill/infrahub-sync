@@ -311,3 +311,19 @@ def test_no_named_source_or_owner_looks_nothing_up(monkeypatch: pytest.MonkeyPat
 
     assert found == []
     assert client.lookups == []
+
+
+def test_a_named_lineage_kind_the_branch_schema_does_not_hold_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`CoreReadOnlyRepository` is an allowed lineage kind, but this branch's schema has no such kind."""
+    found, client = _validate(
+        monkeypatch,
+        permissions=_DEVICE_WRITE + _LINEAGE_VIEW,
+        lineage={"source": {"kind": "CoreReadOnlyRepository", "name": "mirror"}},
+    )
+
+    assert [(finding.code, finding.location) for finding in found] == [
+        ("destination-lineage-node-not-found", "/configuration/destination/settings/source")
+    ]
+    assert "CoreReadOnlyRepository" in found[0].message
+    assert "mirror" in found[0].message
+    assert client.lookups == []
