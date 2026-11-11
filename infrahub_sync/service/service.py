@@ -6,16 +6,17 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any, Literal, NoReturn
 from uuid import uuid4
 
 from pydantic import ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
-from infrahub_sync.client.models import DEFAULT_LOG_LIMIT
+from infrahub_sync.client.models import DEFAULT_LOG_LIMIT, PlanReportPageResource
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
@@ -82,6 +83,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 PLAN_ARTIFACT_ID = "plan-review"
+# The key of the published review document that holds the plan report's lines (spec 019).
+# `GET /runs/{run_id}/plan` does not return it; the paged report routes do.
+PLAN_REPORT_KEY = "report"
+# The `entry` of a plan report line, one per report route.
+ReportEntry = Literal["problem", "left_out", "kept"]
 
 
 def _reservation_outcome(receipt: MutationReceipt) -> str:
@@ -826,6 +832,50 @@ class RunService:
         self._required_run(run_id)
         return self._plan(run_id)
 
+    def get_plan_report(  # pylint: disable=too-many-arguments  # the route's filters, all keyword-only
+        self,
+        run_id: str,
+        *,
+        entry: ReportEntry,
+        offset: int,
+        limit: int,
+        problem_type: str | None = None,
+        kind: str | None = None,
+        expected_checksum: str | None = None,
+    ) -> PlanReportPageResource:
+        """Return one page of the problems, left-out records or kept records of the retained plan (spec 019).
+
+        The entries are the lines of the plan's `report.jsonl` whose `entry` is `entry`,
+        without that key, in the report's order, filtered by `problem_type` and `kind`. A
+        plan published without a report (format 2 or 3) has no entry.
+        """
+        self._required_run(run_id)
+        document = self._plan_document(run_id)
+        checksum = str(document.get("checksum") or "")
+        if expected_checksum is not None and expected_checksum != checksum:
+            raise self._error(409, "plan-changed", "the retained plan has another checksum", run_id=run_id)
+        lines = document.get(PLAN_REPORT_KEY) or []
+        if not isinstance(lines, list):
+            raise self._error(503, "plan-unavailable", "the retained plan is invalid", run_id=run_id)
+        selected = [
+            {key: value for key, value in line.items() if key != "entry"}
+            for line in lines
+            if isinstance(line, dict)
+            and line.get("entry") == entry
+            and (problem_type is None or line.get("problem_type") == problem_type)
+            and (kind is None or (line.get("record") or {}).get("kind") == kind)
+        ]
+        end = offset + limit
+        return PlanReportPageResource(
+            run_id=run_id,
+            plan_checksum=checksum,
+            entries=tuple(selected[offset:end]),
+            offset=offset,
+            limit=limit,
+            total=len(selected),
+            next_offset=end if end < len(selected) else None,
+        )
+
     def get_results(self, run_id: str) -> ResultsResource:
         """Return retained product results without consulting Prefect."""
         run = self._required_run(run_id)
@@ -1086,7 +1136,7 @@ class RunService:
             raise self._error(404, "run-not-found", "the requested Sync run does not exist", run_id=run_id)
         return result.value
 
-    def _plan(self, run_id: str) -> PlanResource:
+    def _plan_bytes(self, run_id: str) -> bytes:
         result = self._projection.lookup_artifact(run_id, PLAN_ARTIFACT_ID)
         if result.value is None:
             if result.reason == "run-not-found":
@@ -1094,10 +1144,27 @@ class RunService:
             if result.reason == "artifact-expired":
                 raise self._error(410, "artifact-expired", "the retained plan has expired", run_id=run_id)
             raise self._error(503, "plan-unavailable", "the retained plan cannot be retrieved", run_id=run_id)
+        return result.value
+
+    def _plan(self, run_id: str) -> PlanResource:
+        # The bounded model ignores the published document's report lines (`PLAN_REPORT_KEY`),
+        # which only the paged report routes return.
         try:
-            return EmittedPlanResource.model_validate_json(result.value)
+            return EmittedPlanResource.model_validate_json(self._plan_bytes(run_id))
         except (ValidationError, ValueError):
             raise self._error(503, "plan-unavailable", "the retained plan is invalid", run_id=run_id) from None
+
+    def _plan_document(self, run_id: str) -> dict[str, Any]:
+        """The published review document as a mapping, checked as `_plan` checks it."""
+        data = self._plan_bytes(run_id)
+        try:
+            EmittedPlanResource.model_validate_json(data)
+            document = json.loads(data)
+        except (ValidationError, ValueError):
+            raise self._error(503, "plan-unavailable", "the retained plan is invalid", run_id=run_id) from None
+        if not isinstance(document, dict):
+            raise self._error(503, "plan-unavailable", "the retained plan is invalid", run_id=run_id)
+        return document
 
     @staticmethod
     def _stage_parameters(

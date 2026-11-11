@@ -16,11 +16,9 @@ Names this module assumes, for spec 019 T029 to T031 to confirm or change:
   called with the run ID and the keywords `offset`, `limit` and the filters `problem_type`
   (problems only) and `kind`, each returning a page with `entries`, `total` and `next_offset`
   (contracts/sync-api.md); the pages here are plain namespaces with those fields
-- the summary counts of data-model.md "Plan summary additions" on `PlanSummaryResource`; the
-  summary is built with `model_construct` because the fields do not exist before T029
+- the summary counts of data-model.md "Plan summary additions" on `PlanSummaryResource`
 
-Until T029 to T031 each test is an expected failure: the CLI prints none of these lines and has no
-`--problems`, `--left-out`, `--kept` or `--type` option (`AssertionError`).
+Spec 019 T029 to T031 confirmed these names.
 """
 
 from __future__ import annotations
@@ -39,12 +37,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
 __all__ = ["client"]
-
-pytestmark = pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="spec 019 US1 not implemented: the CLI prints no problem, left-out or kept line (T031)",
-)
 
 RUN_ID = "service-run-1"
 
@@ -146,8 +138,7 @@ def _summary(**additions: Any) -> PlanSummaryResource:  # noqa: ANN401
         "dropdown_values_checked": True,
     }
     counts.update(additions)
-    base = _plan().summary.model_dump()
-    return PlanSummaryResource.model_construct(**base, **counts)
+    return PlanSummaryResource.model_validate({**_plan().summary.model_dump(), **counts})
 
 
 def _pages(

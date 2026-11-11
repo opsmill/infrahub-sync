@@ -49,6 +49,7 @@ from infrahub_sync.client.models import (
     LOG_STAGES,
     MAX_FAILURE_CAUSE_TEXT,
     MAX_LIMIT,
+    MAX_REPORT_LIMIT,
     RECOVERY_NEXT_ACTIONS,
     SCHEMA_CHANGED_NEXT_ACTION,
     ListPage,
@@ -66,6 +67,7 @@ if TYPE_CHECKING:
         EventResource,
         PlanLastChangeResource,
         PlanOperationResource,
+        PlanReportPageResource,
         PublicRunResource,
         RecoveryAction,
         RunLogLine,
@@ -87,6 +89,7 @@ NOT_RECORDED = "not recorded"
 _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
 _KIND_ARG = "kind"
+_TYPE_ARG = "type"
 _VERSION_ARG = "version"
 _DIFF_DEPRECATION = "warning: 'diff' is deprecated, use 'plan'"
 _LIMIT_HELP = f"Items per page, 1-{MAX_LIMIT}. The server default applies when omitted."
@@ -784,6 +787,102 @@ def _operation_detail(operation: PlanOperationResource, last_changes: Sequence[P
         typer.echo(_last_change_line(record))
 
 
+def _report_value(value: object) -> str:
+    """One identity value of a report record: a peer reference shows its own identity values."""
+    if isinstance(value, dict):
+        mapping = cast("dict[str, object]", value)
+        identity = mapping.get("identity")
+        inner = cast("dict[str, object]", identity) if isinstance(identity, dict) else mapping
+        return ",".join(_report_value(inner[key]) for key in sorted(inner))
+    if isinstance(value, list | tuple):
+        return ",".join(_report_value(item) for item in value)
+    return str(value)
+
+
+def _report_record(record: Mapping[str, Any] | None) -> str:
+    """A report record by its identity, or by its source ID when its identity is not known."""
+    if not record:
+        return "<none>"
+    identity = record.get("identity")
+    if isinstance(identity, dict) and identity:
+        return " ".join(f"{key}={_report_value(identity[key])}" for key in sorted(identity))
+    return f"source_id={record.get('source_id')}"
+
+
+def _report_line(first: object, record: Mapping[str, Any], text: str) -> str:
+    """One line of a problem, left-out or kept list: four columns separated by two spaces (contracts/cli.md)."""
+    return _display(f"{first}  {record.get('kind')}  {_report_record(record)}  {text}")
+
+
+def _problem_line(entry: Mapping[str, Any]) -> str:
+    return _report_line(entry.get("problem_type"), entry.get("record") or {}, str(entry.get("reason") or ""))
+
+
+def _left_out_line(entry: Mapping[str, Any]) -> str:
+    if entry.get("cause") == "depends_on_left_out":
+        depends_on = entry.get("depends_on") or {}
+        text = f"depends on {depends_on.get('kind')} {_report_record(depends_on)} through {entry.get('relationship')}"
+    else:
+        text = "has " + ", ".join(str(problem_type) for problem_type in entry.get("problem_types") or ())
+    return _report_line(entry.get("cause"), entry.get("record") or {}, text)
+
+
+def _kept_line(entry: Mapping[str, Any]) -> str:
+    peer = entry.get("left_out_peer") or {}
+    if entry.get("cause") == "peer_not_found_in_source":
+        named = f"{peer.get('kind')} source ID {peer.get('source_id')}, which is not in the source"
+    else:
+        named = f"{peer.get('kind')} {_report_record(peer)}, which the plan leaves out"
+    text = f"{entry.get('relationship')} refers to {named}; written without it"
+    return _report_line(entry.get("cause"), entry.get("record") or {}, text)
+
+
+def _echo_report_summary(plan: PlanResource) -> None:
+    """The counts of spec 019 FR-007, the kinds whose deletes are not computed, and the Dropdown check."""
+    summary = plan.summary
+    typer.echo(
+        f"left_out: {summary.left_out} (with a problem: {summary.left_out_with_problem}, "
+        f"depending on one: {summary.left_out_dependent})"
+    )
+    typer.echo(f"problems: {summary.problems}")
+    typer.echo(f"kept_without_relationship: {summary.kept}")
+    for kind, count in summary.deletes_withheld_by_kind.items():
+        typer.echo(_display(f"deletes not computed for {kind}: {count} records without identity"))
+    if not summary.dropdown_values_checked:
+        typer.echo("Dropdown values were not checked: no destination schema snapshot in this run")
+
+
+def _report_pages(
+    read: Callable[..., PlanReportPageResource], run_id: str, operation: str, **filters: str | None
+) -> Iterator[Mapping[str, Any]]:
+    """Every entry of one report list, page after page, until `next_offset` is null."""
+    given = {name: value for name, value in filters.items() if value is not None}
+    offset = 0
+    while True:
+        page = read(run_id, offset=offset, limit=MAX_REPORT_LIMIT, **given)
+        yield from page.entries
+        if page.next_offset is None:
+            return
+        if page.next_offset <= offset:
+            raise ProtocolError(operation)
+        offset = page.next_offset
+
+
+# How many problems `plan` prints after its summary (contracts/cli.md).
+_FIRST_PROBLEMS = 20
+
+
+def _echo_first_problems(client: SyncClient, plan: PlanResource) -> None:
+    """Print the first problems of a new plan and the command that lists every one."""
+    if plan.summary.problems <= 0:
+        return
+    page = client.get_plan_problems(plan.run_id, offset=0, limit=_FIRST_PROBLEMS)
+    for entry in page.entries:
+        typer.echo(_problem_line(entry))
+    if plan.summary.problems > len(page.entries):
+        typer.echo(f"List every problem with `infrahub-sync runs plan {_display(plan.run_id)} --problems`.")
+
+
 def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = None) -> None:
     operations = list(plan.operations)
     if kind is not None:
@@ -807,6 +906,7 @@ def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = N
     for note in plan.verification_notes:
         typer.echo(f"verification_note: {_display(note)}")
     _echo_counts("by_action", plan.summary.by_action)
+    _echo_report_summary(plan)
     _echo_counts("by_kind", plan.summary.by_kind)
     _delete_disclosure(plan)
     _owner_scope_disclosure(plan)
@@ -970,7 +1070,9 @@ def plan_cmd(
             poll_interval=poll_interval,
         )
         if wait:
-            _echo_plan(client.get_plan(completed.run.run_id))
+            plan = client.get_plan(completed.run.run_id)
+            _echo_plan(plan)
+            _echo_first_problems(client, plan)
 
 
 @app.command("diff", hidden=True, help="Deprecated alias of `plan`; it will be removed in a later release.")
@@ -1245,16 +1347,45 @@ def runs_results(
 def runs_plan(
     ctx: typer.Context,
     run_id: str = typer.Argument(..., help="Service-issued run ID."),
+    *,
     detail: bool = typer.Option(False, "--detail", help="Render every saved operation."),  # noqa: FBT003
     kind: str | None = typer.Option(
         None,
         "--kind",
-        help="Filter the detailed operation list by destination kind; requires --detail.",
+        help="Filter the detailed operation list, or the problem, left-out or kept list, by destination kind.",
+    ),
+    problems: bool = typer.Option(False, "--problems", help="List every problem the plan found."),  # noqa: FBT003
+    left_out: bool = typer.Option(False, "--left-out", help="List every record the plan leaves out."),  # noqa: FBT003
+    kept: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--kept",
+        help="List every record the plan keeps without one optional relationship.",
+    ),
+    problem_type: str | None = typer.Option(
+        None, "--type", help="List only the problems of this problem type; requires --problems."
     ),
 ) -> None:
-    """Review a saved plan summary, checksum, and operations."""
+    """Review a saved plan summary, checksum, and operations, or list its problems, left-out or kept records."""
     with _client_errors():
-        _echo_plan(_client(ctx).get_plan(run_id), detail=detail, kind=kind)
+        lists = [name for name, chosen in (("problems", problems), ("left_out", left_out), ("kept", kept)) if chosen]
+        if len(lists) > 1 or (lists and detail):
+            raise ClientInputError(lists[1] if len(lists) > 1 else "detail")
+        if problem_type is not None and not problems:
+            raise ClientInputError(_TYPE_ARG)
+        client = _client(ctx)
+        if problems:
+            for entry in _report_pages(
+                client.get_plan_problems, run_id, "get_plan_problems", problem_type=problem_type, kind=kind
+            ):
+                typer.echo(_problem_line(entry))
+        elif left_out:
+            for entry in _report_pages(client.get_plan_left_out, run_id, "get_plan_left_out", kind=kind):
+                typer.echo(_left_out_line(entry))
+        elif kept:
+            for entry in _report_pages(client.get_plan_kept, run_id, "get_plan_kept", kind=kind):
+                typer.echo(_kept_line(entry))
+        else:
+            _echo_plan(client.get_plan(run_id), detail=detail, kind=kind)
 
 
 # A run's phase while its first execution is submitted and has not ended.

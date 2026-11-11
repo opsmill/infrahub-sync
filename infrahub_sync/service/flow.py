@@ -26,6 +26,7 @@ from prefect.client.schemas.objects import WorkerStatus
 from prefect.exceptions import MissingContextError, ObjectNotFound
 from prefect.runtime import flow_run as current_flow_run
 from prefect.states import Failed, State
+from pydantic_core import to_json
 
 from infrahub_sync.client.models import RECOVERY_NEXT_ACTIONS, RecoveryAction
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
@@ -84,7 +85,7 @@ from .orchestration import SERVICE_FLOW_NAME, run_name
 from .read_progress import StoreSideReadObserver, record_waiting
 from .run_artifact import publish_run_artifact
 from .scratch import StageScratch, stage_scratch
-from .service import PLAN_ARTIFACT_ID
+from .service import PLAN_ARTIFACT_ID, PLAN_REPORT_KEY
 from .storage import service_guard_secrets, service_guard_session, service_product_projection
 
 CONFIG_DIR_ENV = "INFRAHUB_SYNC_CONFIG_DIRECTORY"
@@ -264,12 +265,18 @@ def _review_document(run_id: str, saved: SavedPlan) -> PlanResource:
 
 def _publish_plan(projection: ProductProjection, run_id: str, saved: SavedPlan, secrets: Sequence[str]) -> None:
     document = _review_document(run_id, saved)
+    data = document.model_dump_json().encode()
+    if saved.report:
+        # The plan report's lines travel in the same document, under a key `GET /runs/{run_id}/plan`
+        # does not return; the paged report routes read them (spec 019 contracts/sync-api.md). The
+        # same serializer as `model_dump_json`, so secret redaction sees the same value text.
+        data = to_json({**document.model_dump(mode="json"), PLAN_REPORT_KEY: list(saved.report)})
     projection.publish_artifact(
         run_id,
         artifact_id=PLAN_ARTIFACT_ID,
         kind="saved-plan-review",
         media_type="application/json",
-        data=document.model_dump_json().encode(),
+        data=data,
         secrets=secrets,
     )
 

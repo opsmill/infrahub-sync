@@ -13,8 +13,9 @@ keeps out of the comparison:
 - the parquet digests of `source_snapshot`, which depend on the parquet writer's version and
   not on the plan; their paths and row counts are compared.
 
-When T027 adds `report.jsonl` and the manifest's `report` key, it updates `PLAN_FILES` and
-`MANIFEST_KEYS` here and nothing else.
+T027 added `report.jsonl` and the manifest's `report` key; T028 added
+`dropdown_values_checked: false`, since these fixtures run without a destination schema
+snapshot. Each changed `PLAN_FILES`, `MANIFEST_KEYS` and the recorded manifests only.
 """
 
 from __future__ import annotations
@@ -56,6 +57,7 @@ MANIFEST_KEYS = [
     "config_version",
     "created_at",
     "delete_operations_computed",
+    "dropdown_values_checked",
     "format_version",
     "operations_count",
     "plan_checksum",

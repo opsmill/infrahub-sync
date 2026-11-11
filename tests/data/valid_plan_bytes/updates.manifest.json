@@ -1,6 +1,7 @@
 {
   "config_version": "9f8638a66be8816ecd610b26d540f4984579059b3f4bf9f8df304e884d493133",
   "delete_operations_computed": true,
+  "dropdown_values_checked": false,
   "operations_count": 4,
   "report": {
     "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",

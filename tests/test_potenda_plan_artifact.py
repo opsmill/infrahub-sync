@@ -84,6 +84,9 @@ MANIFEST_KEYS = frozenset(
         "plan_checksum",
         # Plan format 4 (spec 019): the digest, size and counts of `report.jsonl`.
         "report",
+        # Plan format 4: these runs have no destination schema snapshot, so the plan could not
+        # check Dropdown values (spec 019 research R4).
+        "dropdown_values_checked",
     }
 )
 
@@ -2472,4 +2475,10 @@ def test_a_registered_plan_run_records_the_runtime_snapshot_fingerprint(monkeypa
 
     manifest = read_manifest(plan_run_dir(potenda))
     assert manifest["schema_fingerprint"] == fingerprint
-    assert set(manifest) == MANIFEST_KEYS | {"config_id", "registry_version", "package_checksum", "schema_fingerprint"}
+    # A registered run has a destination schema snapshot, so the plan checked Dropdown values.
+    assert set(manifest) == (MANIFEST_KEYS - {"dropdown_values_checked"}) | {
+        "config_id",
+        "registry_version",
+        "package_checksum",
+        "schema_fingerprint",
+    }

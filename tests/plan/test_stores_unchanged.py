@@ -5,9 +5,7 @@ destination schema and the derived operations; the selection step removes operat
 relationship values from the plan only. So after `Potenda.write_plan` both stores and the diff
 hold what they held before it, and a plan of valid data keeps its bytes.
 
-Spec 019 T017 to T028 implement the behavior. Until then each test is an expected failure: the
-fixture source needs the base-class read loop, and `DiffSyncMixin.model_loader` raises
-`NotImplementedError`.
+Spec 019 T017 to T028 implement the behavior.
 """
 
 from __future__ import annotations
@@ -16,26 +14,15 @@ import copy
 import json
 from typing import TYPE_CHECKING, Any
 
-import pytest
-
-from infrahub_sync.plan.errors import DestinationIdentityCollisionError
 from tests.plan.problem_plan import build_potenda, finish_plan, load_both_sides
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    import pytest
     from diffsync import Adapter
 
     from tests.plan.conftest import PlanProblemFixture
-
-pytestmark = pytest.mark.xfail(
-    strict=True,
-    raises=DestinationIdentityCollisionError,
-    reason=(
-        "spec 019 T028 not implemented: Potenda.write_plan does not run the problem pass yet, so it "
-        "still refuses identity groups (DestinationIdentityCollisionError)"
-    ),
-)
 
 
 def _store(adapter: Adapter, kinds: list[str]) -> dict[str, list[str]]:

@@ -12,8 +12,12 @@ Format 4 is format 3 plus `plan/report.jsonl` and a `report` object in the manif
 - the format 3 fields stay: `destination_id` on updates, `lineage` and `plan/last_changes.jsonl`
 
 Spec 019 T027 implements the format; T028 runs the problem pass before `Potenda.write_plan`
-writes the plan. Until T028, each test that plans the full fixture is an expected failure:
-`Potenda.write_plan` still refuses its identity groups (`DestinationIdentityCollisionError`).
+writes the plan.
+
+The apply gate's left-out count is bound to the checksum the operator confirms (ADR 0022):
+the checksum covers the manifest, the manifest holds the report's digest, and the apply
+refuses a report that does not match that digest. The last two tests check this on the apply
+path, not only on the reader.
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ import pytest
 
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
-from infrahub_sync.plan.errors import DestinationIdentityCollisionError, PlanVerificationError
+from infrahub_sync.plan.errors import PlanVerificationError
 from infrahub_sync.plan.models import LineageAccountRecord, LineageNodeRecord, PlanLineageRecord
 from infrahub_sync.plan.reader import load_plan_artifact
 from infrahub_sync.plan.review import resolve_run_directory
@@ -47,14 +51,6 @@ if TYPE_CHECKING:
     from tests.plan.conftest import PlanProblemFixture
     from tests.plan.problem_plan import PlannedFixture
 
-NOT_IMPLEMENTED = pytest.mark.xfail(
-    strict=True,
-    raises=DestinationIdentityCollisionError,
-    reason=(
-        "spec 019 T028 not implemented: Potenda.write_plan does not run the problem pass yet, so it "
-        "still refuses identity groups (DestinationIdentityCollisionError)"
-    ),
-)
 
 ZERO_COUNTS = {"problems": 0, "left_out": 0, "left_out_with_problem": 0, "left_out_dependent": 0, "kept": 0}
 
@@ -90,7 +86,6 @@ def _order_key(line: dict[str, Any]) -> tuple[Any, ...]:
     return (group, *key, canonical_json_bytes(line))
 
 
-@NOT_IMPLEMENTED
 def test_the_manifest_is_format_4_and_records_the_report(plan_problems: PlanProblemFixture) -> None:
     """`report` holds the digest, the size and the counts of `report.jsonl`."""
     planned = plan_fixture(plan_problems)
@@ -115,7 +110,6 @@ def test_the_manifest_is_format_4_and_records_the_report(plan_problems: PlanProb
     assert planned.loaded_manifest.format_version == 4
 
 
-@NOT_IMPLEMENTED
 def test_the_report_is_canonical_and_in_the_stable_order(plan_problems: PlanProblemFixture) -> None:
     """Every line is in the canonical encoding, and the lines follow the order of data-model.md."""
     planned = plan_fixture(plan_problems)
@@ -127,7 +121,6 @@ def test_the_report_is_canonical_and_in_the_stable_order(plan_problems: PlanProb
     assert planned.report_bytes.endswith(b"\n")
 
 
-@NOT_IMPLEMENTED
 def test_the_report_does_not_depend_on_the_read_order(plan_problems: PlanProblemFixture) -> None:
     """The same records read in reverse order give the same report bytes.
 
@@ -145,7 +138,6 @@ def test_the_report_does_not_depend_on_the_read_order(plan_problems: PlanProblem
     assert second.report_bytes == first.report_bytes
 
 
-@NOT_IMPLEMENTED
 def test_a_report_that_does_not_match_its_digest_is_refused(plan_problems: PlanProblemFixture) -> None:
     """One changed byte in `report.jsonl` is a `PlanVerificationError`."""
     planned = plan_fixture(plan_problems)
@@ -156,7 +148,6 @@ def test_a_report_that_does_not_match_its_digest_is_refused(plan_problems: PlanP
         load_plan_artifact(planned.run_dir)
 
 
-@NOT_IMPLEMENTED
 def test_a_missing_report_is_refused(plan_problems: PlanProblemFixture) -> None:
     """A format 4 plan without `report.jsonl` is a `PlanVerificationError`."""
     planned = plan_fixture(plan_problems)
@@ -166,7 +157,6 @@ def test_a_missing_report_is_refused(plan_problems: PlanProblemFixture) -> None:
         load_plan_artifact(planned.run_dir)
 
 
-@NOT_IMPLEMENTED
 def test_a_left_out_count_that_does_not_match_the_report_is_refused(plan_problems: PlanProblemFixture) -> None:
     """A manifest whose `report.left_out` differs from the report's lines is refused, even with a valid checksum."""
     planned = plan_fixture(plan_problems)
@@ -180,7 +170,6 @@ def test_a_left_out_count_that_does_not_match_the_report_is_refused(plan_problem
         load_plan_artifact(planned.run_dir)
 
 
-@NOT_IMPLEMENTED
 def test_the_plan_checksum_covers_the_report_digest(plan_problems: PlanProblemFixture) -> None:
     """The checksum computed over the manifest changes when only the report digest changes."""
     planned = plan_fixture(plan_problems)
@@ -192,6 +181,73 @@ def test_the_plan_checksum_covers_the_report_digest(plan_problems: PlanProblemFi
     assert compute_plan_checksum(manifest, operations_bytes) != planned.manifest["plan_checksum"]
 
 
+class _NoWriteOwnership:
+    """A write-ownership boundary that fails the test if the apply reaches an operation."""
+
+    @staticmethod
+    def before_operation() -> None:
+        msg = "the apply reached an operation"
+        raise AssertionError(msg)
+
+    @staticmethod
+    def after_final_operation() -> None:
+        msg = "the apply reached its last operation"
+        raise AssertionError(msg)
+
+
+def _without_one_left_out_line(report_bytes: bytes) -> bytes:
+    """The report with its first dependent left-out line removed, as an edit to lower the count."""
+    lines = report_bytes.splitlines(keepends=True)
+    index = next(i for i, raw in enumerate(lines) if json.loads(raw).get("cause") == "depends_on_left_out")
+    return b"".join(lines[:index] + lines[index + 1 :])
+
+
+def test_an_apply_refuses_a_report_edited_after_the_plan(plan_problems: PlanProblemFixture) -> None:
+    """Removing a left-out line from `report.jsonl` alone makes the apply refuse before any write."""
+    planned = plan_fixture(plan_problems)
+    confirmed = planned.manifest["plan_checksum"]
+    report_path = _plan_dir(planned) / REPORT_FILE_NAME
+    report_path.write_bytes(_without_one_left_out_line(planned.report_bytes))
+
+    with pytest.raises(PlanVerificationError, match="report"):
+        planned.potenda.apply_plan(ownership=_NoWriteOwnership(), expected_checksum=confirmed)
+
+
+@pytest.mark.parametrize("rehash", [False, True], ids=["checksum-kept", "checksum-recomputed"])
+def test_an_apply_refuses_a_report_and_manifest_edited_together(
+    plan_problems: PlanProblemFixture, *, rehash: bool
+) -> None:
+    """A report edit with a matching manifest `report` record changes the checksum the operator confirmed.
+
+    Kept: the recorded checksum no longer matches the files. Recomputed: the files match a new
+    checksum, which is not the one the operator confirmed. Both refuse before any write.
+    """
+    planned = plan_fixture(plan_problems)
+    confirmed = planned.manifest["plan_checksum"]
+    plan_dir = _plan_dir(planned)
+    edited = _without_one_left_out_line(planned.report_bytes)
+    (plan_dir / REPORT_FILE_NAME).write_bytes(edited)
+    manifest = json.loads((plan_dir / MANIFEST_FILE_NAME).read_bytes())
+    manifest["report"] = {
+        **manifest["report"],
+        "digest": report_digest(edited),
+        "size": len(edited),
+        "left_out": manifest["report"]["left_out"] - 1,
+        "left_out_dependent": manifest["report"]["left_out_dependent"] - 1,
+    }
+    if rehash:
+        manifest["plan_checksum"] = compute_plan_checksum(manifest, (plan_dir / OPERATIONS_FILE_NAME).read_bytes())
+    (plan_dir / MANIFEST_FILE_NAME).write_bytes(canonical_json_bytes(manifest))
+    if rehash:
+        # The edited plan is consistent in itself: only the confirmed checksum tells it apart.
+        edited_manifest = load_plan_artifact(planned.run_dir).manifest
+        assert edited_manifest.report is not None
+        assert edited_manifest.report.left_out == planned.manifest["report"]["left_out"] - 1
+
+    with pytest.raises(PlanVerificationError, match="checksum"):
+        planned.potenda.apply_plan(ownership=_NoWriteOwnership(), expected_checksum=confirmed)
+
+
 def test_a_plan_with_no_problem_writes_an_empty_report(plan_problems: PlanProblemFixture) -> None:
     """Valid records only: `report.jsonl` is empty and the `report` object holds zeros."""
     planned = plan_fixture(plan_problems, Variant.NO_PROBLEMS)
@@ -201,7 +257,6 @@ def test_a_plan_with_no_problem_writes_an_empty_report(plan_problems: PlanProble
     assert planned.manifest["format_version"] == 4
 
 
-@NOT_IMPLEMENTED
 def test_a_run_without_a_schema_snapshot_records_that_dropdown_values_were_not_checked(
     plan_problems: PlanProblemFixture,
 ) -> None:

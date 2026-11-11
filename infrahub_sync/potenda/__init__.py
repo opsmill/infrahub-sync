@@ -762,9 +762,11 @@ class Potenda:
             tier_of,
             warn_missing_convergence_key,
         )
-        from infrahub_sync.plan.keying import refuse_identity_groups
+        from infrahub_sync.plan.last_changes import selected_last_changes
         from infrahub_sync.plan.models import SourceSnapshotRecord
+        from infrahub_sync.plan.problems import run_problem_pass
         from infrahub_sync.plan.writer import write_plan_artifact as write_artifact
+        from infrahub_sync.runtime_schema.worker import planned_dropdown_choices
 
         resolve_tier = partial(tier_of, tiers=self.tiers, top_level=self.top_level)
         last_changes = destination_last_changes(self.destination)  # FR-007; `None` writes no last-change file
@@ -796,20 +798,27 @@ class Potenda:
                 destination_full_extract=deletes_computed,
             )
         )
+        identity_groups = warn_missing_convergence_key(
+            destination=self.destination, operations=operations, source_adapter=self.source, config=self.config
+        )
+        # Spec 019 research R3: find every problem, then leave out the records that have one and
+        # the records that depend on them, before anything is written. The report and the
+        # selected operations are the plan; no store and no derived operation is changed.
+        result = run_problem_pass(
+            source=self.source,
+            destination=self.destination,
+            operations=operations,
+            config=self.config,
+            identity_groups=identity_groups,
+            dropdown_choices=planned_dropdown_choices(self.config),
+        )
+        operations = result.operations
         action_counts: dict[str, int] = dict.fromkeys(ACTIONS, 0)
         for operation in operations:
             action_counts[operation.action] += 1
 
-        identity_groups = warn_missing_convergence_key(
-            destination=self.destination, operations=operations, source_adapter=self.source, config=self.config
-        )
-        # Spec 019 T028 replaces this refusal with the problem pass, which leaves these records out.
-        # Until then the plan refuses the groups it refused before spec 019; a merge on the
-        # closest destination key stays a warning.
-        refuse_identity_groups(identity_groups, config=self.config)
-
         if not self.run_dir or not self.run_id:
-            logger.debug("Plan artifact: skipped after identity checks, this run has no run_dir/run_id")
+            logger.debug("Plan artifact: skipped after the problem pass, this run has no run_dir/run_id")
             return None
 
         manifest = write_artifact(
@@ -825,8 +834,10 @@ class Potenda:
             configuration_binding=self.configuration_binding,
             schema_fingerprint=self.schema_fingerprint,
             lineage=destination_lineage_record(self.destination),
-            last_changes=None if last_changes is None else last_changes.records,
+            last_changes=None if last_changes is None else selected_last_changes(last_changes.records, operations),
             metadata_read=last_changes is not None and last_changes.metadata_read,
+            report=result.report,
+            dropdown_values_checked=result.dropdown_values_checked,
         )
         logger.info(
             "Plan artifact: wrote %d operation(s) to %s (deletes computed: %s)",

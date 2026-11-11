@@ -45,6 +45,10 @@ DEFAULT_LOG_LIMIT = 200
 MAX_LOG_LIMIT = 1000
 LOG_STAGES: tuple[str, ...] = ("plan", "verify", "apply", "sync")
 
+# The largest page of a saved plan's problem, left-out or kept list, and the default (spec 019,
+# contracts/sync-api.md).
+MAX_REPORT_LIMIT = 500
+
 _Item_co = TypeVar("_Item_co", covariant=True)
 
 
@@ -507,6 +511,35 @@ class PlanSummaryResource(_ResourceModel):
     total: int = Field(ge=0)
     delete_operations_computed: bool
     deletes_not_executed: int = Field(ge=0)
+    # Spec 019 FR-007 and FR-008: the counts of the plan report. Defaults, so a review
+    # published before these fields existed still validates; a format 2 or 3 plan has zeros
+    # and `dropdown_values_checked` false.
+    left_out: int = Field(default=0, ge=0)
+    left_out_with_problem: int = Field(default=0, ge=0)
+    left_out_dependent: int = Field(default=0, ge=0)
+    left_out_by_kind: dict[str, int] = Field(default_factory=dict)
+    problems: int = Field(default=0, ge=0)
+    problems_by_type: dict[str, int] = Field(default_factory=dict)
+    kept: int = Field(default=0, ge=0)
+    # Per kind, the records whose deletes the plan does not compute (research R21).
+    deletes_withheld_by_kind: dict[str, int] = Field(default_factory=dict)
+    dropdown_values_checked: bool = False
+
+
+class PlanReportPageResource(_ResourceModel):
+    """One page of the problems, left-out records or kept records of a saved plan (spec 019).
+
+    `entries` are the lines of the plan's `report.jsonl` without their `entry` key, in the
+    report's stable order. `next_offset` is `None` on the last page.
+    """
+
+    run_id: str
+    plan_checksum: str
+    entries: tuple[dict[str, Any], ...]
+    offset: int = Field(ge=0)
+    limit: int = Field(ge=MIN_LIMIT, le=MAX_REPORT_LIMIT)
+    total: int = Field(ge=0)
+    next_offset: int | None = Field(default=None, ge=0)
 
 
 class PlanOperationResource(_ResourceModel):

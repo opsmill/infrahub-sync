@@ -29,6 +29,7 @@ from .models import (
     LOG_STAGES,
     MAX_LIMIT,
     MAX_LOG_LIMIT,
+    MAX_REPORT_LIMIT,
     MIN_LIMIT,
     ApplyRunRequest,
     ArtifactContent,
@@ -47,6 +48,7 @@ from .models import (
     EventResource,
     ListPage,
     OrchestrationSummary,
+    PlanReportPageResource,
     PlanResource,
     PrincipalResource,
     PublicRunResource,
@@ -496,6 +498,65 @@ class SyncClient:  # pylint: disable=too-many-public-methods
 
         run_id = self._identifier(run_id, "run_id")
         return self._request_model("get_plan", "GET", f"/runs/{run_id}/plan", model=PlanResource, success={200})
+
+    def get_plan_problems(
+        self,
+        run_id: str,
+        *,
+        offset: int = 0,
+        limit: int = MAX_REPORT_LIMIT,
+        problem_type: str | None = None,
+        kind: str | None = None,
+    ) -> PlanReportPageResource:
+        """Return one page of a saved plan's problems, optionally of one problem type or kind (spec 019)."""
+
+        return self._plan_report_page(
+            "get_plan_problems", run_id, "problems", offset=offset, limit=limit, problem_type=problem_type, kind=kind
+        )
+
+    def get_plan_left_out(
+        self, run_id: str, *, offset: int = 0, limit: int = MAX_REPORT_LIMIT, kind: str | None = None
+    ) -> PlanReportPageResource:
+        """Return one page of the records a saved plan leaves out, optionally of one kind (spec 019)."""
+
+        return self._plan_report_page("get_plan_left_out", run_id, "left-out", offset=offset, limit=limit, kind=kind)
+
+    def get_plan_kept(
+        self, run_id: str, *, offset: int = 0, limit: int = MAX_REPORT_LIMIT, kind: str | None = None
+    ) -> PlanReportPageResource:
+        """Return one page of the records a saved plan keeps without one optional relationship (spec 019)."""
+
+        return self._plan_report_page("get_plan_kept", run_id, "kept", offset=offset, limit=limit, kind=kind)
+
+    def _plan_report_page(
+        self,
+        operation: str,
+        run_id: str,
+        route: str,
+        *,
+        offset: int,
+        limit: int,
+        problem_type: str | None = None,
+        kind: str | None = None,
+    ) -> PlanReportPageResource:
+        run_id = self._identifier(run_id, "run_id")
+        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_OFFSET_ARG)
+        if type(limit) is not int or not MIN_LIMIT <= limit <= MAX_REPORT_LIMIT:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_LIMIT_ARG)
+        params: dict[str, str | int] = {"offset": offset, "limit": limit}
+        if problem_type is not None:
+            params["problem_type"] = problem_type
+        if kind is not None:
+            params["kind"] = kind
+        return self._request_model(
+            operation,
+            "GET",
+            f"/runs/{run_id}/plan/{route}",
+            model=PlanReportPageResource,
+            success={200},
+            params=params,
+        )
 
     def get_results(self, run_id: str) -> ResultsResource:
         """Return the recorded results for one run."""

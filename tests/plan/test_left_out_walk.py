@@ -10,9 +10,7 @@ Also covered, the edge cases of spec.md: both records of a duplicate pair are le
 record that Infrahub already holds gets no update and no delete, and a plan whose every record is
 left out finishes with no operation.
 
-Spec 019 T017 to T028 implement the behavior. Until then each test is an expected failure: the
-fixture source needs the base-class read loop, and `DiffSyncMixin.model_loader` raises
-`NotImplementedError`.
+Spec 019 T017 to T028 implement the behavior.
 """
 
 from __future__ import annotations
@@ -22,7 +20,6 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from infrahub_sync.plan.errors import DestinationIdentityCollisionError
 from tests.plan.conftest import TWIN_SITE_NAME, Variant
 from tests.plan.problem_plan import operations_of, plan_fixture, record_key
 
@@ -33,15 +30,6 @@ if TYPE_CHECKING:
 
 pytestmark = [
     pytest.mark.usefixtures("_cache_dir"),
-    pytest.mark.xfail(
-        strict=True,
-        # The variants without an identity group plan without the pass and fail an assertion.
-        raises=(DestinationIdentityCollisionError, AssertionError),
-        reason=(
-            "spec 019 T028 not implemented: Potenda.write_plan does not run the problem pass yet, so it "
-            "still refuses identity groups and writes an empty report"
-        ),
-    ),
 ]
 
 

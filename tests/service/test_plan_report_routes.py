@@ -11,9 +11,8 @@ plan in its stable order, with the same response shape for the three routes:
 The plan of the shared problem fixture (`tests/plan/problem_plan.py`) is read back with
 `read_saved_plan` and published with the worker's `_publish_plan`, as the plan stage does.
 
-Spec 019 T027 to T030 implement the routes. Until then each test is an expected failure: the
-fixture plan needs the base-class read loop (`NotImplementedError`), and a route that does not
-exist answers 404 (`AssertionError`).
+Spec 019 T027 to T030 implement the routes. The worker publishes the report's lines in the plan
+review document; `GET /runs/{run_id}/plan` does not return them.
 """
 
 from __future__ import annotations
@@ -23,8 +22,6 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 import pytest
-
-from infrahub_sync.plan.errors import DestinationIdentityCollisionError
 
 pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
@@ -51,20 +48,6 @@ HEADERS = {"Authorization": f"Bearer {OWNER_TOKEN}"}
 RUN_ID = "run-plan-report"
 PAGE_FIELDS = {"run_id", "plan_checksum", "entries", "offset", "limit", "total", "next_offset"}
 ROUTES = [("problems", "problem"), ("left-out", "left_out"), ("kept", "kept")]
-
-NOT_IMPLEMENTED = pytest.mark.xfail(
-    strict=True,
-    raises=DestinationIdentityCollisionError,
-    reason=(
-        "spec 019 T028 not implemented: Potenda.write_plan does not run the problem pass yet, so it "
-        "still refuses identity groups (DestinationIdentityCollisionError)"
-    ),
-)
-NO_ROUTE = pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="spec 019 US1 not implemented: the plan report routes do not exist (T030)",
-)
 
 
 def _service(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[ProductProjection, TestClient]:
@@ -130,7 +113,6 @@ def _all_pages(client: TestClient, route: str, *, limit: int, **params: Any) -> 
     return entries
 
 
-@NOT_IMPLEMENTED
 @pytest.mark.parametrize(("route", "entry"), ROUTES)
 def test_a_route_returns_every_entry_in_the_report_order(
     route: str, entry: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -151,7 +133,6 @@ def test_a_route_returns_every_entry_in_the_report_order(
     assert expected
 
 
-@NOT_IMPLEMENTED
 @pytest.mark.parametrize(("route", "entry"), ROUTES)
 def test_pages_hold_each_entry_once_in_order(
     route: str, entry: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -162,7 +143,6 @@ def test_pages_hold_each_entry_once_in_order(
     assert _all_pages(client, route, limit=1) == _expected(planned, entry)
 
 
-@NOT_IMPLEMENTED
 def test_the_lists_filter_by_problem_type_and_kind(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """`problem_type` and `kind` keep only the matching entries, in order, with the filtered total."""
     client, planned = _published_fixture(monkeypatch, tmp_path)
@@ -186,7 +166,6 @@ def test_the_lists_filter_by_problem_type_and_kind(monkeypatch: pytest.MonkeyPat
     assert _get(client, "kept", kind="DcimDevice").json()["entries"] == []
 
 
-@NOT_IMPLEMENTED
 def test_an_expected_checksum_that_differs_is_plan_changed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """409 `plan-changed` when `expected_checksum` is not the stored plan's; 200 when it is."""
     client, planned = _published_fixture(monkeypatch, tmp_path)
@@ -199,7 +178,6 @@ def test_an_expected_checksum_that_differs_is_plan_changed(monkeypatch: pytest.M
     assert same.status_code == 200
 
 
-@NO_ROUTE
 def test_an_unknown_problem_type_is_refused(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A `problem_type` outside the nine names is 422."""
     client = _published_format_3(monkeypatch, tmp_path)
@@ -207,7 +185,6 @@ def test_an_unknown_problem_type_is_refused(monkeypatch: pytest.MonkeyPatch, tmp
     assert _get(client, "problems", problem_type="not_a_problem_type").status_code == 422
 
 
-@NO_ROUTE
 @pytest.mark.parametrize("limit", [0, 501])
 def test_a_limit_outside_1_to_500_is_refused(limit: int, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     client = _published_format_3(monkeypatch, tmp_path)
@@ -215,7 +192,6 @@ def test_a_limit_outside_1_to_500_is_refused(limit: int, monkeypatch: pytest.Mon
     assert _get(client, "problems", limit=limit).status_code == 422
 
 
-@NO_ROUTE
 @pytest.mark.parametrize(("route", "entry"), ROUTES)
 def test_a_plan_without_a_report_returns_empty_lists(
     route: str, entry: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -231,7 +207,6 @@ def test_a_plan_without_a_report_returns_empty_lists(
     assert (body["entries"], body["total"], body["next_offset"]) == ([], 0, None)
 
 
-@NO_ROUTE
 def test_an_unknown_run_is_run_not_found(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     client = _published_format_3(monkeypatch, tmp_path)
 
@@ -239,3 +214,48 @@ def test_an_unknown_run_is_run_not_found(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
     assert response.status_code == 404
     assert response.json().get("error", {}).get("code") == "run-not-found"
+
+
+def test_the_plan_summary_holds_the_report_counts_and_not_the_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`GET /runs/{run_id}/plan` returns the FR-007 counts in `summary`, and no report line (T029)."""
+    client, planned = _published_fixture(monkeypatch, tmp_path)
+
+    response = client.get(f"/runs/{RUN_ID}/plan", headers=HEADERS)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert "report" not in body
+    summary = body["summary"]
+    record = planned.manifest["report"]
+    assert summary["left_out"] == record["left_out"] == len(planned.left_out)
+    assert summary["left_out_with_problem"] == record["left_out_with_problem"]
+    assert summary["left_out_dependent"] == record["left_out_dependent"]
+    assert summary["problems"] == record["problems"] == len(planned.problems)
+    assert summary["kept"] == record["kept"] == len(planned.kept)
+    assert sum(summary["left_out_by_kind"].values()) == summary["left_out"]
+    assert sum(summary["problems_by_type"].values()) == summary["problems"]
+    assert summary["problems_by_type"]["peer_not_found_in_source"] == 2
+    assert summary["dropdown_values_checked"] is True
+    # Per kind, the left-out records without identity plus the ambiguous Infrahub identities.
+    withheld: dict[str, int] = {}
+    for line in planned.left_out:
+        if line["record"]["identity"] is None:
+            withheld[line["record"]["kind"]] = withheld.get(line["record"]["kind"], 0) + 1
+    for line in planned.problems:
+        if line["problem_type"] == "destination_identity_ambiguous":
+            withheld[line["record"]["kind"]] = withheld.get(line["record"]["kind"], 0) + 1
+    assert withheld
+    assert summary["deletes_withheld_by_kind"] == withheld
+
+
+def test_a_plan_without_a_report_has_zero_counts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A review published before format 4 validates, with zero counts and Dropdown values not checked."""
+    client = _published_format_3(monkeypatch, tmp_path)
+
+    summary = client.get(f"/runs/{RUN_ID}/plan", headers=HEADERS).json()["summary"]
+
+    assert (summary["left_out"], summary["problems"], summary["kept"]) == (0, 0, 0)
+    assert summary["deletes_withheld_by_kind"] == {}
+    assert summary["dropdown_values_checked"] is False

@@ -12,8 +12,7 @@ responses. The adapter is built without its `__init__`, which connects to the pr
 
 Spec 019 T017 to T021 implement the read: `test_the_read_records_each_missing_peer` checks the
 load report each adapter writes. The plan problems, left-out and kept entries come with the problem
-pass and plan format 4 (T025 to T028); until then the plan test is an expected failure, because the
-plan writer writes no `plan/report.jsonl` (`FileNotFoundError`).
+pass and plan format 4 (T025 to T028).
 """
 
 from __future__ import annotations
@@ -36,7 +35,6 @@ from infrahub_sync import (
 )
 from infrahub_sync.adapters.infrahub import InfrahubModel
 from infrahub_sync.cache.paths import cache_root_for
-from infrahub_sync.plan.errors import NotInSourcePeerInPlanError
 from infrahub_sync.potenda import Potenda
 from infrahub_sync.runtime_schema.domain import normalize_destination_schema
 from infrahub_sync.runtime_schema.models import build_runtime_models
@@ -261,14 +259,6 @@ def test_the_read_records_each_missing_peer(name: str, tmp_path: Path, monkeypat
     assert not is_not_in_source_placeholder(vrfs["10.0.0.1/32"])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=NotInSourcePeerInPlanError,
-    reason=(
-        "spec 019 T028 not implemented: Potenda.write_plan does not run the selection step yet, so the "
-        "writer refuses the placeholder of the peer the source does not return"
-    ),
-)
 @pytest.mark.parametrize("name", sorted(SOURCES))
 def test_a_peer_the_source_does_not_return_is_listed_and_the_plan_finishes(
     name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

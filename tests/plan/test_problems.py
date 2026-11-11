@@ -9,9 +9,7 @@ data-model.md "Plan problem".
 The three tests of `test_problem_baseline.py` pin the behavior before spec 019 for three of these
 types; the tasks that make this module pass rewrite or remove them.
 
-Spec 019 T017 to T028 implement the behavior. Until then each test is an expected failure: the
-fixture source needs the base-class read loop, and `DiffSyncMixin.model_loader` raises
-`NotImplementedError`.
+Spec 019 T017 to T028 implement the behavior.
 """
 
 from __future__ import annotations
@@ -20,7 +18,6 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from infrahub_sync.plan.errors import DestinationIdentityCollisionError
 from tests.plan.conftest import PROBLEM_TYPES, TWIN_SITE_NAME
 from tests.plan.problem_plan import PlannedFixture, plan_fixture, problem_source_ids
 
@@ -29,14 +26,6 @@ if TYPE_CHECKING:
 
 pytestmark = [
     pytest.mark.usefixtures("_cache_dir"),
-    pytest.mark.xfail(
-        strict=True,
-        raises=DestinationIdentityCollisionError,
-        reason=(
-            "spec 019 T028 not implemented: Potenda.write_plan does not run the problem pass yet, so it "
-            "still refuses identity groups (DestinationIdentityCollisionError)"
-        ),
-    ),
 ]
 
 REASON_LIMIT = 512

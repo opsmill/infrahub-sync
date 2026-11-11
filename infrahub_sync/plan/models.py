@@ -16,7 +16,7 @@ operations into write units (FR-026).
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import PurePath
@@ -616,6 +616,10 @@ class PlanSummary(BaseModel):
     read — from the manifest and from the operation set — so the artifact format and
     `plan_checksum` are untouched. Without the first, a plan whose whole delete class was
     never computed is indistinguishable from one that has no deletes.
+
+    The counts of spec 019 FR-007 and FR-008 come from the plan report (data-model.md "Plan
+    summary additions"). A format 2 or 3 plan has no report: its counts are zeros and
+    `dropdown_values_checked` is false.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -625,6 +629,15 @@ class PlanSummary(BaseModel):
     total: int = Field(ge=0)
     delete_operations_computed: bool
     deletes_not_executed: int = Field(ge=0)
+    left_out: int = Field(default=0, ge=0)
+    left_out_with_problem: int = Field(default=0, ge=0)
+    left_out_dependent: int = Field(default=0, ge=0)
+    left_out_by_kind: dict[str, int] = Field(default_factory=dict)
+    problems: int = Field(default=0, ge=0)
+    problems_by_type: dict[str, int] = Field(default_factory=dict)
+    kept: int = Field(default=0, ge=0)
+    deletes_withheld_by_kind: dict[str, int] = Field(default_factory=dict)
+    dropdown_values_checked: bool = False
 
 
 @dataclass(frozen=True)
@@ -961,6 +974,42 @@ class PlanReport:
             if problem.problem_type == "destination_identity_ambiguous":
                 withheld[problem.record.kind] = withheld.get(problem.record.kind, 0) + 1
         return dict(sorted(withheld.items()))
+
+    @classmethod
+    def from_lines(cls, lines: Iterable[Mapping[str, Any]]) -> PlanReport:
+        """The report whose `lines()` are `lines`, as the plan reader returns them."""
+        problems: list[PlanProblem] = []
+        left_out: list[LeftOutRecord] = []
+        kept: list[KeptRecord] = []
+        for line in lines:
+            fields = {key: value for key, value in line.items() if key != "entry"}
+            if line.get("entry") == "problem":
+                problems.append(PlanProblem.model_validate(fields))
+            elif line.get("entry") == "left_out":
+                left_out.append(LeftOutRecord.model_validate(fields))
+            else:
+                kept.append(KeptRecord.model_validate(fields))
+        return cls(problems=tuple(problems), left_out=tuple(left_out), kept=tuple(kept))
+
+    def summary_counts(self) -> dict[str, Any]:
+        """The plan summary counts of this report (FR-007, FR-008; data-model.md "Plan summary additions")."""
+        record = self.record()
+        left_out_by_kind: dict[str, int] = {}
+        for item in self.left_out:
+            left_out_by_kind[item.record.kind] = left_out_by_kind.get(item.record.kind, 0) + 1
+        problems_by_type: dict[str, int] = {}
+        for problem in self.problems:
+            problems_by_type[problem.problem_type] = problems_by_type.get(problem.problem_type, 0) + 1
+        return {
+            "left_out": record.left_out,
+            "left_out_with_problem": record.left_out_with_problem,
+            "left_out_dependent": record.left_out_dependent,
+            "left_out_by_kind": dict(sorted(left_out_by_kind.items())),
+            "problems": record.problems,
+            "problems_by_type": dict(sorted(problems_by_type.items())),
+            "kept": record.kept,
+            "deletes_withheld_by_kind": self.deletes_withheld_by_kind(),
+        }
 
 
 # --- A peer the source does not return (spec 019 research R5) ------------------------------

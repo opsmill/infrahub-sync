@@ -162,13 +162,40 @@ def engine(source: Population, destination: Population) -> Potenda:
     )
 
 
+def report_lines(run_dir: Path) -> list[dict[str, Any]]:
+    """The lines of the saved plan's `report.jsonl`."""
+    return [json.loads(line) for line in (run_dir / "plan" / "report.jsonl").read_text().splitlines() if line]
+
+
+def operation_lines(run_dir: Path) -> list[dict[str, Any]]:
+    """The lines of the saved plan's `operations.jsonl`."""
+    return [json.loads(line) for line in (run_dir / "plan" / "operations.jsonl").read_text().splitlines() if line]
+
+
+def assert_group_left_out(run_dir: Path, kind: str, problem_type: str) -> None:
+    """One identity problem of `problem_type` for `kind`, both records left out, no operation of `kind`."""
+    report = report_lines(run_dir)
+    problems = [line for line in report if line["entry"] == "problem"]
+    assert [(line["problem_type"], line["record"]["kind"]) for line in problems] == [(problem_type, kind)]
+    assert len(problems[0]["other_records"]) == 1
+    left_out = [line for line in report if line["entry"] == "left_out"]
+    assert [(line["record"]["kind"], line["cause"]) for line in left_out] == [(kind, "has_problem")] * 2
+    assert [line for line in operation_lines(run_dir) if line["kind"] == kind] == []
+
+
 @pytest.mark.parametrize("nested", [False, True], ids=["rack", "interface-device-site"])
 @pytest.mark.parametrize("existing", ["none", "update", "unchanged"])
 @pytest.mark.parametrize("artifact", [False, True], ids=["no-artifact", "saved-artifact"])
-def test_full_source_population_refuses_lossy_creates(
+def test_full_source_population_leaves_lossy_creates_out(
     *, nested: bool, existing: str, artifact: bool, tmp_path: Path
 ) -> None:
-    """A real diff may omit a colliding source record entirely; planning still refuses."""
+    """A real diff may omit a colliding source record entirely; the plan still leaves both out (spec 019 R6).
+
+    Before spec 019 the plan refused the group with `DestinationIdentityCollisionError`. The
+    problem pass now records one identity problem and leaves every record of the group out:
+    two creates on one Infrahub identity are `destination_identity_collision`; a record that
+    Infrahub already holds on the identity they merge on is `identities_merge_in_destination`.
+    """
     source, destination, kind = populations(nested=nested, existing=existing)
     potenda = engine(source, destination)
     if artifact:
@@ -182,22 +209,13 @@ def test_full_source_population_refuses_lossy_creates(
             diff, config=config(), tier_of=lambda _: 0, source_adapter=source, destination_adapter=destination
         )
         assert next(op for op in operations if op.action == "update").destination_id == "recorded-id"
-    with pytest.raises(DestinationIdentityCollisionError) as error:
-        potenda.write_plan(diff)
-    message = str(error.value)
-    assert kind in message
-    if existing != "none":
-        assert "actual destination match key" in message
-        assert "Declared source identity" in message
-        assert f"mapping identifiers): {'device, name' if nested else 'name, site'}." in message
-        assert (
-            f"Other loaded source record identifiers: '{'eth0__edge1__site-a' if nested else 'same__site-a'}'"
-            in message
-        )
-        assert "Source identity identifiers" not in message
-        assert ("device__site__name__value" if nested else "site__name__value") in message
-        assert error.value.wrote is False
-    assert not (tmp_path / "plan" / "manifest.json").exists()
+    written = potenda.write_plan(diff)
+    if not artifact:
+        assert written is None
+        assert not (tmp_path / "plan" / "manifest.json").exists()
+        return
+    problem_type = "destination_identity_collision" if existing == "none" else "identities_merge_in_destination"
+    assert_group_left_out(tmp_path, kind, problem_type)
 
 
 @pytest.mark.parametrize("nested", [False, True])
@@ -209,7 +227,7 @@ def test_distinct_match_keys_are_allowed_without_an_artifact(*, nested: bool) ->
 
 
 def test_warm_incremental_population_includes_unchanged_collision(tmp_path: Path) -> None:
-    """Hydrated source records participate even though the delta contains only a new rack."""
+    """Hydrated source records participate even though the delta contains only a new rack: both are left out."""
     source, destination, _ = populations(nested=False, existing="unchanged")
     source.remove(source.get("TestRack", "same__site-a"))
     source.remove(source.get("TestRack", "same__site-b"))
@@ -232,8 +250,10 @@ def test_warm_incremental_population_includes_unchanged_collision(tmp_path: Path
     potenda.load_one_side(side="A", adapter=source)
     assert potenda._side_full_extract["A"] is False
     assert len(source.get_all("TestRack")) == 2
-    with pytest.raises(DestinationIdentityCollisionError, match="distinct loaded source record"):
-        potenda.write_plan(potenda.diff())
+    potenda.run_dir = tmp_path / "current"
+    potenda.run_id = "warm-collision-run"
+    potenda.write_plan(potenda.diff())
+    assert_group_left_out(potenda.run_dir, "TestRack", "identities_merge_in_destination")
 
 
 def test_missing_peer_value_in_population_warns_and_proceeds(caplog: pytest.LogCaptureFixture) -> None:
@@ -352,13 +372,15 @@ def test_collision_identifiers_with_non_name_values_are_withheld() -> None:
     assert "source identity fingerprint" in str(error.value)
 
 
-def test_alternative_uniqueness_constraint_does_not_mask_actual_match_key() -> None:
-    """A finer uniqueness constraint cannot stop an upsert from matching on its HFID."""
+def test_alternative_uniqueness_constraint_does_not_mask_actual_match_key(tmp_path: Path) -> None:
+    """A finer uniqueness constraint cannot stop an upsert from matching on its HFID: the group is left out."""
     source, destination, _ = populations(nested=False, existing="unchanged")
     destination.schema["TestRack"].uniqueness_constraints = [["site__name__value", "name__value"]]  # ty: ignore[unresolved-attribute]
     potenda = engine(source, destination)
-    with pytest.raises(DestinationIdentityCollisionError, match="actual destination match key"):
-        potenda.write_plan(potenda.diff())
+    potenda.run_dir = tmp_path
+    potenda.run_id = "uniqueness-run"
+    potenda.write_plan(potenda.diff())
+    assert_group_left_out(tmp_path, "TestRack", "identities_merge_in_destination")
 
 
 @pytest.mark.parametrize("missing", ["schema", "kind"])

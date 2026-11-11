@@ -433,7 +433,7 @@ $ infrahub-sync runs results [OPTIONS] {run_id}
 
 ### `infrahub-sync runs plan`
 
-Review a saved plan summary, checksum, and operations.
+Review a saved plan summary, checksum, and operations, or list its problems, left-out or kept records.
 
 **Usage**:
 
@@ -448,7 +448,11 @@ $ infrahub-sync runs plan [OPTIONS] {run_id}
 **Options**:
 
 * `--detail`: Render every saved operation.
-* `--kind <str>`: Filter the detailed operation list by destination kind; requires --detail.
+* `--kind <str>`: Filter the detailed operation list, or the problem, left-out or kept list, by destination kind.
+* `--problems`: List every problem the plan found.
+* `--left-out`: List every record the plan leaves out.
+* `--kept`: List every record the plan keeps without one optional relationship.
+* `--type <str>`: List only the problems of this problem type; requires --problems.
 * `--help`: Show this message and exit.
 
 ### `infrahub-sync runs logs`
