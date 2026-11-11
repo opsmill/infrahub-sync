@@ -94,6 +94,7 @@ the fixture and apply the stopped run.
 - [ ] T036 [P] [US2] Test the `sync` stop: phase `planned`, outcome `left-out-review-required`, `failure` in the stage result with the run ID, the checksum and `--confirm-left-out` in `next_action`, no destination call, the last log line, in `tests/service/test_sync_left_out_stop.py`
 - [ ] T037 [P] [US2] Test the CLI: `--confirm-left-out` sends `confirm_left_out: true`, the refusal line and exit code 1, and the stopped `sync` hint read from `results.failure`, in `tests/cli/test_apply_confirm_left_out.py`
 - [ ] T038 [P] [US2] Test the Prefect run artifact lines for left-out and problem counts and the `runs plan --problems` next step, in `tests/service/test_run_artifact.py`
+- [ ] T078 [US2] Test that another run that takes the configuration's write admission between a stopped `sync` and its confirmed apply makes that apply wait or be refused, never write alongside it (decision 2 of 2026-11-11), next to T033's test
 
 ### Implementation for User Story 2
 
@@ -190,6 +191,8 @@ the register response holds no redacted content (FR-034 to FR-038).
 - [ ] T074 [P] Update the user guide for reviewing problems, confirming left-out records, the stopped `sync`, and reading a failure, in `docs/docs/` (the plan-and-apply guide), and regenerate the CLI and HTTP API references with `uv run invoke docs.generate`
 - [ ] T075 [P] Add to the upgrade documentation and a changelog fragment that plans saved in format 3 before the upgrade must be planned again before apply, and that the new `worker_environments` table stays unused after a rollback (critique P3, E6)
 - [ ] T076 [P] Update `docs/docs/development/knowledge/orchestration-prefect.md` and `docs/docs/development/knowledge/repository-tour.md` for the new modules, the stopped `sync` and the artifact lines
+- [ ] T079 [P] Find the tests on `feature/v3-develop` that prove old FR-004 (a plan writes nothing to the destination) and old FR-013 (a rejected write stops the apply); if a case has no test, add one
+- [ ] T080 SIGN-OFF gate (merge blocker, not implementation work): the product owner accepts ADR 0020, ADR 0021 and ADR 0022, written with the status Proposed (decision 3 of 2026-11-11). Leave unticked until that sign-off is recorded
 - [ ] T077 Run the full quickstart (offline and live), the required workflow of AGENTS.md, and the CLI sanity commands; record results in `dev/specs/019-plan-problem-reporting/opsmill-implement-report.md`
 
 ## Dependencies and execution order
