@@ -1,13 +1,24 @@
-"""FR-001: a destination schema read failure records a cause and a next action the reader acts on."""
+"""The cause a failed run records.
+
+- Spec 017 FR-001: a destination schema read failure records a cause and a next action the
+  reader acts on.
+- Spec 019 T046: each failure type records its `failure_type` and the fields of FR-014.
+"""
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 import pytest
 
-from infrahub_sync.client.models import MAX_FAILURE_CAUSE_TEXT
+from infrahub_sync.client.models import FAILURE_TYPES, MAX_FAILURE_CAUSE_TEXT
 from infrahub_sync.runtime_schema import DestinationSchemaUnavailableError
 from infrahub_sync.runtime_schema.errors import DestinationBranchNotFoundError
 from infrahub_sync.service.failure_cause import operator_cause
+from tests.service.failure_cases import APPLIED_OPERATION, CASES, FAILED_OPERATION, NEUTRAL_TEXT, FailureCase
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _REASONS = ("timeout", "unreachable", "unauthorized", "forbidden", "credentials", "unconfigured", "rejected")
 
@@ -89,3 +100,72 @@ def test_an_unknown_reason_still_records_a_cause_and_a_next_action() -> None:
 
     assert "`demo-test`" in recorded["cause"]
     assert recorded["next_action"]
+
+
+# Spec 019 T046 (FR-014 to FR-018, data-model.md "Stage failure record additions"): the record of
+# each failure type. The record is built by `_failure_evidence`, the function the worker writes
+# `results.<stage>_failure` with; spec 019 T053 and T054 make it call `failure_record`.
+
+_US3_PENDING = pytest.mark.xfail(strict=True, raises=KeyError, reason="spec 019 US3 not implemented")
+
+
+@pytest.fixture
+def failure_evidence() -> Callable[..., dict[str, Any]]:
+    """`_failure_evidence` of the service worker; skipped where Prefect is not installed."""
+    pytest.importorskip("prefect")
+    from infrahub_sync.service import flow
+
+    return flow._failure_evidence
+
+
+def _evidence(failure_evidence: Callable[..., dict[str, Any]], case: FailureCase) -> dict[str, Any]:
+    exc = case.build(NEUTRAL_TEXT)
+    return failure_evidence(case.stage, exc, outcome="failed", record=None, secrets=())
+
+
+@pytest.mark.parametrize("case", [pytest.param(case, id=case.case_id, marks=_US3_PENDING) for case in CASES])
+def test_each_failure_type_records_its_type_and_fields(
+    failure_evidence: Callable[..., dict[str, Any]], case: FailureCase
+) -> None:
+    evidence = _evidence(failure_evidence, case)
+
+    assert evidence["failure_type"] == case.failure_type
+    assert evidence["failure_type"] in FAILURE_TYPES
+    for name, expected in case.fields.items():
+        if name == "record":
+            assert {key: evidence["record"][key] for key in expected} == expected
+        else:
+            assert evidence[name] == expected, name
+
+
+@pytest.mark.parametrize("case", [pytest.param(case, id=case.case_id, marks=_US3_PENDING) for case in CASES])
+def test_each_failure_type_keeps_the_fields_it_records_today(
+    failure_evidence: Callable[..., dict[str, Any]], case: FailureCase
+) -> None:
+    """The keys of spec 017 keep their meaning next to the new fields (FR-014)."""
+    exc = case.build(NEUTRAL_TEXT)
+    evidence = failure_evidence(case.stage, exc, outcome="failed", record=None, secrets=())
+
+    assert evidence["failure_type"] == case.failure_type
+    assert evidence["stage"] == case.stage
+    assert evidence["error_type"] == type(exc).__name__
+    assert evidence["cause_type"] == (None if exc.__cause__ is None else type(exc.__cause__).__name__)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(case, id=case.case_id, marks=_US3_PENDING)
+        for case in CASES
+        if case.case_id in {"destination-peer-missing", "destination-peer-ambiguous", "rejected-write-with-code"}
+    ],
+)
+def test_a_stopped_apply_keeps_its_failed_operation(
+    failure_evidence: Callable[..., dict[str, Any]], case: FailureCase
+) -> None:
+    """FR-018: a destination peer refusal names the operation; the apply record keys stay."""
+    evidence = _evidence(failure_evidence, case)
+
+    assert evidence["failure_type"] == case.failure_type
+    assert evidence["failed_operation"] == FAILED_OPERATION
+    assert evidence["applied_operations"] == [APPLIED_OPERATION]

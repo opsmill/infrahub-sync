@@ -122,11 +122,11 @@ This phase does not depend on Phases 3 and 4 and can run in parallel with them a
 
 ### Tests for User Story 3
 
-- [ ] T046 [P] [US3] Test `failure_record` for each failure type of data-model.md: a rejected write with and without an Infrahub error code, source and destination unreachable and timeout, source and destination token refused, a 403 permission, a TLS certificate refusal, a lineage refusal, a destination schema read failure, `destination_peer_missing`, `destination_peer_ambiguous`, `record_load_failed` with kind, identity and field, an unknown class as `internal_error`, in `tests/service/test_failure_cause.py`
-- [ ] T047 [P] [US3] Test credential absence: each failure type raised with error text that holds a 5-character credential and a credential with `"`, `\` and `,` (and an address with user name and password, a request header), and neither value appears in the failure record, `GET /runs/{run_id}`, `GET /runs/{run_id}/results` or the CLI output (SC-005, SC-007), in `tests/service/test_failure_cause_credentials.py`
-- [ ] T048 [P] [US3] Test credential absence in plan files and report entries with the same two credentials referenced by the configuration, in `tests/plan/test_report_credentials_absent.py`
-- [ ] T049 [P] [US3] Test the CLI lines between `<stage> failed:` and `hint:` for `plan`, `verify`, `apply`, `sync` and `runs show`, through `_display`, in `tests/cli/test_failure_output.py`
-- [ ] T050 [P] [US3] Test that existing keys of `<stage>_failure` keep their values and that a record without the new fields (an older Sync API) still prints as today, in `tests/service/test_failure_record_compat.py`
+- [X] T046 [P] [US3] Test `failure_record` for each failure type of data-model.md: a rejected write with and without an Infrahub error code, source and destination unreachable and timeout, source and destination token refused, a 403 permission, a TLS certificate refusal, a lineage refusal, a destination schema read failure, `destination_peer_missing`, `destination_peer_ambiguous`, `record_load_failed` with kind, identity and field, an unknown class as `internal_error`, in `tests/service/test_failure_cause.py`
+- [X] T047 [P] [US3] Test credential absence: each failure type raised with error text that holds a 5-character credential and a credential with `"`, `\` and `,` (and an address with user name and password, a request header), and neither value appears in the failure record, `GET /runs/{run_id}`, `GET /runs/{run_id}/results` or the CLI output (SC-005, SC-007), in `tests/service/test_failure_cause_credentials.py`
+- [X] T048 [P] [US3] Test credential absence in plan files and report entries with the same two credentials referenced by the configuration, in `tests/plan/test_report_credentials_absent.py`
+- [X] T049 [P] [US3] Test the CLI lines between `<stage> failed:` and `hint:` for `plan`, `verify`, `apply`, `sync` and `runs show`, through `_display`, in `tests/cli/test_failure_output.py`
+- [X] T050 [P] [US3] Test that existing keys of `<stage>_failure` keep their values and that a record without the new fields (an older Sync API) still prints as today, in `tests/service/test_failure_record_compat.py`
 
 ### Implementation for User Story 3
 
