@@ -30,11 +30,14 @@ are integration tests (see below).
 
 **Always test that records become correct DiffSync models:**
 
-- `model_loader` (or the `obj_to_diffsync` helper) maps fields to the right destination names.
+- `record_to_data`, called through the base-class `model_loader`, maps fields to the right
+  destination names.
 - Filters keep and drop the right records.
 - Transforms produce native-typed values.
 - `identifiers` and `local_id` are populated, and `reference` fields resolve to peer
   `unique_id`s — including the list-reference case.
+- On the source side, a record the read cannot build is recorded in `load_report` and the
+  read continues with the next record.
 
 ### Cover the incremental contract
 
@@ -43,7 +46,7 @@ are integration tests (see below).
 - `cursor_tier_for` returns the expected tier for mapped kinds and `CursorTier.NONE` for
   unmapped ones.
 - `list_changed_since` issues the correct change filter (for example `last_updated__gte`) and
-  yields records in `model_loader` shape.
+  yields model data, as `record_to_data` returns it.
 - `list_existing_ids` yields the current `unique_id`s.
 - An adapter that declares a non-`NONE` tier but omits `list_changed_since` must fail — assert
   the `NotImplementedError`. `tests/test_diffsync_mixin_contract.py` covers the mixin defaults;
