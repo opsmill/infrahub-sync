@@ -42,7 +42,12 @@ from infrahub_sync.plan.reader import load_plan_artifact
 from infrahub_sync.plan.writer import PLAN_DIR_NAME
 from infrahub_sync.potenda import Potenda
 from infrahub_sync.runtime_schema.models import build_runtime_models
-from infrahub_sync.runtime_schema.worker import RuntimeModelPlan, RuntimeSideModels, bind_runtime_models
+from infrahub_sync.runtime_schema.worker import (
+    RuntimeModelPlan,
+    RuntimeSideModels,
+    bind_runtime_models,
+    mapped_dropdown_choices,
+)
 from tests.plan.conftest import PlanProblemFixture, PlanProblemModel, Variant
 
 if TYPE_CHECKING:
@@ -270,6 +275,7 @@ def _runtime_model_plan(fixture: PlanProblemFixture, configuration: SyncInstance
         destination=RuntimeSideModels(adapter_class=FixtureDestination, models=models(InfrahubModel)),
         source=RuntimeSideModels(adapter_class=FixtureSource, models=models(PlanProblemModel)),
         generic_peers=snapshot.generic_peers,
+        dropdown_choices=mapped_dropdown_choices(snapshot, configuration),
     )
 
 

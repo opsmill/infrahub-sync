@@ -54,10 +54,10 @@ ROUTES = [("problems", "problem"), ("left-out", "left_out"), ("kept", "kept")]
 
 NOT_IMPLEMENTED = pytest.mark.xfail(
     strict=True,
-    raises=(DestinationIdentityCollisionError, FileNotFoundError),
+    raises=DestinationIdentityCollisionError,
     reason=(
-        "spec 019 US1 not implemented: the plan raises on identity collisions (T024) and writes no "
-        "plan/report.jsonl (T026 to T028)"
+        "spec 019 T028 not implemented: Potenda.write_plan does not run the problem pass yet, so it "
+        "still refuses identity groups (DestinationIdentityCollisionError)"
     ),
 )
 NO_ROUTE = pytest.mark.xfail(

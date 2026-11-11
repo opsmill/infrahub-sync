@@ -11,9 +11,9 @@ Format 4 is format 3 plus `plan/report.jsonl` and a `report` object in the manif
 - a run without a destination schema snapshot records `dropdown_values_checked: false`
 - the format 3 fields stay: `destination_id` on updates, `lineage` and `plan/last_changes.jsonl`
 
-Spec 019 T027 (and T017 to T028 for the planned fixture) implements the behavior. Until then each
-test is an expected failure: the fixture source needs the base-class read loop
-(`NotImplementedError`), and the writer writes format 3 (`AssertionError` on the format version).
+Spec 019 T027 implements the format; T028 runs the problem pass before `Potenda.write_plan`
+writes the plan. Until T028, each test that plans the full fixture is an expected failure:
+`Potenda.write_plan` still refuses its identity groups (`DestinationIdentityCollisionError`).
 """
 
 from __future__ import annotations
@@ -49,10 +49,10 @@ if TYPE_CHECKING:
 
 NOT_IMPLEMENTED = pytest.mark.xfail(
     strict=True,
-    raises=(DestinationIdentityCollisionError, FileNotFoundError),
+    raises=DestinationIdentityCollisionError,
     reason=(
-        "spec 019 US1 not implemented: the plan raises on identity collisions (T024) and writes no "
-        "plan/report.jsonl (T026 to T028)"
+        "spec 019 T028 not implemented: Potenda.write_plan does not run the problem pass yet, so it "
+        "still refuses identity groups (DestinationIdentityCollisionError)"
     ),
 )
 
@@ -192,7 +192,6 @@ def test_the_plan_checksum_covers_the_report_digest(plan_problems: PlanProblemFi
     assert compute_plan_checksum(manifest, operations_bytes) != planned.manifest["plan_checksum"]
 
 
-@NOT_IMPLEMENTED
 def test_a_plan_with_no_problem_writes_an_empty_report(plan_problems: PlanProblemFixture) -> None:
     """Valid records only: `report.jsonl` is empty and the `report` object holds zeros."""
     planned = plan_fixture(plan_problems, Variant.NO_PROBLEMS)
@@ -214,11 +213,6 @@ def test_a_run_without_a_schema_snapshot_records_that_dropdown_values_were_not_c
     assert planned.problems
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="spec 019 US1 not implemented: the plan writer writes format 3 (T027)",
-)
 def test_format_3_fields_are_kept(tmp_path: Path) -> None:
     """Destination IDs on updates, `lineage` and `last_changes.jsonl` stay as format 3 writes them."""
     operations, last_changes = _update_operations()

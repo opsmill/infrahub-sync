@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.identity import operation_id
-from infrahub_sync.plan.models import PLAN_FORMAT_VERSION
+from infrahub_sync.plan.models import PLAN_FORMAT_VERSION, REPORT_FILE_NAME, REPORT_FORMAT_VERSION, PlanReport
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME
 
 if TYPE_CHECKING:
@@ -139,11 +139,17 @@ def write_artifact(  # noqa: PLR0913 — one parameter per manifest field the fi
         "delete_operations_computed": deletes_computed,
     }
     body.update(manifest_overrides)
+    report_format = isinstance(body.get("format_version"), int) and body["format_version"] >= REPORT_FORMAT_VERSION
+    if report_format and "report" not in body:
+        # Plan format 4 (spec 019): an empty report, as the writer records a plan without problems.
+        body["report"] = PlanReport().record().model_dump()
     body["plan_checksum"] = compute_plan_checksum(body, operations_bytes)
 
     directory = plan_dir(run_directory)
     directory.mkdir(parents=True, exist_ok=True)
     (directory / OPERATIONS_FILE_NAME).write_bytes(operations_bytes)
+    if report_format:
+        (directory / REPORT_FILE_NAME).write_bytes(b"")
     (directory / MANIFEST_FILE_NAME).write_bytes(canonical_json_bytes(body))
     return body
 

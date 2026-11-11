@@ -36,6 +36,7 @@ from infrahub_sync import (
 )
 from infrahub_sync.adapters.infrahub import InfrahubModel
 from infrahub_sync.cache.paths import cache_root_for
+from infrahub_sync.plan.errors import NotInSourcePeerInPlanError
 from infrahub_sync.potenda import Potenda
 from infrahub_sync.runtime_schema.domain import normalize_destination_schema
 from infrahub_sync.runtime_schema.models import build_runtime_models
@@ -262,8 +263,11 @@ def test_the_read_records_each_missing_peer(name: str, tmp_path: Path, monkeypat
 
 @pytest.mark.xfail(
     strict=True,
-    raises=FileNotFoundError,
-    reason="spec 019 US1 not implemented: the plan writer writes no plan/report.jsonl (T025 to T028)",
+    raises=NotInSourcePeerInPlanError,
+    reason=(
+        "spec 019 T028 not implemented: Potenda.write_plan does not run the selection step yet, so the "
+        "writer refuses the placeholder of the peer the source does not return"
+    ),
 )
 @pytest.mark.parametrize("name", sorted(SOURCES))
 def test_a_peer_the_source_does_not_return_is_listed_and_the_plan_finishes(

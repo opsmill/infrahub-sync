@@ -1,7 +1,7 @@
 """The plan artifact writer (FR-004, FR-010, FR-019, FR-021, FR-022, FR-026, FR-027).
 
-`operations.jsonl` is written **first**, then `last_changes.jsonl` when the plan has one, and
-`manifest.json` **last**; that order is the commit point (AD014): the manifest's presence is
+`operations.jsonl` is written **first**, then `last_changes.jsonl` when the plan has one, then
+`report.jsonl` (plan format 4, spec 019), and `manifest.json` **last**; that order is the commit point (AD014): the manifest's presence is
 what makes the artifact complete, so a failure part-way through the operations write leaves a
 run directory with a `plan/` directory and no manifest — which the reader classifies as **torn** — while a run that
 never reached this writer has no `plan/` directory at all and is classified as the
@@ -30,8 +30,16 @@ from typing import TYPE_CHECKING, Any
 
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
-from infrahub_sync.plan.errors import DuplicateOperationIdError, PlanGenerationExistsError
-from infrahub_sync.plan.models import LAST_CHANGES_FILE_NAME, PLAN_FORMAT_VERSION, PlanLastChangesRecord, PlanManifest
+from infrahub_sync.plan.errors import DuplicateOperationIdError, NotInSourcePeerInPlanError, PlanGenerationExistsError
+from infrahub_sync.plan.models import (
+    LAST_CHANGES_FILE_NAME,
+    PLAN_FORMAT_VERSION,
+    REPORT_FILE_NAME,
+    PlanLastChangesRecord,
+    PlanManifest,
+    PlanReport,
+    holds_not_in_source_peer,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -55,6 +63,7 @@ __all__ = [
     "MANIFEST_FILE_NAME",
     "OPERATIONS_FILE_NAME",
     "PLAN_DIR_NAME",
+    "REPORT_FILE_NAME",
     "committed_manifest_path",
     "encode_last_changes",
     "require_uncommitted_plan",
@@ -148,6 +157,22 @@ def _refuse_duplicate_identifiers(operations: Sequence[PlannedOperation]) -> Non
         seen[operation.operation_id] = operation
 
 
+def _refuse_not_in_source_peers(operations: Sequence[PlannedOperation]) -> None:
+    """Refuse an operation whose identity, payload or relationships still name a peer not in the source.
+
+    The selection step of the problem pass removes every such placeholder (spec 019 research
+    R5); one that reaches this point would be written, and applied, as a destination identity.
+    The check runs before the first write, so a refusal leaves no artifact.
+    """
+    for operation in operations:
+        if holds_not_in_source_peer(_operation_line_mapping(operation)):
+            msg = (
+                f"Operation {operation.operation_id!r} of kind {operation.kind!r} still names a peer that the "
+                "source does not return, so the plan was not written."
+            )
+            raise NotInSourcePeerInPlanError(msg)
+
+
 def _ordered_operations(operations: Sequence[PlannedOperation]) -> list[PlannedOperation]:
     """Order operations by `(tier, operation_id)` — tier ascending, then identifier (AD001)."""
     return sorted(operations, key=lambda operation: (operation.tier, operation.operation_id))
@@ -219,6 +244,8 @@ def write_plan_artifact(
     lineage: PlanLineageRecord | None = None,
     last_changes: Sequence[LastChangeRecord] | None = None,
     metadata_read: bool = False,
+    report: PlanReport | None = None,
+    dropdown_values_checked: bool = True,
 ) -> PlanManifest:
     """Write `<run_dir>/plan/` and return the manifest that was written.
 
@@ -245,16 +272,25 @@ def write_plan_artifact(
     record count, and `metadata_read`. `None` (a destination that keeps no last changes)
     writes neither the file nor the field.
 
+    `report` is the plan report of the problem pass (spec 019), written to `report.jsonl`
+    after the operations and before the manifest; the manifest's `report` field records its
+    digest, size and counts. `None` writes an empty report, so every format 4 plan has one
+    shape. `dropdown_values_checked=False` records that the run had no destination schema
+    snapshot, so the plan could not check Dropdown values.
+
     Raises:
         PlanGenerationExistsError: the run already holds a committed plan generation, which
             is never overwritten.
         DuplicateOperationIdError: two operations share an operation identifier (FR-021).
+        NotInSourcePeerInPlanError: an operation still names a peer the source does not return.
         UnserializablePayloadValueError: a payload value is outside the canonical-value table.
         ValidationError: the manifest the caller's values assemble is not a valid manifest —
             a registered plan with no `schema_fingerprint`, above all.
     """
     require_uncommitted_plan(run_dir, run_id=run_id)
     _refuse_duplicate_identifiers(operations)
+    _refuse_not_in_source_peers(operations)
+    report_bytes = (report or PlanReport()).encode()
     ordered = _ordered_operations(operations)
     operations_bytes = _encode_operations(ordered)
 
@@ -273,6 +309,9 @@ def write_plan_artifact(
             count=len(last_changes),
             metadata_read=metadata_read,
         ).model_dump()
+
+    # Before the manifest: a failure here leaves no manifest, so the artifact reads as torn.
+    _atomic_write_bytes(plan_dir / REPORT_FILE_NAME, report_bytes)
 
     body: dict[str, Any] = {
         "format_version": PLAN_FORMAT_VERSION,
@@ -301,6 +340,10 @@ def write_plan_artifact(
     if last_changes_field is not None:
         # Before the checksum below, so the file's digest, and through it its bytes, are covered.
         body["last_changes"] = last_changes_field
+    # Before the checksum below, so the report's digest, and through it its bytes, are covered.
+    body["report"] = (report or PlanReport()).record(report_bytes).model_dump()
+    if not dropdown_values_checked:
+        body["dropdown_values_checked"] = False
     body["plan_checksum"] = compute_plan_checksum(body, operations_bytes)
     manifest = PlanManifest.model_validate(body)
 

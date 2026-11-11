@@ -2,6 +2,15 @@
   "config_version": "9f8638a66be8816ecd610b26d540f4984579059b3f4bf9f8df304e884d493133",
   "delete_operations_computed": true,
   "operations_count": 4,
+  "report": {
+    "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "size": 0,
+    "problems": 0,
+    "left_out": 0,
+    "left_out_with_problem": 0,
+    "left_out_dependent": 0,
+    "kept": 0
+  },
   "source_snapshot": [
     {
       "path": "A/BuiltinTag.parquet",

@@ -35,10 +35,11 @@ pytestmark = [
     pytest.mark.usefixtures("_cache_dir"),
     pytest.mark.xfail(
         strict=True,
-        raises=(DestinationIdentityCollisionError, FileNotFoundError),
+        # The variants without an identity group plan without the pass and fail an assertion.
+        raises=(DestinationIdentityCollisionError, AssertionError),
         reason=(
-            "spec 019 US1 not implemented: the plan raises on identity collisions (T024) and writes no "
-            "plan/report.jsonl (T026 to T028)"
+            "spec 019 T028 not implemented: Potenda.write_plan does not run the problem pass yet, so it "
+            "still refuses identity groups and writes an empty report"
         ),
     ),
 ]

@@ -762,6 +762,7 @@ class Potenda:
             tier_of,
             warn_missing_convergence_key,
         )
+        from infrahub_sync.plan.keying import refuse_identity_groups
         from infrahub_sync.plan.models import SourceSnapshotRecord
         from infrahub_sync.plan.writer import write_plan_artifact as write_artifact
 
@@ -799,9 +800,13 @@ class Potenda:
         for operation in operations:
             action_counts[operation.action] += 1
 
-        warn_missing_convergence_key(
+        identity_groups = warn_missing_convergence_key(
             destination=self.destination, operations=operations, source_adapter=self.source, config=self.config
         )
+        # Spec 019 T028 replaces this refusal with the problem pass, which leaves these records out.
+        # Until then the plan refuses the groups it refused before spec 019; a merge on the
+        # closest destination key stays a warning.
+        refuse_identity_groups(identity_groups, config=self.config)
 
         if not self.run_dir or not self.run_id:
             logger.debug("Plan artifact: skipped after identity checks, this run has no run_dir/run_id")

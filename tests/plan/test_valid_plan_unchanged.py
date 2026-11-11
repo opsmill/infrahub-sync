@@ -49,7 +49,7 @@ EXPECTED_DIR = Path(__file__).resolve().parent.parent / "data" / "valid_plan_byt
 RUN_ID = "20260101T0000-01900003"
 
 # The files of a saved plan of valid data.
-PLAN_FILES = ["manifest.json", "operations.jsonl"]
+PLAN_FILES = ["manifest.json", "operations.jsonl", "report.jsonl"]
 
 # The manifest keys of a saved plan of valid data.
 MANIFEST_KEYS = [
@@ -59,6 +59,7 @@ MANIFEST_KEYS = [
     "format_version",
     "operations_count",
     "plan_checksum",
+    "report",
     "run_id",
     "source_snapshot",
 ]

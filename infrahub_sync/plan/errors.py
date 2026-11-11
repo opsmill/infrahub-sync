@@ -385,6 +385,24 @@ class NullRelationshipValueError(PlanArtifactError):
     )
 
 
+class NotInSourcePeerInPlanError(PlanArtifactError):
+    """An operation about to be written still names a peer that the source does not return.
+
+    Plan derivation names such a peer with a placeholder (`SourcePeerUnresolvedError`'s absent
+    arm, spec 019 research R5), and the selection step of the problem pass removes every
+    placeholder. One that reaches the writer means the selection step did not run, so the
+    plan is refused before any file is written: a placeholder must never be applied as a
+    destination identity.
+    """
+
+    wrote = False
+
+    next_action = (
+        "Re-run `plan`. If the refusal repeats, report it: the plan could not leave out a "
+        "reference to a peer the source does not return."
+    )
+
+
 class PlanVerificationError(PlanArtifactError):
     """One or more pre-apply checks failed, so the apply is refused."""
 
@@ -591,6 +609,11 @@ class SourcePeerUnresolvedError(PlanArtifactError):
     **ambiguous** — the bounded kind probe found it in more than one, so its kind cannot
     be established. Use `absent()` / `ambiguous()` rather than the bare constructor, so
     the operator is routed at the condition they actually have.
+
+    A reference that a source adapter marked as a peer the source does not return
+    (`infrahub_sync.not_in_source_placeholder`) does not reach the absent arm: derivation
+    names it with a placeholder pair, which the problem pass resolves into the plan problem
+    `peer_not_found_in_source` and removes from the plan (spec 019 research R5).
     """
 
     ABSENT_NEXT_ACTION = (

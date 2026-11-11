@@ -47,6 +47,7 @@ from infrahub_sync.plan.reader import (
     last_changes_mismatch,
     load_manifest_mapping,
     operation_record_lines,
+    report_mismatch,
     stat_or_unreadable,
     supported_versions_text,
 )
@@ -238,6 +239,18 @@ def _last_changes_failures(
     if mismatch is None:
         return []
     return [_failure("last_changes", run_id=run_id, expected=mismatch[0], found=mismatch[1])]
+
+
+def _report_failures(run_id: str, artifact: RawPlanArtifact, mapping: dict[str, Any]) -> list[VerificationFailure]:
+    """Check `report.jsonl` against a format 4 manifest's `report` record (spec 019).
+
+    No failure for a format 2 or 3 plan, which has no report. The record itself is covered by
+    the plan checksum; this check covers the file it describes, by its digest, size and counts.
+    """
+    mismatch = report_mismatch(mapping, artifact.report_bytes)
+    if mismatch is None:
+        return []
+    return [_failure("report", run_id=run_id, expected=mismatch[0], found=mismatch[1])]
 
 
 def plan_checksum_failure(
@@ -560,6 +573,7 @@ def verify_plan(
     failures.extend(_run_binding_failures(run_id, mapping))
     failures.extend(_operations_failures(run_id, artifact, mapping))
     failures.extend(_last_changes_failures(run_id, artifact, mapping))
+    failures.extend(_report_failures(run_id, artifact, mapping))
     failures.extend(source_snapshot_failures(run_id=run_id, run_dir=artifact.run_dir, mapping=mapping))
     failures.extend(_config_version_failures(run_id, mapping, config_version))
     failures.extend(_write_surface_failures(run_id, write_surface_missing_on))

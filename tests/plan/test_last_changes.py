@@ -281,7 +281,7 @@ def test_the_manifest_records_the_digest_and_the_count(tmp_path: Path) -> None:
         "count": 3,
         "metadata_read": True,
     }
-    assert manifest["format_version"] == 3
+    assert manifest["format_version"] == 4
     assert PlanManifest.model_validate(manifest).last_changes is not None
 
 

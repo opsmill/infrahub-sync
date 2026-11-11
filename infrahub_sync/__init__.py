@@ -20,7 +20,7 @@ from infrahub_sync.adapters.utils import get_value
 from infrahub_sync.cache.cursors import CursorTier
 from infrahub_sync.dependency_graph import compute_tiers, flatten_tiers
 from infrahub_sync.load_report import LoadReport, LoadReportEntry, filter_entry, transform_entry
-from infrahub_sync.plan.models import SourceRecordReference
+from infrahub_sync.plan.models import NOT_IN_SOURCE_VALUE_PREFIX, SourceRecordReference
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -328,7 +328,7 @@ FILTERS_OPERATIONS: dict[str, Callable[..., Any]] = {
 }
 
 
-NOT_IN_SOURCE_PLACEHOLDER_PREFIX = "infrahub-sync:not-in-source:"
+NOT_IN_SOURCE_PLACEHOLDER_PREFIX = NOT_IN_SOURCE_VALUE_PREFIX
 """Prefix of the reference value that stands for an optional peer the source does not return."""
 
 

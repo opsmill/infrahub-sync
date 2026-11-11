@@ -362,7 +362,7 @@ def _build_schema_snapshot(schema: object) -> dict[str, Any]:
 def _attribute_shape(attribute: Any) -> dict[str, Any]:
     """The attribute properties that can change a runtime model or a planned write."""
     computed = getattr(attribute, "computed_attribute", None)
-    return {
+    shape: dict[str, Any] = {
         "kind": _member_text(attribute.kind),
         "optional": _exact_bool(attribute.optional),
         "default_value": _json_native_default(attribute.default_value),
@@ -370,6 +370,23 @@ def _attribute_shape(attribute: Any) -> dict[str, Any]:
         "read_only": _exact_bool(getattr(attribute, "read_only", False))
         or (computed is not None and getattr(computed, "kind", None) != "User"),
     }
+    if shape["kind"] == "Dropdown":
+        # The choice names of a Dropdown attribute (spec 019 research R4): the plan checks each
+        # mapped value against them. Only the names; a choice's label, color and description
+        # cannot change a planned write.
+        shape["choices"] = _dropdown_choice_names(getattr(attribute, "choices", None))
+    return shape
+
+
+def _dropdown_choice_names(choices: Any) -> list[str]:
+    """The names of a Dropdown attribute's choices, as the SDK returns them (dicts or objects)."""
+    names: list[str] = []
+    for choice in choices or ():
+        name = choice.get("name") if isinstance(choice, Mapping) else getattr(choice, "name", None)
+        if not isinstance(name, str):
+            raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
+        names.append(name)
+    return names
 
 
 def _relationship_shape(relationship: Any) -> dict[str, Any]:

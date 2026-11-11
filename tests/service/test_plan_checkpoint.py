@@ -197,7 +197,8 @@ def test_the_plan_checkpoint_carries_the_plan_and_its_declared_source_snapshots(
     assert stored.value is not None
     with zipfile.ZipFile(BytesIO(stored.value)) as archive:
         names = sorted(name for name in archive.namelist() if name != "bundle-manifest.json")
-    assert names == ["A/resource0.parquet", "plan/manifest.json", "plan/operations.jsonl"]
+    # Plan format 4 (spec 019): the plan report travels with the plan.
+    assert names == ["A/resource0.parquet", "plan/manifest.json", "plan/operations.jsonl", "plan/report.jsonl"]
     reference = projection.lookup_internal_reference(run_id, PLAN_CHECKPOINT_ARTIFACT_ID).value
     assert reference is not None
     assert reference.size == len(stored.value)
@@ -301,7 +302,13 @@ def test_the_plan_checkpoint_carries_the_last_change_file_the_manifest_names(tmp
     assert stored.value is not None
     with zipfile.ZipFile(BytesIO(stored.value)) as archive:
         names = sorted(name for name in archive.namelist() if name != "bundle-manifest.json")
-    assert names == ["A/resource0.parquet", "plan/last_changes.jsonl", "plan/manifest.json", "plan/operations.jsonl"]
+    assert names == [
+        "A/resource0.parquet",
+        "plan/last_changes.jsonl",
+        "plan/manifest.json",
+        "plan/operations.jsonl",
+        "plan/report.jsonl",
+    ]
 
     with stage_scratch("verify") as scratch:
         destination = scratch.run_directory(SYNC_NAME, run_id)
