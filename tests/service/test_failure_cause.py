@@ -21,6 +21,7 @@ from infrahub_sync.client.models import (
     MAX_FAILURE_NAME_TEXT,
     StageFailureResource,
 )
+from infrahub_sync.infrahub_errors import MAX_REJECTED_WRITE_MESSAGE
 from infrahub_sync.plan.errors import OperationApplyFailedError
 from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.potenda import SideLoadError
@@ -308,3 +309,21 @@ def test_infrahubs_message_goes_through_the_masking_pass() -> None:
 
     assert recorded["failure_type"] == "destination_rejected_write"
     assert "s3cr3t-value" not in recorded["infrahub_message"]
+
+
+@pytest.mark.parametrize("offset", [0, 10, MAX_REJECTED_WRITE_MESSAGE - 20, MAX_REJECTED_WRITE_MESSAGE - 5])
+def test_a_secret_in_infrahubs_rejection_message_is_masked_before_the_message_is_cut(offset: int) -> None:
+    """A secret in Infrahub's own message is masked, also when it crosses the length limit (FR-019)."""
+    secret = "s3cr3t-T0KEN-value-0123456789abcdef"  # noqa: S105 - a test credential
+    message = "x" * offset + secret + " y" * MAX_REJECTED_WRITE_MESSAGE
+    rejected = GraphQLError(errors=[{"message": message, "extensions": {"code": "X"}}], query="", variables={})
+    error = OperationApplyFailedError("apply failed", apply_record=ApplyRecord())
+    error.__cause__ = rejected
+
+    record = failure_record("apply", error, secrets=[secret])
+
+    assert record["failure_type"] == "destination_rejected_write"
+    recorded = record["infrahub_message"]
+    assert recorded is not None
+    assert len(recorded) <= MAX_REJECTED_WRITE_MESSAGE
+    assert secret[:4] not in recorded

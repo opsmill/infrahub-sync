@@ -237,8 +237,10 @@ def rejected_write(exc: BaseException) -> RejectedWrite | None:
     """Read Infrahub's own description of a rejected write from the first `GraphQLError` in the chain.
 
     Reads exactly `extensions.code`, `extensions.data.node_kind`, `extensions.data.field_name`
-    and `message` of the first error that has a message, each only when it is a string, with
-    control characters removed and capped. Nothing else of the error is read: not the query,
+    and `message` of the first error that has a message, each only when it is a string. The
+    three names have control characters removed and are capped; the message is returned as
+    Infrahub sent it, and the caller must mask secrets in it and then cap it with
+    `quotable_text(..., limit=MAX_REJECTED_WRITE_MESSAGE)`. Nothing else of the error is read: not the query,
     not its variables and no other key of `extensions.data`, because those can hold the values
     sent, including a credential. Returns `None` when the chain holds no `GraphQLError`.
     """
@@ -257,7 +259,9 @@ def rejected_write(exc: BaseException) -> RejectedWrite | None:
         error_code=_name(extensions.get("code")),
         node_kind=_name(data.get("node_kind")),
         attribute=_name(data.get("field_name")),
-        message=quotable_text(first["message"], limit=MAX_REJECTED_WRITE_MESSAGE) or None,
+        # The message is kept whole: the caller masks secrets in it before it shortens it, so a
+        # secret that crosses the length limit is not left half visible.
+        message=first["message"] or None,
     )
 
 

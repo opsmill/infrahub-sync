@@ -1768,6 +1768,23 @@ def test_validate_with_a_branch_checks_the_mapping_against_that_branch(
     assert body["destination_schema_fingerprint"] is None or isinstance(body["destination_schema_fingerprint"], str)
 
 
+@pytest.mark.parametrize("authorization", [None, "Bearer not-a-token"])
+def test_validate_with_a_branch_refuses_a_caller_without_a_valid_token_before_any_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authorization: str | None
+) -> None:
+    """FR-034: a branch validation reads Infrahub with the registered credential, so it needs a valid token."""
+    branches = _spied_schema_reads(monkeypatch)
+    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    config_id = _register(client, _package_with_missing_kind_attribute_and_relationship(), "branch-validate-auth")
+    del client.headers["Authorization"]
+    headers = {} if authorization is None else {"Authorization": authorization}
+
+    response = client.post(f"/configs/{config_id}/versions/1/validate", params={"branch": "review"}, headers=headers)
+
+    assert response.status_code == 401, response.text
+    assert branches == []
+
+
 def test_validate_without_a_branch_reads_no_schema_and_is_unchanged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

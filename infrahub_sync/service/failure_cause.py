@@ -31,6 +31,7 @@ from infrahub_sync.client.models import MAX_FAILURE_CAUSE_TEXT, MAX_FAILURE_NAME
 from infrahub_sync.configuration.credentials import CredentialConfigurationError
 from infrahub_sync.execution import redact
 from infrahub_sync.infrahub_errors import (
+    MAX_REJECTED_WRITE_MESSAGE,
     MISSING_PERMISSION_STATUS,
     REFUSED_TOKEN_STATUS,
     cause_chain,
@@ -433,7 +434,14 @@ def failure_record(
         "error_code": written.error_code if written else None,
         "node_kind": _node_kind(classified, written),
         "attribute": written.attribute if written else None,
-        "infrahub_message": (_recordable(written.message, secrets) or None) if written and written.message else None,
+        "infrahub_message": (
+            quotable_text(
+                redact(written.message, secrets), limit=min(MAX_REJECTED_WRITE_MESSAGE, MAX_FAILURE_CAUSE_TEXT)
+            )
+            or None
+        )
+        if written and written.message
+        else None,
         "record": _record_reference(link),
         "field": field_name,
     }
