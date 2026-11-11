@@ -275,6 +275,25 @@ def test_given_credential_is_closed_when_graph_client_exits_on_error() -> None:
     assert credential.closed is True
 
 
+def test_credential_is_closed_when_graph_client_setup_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    credential = FakeCredential()
+
+    def failing_adapter(*_args: object, **_kwargs: object) -> None:
+        msg = "fake failure while building the request adapter"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(msgraphsync, "GraphRequestAdapter", failing_adapter)
+
+    async def open_client() -> None:
+        async with MsgraphClient(make_settings({}, FULL_ENV), transport=GraphRouter().transport, credential=credential):
+            pass
+
+    with pytest.raises(RuntimeError, match="fake failure while building"):
+        asyncio.run(open_client())
+
+    assert credential.closed is True
+
+
 def test_member_of_users_collection_is_accepted() -> None:
     settings = make_settings(
         {"collections": {"room_accounts": {"resource": "users", "member_of": SETTINGS_TENANT}}}, FULL_ENV

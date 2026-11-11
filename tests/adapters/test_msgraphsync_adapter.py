@@ -171,6 +171,82 @@ def test_filter_property_is_selected_when_a_transform_writes_the_same_key() -> N
     assert set(loaded(adapter, IdentityEmployee)) == {graph_id(1)}
 
 
+def test_transform_that_rewrites_a_property_under_its_own_name_reads_it_from_graph() -> None:
+    entry = {
+        **USERS_ENTRY,
+        "transforms": [{"field": "displayName", "expression": "{{ displayName | upper }}"}],
+    }
+    router = GraphRouter(honor_select=True)
+    router.add_records("/users", [user_record(1, "alice@example.com", displayName="Alice")])
+    adapter = make_adapter(make_config([entry]), router)
+
+    adapter.load()
+
+    assert "displayName" in router.requests_for("/users")[0].url.params["$select"].split(",")
+    assert loaded(adapter, IdentityEmployee)[graph_id(1)].display_name == "ALICE"
+
+
+def test_properties_read_only_by_a_transform_are_selected_without_settings_select() -> None:
+    entry = {
+        **USERS_ENTRY,
+        "fields": [*EMPLOYEE_FIELDS[:2], {"name": "display_name", "mapping": "team"}],
+        "transforms": [
+            {"field": "team", "expression": "{{ department }} / {{ jobTitle }}"},
+            {"field": "team", "expression": "{{ team | lower }}"},
+        ],
+    }
+    router = GraphRouter(honor_select=True)
+    router.add_records("/users", [user_record(1, "alice@example.com", department="Network", jobTitle="Engineer")])
+    adapter = make_adapter(make_config([entry]), router)
+
+    adapter.load()
+
+    select = router.requests_for("/users")[0].url.params["$select"].split(",")
+    assert select == ["id", "userPrincipalName", "department", "jobTitle"]
+    assert loaded(adapter, IdentityEmployee)[graph_id(1)].display_name == "network / engineer"
+
+
+def test_reference_field_property_is_selected() -> None:
+    entry = {
+        **USERS_ENTRY,
+        "fields": [
+            *EMPLOYEE_FIELDS,
+            {"name": "sponsor", "mapping": "employeeId", "reference": "IdentityServiceAccount"},
+        ],
+    }
+    accounts = {**USERS_ENTRY, "name": "IdentityServiceAccount"}
+
+    adapter = make_adapter(make_config([accounts, entry]), GraphRouter())
+
+    assert "employeeId" in adapter.request_plan["users"].select
+
+
+def test_filter_on_a_transform_output_logs_a_warning(caplog: pytest.LogCaptureFixture) -> None:
+    entry = {
+        **USERS_ENTRY,
+        "filters": [{"field": "team", "operation": "is_not_empty"}],
+        "transforms": [{"field": "team", "expression": "{{ department }}"}],
+    }
+    caplog.set_level(logging.WARNING, logger=MSGRAPH_LOGGER)
+
+    make_adapter(make_config([entry]), GraphRouter())
+
+    warnings = msgraphsync_records(caplog, logging.WARNING)
+    assert len(warnings) == 1
+    assert "filter reads a key that a transform writes" in warnings[0].getMessage()
+    assert "filter_field='team'" in warnings[0].getMessage()
+
+
+def test_invalid_transform_expression_is_refused_before_any_request() -> None:
+    entry = {**USERS_ENTRY, "transforms": [{"field": "name", "expression": "{{ displayName "}]}
+    router = GraphRouter()
+
+    with pytest.raises(MsgraphConfigError, match="IdentityEmployee"):
+        make_adapter(make_config([entry]), router)
+
+    assert router.requests == []
+
+
 def test_empty_tenant_loads_zero_objects() -> None:
     router = GraphRouter()
     router.add_pages("/users", [[]])
@@ -361,7 +437,11 @@ def msgraphsync_records(caplog: pytest.LogCaptureFixture, level: int) -> list[lo
 
 def member_paths(router: GraphRouter) -> list[str]:
     """The paths of the member requests, in order."""
-    return [path for path in router.paths() if path.endswith(("/members", "/transitiveMembers"))]
+    return [
+        path
+        for path in router.paths()
+        if path.endswith(("/members/microsoft.graph.user", "/transitiveMembers/microsoft.graph.user"))
+    ]
 
 
 @pytest.mark.parametrize("membership", ["direct", "transitive"])
@@ -687,7 +767,7 @@ def test_entries_sharing_a_collection_send_one_request_selecting_both_properties
 @pytest.mark.parametrize("membership", ["direct", "transitive"])
 def test_member_of_collection_loads_mapped_users_and_plans_members_path(membership: str) -> None:
     router = GraphRouter(honor_select=True)
-    path = router.members_path(graph_id(11), transitive=membership == "transitive") + "/microsoft.graph.user"
+    path = router.members_path(graph_id(11), transitive=membership == "transitive")
     router.add_records(path, [user_record(1, "room1@example.com", accountEnabled=True)])
     entry = {**USERS_ENTRY, "mapping": "room_accounts"}
     settings = {
@@ -710,3 +790,32 @@ def test_member_of_collection_loads_mapped_users_and_plans_members_path(membersh
     assert users[graph_id(1)].name == "room1@example.com"
     assert users[graph_id(1)].enabled is True
     assert router.paths() == [path]
+
+
+def test_members_are_read_only_for_groups_that_pass_the_entry_filters() -> None:
+    entry = {**GROUPS_WITH_MEMBERS_ENTRY, "filters": [{"field": "displayName", "operation": "==", "value": "Network"}]}
+    router = GraphRouter()
+    router.add_records("/users", [user_record(1, "alice@example.com")])
+    router.add_records("/groups", [group_record(11, "Network"), group_record(12, "Sales")])
+    router.add_members(graph_id(11), [member_record(graph_id(1))])
+    router.add_members(graph_id(12), [member_record(graph_id(1))])
+    adapter = make_adapter(make_config([USERS_ENTRY, entry]), router)
+
+    adapter.load()
+
+    assert member_paths(router) == [router.members_path(graph_id(11))]
+    assert loaded(adapter, IdentityGroup)[graph_id(11)].members
+
+
+def test_filter_on_members_reads_the_members_of_every_group() -> None:
+    entry = {**GROUPS_WITH_MEMBERS_ENTRY, "filters": [{"field": "members", "operation": "is_not_empty"}]}
+    router = GraphRouter()
+    router.add_records("/users", [user_record(1, "alice@example.com")])
+    router.add_records("/groups", [group_record(11, "Network"), group_record(12, "Sales")])
+    router.add_members(graph_id(11), [member_record(graph_id(1))])
+    adapter = make_adapter(make_config([USERS_ENTRY, entry]), router)
+
+    adapter.load()
+
+    assert sorted(member_paths(router)) == [router.members_path(graph_id(11)), router.members_path(graph_id(12))]
+    assert set(loaded(adapter, IdentityGroup)) == {graph_id(11)}

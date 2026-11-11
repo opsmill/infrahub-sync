@@ -26,36 +26,43 @@ from urllib.parse import unquote, urlsplit
 
 import httpx
 import structlog
-from azure.core.exceptions import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+from azure.core.exceptions import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error  # optional dep, installed separately
     AzureError,
     ClientAuthenticationError,
 )
-from azure.identity.aio import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+from azure.identity.aio import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error  # optional dep, installed separately
     ClientSecretCredential,
     DefaultAzureCredential,
 )
 from diffsync import Adapter, DiffSyncModel
-from kiota_abstractions.api_error import APIError  # ty: ignore[unresolved-import]  # pylint: disable=import-error
-from kiota_abstractions.base_request_configuration import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+from jinja2 import TemplateSyntaxError
+from jinja2 import meta as jinja2_meta
+from jinja2.nativetypes import NativeEnvironment
+from kiota_abstractions.api_error import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error  # optional dep, installed separately
+    APIError,
+)
+from kiota_abstractions.base_request_configuration import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error  # optional dep, installed separately
     RequestConfiguration,
 )
-from kiota_authentication_azure.azure_identity_authentication_provider import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+from kiota_authentication_azure.azure_identity_authentication_provider import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error  # optional dep, installed separately
     AzureIdentityAuthenticationProvider,
 )
-from kiota_http.middleware.options import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+from kiota_http.middleware.options import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error  # optional dep, installed separately
     RetryHandlerOption,
 )
-from msgraph import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+from msgraph import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error  # optional dep, installed separately
     GraphRequestAdapter,
     GraphServiceClient,
 )
-from msgraph.generated.models.o_data_errors.o_data_error import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+from msgraph.generated.models.o_data_errors.o_data_error import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error  # optional dep, installed separately
     ODataError,
 )
-from msgraph.graph_request_adapter import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+from msgraph.graph_request_adapter import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error  # optional dep, installed separately
     options as sdk_default_options,
 )
-from msgraph_core import GraphClientFactory  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+from msgraph_core import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error  # optional dep, installed separately
+    GraphClientFactory,
+)
 
 from infrahub_sync import DiffSyncMixin, DiffSyncModelMixin
 from infrahub_sync.adapters.utils import get_value
@@ -63,7 +70,7 @@ from infrahub_sync.adapters.utils import get_value
 if TYPE_CHECKING:
     from collections.abc import Coroutine, Sequence
 
-    from kiota_abstractions.request_information import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error
+    from kiota_abstractions.request_information import (  # ty: ignore[unresolved-import]  # pylint: disable=import-error  # optional dep, installed separately
         RequestInformation,
     )
     from typing_extensions import Self
@@ -87,7 +94,6 @@ RESOURCES = (USERS, GROUPS)
 # A collection cannot use these names: they already mean an unfiltered read of the resource.
 RESERVED_COLLECTION_NAMES = frozenset(RESOURCES)
 MEMBERS_KEY = "members"
-USER_ODATA_TYPE = "#microsoft.graph.user"
 REQUIRED_PERMISSIONS = ("User.Read.All", "Group.Read.All", "GroupMember.Read.All")
 # Graph also requires this permission to list the members of a group with hidden membership.
 HIDDEN_MEMBERSHIP_PERMISSION = "Member.Read.Hidden"
@@ -140,6 +146,8 @@ ERROR_MAPPING = {"XXX": ODataError}
 _sleep = asyncio.sleep
 
 T = TypeVar("T")
+# Parses transform expressions to find the Graph properties they read. Never renders.
+_JINJA_ENV = NativeEnvironment()
 
 
 class MsgraphConfigError(ValueError):
@@ -438,31 +446,44 @@ class MsgraphClient:
         self.requests = 0
         self.retries = 0
         self.member_requests = 0
-        self._credential = credential if credential is not None else build_credential(settings)
-        middleware_options: dict[str, Any] = {
-            **sdk_default_options,
-            # The adapter runs its own bounded retry loop in `_send`; the SDK retry handler is off.
-            RetryHandlerOption.get_key(): RetryHandlerOption(should_retry=False),
-        }
-        self._http: httpx.AsyncClient = GraphClientFactory.create_with_default_middleware(
-            client=httpx.AsyncClient(transport=transport, timeout=settings.timeout),
-            options=middleware_options,
-        )
-        auth_provider = AzureIdentityAuthenticationProvider(
-            self._credential,
-            scopes=[settings.token_scope],
-            allowed_hosts=[settings.graph_host],
-        )
-        self._adapter = GraphRequestAdapter(auth_provider, client=self._http)
-        self._adapter.base_url = settings.graph_url
-        self.sdk = GraphServiceClient(request_adapter=self._adapter)
+        self._transport = transport
+        self._credential: Any | None = credential
+        self._http: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> Self:
+        """Build the credential, the HTTP client and the SDK client. Close what was built if a step fails."""
+        try:
+            if self._credential is None:
+                self._credential = build_credential(self.settings)
+            middleware_options: dict[str, Any] = {
+                **sdk_default_options,
+                # The adapter runs its own bounded retry loop in `_send`; the SDK retry handler is off.
+                RetryHandlerOption.get_key(): RetryHandlerOption(should_retry=False),
+            }
+            self._http = GraphClientFactory.create_with_default_middleware(
+                client=httpx.AsyncClient(transport=self._transport, timeout=self.settings.timeout),
+                options=middleware_options,
+            )
+            auth_provider = AzureIdentityAuthenticationProvider(
+                self._credential,
+                scopes=[self.settings.token_scope],
+                allowed_hosts=[self.settings.graph_host],
+            )
+            self._adapter = GraphRequestAdapter(auth_provider, client=self._http)
+            self._adapter.base_url = self.settings.graph_url
+            self.sdk = GraphServiceClient(request_adapter=self._adapter)
+        except BaseException:
+            await self._close()
+            raise
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
+        await self._close()
+
+    async def _close(self) -> None:
         try:
-            await self._http.aclose()
+            if self._http is not None:
+                await self._http.aclose()
         finally:
             close = getattr(self._credential, "close", None)
             if close is not None:
@@ -474,9 +495,9 @@ class MsgraphClient:
         """Return every record of a collection, following `@odata.nextLink` until the last page."""
         builder = self.sdk.users if collection.resource == USERS else self.sdk.groups
         if collection.member_of:
-            group = self.sdk.groups.by_group_id(collection.member_of)
-            members = group.transitive_members if self.settings.membership == MEMBERSHIP_TRANSITIVE else group.members
-            builder = members.graph_user
+            builder = self._user_members(
+                collection.member_of, transitive=self.settings.membership == MEMBERSHIP_TRANSITIVE
+            )
         # Graph requires `$count` and `ConsistencyLevel: eventual` for the OData cast that every `member_of` read uses.
         eventual = collection.advanced_query or bool(collection.member_of)
         info = builder.to_get_request_information(
@@ -488,9 +509,8 @@ class MsgraphClient:
                 count=True if eventual else None,
             )
         )
-        if collection.member_of and info.url_template is not None:
-            # Some SDK versions shorten the cast to `graph.user`; use Graph's fully qualified type name.
-            info.url_template = info.url_template.replace("/graph.user", "/microsoft.graph.user")
+        if collection.member_of:
+            _qualify_user_cast(info)
         try:
             return await self._read_pages(builder, info, eventual=eventual, member=bool(collection.member_of))
         except MsgraphRequestError as exc:
@@ -503,20 +523,24 @@ class MsgraphClient:
             raise
 
     async def user_member_ids(self, group_id: str, *, transitive: bool) -> list[str]:
-        """Return the sorted, unique IDs of the users that are direct or transitive members of a group."""
-        group = self.sdk.groups.by_group_id(group_id)
-        builder = group.transitive_members if transitive else group.members
+        """Return the sorted, unique IDs of the users that are direct or transitive members of a group.
+
+        The request casts the members to users, so Graph returns no devices, service principals, contacts or
+        groups. The cast needs `$count` and `ConsistencyLevel: eventual`.
+        """
+        builder = self._user_members(group_id, transitive=transitive)
         info = builder.to_get_request_information(
-            _request_configuration(builder, select=["id"], top=self.settings.page_size)
+            _request_configuration(builder, select=["id"], top=self.settings.page_size, count=True)
         )
-        members = await self._read_pages(builder, info, eventual=False, member=True)
-        return sorted(
-            {
-                str(member["id"])
-                for member in members
-                if member.get("@odata.type") == USER_ODATA_TYPE and member.get("id") is not None
-            }
-        )
+        _qualify_user_cast(info)
+        members = await self._read_pages(builder, info, eventual=True, member=True)
+        return sorted({str(member["id"]) for member in members if member.get("id") is not None})
+
+    def _user_members(self, group_id: str, *, transitive: bool) -> Any:
+        """Request builder for the members of a group that are users: `/members/microsoft.graph.user`."""
+        group = self.sdk.groups.by_group_id(group_id)
+        members = group.transitive_members if transitive else group.members
+        return members.graph_user
 
     async def _read_pages(
         self, builder: Any, info: RequestInformation, *, eventual: bool, member: bool = False
@@ -689,6 +713,24 @@ def _request_path(info: RequestInformation) -> str:
     return f"{path}?{unquote(parts.query)}" if parts.query else path
 
 
+def _qualify_user_cast(info: RequestInformation) -> None:
+    """Use Graph's fully qualified type name in the user cast of a member read.
+
+    Some SDK versions shorten the cast to `graph.user`, which Graph refuses. If the URL template of an SDK version
+    has neither form, the request would fail with a misleading error, so the adapter stops before sending it.
+    """
+    template = info.url_template or ""
+    if "/microsoft.graph.user" not in template:
+        template = template.replace("/graph.user", "/microsoft.graph.user")
+    if "/microsoft.graph.user" not in template:
+        msg = (
+            f"The msgraph-sdk URL template {info.url_template!r} has no user cast; the msgraph-sdk version is not "
+            "supported."
+        )
+        raise TypeError(msg)
+    info.url_template = template
+
+
 def _retryable_transport_error(exc: Exception) -> bool:
     """Whether a transport failure can recover, excluding invalid requests and untrusted certificates."""
     if not isinstance(exc, httpx.TransportError) or isinstance(
@@ -807,19 +849,48 @@ def _append_new(names: list[str], new: Sequence[str]) -> None:
 
 
 def _entry_properties(entry: SchemaMappingModel, collection: Collection) -> list[str]:
-    """Top-level Graph properties that one entry reads through plain field mappings and filters.
+    """Top-level Graph properties that one entry reads through its filters, transforms and field mappings.
 
-    `members` on groups is not a Graph property: the adapter adds it to the group records. Filters run before the
-    transforms, so every property a filter reads is selected. A field mapping that names a transform output reads
-    the transformed key, which is not a Graph property, so it is not selected.
+    Filters run before the transforms, so every property a filter reads is selected. Each transform reads the
+    variables of its expression; a variable that an earlier transform of the entry writes is not a Graph property.
+    A field mapping, with or without a `reference`, reads a Graph property unless a transform writes that key.
+    `members` on groups is not a Graph property: the adapter adds it to the group records.
     """
     synthetic = {MEMBERS_KEY} if collection.resource == GROUPS else set()
-    transform_outputs = {transform.field for transform in entry.transforms or []}
-    field_paths = [field_map.mapping for field_map in entry.fields if field_map.mapping and not field_map.reference]
-    filter_paths = [filter_map.field for filter_map in entry.filters or []]
-    tops = [top for top in (path.split(".", 1)[0] for path in field_paths) if top not in transform_outputs]
-    tops += [path.split(".", 1)[0] for path in filter_paths]
+    filter_reads = [_top(filter_map.field) for filter_map in entry.filters or []]
+    transform_reads: list[str] = []
+    written: set[str] = set()
+    for transform in entry.transforms or []:
+        transform_reads += [name for name in _expression_variables(entry, transform.expression) if name not in written]
+        written.add(_top(transform.field))
+    field_reads = [_top(field_map.mapping) for field_map in entry.fields if field_map.mapping]
+    for filter_map in entry.filters or []:
+        if _top(filter_map.field) in written - set(transform_reads):
+            log.warning(
+                "filter reads a key that a transform writes",
+                entry=entry.name,
+                filter_field=filter_map.field,
+                detail=(
+                    "filters run before the transforms, so the filter reads the Graph property of that name, not "
+                    "the transform output. Graph refuses the read if no such property exists."
+                ),
+            )
+    tops = [top for top in field_reads if top not in written] + filter_reads + transform_reads
     return [top for top in tops if top not in synthetic]
+
+
+def _top(path: str) -> str:
+    return path.split(".", 1)[0]
+
+
+def _expression_variables(entry: SchemaMappingModel, expression: str) -> list[str]:
+    """Top-level variables that a transform expression reads, sorted. Jinja globals such as `range` are left out."""
+    try:
+        names = jinja2_meta.find_undeclared_variables(_JINJA_ENV.parse(expression))
+    except TemplateSyntaxError as exc:
+        msg = f"schema_mapping '{entry.name}': the transform expression {expression!r} is not valid Jinja: {exc}"
+        raise MsgraphConfigError(msg) from exc
+    return sorted(name for name in names if name not in _JINJA_ENV.globals)
 
 
 def _maps_members(entry: SchemaMappingModel, collection: Collection) -> bool:
@@ -936,7 +1007,7 @@ class MsgraphsyncAdapter(DiffSyncMixin, Adapter):
                 member_requests_before = graph.member_requests
                 records[name] = await graph.list_collection(plan.collection, plan.select)
                 if plan.needs_members:
-                    await self._add_members(graph, records[name])
+                    await self._add_members(graph, self._groups_needing_members(name, records[name]))
                 log.info(
                     "collection read",
                     collection=name,
@@ -955,6 +1026,25 @@ class MsgraphsyncAdapter(DiffSyncMixin, Adapter):
                 retries=graph.retries,
             )
         return records
+
+    def _groups_needing_members(self, collection_name: str, groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The groups that pass the filters of at least one entry that maps `members` from this collection.
+
+        Filters run before the members are known, so a filter on `members` would see none: if an entry filters on
+        `members`, or maps `members` without filters, every group needs its members.
+        """
+        entries = [
+            entry
+            for entry, collection in self._entries
+            if collection.name == collection_name and _maps_members(entry, collection)
+        ]
+        filter_sets = [entry.filters or [] for entry in entries]
+        for filters in filter_sets:
+            if not filters or any(_top(filter_map.field) == MEMBERS_KEY for filter_map in filters):
+                return groups
+        return [
+            group for group in groups if any(MsgraphsyncModel.apply_filters(group, filters) for filters in filter_sets)
+        ]
 
     async def _add_members(self, graph: MsgraphClient, groups: list[dict[str, Any]]) -> None:
         """Store the sorted user member IDs of every group under `members`.

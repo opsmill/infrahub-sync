@@ -35,6 +35,8 @@ MSGRAPH_ENV = {
     msgraphsync.ENV_CLIENT_SECRET: CLIENT_SECRET,
 }
 ONE_YEAR_SECONDS = 365 * 24 * 3600
+USER_ODATA_TYPE = "#microsoft.graph.user"
+USER_CAST = "/microsoft.graph.user"
 
 
 def graph_id(number: int) -> str:
@@ -45,7 +47,7 @@ def graph_id(number: int) -> str:
 def user_record(number: int, upn: str, **properties: object) -> dict[str, Any]:
     """A Graph user record in the wire format. Use `example.com` user principal names."""
     return {
-        "@odata.type": msgraphsync.USER_ODATA_TYPE,
+        "@odata.type": USER_ODATA_TYPE,
         "id": graph_id(number),
         "userPrincipalName": upn,
         "displayName": upn.split("@", 1)[0],
@@ -58,7 +60,7 @@ def group_record(number: int, display_name: str, **properties: object) -> dict[s
     return {"id": graph_id(number), "displayName": display_name, **properties}
 
 
-def member_record(member_id: str, odata_type: str = msgraphsync.USER_ODATA_TYPE) -> dict[str, Any]:
+def member_record(member_id: str, odata_type: str = USER_ODATA_TYPE) -> dict[str, Any]:
     """An item of a `/members` or `/transitiveMembers` page."""
     return {"@odata.type": odata_type, "id": member_id}
 
@@ -127,6 +129,7 @@ class GraphRouter:
     Queued errors and timeouts of a path are answered first, in order. A path without
     registered pages answers one empty page. Every `httpx.Request` is kept in `requests`.
     With `honor_select`, each record keeps only the `$select` properties, as Graph does.
+    A path that ends in the user cast `/microsoft.graph.user` returns only the records of type user, as Graph does.
     """
 
     def __init__(self, base_url: str = GRAPH_URL, *, honor_select: bool = False) -> None:
@@ -150,7 +153,7 @@ class GraphRouter:
         self.add_pages(path, [records])
 
     def add_members(self, group_id: str, members: Iterable[dict[str, Any]], *, transitive: bool = False) -> None:
-        """Serve one page of member items for a group's `/members` or `/transitiveMembers` path."""
+        """Serve one page of member items for a group's members, read through the user cast."""
         self.add_records(self.members_path(group_id, transitive=transitive), list(members))
 
     def add_error(
@@ -201,7 +204,7 @@ class GraphRouter:
 
     @staticmethod
     def members_path(group_id: str, *, transitive: bool = False) -> str:
-        return f"/groups/{group_id}/{'transitiveMembers' if transitive else 'members'}"
+        return f"/groups/{group_id}/{'transitiveMembers' if transitive else 'members'}{USER_CAST}"
 
     def relative_path(self, request: httpx.Request) -> str:
         path = request.url.path
@@ -227,6 +230,8 @@ class GraphRouter:
         if index >= len(pages):
             return httpx.Response(400, json={"error": {"code": "BadSkipToken", "message": f"No page {index}."}})
         records = pages[index]
+        if path.endswith(USER_CAST):
+            records = [record for record in records if record.get("@odata.type", USER_ODATA_TYPE) == USER_ODATA_TYPE]
         if self.honor_select:
             records = _project(records, request.url.params.get("$select"))
         body: dict[str, Any] = {"value": records}

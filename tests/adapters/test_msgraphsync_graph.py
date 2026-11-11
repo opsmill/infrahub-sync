@@ -37,6 +37,7 @@ from tests.adapters.msgraphsync_fakes import (
     SleepRecorder,
     graph_id,
     group_record,
+    member_record,
     user_record,
 )
 
@@ -604,7 +605,7 @@ def test_member_of_reads_user_cast_with_paging_and_query_options(
 ) -> None:
     # Graph requires $count and ConsistencyLevel: eventual for an OData cast, so every member_of read sends them.
     router = GraphRouter()
-    path = router.members_path(graph_id(11), transitive=membership == "transitive") + "/microsoft.graph.user"
+    path = router.members_path(graph_id(11), transitive=membership == "transitive")
     records = [user_record(1, "room1@example.com"), user_record(2, "room2@example.com")]
     router.add_pages(path, [[records[0]], [records[1]]])
     collection = Collection(
@@ -632,7 +633,7 @@ def test_member_of_reads_user_cast_with_paging_and_query_options(
 @pytest.mark.parametrize("page", [0, 1])
 def test_missing_member_of_group_stops_the_collection_read(page: int) -> None:
     router = GraphRouter()
-    path = router.members_path(graph_id(11)) + "/microsoft.graph.user"
+    path = router.members_path(graph_id(11))
     if page:
         router.add_body(
             path,
@@ -657,7 +658,7 @@ def test_missing_member_of_group_stops_the_collection_read(page: int) -> None:
 
 def test_member_of_permission_error_explains_member_permissions() -> None:
     router = GraphRouter()
-    path = router.members_path(graph_id(11)) + "/microsoft.graph.user"
+    path = router.members_path(graph_id(11))
     router.add_error(path, 403, code="Authorization_RequestDenied")
 
     with pytest.raises(MsgraphPermissionError) as excinfo:
@@ -665,3 +666,40 @@ def test_member_of_permission_error_explains_member_permissions() -> None:
 
     assert "GroupMember.Read.All" in str(excinfo.value)
     assert HIDDEN_MEMBERSHIP_PERMISSION in str(excinfo.value)
+
+
+@pytest.mark.parametrize("membership", ["direct", "transitive"])
+def test_member_read_casts_to_users_with_eventual_consistency(membership: str) -> None:
+    # The user cast makes Graph leave out devices, service principals, contacts and groups.
+    transitive = membership == "transitive"
+    router = GraphRouter()
+    router.add_members(GROUP_ID, [member_record(graph_id(2)), member_record(graph_id(1))], transitive=transitive)
+
+    async def read() -> list[str]:
+        async with MsgraphClient(make_settings(), transport=router.transport, credential=FakeCredential()) as graph:
+            return await graph.user_member_ids(GROUP_ID, transitive=transitive)
+
+    assert asyncio.run(read()) == [graph_id(1), graph_id(2)]
+    assert router.paths() == [GraphRouter.members_path(GROUP_ID, transitive=transitive)]
+    request = router.requests[0]
+    assert request.url.params["$select"] == "id"
+    assert request.url.params["$count"] == "true"
+    assert request.headers["ConsistencyLevel"] == "eventual"
+
+
+def test_url_template_without_user_cast_stops_before_any_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An SDK version whose URL template has no user cast would send a request that Graph refuses.
+    original = msgraphsync.MsgraphClient._user_members
+
+    def uncast_members(self: MsgraphClient, group_id: str, *, transitive: bool) -> object:
+        cast = original(self, group_id, transitive=transitive)
+        cast.url_template = cast.url_template.replace("/graph.user", "")
+        return cast
+
+    monkeypatch.setattr(msgraphsync.MsgraphClient, "_user_members", uncast_members)
+    router = GraphRouter()
+
+    with pytest.raises(TypeError, match="no user cast"):
+        read_members(router, GROUP_ID)
+
+    assert router.requests == []
