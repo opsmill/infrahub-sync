@@ -487,6 +487,27 @@ def test_a_failure_after_part_of_a_write_names_the_operation_and_marks_the_parti
     assert "re-applying" in message.lower(), "and the convergent remedy (AD033)"
 
 
+def test_a_stopped_apply_records_the_plan_size_and_the_failed_operation(tmp_path: Path) -> None:
+    """Spec 019 FR-014: the failure record of a stopped apply names the operation from the plan."""
+    directory = _run_dir(tmp_path)
+    records = [operation_record(identity={"name": "first"}), operation_record(identity={"name": "second"})]
+    write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
+
+    with pytest.raises(OperationApplyFailedError) as caught:
+        _potenda(directory, PartiallyWritingDestination()).apply_plan(
+            ownership=granted_ownership(), config_version=CONFIG_VERSION
+        )
+
+    record = caught.value.apply_record
+    assert record.operations_total == len(records)
+    assert record.failed_operation_detail == {
+        "action": records[1]["action"],
+        "kind": records[1]["kind"],
+        "identity": {"name": "second"},
+    }
+    assert "operations_total" not in record.as_summary_keys(), "the run summary keys are unchanged"
+
+
 class DefectiveDestination(RecordingDestination):
     """A destination whose second operation raises the defect it is constructed with.
 

@@ -51,7 +51,7 @@ from tests.cli.test_client_commands import (
     client,  # noqa: F401 - the fixture is used by name.
 )
 from tests.service.execution_fixtures import append_execution
-from tests.service.failure_cases import CASES, CREDENTIALS, ERROR_TEXT, OTHER_CASES, FailureCase, forbidden_values
+from tests.service.failure_cases import CASES, CREDENTIALS, ERROR_TEXT, FailureCase, forbidden_values
 from tests.service.test_http_api import _FakeOrchestration, _registered_package
 
 if TYPE_CHECKING:
@@ -65,7 +65,7 @@ HEADERS = {"Authorization": f"Bearer {OWNER_TOKEN}"}
 WORKER_ID = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
 RUN_ID = "run-failure-credentials"
 
-ALL_CASES = [pytest.param(case, id=case.case_id) for case in (*CASES, *OTHER_CASES)]
+ALL_CASES = [pytest.param(case, id=case.case_id) for case in CASES]
 
 # The command of each stage, as the CLI starts it.
 _STAGE_COMMANDS: dict[str, tuple[str, ...]] = {
@@ -162,6 +162,11 @@ def test_no_credential_reaches_the_api_the_cli_or_the_run_artifact(
     assert run_response.status_code == 200, run_response.text
     assert results_response.status_code == 200, results_response.text
     assert f"{case.stage}_failure" in results_response.json()["results"]
+    # The failure type reaches the API through the store commit (FR-015).
+    stored_failure = ResultsResource.model_validate(results_response.json()).stage_failure(case.stage)
+    assert stored_failure is not None
+    assert stored_failure.failure_type == case.failure_type
+    assert run_response.json()["run"]["results"][f"{case.stage}_failure"]["failure_type"] == case.failure_type
     _assert_absent(run_response.content, "GET /runs/{run_id}")
     _assert_absent(results_response.content, "GET /runs/{run_id}/results")
 

@@ -289,6 +289,11 @@ class PeerNotFoundError(PlanArtifactError):
 
     next_action = "Create the peer at the destination, or re-plan so the same plan creates it."
 
+    def __init__(self, message: str, *, next_action: str | None = None, peer_kind: str | None = None) -> None:
+        super().__init__(message, next_action=next_action)
+        # The kind of the peer, which a failure record names (spec 019 FR-018).
+        self.peer_kind = peer_kind
+
 
 class PeerAmbiguousError(PlanArtifactError):
     """A peer identity matches more than one object at the destination."""
@@ -301,6 +306,11 @@ class PeerAmbiguousError(PlanArtifactError):
         "The destination kind's identity is not unique for these values: de-duplicate at the "
         "destination, or narrow the mapping's identifiers."
     )
+
+    def __init__(self, message: str, *, next_action: str | None = None, peer_kind: str | None = None) -> None:
+        super().__init__(message, next_action=next_action)
+        # The kind of the peer, which a failure record names (spec 019 FR-018).
+        self.peer_kind = peer_kind
 
 
 class UnaccountedIdentityComponentError(PlanArtifactError):

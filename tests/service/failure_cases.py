@@ -364,6 +364,13 @@ CASES: tuple[FailureCase, ...] = (
         lambda text: CredentialConfigurationError(f"environment credential '{text}' is missing or empty"),
         "credential_missing",
     ),
+    FailureCase("verification-failed", "apply", PlanVerificationError, "verification_failed"),
+    FailureCase(
+        "apply-refused",
+        "apply",
+        lambda text: _chained(LeftOutConfirmationRequiredError(2, run_id="run-failure-case"), RuntimeError(text)),
+        "apply_refused",
+    ),
     FailureCase("unknown-class", "plan", RuntimeError, "internal_error"),
     FailureCase(
         "unknown-class-in-a-side-read",
@@ -374,18 +381,6 @@ CASES: tuple[FailureCase, ...] = (
     ),
 )
 
-# Failure types raised for the credential checks of T047 only. Their `failure_type` is not
-# checked: research R12 names no error class for `verification_failed` and `apply_refused`.
-OTHER_CASES: tuple[FailureCase, ...] = (
-    FailureCase("verification-failed", "apply", PlanVerificationError, "verification_failed"),
-    FailureCase(
-        "apply-refused",
-        "apply",
-        lambda text: _chained(LeftOutConfirmationRequiredError(2, run_id="run-failure-case"), RuntimeError(text)),
-        "apply_refused",
-    ),
-)
-
 __all__ = [
     "ADDRESS",
     "CASES",
@@ -393,7 +388,6 @@ __all__ = [
     "ERROR_TEXT",
     "FAILED_OPERATION",
     "NEUTRAL_TEXT",
-    "OTHER_CASES",
     "SHORT_CREDENTIAL",
     "SHORT_CREDENTIAL_NAME",
     "SPECIAL_CREDENTIAL",

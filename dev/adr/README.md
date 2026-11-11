@@ -56,6 +56,9 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — **Proposed** — why a plan finds every problem in one pass, leaves out the records with a
   problem and the records that depend on them, keeps records through optional relationships,
   withholds the deletes of a kind it cannot match, and asks for a confirmation at apply.
+- [0021 — A run's failure record holds a structured cause built from allowlisted fields](0021-a-failure-record-holds-a-structured-cause.md)
+  — **Proposed** — why a failed run records a failure type, the system involved and
+  Infrahub's own message of a rejected write, and never the text of any other error.
 - [0022 — Saved plan format 4 holds the plan report](0022-saved-plan-format-4.md)
   — **Proposed** — the report file and the manifest's `report` record, how the plan checksum
   binds the left-out count the apply checks, and why formats 2 and 3 can no longer be applied.

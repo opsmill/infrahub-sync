@@ -1051,6 +1051,8 @@ class Potenda:
 
         applied: list[str] = []
         skipped_deletes: list[str] = []
+        # Read from the plan for the failure record of a stopped apply (spec 019 FR-014).
+        operations_total = len(loaded.operations)
         for operation in loaded.operations:
             if operation.action == "delete":
                 skipped_deletes.append(operation.operation_id)
@@ -1065,6 +1067,7 @@ class Potenda:
                 exc.apply_record = ApplyRecord(  # ty: ignore[unresolved-attribute]
                     applied_operations=tuple(applied),
                     skipped_delete_operations=tuple(skipped_deletes),
+                    operations_total=operations_total,
                 )
                 raise
             try:
@@ -1083,6 +1086,12 @@ class Potenda:
                     # whether it got as far as a mutation. `None` for anything that does not
                     # say, which is the unchanged "may have written" reading (S6).
                     failed_operation_wrote=getattr(exc, "wrote", None),
+                    operations_total=operations_total,
+                    failed_operation_detail={
+                        "action": operation.action,
+                        "kind": operation.kind,
+                        "identity": dict(operation.identity),
+                    },
                 )
                 if not isinstance(exc, OPERATIONAL_APPLY_FAILURES):
                     # An interrupt or a defect: it propagates as itself, with its own

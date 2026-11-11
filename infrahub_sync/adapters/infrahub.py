@@ -575,6 +575,7 @@ class PeerResolver:
                     "carries at least one direct attribute value, or add one to its `identifiers` in "
                     "the schema mapping."
                 ),
+                peer_kind=peer_kind,
             )
         results = self._adapter.client.filters(
             kind=peer_kind,
@@ -590,13 +591,13 @@ class PeerResolver:
                 f"{readable}, referenced by operation {referring_operation_id!r}. Queried with: "
                 f"{sorted(filter_kwargs)}."
             )
-            raise PeerNotFoundError(msg)
+            raise PeerNotFoundError(msg, peer_kind=peer_kind)
         msg = (
             f"{len(results)} objects of kind {peer_kind!r} at the destination match the peer identity "
             f"{readable}, referenced by operation {referring_operation_id!r}, so the peer is ambiguous. "
             f"Queried with: {sorted(filter_kwargs)}."
         )
-        raise PeerAmbiguousError(msg)
+        raise PeerAmbiguousError(msg, peer_kind=peer_kind)
 
 
 class PeerIdentifierError(ValueError):

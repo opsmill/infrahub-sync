@@ -538,7 +538,8 @@ def test_service_flow_redacts_worker_logs_exception_chain_and_failed_state(
     assert stored is not None
     assert stored.phase == "plan-failed"
     assert stored.outcome == "failed"
-    assert stored.results["plan_failure"] == {
+    recorded = stored.results["plan_failure"]
+    assert {key: recorded[key] for key in ("stage", "outcome", "error_type", "cause_type")} == {
         "stage": "plan",
         "outcome": "failed",
         "error_type": "ValueError",
@@ -546,6 +547,10 @@ def test_service_flow_redacts_worker_logs_exception_chain_and_failed_state(
         # the canary assertions above and below cover the whole stored document.
         "cause_type": "ConnectionError",
     }
+    # Spec 019 ADR 0021: the failure type and a fixed template cause, never the error's text.
+    assert recorded["failure_type"] == "system_unreachable"
+    assert recorded["system"] is None
+    assert recorded["cause"] == "A system could not be reached"
     assert environment_canary not in stored.model_dump_json()
     assert configuration_canary not in stored.model_dump_json()
     assert stored.prefect_executions[0].terminal_state == "failed"
@@ -600,6 +605,16 @@ def test_service_apply_failure_retains_partial_write_evidence(
         # The class's own next action, never the destination's message.
         "next_action": failure.next_action,
         **partial.as_summary_keys(),
+        # Spec 019 ADR 0021: an apply failure with no known cause is an internal error at the
+        # destination, with no cause text.
+        "failure_type": "internal_error",
+        "system": {"role": "destination", "adapter": "infrahub"},
+        "error_code": None,
+        "node_kind": None,
+        "attribute": None,
+        "infrahub_message": None,
+        "record": None,
+        "field": None,
     }
     assert stored.prefect_executions[0].terminal_state == "interrupted"
 
@@ -1215,18 +1230,19 @@ def test_a_wrapped_apply_failure_records_the_class_it_was_raised_from(
 
 
 @pytest.mark.usefixtures("_claimed_worker_execution")
-def test_the_recorded_cause_carries_a_class_name_and_never_a_message(
+def test_the_recorded_cause_holds_infrahubs_message_and_no_other_error_text(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Safe by construction is what the sweep exists to verify rather than accept.
+    """ADR 0021 replaces "a class name, never a message".
 
-    A destination's text can carry anything it likes, including a credential it
-    was sent. The recorded cause is one identifier from this process's own
-    taxonomy, so the message the wrapper was raised from must reach nothing.
+    Infrahub's own message of a rejected write is recorded, in `infrahub_message` only. Every
+    other part of the error -- the query, its variables, the extra data of the GraphQL error and
+    the wrapper's message -- can carry a value the destination was sent, and reaches nothing.
     """
     run_id = "run-cause-carries-no-message"
     projection = _create_product_run(tmp_path.resolve(), run_id)
+    infrahub_message = "status planned is not one of the allowed values"
     canary = "kaphaeric-secret-in-a-destination-message"
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
     bind_granting_guard(monkeypatch, service_flow)
@@ -1237,8 +1253,12 @@ def test_the_recorded_cause_carries_a_class_name_and_never_a_message(
     monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     def fail_apply(*_args: object, **_kwargs: object) -> NoReturn:
-        msg = "applying an operation failed"
-        cause = SDKGraphQLError(errors=[{"message": canary}])
+        msg = f"applying an operation failed: {canary}"
+        cause = SDKGraphQLError(
+            errors=[{"message": infrahub_message, "extensions": {"data": {"detail": canary}}}],
+            query=f"mutation {{ x(data: {{token: {canary!r}}}) }}",
+            variables={"token": canary},
+        )
         raise OperationApplyFailedError(msg, apply_record=ApplyRecord(failed_operation="op-failed")) from cause
 
     monkeypatch.setattr(service_flow, "execute_run", fail_apply)
@@ -1255,7 +1275,10 @@ def test_the_recorded_cause_carries_a_class_name_and_never_a_message(
     stored = projection.lookup_run(run_id).value
     assert stored is not None
 
-    assert stored.results["apply_failure"]["cause_type"] == "GraphQLError"
+    recorded = stored.results["apply_failure"]
+    assert recorded["cause_type"] == "GraphQLError"
+    assert recorded["failure_type"] == "destination_rejected_write"
+    assert recorded["infrahub_message"] == infrahub_message
     assert canary not in stored.model_dump_json()
 
 

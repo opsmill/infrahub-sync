@@ -18,6 +18,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from hashlib import sha256
 from pathlib import PurePath
 from typing import Any, Literal, TypeAlias, get_args
@@ -665,6 +666,12 @@ class ApplyRecord:
     # nothing. `True` is never set — an operation that failed after dispatching is exactly
     # the case that cannot be known.
     failed_operation_wrote: bool | None = None
+    # The plan's operation count, and the failed operation's action, kind and identity, read
+    # from the plan by the engine (spec 019 FR-014). The failure record of a stopped apply
+    # holds them. Not summary keys, and not part of the record's equality: two records of
+    # one apply compare equal whether or not they carry them.
+    operations_total: int | None = dataclass_field(default=None, compare=False)
+    failed_operation_detail: Mapping[str, Any] | None = dataclass_field(default=None, compare=False)
 
     @property
     def skipped_delete_count(self) -> int:

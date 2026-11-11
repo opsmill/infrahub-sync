@@ -10,7 +10,7 @@
 import logging
 import os
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -78,7 +78,7 @@ from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, RuntimeModel
 from .apply_guard import ApplyGuard, hold_apply_guard
 from .checkpoints import publish_final_checkpoint, publish_plan_checkpoint, rehydrate_plan_checkpoint
 from .events import run_event, stage_result_type
-from .failure_cause import operator_cause
+from .failure_cause import FAILURE_RECORD_KEYS, apply_progress, failure_record, operator_cause
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME, run_name
@@ -879,39 +879,66 @@ def _failure_evidence(
 ) -> dict[str, Any]:
     """Describe one failure, with whatever is known about what it wrote.
 
-    The failure's operator cause is recorded too, when it has one: see `operator_cause`.
+    The failure's operator cause is recorded too, when it has one: see `operator_cause`. Every
+    record carries the spec 019 fields of `failure_record` (ADR 0021): the failure type, the
+    system involved and the allowlisted values the failure names. Where `operator_cause`
+    records no cause or next action, the fixed template of the failure type supplies it.
 
     A failure raised by the engine carries its own partial record; a failure raised after
     the engine returned — a sidecar write, the guard's release, the product commit — carries
-    none, and the scope's record is what that one wrote.
+    none, and the scope's record is what that one wrote. The engine's record also holds the
+    plan's operation count and the failed operation's action, kind and identity.
     """
     evidence: dict[str, Any] = {
         "stage": stage,
         "outcome": outcome,
         "error_type": type(exc).__name__,
-        # The class the wrapper was raised from, and nothing else about it. Every
-        # designed refusal the apply path recognises is reported as one
-        # `OperationApplyFailedError`, so the wrapper alone cannot tell an unkeyed
-        # render from a peer that matched nothing or from a destination's own
-        # rejection -- and a gate whose whole subject is one of those refusals has
-        # nothing in the record to read. The immediate cause only: the apply path
-        # wraps exactly once, and walking a chain would record whichever link was
-        # deepest rather than the one that decided this failure.
+        # The class the wrapper was raised from. Every designed refusal the apply path
+        # recognises is reported as one `OperationApplyFailedError`, so the wrapper alone
+        # cannot tell an unkeyed render from a peer that matched nothing or from a
+        # destination's own rejection; the immediate cause only, because the apply path wraps
+        # exactly once.
         #
-        # A class name, never a message. That is the whole reason this is safe to
-        # record: a destination's text can carry anything, and a class name from
-        # this process's own taxonomy carries one identifier.
+        # ADR 0021: the record holds the class name of the immediate cause and the allowlisted
+        # fields of `failure_record` (the failure type, the system, Infrahub's error code, node
+        # kind, attribute and own message of a rejected write, the kind, record and field a
+        # typed Sync error names, the apply progress) and fixed template text filled with them.
+        # It never holds the text of any other error: an adapter's, an HTTP library's or a
+        # parser's text can carry an address, a header or a credential.
         "cause_type": None if exc.__cause__ is None else type(exc.__cause__).__name__,
     }
     if isinstance(exc, UnsupportedSyncStoreError):
         evidence.update(reason=UNSUPPORTED_STORE_REASON, message=UNSUPPORTED_STORE_MESSAGE)
     evidence.update(operator_cause(exc, secrets))
+    evidence.update(_structured_cause(stage, exc, secrets, evidence))
     if stage == "apply" and isinstance(exc, RegisteredPlanVerificationError) and exc.recovery_action is not None:
         evidence["recovery_action"] = exc.recovery_action
     written = effective_apply_record(exc, record)
     if written is not None:
         evidence.update(written.as_summary_keys())
+        evidence.update(apply_progress(written))
     return evidence
+
+
+def _structured_cause(
+    stage: str, exc: Exception, secrets: Sequence[str], recorded: Mapping[str, Any]
+) -> dict[str, Any]:
+    """The `failure_record` fields, keeping the cause and next action `operator_cause` recorded.
+
+    `failure_record` reads typed values only, but an unexpected shape must not cost the run its
+    whole failure record (`_record_failure` stores nothing when building it raises), so any
+    error here records `internal_error`.
+    """
+    try:
+        fields = failure_record(stage, exc, secrets=secrets)
+    except Exception as unexpected:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        logger.warning("failure record fields could not be built (%s)", type(unexpected).__name__)
+        fields = dict.fromkeys(FAILURE_RECORD_KEYS)
+        fields["failure_type"] = "internal_error"
+    for key in ("cause", "next_action"):
+        if recorded.get(key):
+            fields.pop(key, None)
+    return fields
 
 
 def effective_apply_record(exc: Exception, record: ApplyRecord | None) -> ApplyRecord | None:
@@ -931,7 +958,8 @@ def effective_apply_record(exc: Exception, record: ApplyRecord | None) -> ApplyR
 class RecordedFailure:
     """What `_record_failure` stored: the run's terminal outcome and the failure's next action.
 
-    `cause` is the operator cause the evidence holds, for a known error class only.
+    `cause` is the cause `operator_cause` recorded, for a known error class only; a cause from
+    a `failure_record` template is not repeated here.
     """
 
     outcome: Literal["failed", "ambiguous"]
@@ -1059,7 +1087,10 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
         )
         return None
     next_action = evidence.get("next_action")
-    cause = evidence.get("cause")
+    # The worker's ERROR line and its returned `Failed` state repeat only a cause that
+    # `operator_cause` recorded (spec 017); a cause from a `failure_record` template stays in
+    # the record, and the failure keeps the sanitized raise.
+    cause = operator_cause(exc, secrets).get("cause")
     return RecordedFailure(
         outcome=terminal_outcome,
         next_action=next_action if isinstance(next_action, str) and next_action else None,

@@ -143,6 +143,20 @@ def test_an_older_record_validates_with_the_new_fields_empty() -> None:
     assert record.operations_total is None
 
 
+def test_the_results_resource_reads_an_older_record_and_skips_a_malformed_one() -> None:
+    resource = ResultsResource(
+        run_id="service-run-1",
+        results={"apply_failure": _OLDER_RECORD, "plan_failure": {"error_code": "x" * 500}, "verify_failure": "text"},
+    )
+
+    older = resource.stage_failure("apply")
+    assert older is not None
+    assert older.failure_type is None
+    assert resource.stage_failure("plan") is None
+    assert resource.stage_failure("verify") is None
+    assert resource.stage_failure("sync") is None
+
+
 def _failure_lines(output: str) -> list[str]:
     """The lines from `apply failed:` to the end of the output, without the run-terminal error."""
     lines = output.splitlines()

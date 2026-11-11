@@ -11,10 +11,17 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from infrahub_sync.client.models import FAILURE_TYPES, MAX_FAILURE_CAUSE_TEXT
+from infrahub_sync.client.models import (
+    FAILURE_TYPES,
+    MAX_FAILURE_CAUSE_TEXT,
+    MAX_FAILURE_NAME_TEXT,
+    StageFailureResource,
+)
+from infrahub_sync.plan.errors import OperationApplyFailedError
+from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.runtime_schema import DestinationSchemaUnavailableError
 from infrahub_sync.runtime_schema.errors import DestinationBranchNotFoundError
-from infrahub_sync.service.failure_cause import operator_cause
+from infrahub_sync.service.failure_cause import FAILURE_RECORD_KEYS, operator_cause
 from tests.service.failure_cases import APPLIED_OPERATION, CASES, FAILED_OPERATION, NEUTRAL_TEXT, FailureCase
 
 if TYPE_CHECKING:
@@ -106,8 +113,6 @@ def test_an_unknown_reason_still_records_a_cause_and_a_next_action() -> None:
 # each failure type. The record is built by `_failure_evidence`, the function the worker writes
 # `results.<stage>_failure` with; spec 019 T053 and T054 make it call `failure_record`.
 
-_US3_PENDING = pytest.mark.xfail(strict=True, raises=KeyError, reason="spec 019 US3 not implemented")
-
 
 @pytest.fixture
 def failure_evidence() -> Callable[..., dict[str, Any]]:
@@ -123,7 +128,7 @@ def _evidence(failure_evidence: Callable[..., dict[str, Any]], case: FailureCase
     return failure_evidence(case.stage, exc, outcome="failed", record=None, secrets=())
 
 
-@pytest.mark.parametrize("case", [pytest.param(case, id=case.case_id, marks=_US3_PENDING) for case in CASES])
+@pytest.mark.parametrize("case", [pytest.param(case, id=case.case_id) for case in CASES])
 def test_each_failure_type_records_its_type_and_fields(
     failure_evidence: Callable[..., dict[str, Any]], case: FailureCase
 ) -> None:
@@ -138,7 +143,7 @@ def test_each_failure_type_records_its_type_and_fields(
             assert evidence[name] == expected, name
 
 
-@pytest.mark.parametrize("case", [pytest.param(case, id=case.case_id, marks=_US3_PENDING) for case in CASES])
+@pytest.mark.parametrize("case", [pytest.param(case, id=case.case_id) for case in CASES])
 def test_each_failure_type_keeps_the_fields_it_records_today(
     failure_evidence: Callable[..., dict[str, Any]], case: FailureCase
 ) -> None:
@@ -155,7 +160,7 @@ def test_each_failure_type_keeps_the_fields_it_records_today(
 @pytest.mark.parametrize(
     "case",
     [
-        pytest.param(case, id=case.case_id, marks=_US3_PENDING)
+        pytest.param(case, id=case.case_id)
         for case in CASES
         if case.case_id in {"destination-peer-missing", "destination-peer-ambiguous", "rejected-write-with-code"}
     ],
@@ -169,3 +174,53 @@ def test_a_stopped_apply_keeps_its_failed_operation(
     assert evidence["failure_type"] == case.failure_type
     assert evidence["failed_operation"] == FAILED_OPERATION
     assert evidence["applied_operations"] == [APPLIED_OPERATION]
+
+
+@pytest.mark.parametrize("case", [pytest.param(case, id=case.case_id) for case in CASES])
+def test_every_record_carries_every_new_key(failure_evidence: Callable[..., dict[str, Any]], case: FailureCase) -> None:
+    """data-model.md: `failure_type` is always present; the other fields are `None` when not named."""
+    evidence = _evidence(failure_evidence, case)
+
+    assert set(FAILURE_RECORD_KEYS) <= set(evidence)
+    assert StageFailureResource.model_validate(evidence).failure_type == case.failure_type
+
+
+def test_a_stopped_apply_records_the_plan_size_and_the_failed_operation(
+    failure_evidence: Callable[..., dict[str, Any]],
+) -> None:
+    """FR-014: the operation count and the failed operation's action, kind and identity, from the plan."""
+    record = ApplyRecord(
+        applied_operations=(APPLIED_OPERATION,),
+        failed_operation=FAILED_OPERATION,
+        operations_total=2291,
+        failed_operation_detail={
+            "action": "update",
+            "kind": "DcimDevice",
+            "identity": {"location": "r1", "name": "x" * 500},
+        },
+    )
+    exc = OperationApplyFailedError("failed", apply_record=record)
+
+    evidence = failure_evidence("apply", exc, outcome="ambiguous", record=None, secrets=())
+
+    assert evidence["operations_total"] == 2291
+    detail = evidence["failed_operation_detail"]
+    assert (detail["action"], detail["kind"], detail["identity"]["location"]) == ("update", "DcimDevice", "r1")
+    assert len(detail["identity"]["name"]) <= MAX_FAILURE_NAME_TEXT
+
+
+def test_a_failure_record_that_cannot_be_built_is_an_internal_error(
+    failure_evidence: Callable[..., dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The worker never loses the whole record because the structured cause could not be built."""
+    from infrahub_sync.service import flow
+
+    def broken(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        raise AttributeError
+
+    monkeypatch.setattr(flow, "failure_record", broken)
+
+    evidence = failure_evidence("plan", RuntimeError("x"), outcome="failed", record=None, secrets=())
+
+    assert evidence["failure_type"] == "internal_error"
+    assert evidence["error_type"] == "RuntimeError"

@@ -13,6 +13,7 @@ from pydantic import (
     SerializerFunctionWrapHandler,
     StrictBool,
     StringConstraints,
+    ValidationError,
     field_validator,
     model_serializer,
     model_validator,
@@ -705,9 +706,12 @@ class StageFailureResource(_ResourceModel):
     """One `<stage>_failure` record of a run's results.
 
     The keys a record held before spec 019 keep their meaning and stay optional, so a record
-    written by an older Sync API validates. The spec 019 fields are optional too, and
-    `failure_type` is a string rather than `FailureType`: a later server may add a name. No
-    field holds the text of an exception, apart from Infrahub's own message of a rejected write.
+    written by an older Sync API validates. The worker of this version sets every spec 019 field
+    on every record it writes, `failure_type` always and the others `None` when the failure does
+    not name them (ADR 0021). The reader keeps them optional, because a record written by an
+    older Sync API has none of them (FR-014), and `failure_type` is a string rather than
+    `FailureType`: a later server may add a name. No field holds the text of an exception,
+    apart from Infrahub's own message of a rejected write.
     """
 
     stage: str | None = None
@@ -737,6 +741,20 @@ class ResultsResource(_ResourceModel):
 
     run_id: str
     results: dict[str, Any]
+
+    def stage_failure(self, stage: str) -> StageFailureResource | None:
+        """The run's `<stage>_failure` record, or `None` when the run has none or it does not validate."""
+        return stage_failure_resource(self.results.get(f"{stage}_failure"))
+
+
+def stage_failure_resource(value: object) -> StageFailureResource | None:
+    """Validate one recorded `<stage>_failure` value, or return `None` for any other value."""
+    if not isinstance(value, dict):
+        return None
+    try:
+        return StageFailureResource.model_validate(value)
+    except ValidationError:
+        return None
 
 
 class ArtifactListResource(_ResourceModel):

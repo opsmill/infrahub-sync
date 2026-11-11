@@ -53,6 +53,8 @@ from infrahub_sync.client.models import (
     RECOVERY_NEXT_ACTIONS,
     SCHEMA_CHANGED_NEXT_ACTION,
     ListPage,
+    StageFailureResource,
+    stage_failure_resource,
 )
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 
@@ -932,9 +934,9 @@ def _echo_completed_destination_branch(client: SyncClient, run_id: str) -> None:
 def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
     """Print what the service recorded about a failed stage, before the run-terminal error.
 
-    `<stage> failed: <error type>`, then `cause:` when the run recorded an operator cause (a
-    missing permission, a refused token or a lineage refusal), and `hint:` when it recorded a
-    next action. A record without a next action, from an older Sync API, gets the fixed hint
+    `<stage> failed: <error type>`, then the failure type and system, `cause:` and the other
+    spec 019 fields when the run recorded them (see `_echo_failure_record`), and `hint:` when it
+    recorded a next action. A record without a next action, from an older Sync API, gets the fixed hint
     for its error type or recovery signal when it has one. The record is the API's, and the API
     stores only text written for the operator. Each value is still capped and printed through
     `_display`, so recorded text cannot reach the terminal as an escape sequence.
@@ -947,8 +949,38 @@ def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
         _echo_failure_record(failure, stage=stage, err=True)
 
 
+def _failure_lines(failure: Mapping[str, Any], record: StageFailureResource | None) -> Iterator[str]:
+    """The spec 019 lines of a failure record that follow `cause:` (contracts/cli.md), unescaped."""
+    if record is None:
+        return
+    if record.infrahub_message:
+        yield f"Infrahub message: {record.infrahub_message}"
+    if record.record is not None:
+        reference = record.record
+        identity = _identity_text(reference.identity or {})
+        source_id = f" source ID {reference.source_id}" if reference.source_id else ""
+        yield f"record: {reference.kind}{' ' + identity if identity else ''}{source_id}"
+    if record.field:
+        yield f"field: {record.field}"
+    applied = failure.get("applied_operations")
+    if record.operations_total is not None and isinstance(applied, list):
+        yield f"written: {len(applied)} of {record.operations_total} operations"
+    detail = record.failed_operation_detail
+    failed_operation = failure.get("failed_operation")
+    if detail is not None and isinstance(failed_operation, str):
+        identity = _identity_text(detail.identity or {})
+        partial = " (may have written part of its change)" if failure.get("may_have_partially_written") is True else ""
+        yield f"failed operation: {failed_operation} {detail.action} {detail.kind}{' ' + identity if identity else ''}{partial}"
+
+
 def _echo_failure_record(failure: Mapping[str, Any], *, stage: str, err: bool) -> None:
-    """Print one recorded `<stage>_failure`: the error type, then `cause:` and `hint:` when recorded."""
+    """Print one recorded `<stage>_failure`: the error type, the spec 019 fields, `cause:` and `hint:`.
+
+    The spec 019 fields go between `<stage> failed:` and `hint:` (FR-015, contracts/cli.md): the
+    failure type and its system, then the cause, Infrahub's message of a rejected write, the
+    record and field a failure names, and the progress of a stopped apply. A record from an
+    older Sync API has none of them and prints as before.
+    """
     if failure.get("stage") != stage:
         return
     error_type = failure.get("error_type")
@@ -957,9 +989,15 @@ def _echo_failure_record(failure: Mapping[str, Any], *, stage: str, err: bool) -
     ):
         return
     typer.echo(f"{stage} failed: {error_type}", err=err)
+    record = stage_failure_resource(dict(failure))
+    if record is not None and record.failure_type:
+        system = f" ({record.system.role} {record.system.adapter})" if record.system is not None else ""
+        typer.echo(f"failure type: {_display(f'{record.failure_type}{system}'[:MAX_FAILURE_CAUSE_TEXT])}", err=err)
     cause = failure.get("cause")
     if isinstance(cause, str) and cause:
         typer.echo(f"cause: {_display(cause[:MAX_FAILURE_CAUSE_TEXT])}", err=err)
+    for line in _failure_lines(failure, record):
+        typer.echo(_display(line[: MAX_FAILURE_CAUSE_TEXT * 2]), err=err)
     next_action = failure.get("next_action")
     if isinstance(next_action, str) and next_action:
         typer.echo(f"hint: {_display(next_action[:MAX_FAILURE_CAUSE_TEXT])}", err=err)
@@ -1242,14 +1280,20 @@ def verify_cmd(
     """Start verification of the saved plan of the named run."""
     with _client_errors():
         client = _waiting_client(ctx, wait_timeout=wait_timeout, poll_interval=poll_interval)
-        completed = _submit_and_wait(
-            client,
-            lambda key: client.verify(run_id, cast("VerifyRunRequest", _request(VerifyRunRequest, reason=reason)), key),
-            idempotency_key=idempotency_key,
-            wait=wait,
-            wait_timeout=wait_timeout,
-            poll_interval=poll_interval,
-        )
+        try:
+            completed = _submit_and_wait(
+                client,
+                lambda key: client.verify(
+                    run_id, cast("VerifyRunRequest", _request(VerifyRunRequest, reason=reason)), key
+                ),
+                idempotency_key=idempotency_key,
+                wait=wait,
+                wait_timeout=wait_timeout,
+                poll_interval=poll_interval,
+            )
+        except RunTerminalError as error:
+            _echo_stage_failure(client, error.run_id, stage="verify")
+            raise
         if wait:
             _echo_run(completed)
 

@@ -28,7 +28,6 @@ from tests.cli.test_client_commands import (
 if TYPE_CHECKING:
     from unittest.mock import MagicMock
 
-_US3_PENDING = pytest.mark.xfail(strict=True, raises=AssertionError, reason="spec 019 US3 not implemented")
 
 _REJECTED_WRITE_CAUSE = "Infrahub rejected a write to DcimDevice attribute status (ATTRIBUTE_CONSTRAINT_VIOLATION)"
 _REJECTED_WRITE_NEXT_ACTION = "Fix the cause, then create and review a new plan with `infrahub-sync plan`."
@@ -129,7 +128,7 @@ def _failed_command(client: MagicMock, stage: str, failure: dict[str, Any]) -> s
     return result.output
 
 
-@pytest.mark.parametrize("stage", [pytest.param(stage, marks=_US3_PENDING) for stage in ("plan", "sync", "verify")])
+@pytest.mark.parametrize("stage", ["plan", "sync", "verify"])
 def test_a_failed_stage_prints_the_failure_type_and_system_before_the_hint(
     client: MagicMock,  # noqa: F811 - the imported fixture.
     stage: str,
@@ -139,14 +138,12 @@ def test_a_failed_stage_prints_the_failure_type_and_system_before_the_hint(
     assert _block(output, stage) == _token_lines(stage)
 
 
-@_US3_PENDING
 def test_a_stopped_apply_prints_the_rejected_write_and_what_it_wrote(client: MagicMock) -> None:  # noqa: F811
     output = _failed_command(client, "apply", _rejected_write())
 
     assert _block(output, "apply") == _REJECTED_WRITE_LINES
 
 
-@_US3_PENDING
 def test_runs_show_prints_the_same_lines(client: MagicMock) -> None:  # noqa: F811 - the imported fixture.
     resource = _run(operation="apply", phase="apply-interrupted", outcome="ambiguous")
     failed_run = resource.run.model_copy(update={"results": {"apply_failure": _rejected_write()}})
@@ -158,7 +155,6 @@ def test_runs_show_prints_the_same_lines(client: MagicMock) -> None:  # noqa: F8
     assert _block(result.stdout, "apply") == _REJECTED_WRITE_LINES
 
 
-@_US3_PENDING
 def test_infrahub_message_is_printed_with_its_control_characters_made_visible(
     client: MagicMock,  # noqa: F811 - the imported fixture.
 ) -> None:

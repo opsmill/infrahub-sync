@@ -130,13 +130,13 @@ This phase does not depend on Phases 3 and 4 and can run in parallel with them a
 
 ### Implementation for User Story 3
 
-- [ ] T051 [US3] Read Infrahub's `extensions.code`, node kind, field name and message from a GraphQL error of a rejected write, capped and without control characters, in `infrahub_sync/infrahub_errors.py`
-- [ ] T052 [US3] Write the per-adapter classification table (exception type and HTTP status code only, never text) for source and destination connection, timeout and token failures, in `infrahub_sync/service/failure_cause.py` (plan.md open risks)
-- [ ] T053 [US3] Implement `failure_record(stage, exc, ...)` with the failure type table of research R12 and the allowlist of FR-019, in `infrahub_sync/service/failure_cause.py`
-- [ ] T054 [US3] Call `failure_record` from `_failure_evidence`, add `operations_total` and `failed_operation_detail` from the plan, and rewrite the comment at `flow.py:834-836` to the rule of ADR 0021, in `infrahub_sync/service/flow.py`
-- [ ] T055 [US3] Print the new fields in `_echo_failure_record`, in `infrahub_sync/cli.py` (contracts/cli.md)
-- [ ] T056 [P] [US3] Write `dev/adr/0021-a-failure-record-holds-a-structured-cause.md` from research R14, and list it in `dev/adr/README.md`
-- [ ] T057 [P] [US3] Update `docs/docs/development/guidelines/secret-redaction.md` to the allowlist rule of ADR 0021, stating that the masking pass is unchanged and that the worker and Prefect logs keep masked error text until 3.0
+- [X] T051 [US3] Read Infrahub's `extensions.code`, node kind, field name and message from a GraphQL error of a rejected write, capped and without control characters, in `infrahub_sync/infrahub_errors.py`
+- [X] T052 [US3] Write the per-adapter classification table (exception type and HTTP status code only, never text) for source and destination connection, timeout and token failures, in `infrahub_sync/service/failure_cause.py` (plan.md open risks)
+- [X] T053 [US3] Implement `failure_record(stage, exc, ...)` with the failure type table of research R12 and the allowlist of FR-019, in `infrahub_sync/service/failure_cause.py`
+- [X] T054 [US3] Call `failure_record` from `_failure_evidence`, add `operations_total` and `failed_operation_detail` from the plan, and rewrite the comment at `flow.py:834-836` to the rule of ADR 0021, in `infrahub_sync/service/flow.py`
+- [X] T055 [US3] Print the new fields in `_echo_failure_record`, in `infrahub_sync/cli.py` (contracts/cli.md)
+- [X] T056 [P] [US3] Write `dev/adr/0021-a-failure-record-holds-a-structured-cause.md` from research R14, and list it in `dev/adr/README.md`
+- [X] T057 [P] [US3] Update `docs/docs/development/guidelines/secret-redaction.md` to the allowlist rule of ADR 0021, stating that the masking pass is unchanged and that the worker and Prefect logs keep masked error text until 3.0
 
 **Checkpoint**: T046 to T050 pass.
 
