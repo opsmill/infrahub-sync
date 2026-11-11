@@ -1,0 +1,24 @@
+tests/plan/test_report_credentials_absent.py
+  s_d199771aa41449::t_888e341b43012a 39-41,68
+tests/service/failure_cases.py
+  s_d199771aa41449::t_888e341b43012a 53-57,110,178-179,181-187,282-295,361-366,377-378,401
+  s_d199771aa41449::t_b7fae199545d6e 180,360
+tests/service/test_failure_record_compat.py
+  s_d199771aa41449::t_693100c2e9b5be 4-5,98-99,107,115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9544f5e3026730a8f50ab0b9c6dd9c69d21cec9c",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
