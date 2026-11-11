@@ -422,3 +422,40 @@ def test_a_format_3_plan_reads_without_a_report(tmp_path: Path) -> None:
         artifact=read_plan_artifact_bytes(tmp_path), run_id=ARTIFACT_RUN_ID, config_version=ARTIFACT_CONFIG_VERSION
     )
     assert [failure.check for failure in failures if failure.check == "report"] == []
+
+
+def _untyped(value: object) -> Any:  # noqa: ANN401 - an adapter or record whose attributes the test sets
+    return value
+
+
+def test_a_duplicate_whose_kept_record_has_no_record_id_leaves_out_both(plan_problems: PlanProblemFixture) -> None:
+    """When the adapter gives the kept record no record ID, both duplicates are still left out (FR-002).
+
+    An adapter such as the generic REST adapter can build a record without a `local_id`. The
+    load report then names the kept record without a source ID, and the pass finds it by its
+    identity instead.
+    """
+    potenda = _loaded(plan_problems)
+    source = _untyped(potenda.source)  # the fixture adapter, which has a load report
+    entries = source.load_report.entries
+    (index,) = [i for i, entry in enumerate(entries) if entry.reason == "duplicate_source_identity"]
+    duplicate = entries[index]
+    assert duplicate.existing is not None
+    kept_id = duplicate.existing.source_id
+    (kept,) = [
+        item for item in source.get_all(duplicate.record.kind) if str(getattr(item, "local_id", None)) == kept_id
+    ]
+    kept.local_id = None
+    entries[index] = duplicate.model_copy(
+        update={"existing": duplicate.existing.model_copy(update={"source_id": None})}
+    )
+    operations = _derived(potenda)
+    assert [op for op in operations if op.kind == duplicate.record.kind and op.identity == duplicate.record.identity]
+
+    result = _pass(potenda, operations)
+
+    (problem,) = [p for p in result.report.problems if p.problem_type == "duplicate_source_identity"]
+    assert len(problem.other_records) == 1
+    assert [
+        op for op in result.operations if op.kind == duplicate.record.kind and op.identity == duplicate.record.identity
+    ] == []

@@ -363,6 +363,11 @@ def _load_report_problems(
         elif entry.reason == "duplicate_source_identity":
             existing = view.reference_of(entry.existing)
             kept = None if existing is None else view.by_source_id(existing.kind, existing.source_id)
+            if kept is None and record.identity is not None:
+                # The kept record has no source ID: find it by identity. The store's records come
+                # first in `by_identity`, so the identity names the kept record, not this one.
+                kept_key = view.by_identity.get((record.kind, _identity_bytes(record.identity)))
+                kept = None if kept_key is None or kept_key == record.key else view.records[kept_key]
             group_identity = entry.record.identity or {}
             members = duplicates.setdefault((record.kind, _identity_bytes(group_identity)), {})
             members[record.key] = record
