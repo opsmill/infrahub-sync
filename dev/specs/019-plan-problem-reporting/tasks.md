@@ -176,6 +176,7 @@ the register response holds no redacted content (FR-034 to FR-038).
 - [ ] T068 [US5] Read the account's permissions and resolve the lineage names on the named branch, and report the findings, in `infrahub_sync/configuration/schema_validation.py`, `infrahub_sync/configuration/capabilities.py` and `infrahub_sync/adapters/infrahub_lineage.py`
 - [ ] T069 [US5] Add the `worker_environments` table with `CREATE TABLE IF NOT EXISTS`, in `infrahub_sync/product_store/store.py`; publish names from the worker on each poll, in `infrahub_sync/service/worker.py`; collect referenced names, in new `infrahub_sync/configuration/worker_credentials.py`
 - [ ] T070 [US5] Return a version reference without `declared_content` from `POST /configs` and `POST /configs/{config_id}/versions`, in `infrahub_sync/product_store/configs.py`, `infrahub_sync/service/config_routes.py` and `infrahub_sync/client/models.py`
+- [ ] T083 [US5] Make validation judge the same fields as the plan for kinds without a writable human-friendly ID: validation reads the mapped fields while the plan keys on `identifiers`, so 3 of the 8 kinds of T064 disagree (a key component mapped but not selected). The plan is what writes, so change the validation side to the plan's identifiers (the old branch used `get_identifiers`), in `infrahub_sync/configuration/schema_validation.py`; record the decision in research R16 (found in chunk 13, 2026-11-11)
 
 **Checkpoint**: T061 to T065 pass.
 
