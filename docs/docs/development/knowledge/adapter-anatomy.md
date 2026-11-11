@@ -147,8 +147,9 @@ The model mixin gives every model helpers used during loading.
 
 Provided for you:
 
-- `apply_filters` and `apply_transforms` — the base-class read loop calls them for each source
-  record: the filters in `model_loader`, the transforms in `load_record`.
+- `apply_filter` and `apply_transforms` — the base-class read loop calls them for each source
+  record: `apply_filter` once for each configured filter in `model_loader`, `apply_transforms`
+  in `load_record`. `apply_filters` applies every filter to one record.
 - `filter_records(records, schema_mapping)` and `transform_records(records, schema_mapping)` —
   the same steps over a list of records. They record nothing in `load_report`, so the read loop
   does not use them.
