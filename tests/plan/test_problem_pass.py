@@ -40,6 +40,9 @@ from infrahub_sync.plan.writer import (
     write_plan_artifact,
 )
 from infrahub_sync.runtime_schema.worker import planned_dropdown_choices
+from tests.plan.artifact_fixtures import CONFIG_VERSION as ARTIFACT_CONFIG_VERSION
+from tests.plan.artifact_fixtures import RUN_ID as ARTIFACT_RUN_ID
+from tests.plan.artifact_fixtures import operation_record, write_artifact
 from tests.plan.conftest import Variant
 from tests.plan.problem_plan import build_potenda, load_both_sides
 
@@ -356,3 +359,66 @@ def test_a_format_4_manifest_without_its_report_record_is_refused(tmp_path: Path
 
     with pytest.raises(PlanVerificationError, match="no 'report' record"):
         load_plan_artifact(tmp_path)
+
+
+def _walk_records(fixture: PlanProblemFixture) -> dict[str, list[dict[str, Any]]]:
+    """Site `berlin` (a Dropdown problem, built), a device at it, an interface on it and an address of it."""
+    berlin = next(site for site in fixture.source_records(Variant.ALL)["LocationSite"] if site["id"] == 3)
+    return {
+        "LocationSite": [berlin],
+        "DcimDevice": [{"id": 90, "name": "edge-9", "serial": "X9", "position": 1, "role": "leaf", "site": {"id": 3}}],
+        "InterfacePhysical": [{"id": 91, "name": "eth9", "device": {"id": 90}}],
+        "IpamIPAddress": [{"id": 92, "address": "10.0.0.92/32", "device": {"id": 90}, "vrf": None}],
+    }
+
+
+def test_the_walk_leaves_out_the_dependents_of_a_record_the_read_built(plan_problems: PlanProblemFixture) -> None:
+    """A record left out by the pass, not by the read: its dependents follow through the store's references."""
+    potenda = _loaded(plan_problems, records=_walk_records(plan_problems), destination={})
+    result = _pass(potenda, _derived(potenda))
+
+    assert sorted(
+        (*_key(item.record), item.cause, None if item.depends_on is None else _key(item.depends_on), item.relationship)
+        for item in result.report.left_out
+    ) == [
+        ("DcimDevice", "90", "depends_on_left_out", ("LocationSite", "3"), "site"),
+        ("InterfacePhysical", "91", "depends_on_left_out", ("DcimDevice", "90"), "device"),
+        ("LocationSite", "3", "has_problem", None, None),
+    ]
+    assert [
+        (*_key(item.record), item.cause, item.relationship, _key(item.left_out_peer)) for item in result.report.kept
+    ] == [("IpamIPAddress", "92", "peer_left_out", "device", ("DcimDevice", "90"))]
+    (address,) = result.operations
+    assert (address.action, address.identity) == ("create", {"address": "10.0.0.92/32"})
+    assert "device" not in {reference.field for reference in address.relationships or []}
+
+
+def test_an_update_that_changes_only_a_dropped_relationship_is_not_planned(plan_problems: PlanProblemFixture) -> None:
+    """Infrahub holds the address without a device: the only change is the left-out device, so no update."""
+    nodes = {"IpamIPAddress": [{"local_id": "node-92", "address": "10.0.0.92/32", "device": None, "vrf": None}]}
+    potenda = _loaded(plan_problems, records=_walk_records(plan_problems), destination=nodes)
+    operations = _derived(potenda)
+    assert [(operation.action, operation.kind) for operation in operations if operation.kind == "IpamIPAddress"] == [
+        ("update", "IpamIPAddress")
+    ]
+
+    result = _pass(potenda, operations)
+
+    assert [item.relationship for item in result.report.kept] == ["device"]
+    assert [operation for operation in result.operations if operation.kind == "IpamIPAddress"] == []
+
+
+def test_a_format_3_plan_reads_without_a_report(tmp_path: Path) -> None:
+    """A format 3 plan has no report: it stays readable, with no report lines, and verifies clean."""
+    write_artifact(tmp_path, [operation_record()], format_version=3)
+
+    loaded = load_plan_artifact(tmp_path)
+
+    assert loaded.manifest.format_version == 3
+    assert loaded.manifest.report is None
+    assert loaded.report == ()
+    assert not (tmp_path / PLAN_DIR_NAME / REPORT_FILE_NAME).exists()
+    failures = verify_plan(
+        artifact=read_plan_artifact_bytes(tmp_path), run_id=ARTIFACT_RUN_ID, config_version=ARTIFACT_CONFIG_VERSION
+    )
+    assert [failure.check for failure in failures if failure.check == "report"] == []

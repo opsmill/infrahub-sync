@@ -893,6 +893,10 @@ class PlanReport:
     problems: tuple[PlanProblem, ...] = ()
     left_out: tuple[LeftOutRecord, ...] = ()
     kept: tuple[KeptRecord, ...] = ()
+    # Not written to the report: the (kind, identity) of each kept record whose source and
+    # Infrahub values differ only in the relationships it is written without. The selection
+    # step plans no update for it, since that update would change nothing (spec 019 research R3).
+    unchanged_without_kept_relationships: frozenset[tuple[str, bytes]] = frozenset()
 
     def lines(self) -> list[dict[str, Any]]:
         """Every report line as a mapping, in the report's order."""

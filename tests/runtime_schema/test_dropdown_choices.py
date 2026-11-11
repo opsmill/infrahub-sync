@@ -11,8 +11,10 @@ import copy
 from typing import Any
 
 import pytest
+from infrahub_sdk.schema.main import AttributeKind, NodeSchemaAPI
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncConfig, SyncInstance
+from infrahub_sync.configuration import capabilities as capabilities_module
 from infrahub_sync.runtime_schema import (
     UnsupportedSchemaSemanticsError,
     compute_consumed_schema_fingerprint,
@@ -125,3 +127,25 @@ def test_the_runtime_model_plan_carries_the_choices_of_each_mapped_dropdown() ->
         dropdown_choices=choices,
     )
     assert planned_dropdown_choices(configuration) == choices
+
+
+def test_a_dropdown_whose_choices_the_schema_does_not_state_records_none() -> None:
+    """No `choices` key, so the plan does not refuse every value of that attribute."""
+    node = NodeSchemaAPI.model_validate(
+        {
+            "name": "Device",
+            "namespace": "Infra",
+            "attributes": [
+                {"name": "name", "kind": AttributeKind.TEXT, "unique": True},
+                {"name": "role", "kind": AttributeKind.DROPDOWN, "optional": True},
+                {"name": "status", "kind": AttributeKind.DROPDOWN, "optional": True, "choices": [{"name": "up"}]},
+            ],
+        }
+    )
+
+    raw = capabilities_module._build_schema_snapshot({node.kind: node})
+
+    assert "choices" not in raw["InfraDevice"]["attributes"]["role"]
+    assert raw["InfraDevice"]["attributes"]["status"]["choices"] == ["up"]
+    attributes = {item.name: item for item in normalize_destination_schema(raw).kinds["InfraDevice"].attributes}
+    assert attributes["role"].choices is None

@@ -21,6 +21,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from diffsync.exceptions import ObjectNotFound
+
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.derive import _identity_from_keys, _resolve_references, unique_identity_groups
 from infrahub_sync.plan.destination_only_peer import destination_only_peers
@@ -658,7 +660,44 @@ def find_problems(
     left, kept = _walk(
         source=source, view=view, destination_schema=destination_schema, config=config, findings=findings
     )
-    return PlanReport(problems=tuple(findings.problems), left_out=tuple(left.values()), kept=tuple(kept))
+    return PlanReport(
+        problems=tuple(findings.problems),
+        left_out=tuple(left.values()),
+        kept=tuple(kept),
+        unchanged_without_kept_relationships=_unchanged_without(
+            kept, view=view, source=source, destination=destination
+        ),
+    )
+
+
+def _unchanged_without(
+    kept: Sequence[KeptRecord], *, view: _SourceView, source: Any, destination: Any
+) -> frozenset[tuple[str, bytes]]:
+    """The kept records whose source and destination values are equal once their dropped relationships are ignored.
+
+    Their update would change only a relationship the plan writes without its peer, which
+    the selection step removes, so the plan plans no update for them.
+    """
+    dropped: dict[tuple[str, bytes], set[str]] = {}
+    for item in kept:
+        if item.record.identity is not None:
+            dropped.setdefault((item.record.kind, _identity_bytes(item.record.identity)), set()).add(item.relationship)
+    unchanged: set[tuple[str, bytes]] = set()
+    for (kind, identity), fields in dropped.items():
+        key = view.by_identity.get((kind, identity))
+        record = None if key is None else view.records[key]
+        if record is None or record.unique_id is None or destination is None:
+            continue
+        try:
+            source_item = source.store.get(model=kind, identifier=record.unique_id)
+            destination_item = destination.store.get(model=kind, identifier=record.unique_id)
+        except ObjectNotFound:
+            continue
+        source_values = {name: value for name, value in source_item.get_attrs().items() if name not in fields}
+        destination_values = {name: value for name, value in destination_item.get_attrs().items() if name not in fields}
+        if source_values == destination_values:
+            unchanged.add((kind, identity))
+    return frozenset(unchanged)
 
 
 # --- The selection step --------------------------------------------------------------------
@@ -704,7 +743,8 @@ def select_operations(operations: Sequence[PlannedOperation], report: PlanReport
     Infrahub nodes hold. It computes no delete of a kind in `report.deletes_withheld_by_kind()`
     (FR-008): a left-out record without a known identity may be any node of its kind. From
     every other operation it removes the references to left-out peers and to peers the source
-    does not return (`_without_left_out_peers`).
+    does not return (`_without_left_out_peers`), and it plans no update of a kept record that
+    would change nothing else (`PlanReport.unchanged_without_kept_relationships`).
     """
     left = {
         (item.record.kind, _identity_bytes(item.record.identity))
@@ -729,6 +769,8 @@ def select_operations(operations: Sequence[PlannedOperation], report: PlanReport
             continue
         if operation.action == "delete" and operation.kind in no_deletes:
             withheld[operation.kind] = withheld.get(operation.kind, 0) + 1
+            continue
+        if operation.action == "update" and key in report.unchanged_without_kept_relationships:
             continue
         selected.append(_without_left_out_peers(operation, left=left, dropped=dropped.get(key, set())))
     for kind, count in sorted(withheld.items()):

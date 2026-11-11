@@ -370,18 +370,20 @@ def _attribute_shape(attribute: Any) -> dict[str, Any]:
         "read_only": _exact_bool(getattr(attribute, "read_only", False))
         or (computed is not None and getattr(computed, "kind", None) != "User"),
     }
-    if shape["kind"] == "Dropdown":
+    choices = getattr(attribute, "choices", None)
+    if shape["kind"] == "Dropdown" and choices is not None:
         # The choice names of a Dropdown attribute (spec 019 research R4): the plan checks each
         # mapped value against them. Only the names; a choice's label, color and description
-        # cannot change a planned write.
-        shape["choices"] = _dropdown_choice_names(getattr(attribute, "choices", None))
+        # cannot change a planned write. Choices the schema does not state are left out, so
+        # the plan does not refuse every value of an attribute whose choices are not known.
+        shape["choices"] = _dropdown_choice_names(choices)
     return shape
 
 
 def _dropdown_choice_names(choices: Any) -> list[str]:
     """The names of a Dropdown attribute's choices, as the SDK returns them (dicts or objects)."""
     names: list[str] = []
-    for choice in choices or ():
+    for choice in choices:
         name = choice.get("name") if isinstance(choice, Mapping) else getattr(choice, "name", None)
         if not isinstance(name, str):
             raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
