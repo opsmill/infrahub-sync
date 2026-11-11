@@ -36,7 +36,9 @@ if TYPE_CHECKING:
 
 # The same two credentials as the failure record tests (tests/service/failure_cases.py).
 SHORT_CREDENTIAL = "k3yQz"
-SPECIAL_CREDENTIAL = 'pa"ss\\wo,rdQ'
+SPECIAL_CREDENTIAL = 'Wq7Zm"ss\\wo,rd'
+# The start of the special credential, which no escaped form changes.
+SPECIAL_CREDENTIAL_RUN = "Wq7Zm"
 SHORT_CREDENTIAL_NAME = "INFRAHUB_SYNC_CREDENTIAL_SHORT_TOKEN"
 SPECIAL_CREDENTIAL_NAME = "INFRAHUB_SYNC_CREDENTIAL_SPECIAL_PASSWORD"
 
@@ -63,7 +65,7 @@ def _forms(value: str) -> list[bytes]:
 
 FORBIDDEN = [
     form
-    for value in (SHORT_CREDENTIAL, SPECIAL_CREDENTIAL, ERROR_MARKER, "netbox.example.test")
+    for value in (SHORT_CREDENTIAL, SPECIAL_CREDENTIAL, SPECIAL_CREDENTIAL_RUN, ERROR_MARKER, "netbox.example.test")
     for form in _forms(value)
 ]
 

@@ -1,7 +1,8 @@
 """The keys of a failure record keep their values, and an older record prints as today (spec 019 T050).
 
 FR-014: the `results.<stage>_failure` record of spec 017 gains fields, and the keys it holds
-today keep their meaning. These tests pin the values the worker records today for those keys,
+today keep their meaning. These tests pin the values the worker records today for the keys it
+records today (a key absent today, such as the `cause` of a rejected write, may be added),
 and the lines the CLI prints for a record that has none of the spec 019 fields, as an older Sync
 API writes it. They pass before and after spec 019 User Story 3.
 """
@@ -28,26 +29,6 @@ from tests.service.failure_cases import APPLIED_OPERATION, CASES, FAILED_OPERATI
 if TYPE_CHECKING:
     from collections.abc import Callable
     from unittest.mock import MagicMock
-
-# The keys a failure record held before spec 019 (data-model.md "Stage failure record additions").
-_EXISTING_KEYS = (
-    "stage",
-    "outcome",
-    "error_type",
-    "cause_type",
-    "cause",
-    "next_action",
-    "infrahub_error",
-    "recovery_action",
-    "reason",
-    "message",
-    "applied_operations",
-    "failed_operation",
-    "failed_operation_wrote",
-    "may_have_partially_written",
-    "skipped_delete_operations",
-    "skipped_delete_count",
-)
 
 _PERMISSION = "object:*:DcimDevice:create:allow_all"
 _APPLY_NEXT_ACTION = (
@@ -108,17 +89,14 @@ def failure_evidence() -> Callable[..., dict[str, Any]]:
     return flow._failure_evidence
 
 
-def _existing(evidence: dict[str, Any]) -> dict[str, Any]:
-    return {key: evidence[key] for key in _EXISTING_KEYS if key in evidence}
-
-
 @pytest.mark.parametrize("case_id", sorted(_TODAY))
 def test_the_existing_keys_keep_their_values(failure_evidence: Callable[..., dict[str, Any]], case_id: str) -> None:
     case = next(case for case in CASES if case.case_id == case_id)
 
     evidence = failure_evidence(case.stage, case.build(NEUTRAL_TEXT), outcome="failed", record=None, secrets=())
 
-    assert _existing(evidence) == _TODAY[case_id]
+    # Only the keys recorded today: spec 019 may add a `cause` where today's record has none.
+    assert {key: evidence.get(key) for key in _TODAY[case_id]} == _TODAY[case_id]
 
 
 def test_a_missing_branch_keeps_its_cause_and_next_action(failure_evidence: Callable[..., dict[str, Any]]) -> None:
@@ -126,7 +104,7 @@ def test_a_missing_branch_keeps_its_cause_and_next_action(failure_evidence: Call
         "plan", DestinationBranchNotFoundError(branch="demo-test"), outcome="failed", record=None, secrets=()
     )
 
-    assert _existing(evidence) == {
+    expected = {
         "stage": "plan",
         "outcome": "failed",
         "error_type": "DestinationBranchNotFoundError",
@@ -134,6 +112,7 @@ def test_a_missing_branch_keeps_its_cause_and_next_action(failure_evidence: Call
         "cause": "Branch `demo-test` does not exist in Infrahub.",
         "next_action": "Create it, or start the run with `--branch <existing branch>`.",
     }
+    assert {key: evidence.get(key) for key in expected} == expected
 
 
 # A record written by a Sync API before spec 019: none of the new fields.

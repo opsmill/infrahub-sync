@@ -50,8 +50,11 @@ Stage = Literal["plan", "verify", "apply", "sync"]
 # A referenced credential of five characters, below the masking pass's minimum length of six
 # (`MIN_SECRET_LENGTH`), so masking cannot hide it.
 SHORT_CREDENTIAL = "k3yQz"
-# A referenced credential that holds the characters JSON escapes (`"` and `\`) and a comma.
-SPECIAL_CREDENTIAL = 'pa"ss\\wo,rdQ'
+# A referenced credential that holds the characters JSON escapes (`"` and `\`) and a comma. It
+# starts with a run of characters that no form escapes, so a leak in any escaped form (JSON,
+# Python's `repr`, a double escape) still shows that run.
+SPECIAL_CREDENTIAL = 'Wq7Zm"ss\\wo,rd'
+SPECIAL_CREDENTIAL_RUN = "Wq7Zm"
 SHORT_CREDENTIAL_NAME = "INFRAHUB_SYNC_CREDENTIAL_SHORT_TOKEN"
 SPECIAL_CREDENTIAL_NAME = "INFRAHUB_SYNC_CREDENTIAL_SPECIAL_PASSWORD"
 CREDENTIALS = (SHORT_CREDENTIAL, SPECIAL_CREDENTIAL)
@@ -104,6 +107,7 @@ def forbidden_values() -> list[str]:
     values: list[str] = []
     for value in CREDENTIALS:
         values.extend((value, json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1]))
+    values.append(SPECIAL_CREDENTIAL_RUN)
     values.extend(ERROR_TEXT_PARTS)
     return list(dict.fromkeys(values))
 
@@ -169,6 +173,16 @@ def _requests_status(status: int, text: str) -> requests.HTTPError:
         "GET", ADDRESS, headers={"Authorization": f"Token {SPECIAL_CREDENTIAL}"}
     ).prepare()
     return requests.HTTPError(text, response=response)
+
+
+def _netbox_status(status: int, text: str) -> Exception:
+    """The `RequestError` that pynetbox raises for a refused request."""
+    import pytest
+
+    query = pytest.importorskip("pynetbox.core.query")
+    response = _requests_status(status, text).response
+    assert response is not None
+    return query.RequestError(response)
 
 
 def _infrahub_status(status: int, text: str) -> AuthenticationError:
@@ -266,6 +280,20 @@ CASES: tuple[FailureCase, ...] = (
         {"system": SOURCE},
     ),
     FailureCase(
+        "source-token-refused-by-netbox",
+        "plan",
+        lambda text: _side("source", "netbox", _netbox_status(401, text), text),
+        "token_rejected",
+        {"system": SOURCE},
+    ),
+    FailureCase(
+        "source-permission-missing-in-netbox",
+        "plan",
+        lambda text: _side("source", "netbox", _netbox_status(403, text), text),
+        "permission_missing",
+        {"system": SOURCE},
+    ),
+    FailureCase(
         "destination-token-refused",
         "plan",
         lambda text: _side("destination", "infrahub", _infrahub_status(401, text), text),
@@ -329,6 +357,13 @@ CASES: tuple[FailureCase, ...] = (
         "record_load_failed",
         {"system": SOURCE, "record": {"kind": "DcimDevice", "source_id": "42"}, "field": "name"},
     ),
+    FailureCase("transform-failed", "plan", _transform_failed, "transform_failed", {"system": SOURCE, "field": "name"}),
+    FailureCase(
+        "credential-missing",
+        "plan",
+        lambda text: CredentialConfigurationError(f"environment credential '{text}' is missing or empty"),
+        "credential_missing",
+    ),
     FailureCase("unknown-class", "plan", RuntimeError, "internal_error"),
     FailureCase(
         "unknown-class-in-a-side-read",
@@ -339,16 +374,9 @@ CASES: tuple[FailureCase, ...] = (
     ),
 )
 
-# Failure types that T046 does not list, raised for the credential checks of T047 only. Their
-# `failure_type` is not checked here: research R12 names no error class for some of them.
+# Failure types raised for the credential checks of T047 only. Their `failure_type` is not
+# checked: research R12 names no error class for `verification_failed` and `apply_refused`.
 OTHER_CASES: tuple[FailureCase, ...] = (
-    FailureCase("transform-failed", "plan", _transform_failed, "transform_failed"),
-    FailureCase(
-        "credential-missing",
-        "plan",
-        lambda text: CredentialConfigurationError(f"environment credential '{text}' is missing or empty"),
-        "credential_missing",
-    ),
     FailureCase("verification-failed", "apply", PlanVerificationError, "verification_failed"),
     FailureCase(
         "apply-refused",
@@ -370,6 +398,7 @@ __all__ = [
     "SHORT_CREDENTIAL_NAME",
     "SPECIAL_CREDENTIAL",
     "SPECIAL_CREDENTIAL_NAME",
+    "SPECIAL_CREDENTIAL_RUN",
     "FailureCase",
     "forbidden_values",
 ]
