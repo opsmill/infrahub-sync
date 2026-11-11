@@ -1,0 +1,42 @@
+infrahub_sync/load_report.py
+  s_d199771aa41449::t_d3cb9e498c9a0d 1-99
+infrahub_sync/__init__.py
+  s_d199771aa41449::t_286a516d7be423 121-128
+  s_d199771aa41449::t_9c3885fe788ea7 106-120,129
+  s_d199771aa41449::t_a3234014c61ac7 464,467,471-475,478-482
+infrahub_sync/client/models.py
+  s_d199771aa41449::t_ca42d409821643 7
+  s_d199771aa41449::t_74f3d8cc89c012 596-676
+tests/test_schema_mapping_transforms.py
+  s_d199771aa41449::t_add585d12555b4 6
+  s_d199771aa41449::t_9439a9fde730a7 15,265-286
+tests/plan/test_report_models.py
+  s_d199771aa41449::t_eab1f382b1256d 1-42,44-165
+  s_d199771aa41449::t_add585d12555b4 43
+infrahub_sync/plan/models.py
+  s_d199771aa41449::t_6866731ae773fd 695-832
+infrahub_sync/potenda/__init__.py
+  s_d199771aa41449::t_342ca3c760de72 75-107
+  s_d199771aa41449::t_a061640c1f8bca 572-574
+tests/test_potenda_read_progress.py
+  s_d199771aa41449::t_add585d12555b4 10
+  s_d199771aa41449::t_abca8f134c3cd7 17,304-330
+dev/specs/019-plan-problem-reporting/tasks.md
+  s_d199771aa41449::t_66179a7d9b4d13 31-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5597e14d502e465925ab9adbe70423a5dda6fbc9",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
