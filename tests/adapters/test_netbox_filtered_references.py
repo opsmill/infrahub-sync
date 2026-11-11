@@ -339,3 +339,11 @@ def test_filtered_peer_plan_effect_on_existing_destination(
     else:
         assert update.relationships is not None
         assert update.relationships[0].peers == expected_peers
+
+
+def test_the_existing_id_sweep_leaves_no_load_report_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The soft-delete sweep converts records to compute IDs only; its reference entries are dropped."""
+    adapter = _adapter(monkeypatch, OptionalOne, [{"id": 1, "name": "owner", "peer": {"id": 99}}])
+
+    assert list(adapter.list_existing_ids("Example")) == ["owner"]
+    assert adapter.load_report.entries == []

@@ -129,8 +129,15 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
         model: type[NetboxModel] = getattr(self, model_name)
         endpoint = self._resolve_endpoint(element.mapping)
         raw_records = [dict(node) for node in endpoint.all()]
-        for payload in self._convert_records(element=element, model=model, raw_records=raw_records):
-            yield model(**payload).get_unique_id()
+        # This sweep only computes IDs: the load report entries its conversion writes describe
+        # no record the read admits, so they are dropped.
+        entries = self.load_report.entries
+        start = len(entries)
+        try:
+            for payload in self._convert_records(element=element, model=model, raw_records=raw_records):
+                yield model(**payload).get_unique_id()
+        finally:
+            del entries[start:]
 
     def list_records(self, model_name: str, element: SchemaMappingModel) -> list[dict]:  # noqa: ARG002
         """Return every NetBox record of the mapping entry's endpoint, as dicts.

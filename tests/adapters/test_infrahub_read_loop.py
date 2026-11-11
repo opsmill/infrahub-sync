@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from infrahub_sync import SchemaMappingFilter, SchemaMappingTransform
 from tests.plan.conftest import load_plan_problem_fixture
 from tests.plan.problem_plan import FixtureDestination, build_destination
 
@@ -35,7 +36,12 @@ def test_two_destination_nodes_with_one_identity_are_an_ambiguity() -> None:
     destination.model_loader("LocationSite", _sites_model(destination))
 
     (ambiguity,) = destination.destination_identity_ambiguities
-    assert (ambiguity.kind, ambiguity.unique_id, ambiguity.node_ids) == ("LocationSite", "twin", (TWIN_A, TWIN_B))
+    assert (ambiguity.kind, ambiguity.unique_id, ambiguity.identity, ambiguity.node_ids) == (
+        "LocationSite",
+        "twin",
+        {"name": "twin"},
+        (TWIN_A, TWIN_B),
+    )
     assert sorted(site.model_dump()["local_id"] for site in destination.get_all("LocationSite")) == [TWIN_A, "other"]
     assert destination.client.store.keys == [  # ty: ignore[unresolved-attribute] -- the stand-in store
         ("LocationSite", "twin"),
@@ -68,3 +74,23 @@ def test_on_the_source_side_two_nodes_with_one_identity_are_a_duplicate() -> Non
     ] == [("duplicate_source_identity", TWIN_B, TWIN_A)]
     assert [site.model_dump()["local_id"] for site in source.get_all("LocationSite")] == [TWIN_A]
     assert source.destination_identity_ambiguities == []
+
+
+def test_on_the_source_side_filters_and_transforms_name_the_node_id() -> None:
+    """A filtered node is recorded by its node ID; a failed transform names the node it failed for."""
+    fixture = load_plan_problem_fixture()
+    source = build_destination(fixture, _sites(("kept", "paris"), ("removed", "berlin"), ("broken", "rome")))
+    source.target = "source"
+    (element,) = [entry for entry in source.config.schema_mapping if entry.name == "LocationSite"]
+    element.filters = [SchemaMappingFilter(field="name", operation="!=", value="berlin")]
+    element.transforms = [
+        SchemaMappingTransform(field="name", expression="{{ name if name != 'rome' else missing.attribute }}")
+    ]
+
+    source.model_loader("LocationSite", _sites_model(source))
+
+    assert source.load_report.filtered_ids["LocationSite"] == {"removed": 0}
+    assert [
+        (entry.reason, entry.record.source_id, entry.field, entry.config_entry) for entry in source.load_report.entries
+    ] == [("transform_failed", "broken", "name", "transforms[0]")]
+    assert [site.model_dump()["local_id"] for site in source.get_all("LocationSite")] == ["kept"]

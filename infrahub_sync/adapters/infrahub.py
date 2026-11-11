@@ -914,12 +914,13 @@ def _latest_change(changes: Iterable[LastChange]) -> LastChange:
 class DestinationIdentityAmbiguity:
     """One mapped identity that two or more Infrahub nodes of one kind hold (`destination_identity_ambiguous`).
 
-    It holds the kind, the DiffSync unique ID of the identity and the node IDs, never another
-    attribute value.
+    It holds the kind, the identity (its DiffSync unique ID and identifier values) and the node
+    IDs, never another attribute value.
     """
 
     kind: str
     unique_id: str
+    identity: dict[str, Any]
     node_ids: tuple[str, ...]
 
 
@@ -1295,6 +1296,11 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """Return the record unchanged: `model_loader` converts each node to model data before filtering."""
         return dict(record)
 
+    def record_source_id(self, record: Any) -> str | None:
+        """Return the node ID of a converted record (`local_id`), which the filters and transforms see."""
+        value = record.get("local_id") if isinstance(record, Mapping) else None
+        return None if value is None else str(value)
+
     def _store_node(self, item: DiffSyncModel) -> DiffSyncModel:
         """Store `item` as `update_or_add_model_instance` does, and detect a second node with its identity.
 
@@ -1315,7 +1321,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 if self.target == "source":
                     msg = f"Object {unique_id} already present"
                     raise ObjectAlreadyExists(msg, item)
-                seen = self._identity_nodes.setdefault((kind, unique_id), [])
+                _, seen = self._identity_nodes.setdefault((kind, unique_id), (dict(item.get_identifiers()), []))
                 for value in (str(existing_id), str(node_id)):
                     if value not in seen:
                         seen.append(value)
@@ -1323,7 +1329,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         return stored
 
     @property
-    def _identity_nodes(self) -> dict[tuple[str, str], list[str]]:
+    def _identity_nodes(self) -> dict[tuple[str, str], tuple[dict[str, Any], list[str]]]:
         """The node IDs of each (kind, unique ID) that more than one destination node holds, in read order."""
         return self.__dict__.setdefault("_destination_identity_nodes", {})
 
@@ -1335,8 +1341,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         through the cache does not (spec 019, `destination_identity_ambiguous`).
         """
         return [
-            DestinationIdentityAmbiguity(kind=kind, unique_id=unique_id, node_ids=tuple(node_ids))
-            for (kind, unique_id), node_ids in self._identity_nodes.items()
+            DestinationIdentityAmbiguity(kind=kind, unique_id=unique_id, identity=identity, node_ids=tuple(node_ids))
+            for (kind, unique_id), (identity, node_ids) in self._identity_nodes.items()
         ]
 
     def _resolve_peer_unique_id(
