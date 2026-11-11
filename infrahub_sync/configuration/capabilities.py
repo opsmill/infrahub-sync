@@ -72,6 +72,9 @@ class AdapterConfigurationCapabilities:
     supported_destination_write_operations: frozenset[WriteOperation] = frozenset()
     destination_schema_validation: bool = False
     destination_schema_accessor: DestinationSchemaAccessor | None = None
+    # Reads what the import account may do on the destination branch (spec 019 FR-036); only
+    # the explicit validation opt-in calls it, after a successful schema read.
+    destination_access_accessor: DestinationAccessAccessor | None = None
     # Whether this adapter implements incremental extraction (the cursor_tier_for /
     # list_changed_since overrides). A package declaring `incremental:` against a source
     # that does not is warned about the unqualified optional feature; the conformance
@@ -243,6 +246,17 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
     third-party content; a normalization failure carries one fixed message
     (:func:`_normalized_schema_snapshot`).
     """
+    schema = _infrahub_call(package, branch, "schema read", lambda client: client.schema.all(branch=branch))
+    return _normalized_schema_snapshot(schema)
+
+
+def _infrahub_call(package: ConfigurationPackage, branch: str, what: str, call: Callable[[Any], Any]) -> Any:
+    """Run `call` with a client built from the declared settings, classifying every failure.
+
+    The failure arms every read of the validation opt-in shares: the schema read and the
+    access read (spec 019 FR-036). `what` names the read in the message, for example
+    "schema read"; the messages carry exception type names, never third-party content.
+    """
     # Imported here, not at module load: this module stays connection-free to import, and
     # the default validate path never touches a network client (envelope AR7).
     # pylint: disable=import-outside-toplevel
@@ -264,14 +278,14 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
     url, sdk_config = _resolved_client_settings(package, branch)
     try:
         client = InfrahubClientSync(address=url, config=Config(**sdk_config))
-        schema = client.schema.all(branch=branch)
+        return call(client)
     except (httpx.TimeoutException, ServerNotResponsiveError) as exc:
-        msg = f"destination schema read timed out: {type(exc).__name__}"
+        msg = f"destination {what} timed out: {type(exc).__name__}"
         raise DestinationSchemaReadError(msg, reason="timeout") from None
     except (AuthenticationError, httpx.HTTPStatusError) as exc:
         # A 403 is a missing permission and only a 401 is a refused token.
         classification = classify_infrahub_error(exc)
-        msg = f"destination refused the schema read: {type(exc).__name__}"
+        msg = f"destination refused the {what}: {type(exc).__name__}"
         if classification is None:
             raise DestinationSchemaReadError(msg, reason="unreachable") from None
         reason = "unauthorized" if classification.problem == "refused_token" else "forbidden"
@@ -288,14 +302,189 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
         # The SDK's own base error: everything it raises that the arms above did not
         # classify (a GraphQL refusal, undecodable content) is still a
         # read the destination rejected, never an untyped escape (review F1).
-        msg = f"destination rejected the schema read: {type(exc).__name__}"
+        msg = f"destination rejected the {what}: {type(exc).__name__}"
         raise DestinationSchemaReadError(msg, reason="rejected") from None
     except ValueError as exc:
         # Config(**sdk_config) refusing the declared settings: pydantic's ValidationError
         # subclasses ValueError, so both land here as one unusable-configuration class.
         msg = f"destination client could not be configured from the declared settings: {type(exc).__name__}"
         raise DestinationSchemaReadError(msg, reason="unconfigured") from None
-    return _normalized_schema_snapshot(schema)
+
+
+LineageCheckOutcome = Literal["permission_missing", "kind_missing", "not_found", "ambiguous"]
+
+
+@dataclass(frozen=True, slots=True)
+class LineageCheck:
+    """A named `source` or `owner` the import account cannot use on the branch (spec 019 FR-036).
+
+    `missing` holds the permissions the lookup needs and the account lacks, for
+    `permission_missing` only; the other outcomes say what the lookup found.
+    """
+
+    setting: str
+    kind: str
+    name: str
+    outcome: LineageCheckOutcome
+    missing: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DestinationAccess:
+    """What the import account may do on one destination branch (spec 019 FR-036).
+
+    `missing_by_kind` maps each mapped kind to the permissions the account lacks to view,
+    create and update it, as identifiers without a decision (`object:Infra:Device:create`).
+    `lineage` holds each named `source` or `owner` the account cannot look up, or that
+    matches no node or more than one node. A kind the schema does not declare is left out:
+    the schema checks report it.
+    """
+
+    branch: str
+    missing_by_kind: Mapping[str, tuple[str, ...]]
+    lineage: tuple[LineageCheck, ...] = ()
+
+
+# The access-accessor contract: (package, branch) -> DestinationAccess. Raises
+# DestinationSchemaReadError and nothing else for a read that fails.
+DestinationAccessAccessor = Callable[[ConfigurationPackage, str], DestinationAccess]
+_UNUSABLE_ACCESS_RESPONSE = "destination returned an unusable access response"
+
+
+def _kind_parts(schema: Mapping[str, Any], kind: str) -> tuple[str, str] | None:
+    """The namespace and name the destination schema gives `kind`, or `None` when it is not there.
+
+    A kind cannot be split into its two parts from its spelling (`DcimVLANGroup`), so they are
+    read from the schema node the SDK returned.
+    """
+    node = schema.get(kind)
+    namespace = getattr(node, "namespace", None)
+    name = getattr(node, "name", None)
+    if isinstance(namespace, str) and namespace and isinstance(name, str) and name:
+        return namespace, name
+    return None
+
+
+def _default_branch(branches: object) -> str:
+    """The name of the destination's default branch, or `main` when the response names none."""
+    if isinstance(branches, Mapping):
+        for name, data in branches.items():
+            if getattr(data, "is_default", False) is True and isinstance(name, str):
+                return name
+    return "main"
+
+
+def _permission_identifiers(groups: object) -> list[object]:
+    """Every permission identifier of the account, across the account groups the SDK groups them by."""
+    if not isinstance(groups, Mapping):
+        raise TypeError(_UNUSABLE_ACCESS_RESPONSE)
+    return [item for group in groups.values() if isinstance(group, (list, tuple)) for item in group]
+
+
+def _check_named_lineage(  # pylint: disable=too-many-arguments
+    client: Any,
+    schema: Mapping[str, Any],
+    identifiers: list[object],
+    setting: str,
+    named: Any,
+    *,
+    branch: str,
+    default_branch: str,
+) -> LineageCheck | None:
+    """Look up one named `source` or `owner` as a run does; return what stops it, or `None`.
+
+    The lookup needs `view` on the named kind only: it reads the name and excludes every
+    relationship of the kind, as `InfrahubAdapter._resolve_named_lineage_node` does.
+    """
+    # pylint: disable-next=import-outside-toplevel
+    from .infrahub_lineage import PermissionNeed, missing_permissions
+
+    parts = _kind_parts(schema, named.kind)
+    if parts is None:
+        return LineageCheck(setting=setting, kind=named.kind, name=named.name, outcome="kind_missing")
+    missing = missing_permissions(
+        identifiers, needs=(PermissionNeed(parts[0], parts[1], "view"),), branch=branch, default_branch=default_branch
+    )
+    if missing:
+        return LineageCheck(
+            setting=setting,
+            kind=named.kind,
+            name=named.name,
+            outcome="permission_missing",
+            missing=tuple(need.identifier for need in missing),
+        )
+    relationships = [
+        relationship.name
+        for relationship in getattr(schema[named.kind], "relationships", None) or ()
+        if isinstance(getattr(relationship, "name", None), str)
+    ]
+    found = client.filters(
+        kind=named.kind, branch=branch, include=["name"], exclude=relationships, name__value=named.name
+    )
+    if not isinstance(found, list):
+        raise TypeError(_UNUSABLE_ACCESS_RESPONSE)
+    if not found:
+        return LineageCheck(setting=setting, kind=named.kind, name=named.name, outcome="not_found")
+    if len(found) > 1:
+        return LineageCheck(setting=setting, kind=named.kind, name=named.name, outcome="ambiguous")
+    return None
+
+
+def _read_infrahub_destination_access(package: ConfigurationPackage, branch: str) -> DestinationAccess:
+    """Read what the import account may do on `branch`: its permissions and its named lineage.
+
+    One client reads the account's permission identifiers, the default branch, the schema of
+    `branch` (for each mapped kind's namespace and name) and, when the account may look them
+    up, the nodes that `source` and `owner` name (spec 019 FR-036, spec 014 decision D-1).
+    A response of an unexpected shape is a read the destination rejected, with one fixed
+    message.
+    """
+    # pylint: disable-next=import-outside-toplevel
+    from .infrahub_lineage import missing_permissions, parse_infrahub_lineage_settings, write_needs
+
+    lineage_settings = parse_infrahub_lineage_settings(package.configuration.destination.settings).settings
+    named = (
+        {}
+        if lineage_settings is None
+        else {
+            setting: node
+            for setting, node in (("source", lineage_settings.source), ("owner", lineage_settings.owner))
+            if node is not None
+        }
+    )
+
+    def collect(client: Any) -> DestinationAccess:
+        identifiers = _permission_identifiers(client.get_user_permissions())
+        default_branch = _default_branch(client.branch.all())
+        schema = client.schema.all(branch=branch)
+        if not isinstance(schema, Mapping):
+            raise TypeError(_UNUSABLE_ACCESS_RESPONSE)
+        missing_by_kind: dict[str, tuple[str, ...]] = {}
+        for mapping in package.configuration.schema_mapping:
+            parts = _kind_parts(schema, mapping.name)
+            if parts is None:
+                continue
+            missing = missing_permissions(
+                identifiers, needs=write_needs(*parts), branch=branch, default_branch=default_branch
+            )
+            if missing:
+                missing_by_kind[mapping.name] = tuple(need.identifier for need in missing)
+        checks = (
+            _check_named_lineage(
+                client, schema, identifiers, setting, node, branch=branch, default_branch=default_branch
+            )
+            for setting, node in named.items()
+        )
+        lineage = tuple(check for check in checks if check is not None)
+        return DestinationAccess(branch=branch, missing_by_kind=missing_by_kind, lineage=lineage)
+
+    def read(client: Any) -> DestinationAccess:
+        try:
+            return collect(client)
+        except (AttributeError, TypeError, KeyError):
+            raise DestinationSchemaReadError(_UNUSABLE_ACCESS_RESPONSE, reason="rejected") from None
+
+    return _infrahub_call(package, branch, "access read", read)
 
 
 # The one message every normalization failure carries. Fixed, so a hostile response puts
@@ -564,6 +753,7 @@ BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
             supported_destination_write_operations=_CREATE_UPDATE,
             destination_schema_validation=True,
             destination_schema_accessor=_read_infrahub_destination_schema,
+            destination_access_accessor=_read_infrahub_destination_access,
             incremental_extraction=True,
             validator=validate_infrahub_lineage_settings,
         ),

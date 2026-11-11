@@ -18,9 +18,6 @@ by T061.
 Permission identifiers follow Infrahub's grammar `object:<namespace>:<name>:<action>:<decision>`
 and `global:<permission>:<decision>`, where the decision `allow_default` applies only to the
 default branch.
-
-Strict xfail markers: the permission and lineage findings do not exist yet (T068 adds them);
-today each such test fails on its first assertion. Tests that pass today carry no marker.
 """
 
 from __future__ import annotations
@@ -38,7 +35,6 @@ if TYPE_CHECKING:
     from infrahub_sync.configuration.models import ValidationFinding
 
 _TOKEN = "permission-test-token-0042"  # noqa: S105 - deliberate non-secret canary.
-_NOT_IMPLEMENTED = "spec 019 US5 not implemented"
 _NEW_CODES = frozenset(
     {"destination-permission-missing", "destination-lineage-node-not-found", "destination-lineage-node-ambiguous"}
 )
@@ -195,7 +191,6 @@ def _validate(
     return [finding for finding in findings if finding.code in _NEW_CODES], client
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 @pytest.mark.parametrize("action", ["view", "create", "update"])
 def test_a_missing_action_on_a_mapped_kind_names_the_kind_and_the_permission(
     monkeypatch: pytest.MonkeyPatch, action: str
@@ -224,7 +219,6 @@ def test_a_super_administrator_gets_no_permission_finding(monkeypatch: pytest.Mo
     assert found == []
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 def test_a_grant_for_the_default_branch_only_is_missing_on_another_branch(monkeypatch: pytest.MonkeyPatch) -> None:
     """The permissions are judged on the branch the team names, not on the default branch."""
     default_only = tuple(item.replace(":allow_all", ":allow_default") for item in _DEVICE_WRITE)
@@ -245,7 +239,6 @@ def test_a_grant_for_the_default_branch_is_enough_on_the_default_branch(monkeypa
     assert found == []
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 def test_an_account_that_cannot_look_up_the_named_owner_kind_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     """The lookup of a named `owner` needs `view` on the kind it names, and only that."""
     found, _client = _validate(
@@ -261,7 +254,6 @@ def test_an_account_that_cannot_look_up_the_named_owner_kind_is_reported(monkeyp
     assert "object:Core:AccountGroup:view" in found[0].message
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 @pytest.mark.parametrize(
     ("setting", "kind"),
     [("owner", "CoreAccountGroup"), ("source", "CoreAccount"), ("source", "CoreRepository")],
@@ -284,7 +276,6 @@ def test_a_named_lineage_node_that_does_not_exist_is_reported(
     assert "no-such-node" in found[0].message
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 def test_a_named_lineage_node_that_matches_more_than_one_node_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     found, _client = _validate(
         monkeypatch,

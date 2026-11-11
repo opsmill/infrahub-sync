@@ -8,7 +8,7 @@ import json
 import logging
 import os
 import sqlite3
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -53,6 +53,7 @@ from infrahub_sync.product_store.models import (
     RunFilters,
     RunPage,
     RunReference,
+    WorkerEnvironment,
 )
 
 if TYPE_CHECKING:
@@ -132,6 +133,9 @@ CREATE TABLE IF NOT EXISTS configuration_versions (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS configuration_versions_checksum
     ON configuration_versions (config_id, package_checksum);
+CREATE TABLE IF NOT EXISTS worker_environments (
+    worker_id TEXT PRIMARY KEY, credential_names TEXT NOT NULL, observed_at TEXT NOT NULL
+);
 """
 _SQLITE_EXECUTION_TIMESTAMP_FUNCTION = "infrahub_sync_execution_timestamp_microseconds"
 _UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -335,6 +339,7 @@ _SCHEMA_INITIALIZATION_ATTEMPTS = 2
 # supports up to 8 concurrent writers with margin above that observed worst case.
 _CONFIGURATION_VERSION_ATTEMPTS = 8
 _JSON_MAPPING_ADAPTER = TypeAdapter(dict[str, Any])
+_JSON_LIST_ADAPTER = TypeAdapter(list[str])
 _INVALID_SERVICE_WORKER_ID = "service worker identity is invalid"
 
 _INSERT_CONFIGURATION = "INSERT INTO configurations (config_id, created_at) VALUES (?, ?)"
@@ -426,6 +431,12 @@ manifest_key, created_at, expires_at, published, visibility FROM artifact_refs
 WHERE run_id = ? AND artifact_id = ? AND visibility = ?"""
 _SELECT_CONFIGURATION_BASELINE = """SELECT config_id, source_row_counts, runs_since_full_extract, updated_at
 FROM configuration_baselines WHERE config_id = ?"""
+_UPSERT_WORKER_ENVIRONMENT = """INSERT INTO worker_environments (worker_id, credential_names, observed_at)
+VALUES (?, ?, ?)
+ON CONFLICT (worker_id) DO UPDATE SET credential_names = EXCLUDED.credential_names,
+observed_at = EXCLUDED.observed_at"""
+_SELECT_WORKER_ENVIRONMENTS = """SELECT worker_id, credential_names, observed_at FROM worker_environments
+ORDER BY worker_id"""
 _UPSERT_CONFIGURATION_BASELINE = """INSERT INTO configuration_baselines (config_id, source_row_counts,
 runs_since_full_extract, updated_at) VALUES (?, ?, ?, ?)
 ON CONFLICT (config_id) DO UPDATE SET source_row_counts = EXCLUDED.source_row_counts,
@@ -586,6 +597,10 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def has_pending_artifacts(self, run_id: str) -> bool: ...
 
     def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]: ...
+
+    def publish_worker_environment(self, environment: WorkerEnvironment) -> None: ...
+
+    def worker_environments(self) -> tuple[WorkerEnvironment, ...]: ...
 
     def add_prefect_execution(
         self, run_id: str, link: PrefectExecutionLink, *, receipt_id: str, allocate_attempt: bool = False
@@ -1652,6 +1667,52 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 runs_since_full_extract,
                 updated_at.isoformat(),
             ),
+        )
+
+    def publish_worker_environment(self, environment: WorkerEnvironment) -> None:
+        """Replace one worker's published credential variable names (spec 019 FR-035)."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql(_UPSERT_WORKER_ENVIRONMENT),
+                    (
+                        environment.worker_id,
+                        _json(list(environment.credential_names)),
+                        environment.observed_at.isoformat(),
+                    ),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def worker_environments(self) -> tuple[WorkerEnvironment, ...]:
+        """Return every worker's last published credential variable names, by worker."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_WORKER_ENVIRONMENTS))
+                rows = cursor.fetchall()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return tuple(
+            WorkerEnvironment.model_validate(
+                {
+                    "worker_id": row[0],
+                    "credential_names": tuple(_JSON_LIST_ADAPTER.validate_json(str(row[1]))),
+                    "observed_at": row[2],
+                }
+            )
+            for row in rows
         )
 
     def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]:
@@ -3725,6 +3786,30 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
     def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]:
         """Return one configuration's durable source-count and full-extract reference."""
         return self._records.lookup_configuration_baseline(config_id)
+
+    def publish_worker_environment(
+        self, worker_id: str, credential_names: Iterable[str], *, observed_at: datetime | None = None
+    ) -> None:
+        """Record the credential variable NAMES one worker holds now; never a value (spec 019 FR-035).
+
+        Each call replaces that worker's previous names, so the record follows the variables
+        the worker holds at its latest poll.
+        """
+        self._records.publish_worker_environment(
+            WorkerEnvironment(
+                worker_id=worker_id,
+                credential_names=tuple(credential_names),
+                observed_at=observed_at or datetime.now(timezone.utc),
+            )
+        )
+
+    def live_worker_environments(self, *, observed_after: datetime) -> tuple[WorkerEnvironment, ...]:
+        """Return the publications of the workers that published after `observed_after`, by worker."""
+        return tuple(
+            environment
+            for environment in self._records.worker_environments()
+            if environment.observed_at > observed_after
+        )
 
     def lookup_artifact(self, run_id: str, artifact_id: str) -> LookupResult[bytes]:
         """Resolve only a published, public, run-owned reference, with explicit unavailability."""

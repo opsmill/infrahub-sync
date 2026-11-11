@@ -331,6 +331,20 @@ Both paths already call `writable_convergence_reason` (`schema_validation.py:251
 both paths on the same kinds and checks the same answer. The old branch's test T088 is the
 reference.
 
+Finding of 2026-11-11 (T064, chunk 13): the two paths call the same rule on different fields.
+Validation passed the mapped fields as the identity; the plan keys each create on the
+operation's identity, which holds only the fields the mapping selects as `identifiers`. So
+3 of the 8 kinds of T064 disagreed: those where the mapping maps a key component but does
+not select it. Validation accepted them and the plan refused their creates.
+
+Decision (T083): the plan is what writes, so validation changes to the plan's fields. It
+selects the identifiers with `get_identifiers` (the mapping's `identifiers`, or else its
+mapped unique attributes, the same function the runtime model builder uses) and judges only
+the selected identifiers that are also mapped. The plan side does not change. The registered
+worker's construction check (`runtime_schema/worker.py`) still judges the mapped fields; it
+accepts more than validation now does, and the plan refuses the creates it lets through, so a
+run never writes what validation refuses.
+
 ## R17. Register response without redacted content (SYNC-107)
 
 Decision: `POST /configs` and `POST /configs/{config_id}/versions` return a version reference with

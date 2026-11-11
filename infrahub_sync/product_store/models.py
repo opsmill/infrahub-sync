@@ -9,6 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from infrahub_sync.configuration.worker_credentials import is_credential_name
 from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves this annotation at runtime.
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
@@ -263,6 +264,29 @@ class ConfigurationBaseline(BaseModel):
     source_row_counts: dict[str, int]
     runs_since_full_extract: int = Field(ge=0)
     updated_at: datetime
+
+
+class WorkerEnvironment(BaseModel):
+    """The credential variable names one worker held at its last poll (spec 019 FR-035).
+
+    Names only, never values: each is a set, non-empty variable of the credential namespace.
+    `worker_id` is the worker's name, the identity it has before Prefect resolves its record.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    worker_id: str = Field(min_length=1, max_length=256)
+    credential_names: tuple[str, ...]
+    observed_at: datetime
+
+    @field_validator("credential_names")
+    @classmethod
+    def _names_only(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Refuse anything that is not a credential variable name, so no value can be stored here."""
+        if not all(is_credential_name(name) for name in value):
+            msg = "credential_names holds only variable names of the credential namespace"
+            raise ValueError(msg)
+        return tuple(sorted(set(value)))
 
 
 class ExecutionFinishWriteback(BaseModel):

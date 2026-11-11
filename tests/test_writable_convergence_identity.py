@@ -186,14 +186,8 @@ def test_read_only_relationship_cannot_supply_a_key(component: str) -> None:
 # Spec 019 FR-037 (SYNC-147, T064): validation and the plan give the same answer on whether a
 # kind without a writable human-friendly ID can be created. Each case is one destination kind,
 # the fields the mapping selects as its identity (`identifiers`, which the plan keys each create
-# on) and the fields it maps. Validation judges the mapped fields today, so the cases where the
-# mapping maps a key component it does not select disagree; those carry a strict xfail. No task
-# of T066-T070 changes either side yet.
-_DISAGREE = pytest.mark.xfail(
-    strict=True, raises=AssertionError, reason="spec 019 US5 not implemented: validation and plan disagree"
-)
-
-
+# on) and the fields it maps. Validation judges the selected identifiers, as the plan does
+# (T083, research R16), so the cases that map a key component they do not select agree too.
 def _kind_without_writable_hfid(
     *, hfid: list[str], constraints: list[list[str]], read_only: frozenset[str] = frozenset()
 ) -> dict[str, Any]:
@@ -238,7 +232,6 @@ _KINDS_WITHOUT_WRITABLE_HFID = [
         ["name"],
         ["name", "serial"],
         id="read-only-hfid-and-a-mapped-but-unselected-constraint",
-        marks=_DISAGREE,
     ),
     pytest.param(_kind_without_writable_hfid(hfid=[], constraints=[]), ["name"], ["name"], id="no-declared-key"),
     pytest.param(
@@ -252,7 +245,6 @@ _KINDS_WITHOUT_WRITABLE_HFID = [
         ["name"],
         ["name", "serial"],
         id="no-hfid-and-a-mapped-but-unselected-constraint",
-        marks=_DISAGREE,
     ),
     pytest.param(
         _kind_without_writable_hfid(hfid=[], constraints=[["name__value", "serial__value"]]),
@@ -265,7 +257,6 @@ _KINDS_WITHOUT_WRITABLE_HFID = [
         ["name"],
         ["name", "serial"],
         id="no-hfid-and-a-partly-selected-but-fully-mapped-constraint",
-        marks=_DISAGREE,
     ),
 ]
 
@@ -297,7 +288,11 @@ def _validation_refuses_the_kind(
 ) -> bool:
     """Whether destination validation reports that the kind has no usable identity."""
     table = dict(BUILTIN_ADAPTER_CAPABILITIES)
-    table["infrahub"] = replace(table["infrahub"], destination_schema_accessor=lambda _package, _branch: snapshot)
+    table["infrahub"] = replace(
+        table["infrahub"],
+        destination_schema_accessor=lambda _package, _branch: snapshot,
+        destination_access_accessor=None,
+    )
     monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
     content = package_data()
     content["configuration"]["schema_mapping"] = [

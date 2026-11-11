@@ -47,9 +47,10 @@ not.
 ### Finding codes
 
 The `code` is the stable part of a finding. The message wording and the printed layout may
-change; the code will not. Three enumerations are emitted: the declared-content core's
-fifteen error codes below, the five destination-schema codes (emitted only when `validate`
-is given an explicit destination-schema opt-in), and the three warning-channel codes. One
+change; the code will not. Four enumerations are emitted: the declared-content core's
+fifteen error codes below, the nine destination-schema codes and the two worker credential
+codes (emitted only when `validate` is given an explicit destination-schema opt-in), and the
+three warning-channel codes. One
 location can report more than one of them — a credential declaration naming an uninstalled
 provider *and* an invalid identifier reports both at `/credentials/<name>` — but only ever
 from one check: when two checks reach the same pointer, the first to judge it is the one
@@ -78,15 +79,21 @@ An adapter's own configuration check keeps its own codes, which are outside this
 
 #### Destination schema validation codes
 
-These five codes are emitted **only on the explicit opt-in**: `validate` given a
-destination-schema options object. The default `validate` path judges declared content
-only, performs no schema read and no network I/O, and never emits them. All five carry an
-`error` severity.
+These nine codes are emitted **only on the explicit opt-in**: `validate` given a
+destination-schema options object, which `configs validate --branch <name>` and the `branch`
+parameter of `POST /configs/{config_id}/versions/{registry_version}/validate` send. The named
+branch is the one read; without a name, the package's declared destination branch is read.
+The default `validate` path judges declared content only, performs no schema read and no
+network I/O, and never emits them. All nine carry an `error` severity.
 
 | Code | What it means | Where it points |
 | ---- | ------------- | --------------- |
-| `destination-schema-mismatch` | A declared schema mapping disagrees with the destination's schema snapshot: an undeclared kind, a field that is neither an attribute nor a relationship, a relationship reference on an attribute, or a static value whose shape disagrees with the relationship's cardinality. | the mapping entry, field, reference, or static value |
-| `destination-schema-read-failed` | The destination schema could not be read: a timeout, refused credentials, an unreachable server, a rejected or unusable response, an unresolvable declared token, or unusable declared client settings. The message names the failure class. | `/configuration/destination` |
+| `destination-schema-mismatch` | A declared schema mapping disagrees with the destination's schema snapshot: an undeclared kind, a field that is neither an attribute nor a relationship, a relationship reference on an attribute, a static value whose shape disagrees with the relationship's cardinality, or a kind whose selected `identifiers` cannot key a create (the plan refuses the same creates). | the mapping entry, field, reference, static value, or `identifiers` |
+| `destination-dropdown-value-not-in-choices` | A mapping sets a Dropdown attribute to a literal `static` value that is not one of the attribute's choices on the branch. The message names the kind, the attribute, the value and the choices. Values mapped from the source are checked by the plan instead. | the field's `static` value |
+| `destination-permission-missing` | The import account lacks a permission on the branch: `view`, `create` or `update` on a mapped kind, or `view` on the kind that a `source` or `owner` setting names. The message names the kind and each missing permission (for example `object:Infra:Device:create`). A permission granted with `allow_default` counts on the default branch only. | the mapping entry's `name`, or `/configuration/destination/settings/<setting>` |
+| `destination-lineage-node-not-found` | The `source` or `owner` setting names a node, or a kind, that the branch does not hold. | `/configuration/destination/settings/<setting>` |
+| `destination-lineage-node-ambiguous` | The `source` or `owner` setting names a node that matches more than one node of that kind on the branch. | `/configuration/destination/settings/<setting>` |
+| `destination-schema-read-failed` | The destination schema, or the account's permissions and lineage nodes, could not be read: a timeout, refused credentials, an unreachable server, a rejected or unusable response, an unresolvable declared token, or unusable declared client settings. The message names the failure class. | `/configuration/destination` |
 | `destination-schema-unsupported-semantics` | The destination schema was read, but it declares semantics outside the supported schema domain — an unknown relationship cardinality, a member shape the domain does not define, or a default no JSON encoding can carry. A run of this configuration refuses the same schema. | `/configuration/destination` |
 | `destination-schema-validation-unsupported` | Schema validation was explicitly requested against a destination adapter that does not declare it. A missing capability needed to determine safety is an error, not a warning. | `/configuration/destination` |
 | `unsupported-destination-write` | The configuration requests destination write operations the destination adapter does not declare support for. | `/configuration/destination` |
@@ -99,10 +106,26 @@ mandatory-without-default field on those kinds. Unmapped destination growth and
 differences in schema delivery order leave it unchanged. It is `null` whenever no
 snapshot was read — the default path, a non-declaring destination, or a failed read.
 
+#### Worker credential codes
+
+The same opt-in also compares the package's `$credential` references with the variables
+the workers hold. The Sync API does not read its own environment for this: each worker
+publishes, on each poll, the names of its set and non-empty `INFRAHUB_SYNC_CREDENTIAL_*`
+variables (never a value) to the `worker_environments` table, and a worker counts as live
+while its last publication is no older than the liveness threshold (three times
+`PREFECT_WORKER_QUERY_SECONDS`, at least thirty seconds). An empty variable counts as unset.
+
+| Code | Severity | What it means | Where it points |
+| ---- | -------- | ------------- | --------------- |
+| `credential-not-set-in-worker` | `error` | No live worker holds the variable a `$credential` reference names. The message names the variable, never a value. | `/credentials/<name>` |
+| `worker-environment-unknown` | `warning` | No live worker has published its variables, so the credential check could not run. | `/credentials` |
+
 #### Warning-channel codes
 
-The warning channel is closed: warnings are limited to intentional omissions and
-explicitly unqualified optional features, and nothing else.
+The warning channel of declared-content validation is closed: warnings are limited to
+intentional omissions and explicitly unqualified optional features, and nothing else. The
+only other warning, `worker-environment-unknown`, comes from the destination opt-in described
+above, not from the declared content.
 
 | Code | Severity | What it means | Where it points |
 | ---- | -------- | ------------- | --------------- |

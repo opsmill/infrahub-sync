@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import sqlite3
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -23,7 +24,10 @@ from prefect.utilities.processutils import command_to_string, get_sys_executable
 from prefect.workers.process import ProcessJobConfiguration, ProcessWorker, ProcessWorkerResult
 from pydantic import PrivateAttr
 
+from infrahub_sync.configuration.worker_credentials import held_credential_names
+
 from .orchestration import SERVICE_DEFINITION
+from .storage import service_product_projection
 
 if TYPE_CHECKING:
     import logging
@@ -33,6 +37,8 @@ if TYPE_CHECKING:
     from prefect.client.schemas.objects import Flow as APIFlow
     from prefect.client.schemas.objects import FlowRun, WorkPool
     from prefect.client.schemas.responses import DeploymentResponse
+
+    from infrahub_sync.product_store import ProductProjection
 
 _IDENTITY_ERROR = "service worker identity is unavailable"
 _WORKER_NAME_PREFIX = "infrahub-sync-service"
@@ -242,6 +248,9 @@ class ServiceProcessWorker(ProcessWorker):  # pylint: disable=abstract-method
         self._identity_generation = 0
         self._identity_refresh_requests = 0
         self._identity_refresh_active = False
+        # The store this worker publishes its credential variable names to; built on the
+        # first poll that reaches it, and again after a publication fails.
+        self._environment_projection: ProductProjection | None = None
 
     @classmethod
     def __dispatch_key__(cls) -> str | None:
@@ -337,7 +346,33 @@ class ServiceProcessWorker(ProcessWorker):  # pylint: disable=abstract-method
             return None
         return self._identity_generation
 
+    def _publish_credential_names_now(self, names: tuple[str, ...]) -> None:
+        """Write this worker's credential variable names to the product store (blocking)."""
+        projection = self._environment_projection
+        if projection is None:
+            projection = self._environment_projection = service_product_projection()
+        projection.publish_worker_environment(str(self.name), names)
+
+    async def _publish_credential_names(self) -> None:
+        """Publish the names of the set, non-empty credential variables this worker holds.
+
+        Names only, never a value. Best effort: a store that cannot be reached leaves the
+        poll running, logs a fixed line with no detail, and is tried again on the next poll.
+        """
+        names = held_credential_names()
+        try:
+            await anyio.to_thread.run_sync(self._publish_credential_names_now, names)
+        except (RuntimeError, ValueError, OSError, sqlite3.Error):
+            # RuntimeError covers ProductStoreProviderError and ServiceStorageStartupError;
+            # ValueError covers missing or invalid store settings. No exception text is
+            # logged: a database error can repeat its connection string.
+            self._environment_projection = None
+            self._logger.debug("Could not publish the worker's credential variable names; retrying on the next poll.")
+
     async def get_and_submit_flow_runs(self) -> list[FlowRun]:
+        # Before the identity check: a worker publishes its variables even while Prefect
+        # has not resolved its record yet, so `configs validate` can see it (spec 019 FR-035).
+        await self._publish_credential_names()
         generation = self._submission_generation()
         if generation is None:
             self._logger.debug("Service worker identity is unavailable; skipping flow run submission.")

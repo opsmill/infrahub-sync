@@ -17,9 +17,6 @@ proposal: T069 does not name how the worker opens the store.
 The SC-007 credentials (five characters, and one that holds `"`, `\\` and `,`) are set in the
 worker's environment. Every table of the store, every validation response and every log record
 is searched for the values and their JSON-escaped forms.
-
-Strict xfail markers: the worker publishes nothing and validation reports no worker finding yet
-(T066, T069). Tests that pass today carry no marker.
 """
 
 from __future__ import annotations
@@ -51,6 +48,7 @@ from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResol
 from infrahub_sync.service.config_routes import ConfigurationRoutes
 from infrahub_sync.service.service import RunService
 from infrahub_sync.service.worker import ServiceProcessWorker
+from tests.configuration.test_validate_permissions import _StandInClient
 from tests.configuration.validation_packages import package_data
 from tests.service.failure_cases import (
     SHORT_CREDENTIAL,
@@ -67,7 +65,6 @@ if TYPE_CHECKING:
 
     from infrahub_sync.product_store.store import ProductProjection
 
-_NOT_IMPLEMENTED = "spec 019 US5 not implemented"
 _ADMIN_TOKEN = "worker-environment-admin-0005"  # noqa: S105 - deliberate non-secret canary.
 _POOL_NAME = "service-pool"
 _POOL_ID = UUID("e0679e8a-9460-4ca7-8bf1-70bf967eed2d")
@@ -139,11 +136,22 @@ def _tables(tmp_path: Path) -> dict[str, str]:
         }
 
 
-def _validation_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, projection: ProductProjection) -> TestClient:
-    """An administrator client of the Sync API on `projection`, with a fixed destination schema."""
-    table = dict(BUILTIN_ADAPTER_CAPABILITIES)
-    table["infrahub"] = replace(table["infrahub"], destination_schema_accessor=lambda _package, _branch: {})
-    monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
+def _validation_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, projection: ProductProjection, *, bundled_reads: bool = False
+) -> TestClient:
+    """An administrator client of the Sync API on `projection`.
+
+    The destination schema is fixed and empty, unless `bundled_reads` keeps the bundled schema
+    and access reads, which then reach whatever `infrahub_sdk.InfrahubClientSync` returns.
+    """
+    if not bundled_reads:
+        table = dict(BUILTIN_ADAPTER_CAPABILITIES)
+        table["infrahub"] = replace(
+            table["infrahub"],
+            destination_schema_accessor=lambda _package, _branch: {},
+            destination_access_accessor=None,
+        )
+        monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
     monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": _ADMIN_TOKEN, "administrator": True}}))
     resolver = EnvironmentPrincipalResolver.from_environment()
     del tmp_path
@@ -166,9 +174,10 @@ def _referencing_package() -> dict[str, Any]:
     return data
 
 
-def _validate(client: TestClient, *, branch: str | None = "main") -> dict[str, Any]:
+def _validate(client: TestClient, *, branch: str | None = "main", data: dict[str, Any] | None = None) -> dict[str, Any]:
+    content = _referencing_package() if data is None else data
     registered = client.post(
-        "/configs", headers={"Idempotency-Key": "worker-env"}, json={"package": _referencing_package(), "reason": "t"}
+        "/configs", headers={"Idempotency-Key": "worker-env"}, json={"package": content, "reason": "t"}
     )
     assert registered.status_code == 201, registered.text
     config_id = registered.json()["configuration"]["config_id"]
@@ -188,7 +197,6 @@ def _assert_no_value(text: str) -> None:
         assert form not in text
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 async def test_a_poll_publishes_the_names_of_set_credential_variables_and_no_value(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -210,7 +218,6 @@ async def test_a_poll_publishes_the_names_of_set_credential_variables_and_no_val
     _assert_no_value(caplog.text)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 async def test_each_poll_publishes_the_variables_the_worker_holds_then(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -232,7 +239,7 @@ async def test_each_poll_publishes_the_variables_the_worker_holds_then(
 async def test_a_store_that_cannot_be_reached_does_not_stop_the_poll(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Publishing is best effort: an unavailable store leaves the poll loop running (passes today)."""
+    """Publishing is best effort: an unavailable store leaves the poll loop running."""
 
     def unavailable(*_args: object, **_kwargs: object) -> ProductProjection:
         raise ProductStoreProviderError(sqlstate="08006")
@@ -249,7 +256,6 @@ async def test_a_store_that_cannot_be_reached_does_not_stop_the_poll(
     _assert_no_value(caplog.text)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 async def test_validation_names_each_referenced_variable_no_live_worker_holds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -269,7 +275,6 @@ async def test_validation_names_each_referenced_variable_no_live_worker_holds(
     _assert_no_value(json.dumps(body))
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 async def test_a_variable_set_only_in_the_api_process_still_counts_as_unset(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -291,7 +296,6 @@ async def test_a_variable_set_only_in_the_api_process_still_counts_as_unset(
     _assert_no_value(json.dumps(body))
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 def test_no_published_worker_gives_a_warning_and_no_credential_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -306,7 +310,6 @@ def test_no_published_worker_gives_a_warning_and_no_credential_error(
     ]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 async def test_a_publication_from_a_worker_that_stopped_long_ago_is_not_a_live_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -331,7 +334,7 @@ async def test_a_publication_from_a_worker_that_stopped_long_ago_is_not_a_live_w
 async def test_validation_without_a_branch_reports_no_worker_finding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Without a branch, validation stays as it is today (passes today)."""
+    """Without a branch, validation stays as it is today."""
     projection = local_product_projection(tmp_path)
     _store_reached_by_the_worker(monkeypatch, projection)
     _set_worker_environment(monkeypatch, _WORKER_VARIABLES)
@@ -341,3 +344,50 @@ async def test_validation_without_a_branch_reports_no_worker_finding(
     body = _validate(client, branch=None)
 
     assert _worker_findings(body) == []
+
+
+async def test_one_validation_reports_a_missing_attribute_an_unset_credential_and_a_missing_permission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The US5 independent test, SC-009 and SC-011 on one configuration, through the bundled reads.
+
+    The mapping maps `serial`, which the branch schema does not hold; the source credential is
+    held by no live worker; and the import account cannot create `InfraDevice` on the branch.
+    One validation names all three, and no run is created.
+    """
+    projection = local_product_projection(tmp_path)
+    _store_reached_by_the_worker(monkeypatch, projection)
+    _set_worker_environment(monkeypatch, {_EMPTY_NAME: "worker-held-token"})
+    await _poll(_worker())
+    # The API holds the destination token the schema read needs (Compose gives it to the API).
+    monkeypatch.setenv(_EMPTY_NAME, "api-held-token")
+    stand_in = _StandInClient(("object:Infra:Device:view:allow_all", "object:Infra:Device:update:allow_all"), nodes={})
+
+    def _sdk_client(address: str, config: object) -> _StandInClient:
+        del address, config
+        return stand_in
+
+    monkeypatch.setattr("infrahub_sdk.InfrahubClientSync", _sdk_client)
+    client = _validation_client(tmp_path, monkeypatch, projection, bundled_reads=True)
+    data = package_data()
+    data["configuration"]["schema_mapping"] = [
+        {
+            "name": "InfraDevice",
+            "mapping": "dcim.devices",
+            "identifiers": ["name"],
+            "fields": [{"name": "name", "mapping": "name"}, {"name": "serial", "mapping": "serial"}],
+        }
+    ]
+
+    body = _validate(client, branch="review", data=data)
+
+    found = {(finding["code"], finding["location"]): finding["message"] for finding in body["findings"]}
+    assert "serial" in found["destination-schema-mismatch", "/configuration/schema_mapping/0/fields/1/name"]
+    assert "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN" in found["credential-not-set-in-worker", "/credentials/netbox-token"]
+    permission = found["destination-permission-missing", "/configuration/schema_mapping/0/name"]
+    assert "InfraDevice" in permission
+    assert "object:Infra:Device:create" in permission
+    assert set(stand_in.schema.branches) == {"review"}
+    runs = client.get("/runs")
+    assert runs.status_code == 200, runs.text
+    assert runs.json()["items"] == []

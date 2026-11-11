@@ -1683,7 +1683,6 @@ def _register_with(client: TestClient, headers: dict[str, str], body: Mapping[st
 
 # Spec 019 US5 (T061, T065): `configs validate --branch` and the registration responses.
 
-_US5_NOT_IMPLEMENTED = "spec 019 US5 not implemented"
 _BRANCH_SNAPSHOT: dict[str, object] = {
     "InfraDevice": {
         "human_friendly_id": ["name__value"],
@@ -1711,7 +1710,9 @@ def _spied_schema_reads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         return _BRANCH_SNAPSHOT
 
     table = dict(BUILTIN_ADAPTER_CAPABILITIES)
-    table["infrahub"] = replace(table["infrahub"], destination_schema_accessor=accessor)
+    table["infrahub"] = replace(
+        table["infrahub"], destination_schema_accessor=accessor, destination_access_accessor=None
+    )
     monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
     return branches
 
@@ -1737,7 +1738,6 @@ def _package_with_missing_kind_attribute_and_relationship() -> dict[str, object]
     return data
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_US5_NOT_IMPLEMENTED)
 def test_validate_with_a_branch_checks_the_mapping_against_that_branch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1795,7 +1795,6 @@ def _without_content(body: object) -> bool:
     return True
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_US5_NOT_IMPLEMENTED)
 def test_the_register_response_shows_the_checksum_and_no_declared_content(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1817,7 +1816,6 @@ def test_the_register_response_shows_the_checksum_and_no_declared_content(
     RegisteredConfigurationResource.model_validate(first.json())
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_US5_NOT_IMPLEMENTED)
 def test_the_new_version_response_shows_the_checksum_and_no_declared_content(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

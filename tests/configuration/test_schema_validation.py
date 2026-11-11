@@ -29,8 +29,10 @@ from infrahub_sync.configuration import validation as validation_module
 from infrahub_sync.configuration.capabilities import (
     BUILTIN_ADAPTER_CAPABILITIES,
     AdapterConfigurationCapabilities,
+    DestinationAccess,
     DestinationSchemaAccessor,
     DestinationSchemaReadError,
+    LineageCheck,
 )
 from infrahub_sync.configuration.credentials import CredentialConfigurationError
 from infrahub_sync.configuration.schema_validation import (
@@ -117,7 +119,9 @@ def _table_with_accessor(
     accessor: Callable[[ConfigurationPackage, str], Mapping[str, Any]],
 ) -> dict[str, AdapterConfigurationCapabilities]:
     table = dict(BUILTIN_ADAPTER_CAPABILITIES)
-    table["infrahub"] = replace(table["infrahub"], destination_schema_accessor=accessor)
+    table["infrahub"] = replace(
+        table["infrahub"], destination_schema_accessor=accessor, destination_access_accessor=None
+    )
     return table
 
 
@@ -525,8 +529,34 @@ FROZEN_SCHEMA_CODES = frozenset(
         "destination-schema-read-failed",
         # The closed-domain family: a snapshot the shared runtime domain refuses.
         "destination-schema-unsupported-semantics",
+        # Spec 019 FR-034: a literal Dropdown value outside the attribute's choices.
+        "destination-dropdown-value-not-in-choices",
+        # Spec 019 FR-036: the destination-access family.
+        "destination-permission-missing",
+        "destination-lineage-node-not-found",
+        "destination-lineage-node-ambiguous",
     }
 )
+
+
+def _access_accessor(package_: ConfigurationPackage, branch: str) -> DestinationAccess:
+    """An access read in which the account lacks one write permission and each lineage check fails once."""
+    del package_
+    return DestinationAccess(
+        branch=branch,
+        missing_by_kind={"InfraDevice": ("object:Infra:Device:create",)},
+        lineage=(
+            LineageCheck(
+                setting="owner",
+                kind="CoreAccountGroup",
+                name="team",
+                outcome="permission_missing",
+                missing=("object:Core:AccountGroup:view",),
+            ),
+            LineageCheck(setting="source", kind="CoreAccount", name="netbox", outcome="not_found"),
+            LineageCheck(setting="source", kind="CoreAccount", name="netbox", outcome="ambiguous"),
+        ),
+    )
 
 
 def _declared_codes(tree: ast.AST) -> set[str]:
@@ -578,6 +608,14 @@ def test_every_frozen_schema_code_is_reachable_and_nothing_else_is_emitted(
         severities.add(finding.severity)
     _inject(monkeypatch, _table_with_accessor(_SpiedAccessor(_UNSUPPORTED_SNAPSHOT)))
     for finding in collect_destination_schema_findings(package(package_data())).findings:
+        reached.add(finding.code)
+        severities.add(finding.severity)
+    # Spec 019: a Dropdown literal outside its choices, and an access read that finds gaps.
+    table = _table_with_accessor(_SpiedAccessor(_dropdown_snapshot(["active"])))
+    table["infrahub"] = replace(table["infrahub"], destination_access_accessor=_access_accessor)
+    _inject(monkeypatch, table)
+    dropdown = _mapping_package_data([{"name": "name", "mapping": "name"}, {"name": "status", "static": "retired"}])
+    for finding in collect_destination_schema_findings(package(dropdown)).findings:
         reached.add(finding.code)
         severities.add(finding.severity)
     _inject(monkeypatch, dict(BUILTIN_ADAPTER_CAPABILITIES))
@@ -994,9 +1032,6 @@ def test_a_snapshot_outside_the_closed_domain_reports_a_finding(monkeypatch: pyt
 
 
 # --- Spec 019 FR-034 (T061): a literal Dropdown value outside the attribute's choices ----
-#
-# The new code `destination-dropdown-value-not-in-choices` is not in `FROZEN_SCHEMA_CODES` yet:
-# T067 adds it there, to the reachability test and to the operator documentation.
 
 
 def _dropdown_snapshot(choices: list[str] | None) -> dict[str, Any]:
@@ -1016,7 +1051,6 @@ def _dropdown_findings(monkeypatch: pytest.MonkeyPatch, *, choices: list[str] | 
     return [finding for finding in findings if finding.code == "destination-dropdown-value-not-in-choices"]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="spec 019 US5 not implemented")
 def test_a_literal_dropdown_value_outside_the_choices_names_kind_attribute_value_and_choices(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

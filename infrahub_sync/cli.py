@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from infrahub_sync.client.models import (
         ArtifactReferenceResource,
         ConfigurationSummaryResource,
+        ConfigurationVersionReferenceResource,
         ConfigurationVersionResource,
         ConfigurationVersionSummaryResource,
         EventResource,
@@ -445,25 +446,32 @@ def _echo_config_version_summary(resource: ConfigurationVersionSummaryResource) 
     )
 
 
-def _echo_config_version(resource: ConfigurationVersionResource) -> None:
+def _echo_config_version_reference(
+    resource: ConfigurationVersionReferenceResource | ConfigurationVersionResource,
+) -> None:
     _echo_fields(
         (
             ("config_id", resource.config_id),
             ("registry_version", resource.registry_version),
             ("package_checksum", resource.package_checksum),
             ("created_at", resource.created_at.isoformat()),
-            ("declared_content", json.dumps(resource.declared_content, sort_keys=True, separators=(",", ":"))),
         )
     )
 
 
+def _echo_config_version(resource: ConfigurationVersionResource) -> None:
+    _echo_config_version_reference(resource)
+    _echo_fields((("declared_content", json.dumps(resource.declared_content, sort_keys=True, separators=(",", ":"))),))
+
+
 def _echo_registered_config(resource: RegisteredConfigurationResource) -> None:
+    # The registration response names the version by checksum only (spec 019 FR-038).
     _echo_config_summary(resource.configuration)
-    _echo_config_version(resource.version)
+    _echo_config_version_reference(resource.version)
 
 
 def _echo_registered_version(resource: RegisteredVersionResource) -> None:
-    _echo_config_version(resource.version)
+    _echo_config_version_reference(resource.version)
     _echo_fields((("created", resource.created),))
 
 
@@ -607,13 +615,29 @@ def configs_validate(
     ctx: typer.Context,
     config: str = typer.Argument(..., metavar="CONFIG", help=_CONFIG_HELP),
     version: int = typer.Argument(...),
+    *,
     offset: int = typer.Option(0, "--offset", help="Finding offset."),
     limit: int = typer.Option(256, "--limit", help="Maximum findings to return."),
+    branch: str | None = typer.Option(
+        None,
+        "--branch",
+        help=(
+            "Also check the mapping, the import account's permissions and the workers' credential "
+            "variables against this Infrahub branch. Exits 1 when a finding is an error."
+        ),
+    ),
 ) -> None:
     """Validate a registered configuration version."""
     with _client_errors():
         config_id = _config_id(ctx, config)
-        _echo_validation(_client(ctx).validate_config(config_id, version, offset=offset, limit=limit))
+        if branch is None:
+            _echo_validation(_client(ctx).validate_config(config_id, version, offset=offset, limit=limit))
+            return
+        report = _client(ctx).validate_config(config_id, version, offset=offset, limit=limit, branch=branch)
+        _echo_validation(report)
+    # contracts/cli.md (spec 019): with a branch, an error finding on the page exits 1.
+    if any(finding.severity == "error" for finding in report.findings):
+        raise typer.Exit(code=1)
 
 
 def _echo_run(resource: RunResource) -> None:

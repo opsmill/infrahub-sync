@@ -869,17 +869,38 @@ class ConfigurationVersionResource(_ResourceModel):
         return checked
 
 
+class ConfigurationVersionReferenceResource(_ResourceModel):
+    """Name one registered version by its checksum, without its package (spec 019 FR-038).
+
+    The registration responses return this reference: the stored package is redacted, so
+    showing it next to the checksum of the original content would show two things that do not
+    match. ``GET /configs/{config_id}/versions/{registry_version}`` returns the content.
+    """
+
+    config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    registry_version: int = Field(ge=1)
+    package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    created_at: datetime
+
+    @field_validator("created_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, "configuration-version timestamps must include a timezone")
+        assert checked is not None
+        return checked
+
+
 class RegisteredConfigurationResource(_ResourceModel):
-    """Return a newly registered configuration and its first version."""
+    """Return a newly registered configuration and a reference to its first version."""
 
     configuration: ConfigurationSummaryResource
-    version: ConfigurationVersionResource
+    version: ConfigurationVersionReferenceResource
 
 
 class RegisteredVersionResource(_ResourceModel):
-    """Return a configuration version and whether it was newly created."""
+    """Return a reference to a configuration version and whether it was newly created."""
 
-    version: ConfigurationVersionResource
+    version: ConfigurationVersionReferenceResource
     created: bool
 
 

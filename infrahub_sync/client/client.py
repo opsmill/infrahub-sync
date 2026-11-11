@@ -81,6 +81,7 @@ _TOKEN_ARG = "token"
 _TIMEOUT_ARG = "timeout"
 _OFFSET_ARG = "offset"
 _LIMIT_ARG = "limit"
+_BRANCH_ARG = "branch"
 _CURSOR_ARG = "cursor"
 _NAME_ARG = "name"
 _CONFIG_ID_ARG = "config_id"
@@ -299,9 +300,13 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         )
 
     def validate_config(
-        self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = 256
+        self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = 256, branch: str | None = None
     ) -> ValidationReportResource:
-        """Validate a configuration version and return one findings page."""
+        """Validate a configuration version and return one findings page.
+
+        With ``branch``, the service also checks the mapping, the import account's permissions
+        and the workers' credential variables against that Infrahub branch (spec 019 FR-034).
+        """
 
         config_id = self._identifier(config_id, "config_id")
         version = self._positive_integer(registry_version, "registry_version")
@@ -309,13 +314,17 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             raise ClientInputError(_OFFSET_ARG)
         if type(limit) is not int or not 1 <= limit <= 256:  # pylint: disable=unidiomatic-typecheck
             raise ClientInputError(_LIMIT_ARG)
+        if branch is not None and (type(branch) is not str or not branch.strip()):  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_BRANCH_ARG)
         return self._request_model(
             "validate_config",
             "POST",
             f"/configs/{config_id}/versions/{version}/validate",
             model=ValidationReportResource,
             success={200},
-            params={"offset": offset, "limit": limit},
+            params={"offset": offset, "limit": limit}
+            if branch is None
+            else {"offset": offset, "limit": limit, "branch": branch},
             config_route=True,
         )
 
