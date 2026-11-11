@@ -33,7 +33,6 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 import pytest
-from pydantic import ValidationError
 
 from infrahub_sync.product_store import (
     AuditEvent,
@@ -56,10 +55,6 @@ _WORKER_ID = "7c1e2a90-3b4d-4f6e-8a1b-2c3d4e5f6a7b"
 _OTHER_WORKER_ID = "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d"
 _STARTED_AT = datetime(2026, 11, 11, 9, tzinfo=timezone.utc)
 _STOP_OUTCOME = "left-out-review-required"
-_NOT_IMPLEMENTED = "spec 019 US2 not implemented"
-
-# The stop's writeback cannot carry `release_write_admission` before T039.
-_RELEASE_MISSING = pytest.mark.xfail(strict=True, raises=ValidationError, reason=_NOT_IMPLEMENTED)
 
 _postgresql_schema = postgresql_schema_fixture("the stopped sync admission's PostgreSQL parameter")
 
@@ -216,7 +211,6 @@ def _stored(projection: ProductProjection, run_id: str) -> ProductRun:
 # --- T033: the release and the confirmed apply -------------------------------------------------
 
 
-@_RELEASE_MISSING
 def test_a_stopped_sync_records_the_stop_and_admits_its_confirmed_apply(projection: ProductProjection) -> None:
     """The stop and the release are one commit; the apply then reserves through the normal path."""
     run_id = _rid("stopped-sync")
@@ -234,7 +228,6 @@ def test_a_stopped_sync_records_the_stop_and_admits_its_confirmed_apply(projecti
     _submit(projection, run_id, admitted, purpose="apply")
 
 
-@_RELEASE_MISSING
 def test_a_second_apply_after_the_confirmed_apply_is_refused(projection: ProductProjection) -> None:
     """One write admission per run that writes, and none after it (FR-023)."""
     run_id = _rid("stopped-sync-twice")
@@ -248,7 +241,6 @@ def test_a_second_apply_after_the_confirmed_apply_is_refused(projection: Product
     _assert_refused(second)
 
 
-@_RELEASE_MISSING
 def test_a_second_apply_after_the_confirmed_apply_finished_is_refused(projection: ProductProjection) -> None:
     """A terminal apply still holds the run's one admission: the run is not reopened."""
     run_id = _rid("stopped-sync-applied")
@@ -297,7 +289,6 @@ def test_a_second_apply_after_the_confirmed_apply_finished_is_refused(projection
         ),
     ],
 )
-@_RELEASE_MISSING
 def test_a_sync_that_dispatched_an_operation_keeps_its_admission_even_when_a_release_is_asked(
     projection: ProductProjection, verdict: tuple[str, str], overrides: dict[str, Any]
 ) -> None:
@@ -340,7 +331,6 @@ def test_a_stop_without_the_release_keeps_the_admission(projection: ProductProje
     _assert_refused(_apply(projection, run_id, "m-apply-unreleased"))
 
 
-@_RELEASE_MISSING
 def test_the_release_never_gives_back_an_apply_admission(projection: ProductProjection) -> None:
     """Only the admission a `sync` reserved at creation can be given back."""
     run_id = _rid("apply-release")
@@ -386,7 +376,6 @@ def _assert_nothing_recorded(projection: ProductProjection, run_id: str) -> None
     _assert_refused(_apply(projection, run_id, "m-apply-after-rollback"))
 
 
-@_RELEASE_MISSING
 def test_a_stop_that_fails_after_the_release_stores_neither(
     projection: ProductProjection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -436,7 +425,6 @@ class _RefusingConnection:
         return getattr(self._connection, name)
 
 
-@_RELEASE_MISSING
 def test_a_release_that_fails_does_not_record_the_stop(
     projection: ProductProjection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -456,7 +444,6 @@ def test_a_release_that_fails_does_not_record_the_stop(
     _assert_nothing_recorded(projection, run_id)
 
 
-@_RELEASE_MISSING
 def test_a_stop_from_a_worker_that_does_not_own_the_execution_changes_nothing(projection: ProductProjection) -> None:
     """A verdict the store does not accept stores no stop and gives back no admission."""
     run_id = _rid("stop-wrong-worker")
@@ -471,7 +458,6 @@ def test_a_stop_from_a_worker_that_does_not_own_the_execution_changes_nothing(pr
 # --- T078: another run of the same configuration between the stop and the apply -----------------
 
 
-@_RELEASE_MISSING
 def test_another_run_admitted_between_the_stop_and_the_apply_leaves_the_store_decision_unchanged(
     projection: ProductProjection,
 ) -> None:

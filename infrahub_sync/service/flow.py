@@ -95,6 +95,8 @@ _REGISTERED_VERSION_INVALID = "registered configuration version is invalid"
 _REGISTERED_CHECKSUM_MISMATCH = "registered configuration checksum does not match run binding"
 _REGISTERED_PLAN_BINDING_MISMATCH = "registered saved plan binding does not match run binding"
 _REGISTERED_PLAN_VERIFICATION_FAILED = "registered saved plan verification failed"
+# The outcome of a `sync` that stopped after a plan that leaves out records (spec 019 FR-012).
+LEFT_OUT_STOP_OUTCOME = "left-out-review-required"
 _REGISTERED_PLAN_CHECKSUM_MISMATCH = "registered saved plan checksum does not match the approved expected_checksum"
 _WORKER_BINDING_PARAMETERS_INVALID = "service worker configuration binding parameters must be all absent or all present"
 _LEGACY_RUN_IDENTITY_UNAVAILABLE = "legacy service run identity is unavailable"
@@ -593,6 +595,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     tracker: WriteDispatchTracker,
     scratch: StageScratch,
     flow_run_id: str,
+    confirm_left_out: bool = False,
 ) -> tuple[dict[str, Any], ExecutionWriteback]:
     """Resolve and execute one service stage within the sanitized worker boundary.
 
@@ -600,6 +603,9 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     live schema read and before a `sync` waits for its write guard, so a stage that fails
     before either read returns both sides as `not_started`. It then gives the engine an
     observer that stores each side's read on the execution `flow_run_id`.
+
+    A `sync` whose plan leaves out records stops after the plan is saved, before any write,
+    and gives back its write admission (spec 019 FR-012, research R11): see `_left_out_stop`.
     """
     if stage in ("plan", "sync"):
         record_waiting(projection, run_id, flow_run_id)
@@ -714,6 +720,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 branch=branch,
                 expected_checksum=expected_checksum,
                 confirm_writes=True,
+                confirm_left_out=confirm_left_out,
                 ownership=ownership,
                 record_applied=tracker.record_applied,
                 base_directory=scratch.root,
@@ -764,6 +771,11 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 secrets=secrets,
             )
             _publish_plan(projection, run_id, saved, secrets)
+            # After the plan is durable and reviewable, before the verification and the
+            # write: the team reviews the records left out and applies this run itself.
+            stop = _left_out_stop(run_id, saved, sync_name)
+            if stop is not None:
+                return stop
             verified = execute_run(
                 instance,
                 operation="verify",
@@ -806,6 +818,54 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             results=result,
             baseline=_baseline_writeback(verified.manifest),
         )
+    return result, writeback
+
+
+def left_out_stop_next_action(run_id: str, checksum: str) -> str:
+    """The next action of a `sync` that stopped after a plan that leaves out records."""
+    return (
+        f"Review the plan with `infrahub-sync runs plan {run_id} --problems` and `--left-out`, then apply it "
+        f"with `infrahub-sync apply {run_id} --expected-checksum {checksum} --confirm-left-out`."
+    )
+
+
+def _left_out_stop(
+    run_id: str, saved: SavedPlan, sync_name: str
+) -> tuple[dict[str, Any], ExecutionFinishWriteback] | None:
+    """The result and writeback of a `sync` whose plan leaves out records, else `None`.
+
+    The stage ends with phase `planned` and outcome `left-out-review-required`, and its
+    result carries `failure`, whose next action the last log line, the run artifact and the
+    CLI show (spec 019 FR-012, data-model.md "Stage result `failure` for a stopped `sync`").
+    The writeback asks the store to give back the run's write admission in the same commit,
+    so the team can apply the reviewed plan once with the confirmation. It carries no
+    baseline: nothing was written.
+    """
+    summary = saved.summary()
+    if summary.left_out == 0:
+        return None
+    failure = {
+        "stage": "sync",
+        "failure_type": "left_out_review_required",
+        "left_out": summary.left_out,
+        "next_action": left_out_stop_next_action(run_id, saved.manifest.plan_checksum),
+    }
+    summary_data = summary.model_dump(mode="json")
+    result = {
+        "run_id": run_id,
+        "stage": "sync",
+        "outcome": LEFT_OUT_STOP_OUTCOME,
+        "summary": summary_data,
+        "failure": failure,
+    }
+    writeback = ExecutionFinishWriteback(
+        phase="planned",
+        outcome=LEFT_OUT_STOP_OUTCOME,
+        finished_at=datetime.now(timezone.utc),
+        summary={"sync_name": sync_name, **summary_data},
+        results=result,
+        release_write_admission=True,
+    )
     return result, writeback
 
 
@@ -1110,11 +1170,14 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     expected_checksum: str | None = None,
     confirm_writes: bool = False,
     configuration_name: str | None = None,
+    confirm_left_out: bool = False,
 ) -> dict[str, Any] | State[Any]:
     """Execute one API-reserved stage and publish its durable product data.
 
     `configuration_name` is the configuration's readable name, used only for the run's
-    title; the configuration is identified by `config_id`.
+    title; the configuration is identified by `config_id`. `confirm_left_out` is the apply
+    request's confirmation that the records the plan leaves out were reviewed; the engine
+    checks it again (spec 019 research R10).
 
     A refused execution claim, and a failure whose recorded evidence has a cause, end the flow
     run with a returned `Failed` state, so no traceback passes through Prefect's engine; any
@@ -1163,6 +1226,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 tracker=tracker,
                 scratch=scratch,
                 flow_run_id=flow_run_id,
+                confirm_left_out=confirm_left_out,
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         failure = exc

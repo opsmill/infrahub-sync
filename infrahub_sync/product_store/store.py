@@ -312,6 +312,12 @@ _RUN_EXECUTION_CONFLICT_MESSAGE = (
     "this Sync run already has a write admission, an unresolved submission, or a running "
     "execution; review the run and create a new plan or sync run"
 )
+# Gives back the write admission a `sync` reserved at creation. Only the `sync`'s own
+# admission matches, never an apply's, and never on a run that requires reconciliation.
+_RELEASE_STOPPED_SYNC_ADMISSION = (
+    "DELETE FROM write_admissions WHERE run_id = ? AND operation = 'sync' AND NOT EXISTS "
+    "(SELECT 1 FROM product_runs WHERE run_id = ? AND reconciliation_required)"
+)
 _ADMITTED_APPEND_REFUSED = (
     "appending a write execution requires the mutation receipt that holds this run's write admission"
 )
@@ -1560,6 +1566,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         "succeeded",
                     ):
                         self._record_configuration_baseline(cursor, run_id, writeback.baseline, terminal_at)
+                    # A `sync` that stopped after its plan, before any dispatch, gives back
+                    # its write admission in this same transaction, so the team can apply
+                    # the reviewed plan once (spec 019 FR-012, ADR 0020).
+                    if _releases_write_admission(writeback, terminal_state, terminal_outcome):
+                        cursor.execute(self._sql(_RELEASE_STOPPED_SYNC_ADMISSION), (run_id, run_id))
                 else:
                     cursor.execute(
                         self._sql(_SELECT_LATEST_EXECUTION_RESULTS),
@@ -3346,6 +3357,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
                 summary=cast("dict[str, Any]", _redact_value(_normalize_mapping(writeback.summary), secrets)),
                 results=cast("dict[str, Any]", _redact_value(_normalize_mapping(writeback.results), secrets)),
                 baseline=_redacted_baseline(writeback.baseline, secrets),
+                release_write_admission=writeback.release_write_admission,
             )
         else:
             sanitized = ExecutionMergeWriteback(
@@ -4056,6 +4068,23 @@ def _receipt_from_row(row: Sequence[Any]) -> MutationReceipt:
             "created_at": row[15],
             "updated_at": row[16],
         }
+    )
+
+
+def _releases_write_admission(writeback: ExecutionFinishWriteback, terminal_state: str, terminal_outcome: str) -> bool:
+    """Answer whether a finish writeback gives back the run's write admission.
+
+    The writeback must ask for the release, and the run record it commits must show that no
+    operation was dispatched: a succeeded verdict, the `planned` phase, and no applied
+    operation in the summary or the results. The SQL statement adds the last two conditions:
+    the admission is a `sync`'s, and the run does not require reconciliation.
+    """
+    return (
+        writeback.release_write_admission
+        and (terminal_state, terminal_outcome) == ("completed", "succeeded")
+        and writeback.phase == "planned"
+        and not writeback.summary.get("applied_operations")
+        and not writeback.results.get("applied_operations")
     )
 
 

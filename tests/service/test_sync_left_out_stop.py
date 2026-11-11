@@ -58,7 +58,6 @@ from tests.service.test_managed_write_guard import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-_NOT_IMPLEMENTED = "spec 019 US2 not implemented"
 _STOP_OUTCOME = "left-out-review-required"
 _SYNC_FLOW_RUN_ID = "4b2f6e1a-8c3d-4e5f-9a0b-1c2d3e4f5a6b"
 _APPLY_FLOW_RUN_ID = "9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a"
@@ -247,7 +246,6 @@ def stopping(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Harness:
 # --- T036: the stop ----------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 def test_a_sync_whose_plan_leaves_out_records_stops_after_the_plan(stopping: _Harness) -> None:
     result = stopping.run_sync()
 
@@ -261,7 +259,6 @@ def test_a_sync_whose_plan_leaves_out_records_stops_after_the_plan(stopping: _Ha
     assert run.finished_at is not None
 
 
-@pytest.mark.xfail(strict=True, raises=KeyError, reason=_NOT_IMPLEMENTED)
 def test_the_stage_result_carries_the_failure_and_its_next_action(stopping: _Harness) -> None:
     stopping.run_sync()
 
@@ -288,7 +285,6 @@ class _Lines(logging.Handler):
         self.lines.append(record.getMessage())
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 def test_the_last_log_line_shows_the_next_action(stopping: _Harness, monkeypatch: pytest.MonkeyPatch) -> None:
     lines = _Lines()
     run_logger = logging.getLogger("test-sync-left-out-stop")
@@ -307,7 +303,6 @@ def test_the_last_log_line_shows_the_next_action(stopping: _Harness, monkeypatch
     assert "--confirm-left-out" in final[-1]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 def test_the_stopped_sync_admits_its_confirmed_apply(stopping: _Harness) -> None:
     """The stop's writeback gives back the write admission (research R11, T039)."""
     stopping.run_sync()
@@ -341,13 +336,12 @@ def _apply_stage(harness: _Harness) -> dict[str, Any]:
         *harness.binding,
         expected_checksum=harness.checksum,
         confirm_writes=True,
-        confirm_left_out=True,  # ty: ignore[unknown-argument] - the worker receives it after T041 and T042.
+        confirm_left_out=True,
     )
     assert isinstance(result, dict)
     return result
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 def test_a_confirmed_apply_is_refused_while_another_run_holds_the_configuration(stopping: _Harness) -> None:
     """Decision 2 of 2026-11-11: the apply waits for or is refused by the other writer, never writes beside it."""
     stopping.run_sync()
@@ -367,7 +361,6 @@ def test_a_confirmed_apply_is_refused_while_another_run_holds_the_configuration(
     assert run.phase != "applied"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 def test_a_confirmed_apply_writes_once_the_configuration_is_free(stopping: _Harness) -> None:
     """The positive arm: the refusal above is about the other writer, not about the stopped run."""
     stopping.run_sync()

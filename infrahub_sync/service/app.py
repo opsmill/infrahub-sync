@@ -297,6 +297,7 @@ def create_app(
                 status=exc.status,
                 run_id=exc.run_id,
                 mutation_id=exc.mutation_id,
+                left_out=exc.left_out,
             )
         )
         headers = {"WWW-Authenticate": "Bearer"} if exc.status == 401 else None

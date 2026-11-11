@@ -142,12 +142,15 @@ class ServiceAPIError(Exception):
         run_id: str | None = None,
         mutation_id: str | None = None,
         secrets: tuple[str, ...] = (),
+        left_out: int | None = None,
     ) -> None:
         self.status = status
         self.code = code
         self.run_id = run_id
         self.mutation_id = mutation_id
         self.message = redact(message, secrets)
+        # The count of records the plan leaves out, on `left-out-confirmation-required` only.
+        self.left_out = left_out
         super().__init__(self.message)
 
 
@@ -383,6 +386,10 @@ class RunService:
             expected_checksum=request.expected_checksum,
             confirm_writes=True,
         )
+        if request.confirm_left_out:
+            # The worker's engine checks the confirmation again (research R10). Sent only
+            # when true, so an apply that confirms nothing keeps its parameters of today.
+            parameters["confirm_left_out"] = True
         existing = self._lookup_existing_receipt(
             run,
             principal,
@@ -424,6 +431,25 @@ class RunService:
                 "checksum-conflict",
                 "expected_checksum does not match the retained reviewed plan",
                 run_id=run_id,
+            )
+        # After the checksum, so the count refers to the plan the person reviewed, and before
+        # the reservation, so a refusal takes no write admission (spec 019 FR-010, FR-011).
+        left_out = plan.summary.left_out
+        if left_out > 0 and not request.confirm_left_out:
+            self._audit(
+                run_id,
+                actor=principal.actor,
+                operation="apply",
+                reason=request.reason,
+                outcome="refused-left-out-not-confirmed",
+            )
+            raise ServiceAPIError(
+                409,
+                "left-out-confirmation-required",
+                f"this plan leaves out {left_out} records; confirm with confirm_left_out=true",
+                run_id=run_id,
+                secrets=self._secrets,
+                left_out=left_out,
             )
         receipt = self._reserve_existing(
             run,

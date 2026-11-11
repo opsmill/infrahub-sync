@@ -20,8 +20,6 @@ import json
 from typing import TYPE_CHECKING
 
 import httpx
-import pytest
-from pydantic import ValidationError
 
 from infrahub_sync.client import APIError, ApplyRunRequest, PlanSummaryResource, ResultsResource, SyncClient
 from tests.cli.test_client_commands import (
@@ -41,7 +39,6 @@ from tests.client.test_client import _run as _run_payload
 if TYPE_CHECKING:
     from unittest.mock import MagicMock
 
-_NOT_IMPLEMENTED = "spec 019 US2 not implemented"
 _RUN_ID = "service-run-1"
 _NEXT_ACTION = (
     f"Review the plan with `infrahub-sync runs plan {_RUN_ID} --problems` and `--left-out`, then apply it with "
@@ -53,7 +50,6 @@ def _apply_arguments(*extra: str) -> tuple[str, ...]:
     return ("apply", _RUN_ID, "--expected-checksum", CHECKSUM, "--reason", "left-out records reviewed", *extra)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 def test_the_flag_sends_the_confirmation(client: MagicMock) -> None:  # noqa: F811 - the imported fixture.
     result = _invoke(client, *_apply_arguments("--confirm-left-out", "--no-wait"))
 
@@ -76,7 +72,6 @@ def _plan_leaving_out(count: int) -> object:
     return plan.model_copy(update={"summary": summary})
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 def test_an_unconfirmed_apply_prints_the_refusal_and_exits_1(client: MagicMock) -> None:  # noqa: F811
     refusal = APIError(409, "left-out-confirmation-required", run_id=_RUN_ID)
     setattr(refusal, "left_out", 12)  # noqa: B010 - one of the two ways the count may reach the CLI.
@@ -90,7 +85,6 @@ def test_an_unconfirmed_apply_prints_the_refusal_and_exits_1(client: MagicMock) 
     client.wait_for_run.assert_not_called()
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 def test_a_stopped_sync_prints_the_stop_and_its_hint_from_the_stage_result(client: MagicMock) -> None:  # noqa: F811
     stopped = _run(
         operation="sync", phase="planned", outcome="left-out-review-required", terminal=("completed", "succeeded")
@@ -119,7 +113,6 @@ def test_a_stopped_sync_prints_the_stop_and_its_hint_from_the_stage_result(clien
     client.get_results.assert_called_with(_RUN_ID)
 
 
-@pytest.mark.xfail(strict=True, raises=ValidationError, reason=_NOT_IMPLEMENTED)
 def test_the_client_sends_the_field_only_when_it_is_true() -> None:
     bodies: list[dict[str, object]] = []
 
@@ -134,7 +127,7 @@ def test_the_client_sends_the_field_only_when_it_is_true() -> None:
         expected_checksum=CHECKSUM,
         confirm_writes=True,
         reason="test",
-        confirm_left_out=True,  # ty: ignore[unknown-argument] - added by T040.
+        confirm_left_out=True,
     )
     sync_client.apply_run("run-1", confirmed, "key-confirmed")
     sync_client.apply_run(
@@ -143,3 +136,29 @@ def test_the_client_sends_the_field_only_when_it_is_true() -> None:
 
     assert bodies[0]["confirm_left_out"] is True
     assert "confirm_left_out" not in bodies[1]
+
+
+def test_runs_show_prints_the_stop_of_a_sync_and_its_hint(client: MagicMock) -> None:  # noqa: F811
+    """contracts/cli.md lists `runs show` among the commands that print the stop."""
+    stopped = _run(
+        operation="sync", phase="planned", outcome="left-out-review-required", terminal=("completed", "succeeded")
+    )
+    results = {
+        "stage": "sync",
+        "outcome": "left-out-review-required",
+        "failure": {
+            "stage": "sync",
+            "failure_type": "left_out_review_required",
+            "left_out": 12,
+            "next_action": _NEXT_ACTION,
+        },
+    }
+    client.get_run.return_value = stopped.model_copy(
+        update={"run": stopped.run.model_copy(update={"results": results})}
+    )
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    assert "sync stopped: left_out_review_required (12 records left out)" in result.output
+    assert f"hint: {_NEXT_ACTION}" in result.output

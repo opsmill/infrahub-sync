@@ -120,6 +120,29 @@ class PlanFormatApplyUnsupportedError(PlanArtifactError):
     )
 
 
+class LeftOutConfirmationRequiredError(PlanArtifactError):
+    """The plan leaves out records, and the apply did not confirm that they were reviewed.
+
+    Spec 019 FR-010: the Sync API refuses such an apply, and the engine refuses it again so
+    a direct Python caller cannot skip the confirmation. Raised before the first operation
+    is dispatched, so the destination was not touched.
+    """
+
+    next_action = (
+        "Review the records the plan leaves out with `infrahub-sync runs plan <run_id> --problems` and "
+        "`--left-out`, then confirm the apply with `--confirm-left-out` (`confirm_left_out=True`)."
+    )
+    wrote = False
+
+    def __init__(self, left_out: int, *, run_id: str) -> None:
+        self.left_out = left_out
+        super().__init__(
+            f"The plan of run {run_id!r} leaves out {left_out} records, and the apply did not confirm "
+            "that they were reviewed. Nothing was written to the destination.",
+            next_action=type(self).next_action.replace("<run_id>", run_id),
+        )
+
+
 class MissingDestinationIdError(PlanArtifactError):
     """An update was derived for an object whose destination id the plan cannot record.
 

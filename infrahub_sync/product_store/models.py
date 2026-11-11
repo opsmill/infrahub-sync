@@ -279,6 +279,10 @@ class ExecutionFinishWriteback(BaseModel):
     # Present only when this execution completed a write whose source counts are safe to
     # become the next run's reference. Absent on every read stage.
     baseline: BaselineWriteback | None = None
+    # Set only by a `sync` stage that stopped after its plan because the plan leaves out
+    # records (spec 019 FR-012). The store gives back the run's `sync` write admission in
+    # the same transaction, and only when the run record shows no dispatched operation.
+    release_write_admission: bool = False
 
     @field_validator("finished_at", mode="before")
     @classmethod

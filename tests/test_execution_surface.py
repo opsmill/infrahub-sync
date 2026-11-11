@@ -39,6 +39,7 @@ from infrahub_sync.execution import (
     resolve_sync_instance,
     run_remote_request,
 )
+from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.utils import get_all_sync, get_potenda_from_instance
 
 SYNC_NAME = "canary-example"
@@ -1883,6 +1884,51 @@ def test_composed_sync_plan_failure_records_sync_mode(config_dir: str, cache_roo
 
     run_file = RunFile.load_or_default(cache_root / RUN_ID / "run.json")
     assert (run_file.mode, run_file.status) == ("sync", "failed")
+
+
+class _RecordingApplier:
+    """An apply seam that records what it was asked and writes nothing."""
+
+    def __init__(self, engine: object) -> None:
+        self.engine = engine
+        self.applied_plan_action_counts = {"create": 0, "update": 0, "delete": 0}
+        self.calls: list[dict[str, object]] = []
+
+    def apply_plan(self, **kwargs: object) -> ApplyRecord:
+        self.calls.append(kwargs)
+        return ApplyRecord()
+
+
+def test_an_apply_is_accepted_on_the_run_a_sync_planned(config_dir: str, cache_root: Path) -> None:
+    """Spec 019 FR-012: the team applies a stopped `sync` run as it applies a `plan` run.
+
+    The run file a composed `sync` wrote has mode `sync`; nothing in the apply path refuses
+    it, and the confirmation reaches the engine.
+    """
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root, rows=[_plan_row("create", "core01")])
+    execute_run(instance, operation="plan", potenda_factory=factory, _run_file_mode="sync")
+    run_dir = cache_root / RUN_ID
+    assert RunFile.load_or_default(run_dir / "run.json").mode == "sync"
+    (run_dir / "plan").mkdir(exist_ok=True)
+    assert factory.engine is not None
+    applier = _RecordingApplier(factory.engine)
+
+    result = execute_run(  # ty: ignore[no-matching-overload] - the seam is a recording double.
+        instance,
+        operation="apply",
+        run_id=RUN_ID,
+        confirm_writes=True,
+        confirm_left_out=True,
+        ownership=object(),
+        record_applied=lambda _record: None,
+        _plan_applier_factory=lambda *_args, **_kwargs: applier,
+    )
+
+    assert isinstance(result, RunResult)
+    assert [call["confirm_left_out"] for call in applier.calls] == [True]
+    run_file = RunFile.load_or_default(run_dir / "run.json")
+    assert (run_file.mode, run_file.status) == ("apply", "applied")
 
 
 def test_composed_operation_skips_nested_core_lock(

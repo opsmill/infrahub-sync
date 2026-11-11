@@ -977,6 +977,47 @@ def _echo_failure_record(failure: Mapping[str, Any], *, stage: str, err: bool) -
         typer.echo(f"hint: {hint}", err=err)
 
 
+# The `failure_type` of a `sync` stage that stopped after a plan that leaves out records.
+_LEFT_OUT_STOP_FAILURE_TYPE = "left_out_review_required"
+_LEFT_OUT_CONFIRMATION_REQUIRED = "left-out-confirmation-required"
+
+
+def _echo_left_out_stop(failure: Mapping[str, Any], *, stage: str, err: bool) -> bool:
+    """Print a stage result's `failure` for a stop that waits for the left-out review.
+
+    `<stage> stopped: left_out_review_required (<n> records left out)`, then the `hint:` the
+    worker recorded (spec 019 FR-012, contracts/cli.md). Returns whether it printed the stop.
+    """
+    if failure.get("failure_type") != _LEFT_OUT_STOP_FAILURE_TYPE or failure.get("stage") != stage:
+        return False
+    left_out = failure.get("left_out")
+    count = f" ({left_out} records left out)" if type(left_out) is int else ""  # pylint: disable=unidiomatic-typecheck
+    typer.echo(f"{stage} stopped: {_LEFT_OUT_STOP_FAILURE_TYPE}{count}", err=err)
+    next_action = failure.get("next_action")
+    if isinstance(next_action, str) and next_action:
+        typer.echo(f"hint: {_display(next_action[:MAX_FAILURE_CAUSE_TEXT])}", err=err)
+    return True
+
+
+def _echo_stopped_stage(client: SyncClient, run_id: str, *, stage: str) -> bool:
+    """Print the stop a completed stage recorded in its result's `failure`, if any."""
+    try:
+        failure = client.get_results(run_id).results.get("failure")
+    except SyncClientError:
+        return False
+    return isinstance(failure, dict) and _echo_left_out_stop(failure, stage=stage, err=True)
+
+
+def _left_out_refusal_count(client: SyncClient, run_id: str, error: APIError) -> int | None:
+    """The count of records the refused apply's plan leaves out: the refusal's, else the plan's."""
+    if error.left_out is not None:
+        return error.left_out
+    try:
+        return client.get_plan(run_id).summary.left_out
+    except SyncClientError:
+        return None
+
+
 def _waiting_client(ctx: typer.Context, *, wait_timeout: float, poll_interval: float) -> SyncClient:
     """Refuse a wait duration that is not positive before any I/O, then return the client."""
     _positive_duration(wait_timeout, "wait_timeout")
@@ -1117,6 +1158,12 @@ def sync_cmd(
         if wait:
             _echo_run(completed)
             _echo_completed_destination_branch(client, completed.run.run_id)
+            # A `sync` whose plan leaves out records ends completed, without writing, and
+            # waits for the team to review the plan and apply it (spec 019 FR-012).
+            if completed.run.outcome == "left-out-review-required" and _echo_stopped_stage(
+                client, completed.run.run_id, stage="sync"
+            ):
+                raise typer.Exit(1)
 
 
 @app.command("apply")
@@ -1127,6 +1174,11 @@ def apply_cmd(
     expected_checksum: str = typer.Option(..., "--expected-checksum", help="Checksum printed by `runs plan`."),
     reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the apply."),
     branch: str | None = typer.Option(None, "--branch", help="Destination branch admitted by the Sync API."),
+    confirm_left_out: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--confirm-left-out",
+        help="Confirm that you reviewed the records the plan leaves out; required when it leaves out any.",
+    ),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for this run's apply execution."),  # noqa: FBT003
     wait_timeout: float = typer.Option(DEFAULT_WAIT_TIMEOUT, "--wait-timeout", help="Bounded wait in seconds."),
@@ -1143,6 +1195,7 @@ def apply_cmd(
                     ApplyRunRequest,
                     expected_checksum=expected_checksum,
                     confirm_writes=True,
+                    confirm_left_out=confirm_left_out,
                     branch=branch,
                     reason=reason,
                 ),
@@ -1159,6 +1212,14 @@ def apply_cmd(
                 wait_timeout=wait_timeout,
                 poll_interval=poll_interval,
             )
+        except APIError as error:
+            if error.code != _LEFT_OUT_CONFIRMATION_REQUIRED:
+                raise
+            # Refused before any write: the plan leaves out records (spec 019 FR-010).
+            left_out = _left_out_refusal_count(client, run_id, error)
+            count = "" if left_out is None else f" {left_out}"
+            typer.echo(f"apply refused: this plan leaves out{count} records; confirm with --confirm-left-out", err=True)
+            raise typer.Exit(1) from None
         except RunTerminalError as error:
             _echo_stage_failure(client, error.run_id, stage="apply")
             raise
@@ -1308,6 +1369,7 @@ def runs_show(
     execution has no read state: a run recorded before the read state, a stage the worker has not started, or a
     stage whose read state the worker could not store.
     A failed stage adds its error type and, when the run recorded them, a `cause:` and a `hint:` line.
+    A `sync` that stopped after a plan that leaves out records adds a `sync stopped:` and a `hint:` line.
     """
     with _client_errors():
         resource = _client(ctx).get_run(run_id)
@@ -1326,6 +1388,11 @@ def runs_show(
         if latest is not None and latest.terminal_outcome == "succeeded":
             continue
         _echo_failure_record(failure, stage=stage, err=False)
+    # A `sync` that stopped after a plan that leaves out records records no `<stage>_failure`:
+    # its stage result carries `failure` (spec 019 FR-012).
+    stop = resource.run.results.get("failure")
+    if isinstance(stop, dict):
+        _echo_left_out_stop(stop, stage="sync", err=False)
 
 
 @runs_app.command("results")

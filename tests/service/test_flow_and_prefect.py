@@ -261,6 +261,7 @@ def test_service_and_direct_prefect_flow_schemas_are_separate_and_exact() -> Non
         "expected_checksum",
         "confirm_writes",
         "configuration_name",
+        "confirm_left_out",
     )
     assert tuple(inspect.signature(infrahub_sync_run.fn).parameters) == (
         "sync_name",
@@ -955,7 +956,8 @@ async def test_prefect_extras_executor_receives_opaque_key_unchanged() -> None:
 
     assert submission.flow_run_id == str(client.flow_run.id)
     assert client.keys == ["opaque-prefect-key"]
-    assert client.parameters == [parameters]
+    # The deployment fills the defaults of the parameters the request leaves out.
+    assert client.parameters == [{**parameters, "confirm_left_out": False}]
     assert client.names == ["Plan sync of netbox-to-infrahub"]
     assert client.flow_run.tags == sorted(
         {

@@ -6,7 +6,17 @@ from datetime import datetime  # noqa: TC003 - Pydantic resolves resource annota
 from math import isfinite
 from typing import Annotated, Any, Literal, Protocol, TypeVar, cast, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    StrictBool,
+    StringConstraints,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 Operation = Literal["plan", "verify", "apply", "sync"]
 TerminalState = Literal["completed", "failed", "cancelled", "abandoned", "interrupted"]
@@ -125,12 +135,25 @@ class VerifyRunRequest(_RequestModel):
 
 
 class ApplyRunRequest(_RequestModel):
-    """Request application of a reviewed plan checksum."""
+    """Request application of a reviewed plan checksum.
+
+    `confirm_left_out` confirms that the person reviewed the records the plan leaves out
+    (spec 019 FR-010). It is a strict JSON boolean, and it is serialized only when true, so a
+    request that does not confirm keeps today's body and today's idempotency fingerprint.
+    """
 
     expected_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     confirm_writes: bool = False
+    confirm_left_out: StrictBool = False
     branch: str | None = None
     reason: str | None = Field(default=None, min_length=1)
+
+    @model_serializer(mode="wrap")
+    def _omit_unconfirmed_left_out(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data = handler(self)
+        if not self.confirm_left_out:
+            data.pop("confirm_left_out", None)
+        return data
 
 
 class CancelRunRequest(_RequestModel):
@@ -871,6 +894,16 @@ class ErrorDetail(_ResourceModel):
     status: int
     run_id: str | None = None
     mutation_id: str | None = None
+    # The count of records the plan leaves out, on a `left-out-confirmation-required` refusal
+    # only (spec 019 FR-010). Absent from every other error body.
+    left_out: int | None = Field(default=None, ge=0)
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_left_out(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data = handler(self)
+        if self.left_out is None:
+            data.pop("left_out", None)
+        return data
 
 
 class ErrorEnvelope(_ResourceModel):

@@ -173,7 +173,6 @@ def _count_line(markdown: str, words: str, count: int) -> bool:
     return re.search(pattern, markdown, flags=re.IGNORECASE | re.MULTILINE) is not None
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="spec 019 US2 not implemented")
 @pytest.mark.parametrize(("stage", "outcome"), [("plan", "planned"), ("sync", "left-out-review-required")])
 def test_a_plan_that_leaves_out_records_shows_both_counts(stage: str, outcome: str) -> None:
     run = _run(operation=stage, summary=_LEFT_OUT_SUMMARY, artifact_refs=(_review_reference(),))
@@ -184,7 +183,6 @@ def test_a_plan_that_leaves_out_records_shows_both_counts(stage: str, outcome: s
     assert _count_line(markdown, "problem", 3), markdown
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="spec 019 US2 not implemented")
 @pytest.mark.parametrize(("stage", "outcome"), [("plan", "planned"), ("sync", "left-out-review-required")])
 def test_a_plan_that_leaves_out_records_names_the_runs_plan_options_in_its_next_steps(stage: str, outcome: str) -> None:
     run = _run(operation=stage, summary=_LEFT_OUT_SUMMARY, artifact_refs=(_review_reference(),))

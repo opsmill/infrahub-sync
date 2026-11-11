@@ -104,6 +104,7 @@ $ infrahub-sync apply [OPTIONS] {run_id}
 * `--expected-checksum <str>`: Checksum printed by `runs plan`.  [required]
 * `--reason <str>`: Optional audit reason for the apply.
 * `--branch <str>`: Destination branch admitted by the Sync API.
+* `--confirm-left-out`: Confirm that you reviewed the records the plan leaves out; required when it leaves out any.
 * `--idempotency-key <str>`: Retry key.
 * `--wait / --no-wait`: Wait for this run&#x27;s apply execution.  [default: wait]
 * `--wait-timeout <float>`: Bounded wait in seconds.  [default: 1800.0]
@@ -398,6 +399,7 @@ keys that have no value. A side with no read state to return reads &lt;none&gt;.
 execution has no read state: a run recorded before the read state, a stage the worker has not started, or a
 stage whose read state the worker could not store.
 A failed stage adds its error type and, when the run recorded them, a `cause:` and a `hint:` line.
+A `sync` that stopped after a plan that leaves out records adds a `sync stopped:` and a `hint:` line.
 
 **Usage**:
 

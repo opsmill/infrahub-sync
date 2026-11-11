@@ -19,13 +19,14 @@ from infrahub_sync.infrahub_errors import classify_infrahub_error
 from infrahub_sync.plan.config_version import resolve_config_version, validate_config_version
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
+    LeftOutConfirmationRequiredError,
     OperationApplyFailedError,
     PlanArtifactError,
     PlanFormatApplyUnsupportedError,
     PlanVerificationError,
     SkippedDeleteOperation,
 )
-from infrahub_sync.plan.models import ACTIONS, DESTINATION_ID_FORMAT_VERSION, ApplyRecord
+from infrahub_sync.plan.models import ACTIONS, DESTINATION_ID_FORMAT_VERSION, REPORT_FORMAT_VERSION, ApplyRecord
 from infrahub_sync.plan.write_surface import (
     PlannedWriteDestination,
     destination_last_changes,
@@ -194,15 +195,34 @@ def _require_applyable_format(manifest: PlanManifest, *, run_id: str) -> None:
     id alone. Applying one would fall back to the create-shaped convergent upsert, whose
     failure mode on an incomplete payload is a silent duplicate — so the plan is read,
     rendered for review, and refused at the write.
+
+    A format-3 plan was never checked for problems and carries no count of left-out records,
+    so the person cannot confirm what it leaves out (spec 019 SC-006, research R9).
     """
-    if manifest.format_version >= DESTINATION_ID_FORMAT_VERSION:
+    if manifest.format_version >= REPORT_FORMAT_VERSION:
         return
+    reason = (
+        "its updates carry no recorded destination id, so they cannot be keyed"
+        if manifest.format_version < DESTINATION_ID_FORMAT_VERSION
+        else "it was never checked for problems and records no count of the records it leaves out"
+    )
     msg = (
         f"The plan artifact of run {run_id!r} declares format version {manifest.format_version}, which "
-        f"this version of infrahub-sync can read and review but cannot apply: its updates carry no "
-        f"recorded destination id, so they cannot be keyed. Nothing was written to the destination."
+        f"this version of infrahub-sync can read and review but cannot apply: {reason}. "
+        "Nothing was written to the destination."
     )
     raise PlanFormatApplyUnsupportedError(msg)
+
+
+def _require_left_out_confirmation(manifest: PlanManifest, *, run_id: str, confirm_left_out: bool) -> None:
+    """Refuse a plan that leaves out records unless the apply confirms it (spec 019 FR-010).
+
+    The count is the manifest's, which the plan checksum binds, so it is the count of the plan
+    this call applies. A plan that leaves out nothing accepts and ignores a confirmation.
+    """
+    left_out = 0 if manifest.report is None else manifest.report.left_out
+    if left_out > 0 and not confirm_left_out:
+        raise LeftOutConfirmationRequiredError(left_out, run_id=run_id)
 
 
 def _validate_infrahub_plan_payload(
@@ -873,6 +893,7 @@ class Potenda:
         config_version: str | None = None,
         artifact: RawPlanArtifact | None = None,
         expected_checksum: str | None = None,
+        confirm_left_out: bool = False,
     ) -> ApplyRecord:
         """Apply this run's saved plan artifact to the destination, and return what it did.
 
@@ -915,6 +936,9 @@ class Potenda:
                 **authoritative** answer to `--expected-checksum`, because it is given about
                 the bytes this call applies; a caller's earlier check is a fast path, not a
                 substitute. `None` asks for no approval comparison at all.
+            confirm_left_out: The person confirmed that they reviewed the records the plan
+                leaves out. Required when the plan's report leaves out any record, and
+                ignored otherwise (spec 019 FR-010, FR-011).
 
         Returns:
             The `ApplyRecord`: the ordered applied identifiers (whose final element is
@@ -929,6 +953,9 @@ class Potenda:
             PlanArtifactTornError: an operations record fails validation for a reason the
                 line count cannot see (FR-010).
             UnsupportedOperationActionError: an operation's `action` is outside `ACTIONS`.
+            PlanFormatApplyUnsupportedError: the plan's format is 2 or 3; nothing was written.
+            LeftOutConfirmationRequiredError: the plan leaves out records and
+                `confirm_left_out` is false; nothing was written.
             OperationApplyFailedError: an operation failed inside the operational boundary
                 (`OPERATIONAL_APPLY_FAILURES`), carrying the partial record.
             ApplyRecordInvariantError: a completed apply's record does not account for every
@@ -1002,6 +1029,9 @@ class Potenda:
         # read, before `ownership.before_operation` and therefore before the first dispatch,
         # so the destination is provably untouched.
         _require_applyable_format(loaded.manifest, run_id=run_id)
+        # Same place and same guarantee: the Sync API checks this too, and a direct caller
+        # of this method cannot skip it.
+        _require_left_out_confirmation(loaded.manifest, run_id=run_id, confirm_left_out=confirm_left_out)
 
         # The registered service has a schema fingerprint guard, but direct Python apply
         # callers need the same no-write guarantee for reviewed Infrahub payload fields.

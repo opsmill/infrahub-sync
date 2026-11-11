@@ -100,13 +100,13 @@ the fixture and apply the stopped run.
 
 ### Implementation for User Story 2
 
-- [ ] T039 [US2] Add the release of the write admission to the stop's writeback (`release_write_admission`), applied only when no operation was dispatched, in `infrahub_sync/product_store/store.py` and `infrahub_sync/product_store/__init__.py` (research R11; reference the old branch's `service/left_out_stop.py`)
-- [ ] T040 [US2] Add `confirm_left_out` to `ApplyRunRequest` (sent only when true) in `infrahub_sync/client/models.py` and `infrahub_sync/client/client.py`
-- [ ] T041 [US2] Check `confirm_left_out` after the checksum check and refuse with 409 `left-out-confirmation-required`, in `infrahub_sync/service/service.py` (`apply_run`, around lines 397-420)
-- [ ] T042 [US2] Check the confirmation again in the engine's apply and refuse format 2 and 3 plans with `PlanFormatApplyUnsupportedError`, in `infrahub_sync/potenda/__init__.py` and `infrahub_sync/plan/errors.py` (research R9, R10)
-- [ ] T043 [US2] Stop the `sync` stage after its plan when `left_out` > 0 and write `result["failure"]`, in `infrahub_sync/service/flow.py` (sync branch, around lines 728-802)
-- [ ] T044 [US2] Add `--confirm-left-out` to `apply`, print the refusal, and print the stopped `sync` hint from `results.failure`, in `infrahub_sync/cli.py`
-- [ ] T045 [US2] Add left-out and problem counts and the `runs plan` next steps to `run_markdown`, in `infrahub_sync/service/run_artifact.py`
+- [X] T039 [US2] Add the release of the write admission to the stop's writeback (`release_write_admission`), applied only when no operation was dispatched, in `infrahub_sync/product_store/store.py` and `infrahub_sync/product_store/__init__.py` (research R11; reference the old branch's `service/left_out_stop.py`)
+- [X] T040 [US2] Add `confirm_left_out` to `ApplyRunRequest` (sent only when true) in `infrahub_sync/client/models.py` and `infrahub_sync/client/client.py`
+- [X] T041 [US2] Check `confirm_left_out` after the checksum check and refuse with 409 `left-out-confirmation-required`, in `infrahub_sync/service/service.py` (`apply_run`, around lines 397-420)
+- [X] T042 [US2] Check the confirmation again in the engine's apply and refuse format 2 and 3 plans with `PlanFormatApplyUnsupportedError`, in `infrahub_sync/potenda/__init__.py` and `infrahub_sync/plan/errors.py` (research R9, R10)
+- [X] T043 [US2] Stop the `sync` stage after its plan when `left_out` > 0 and write `result["failure"]`, in `infrahub_sync/service/flow.py` (sync branch, around lines 728-802)
+- [X] T044 [US2] Add `--confirm-left-out` to `apply`, print the refusal, and print the stopped `sync` hint from `results.failure`, in `infrahub_sync/cli.py`
+- [X] T045 [US2] Add left-out and problem counts and the `runs plan` next steps to `run_markdown`, in `infrahub_sync/service/run_artifact.py`
 
 **Checkpoint**: T033 to T038 pass.
 

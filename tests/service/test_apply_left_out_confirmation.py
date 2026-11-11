@@ -20,7 +20,6 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from pydantic import ValidationError
 
 pytest.importorskip("prefect")
 pytest.importorskip("opsmill_prefect_extras")
@@ -63,7 +62,6 @@ if TYPE_CHECKING:
 
     from infrahub_sync.product_store import ProductProjection
 
-_NOT_IMPLEMENTED = "spec 019 US2 not implemented"
 _API = tuple["TestClient", "ProductProjection", _FakeOrchestration]
 _CHECKSUM = "c" * 64
 
@@ -133,7 +131,6 @@ def _left_out_in(body: dict[str, Any]) -> object:
     return error.get("left_out", body.get("left_out"))
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 @pytest.mark.parametrize("extra", [{}, {"confirm_left_out": False}], ids=["field-absent", "field-false"])
 def test_an_unconfirmed_apply_of_a_plan_that_leaves_out_records_is_refused_before_any_write(
     service_api: _API,  # noqa: F811 - the imported fixture.
@@ -155,7 +152,6 @@ def test_an_unconfirmed_apply_of_a_plan_that_leaves_out_records_is_refused_befor
     assert "refused-left-out-not-confirmed" in outcomes
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 def test_a_refused_apply_leaves_the_run_free_for_its_confirmed_apply(
     service_api: _API,  # noqa: F811 - the imported fixture.
 ) -> None:
@@ -171,7 +167,6 @@ def test_a_refused_apply_leaves_the_run_free_for_its_confirmed_apply(
     assert _stages(orchestration) == ["plan", "apply"]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 def test_a_confirmed_apply_is_admitted_and_the_worker_receives_the_confirmation(
     service_api: _API,  # noqa: F811 - the imported fixture.
 ) -> None:
@@ -187,7 +182,6 @@ def test_a_confirmed_apply_is_admitted_and_the_worker_receives_the_confirmation(
     assert "refused-left-out-not-confirmed" not in [event.outcome for event in projection.audit_events(run_id)]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 def test_a_confirmation_sent_for_a_plan_that_leaves_out_nothing_is_accepted_and_ignored(
     service_api: _API,  # noqa: F811 - the imported fixture.
 ) -> None:
@@ -246,7 +240,6 @@ def test_a_checksum_mismatch_is_refused_before_the_left_out_check(
     assert _stages(orchestration) == ["plan"]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_NOT_IMPLEMENTED)
 def test_a_format_3_plan_is_refused_before_any_write(tmp_path: Path) -> None:
     """SC-006: a format 3 plan was never checked for problems, so it is reviewable and not applyable.
 
@@ -296,7 +289,7 @@ def _stopped_sync(api: _API) -> str:
         finished_at=datetime.now(timezone.utc),
         summary={"sync_name": "registered-inventory", "left_out": 12},
         results={"stage": "sync", "outcome": "left-out-review-required"},
-        release_write_admission=True,  # ty: ignore[unknown-argument] - added by T039.
+        release_write_admission=True,
     )
     run = projection.lookup_run(run_id).value
     assert run is not None
@@ -314,7 +307,6 @@ def _stopped_sync(api: _API) -> str:
     return run_id
 
 
-@pytest.mark.xfail(strict=True, raises=ValidationError, reason=_NOT_IMPLEMENTED)
 def test_a_stopped_sync_is_applied_through_the_api_with_the_confirmation_once(
     service_api: _API,  # noqa: F811 - the imported fixture.
 ) -> None:
