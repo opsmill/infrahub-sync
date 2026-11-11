@@ -1,0 +1,33 @@
+dev/specs/019-plan-problem-reporting/opsmill-implement-report.md
+  s_d199771aa41449::t_d95d6561896af6 1-98
+tests/plan/test_netbox_device_status.py
+  s_d199771aa41449::t_789ffba7e8a6d7 28,69
+  s_d199771aa41449::t_3c836c9f136987 1-27,29-68,70-135
+examples/netbox_to_infrahub/config.yml
+  s_d199771aa41449::t_2137020aef5f0c 320-321
+  s_d199771aa41449::t_d473cc75ff2e5a 266-275
+  s_d199771aa41449::t_981247d77542aa 247,301
+dev/specs/019-plan-problem-reporting/tasks.md
+  s_d199771aa41449::t_dff0e235a8baa9 188,190
+examples/netbox_to_infrahub/README.md
+  s_d199771aa41449::t_be5c1bd884b4ed 37-106
+examples/netbox_to_infrahub/package.yml
+  s_d199771aa41449::t_5cb1b67421cd56 247,266-275
+  s_d199771aa41449::t_22ef9ad547a7cf 301,320-321
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ddedf37cb44785c9ff223e38c17b5913d9e7d5f8",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
