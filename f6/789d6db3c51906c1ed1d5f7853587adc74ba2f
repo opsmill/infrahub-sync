@@ -1,0 +1,117 @@
+tests/plan/test_problems.py
+  s_d199771aa41449::t_110ea82f55ed12 12
+infrahub_sync/potenda/__init__.py
+  s_d199771aa41449::t_e09ac45dff2154 765,767,769
+  s_d199771aa41449::t_8215c6f4a6b9b5 804-818,821
+  s_d199771aa41449::t_29f548deb5e217 837,839-840
+infrahub_sync/service/service.py
+  s_d199771aa41449::t_0adccc32daf4b8 835-878
+  s_d199771aa41449::t_064a136466fa08 1139,1147-1159,1161-1162,1165-1167
+  s_d199771aa41449::t_8ce3cb0d540577 9,13,19,86-90
+infrahub_sync/cli.py
+  s_d199771aa41449::t_fc725fcb535e9d 851
+  s_d199771aa41449::t_0934d20af12b6e 92,909,1073-1075,1355-1365,1368,1370-1388
+  s_d199771aa41449::t_62f19f52973ac1 790-791,796-806,808-850,852-885
+  s_d199771aa41449::t_718543a7ab4a2a 793-795
+  s_d199771aa41449::t_cee5418102a9fd 1350
+  s_d199771aa41449::t_d47677ea58ab5e 52,70,792,807
+infrahub_sync/client/client.py
+  s_d199771aa41449::t_49d4636aa7b950 502-530,532-560
+  s_d199771aa41449::t_12d28186c474bf 32,51
+  s_d199771aa41449::t_886688c91843b1 531
+infrahub_sync/plan/review.py
+  s_d199771aa41449::t_f276a0d2a006b2 82-84,96,99,127-130,137-138,453
+  s_d199771aa41449::t_d5552163d3f8f5 23,28,40
+tests/cli/test_plan_problem_output.py
+  s_d199771aa41449::t_5fe1e375a3dbb1 141
+  s_d199771aa41449::t_d47677ea58ab5e 19,21
+tests/plan/test_left_out_walk.py
+  s_d199771aa41449::t_110ea82f55ed12 13
+tests/client/test_client.py
+  s_d199771aa41449::t_e40b9b6db08c59 1047-1074,1076-1083,1085-1107
+  s_d199771aa41449::t_718543a7ab4a2a 1084
+  s_d199771aa41449::t_350d6a3d53cd84 28
+  s_d199771aa41449::t_69a59fa44a9eb5 1075
+infrahub_sync/client/models.py
+  s_d199771aa41449::t_91046c245b2984 514-539,541-542
+  s_d199771aa41449::t_b833904a289195 48-51,540
+tests/data/valid_plan_bytes/updates.manifest.json
+  s_d199771aa41449::t_25aff7450f9375 4
+tests/plan/test_last_changes.py
+  s_d199771aa41449::t_0946811045c04d 24,214-233
+  s_d199771aa41449::t_cdd55ac60675b8 234-235
+tests/plan/test_format_4.py
+  s_d199771aa41449::t_afd8ace7e9bb03 241-245
+  s_d199771aa41449::t_0744c2785829ba 15-20,32,184-186,189-191,194-240,246-248
+  s_d199771aa41449::t_bb1101d6272dc8 187-188,192-193
+  s_d199771aa41449::t_53bf6259464203 249-250
+infrahub_sync/plan/last_changes.py
+  s_d199771aa41449::t_ec2c4ee66292d5 98-116
+infrahub_sync/client/__init__.py
+  s_d199771aa41449::t_6c0dcbfb7f2254 40,93
+tests/data/valid_plan_bytes/creates_and_delete.manifest.json
+  s_d199771aa41449::t_25aff7450f9375 4
+infrahub_sync/plan/models.py
+  s_d199771aa41449::t_ee00ffc709453b 619-622,632-640
+  s_d199771aa41449::t_5667aed4fb7765 19
+  s_d199771aa41449::t_47a210cc7991f1 978-1013
+tests/test_potenda_plan_artifact.py
+  s_d199771aa41449::t_5cd663537946f4 87-89
+  s_d199771aa41449::t_3f97865d7fdce3 2478-2484
+tests/plan/test_stores_unchanged.py
+  s_d199771aa41449::t_110ea82f55ed12 8
+  s_d199771aa41449::t_7c054ad4eda147 22
+changelog/+019-plan-leaves-out-records.changed.md
+  s_d199771aa41449::t_02cc30bf8d708d 1
+changelog/+019-plan-report-lists.added.md
+  s_d199771aa41449::t_02cc30bf8d708d 1
+infrahub_sync/service/app.py
+  s_d199771aa41449::t_b0f4ac9192909c 105-110,455-460
+  s_d199771aa41449::t_33599b1baebee9 111-115,118-121
+  s_d199771aa41449::t_bb1101d6272dc8 116-117,122,124-185
+  s_d199771aa41449::t_c95a5015b32ee2 123
+  s_d199771aa41449::t_fdf5038d6837ec 98-104
+  s_d199771aa41449::t_b833904a289195 16-23,25
+tests/service/test_plan_report_routes.py
+  s_d199771aa41449::t_8437815a9ca3e7 14-15
+  s_d199771aa41449::t_b55c3eeab87fe4 241-250
+  s_d199771aa41449::t_9e8bc102c395b1 217-240,251-261
+tests/plan/test_source_identity_collision.py
+  s_d199771aa41449::t_ccf529e0eb1bc2 165-185,189,192-198,212-218,230,253-256,375-376,380-383
+tests/plan/test_valid_plan_unchanged.py
+  s_d199771aa41449::t_25aff7450f9375 16-18,60
+tests/adapters/test_peer_not_found_in_source.py
+  s_d199771aa41449::t_110ea82f55ed12 15
+infrahub_sync/service/flow.py
+  s_d199771aa41449::t_7c2b746c78a7ae 268-273,279
+  s_d199771aa41449::t_b6c7d9ffe23a7a 88
+  s_90dc2d07bdd1aa::t_14c39485af71d6 29
+tests/service/test_http_api.py
+  s_d199771aa41449::t_5cd663537946f4 1833-1835
+docs/docs/reference/cli.mdx
+  s_90dc2d07bdd1aa::t_d61b792ebaf3bc 436,451-455
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f6789d6db3c51906c1ed1d5f7853587adc74ba2f",
+  "prompts": {},
+  "sessions": {
+    "s_90dc2d07bdd1aa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a205941119ff37703",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
