@@ -1,0 +1,22 @@
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_d199771aa41449::t_7ffe66df5e31ff 202-203
+  s_d199771aa41449::t_ca88c29a8a88fd 188-191,199-201
+infrahub_sync/cli.py
+  s_d199771aa41449::t_d38329d748b732 836
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "33a98069452a2fbb33c5bb0503de065cce4df5fb",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
