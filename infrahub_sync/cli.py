@@ -1022,8 +1022,9 @@ _LEFT_OUT_CONFIRMATION_REQUIRED = "left-out-confirmation-required"
 # submission or a running execution (spec 019 FR-023 keeps the code, decision 4).
 _RUN_EXECUTION_CONFLICT = "run-execution-conflict"
 _RUN_EXECUTION_CONFLICT_NEXT_ACTION = (
-    "This run already admitted a write or is still running, so its plan is not applied again. "
-    "Review the run with `infrahub-sync runs show`, then create and review a new plan with `infrahub-sync plan`."
+    "If this run already admitted a write, its plan is not applied again: review the run with "
+    "`infrahub-sync runs show`, then create and review a new plan with `infrahub-sync plan`. "
+    "If a stage of this run is still running, wait for it to finish."
 )
 
 

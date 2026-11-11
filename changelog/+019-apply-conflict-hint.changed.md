@@ -1,1 +1,1 @@
-When `infrahub-sync apply` is refused with `run-execution-conflict`, for example on a run whose apply already stopped partway, the command now prints a `hint:` line after the refusal: review the run, then create and review a new plan with `infrahub-sync plan`.
+When `infrahub-sync apply` is refused with `run-execution-conflict`, for example on a run whose apply already stopped partway, the command now prints a `hint:` line after the refusal: if the run already admitted a write, review the run, then create and review a new plan with `infrahub-sync plan`.

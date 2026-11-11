@@ -11,9 +11,11 @@ not already match:
 
 The first plan is the fixture's valid records (`Variant.NO_PROBLEMS`) against an empty
 destination: ten creates. Its apply runs through `Potenda.apply_plan` against a destination
-that writes four operations and rejects the fifth. The destination of the second plan holds the
-nodes of the four written operations, as model data built from the source records they came
-from. The source is unchanged, so SC-004's count is the first count minus the four written.
+that writes a known number of operations and rejects the next one. The test stops it twice:
+after four operations (nodes without relationships) and after eight (devices and interfaces,
+whose identities hold a peer). The destination of the second plan holds the nodes of the
+written operations, as model data built from the source records they came from. The source is
+unchanged, so SC-004's count is the first count minus the operations written.
 """
 
 from __future__ import annotations
@@ -38,8 +40,8 @@ if TYPE_CHECKING:
 FIRST_RUN_ID = "20261111T120000-01900058"
 SECOND_RUN_ID = "20261111T130000-01900058"
 
-# The apply writes the first four operations and stops at the fifth.
-WRITTEN = 4
+# The apply writes this many operations and stops at the next one.
+STOP_POINTS = (4, 8)
 
 
 class StoppingDestination:
@@ -95,13 +97,19 @@ def _destination_after(planned: PlannedFixture, written: list[PlannedOperation])
     return nodes
 
 
-def _stopped_apply(planned: PlannedFixture) -> tuple[list[PlannedOperation], OperationApplyFailedError]:
-    """Apply the plan through a destination that stops after `WRITTEN` operations."""
-    stopping = StoppingDestination(WRITTEN)
+def _stopped_apply(planned: PlannedFixture, written: int) -> tuple[list[PlannedOperation], OperationApplyFailedError]:
+    """Apply the plan through a destination that stops after `written` operations."""
+    stopping = StoppingDestination(written)
     planned.potenda.destination = stopping  # ty: ignore[invalid-assignment]
     with pytest.raises(OperationApplyFailedError) as caught:
         planned.potenda.apply_plan(ownership=granted_ownership())
     return stopping.dispatched, caught.value
+
+
+@pytest.fixture(params=STOP_POINTS, ids=lambda written: f"stop-after-{written}")
+def stop_after(request: pytest.FixtureRequest) -> int:
+    """The number of operations the stopped apply writes."""
+    return request.param
 
 
 @pytest.fixture
@@ -109,20 +117,20 @@ def first_plan(plan_problems: PlanProblemFixture, tmp_path: Path, monkeypatch: p
     """The plan of the valid records against an empty destination: one create per record."""
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "cache"))
     planned = plan_fixture(plan_problems, Variant.NO_PROBLEMS, destination={}, run_id=FIRST_RUN_ID)
-    assert len(planned.operations) > WRITTEN + 1, "the apply must stop before the last operation"
+    assert len(planned.operations) > max(STOP_POINTS) + 1, "the apply must stop before the last operation"
     assert {operation.action for operation in planned.operations} == {"create"}
     return planned
 
 
 def test_the_new_plan_holds_only_the_operations_the_stopped_apply_did_not_write(
-    plan_problems: PlanProblemFixture, first_plan: PlannedFixture
+    plan_problems: PlanProblemFixture, first_plan: PlannedFixture, stop_after: int
 ) -> None:
     """SC-004: the count is the first plan's count minus the operations written."""
     operations = first_plan.operations
-    written, stopped = _stopped_apply(first_plan)
+    written, stopped = _stopped_apply(first_plan, stop_after)
     record = stopped.apply_record
-    assert list(record.applied_operations) == [operation.operation_id for operation in operations[:WRITTEN]]
-    assert record.failed_operation == operations[WRITTEN].operation_id
+    assert list(record.applied_operations) == [operation.operation_id for operation in operations[:stop_after]]
+    assert record.failed_operation == operations[stop_after].operation_id
     assert record.operations_total == len(operations)
 
     second = plan_fixture(
@@ -133,7 +141,7 @@ def test_the_new_plan_holds_only_the_operations_the_stopped_apply_did_not_write(
     )
 
     assert len(second.operations) == len(operations) - len(record.applied_operations)
-    remaining = [_key(operation) for operation in operations[WRITTEN:]]
+    remaining = [_key(operation) for operation in operations[stop_after:]]
     assert sorted(_key(operation) for operation in second.operations) == sorted(remaining)
     written_keys = {_key(operation) for operation in written}
     assert not written_keys & {_key(operation) for operation in second.operations}, (
@@ -142,17 +150,17 @@ def test_the_new_plan_holds_only_the_operations_the_stopped_apply_did_not_write(
 
 
 def test_the_new_plan_leaves_out_a_remaining_operation_the_destination_now_matches(
-    plan_problems: PlanProblemFixture, first_plan: PlannedFixture
+    plan_problems: PlanProblemFixture, first_plan: PlannedFixture, stop_after: int
 ) -> None:
     """FR-022: an operation the apply did not attempt drops out when the destination matches it."""
     operations = first_plan.operations
-    written, _stopped = _stopped_apply(first_plan)
+    written, _stopped = _stopped_apply(first_plan, stop_after)
     # Between the two plans, someone creates the last record of the plan by hand.
     created_by_hand = operations[-1]
     destination = _destination_after(first_plan, [*written, created_by_hand])
 
     second = plan_fixture(plan_problems, Variant.NO_PROBLEMS, destination=destination, run_id=SECOND_RUN_ID)
 
-    assert len(second.operations) == len(operations) - WRITTEN - 1
-    remaining = [_key(operation) for operation in operations[WRITTEN:-1]]
+    assert len(second.operations) == len(operations) - stop_after - 1
+    remaining = [_key(operation) for operation in operations[stop_after:-1]]
     assert sorted(_key(operation) for operation in second.operations) == sorted(remaining)
