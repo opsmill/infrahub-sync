@@ -148,8 +148,10 @@ class ApplyRunRequest(_RequestModel):
     branch: str | None = None
     reason: str | None = Field(default=None, min_length=1)
 
+    # No return annotation on purpose: with one, Pydantic replaces the model's serialization
+    # JSON schema (and so the OpenAPI document) with a bare object.
     @model_serializer(mode="wrap")
-    def _omit_unconfirmed_left_out(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+    def _omit_unconfirmed_left_out(self, handler: SerializerFunctionWrapHandler):
         data = handler(self)
         if not self.confirm_left_out:
             data.pop("confirm_left_out", None)
@@ -898,8 +900,10 @@ class ErrorDetail(_ResourceModel):
     # only (spec 019 FR-010). Absent from every other error body.
     left_out: int | None = Field(default=None, ge=0)
 
+    # No return annotation on purpose: with one, Pydantic replaces the model's serialization
+    # JSON schema (and so the OpenAPI document) with a bare object.
     @model_serializer(mode="wrap")
-    def _omit_absent_left_out(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+    def _omit_absent_left_out(self, handler: SerializerFunctionWrapHandler):
         data = handler(self)
         if self.left_out is None:
             data.pop("left_out", None)
