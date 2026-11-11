@@ -51,10 +51,9 @@ destination:
 # IdentityEmployee loads before IdentityGroup, which references it.
 
 schema_mapping:
-  # Field mappings and filters name Graph properties. The adapter requests
-  # those properties with $select. A property used only inside a transform
-  # must be added with `settings.select`; here `userPrincipalName` is already
-  # requested because the filters read it.
+  # Field mappings, filters and transform expressions name Graph properties.
+  # The adapter requests those properties with $select, so `userPrincipalName`
+  # is requested because the filters and the transform read it.
   - name: IdentityEmployee
     mapping: accounts
     identifiers: ["entra_id"]

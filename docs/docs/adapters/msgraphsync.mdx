@@ -134,7 +134,7 @@ auth 'client_secret' is missing values. Set the environment variable(s): MSGRAPH
 | `timeout` | number | `60` | Greater than 0 | Seconds to wait for each attempt. Timeouts are retried up to `max_retries` times. |
 | `max_retries` | integer | `5` | 0 to 10 | Retries of one request after HTTP 429, 502, 503, 504, a timeout or a dropped connection. All failures share this count. Without `Retry-After`, the wait between attempts doubles at each retry, with a random part, up to 60 seconds. |
 | `membership` | string | `direct` | `direct`, `transitive` | Which group members the adapter reads. See [Group membership](#group-membership). |
-| `select` | mapping | none | Keys `users` and `groups`; each value a property name or a list of names | Extra Graph properties to request, for properties used only in transforms. |
+| `select` | mapping | none | Keys `users` and `groups`; each value a property name or a list of names | Extra Graph properties to request, beyond those that field mappings, filters and transforms read. See [Properties the adapter requests](#properties-the-adapter-requests). |
 | `collections` | mapping | none | Collection names mapped to definitions | Named, optionally filtered reads of users or groups. See [Collections and advanced queries](#collections-and-advanced-queries). |
 
 The adapter refuses any other key and lists the allowed settings in the message, for example: `Unknown msgraphsync setting(s): page-size. Allowed settings: auth, tenant_id, client_id, graph_url, page_size, timeout, max_retries, membership, select, collections.`
@@ -192,26 +192,19 @@ The adapter follows the schema mapping rules of every adapter (see the [schema m
 
 ### Properties the adapter requests
 
-The adapter requests only the properties it needs, with `$select`. For each collection, the list contains `id`, the top-level property of every plain field mapping and every filter of the entries that read the collection, then the properties of `settings.select` for that resource. The list does not contain the properties of fields with a `reference`, nor `members`, which the adapter reads with separate requests.
+The adapter requests only the properties it needs, with `$select`. For each collection, the list contains, in this order:
 
-Add a property with `settings.select` when only a transform expression or a field with a `reference` reads it. Otherwise Graph does not return it, and the transform or the field reads an empty value:
+- `id`.
+- The top-level property of every field mapping, including fields with a `reference`, unless a transform of the entry writes that key.
+- The top-level property of every filter. Filters run before the transforms, so they read Graph properties.
+- The variables that each transform expression reads, unless an earlier transform of the entry writes them. For example, `{{ department }} / {{ jobTitle }}` adds `department` and `jobTitle`, and `{{ displayName | upper }}` written to `displayName` adds `displayName`.
+- The properties of `settings.select` for that resource.
 
-```yaml
-source:
-  name: msgraphsync
-  settings:
-    select:
-      users: [department, jobTitle]
-schema_mapping:
-  - name: IdentityEmployee
-    mapping: users
-    transforms:
-      - field: team
-        expression: "{{ department }} / {{ jobTitle }}"
-    fields:
-      - name: team
-        mapping: team
-```
+The list never contains `members` on groups: the adapter reads members with separate requests.
+
+Add a property with `settings.select` when Graph must return a property that none of these reads.
+
+A transform expression that is not valid Jinja stops the sync before any request, with a message that names the entry. A filter on a key that a transform writes, where no transform reads a Graph property of that name, logs a warning before the reads: the filter reads the Graph property of that name, not the transform output, and Graph refuses the read when no such property exists.
 
 Some Graph properties hold a list, for example `businessPhones` or `proxyAddresses`. Mapping such a property to an attribute that holds one value stops the sync with: `schema_mapping 'IdentityEmployee', field 'phone': the Graph property 'businessPhones' is a list, but the attribute holds one value. Turn the list into one value with a transform of this entry and map the transformed key.`
 
@@ -235,12 +228,12 @@ To load the members of each group, add a field with `mapping: members` and a `re
 
 | `membership` | Request per group | Members kept |
 | --- | --- | --- |
-| `direct` (default) | `GET /groups/{id}/members` | Users that are members of the group. |
-| `transitive` | `GET /groups/{id}/transitiveMembers` | Users that are members of the group or of any group nested in it. |
+| `direct` (default) | `GET /groups/{id}/members/microsoft.graph.user` | Users that are members of the group. |
+| `transitive` | `GET /groups/{id}/transitiveMembers/microsoft.graph.user` | Users that are members of the group or of any group nested in it. |
 
-The adapter keeps only members that are users. Members of other types, such as groups, devices and service principals, are left out. A user reached through several nested groups appears once.
+The `microsoft.graph.user` cast makes Graph return only users: members of other types, such as groups, devices and service principals, are not read. Graph requires `$count=true` and the header `ConsistencyLevel: eventual` for the cast, so the adapter sends both on every member read. A user reached through several nested groups appears once.
 
-The adapter sends these requests only when an entry maps `members`. It sends at least one request per group and reads four groups at a time, so on a tenant with many groups the member reads make up most of the requests of a run. A `filter` on the groups collection reduces their number.
+The adapter sends these requests only when an entry maps `members`, and only for the groups that pass the `filters` of at least one such entry. When one of these entries has no filters, or filters on `members`, the adapter reads the members of every group of the collection. It sends at least one request per group and reads four groups at a time, so on a tenant with many groups the member reads make up most of the requests of a run. A `filter` on the groups collection, or `filters` on the entry, reduce their number.
 
 A `mapping: members` field without a `reference` stops the sync before any request: `schema_mapping 'IdentityGroup', field 'members': 'mapping: members' holds the IDs of the group's user members and needs a 'reference' to the kind that loads those users.`
 
@@ -425,7 +418,7 @@ The adapter got a token, but Microsoft Graph refused the request:
 - HTTP 403: the token is valid, but a permission is missing.
 
 ```text
-Microsoft Graph refused /v1.0/groups/.../members?$select=id&$top=999 with HTTP 403 (<code>: <message>). HTTP 401 means Graph rejected the access token: check the tenant, the credential, and that 'graph_url' matches the token audience. HTTP 403 means a permission is missing. The application needs the Microsoft Graph application permissions User.Read.All and Group.Read.All (or GroupMember.Read.All instead of Group.Read.All), with admin consent.
+Microsoft Graph refused /v1.0/groups/.../members/microsoft.graph.user?$select=id&$top=999&$count=true with HTTP 403 (<code>: <message>). HTTP 401 means Graph rejected the access token: check the tenant, the credential, and that 'graph_url' matches the token audience. HTTP 403 means a permission is missing. The application needs the Microsoft Graph application permissions User.Read.All and Group.Read.All (or GroupMember.Read.All instead of Group.Read.All), with admin consent.
 ```
 
 With `auth: default`, the last sentence says that the signed-in identity (user, managed identity or workload identity) needs read access to users and groups.
@@ -461,13 +454,13 @@ schema_mapping 'IdentityServiceAccount', field 'owner': the Graph property 'owne
 Microsoft Graph limits the request rate of each application and tenant. On HTTP 429, 502, 503 or 504, the adapter waits for the number of seconds in the `Retry-After` header, then sends the same request again. Requests that time out or lose their connection are also retried. Without `Retry-After`, the upper bound of the wait starts at 5 seconds and doubles at each retry, up to 60 seconds. The adapter picks a random wait between 1 second and that bound. TLS certificate verification failures, invalid URLs or protocols, authentication failures and other HTTP 4xx errors are not retried. It logs one warning per wait:
 
 ```text
-WARNING | infrahub_sync.adapters.msgraphsync | event='graph request throttled, waiting before retry' status=429 path='/v1.0/groups/.../members?$select=id&$top=999' wait_seconds=5.0 retry=1 max_retries=5
+WARNING | infrahub_sync.adapters.msgraphsync | event='graph request throttled, waiting before retry' status=429 path='/v1.0/groups/.../members/microsoft.graph.user?$select=id&$top=999&$count=true' wait_seconds=5.0 retry=1 max_retries=5
 ```
 
 `max_retries` counts retries per request: HTTP and transport failures share one count, and each request starts with its own count, so a run can wait more times in total than `max_retries`. After the last retry of one request, the sync stops:
 
 ```text
-Microsoft Graph returned HTTP 429 for /v1.0/groups/.../members?$select=id&$top=999 after 5 retries (<code>: <message>). Run the sync again later, or raise the setting 'max_retries'.
+Microsoft Graph returned HTTP 429 for /v1.0/groups/.../members/microsoft.graph.user?$select=id&$top=999&$count=true after 5 retries (<code>: <message>). Run the sync again later, or raise the setting 'max_retries'.
 ```
 
 When `Retry-After` asks for more than 300 seconds, the adapter does not retry earlier than Graph allows. It stops instead:
