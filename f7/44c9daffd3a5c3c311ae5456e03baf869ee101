@@ -1,0 +1,19 @@
+changelog/+verify-destination-checks.changed.md
+  s_0e27d689be35c6::t_25c4f048b7a363 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f744c9daffd3a5c3c311ae5456e03baf869ee101",
+  "prompts": {},
+  "sessions": {
+    "s_0e27d689be35c6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b20dec89-d8b1-4b63-b013-41b894645006",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
