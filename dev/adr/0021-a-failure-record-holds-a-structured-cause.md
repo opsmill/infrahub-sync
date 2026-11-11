@@ -29,10 +29,8 @@ Replacing credential values in error text was considered and rejected:
 
 - The masking pass needs at least six characters (`MIN_SECRET_LENGTH`), so a shorter credential
   stays in the text.
-- A credential that holds `"`, `\` or `,` can appear in an escaped form that the replacement
-  does not match.
 - The text of an adapter, an HTTP library or a configuration parser can hold an address with a
-  user name and password, a request header or a traceback.
+  user name and password, a request header or a traceback (FR-019).
 
 ## Decision
 
@@ -60,8 +58,8 @@ their values.
 
 ## Consequences
 
-- Infrahub's own message of a rejected write reaches the run record. It describes the write
-  that Infrahub received, which is source data that the team already reviewed in the plan.
+- Infrahub's own message of a rejected write reaches the run record (FR-016). It describes the
+  write that Infrahub received. It still goes through the masking pass.
 - A credential value cannot enter the record, whatever its length or characters, because no
   field is built from connection settings or from error text (FR-029). This protection does not
   depend on replacing values in text.

@@ -7,9 +7,13 @@
 
 from __future__ import annotations
 
+import ssl
 from typing import TYPE_CHECKING, Any
 
+import httpx
 import pytest
+import requests
+from infrahub_sdk.exceptions import GraphQLError, ServerNotReachableError, ServerNotResponsiveError
 
 from infrahub_sync.client.models import (
     FAILURE_TYPES,
@@ -19,10 +23,11 @@ from infrahub_sync.client.models import (
 )
 from infrahub_sync.plan.errors import OperationApplyFailedError
 from infrahub_sync.plan.models import ApplyRecord
+from infrahub_sync.potenda import SideLoadError
 from infrahub_sync.runtime_schema import DestinationSchemaUnavailableError
 from infrahub_sync.runtime_schema.errors import DestinationBranchNotFoundError
-from infrahub_sync.service.failure_cause import FAILURE_RECORD_KEYS, operator_cause
-from tests.service.failure_cases import APPLIED_OPERATION, CASES, FAILED_OPERATION, NEUTRAL_TEXT, FailureCase
+from infrahub_sync.service.failure_cause import FAILURE_RECORD_KEYS, failure_record, operator_cause
+from tests.service.failure_cases import APPLIED_OPERATION, CASES, FAILED_OPERATION, NEUTRAL_TEXT, SOURCE, FailureCase
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -224,3 +229,82 @@ def test_a_failure_record_that_cannot_be_built_is_an_internal_error(
 
     assert evidence["failure_type"] == "internal_error"
     assert evidence["error_type"] == "RuntimeError"
+
+
+def _from(outer: BaseException, inner: BaseException) -> BaseException:
+    outer.__cause__ = inner
+    return outer
+
+
+def _source(inner: BaseException, adapter: str = "ipfabricsync") -> BaseException:
+    return _from(SideLoadError("read failed", role="source", adapter=adapter), inner)
+
+
+def _with_context(outer: BaseException, inner: BaseException) -> BaseException:
+    outer.__context__ = inner
+    return outer
+
+
+def _httpx_status(status: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("GET", "https://source.example.test/api")
+    return httpx.HTTPStatusError("refused", request=request, response=httpx.Response(status, request=request))
+
+
+_INFRAHUB = {"role": "destination", "adapter": "infrahub"}
+_IPFABRIC = {"role": "source", "adapter": "ipfabricsync"}
+
+
+@pytest.mark.parametrize(
+    ("stage", "exc", "failure_type", "system"),
+    [
+        pytest.param(
+            "plan",
+            _source(requests.ConnectTimeout("t"), "netbox"),
+            "system_timeout",
+            SOURCE,
+            id="requests-connect-timeout",
+        ),
+        pytest.param("plan", _source(httpx.ReadTimeout("t")), "system_timeout", _IPFABRIC, id="httpx-timeout"),
+        pytest.param("plan", _source(httpx.ConnectError("c")), "system_unreachable", _IPFABRIC, id="httpx-connect"),
+        pytest.param("plan", _source(_httpx_status(401)), "token_rejected", _IPFABRIC, id="httpx-401-from-a-source"),
+        pytest.param(
+            "plan",
+            _source(_with_context(requests.ConnectionError("c"), ssl.SSLCertVerificationError("v")), "netbox"),
+            "tls_certificate_rejected",
+            SOURCE,
+            id="certificate-error-as-context",
+        ),
+        pytest.param(
+            "sync",
+            _from(
+                OperationApplyFailedError("failed", apply_record=ApplyRecord(failed_operation="op_1")),
+                ServerNotResponsiveError(url="https://infrahub.example.test", timeout=5),
+            ),
+            "system_timeout",
+            _INFRAHUB,
+            id="sync-apply-timeout",
+        ),
+        pytest.param(
+            "verify",
+            ServerNotReachableError(address="https://infrahub.example.test"),
+            "system_unreachable",
+            _INFRAHUB,
+            id="unwrapped-sdk-error",
+        ),
+    ],
+)
+def test_the_classification_table(stage: str, exc: BaseException, failure_type: str, system: dict[str, str]) -> None:
+    """T052: the exception type and the HTTP status code decide the failure type and the system."""
+    recorded = failure_record(stage, exc)
+
+    assert (recorded["failure_type"], recorded["system"]) == (failure_type, system)
+
+
+def test_infrahubs_message_goes_through_the_masking_pass() -> None:
+    rejected = GraphQLError(errors=[{"message": "value s3cr3t-value is not allowed"}])
+    exc = _from(OperationApplyFailedError("failed", apply_record=ApplyRecord(failed_operation="op_1")), rejected)
+
+    recorded = failure_record("apply", exc, secrets=["s3cr3t-value"])
+
+    assert recorded["failure_type"] == "destination_rejected_write"
+    assert "s3cr3t-value" not in recorded["infrahub_message"]

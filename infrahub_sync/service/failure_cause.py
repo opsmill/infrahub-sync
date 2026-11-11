@@ -11,8 +11,8 @@ Every value comes from a class name, an HTTP status code, a typed attribute this
 defines, or one of the four values Infrahub returns with a rejected write
 (`infrahub_sync.infrahub_errors.rejected_write`). No value is built from the text of an
 exception, from an address, a request header or a traceback, so no credential can enter the
-record (spec 019 FR-019, FR-029). Every text is still redacted, stripped of control characters
-and capped.
+record (spec 019 FR-019, FR-029). Every value is stripped of control characters and capped, and
+the cause, the next action and Infrahub's message are still redacted.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import requests
+from infrahub_sdk.exceptions import Error as InfrahubSDKError
 from infrahub_sdk.exceptions import GraphQLError, ServerNotReachableError, ServerNotResponsiveError
 
 from infrahub_sync import RecordLoadError, TransformError
@@ -269,18 +270,25 @@ _DESTINATION_TYPES: frozenset[str] = frozenset(
 )
 
 
-def _system(
-    exc: BaseException, failure_type: FailureType, *, stage: str, destination_adapter: str
-) -> dict[str, str] | None:
-    """The role and adapter of the one system involved, or `None` when no one system is."""
-    side = next((link for link in cause_chain(exc, follow_context=False) if isinstance(link, SideLoadError)), None)
+def _system(exc: BaseException, failure_type: FailureType, *, destination_adapter: str) -> dict[str, str] | None:
+    """The role and adapter of the one system involved, or `None` when no one system is.
+
+    A side read names its side (`SideLoadError`). Otherwise the destination is the system when
+    the failure type is one of the destination's, when an apply operation failed, or when the
+    chain holds an infrahub-sdk error: only the destination is read through the SDK outside a
+    side read (the lineage resolution, the schema read, an apply).
+    """
+    explicit = tuple(cause_chain(exc, follow_context=False))
+    side = next((link for link in explicit if isinstance(link, SideLoadError)), None)
     if side is not None:
         adapter = _name(side.adapter)
         return {"role": side.role, "adapter": adapter} if adapter else None
-    applying = stage == "apply" and any(
-        isinstance(link, OperationApplyFailedError) for link in cause_chain(exc, follow_context=False)
-    )
-    if failure_type in _DESTINATION_TYPES or applying or classify_infrahub_error_chain(exc) is not None:
+    if (
+        failure_type in _DESTINATION_TYPES
+        or any(isinstance(link, OperationApplyFailedError) for link in explicit)
+        or any(isinstance(link, InfrahubSDKError) for link in cause_chain(exc))
+        or classify_infrahub_error_chain(exc) is not None
+    ):
         return {"role": "destination", "adapter": destination_adapter}
     return None
 
@@ -408,8 +416,10 @@ def failure_record(
     The failure type comes from the fixed table of research R12. The values come from typed
     attributes, HTTP status codes and Infrahub's own description of a rejected write, never from
     the text of an exception (FR-019). The function does not raise: any value of an unexpected
-    shape is recorded as `None`.
+    shape is recorded as `None`. The failure type does not depend on `stage`: the caller records
+    the stage, and the same error means the same failure in every stage.
     """
+    del stage
     classified = _classify(exc)
     failure_type = classified.failure_type
     written = rejected_write(exc) if failure_type == "destination_rejected_write" else None
@@ -418,12 +428,12 @@ def failure_record(
     fields: dict[str, Any] = {
         "failure_type": failure_type,
         "system": _system(
-            exc, failure_type, stage=stage, destination_adapter=_name(destination_adapter) or APPLY_DESTINATION_ADAPTER
+            exc, failure_type, destination_adapter=_name(destination_adapter) or APPLY_DESTINATION_ADAPTER
         ),
         "error_code": written.error_code if written else None,
         "node_kind": _node_kind(classified, written),
         "attribute": written.attribute if written else None,
-        "infrahub_message": written.message if written else None,
+        "infrahub_message": (_recordable(written.message, secrets) or None) if written and written.message else None,
         "record": _record_reference(link),
         "field": field_name,
     }

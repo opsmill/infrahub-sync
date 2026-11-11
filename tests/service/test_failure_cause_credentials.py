@@ -175,12 +175,14 @@ def test_no_credential_reaches_the_api_the_cli_or_the_run_artifact(
     assert shown.exit_code == 0, shown.output
     assert f"{case.stage} failed: " in shown.output
     _assert_absent(shown.output, "runs show")
+    assert f"failure type: {case.failure_type}" in shown.output
 
     client.wait_for_run.side_effect = _terminal(f"{case.stage}-failed")
     client.get_results.return_value = ResultsResource.model_validate(results_response.json())
     failed = _invoke(client, *_STAGE_COMMANDS[case.stage])
     assert f"{case.stage} failed: " in failed.output
     _assert_absent(failed.output, f"the output of {case.stage}")
+    assert f"failure type: {case.failure_type}" in failed.output
 
     stored = projection.lookup_run(RUN_ID).value
     assert stored is not None

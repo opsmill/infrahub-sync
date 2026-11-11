@@ -58,8 +58,8 @@ attribute only. An error class without a template records `internal_error` and n
 
 This protection does not depend on replacing values in text, so it also holds for a
 credential shorter than the six characters the masking pass needs. The masking pass itself is
-unchanged: every recorded text still goes through `redact`. The worker log and the Prefect logs
-keep the masked error text until version 3.0.
+unchanged: the cause, the next action and Infrahub's message still go through `redact`. The
+worker log and the Prefect logs keep the masked error text until version 3.0.
 
 The registered CLI is a remote API caller; having credentials in the local shell does
 not make a returned failure safe to display. The adapter rule still applies:
