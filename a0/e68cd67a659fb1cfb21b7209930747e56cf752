@@ -1,0 +1,28 @@
+dev/specs/019-plan-problem-reporting/tasks.md
+  s_d199771aa41449::t_903d186a48489b 150-152
+changelog/+019-apply-conflict-hint.changed.md
+  s_d199771aa41449::t_91c70cc37e5115 1
+tests/cli/test_stopped_apply_output.py
+  s_d199771aa41449::t_72737129eb820f 1-91
+tests/plan/test_replan_after_stopped_apply.py
+  s_d199771aa41449::t_765afb39a05a37 1-158
+infrahub_sync/cli.py
+  s_d199771aa41449::t_1009498f612826 1021-1027
+  s_d199771aa41449::t_7afa961ba4ac34 1261-1269
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a0e68cd67a659fb1cfb21b7209930747e56cf752",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
