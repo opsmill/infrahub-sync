@@ -1,0 +1,34 @@
+docs/docs/reference/sync-http-api.mdx
+  s_d199771aa41449::t_b132c3ed92c34b 100
+  s_d199771aa41449::t_7fbc2045e2f5fd 674
+  s_d199771aa41449::t_22472c61e89840 675-682
+docs/docs/running-a-sync.mdx
+  s_d199771aa41449::t_705bfdeccd2382 134
+  s_d199771aa41449::t_8e9084e59f83e7 437-438,440-441
+docs/docs/development/knowledge/repository-tour.md
+  s_d199771aa41449::t_81f53e2593f1ff 104-105
+changelog/+019-netbox-device-status.changed.md
+  s_d199771aa41449::t_2fb428beb098ea 1
+docs/docs/creating-a-sync-project.mdx
+  s_d199771aa41449::t_74cea33fa0a50c 123-131
+dev/specs/019-plan-problem-reporting/opsmill-implement-report.md
+  s_d199771aa41449::t_e84f164b7834ca 116-119
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_d199771aa41449::t_fb80a6f6553360 73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bc2cf16ac0e55e9841d02116793c6c688897f321",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
