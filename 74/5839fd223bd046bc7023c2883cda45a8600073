@@ -1,0 +1,31 @@
+tests/service/test_failure_cause.py
+  s_d199771aa41449::t_b8d0322fe0c548 10,13,15-16,29-30,232-310
+  s_d199771aa41449::t_3b6078fa69efd7 26
+tests/service/test_failure_cause_credentials.py
+  s_d199771aa41449::t_3b6078fa69efd7 178,185
+docs/docs/development/guidelines/secret-redaction.md
+  s_d199771aa41449::t_4a42e0524909bc 61-62
+infrahub_sync/service/failure_cause.py
+  s_d199771aa41449::t_4a42e0524909bc 14-15
+  s_d199771aa41449::t_1586a84e60b3de 26,273-282,286-291
+  s_d199771aa41449::t_b60b7c9b941e99 419-420,422,431
+  s_d199771aa41449::t_b92343fcee73b2 436
+dev/adr/0021-a-failure-record-holds-a-structured-cause.md
+  s_d199771aa41449::t_3b6078fa69efd7 33,61-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "745839fd223bd046bc7023c2883cda45a8600073",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
