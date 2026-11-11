@@ -1,0 +1,48 @@
+tests/configuration/test_schema_validation.py
+  s_d199771aa41449::t_bda60eb88868de 994-1037
+tests/test_writable_convergence_identity.py
+  s_d199771aa41449::t_4cbdbf5430acc4 5,11-13,19-20,184-316
+  s_d199771aa41449::t_086f5e48fe8aa7 317-319
+  s_565a6ec830fea2::t_6e19e6fe9bc3d1 320-322
+tests/cli/test_client_commands.py
+  s_d199771aa41449::t_f7c67ffedd76bd 310-320
+tests/service/test_config_routes.py
+  s_d199771aa41449::t_1f1f845f9a8113 1682-1852
+  s_d199771aa41449::t_a13fbeb998db36 7
+  s_d199771aa41449::t_bf69e3a17df697 20-22,24
+tests/service/test_worker_environment.py
+  s_d199771aa41449::t_b0b96f34a706ea 1-133,137-343
+  s_d199771aa41449::t_a5bad4438bca9d 134-136
+dev/specs/019-plan-problem-reporting/tasks.md
+  s_d199771aa41449::t_4ecea424353995 166-170
+tests/configuration/test_validate_permissions.py
+  s_d199771aa41449::t_f6a64c84804152 192
+  s_d199771aa41449::t_d142f70a4d0b01 1-99,101-139,141-189,193-322
+  s_d199771aa41449::t_1228e55cc1db2b 100
+  s_d199771aa41449::t_e21dee72ea0b69 140
+  s_d199771aa41449::t_e6b34254826dcc 190-191
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ea4b2f982e2d7a7c2fcd51b41514f6e6cc4e347",
+  "prompts": {},
+  "sessions": {
+    "s_565a6ec830fea2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a27413d60212428ef",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
