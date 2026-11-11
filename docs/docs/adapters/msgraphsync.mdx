@@ -132,7 +132,7 @@ auth 'client_secret' is missing values. Set the environment variable(s): MSGRAPH
 | `graph_url` | string | `https://graph.microsoft.com/v1.0` | An `https://` URL | Microsoft Graph endpoint and version. The token scope is derived from its scheme and host (`https://<host>/.default`), and the token is sent to that host only. A `graph_url` of a Microsoft cloud other than the public one is not tested: the credential still signs in through the default (public cloud) authority. |
 | `page_size` | integer | `999` | 1 to 999 | Records per page, sent as `$top` on every request. |
 | `timeout` | number | `60` | Greater than 0 | Seconds to wait for each attempt. Timeouts are retried up to `max_retries` times. |
-| `max_retries` | integer | `5` | 0 to 10 | Retries of one request after HTTP 429, 502, 503, 504, a timeout or a dropped connection. All failures share this count. Without `Retry-After`, exponential backoff with jitter waits up to 60 seconds between attempts. |
+| `max_retries` | integer | `5` | 0 to 10 | Retries of one request after HTTP 429, 502, 503, 504, a timeout or a dropped connection. All failures share this count. Without `Retry-After`, the wait between attempts doubles at each retry, with a random part, up to 60 seconds. |
 | `membership` | string | `direct` | `direct`, `transitive` | Which group members the adapter reads. See [Group membership](#group-membership). |
 | `select` | mapping | none | Keys `users` and `groups`; each value a property name or a list of names | Extra Graph properties to request, for properties used only in transforms. |
 | `collections` | mapping | none | Collection names mapped to definitions | Named, optionally filtered reads of users or groups. See [Collections and advanced queries](#collections-and-advanced-queries). |
@@ -169,7 +169,7 @@ collections:
 
 With `membership: direct` (the default), this collection reads `GET /groups/{member_of}/members/microsoft.graph.user`. With `membership: transitive`, it reads `GET /groups/{member_of}/transitiveMembers/microsoft.graph.user`, including users in nested groups. Both reads use the collection's `$select`, `$filter` and page size, and follow every page. They require `GroupMember.Read.All` (or `Group.Read.All`); hidden membership also requires `Member.Read.Hidden`.
 
-When both `member_of` and `filter` are set, the adapter automatically adds `$count=true` and sends `ConsistencyLevel: eventual` on every page, even with `advanced_query: false`. The eventual-consistency delay described below applies. If the group does not exist, the sync stops with an error naming the collection and group ID.
+Microsoft Graph requires an advanced query for the `microsoft.graph.user` cast that both reads use. For every `member_of` collection, the adapter adds `$count=true` and sends `ConsistencyLevel: eventual` on every page, even with `advanced_query: false`. The eventual-consistency delay described below applies. If the group does not exist, the sync stops with an error naming the collection and group ID.
 
 The adapter reads each collection once per run, even when several `schema_mapping` entries name it, and it does not read collections that no entry names. Each entry receives its own copy of the records, so the filters and transforms of one entry do not change the records of another entry. In the example below, one `accounts` collection feeds two kinds: employees and service accounts.
 
@@ -458,7 +458,7 @@ schema_mapping 'IdentityServiceAccount', field 'owner': the Graph property 'owne
 ### Throttling and gateway errors: HTTP 429, 502, 503 or 504
 <!-- vale on -->
 
-Microsoft Graph limits the request rate of each application and tenant. On HTTP 429, 502, 503 or 504, the adapter waits for the number of seconds in the `Retry-After` header, then sends the same request again. Requests that time out or lose their connection are also retried. Without `Retry-After`, exponential backoff doubles the wait upper bound from 5 seconds at each retry, up to 60 seconds; jitter chooses the wait within that bound, with a 1-second floor. TLS certificate verification failures, invalid URLs or protocols, authentication failures and other HTTP 4xx errors are not retried. It logs one warning per wait:
+Microsoft Graph limits the request rate of each application and tenant. On HTTP 429, 502, 503 or 504, the adapter waits for the number of seconds in the `Retry-After` header, then sends the same request again. Requests that time out or lose their connection are also retried. Without `Retry-After`, the upper bound of the wait starts at 5 seconds and doubles at each retry, up to 60 seconds. The adapter picks a random wait between 1 second and that bound. TLS certificate verification failures, invalid URLs or protocols, authentication failures and other HTTP 4xx errors are not retried. It logs one warning per wait:
 
 ```text
 WARNING | infrahub_sync.adapters.msgraphsync | event='graph request throttled, waiting before retry' status=429 path='/v1.0/groups/.../members?$select=id&$top=999' wait_seconds=5.0 retry=1 max_retries=5
