@@ -1,0 +1,69 @@
+docs/docs/development/knowledge/repository-tour.md
+  s_d199771aa41449::t_3c68510acd19cf 68
+  s_d199771aa41449::t_0149f94030b88b 186-187
+  s_d199771aa41449::t_f18aeeea8ba26e 147
+  s_d199771aa41449::t_1f512e80865b15 100-116
+  s_d199771aa41449::t_003348873a5676 164-173
+dev/specs/019-plan-problem-reporting/opsmill-implement-report.md
+  s_d199771aa41449::t_0384bc9e0b01ed 99-196
+changelog/+019-upgrade-steps.changed.md
+  s_d199771aa41449::t_1fcd97b2b5a111 1
+changelog/+019-netbox-device-status.changed.md
+  s_d199771aa41449::t_00a8bc5a81450b 1
+docs/docs/orchestration.mdx
+  s_d199771aa41449::t_c26a457cdbee80 105-106,108-113
+docs/docs/reference/sync-http-api.mdx
+  s_d199771aa41449::t_82cc7805a9b497 912
+  s_d199771aa41449::t_50cd367a3fda3b 737-764
+  s_d199771aa41449::t_72afe8e2fd4804 400-402
+  s_d199771aa41449::t_f21c05bdc63f8b 673-695
+  s_d199771aa41449::t_c3cfa18cb4566f 98-102
+  s_d199771aa41449::t_ce449002bb24ef 671-672
+  s_d199771aa41449::t_0bf98908383f8e 797-809
+  s_d199771aa41449::t_91e2e20ed4ac2b 436-438
+  s_d199771aa41449::t_5b39019740f004 836-840
+  s_d199771aa41449::t_5f3c2245a45ca1 810
+dev/specs/019-plan-problem-reporting/tasks.md
+  s_d199771aa41449::t_8fa06613190b05 194-197
+docs/docs/running-a-sync.mdx
+  s_d199771aa41449::t_da64af018c8298 417-431,433,436-447
+  s_d199771aa41449::t_72119122ded5d1 515-529
+  s_d199771aa41449::t_61c961cd6e9f0c 432,434-435
+  s_d199771aa41449::t_1ba75574331536 134
+  s_d199771aa41449::t_ec2367457553d3 290-312
+  s_d199771aa41449::t_4608ce472fef1f 265
+  s_d199771aa41449::t_5ee57af30b58e4 209-264
+  s_d199771aa41449::t_039c835e05f099 124-133,135-138
+  s_d199771aa41449::t_851a566714aa16 82-98
+  s_d199771aa41449::t_ad882953e8c6bb 319-326
+  s_d199771aa41449::t_a374b140c234bd 139
+  s_d199771aa41449::t_6db569cac5f7bd 266
+  s_d199771aa41449::t_41f53a9173212c 530
+docs/docs/operations/day-2-operations.mdx
+  s_d199771aa41449::t_a995cea424a419 66-70,72-74,76-82,84-85,87-89,91-96
+  s_d199771aa41449::t_3bab85781747cc 71,75,83,86,90
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_d199771aa41449::t_ce688e3102a4e9 136-137,139-140
+  s_d199771aa41449::t_9a5ade9b8fd424 64,68-81
+  s_d199771aa41449::t_75586e09c2a431 82
+changelog/+continue-on-error-source-references.changed.md
+  s_d199771aa41449::t_635eb36e4abecf 1
+docs/docs/compose-deployment.mdx
+  s_d199771aa41449::t_c188d4c4d97347 758-760
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "82471899c99811e62dd005e7945c5ebc908ca80f",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
