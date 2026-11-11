@@ -1,0 +1,23 @@
+tests/plan/test_warm_read_problems.py
+  s_d199771aa41449::t_60e2a121ecf1d8 38
+  s_d199771aa41449::t_a5f3cc04aea38a 105,110
+  s_d199771aa41449::t_240d4c628af9f0 1-22,25-37,39,41-44,51-75,77-79,81-83,93-104,106-109,111-181,183-196,198-206,208-218,220-230
+  s_d199771aa41449::t_b0dd7dab1ad464 40,76,80,84-92
+  s_d199771aa41449::t_78470f6eafe360 23-24,45-50,182,197,207,219
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7779a0b027adaea11fdabc393d0b344420db3fb1",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
