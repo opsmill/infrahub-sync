@@ -1,5 +1,134 @@
 # Spec 019 implementation report
 
+## Summary
+
+- Feature: plan problem reporting, the rebuild of old specification 009 on `feature/v3-develop`.
+- Specification directory: `dev/specs/019-plan-problem-reporting/`.
+- Branch: `019-plan-problem-reporting`, from base commit `ea83a248`. Head commit: the commit
+  that adds this report. 57 commits before it, 199 files changed. Nothing is pushed.
+- Status: DONE. All 83 tasks of `tasks.md` are ticked. The unit tier passes. Two strict expected
+  failures record a known gap (see "Known gap: some problems of one record are not listed").
+- Decision records: ADR 0020, ADR 0021, ADR 0022 and ADR 0025 are Accepted (2026-11-12).
+
+## Chunk ledger
+
+Each chunk ran in its own subagent through `speckit-implement`.
+
+| Chunk | Tasks | Outcome | Commits | Flagged upward |
+| --- | --- | --- | --- | --- |
+| 1 Setup | T001–T003 | 3 done | `70c94774` | — |
+| 2 Foundation | T004–T008 | 5 done | `5597e14d` | — |
+| 3 Foundation | T009–T016 | 8 done | `1cf3732c`, `b665936c` | — |
+| 4 US1 tests | T017–T022 | 6 done | `345aca01`, `258a72e3` | A warm incremental read did not record problems (became T081) |
+| 5 US1 | T023–T027 | 5 done | `5fdac6fd`, `babe8b0d` | — |
+| 6 US1 | T028–T032 | 5 done | `f6789d6d`, `1a4d1c23`, `33a98069` | Extend `<stage>_failure` instead of a top-level `failure` record |
+| 7 US1 follow-up | T082 (T081 deferred) | 1 done, 1 deferred | `7bfeb45e`, `7779a0b0`, `d64349f5`, `9716ee16` | T081 deferred |
+| 8 US2 tests | US2 test tasks | done | `632bda07`, `1398fe32` | — |
+| 9 US2 | US2 tasks | done | `1c597954`, `fcbb4abb` | Keep the refusal code `run-execution-conflict` |
+| 10 US3 tests | US3 test tasks | done | `9fbff10b`, `9544f5e3` | — |
+| 11 US3 | US3 tasks | done | `fb292ac0`, `745839fd` | — |
+| 12 US4 | US4 tasks | done | `a0e68cd6`, `0904a4fd` | — |
+| 13 US5 tests | US5 test tasks | done | `5ea4b2f9` | — |
+| 14 US5 and T083 | US5 tasks, T083 | done | `8f1121d3`, `bfed743f` | — |
+| 15 US6 | US6 tasks | done | `ddedf37c` | — |
+| 16 Polish | T074–T079 | done, T077 live half open | `cd6caa60`, `82471899`, `bc2cf16a` | Live steps needed running stacks |
+| T081 | warm read admission | done | `38c61c7e`, `306ba1d8`, `681b4de5`, `45681ade` | New ADR 0025 |
+| T072 | from-netbox check | done | `7a5541a1`, `ec09e368` | — |
+| T080 | sign-off | done | `d80ed043`, `f09a1f3f` | — |
+| T077 | live quickstart | done | `f07f8193` | — |
+
+The orchestrator added tasks T078 to T083 in `2c7caaee`, `adb13dfe` and `ae2c0314`.
+
+## Tasks not completed
+
+None. Every task in `tasks.md` is `[X]`.
+
+## Local-pass evidence
+
+The full unit tier ran on the head of the branch before this report:
+
+- Command: `uv run invoke tests.tests-unit`
+- Started 2026-11-12T13:37:36Z, finished 2026-11-12T13:41:48Z, macOS, full development profile
+  (`uv sync --extra dev --extra prefect --extra service`).
+- Pass line: `7393 passed, 4 skipped, 285 deselected, 3 xfailed, 12 warnings in 249.17s (0:04:09)`.
+- The three expected failures:
+  - `tests/compose/test_image_pins.py`, which belongs to the preview stack, not to this
+    specification.
+  - Two strict expected failures in
+    `tests/plan/test_left_out_walk.py::test_each_problem_of_one_record_is_listed_and_the_record_is_left_out_once`
+    (see "Known gap").
+
+The branch adds 44 test modules and changes 44 (`git diff --name-status ea83a248..HEAD -- tests`).
+Each chunk subagent reported its own passing runs when it returned. This report does not repeat
+them test by test; the run above covers every unit test of the branch at the head commit.
+
+Tests outside the unit tier:
+
+- The live checks T072 and T077 (below) ran on 2026-11-12 against NetBox and the preview stack.
+- The PostgreSQL tests were not run:
+  `PRODUCT_STORE_TEST_POSTGRESQL_DSN=<dsn> uv run pytest -m integration tests/integration/test_managed_write_guard_integration.py tests/product_store/test_stopped_sync_admission.py`.
+
+## Review findings
+
+### First review (`speckit-review-run`)
+
+`review-findings.md` lists 23 findings: 2 high, 6 medium, 15 low. Fixed in `86415f46` and
+`dbfcd038`: one high finding (duplicate kept record without a record ID), part of the other high
+finding (a 401 test for `configs validate --branch`) and one medium finding (secrets masked
+before Infrahub's message is cut). The other findings are deferred; the file gives the reason for
+each.
+
+### Second review (`/code-review xhigh --fix`)
+
+| Finding | File | Result |
+| --- | --- | --- |
+| A transport failure while a record is converted was recorded as `record_load_failed` instead of a timeout or unreachable system (FR-017) | `infrahub_sync/service/failure_cause.py` | Fixed in `1065704a`, with tests |
+| A kind mapped by several entries with complementary filters listed every record as filtered, so it never read warm | `infrahub_sync/__init__.py`, `infrahub_sync/warm_read.py` | Fixed in `1065704a`, with tests |
+| A record the source returns twice under one source ID was reported as a duplicate of itself and left out | `infrahub_sync/__init__.py` | Fixed in `1065704a`, with tests |
+| A loaded record whose data leaves out an identifier with a default was treated as not loaded, so a record with a missing optional peer was left out instead of kept | `infrahub_sync/__init__.py` | Fixed in `1065704a`, with tests |
+| Four simplifications: report counts, left-out walk queue, unused field, filter loop | `infrahub_sync/plan/models.py`, `infrahub_sync/plan/problems.py`, `infrahub_sync/__init__.py` | Fixed in `1065704a` and `3fc2637a` |
+| The permission check ignores deny permissions | `infrahub_sync/configuration/infrahub_lineage.py:218` | Deferred: how Infrahub resolves a deny against an allow is not known |
+| A destination adapter stores a placeholder for an optional peer that is not in the source | `infrahub_sync/adapters/references.py:107` | Deferred: design decision |
+| Each page of `runs plan --problems` parses the whole plan again | `infrahub_sync/service/service.py:861` | Deferred: changes the API |
+| `configs validate --branch` reads the branch schema twice | `infrahub_sync/configuration/capabilities.py:459` | Deferred: changes the accessor contract |
+| A peer lookup that misses scans the whole kind each time | `infrahub_sync/__init__.py:607` | Deferred: the store changes during a read |
+| Two functions are used only by tests | `infrahub_sync/plan/keying.py:724` | Deferred |
+| A broad `except Exception` in `_structured_cause` | `infrahub_sync/service/flow.py:934` | Kept: a deliberate safety net |
+
+Found while writing the tests: two different records whose raw `id` is `""` count as one record
+read twice, so no duplicate is reported. Not fixed.
+
+### Known gap: some problems of one record are not listed
+
+The specification says each problem of a record is listed. A record that fails validation or a
+transform is not stored, and the dropdown check reads only stored records. So a record with a
+wrong value type, or a failed transform, and also a dropdown value outside the choices, lists only
+the first problem. The record is still left out, and the second problem appears in the next plan
+after the first is corrected. Two strict expected failures in
+`tests/plan/test_left_out_walk.py` (`b5976e34`) record this. Two wrong-type values, or two
+dropdown values, on one record are both listed.
+
+## Decisions to review
+
+- Decisions 1 to 5 of 2026-11-11 (spec.md) were made by the advisor under the delegation of the
+  product owner.
+- The second review chose to keep the first read when the source returns the same record twice
+  under one source ID. The specification does not say how to handle this.
+- The live checks used ports 8085 (Infrahub), 8082, 8010, 4210, 5439 and 9010, because port 8080
+  is used by another container. `netbox.seed` replaced a NetBox volume left from an earlier run.
+- Warm reads: no bundled adapter defines `safe_cursor_before_load`, on this branch or on
+  `ea83a248`, so NetBox and Nautobot read in full on both. ADR 0025 does not change that.
+
+## Next steps
+
+1. Merge the AD-12 amendment (https://github.com/opsmill/infrahub-sync-process/pull/4) before
+   FR-005 to FR-012 ship.
+2. Decide the deferred findings, first the `Location.parent` ordering finding, the role allowed to
+   run `configs validate --branch`, the `sync --wait` exit code and the known gap above.
+3. Run the PostgreSQL tests listed under "Local-pass evidence".
+4. Open the pull request into `feature/v3-develop` when asked, with a news fragment under
+   `changelog/` (13 fragments are already added) and the upgrade notes of the specification.
+
 ## T072 — from-netbox check
 
 The `from-netbox` example check ran on 2026-11-12 on the pinned `demo` dataset
