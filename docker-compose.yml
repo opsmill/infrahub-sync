@@ -238,6 +238,8 @@ services:
       INFRAHUB_SYNC_SERVICE_BEARER_TOKENS: >-
         ${INFRAHUB_SYNC_SERVICE_BEARER_TOKENS:?INFRAHUB_SYNC_SERVICE_BEARER_TOKENS is required}
       INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "${INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS:-300}"
+      # true: apply refuses a plan without a matching approval, and sync is refused.
+      INFRAHUB_SYNC_REQUIRE_APPROVAL: "${INFRAHUB_SYNC_REQUIRE_APPROVAL-false}"
       PREFECT_WORKER_QUERY_SECONDS: "${PREFECT_WORKER_QUERY_SECONDS:-10}"
       # Optional, and empty when unset: a deployment starts before any package is
       # registered, so there is no destination to hold a credential for yet. A

@@ -6,8 +6,10 @@ that offers it drives it here against the running service, with the destination 
 through the Infrahub SDK.
 
 Cancellation races the worker by nature: a small plan can finish before the request lands.
-The rows below assert the two outcomes the service defines for that race and record which
-one happened, rather than retrying until one of them appears.
+The rows below assert the three outcomes the service defines for that race and record which
+one happened, rather than retrying until one of them appears: the execution is cancelled, a
+plan that finished first is withdrawn (`200`, phase `cancelled`), or a run that ended
+otherwise is refused as `execution-terminal`.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ import httpx
 import pytest
 
 from infrahub_sync.client import APIError, SyncClient
-from infrahub_sync.client.models import CancelRunRequest, ConfigMutationRequest, CreateRunRequest
+from infrahub_sync.client.models import CancelRunRequest, ConfigMutationRequest, CreateRunRequest, RunResource
 from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH
 from tests.preview.evidence import canary_leaks
 from tests.preview.test_cli_client import package_file, run_cli
@@ -62,7 +64,7 @@ def _sync_request(config_id: str, registry_version: int) -> dict[str, Any]:
 
 
 def _record_cancellation(evidence_dir: Path, interface: str, outcome: str) -> None:
-    """Write which of the two defined cancellation outcomes this run produced."""
+    """Write which of the defined cancellation outcomes this run produced."""
     (evidence_dir / f"cancellation-{interface}.txt").write_text(f"{outcome}\n", encoding="utf-8")
 
 
@@ -220,7 +222,7 @@ def test_raw_http_synchronizes_in_one_run(preview_env: dict[str, Any], evidence_
 
 
 def test_the_python_client_cancels_a_run_it_has_just_admitted(preview_env: dict[str, Any], evidence_dir: Path) -> None:
-    """Either the run reaches the cancelled terminal state, or the cancel is refused as late."""
+    """The run is cancelled, its finished plan is withdrawn, or the cancel is refused as late."""
     seed_source_branch(preview_env)
 
     with SyncClient(preview_env["urls"]["sync_api"], preview_env["bearer_token"], timeout=30.0) as client:
@@ -273,12 +275,21 @@ def test_the_python_client_cancels_a_run_it_has_just_admitted(preview_env: dict[
             "FAILED",
         }
     else:
+        assert isinstance(cancel_accepted, RunResource), cancel_accepted
         transcript = evidence_dir / "run-cancel-python-oracle-http.jsonl"
         with authenticated_client(preview_env, transcript=transcript) as api:
             cancelled = wait_for_phase(api, run_id, "cancelled")
         assert cancelled["run"]["outcome"] == "cancelled", cancelled["run"]
-        assert _await_prefect_terminal_state(preview_env, flow_run_id) == "CANCELLED"
-        _record_cancellation(evidence_dir, "python", "accepted: run cancelled")
+        prefect_state = _await_prefect_terminal_state(preview_env, flow_run_id)
+        assert prefect_state in {"CANCELLED", "COMPLETED"}, prefect_state
+        if prefect_state == "COMPLETED":
+            # The plan finished before this request, so the cancel withdrew the finished plan
+            # (`200`): the response already carries phase `cancelled`, and the completed Prefect
+            # execution was not cancelled.
+            assert cancel_accepted.run.phase == "cancelled", cancel_accepted.run
+            _record_cancellation(evidence_dir, "python", "accepted: finished plan withdrawn")
+        else:
+            _record_cancellation(evidence_dir, "python", "accepted: run cancelled")
         artifacts.update(
             {
                 "Python cancellation response resource": cancel_accepted,
@@ -290,7 +301,7 @@ def test_the_python_client_cancels_a_run_it_has_just_admitted(preview_env: dict[
 
 
 def test_raw_http_cancels_a_run_it_has_just_admitted(preview_env: dict[str, Any], evidence_dir: Path) -> None:
-    """The same two outcomes over the wire: 202 then cancelled, or 409 `execution-terminal`."""
+    """The same outcomes over the wire: 202 then cancelled, 200 withdrawn, or 409 `execution-terminal`."""
     seed_source_branch(preview_env)
     transcript = evidence_dir / "run-cancel-http.jsonl"
 
@@ -319,8 +330,14 @@ def test_raw_http_cancels_a_run_it_has_just_admitted(preview_env: dict[str, Any]
             headers=idempotency_headers("preview-completion"),
             json={"reason": CANCEL_REASON},
         )
-        assert cancel.status_code in {202, 409}, cancel.text
-        if cancel.status_code == 409:
+        assert cancel.status_code in {200, 202, 409}, cancel.text
+        if cancel.status_code == 200:
+            # The plan finished before this request: the cancel withdrew the finished plan.
+            assert cancel.json()["run"]["phase"] == "cancelled", cancel.text
+            assert cancel.json()["run"]["outcome"] == "cancelled", cancel.text
+            assert _await_prefect_terminal_state(preview_env, flow_run_id) == "COMPLETED"
+            _record_cancellation(evidence_dir, "http", "accepted: finished plan withdrawn")
+        elif cancel.status_code == 409:
             assert cancel.json()["error"]["code"] == "execution-terminal", cancel.text
             assert _await_prefect_terminal_state(preview_env, flow_run_id) in {
                 "CANCELLED",

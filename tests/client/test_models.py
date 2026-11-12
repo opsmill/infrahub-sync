@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from infrahub_sync.client.models import (
     ApplyRunRequest,
+    ApproveRunRequest,
     CancelRunRequest,
     ConfigMutationRequest,
     CreateRunRequest,
@@ -21,9 +22,11 @@ from infrahub_sync.client.models import (
     EventResource,
     OrchestrationSummary,
     PublicRunResource,
+    RunApprovalResource,
+    RunResource,
     VerifyRunRequest,
 )
-from infrahub_sync.product_store.models import PrefectExecutionLink, ProductRun
+from infrahub_sync.product_store.models import PrefectExecutionLink, ProductRun, RunApproval
 from infrahub_sync.service.models import public_run_resource
 
 
@@ -149,6 +152,7 @@ _REQUEST_FIELDS: dict[type, dict[str, object]] = {
     CreateRunRequest: {"config_id": "cfg", "registry_version": 1},
     VerifyRunRequest: {},
     ApplyRunRequest: {"expected_checksum": "a" * 64, "confirm_writes": True},
+    ApproveRunRequest: {"expected_checksum": "a" * 64},
     CancelRunRequest: {},
     ConfigMutationRequest: {"package": {"format_version": 1}},
 }
@@ -188,6 +192,89 @@ def test_a_valid_configuration_reason_is_kept_unchanged() -> None:
     request = ConfigMutationRequest(package={"format_version": 1}, reason="register inventory")
 
     assert request.reason == "register inventory"
+
+
+def _public_run(**extra: object) -> dict[str, object]:
+    return {
+        "run_id": "run-1",
+        "operation": "plan",
+        "configuration_reference": "cfg@1",
+        "started_at": datetime(2026, 11, 10, 12, tzinfo=timezone.utc).isoformat(),
+        "phase": "planned",
+        **extra,
+    }
+
+
+_APPROVAL = {
+    "approved_by": "alice",
+    "approved_at": "2026-11-10T14:03:11Z",
+    "plan_checksum": "a" * 64,
+    "reason": "reviewed by the network team",
+}
+
+
+def test_a_run_resource_without_an_approval_reads_none() -> None:
+    resource = RunResource.model_validate({"run": _public_run(), "orchestration": []})
+
+    assert resource.run.approval is None
+    assert PublicRunResource.model_validate(_public_run(approval=None)).approval is None
+
+
+def test_a_run_resource_carries_its_approval() -> None:
+    resource = RunResource.model_validate({"run": _public_run(approval=_APPROVAL), "orchestration": []})
+
+    approval = resource.run.approval
+    assert isinstance(approval, RunApprovalResource)
+    assert approval.approved_by == "alice"
+    assert approval.approved_at == datetime(2026, 11, 10, 14, 3, 11, tzinfo=timezone.utc)
+    assert approval.plan_checksum == "a" * 64
+    assert approval.reason == "reviewed by the network team"
+
+
+@pytest.mark.parametrize(
+    "override",
+    [{"approved_by": ""}, {"approved_at": "2026-11-10T14:03:11"}, {"plan_checksum": "A" * 64}],
+    ids=["empty-actor", "naive-timestamp", "uppercase-checksum"],
+)
+def test_an_invalid_approval_is_refused(override: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        PublicRunResource.model_validate(_public_run(approval={**_APPROVAL, **override}))
+
+
+def test_the_server_projects_a_stored_approval_into_the_run_resource() -> None:
+    stored = ProductRun(
+        run_id="run-1",
+        operation="plan",
+        configuration_reference="cfg@1",
+        started_at=datetime(2026, 11, 10, 12, tzinfo=timezone.utc),
+        phase="planned",
+        approval=RunApproval(
+            approved_by="alice",
+            approved_at=datetime(2026, 11, 10, 14, 3, 11, tzinfo=timezone.utc),
+            plan_checksum="a" * 64,
+        ),
+    )
+
+    projected = public_run_resource(stored)
+
+    assert projected.approval is not None
+    assert projected.approval.model_dump(mode="json") == {
+        "approved_by": "alice",
+        "approved_at": "2026-11-10T14:03:11Z",
+        "plan_checksum": "a" * 64,
+        "reason": None,
+    }
+
+
+def test_approve_request_refuses_unknown_fields_and_a_malformed_checksum() -> None:
+    assert ApproveRunRequest(expected_checksum="a" * 64).model_dump(mode="json") == {
+        "expected_checksum": "a" * 64,
+        "reason": None,
+    }
+    with pytest.raises(ValidationError):
+        ApproveRunRequest.model_validate({"expected_checksum": "a" * 64, "confirm_writes": True})
+    with pytest.raises(ValidationError):
+        ApproveRunRequest(expected_checksum="not-a-checksum")
 
 
 def test_an_event_page_reads_a_newer_server_and_keeps_its_paging_fields() -> None:

@@ -19,6 +19,9 @@ from infrahub_sync.cli import _display, app  # noqa: PLC2701 - the renderer unde
 from infrahub_sync.client import (
     APIError,
     ApplyRunRequest,
+    ApprovedPlanSummaryResource,
+    ApprovedRunResource,
+    ApproveRunRequest,
     ArtifactListResource,
     ArtifactReferenceResource,
     CancelRunRequest,
@@ -47,6 +50,7 @@ from infrahub_sync.client import (
     RegisteredConfigurationResource,
     RegisteredVersionResource,
     ResultsResource,
+    RunApprovalResource,
     RunLogLine,
     RunLogPage,
     RunPage,
@@ -603,6 +607,7 @@ def _terminal(phase: str) -> RunTerminalError:
         (("diff", "--config-id", "edge-sync", "--version", "1", "--reason", "review"), "plan"),
         (("sync", "--config-id", "edge-sync", "--version", "1", "--reason", "sync now"), "sync"),
         (("apply", "service-run-1", "--expected-checksum", CHECKSUM, "--reason", "apply reviewed plan"), "apply"),
+        (("verify", "service-run-1"), "verify"),
     ],
 )
 def test_a_failed_run_prints_the_recorded_missing_permission(
@@ -1503,6 +1508,7 @@ def test_a_given_reason_is_still_validated(client: MagicMock, tmp_path: Path, re
         ("plan",),
         ("sync",),
         ("apply",),
+        ("approve",),
         ("verify",),
         ("runs", "cancel"),
     ],
@@ -1689,6 +1695,86 @@ def test_verify_calls_client_verify_with_the_reason_and_retry_key(client: MagicM
     assert "run_id: service-run-1" in result.output
 
 
+def test_a_successful_verify_prints_one_line_per_check_that_passed(client: MagicMock) -> None:
+    accepted = _run()
+    checks = ["checkpoint", "run_binding", "destination_binding", "lineage"]
+    completed = accepted.model_copy(
+        update={
+            "run": accepted.run.model_copy(
+                update={"results": {"verification": {"checks": checks, "destination_checked": True}}}
+            )
+        }
+    )
+    client.verify.return_value = accepted
+    client.wait_for_run.side_effect = lambda _accepted, **_kwargs: completed
+
+    result = _invoke(client, "verify", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    printed = [line for line in result.output.splitlines() if line.startswith("check: ")]
+    assert printed == [f"check: {name} passed" for name in checks]
+
+
+def test_a_failed_verify_names_each_check_it_failed_and_the_next_action(client: MagicMock) -> None:
+    """SC-004: the operator reads which pre-write check would refuse the apply, not only `run-terminal`."""
+    client.wait_for_run.side_effect = _terminal("planned")
+    client.get_results.return_value = ResultsResource(
+        run_id="service-run-1",
+        results={
+            "verify_failure": {
+                "stage": "verify",
+                "outcome": "failed",
+                "error_type": "PlanVerificationError",
+                "failed_checks": ["destination_binding", "lineage"],
+                "next_action": "Create a new plan for this configuration and review it.",
+            }
+        },
+    )
+
+    result = _invoke(client, "verify", "service-run-1")
+
+    assert result.exit_code == 1
+    client.get_results.assert_called_once_with("service-run-1")
+    lines = result.output.splitlines()
+    assert "verify failed: PlanVerificationError" in lines
+    assert [line for line in lines if line.startswith("failed_check: ")] == [
+        "failed_check: destination_binding",
+        "failed_check: lineage",
+    ]
+    assert "hint: Create a new plan for this configuration and review it." in lines
+    assert "error: run-terminal" in lines
+
+
+def test_a_failed_verify_prints_only_check_names_that_are_identifiers(client: MagicMock) -> None:
+    """A recorded name that is not an identifier is dropped, so the record cannot reach the terminal as text."""
+    client.wait_for_run.side_effect = _terminal("planned")
+    client.get_results.return_value = ResultsResource(
+        run_id="service-run-1",
+        results={
+            "verify_failure": {
+                "stage": "verify",
+                "outcome": "failed",
+                "error_type": "PlanVerificationError",
+                "failed_checks": ["run_binding", "bad\x1b[2Jname", 7],
+            }
+        },
+    )
+
+    result = _invoke(client, "verify", "service-run-1")
+
+    assert result.exit_code == 1
+    assert [line for line in result.output.splitlines() if line.startswith("failed_check: ")] == [
+        "failed_check: run_binding"
+    ]
+    assert "\x1b" not in result.output
+
+
+def test_verify_help_says_it_checks_the_plan_would_apply_without_writing() -> None:
+    assert "Check that the named run's saved plan would apply now, without writing." in " ".join(
+        _help_text("verify").split()
+    )
+
+
 def test_runs_list_without_filters_prints_one_row_per_run(client: MagicMock) -> None:
     client.list_runs.return_value = RunPage(
         items=(_public_run("run-2", outcome="planned"), _public_run("run-1", config_id=None)),
@@ -1804,14 +1890,54 @@ def test_runs_cancel_prompts_when_interactive(
     assert result.exit_code == (0 if cancelled else 1), result.output
 
 
-def test_whoami_prints_actor_and_administrator(client: MagicMock) -> None:
-    client.me.return_value = PrincipalResource(actor="operator", administrator=False)
+def test_runs_cancel_help_says_a_finished_plan_is_withdrawn() -> None:
+    text = " ".join(_help_text("runs", "cancel").split())
+    assert (
+        "Cancel a run. Cancelling a finished plan withdraws it so it cannot be approved or applied; "
+        "cancelling a write can leave its outcome ambiguous." in text
+    )
+
+
+def test_runs_cancel_prompt_says_a_finished_plan_is_withdrawn(
+    client: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("infrahub_sync.cli._stdin_is_interactive", lambda: True)
+
+    result = RUNNER.invoke(app, ["runs", "cancel", "service-run-1"], obj={"client": client}, input="n\n")
+
+    assert (
+        "Cancel run service-run-1? A finished plan is withdrawn; cancelling a write can leave an ambiguous outcome."
+        in result.output
+    )
+    client.cancel_run.assert_not_called()
+
+
+def test_runs_cancel_prints_phase_cancelled_after_a_withdrawal(client: MagicMock) -> None:
+    client.cancel_run.return_value = _run(phase="cancelled")
+
+    result = _invoke(client, "runs", "cancel", "service-run-1", "--yes")
+
+    assert result.exit_code == 0, result.output
+    assert "phase: cancelled" in result.output
+
+
+@pytest.mark.parametrize(("approval_required", "rendered"), [(True, "true"), (False, "false")])
+def test_whoami_prints_actor_administrator_and_approval_required(
+    client: MagicMock, *, approval_required: bool, rendered: str
+) -> None:
+    client.me.return_value = PrincipalResource(
+        actor="operator", administrator=False, approval_required=approval_required
+    )
 
     result = _invoke(client, "whoami")
 
     assert result.exit_code == 0, result.output
     client.me.assert_called_once_with()
-    assert result.stdout.splitlines() == ["actor: operator", "administrator: false"]
+    assert result.stdout.splitlines() == [
+        "actor: operator",
+        "administrator: false",
+        f"approval_required: {rendered}",
+    ]
 
 
 def test_configs_list_filters_by_name_and_prints_the_name(client: MagicMock) -> None:
@@ -2064,6 +2190,99 @@ def test_configuration_lookup_errors_other_than_not_found_are_reported(client: M
     assert result.exit_code == 1
     assert "status: 403" in result.output
     client.iter_configs.assert_not_called()
+
+
+_APPROVAL = RunApprovalResource(
+    approved_by="alice",
+    approved_at=datetime(2026, 11, 10, 14, 3, 11, tzinfo=timezone.utc),
+    plan_checksum=CHECKSUM,
+    reason="reviewed by the network team",
+)
+
+
+def _approved(resource: RunResource) -> RunResource:
+    return resource.model_copy(update={"run": resource.run.model_copy(update={"approval": _APPROVAL})})
+
+
+def test_approve_sends_the_checksum_and_prints_the_run_its_approval_and_the_approved_counts(
+    client: MagicMock,
+) -> None:
+    approved = _approved(_run(phase="planned"))
+    client.approve.return_value = ApprovedRunResource(
+        run=approved.run,
+        orchestration=approved.orchestration,
+        plan_summary=ApprovedPlanSummaryResource(creates=1, updates=2, deletes_recorded=3),
+    )
+
+    result = _invoke(
+        client,
+        "approve",
+        "service-run-1",
+        "--expected-checksum",
+        CHECKSUM,
+        "--reason",
+        "reviewed by the network team",
+        "--idempotency-key",
+        "retry-approve",
+    )
+
+    assert result.exit_code == 0, result.output
+    client.approve.assert_called_once_with(
+        "service-run-1",
+        ApproveRunRequest(expected_checksum=CHECKSUM, reason="reviewed by the network team"),
+        "retry-approve",
+    )
+    client.wait_for_run.assert_not_called()
+    for line in (
+        "idempotency_key: retry-approve",
+        "run_id: service-run-1",
+        "phase: planned",
+        "approved_by: alice",
+        "approved_at: 2026-11-10T14:03:11+00:00",
+        f"approved_checksum: {CHECKSUM}",
+        "approved_creates: 1",
+        "approved_updates: 2",
+        "approved_deletes_recorded: 3",
+    ):
+        assert line in result.output.splitlines(), line
+
+
+def test_approve_does_not_ask_for_confirmation_and_documents_itself() -> None:
+    help_text = _help_text("approve")
+
+    assert "Record approval of the named run's saved plan without applying it." in help_text
+    assert "--yes" not in help_text
+    assert "--expected-checksum" in help_text
+
+
+def test_approve_refusal_is_printed_through_the_client_error_path(client: MagicMock) -> None:
+    client.approve.side_effect = APIError(409, "already-approved", run_id="service-run-1")
+
+    result = _invoke(client, "approve", "service-run-1", "--expected-checksum", CHECKSUM)
+
+    assert result.exit_code != 0
+    assert "already-approved" in result.output
+
+
+def test_runs_show_prints_the_approval_lines_when_the_run_is_approved(client: MagicMock) -> None:
+    client.get_run.return_value = _approved(_run(phase="planned"))
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert "approved_by: alice" in lines
+    assert "approved_at: 2026-11-10T14:03:11+00:00" in lines
+    assert f"approved_checksum: {CHECKSUM}" in lines
+
+
+def test_runs_show_prints_no_approval_lines_for_an_unapproved_run(client: MagicMock) -> None:
+    client.get_run.return_value = _run(phase="planned")
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert "approved_" not in result.output
 
 
 # `_client_errors` in `infrahub_sync/cli.py` exits with 2 for every `client-input` error.
