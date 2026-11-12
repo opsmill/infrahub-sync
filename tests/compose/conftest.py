@@ -379,6 +379,8 @@ INFRAHUB_FIXTURE_FILES = (
     REPO_ROOT / "development" / "docker-compose.infrahub.yml",
     REPO_ROOT / "development" / "docker-compose.infrahub-ports.yml",
 )
+# The settings that choose the Infrahub image of `docker-compose.infrahub.yml`.
+INFRAHUB_IMAGE_SETTINGS = frozenset({"VERSION", "INFRAHUB_DOCKER_IMAGE", "INFRAHUB_DOCKER_IMAGE_DIGEST"})
 # The public development default of `docker-compose.infrahub.yml`; this fixture is
 # disposable and removed with its volumes afterwards.
 FIXTURE_INFRAHUB_ADMIN_TOKEN = "06438eb2-8019-4776-878c-0941b1f1d1ec"  # noqa: S105 - public development default
@@ -420,7 +422,10 @@ def infrahub_fixture(sync_image: str) -> Iterator[dict[str, str]]:
     # resolves, so it is a secret of this session like any generated canary.
     SECRETS.register(values["INFRAHUB_INITIAL_ADMIN_TOKEN"])
     address = f"http://127.0.0.1:{FIXTURE_INFRAHUB_PORT}"
-    environment = {**os.environ, **values}
+    # The suite exports VERSION and INFRAHUB_SYNC_DOCKER_IMAGE for the Sync image under test;
+    # the Infrahub file reads VERSION for its own image too. Dropping the Infrahub image
+    # settings leaves the file's pinned release and digest in force.
+    environment = {key: value for key, value in os.environ.items() if key not in INFRAHUB_IMAGE_SETTINGS} | values
     base = ["docker", "compose", "--project-name", FIXTURE_PROJECT]
     for path in INFRAHUB_FIXTURE_FILES:
         base += ["--file", str(path)]
