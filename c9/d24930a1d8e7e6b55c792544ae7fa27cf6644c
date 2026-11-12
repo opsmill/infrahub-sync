@@ -1,0 +1,21 @@
+docs/docs/development/knowledge/repository-tour.md
+  s_d199771aa41449::t_5de33510d12fdd 103
+docs/docs/development/guidelines/secret-redaction.md
+  s_d199771aa41449::t_ef61e89f3e275d 35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c9d24930a1d8e7e6b55c792544ae7fa27cf6644c",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
