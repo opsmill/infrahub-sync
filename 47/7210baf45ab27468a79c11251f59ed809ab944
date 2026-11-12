@@ -1,0 +1,58 @@
+infrahub_sync/service/apply_progress.py
+  s_b91a98d41025f3::t_ddfc02a7c61a6f 93,97
+  s_b91a98d41025f3::t_ec53b329b6025a 1-57,59-92,94-96,98-103,105-151
+  s_b91a98d41025f3::t_a3cbc6ab9d365c 58,104
+infrahub_sync/product_store/store.py
+  s_b91a98d41025f3::t_06c3643bbfc6ab 2585
+  s_b91a98d41025f3::t_08dc149cc9b326 37,1395-1397,1417-1421,1424-1427,2336-2338,2348-2350,2355-2358,2366-2368,2379-2392,4457-4473
+  s_b91a98d41025f3::t_4febaeec74be0e 104,250-251,470-471,475-476,636-639,939,941-945,1463,1555-1597,3700-3710,4554
+  s_b91a98d41025f3::t_83efb132a84fba 22
+  s_b91a98d41025f3::t_0d9ce1156e2bb1 1428,1598,3711,4474-4475
+infrahub_sync/product_store/__init__.py
+  s_b91a98d41025f3::t_83efb132a84fba 4,49
+tests/service/test_apply_progress_observer.py
+  s_b91a98d41025f3::t_151a6002b35ff6 21-22
+  s_b91a98d41025f3::t_61a47421a16ed4 11,23,66-72
+  s_b91a98d41025f3::t_6316c4310ad420 157,160,162
+  s_b91a98d41025f3::t_e1ae79ccca556a 1-10,12-20,24-65,73-156,158-159,161,163-231
+tests/service/test_read_progress.py
+  s_b91a98d41025f3::t_ebd91ff6724755 11,466,481-482
+  s_b91a98d41025f3::t_8c5c8e479c4811 23
+  s_b91a98d41025f3::t_a3cbc6ab9d365c 459-461
+dev/specs/022-resume-interrupted-apply/tasks.md
+  s_b91a98d41025f3::t_4afec90e338d73 36-40,44-45
+tests/product_store/test_contract.py
+  s_b91a98d41025f3::t_083c826713bb8a 65
+infrahub_sync/service/flow.py
+  s_b91a98d41025f3::t_a3cbc6ab9d365c 86
+  s_b91a98d41025f3::t_0ea3f69c61124d 691-693,834-836,917-919
+tests/product_store/test_resume_admissions.py
+  s_b91a98d41025f3::t_5a7d184db7174f 1-187,189-193,202-228,232-247
+  s_b91a98d41025f3::t_76be68b1839472 188
+  s_b91a98d41025f3::t_a3cbc6ab9d365c 194-201,229-231
+tests/service/test_flow_and_prefect.py
+  s_b91a98d41025f3::t_ebd91ff6724755 74-77,577,670,708,743,789,873,1214,1261,1314,1525
+tests/runtime_schema/test_worker_path.py
+  s_b91a98d41025f3::t_1ced4e569b5970 293-294
+infrahub_sync/product_store/models.py
+  s_b91a98d41025f3::t_7a2cddfc84be6a 14,75-104,106-110,138-140
+  s_b91a98d41025f3::t_ddfc02a7c61a6f 105
+tests/product_store/test_apply_progress.py
+  s_b91a98d41025f3::t_ed5c56b3a02286 1-170
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "477210baf45ab27468a79c11251f59ed809ab944",
+  "prompts": {},
+  "sessions": {
+    "s_b91a98d41025f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c1e68d9-bc95-47b9-bd6b-c5aa572517ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
