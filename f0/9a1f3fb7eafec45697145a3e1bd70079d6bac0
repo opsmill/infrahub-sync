@@ -1,0 +1,21 @@
+dev/adr/0025-a-warm-source-read-admits-changed-records.md
+  s_d199771aa41449::t_2595cd45cd2a4d 3
+dev/specs/019-plan-problem-reporting/spec.md
+  s_d199771aa41449::t_665724feee5283 783-784
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f09a1f3fb7eafec45697145a3e1bd70079d6bac0",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
