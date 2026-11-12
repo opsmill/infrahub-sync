@@ -104,12 +104,13 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 - `infrahub-sync configs` — register and inspect configuration packages (safe).
 - `infrahub-sync runs list` — list runs, newest first, optionally for one configuration or version (safe).
 - `infrahub-sync runs show` / `runs plan` / `runs results` / `runs artifacts` — inspect one run, its saved plan, its results and its artifacts (safe).
-- `infrahub-sync whoami` — check which actor the API token belongs to (safe).
+- `infrahub-sync whoami` — check which actor the API token belongs to and whether the Sync API requires an approved plan (`approval_required`) (safe).
 - `infrahub-sync plan` — create a plan run and review its summary (Sync API required). `diff` is a hidden, deprecated alias.
-- `infrahub-sync verify` — check a run's saved plan against the destination without writing (Sync API required).
-- `infrahub-sync sync` — perform synchronization (Sync API and approval required).
-- `infrahub-sync apply` — apply a reviewed plan by checksum (Sync API and approval required).
-- `infrahub-sync runs cancel` — cancel a run; cancelling a write can leave an ambiguous outcome (approval required).
+- `infrahub-sync verify` — run every pre-write check of `apply` against the destination without writing; needs to reach the destination and does not approve the plan (Sync API required).
+- `infrahub-sync approve` — record approval of a run's saved plan by checksum without writing; required before `apply` only when the Sync API sets `INFRAHUB_SYNC_REQUIRE_APPROVAL` (Sync API and human approval required).
+- `infrahub-sync sync` — perform synchronization; refused when the Sync API requires approval (Sync API and human approval required).
+- `infrahub-sync apply` — apply a reviewed plan by checksum (Sync API and human approval required).
+- `infrahub-sync runs cancel` — cancel a run's running stage, or withdraw a finished, unapplied plan; cancelling a write can leave an ambiguous outcome (human approval required).
 
 ## Configuration and Examples
 
@@ -205,7 +206,7 @@ The container image is published to `registry.opsmill.io/opsmill/infrahub-sync` 
 ## Known Issues and Limitations
 
 - Optional dependencies (e.g. `pynetbox`, `pynautobot`) may be missing, producing import warnings.
-- `plan`, `verify`, `sync`, and `apply` require a running Sync API and its destination servers.
+- `plan`, `sync`, and `apply` require a running Sync API and its destination servers. `verify` requires the Sync API, and for a run of a registered configuration it also connects to the destination.
 - Docs npm audit may flag dev-only vulnerabilities; they do not affect the Python package.
 
 ## Git and PR Process

@@ -805,6 +805,9 @@ def test_service_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.M
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
     monkeypatch.setattr(service_flow, "execute_run", lambda *_args, **_kwargs: saved)
+    # The destination checks are `tests/service/test_verify_destination.py`'s subject; here
+    # they pass, so this case is about what a passing verify leaves on the run.
+    monkeypatch.setattr(service_flow, "_check_destination", lambda *_args, **_kwargs: ("checkpoint", "lineage"))
 
     result = service_sync_run.fn(
         run_id,
@@ -819,6 +822,8 @@ def test_service_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.M
         "checksum": "a" * 64,
         "checksum_ok": True,
         "verification_notes": [],
+        "checks": ["checkpoint", "lineage"],
+        "destination_checked": True,
     }
     after = projection.lookup_run(run_id).value
     assert after is not None

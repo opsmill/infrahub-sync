@@ -32,6 +32,8 @@ from infrahub_sync.product_store.bundle import (
 )
 from infrahub_sync.product_store.models import (
     DEFAULT_LIMIT,
+    RUN_ALREADY_CANCELLED_MESSAGE,
+    RUN_CANCELLED_MESSAGE,
     ArtifactReference,
     AuditEvent,
     BaselineWriteback,
@@ -50,9 +52,13 @@ from infrahub_sync.product_store.models import (
     MutationReceipt,
     PrefectExecutionLink,
     ProductRun,
+    RunApproval,
     RunFilters,
     RunPage,
     RunReference,
+    already_approved_body,
+    approval_error_body,
+    not_approvable_message,
 )
 
 if TYPE_CHECKING:
@@ -175,11 +181,21 @@ _CONFIGURATION_BINDING_COLUMNS: tuple[tuple[str, str], ...] = (
     ("registry_version", "INTEGER"),
     ("package_checksum", "TEXT"),
 )
+# Nullable approval columns on ``product_runs``, read and written as ``ProductRun.approval``.
+# ``approved_by``, ``approved_at`` (UTC ISO 8601 text, like the other run timestamps) and
+# ``approved_checksum`` are all NULL (never approved) or all NOT NULL; ``approval_reason`` is
+# the optional audit reason. Runs stored before approval existed keep NULL and read as unapproved.
+_APPROVAL_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("approved_by", "TEXT"),
+    ("approved_at", "TEXT"),
+    ("approved_checksum", "TEXT"),
+    ("approval_reason", "TEXT"),
+)
 # Every nullable column the start-up migration adds to a pre-existing table, per table. Each is
 # added only when the catalog does not list it, so a second start-up issues no ALTER. Runs
 # created before ``destination_branch`` existed keep NULL; nothing backfills it.
 _ADDED_NULLABLE_COLUMNS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
-    ("product_runs", (*_CONFIGURATION_BINDING_COLUMNS, ("destination_branch", "TEXT"))),
+    ("product_runs", (*_CONFIGURATION_BINDING_COLUMNS, ("destination_branch", "TEXT"), *_APPROVAL_COLUMNS)),
     ("configuration_versions", (("registered_by", "TEXT"), ("registration_reason", "TEXT"))),
     ("configurations", (("name", "TEXT"),)),
 )
@@ -394,10 +410,11 @@ _SELECT_NEXT_CONFIGURATION_VERSION = (
 
 _INSERT_PRODUCT_RUN = """INSERT INTO product_runs (run_id, operation, configuration_reference, config_id,
 registry_version, package_checksum, actor, audit_links, started_at, finished_at, phase, outcome, summary, results,
-reconciliation_required, destination_branch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+reconciliation_required, destination_branch, approved_by, approved_at, approved_checksum, approval_reason)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _PRODUCT_RUN_COLUMNS = """run_id, operation, configuration_reference, actor, audit_links, started_at,
 finished_at, phase, outcome, summary, results, config_id, registry_version, package_checksum, reconciliation_required,
-destination_branch"""
+destination_branch, approved_by, approved_at, approved_checksum, approval_reason"""
 _SELECT_PRODUCT_RUN = "SELECT " + _PRODUCT_RUN_COLUMNS + " FROM product_runs WHERE run_id = ?"  # noqa: S608 - module constants only.
 # The run list is assembled from these fixed fragments only; every value is a bound parameter.
 # The keyset predicate is the row comparison ``(started_at, run_id) < (?, ?)`` written out as an
@@ -660,6 +677,28 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def lookup_mutation(self, actor: str, key_digest: str) -> LookupResult[MutationReceipt]: ...
 
+    def record_approval(
+        self,
+        run_id: str,
+        approval: RunApproval,
+        receipt: MutationReceipt,
+        response: Mapping[str, Any],
+        *,
+        updated_at: datetime,
+        events: Sequence[AuditEvent] = (),
+    ) -> bool: ...
+
+    def cancel_planned_run(  # pylint: disable=too-many-arguments
+        self,
+        run_id: str,
+        receipt: MutationReceipt,
+        response: Mapping[str, Any],
+        *,
+        cancelled_at: datetime,
+        updated_at: datetime,
+        events: Sequence[AuditEvent] = (),
+    ) -> bool: ...
+
     def lookup_mutation_for_execution(
         self, run_id: str, flow_run_id: str, operation: str
     ) -> LookupResult[MutationReceipt]: ...
@@ -824,7 +863,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
     def _migrate_added_columns(self, cursor: _Cursor) -> frozenset[tuple[str, str]]:
         """Additively bring pre-existing tables up to the current nullable column set.
 
-        Covers ``product_runs`` (configuration binding and ``destination_branch``),
+        Covers ``product_runs`` (configuration binding, ``destination_branch`` and approval),
         ``configuration_versions`` (``registered_by``, ``registration_reason``) and
         ``configurations`` (``name``). Every column is nullable, so no existing row needs a
         value, and a column the catalog already lists is skipped. Returns the
@@ -1104,6 +1143,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 _json(run.results),
                 run.reconciliation_required,
                 run.destination_branch,
+                *_approval_columns(run.approval),
             ),
         )
 
@@ -2170,19 +2210,27 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         after that write becomes terminal: terminal write evidence is immutable and the
         operator's next step is a new run. A write additionally needs the run quiet — no
         other unresolved submission and no unfinished execution — so an apply cannot race
-        a verify that has reserved but not yet submitted.
+        a verify that has reserved but not yet submitted. A write is also refused once the
+        run is in phase ``cancelled``: the caller holds the same row lock as
+        ``cancel_planned_run``, so a cancel and an apply never both succeed.
         """
         cursor.execute(self._sql("SELECT 1 FROM write_admissions WHERE run_id = ?"), (run_id,))
         if cursor.fetchone() is not None:
             return True
         if not admit_write:
             return False
+        cursor.execute(self._sql("SELECT phase FROM product_runs WHERE run_id = ?"), (run_id,))
+        row = cursor.fetchone()
+        if row is not None and row[0] == "cancelled":
+            return True
         # Every stage a run arbitrates is every run mutation except cancellation, which
-        # targets the execution a write already owns rather than reserving a stage.
+        # targets the execution a write already owns rather than reserving a stage, and
+        # approval, which submits no execution: the approval columns decide what an apply
+        # may do, and an approve receipt left reserved by a crash must not block every write.
         cursor.execute(
             self._sql(
                 "SELECT 1 FROM mutation_receipts WHERE run_id = ? AND receipt_id <> ? AND state <> 'accepted' "
-                "AND operation <> 'cancel'"
+                "AND operation NOT IN ('cancel', 'approve')"
             ),
             (run_id, receipt_id),
         )
@@ -2225,6 +2273,229 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         if row is None:
             return LookupResult(value=None, reason="mutation-receipt-not-found")
         return LookupResult(value=_receipt_from_row(row))
+
+    def record_approval(
+        self,
+        run_id: str,
+        approval: RunApproval,
+        receipt: MutationReceipt,
+        response: Mapping[str, Any],
+        *,
+        updated_at: datetime,
+        events: Sequence[AuditEvent] = (),
+    ) -> bool:
+        """Store a run's one approval and complete its request's receipt in one transaction.
+
+        The run's row is locked first, with the write-first pattern a write admission and a
+        withdrawal take, so the execution check and the update below see one state. The
+        conditional update stores the approval only on a run in phase ``planned`` that has none
+        and no unfinished execution, so of two concurrent approvals exactly one stores, and no
+        approval is stored while an execution such as an ``apply`` is running. A write admitted
+        but not yet submitted does not block the approval: once approval is required, retrying
+        that ``apply`` needs this approval. The loser's receipt is completed with a stored
+        refusal instead: ``already-approved`` with the approval that won, ``run-cancelled`` for
+        a withdrawn run, or ``run-not-approvable`` when an execution is unfinished or the run
+        left phase ``planned``. Either way a retry with the same key replays what this
+        transaction stored. ``events`` are written only with a stored approval, in the same
+        transaction (spec 017, FR-014).
+
+        Returns:
+            Whether this call stored the approval.
+
+        Raises:
+            ValueError: The receipt is not awaiting completion; nothing is stored.
+        """
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql("UPDATE product_runs SET run_id = run_id WHERE run_id = ?"), (run_id,))
+                active_stage = self._unfinished_execution_purpose(cursor, run_id)
+                stored = False
+                if active_stage is None:
+                    cursor.execute(
+                        self._sql(
+                            "UPDATE product_runs SET approved_by = ?, approved_at = ?, approved_checksum = ?, "
+                            "approval_reason = ? WHERE run_id = ? AND approved_by IS NULL AND phase = 'planned'"
+                        ),
+                        (*_approval_columns(approval), run_id),
+                    )
+                    stored = cursor.rowcount == 1
+                if stored:
+                    for event in events:
+                        self._insert_event(cursor, event)
+                status, body = (
+                    (200, response)
+                    if stored
+                    else self._approval_refusal(cursor, run_id, receipt.receipt_id, active_stage=active_stage)
+                )
+                self._answer_receipt_row(
+                    cursor, receipt.receipt_id, response_status=status, response_body=body, updated_at=updated_at
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return stored
+
+    def cancel_planned_run(  # pylint: disable=too-many-arguments
+        self,
+        run_id: str,
+        receipt: MutationReceipt,
+        response: Mapping[str, Any],
+        *,
+        cancelled_at: datetime,
+        updated_at: datetime,
+        events: Sequence[AuditEvent] = (),
+    ) -> bool:
+        """Withdraw a finished plan: set phase ``cancelled`` and complete the cancel receipt, in one transaction.
+
+        The run's row is locked with the write-first pattern before anything is read, the same
+        lock a write admission and an approval take, so a cancel and an ``apply`` or ``approve``
+        of the run never both succeed. The run is withdrawn only while it is in phase
+        ``planned`` with no admitted write, no unresolved receipt other than a cancel, and no
+        unfinished execution. Otherwise the run is left unchanged and the receipt is completed
+        with the matching refusal: ``run-execution-conflict`` when other work holds the run,
+        ``run-already-cancelled`` for a cancelled run, ``execution-terminal`` for any other phase.
+        A retry with the same key replays what this transaction stored. ``events`` are written
+        only with a withdrawal, in the same transaction (spec 017, FR-014).
+
+        Returns:
+            Whether this call withdrew the run.
+
+        Raises:
+            ValueError: The receipt is not awaiting completion; nothing is stored.
+        """
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql("UPDATE product_runs SET run_id = run_id WHERE run_id = ?"), (run_id,))
+                cursor.execute(self._sql("SELECT phase FROM product_runs WHERE run_id = ?"), (run_id,))
+                row = cursor.fetchone()
+                refusal = self._withdrawal_refusal(cursor, run_id, receipt.receipt_id, None if row is None else row[0])
+                withdrawn = refusal is None
+                if refusal is None:
+                    cursor.execute(
+                        self._sql(
+                            "UPDATE product_runs SET phase = 'cancelled', outcome = 'cancelled', finished_at = ? "
+                            "WHERE run_id = ? AND phase = 'planned'"
+                        ),
+                        (_utc_iso(cancelled_at), run_id),
+                    )
+                    for event in events:
+                        self._insert_event(cursor, event)
+                    status, body = 200, response
+                else:
+                    status, body = refusal
+                self._answer_receipt_row(
+                    cursor, receipt.receipt_id, response_status=status, response_body=body, updated_at=updated_at
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return withdrawn
+
+    def _withdrawal_refusal(
+        self, cursor: _Cursor, run_id: str, receipt_id: str, phase: str | None
+    ) -> tuple[int, dict[str, Any]] | None:
+        """Return the refusal a withdrawal stores, or None when the locked run may be withdrawn."""
+        if phase is None:
+            return 404, approval_error_body(
+                404, "run-not-found", "the requested Sync run does not exist", run_id=run_id, mutation_id=receipt_id
+            )
+        if phase == "cancelled":
+            return 409, approval_error_body(
+                409, "run-already-cancelled", RUN_ALREADY_CANCELLED_MESSAGE, run_id=run_id, mutation_id=receipt_id
+            )
+        if phase != "planned":
+            return 409, approval_error_body(
+                409,
+                "execution-terminal",
+                "the service execution is already terminal",
+                run_id=run_id,
+                mutation_id=receipt_id,
+            )
+        if self._reservation_refused(cursor, run_id, receipt_id, admit_write=True):
+            return 409, _run_execution_conflict_response(run_id, receipt_id)
+        return None
+
+    def _answer_receipt_row(
+        self,
+        cursor: _Cursor,
+        receipt_id: str,
+        *,
+        response_status: int,
+        response_body: Mapping[str, Any],
+        updated_at: datetime,
+    ) -> None:
+        """Complete a receipt the service answers itself, with no flow run, in the caller's transaction."""
+        cursor.execute(
+            self._sql(
+                "UPDATE mutation_receipts SET state = 'accepted', response_status = ?, response_body = ?, "
+                "updated_at = ? WHERE receipt_id = ? AND state IN ('reserved', 'processing')"
+            ),
+            (response_status, _json(response_body), updated_at.isoformat(), receipt_id),
+        )
+        if cursor.rowcount != 1:
+            msg = f"Mutation receipt {receipt_id!r} is unavailable for completion"
+            raise ValueError(msg)
+
+    def _unfinished_execution_purpose(self, cursor: _Cursor, run_id: str) -> str | None:
+        """Return the stage of the run's latest unfinished execution, or None when every execution finished."""
+        cursor.execute(
+            self._sql(
+                "SELECT purpose FROM prefect_executions WHERE run_id = ? AND terminal_at IS NULL "
+                "ORDER BY position DESC LIMIT 1"
+            ),
+            (run_id,),
+        )
+        row = cursor.fetchone()
+        return None if row is None else str(row[0])
+
+    def _approval_refusal(
+        self, cursor: _Cursor, run_id: str, receipt_id: str, *, active_stage: str | None = None
+    ) -> tuple[int, dict[str, Any]]:
+        """Return the status and refusal a losing approval stores, read in the losing transaction.
+
+        ``active_stage`` names the unfinished execution that refused the approval, if any; it is
+        reported before an existing approval, in the order the service checks the two.
+        """
+        cursor.execute(
+            self._sql(
+                "SELECT phase, approved_by, approved_at, approved_checksum, approval_reason "
+                "FROM product_runs WHERE run_id = ?"
+            ),
+            (run_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return 404, approval_error_body(
+                404, "run-not-found", "the requested Sync run does not exist", run_id=run_id, mutation_id=receipt_id
+            )
+        if row[0] == "cancelled":
+            return 409, approval_error_body(
+                409, "run-cancelled", RUN_CANCELLED_MESSAGE, run_id=run_id, mutation_id=receipt_id
+            )
+        existing = RunApproval.from_columns(row[1], row[2], row[3], row[4])
+        if existing is not None and active_stage is None:
+            return 409, already_approved_body(existing, run_id=run_id, mutation_id=receipt_id)
+        return 409, approval_error_body(
+            409,
+            "run-not-approvable",
+            not_approvable_message(str(row[0]), active_stage),
+            run_id=run_id,
+            mutation_id=receipt_id,
+        )
 
     def complete_mutation(
         self,
@@ -3484,6 +3755,59 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Look up the durable receipt for an actor and hashed client key."""
         return self._records.lookup_mutation(actor, key_digest)
 
+    def record_approval(
+        self,
+        run_id: str,
+        approval: RunApproval,
+        receipt: MutationReceipt,
+        response: Mapping[str, Any],
+        *,
+        events: Sequence[AuditEvent] = (),
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """Store a run's one approval with its request's secret-safe response and events, or the stored refusal.
+
+        Returns:
+            Whether this call stored the approval; when it did not, the receipt holds the refusal
+            and no event of ``events`` is written.
+        """
+        sanitized_approval = RunApproval.model_validate(_redact_value(approval.model_dump(mode="json"), secrets))
+        sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(response), secrets))
+        return self._records.record_approval(
+            run_id,
+            sanitized_approval,
+            receipt,
+            sanitized,
+            updated_at=datetime.now(timezone.utc),
+            events=tuple(_redact_event(event, secrets) for event in events),
+        )
+
+    def cancel_planned_run(
+        self,
+        run_id: str,
+        receipt: MutationReceipt,
+        response: Mapping[str, Any],
+        *,
+        cancelled_at: datetime,
+        events: Sequence[AuditEvent] = (),
+        secrets: Sequence[str] = (),
+    ) -> bool:
+        """Withdraw a finished plan with its request's secret-safe response and events, or store the refusal.
+
+        Returns:
+            Whether this call withdrew the run; when it did not, the receipt holds the refusal
+            and no event of ``events`` is written.
+        """
+        sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(response), secrets))
+        return self._records.cancel_planned_run(
+            run_id,
+            receipt,
+            sanitized,
+            cancelled_at=cancelled_at,
+            updated_at=datetime.now(timezone.utc),
+            events=tuple(_redact_event(event, secrets) for event in events),
+        )
+
     def lookup_mutation_for_execution(
         self, run_id: str, flow_run_id: str, operation: str
     ) -> LookupResult[MutationReceipt]:
@@ -3929,6 +4253,13 @@ def _is_canonical_uuid(value: str) -> bool:
         return False
 
 
+def _approval_columns(approval: RunApproval | None) -> tuple[str | None, str | None, str | None, str | None]:
+    """Return the four stored ``product_runs`` approval columns for ``approval``."""
+    if approval is None:
+        return None, None, None, None
+    return approval.approved_by, _utc_iso(approval.approved_at), approval.plan_checksum, approval.reason
+
+
 def _stored_side_read(value: str | None, *, run_id: str, column: str) -> dict[str, Any] | None:
     """Parse one stored side-read column; a value that is not a JSON object reads as ``None``.
 
@@ -3984,6 +4315,7 @@ def _run_from_rows(
             # SQLite stores a BOOLEAN column as 0/1; PostgreSQL returns a bool.
             "reconciliation_required": bool(row[14]),
             "destination_branch": row[15],
+            "approval": RunApproval.from_columns(row[16], row[17], row[18], row[19]),
             "artifact_refs": [_reference_from_row(item).model_dump() for item in references],
             "prefect_executions": [
                 {

@@ -1836,6 +1836,7 @@ def test_confirmation_schema_errors_and_openapi_contract(
         "/runs/{run_id}/artifacts/{artifact_id}",
         "/runs/{run_id}/verify",
         "/runs/{run_id}/apply",
+        "/runs/{run_id}/approve",
         "/runs/{run_id}/cancel",
         "/status",
         "/version",
@@ -2414,6 +2415,31 @@ def test_a_new_run_records_the_branch_its_worker_plans_against(
     assert resolved_endpoint(settings or {}, worker_branch)[1] == expected
 
 
+@pytest.mark.parametrize("requested", [None, "review"], ids=["default-branch", "requested-branch"])
+def test_verify_checks_the_destination_branch_the_run_was_created_for(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    requested: str | None,
+) -> None:
+    """R4: the verify stage compares the plan with the branch the run stored, not a default."""
+    client, projection, orchestration = service_api
+    version = projection.create_configuration(_package_variant(name="verify-branch-inventory", branch=None))
+    created = _create_for(client, version, key=f"verify-branch-{requested}", branch=requested)
+    run_id = cast("str", created["run_id"])
+    _publish_plan(projection, run_id)
+    _settle_open_executions(projection, run_id)
+
+    response = client.post(
+        f"/runs/{run_id}/verify",
+        headers={**READ, "Idempotency-Key": f"verify-branch-check-{requested}"},
+        json={"reason": "check before the window"},
+    )
+
+    assert response.status_code == 202, response.text
+    submitted, _key = orchestration.submissions[-1]
+    assert submitted["stage"] == "verify"
+    assert submitted["branch"] == created["destination_branch"] == (requested or "main")
+
+
 def test_a_run_stored_without_a_branch_shows_null(
     service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
 ) -> None:
@@ -2431,8 +2457,8 @@ def test_a_run_stored_without_a_branch_shows_null(
 @pytest.mark.parametrize(
     ("token", "expected"),
     [
-        (OWNER_TOKEN, {"actor": "owner", "administrator": False}),
-        (ADMIN_TOKEN, {"actor": "admin", "administrator": True}),
+        (OWNER_TOKEN, {"actor": "owner", "administrator": False, "approval_required": False}),
+        (ADMIN_TOKEN, {"actor": "admin", "administrator": True, "approval_required": False}),
     ],
     ids=["owner", "admin"],
 )
@@ -2441,7 +2467,7 @@ def test_the_token_check_returns_exactly_the_actor_and_administrator_flag(
     token: str,
     expected: dict[str, object],
 ) -> None:
-    """Spec US4 scenario 1: the body names the actor and the flag, and nothing else."""
+    """Spec US4 scenario 1: the body names the actor, the flag and the approval setting, and nothing else."""
     client, projection, orchestration = service_api
 
     response = client.get("/me", headers={"Authorization": f"Bearer {token}"})
@@ -2451,6 +2477,24 @@ def test_the_token_check_returns_exactly_the_actor_and_administrator_flag(
     assert token not in response.text
     assert projection.audit_events() == ()
     assert orchestration.submissions == []
+
+
+@pytest.mark.parametrize(("value", "expected"), [("true", True), ("off", False)], ids=["on", "off"])
+def test_the_token_check_reports_whether_the_site_requires_approval(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+    *,
+    expected: bool,
+) -> None:
+    """Spec 019 FR-017: `GET /me` reports `INFRAHUB_SYNC_REQUIRE_APPROVAL`, read per request."""
+    client, _projection, _orchestration = service_api
+    monkeypatch.setenv("INFRAHUB_SYNC_REQUIRE_APPROVAL", value)
+
+    response = client.get("/me", headers={"Authorization": f"Bearer {OWNER_TOKEN}"})
+
+    assert response.status_code == 200
+    assert response.json()["approval_required"] is expected
 
 
 @pytest.mark.parametrize(

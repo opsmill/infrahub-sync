@@ -6,13 +6,15 @@ The Infrahub Sync CLI is a client of the Sync API. The Sync service stores your
 configuration packages and plans. Its worker connects to the source and the destination.
 The CLI does not load adapters and does not run a sync locally.
 
-A reviewed sync has five steps:
+A reviewed sync has these steps:
 
 1. Register the configuration package.
 2. Validate the registered version.
 3. Create a plan.
 4. Review the plan.
-5. Apply the reviewed plan.
+5. Optional: verify the plan against the destination.
+6. Optional, unless the Sync API requires it: approve the plan.
+7. Apply the reviewed plan.
 
 ## Connect the CLI to the Sync API
 
@@ -173,14 +175,84 @@ contain. Apply never executes a delete. The detailed output marks each delete as
 destination side was not read in full, the plan contains no deletes and the review says so.
 See [Deletes in a plan](./reference/cache-layout#deletes-in-a-plan).
 
-To check the saved plan against the current destination without writing, run:
+After the review, three commands follow, each with one purpose:
+
+1. `verify` checks that the saved plan would still apply now, without writing.
+2. `approve` records that you accept the plan, without writing.
+3. `apply` writes the plan to the destination.
+
+`verify` is always optional. `approve` is optional too, unless the Sync API requires
+approval: then `apply` refuses a run that has no approval. See
+[Require an approved plan](#require-an-approved-plan).
+
+## Verify the plan against the destination
 
 ```bash
 infrahub-sync verify RUN_ID --reason "check plan before apply"
 ```
 
-`verify` acts on the plan that the run already saved; it does not compute a new plan. Apply
-runs the same checks again before its first write, so this step is optional.
+`verify` runs every check that `apply` runs before its first write, and writes nothing. The
+worker connects to the destination for this, with the same credentials and network access
+that `apply` uses, so `verify` fails when it cannot reach the destination. The checks are:
+
+- The saved plan files are unchanged: the plan belongs to this run, the plan checksum and the
+  saved source snapshot are unchanged, and the configuration version and plan format are the
+  ones the plan was created with.
+- The current destination schema matches the schema the plan was made against.
+- The destination URL and branch match the ones the plan recorded.
+- The destination adapter can apply a saved plan, and every planned field still exists in the
+  destination schema and can still be written.
+- For a destination that records lineage, such as Infrahub: the plan records an import
+  account, the apply would run with that same import account, and the `source` and `owner`
+  nodes that the package names exist in the destination.
+
+On success, `verify` prints one `check: NAME passed` line for each check, in the order it ran
+them, such as `check: destination_schema passed`. When a check fails, `verify` exits with a
+non-zero status and the run's phase stays `planned`. Before the `error: run-terminal` line,
+`verify` prints `verify failed: ERROR_TYPE`, one `failed_check: NAME` line for each check
+that failed, such as `failed_check: destination_binding`, and, when the run recorded a next
+action, a `hint:` line that says what to do. `runs results RUN_ID` shows the same failure under `verify_failure`: `failed_checks`
+names the check, `error_type` names the refusal, and `next_action` says what to do. The
+refusal is the same one that `apply` reports when it refuses on that check. A run with no registered configuration
+binding cannot be applied by the service; `verify` checks only its saved files, and its
+results report `destination_checked: false`.
+
+`verify` describes the destination when it read it. It does not change the run's phase, does
+not compute a new plan, and does not wait for an `apply` of the same configuration that is
+writing. `apply` runs the same checks again before its first write.
+
+### Is `verify` an approval?
+
+No. `verify` records no decision, and a run that passed `verify` is not approved. To record
+that you accept the plan, use `approve`.
+
+## Approve the plan
+
+```bash
+infrahub-sync approve RUN_ID --expected-checksum CHECKSUM \
+  --reason "reviewed by the network team"
+```
+
+`approve` records on the run who approved the plan, when, and which checksum they approved.
+It writes nothing to the destination and starts no execution. `--reason` is optional. The
+command prints the run, its approval, and the counts of the plan approved:
+`approved_creates`, `approved_updates` and `approved_deletes_recorded`. `runs show RUN_ID`
+then prints `approved_by`, `approved_at` and `approved_checksum`. The run stays in phase
+`planned`.
+
+The service refuses an approval in these cases. It stores no approval on the run, and records
+the refusal in the audit history:
+
+- The checksum differs from the saved plan's checksum (`checksum-mismatch`).
+- The saved plan's checksum could not be confirmed (`plan-checksum-unverified`).
+- The run is not in phase `planned`, or a stage of the run is still running
+  (`run-not-approvable`).
+- The run was cancelled (`run-cancelled`).
+- The run already has an approval (`already-approved`). The error shows the existing approval.
+
+Only the actor who started the run, or an administrator, can approve it. Approval does not run
+the destination checks: when the destination changes after the approval, `apply` still
+refuses, and `verify` reports the failure beforehand.
 
 ## Apply the reviewed plan
 
@@ -208,6 +280,44 @@ therefore hold a value the destination schema does not offer, such as a NetBox d
 `deprecated`, and `reserved`. Infrahub rejects that write during the apply, and the apply stops
 there. Translate such values with a transform in the package; see the
 [Schema mapping reference](./reference/schema-mapping.mdx).
+
+The service refuses to apply a run in phase `cancelled` (`run-cancelled`). Create a new plan
+run instead.
+
+## Require an approved plan
+
+A site can require an approval before every apply. The operator of the Sync API sets
+`INFRAHUB_SYNC_REQUIRE_APPROVAL=true` on the service; see the
+[Compose deployment](./compose-deployment.mdx). It is off by default. To find whether it is
+on, run `infrahub-sync whoami`: it prints `approval_required: true` or
+`approval_required: false`.
+
+When the setting is on:
+
+- `apply` refuses a run that has no approval (`approval-required`), and tells you to run
+  `approve` first.
+- `apply` refuses a run whose approval names a different checksum from the one you pass with
+  `--expected-checksum` (`approval-checksum-mismatch`). The error shows both checksums.
+- `sync` is refused before the run starts (`approval-required-for-sync`). Use `plan`,
+  `approve` and `apply` instead.
+
+The service reads the setting when each `apply` or `sync` request arrives. Approvals recorded
+while the setting was off still count after it is turned on. When the setting is off,
+approvals stay recorded and visible, and `apply` does not read them.
+
+## Withdraw a plan
+
+To withdraw a finished plan, approved or not, cancel its run:
+
+```bash
+infrahub-sync runs cancel RUN_ID --yes
+```
+
+The run's phase becomes `cancelled`. Its approval, if it has one, stays recorded and visible.
+Nothing is written to the destination or sent to Prefect. After that, `approve` and `apply`
+refuse the run (`run-cancelled`); to try again, create a new plan run. Cancelling a run that is
+already cancelled is refused (`run-already-cancelled`), and cancelling an applied run, or a run
+whose plan failed, is refused as before.
 
 ## Find runs
 
@@ -244,9 +354,10 @@ run applied most recently, which can be an older plan that you applied after a n
 is shown with the time its apply finished (`finished_at`).
 
 `runs artifacts RUN_ID` lists the files that the service kept for a run.
-`runs cancel RUN_ID` cancels a run that has not finished. It asks for confirmation, or
-refuses when it cannot ask; `--yes` skips the question. Cancelling a run that is writing can
-leave an `ambiguous` outcome, because the worker may already have changed the destination.
+`runs cancel RUN_ID` cancels a run's stage that is still running, or withdraws a finished
+plan; see [Withdraw a plan](#withdraw-a-plan). It asks for confirmation, or refuses when it
+cannot ask; `--yes` skips the question. Cancelling a run that is writing can leave an
+`ambiguous` outcome, because the worker may already have changed the destination.
 
 ### Find a run's flow runs in Prefect
 
@@ -273,7 +384,11 @@ next step, and the flow run's Artifacts tab holds a summary of the Sync run. See
 
 `plan`, `verify`, `sync`, and `apply` print the final phase and outcome of a failed run, such
 as `phase: plan-failed`. When the run recorded the class of the error, the command also prints
-`<stage> failed: <ErrorClass>`, for example `plan failed: ValueError`.
+`<stage> failed: <ErrorClass>`, for example `plan failed: ValueError`. When `verify` or `apply`
+fails on a check that runs before the first write, the command then prints one
+`failed_check: NAME` line for each check that failed, such as `failed_check: destination_schema`,
+and `runs results RUN_ID` lists the same names under `failed_checks`. `verify` and `apply` name
+the same check for the same problem.
 
 For some failures the run also records a cause that you can act on, and the command prints it
 on a `cause:` line:
@@ -295,7 +410,7 @@ When the run was recorded by an earlier Sync API release that recorded no next a
 command prints the fixed hint for a changed schema or a saved plan's format version, as earlier
 releases did. `runs results RUN_ID`
 prints the same fields, as `cause`, `next_action` and `infrahub_error`, under `plan_failure`,
-`sync_failure` or `apply_failure`.
+`sync_failure` or `apply_failure`, and a failed `verify` under `verify_failure`.
 
 When the destination branch does not exist, the `cause:` line names the branch, and the
 `hint:` line says to create it or to start the run with `--branch <existing branch>`. A
@@ -362,7 +477,9 @@ infrahub-sync sync --config-id CONFIG_ID --version 1 --branch BRANCH \
 
 The worker saves the plan before the first write, so you can read it afterwards with
 `runs plan`. `sync` does not apply a plan that you reviewed earlier; it creates a new one. To
-approve the exact operations before they are written, use `plan`, `runs plan`, and `apply`.
+review the exact operations before they are written, use `plan`, `runs plan`, and `apply`.
+When the Sync API requires approval, `sync` is refused; see
+[Require an approved plan](#require-an-approved-plan).
 
 ## Reference
 
@@ -395,14 +512,14 @@ and the retry key. Check the run later with `runs show RUN_ID` or `runs plan RUN
 
 ### Audit reasons
 
-`configs register`, `configs version`, `plan`, `verify`, `sync`, `apply`, and `runs cancel`
+`configs register`, `configs version`, `plan`, `verify`, `approve`, `sync`, `apply`, and `runs cancel`
 accept `--reason`. The
 reason is optional. When you give one, the service records it in the audit history of the
 request. When you omit it, the service records the request without a reason.
 
 ### Retry keys
 
-`configs register`, `configs version`, `plan`, `verify`, `sync`, `apply`, and `runs cancel`
+`configs register`, `configs version`, `plan`, `verify`, `approve`, `sync`, `apply`, and `runs cancel`
 accept `--idempotency-key`. If you omit it, the CLI generates a key and prints it. If the connection
 fails before you see a response, run the same command again with that key. The service then
 returns the original response instead of starting a second operation. See

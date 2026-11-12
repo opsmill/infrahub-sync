@@ -18,6 +18,12 @@ MAX_REGISTRY_VERSION = 2**63 - 1
 # Equal to the Sync API's ``DEFAULT_LIMIT``; the store does not import the client package.
 DEFAULT_LIMIT = 50
 _INVALID_SERVICE_WORKER_ID = "service worker identity is invalid"
+# Run mutations the service answers in the request itself, without submitting a flow run:
+# their accepted receipt stores a success response with no flow-run ID. The receipt's
+# ``operation`` column is plain text, so this set is the only place an operation is named.
+SERVICE_ANSWERED_OPERATIONS = frozenset({"approve"})
+# The status of a ``cancel`` receipt that withdrew a finished plan (spec 019, User Story 4).
+WITHDRAWN_CANCEL_STATUS = 200
 _LEGAL_EXECUTION_VERDICTS = {
     ("completed", "succeeded"),
     ("failed", "failed"),
@@ -168,6 +174,111 @@ class PrefectExecutionLink(BaseModel):
         return self
 
 
+class RunApproval(BaseModel):
+    """The one recorded approval of a run's published plan.
+
+    Stored at most once per run and never changed or removed. ``approved_by``,
+    ``approved_at`` and ``plan_checksum`` are required together, so a partial approval
+    cannot be built; ``reason`` is the optional audit reason of the approve request.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    approved_by: str = Field(min_length=1)
+    approved_at: datetime
+    plan_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    reason: str | None = None
+
+    @field_validator("approved_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            msg = "approval timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
+
+    @classmethod
+    def from_columns(
+        cls,
+        approved_by: str | None,
+        approved_at: str | datetime | None,
+        approved_checksum: str | None,
+        approval_reason: str | None,
+    ) -> RunApproval | None:
+        """Build the approval from its four stored columns, or ``None`` when none is stored.
+
+        ``approved_at`` may be the stored ISO 8601 text; Pydantic parses it.
+
+        Raises:
+            ValueError: Some but not all of the required columns are present, or a reason
+                is stored without an approval.
+        """
+        required = (approved_by, approved_at, approved_checksum)
+        if all(value is None for value in required):
+            if approval_reason is not None:
+                msg = "an approval reason requires a stored approval"
+                raise ValueError(msg)
+            return None
+        if any(value is None for value in required):
+            msg = "approval columns must be all absent or all present"
+            raise ValueError(msg)
+        return cls.model_validate(
+            {
+                "approved_by": approved_by,
+                "approved_at": approved_at,
+                "plan_checksum": approved_checksum,
+                "reason": approval_reason,
+            }
+        )
+
+
+RUN_CANCELLED_MESSAGE = (
+    "the run was cancelled, so its plan cannot be approved or applied; create a new plan run to try again"
+)
+RUN_ALREADY_CANCELLED_MESSAGE = "the run is already cancelled"
+
+
+def not_approvable_message(phase: str, active_stage: str | None = None) -> str:
+    """Say why a run cannot be approved: the stage still running, or the run's phase."""
+    if active_stage is not None:
+        return f"the run cannot be approved while a {active_stage} execution is in progress"
+    return f"the run cannot be approved in phase {phase!r}; only a run in phase 'planned' can be approved"
+
+
+def approval_error_body(
+    status: int,
+    code: str,
+    message: str,
+    *,
+    run_id: str,
+    mutation_id: str | None,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the error envelope of a refused approval, as the Sync API sends and a receipt stores it."""
+    error: dict[str, Any] = {
+        "code": code,
+        "message": message,
+        "status": status,
+        "run_id": run_id,
+        "mutation_id": mutation_id,
+    }
+    if details is not None:
+        error["details"] = details
+    return {"error": error}
+
+
+def already_approved_body(approval: RunApproval, *, run_id: str, mutation_id: str | None) -> dict[str, Any]:
+    """Return the ``already-approved`` refusal, carrying the approval the run already has."""
+    return approval_error_body(
+        409,
+        "already-approved",
+        f"the run's plan was already approved by {approval.approved_by!r}",
+        run_id=run_id,
+        mutation_id=mutation_id,
+        details={"approval": approval.model_dump(mode="json")},
+    )
+
+
 class ProductRun(BaseModel):
     """One compact Sync-owned product record.
 
@@ -198,6 +309,9 @@ class ProductRun(BaseModel):
     # The effective Infrahub branch the run writes to, recorded when the run is created.
     # ``None`` for runs created before the store recorded it.
     destination_branch: str | None = None
+    # The run's one approval of its published plan, or ``None`` when it was never approved.
+    # Approval is not a phase: an approved run stays in phase ``planned``.
+    approval: RunApproval | None = None
     artifact_refs: tuple[ArtifactReference, ...] = ()
     prefect_executions: tuple[PrefectExecutionLink, ...] = ()
 
@@ -350,10 +464,17 @@ class MutationReceipt(BaseModel):
             msg = "an accepted mutation receipt requires its stored status and response"
             raise ValueError(msg)
         # A run receipt answered with a refusal never reached Prefect, so it has no
-        # flow-run ID to carry; only an accepted submission does.
+        # flow-run ID to carry; only an accepted submission does. An operation the
+        # service answers itself, such as ``approve``, never submits a flow run.
+        # A ``cancel`` that withdraws a finished plan is answered ``200`` by the service, with no
+        # execution to target; a ``cancel`` of an active execution is answered ``202`` and names it.
+        withdrawal = self.operation == "cancel" and self.response_status == WITHDRAWN_CANCEL_STATUS
+        submits_flow_run = (
+            self.resource_kind == "run" and self.operation not in SERVICE_ANSWERED_OPERATIONS and not withdrawal
+        )
         if (
             self.state == "accepted"
-            and self.resource_kind == "run"
+            and submits_flow_run
             and self.flow_run_id is None
             and self.response_status is not None
             and self.response_status < 400

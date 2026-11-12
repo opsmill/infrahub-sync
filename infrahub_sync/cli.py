@@ -26,6 +26,7 @@ from pydantic import ValidationError
 from infrahub_sync.client import (
     APIError,
     ApplyRunRequest,
+    ApproveRunRequest,
     CancelRunRequest,
     ClientInputError,
     CompatibilityError,
@@ -637,6 +638,15 @@ def _echo_run(resource: RunResource) -> None:
             ("prefect_flow_run_url", selected.prefect_flow_run_url if selected is not None else None),
         )
     )
+    # Printed only for an approved run: an unapproved run has no approval lines at all.
+    if run.approval is not None:
+        _echo_fields(
+            (
+                ("approved_by", run.approval.approved_by),
+                ("approved_at", run.approval.approved_at.isoformat()),
+                ("approved_checksum", run.approval.plan_checksum),
+            )
+        )
 
 
 def _echo_reads(resource: RunResource) -> None:
@@ -857,6 +867,7 @@ def _echo_failure_record(failure: Mapping[str, Any], *, stage: str, err: bool) -
     ):
         return
     typer.echo(f"{stage} failed: {error_type}", err=err)
+    _echo_failed_checks(failure.get("failed_checks"), err=err)
     cause = failure.get("cause")
     if isinstance(cause, str) and cause:
         typer.echo(f"cause: {_display(cause[:MAX_FAILURE_CAUSE_TEXT])}", err=err)
@@ -875,6 +886,19 @@ def _echo_failure_record(failure: Mapping[str, Any], *, stage: str, err: bool) -
             hint = RECOVERY_NEXT_ACTIONS.get(cast("RecoveryAction", recovery_action))
     if hint is not None:
         typer.echo(f"hint: {hint}", err=err)
+
+
+def _echo_failed_checks(recorded: object, *, err: bool = True) -> None:
+    """Print one `failed_check:` line per pre-write check a failed `verify` or `apply` recorded (SC-004).
+
+    The names come from this repository's own check vocabulary; a recorded value that is not a
+    short ASCII identifier is skipped, so the record cannot reach the terminal as free text.
+    """
+    if not isinstance(recorded, list):
+        return
+    for name in recorded:
+        if isinstance(name, str) and len(name) <= 128 and name.isascii() and name.isidentifier():
+            typer.echo(f"failed_check: {name}", err=err)
 
 
 def _waiting_client(ctx: typer.Context, *, wait_timeout: float, poll_interval: float) -> SyncClient:
@@ -1065,6 +1089,35 @@ def apply_cmd(
             _echo_completed_destination_branch(client, completed.run.run_id)
 
 
+@app.command("approve")
+def approve_cmd(
+    ctx: typer.Context,
+    *,
+    run_id: str = typer.Argument(..., help="Service-issued run ID whose saved plan was reviewed."),
+    expected_checksum: str = typer.Option(..., "--expected-checksum", help="Checksum printed by `runs plan`."),
+    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the approval."),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
+) -> None:
+    """Record approval of the named run's saved plan without applying it."""
+    with _client_errors():
+        client = _client(ctx)
+        request = cast(
+            "ApproveRunRequest", _request(ApproveRunRequest, expected_checksum=expected_checksum, reason=reason)
+        )
+        key = _idempotency_key(idempotency_key)
+        _echo_idempotency_key(key)
+        # Approval completes in the request, so there is no execution to wait for.
+        approved = client.approve(run_id, request, key)
+        _echo_run(approved)
+        _echo_fields(
+            (
+                ("approved_creates", approved.plan_summary.creates),
+                ("approved_updates", approved.plan_summary.updates),
+                ("approved_deletes_recorded", approved.plan_summary.deletes_recorded),
+            )
+        )
+
+
 @app.command("verify")
 def verify_cmd(
     ctx: typer.Context,
@@ -1076,19 +1129,38 @@ def verify_cmd(
     wait_timeout: float = typer.Option(DEFAULT_WAIT_TIMEOUT, "--wait-timeout", help="Bounded wait in seconds."),
     poll_interval: float = typer.Option(DEFAULT_POLL_INTERVAL, "--poll-interval", help="Poll interval in seconds."),
 ) -> None:
-    """Start verification of the saved plan of the named run."""
+    """Check that the named run's saved plan would apply now, without writing."""
     with _client_errors():
         client = _waiting_client(ctx, wait_timeout=wait_timeout, poll_interval=poll_interval)
-        completed = _submit_and_wait(
-            client,
-            lambda key: client.verify(run_id, cast("VerifyRunRequest", _request(VerifyRunRequest, reason=reason)), key),
-            idempotency_key=idempotency_key,
-            wait=wait,
-            wait_timeout=wait_timeout,
-            poll_interval=poll_interval,
-        )
+        try:
+            # Only the wait raises RunTerminalError; submitting the verification cannot.
+            completed = _submit_and_wait(
+                client,
+                lambda key: client.verify(
+                    run_id, cast("VerifyRunRequest", _request(VerifyRunRequest, reason=reason)), key
+                ),
+                idempotency_key=idempotency_key,
+                wait=wait,
+                wait_timeout=wait_timeout,
+                poll_interval=poll_interval,
+            )
+        except RunTerminalError as error:
+            _echo_stage_failure(client, error.run_id, stage="verify")
+            raise
         if wait:
             _echo_run(completed)
+            _echo_verification_checks(completed)
+
+
+def _echo_verification_checks(resource: RunResource) -> None:
+    """Print one line per pre-write check the run's verification passed, in the order it ran them."""
+    verification = resource.run.results.get("verification")
+    checks = verification.get("checks") if isinstance(verification, dict) else None
+    if not isinstance(checks, list):
+        return
+    for check in checks:
+        if isinstance(check, str):
+            typer.echo(_display(f"check: {check} passed"))
 
 
 @app.command("whoami")
@@ -1096,7 +1168,13 @@ def whoami_cmd(ctx: typer.Context) -> None:
     """Show the actor the API token authenticates as and whether it is an administrator."""
     with _client_errors():
         principal = _client(ctx).me()
-        _echo_fields((("actor", principal.actor), ("administrator", principal.administrator)))
+        _echo_fields(
+            (
+                ("actor", principal.actor),
+                ("administrator", principal.administrator),
+                ("approval_required", principal.approval_required),
+            )
+        )
 
 
 def _run_row(run: PublicRunResource) -> str:
@@ -1170,7 +1248,9 @@ def runs_cancel(
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
     yes: bool = typer.Option(False, "--yes", help="Cancel without asking for confirmation."),  # noqa: FBT003
 ) -> None:
-    """Request cancellation of a run. Cancelling a write can leave its outcome ambiguous."""
+    """Cancel a run. Cancelling a finished plan withdraws it so it cannot be approved or applied;
+    cancelling a write can leave its outcome ambiguous.
+    """
     with _client_errors():
         if not yes:
             if not _stdin_is_interactive():
@@ -1181,7 +1261,9 @@ def runs_cancel(
                 )
                 raise typer.Exit(2)
             if not typer.confirm(
-                f"Cancel run {_display(run_id)}? Cancelling a write can leave an ambiguous outcome.", default=False
+                f"Cancel run {_display(run_id)}? A finished plan is withdrawn; "
+                "cancelling a write can leave an ambiguous outcome.",
+                default=False,
             ):
                 typer.echo("not cancelled", err=True)
                 raise typer.Exit(1)
