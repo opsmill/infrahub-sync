@@ -30,8 +30,8 @@ external store runs. US5 (released image) is independent.
 
 ## Phase 2: Foundational
 
-- [ ] T003 [P] Add failing unit tests for `build_s3_client` in `tests/service/test_storage.py`: path and virtual addressing reach `botocore.config.Config(s3={"addressing_style": ...})`; an unknown style raises `ValueError` with `INFRAHUB_SYNC_S3_ADDRESSING_STYLE must be path or virtual`; an endpoint with a user name or password raises the `storage.py:198` message; neither message holds the value
-- [ ] T004 Implement `build_s3_client(values, builder=boto3.client)` in `infrahub_sync/service/storage.py` and make `service_product_projection` (`storage.py:208-231`) use it (research R1 item 2)
+- [X] T003 [P] Add failing unit tests for `build_s3_client` in `tests/service/test_storage.py`: path and virtual addressing reach `botocore.config.Config(s3={"addressing_style": ...})`; an unknown style raises `ValueError` with `INFRAHUB_SYNC_S3_ADDRESSING_STYLE must be path or virtual`; an endpoint with a user name or password raises the `storage.py:198` message; neither message holds the value
+- [X] T004 Implement `build_s3_client(values, builder=boto3.client)` in `infrahub_sync/service/storage.py` and make `service_product_projection` (`storage.py:208-231`) use it (research R1 item 2)
 
 ## Phase 3: User Story 1 - Store plans and run files in the team's own S3-compatible store (Priority: P1) 🎯 MVP
 
