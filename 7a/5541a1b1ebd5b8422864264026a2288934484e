@@ -1,0 +1,25 @@
+examples/netbox_to_infrahub/README.md
+  s_d199771aa41449::t_525c6ff935c90c 104-108
+  s_d199771aa41449::t_7caa716432688e 101-103,109-111
+dev/specs/019-plan-problem-reporting/tasks.md
+  s_d199771aa41449::t_4df597671cf41a 189
+dev/specs/019-plan-problem-reporting/opsmill-implement-report.md
+  s_d199771aa41449::t_1721731493f506 198-200
+  s_d199771aa41449::t_6d36c00bdd8a84 3,5-10,12-14,16,18-23,25,27-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7a5541a1b1ebd5b8422864264026a2288934484e",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
