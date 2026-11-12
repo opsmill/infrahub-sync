@@ -34,6 +34,7 @@
 - The specification names compose files, `.env` settings, test paths and the `cosign` identity.
   These are the product surface a deployment team and an OpsMill engineer work with, not
   implementation choices, so they are kept, as in specifications 010 and 019.
-- How every credential variable reaches `sync-worker` without a fixed list of names (FR-008), and
-  whether the CA bundle may be a single file, are left to the plan.
-- Whether a linux/arm64 CI runner can run the lifecycle tier is not known; the plan finds out.
+- The credential list, the release, the arm64 fallback, the external test store and the CA bundle
+  form were settled in the clarification session of 2026-11-12.
+- Whether a linux/arm64 CI runner can run the lifecycle tier is still not known; SC-006 states the
+  fallback.

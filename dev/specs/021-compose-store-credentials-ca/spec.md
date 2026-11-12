@@ -6,10 +6,10 @@
 
 **Status**: Draft
 
-**Release**: not settled. Old specification 013 placed these items in the testing release.
-Specification 010 calls them "the remaining 3.0 blockers listed under Jira card INFP-692"
-([010 spec.md](../010-prefect-from-sync-image/spec.md), Summary and decision D-4). No source says
-which of the two releases they ship in.
+**Release**: the V3 testing release (clarified on 2026-11-12). Old specification 013 placed these
+items there; specification 010 calls them "the remaining 3.0 blockers listed under Jira card
+INFP-692" ([010 spec.md](../010-prefect-from-sync-image/spec.md), Summary and decision D-4). Work
+this specification names as out of scope belongs to 3.0 or 3.x.
 
 **Input**: rebuild of what is left of old specification 013 "Fewer images in the Compose
 deployment" on `feature/v3-develop` at `7d7aabba`. Specification 010 calls itself "the first of
@@ -118,7 +118,7 @@ These decisions of old 013 are not reopened:
 
 ### Decisions taken while writing this specification, to confirm at review
 
-- **A fixed list of credential variable names.** Compose cannot pass every variable that starts
+- **A fixed list of credential variable names** (confirmed on 2026-11-12, see "Clarifications"). Compose cannot pass every variable that starts
   with a prefix. Passing all of `.env` to the worker would give it the PostgreSQL administrator and
   Prefect database passwords, and a separate worker credential file is the kind of secret file
   ADR 0016 removed. The root compose file therefore names each credential variable it passes
@@ -149,9 +149,26 @@ These decisions of old 013 are not reopened:
   registered package references with `$credential` (`infrahub_sync/configuration/credentials.py:29`).
   The package author chooses the name; the Compose deployment passes only the names on the
   documented list of FR-008.
-- **CA bundle**: one or more public CA certificates that the operator names in `.env`. It never
-  holds a private key.
+- **CA bundle**: a host directory of public CA certificate files (`*.pem`, `*.crt`) that the
+  operator names in `.env`. It never holds a private key.
 - **Lifecycle tier**: the compose lifecycle tests, `uv run pytest -m compose tests/compose`.
+
+## Clarifications
+
+### Session 2026-11-12
+
+- Q: How does `sync-worker` receive the credentials of every bundled adapter? → A: A fixed list of
+  credential variable names in the compose file, taken from the shipped examples and adapter pages
+  plus one name for each remaining adapter credential setting (FR-008). No worker-only credential
+  file.
+- Q: Which release does this specification ship in? → A: The V3 testing release, all five user
+  stories.
+- Q: What meets SC-006 on arm64 if no CI runner can run the tier? → A: 10 runs in a row on an
+  arm64 host by hand, recorded in `research.md`; CI runs amd64 until an arm64 runner works.
+- Q: What do the lifecycle tests use as the team's own store? → A: A Silo instance outside the
+  deployment, over TLS from a test CA, with a bucket domain for virtual-hosted requests.
+- Q: In what form does the operator name the CA certificates? → A: A host directory of `*.pem` and
+  `*.crt` files only; no single-file form.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -348,7 +365,7 @@ SBOM commands.
   of six characters or more for those two logs, and say so.
 - **No linux/arm64 runner for the lifecycle tier in CI.** Today the arm64 runner is used only for
   the image build (`ci-docker-image.yml:108-109`). Whether it can run Docker Compose with the tier's
-  services is not known; the plan finds out.
+  services is not known. If it cannot, the arm64 runs of SC-006 are made by hand on an arm64 host.
 
 ## Requirements *(mandatory)*
 
@@ -392,8 +409,8 @@ SBOM commands.
   - say that moving from the bundled store to an external store does not copy earlier plans and
     run files
   - recommend `https` for an external store
-  - name the store OpsMill tests the deployment with, and name no other product as supported
-    unless a test covers it
+  - say that OpsMill tests the external store with a Silo instance outside the deployment, and name
+    no other product as supported unless a test covers it
   - say, in the paragraph on the bundled Silo store, that a team can use its own S3-compatible
     store instead
 
@@ -467,7 +484,8 @@ SBOM commands.
 
 - **FR-019**: The causes of the random failures of the lifecycle tier MUST be found and fixed or
   removed. Each cause MUST be recorded in `research.md` with its fix and the test that shows it.
-- **FR-020**: CI MUST run the lifecycle tier on linux/amd64 and on linux/arm64. The tier MUST cover
+- **FR-020**: CI MUST run the lifecycle tier on linux/amd64, and on linux/arm64 when a CI runner can
+  run it; otherwise the arm64 runs are made by hand on an arm64 host before release. The tier MUST cover
   the bundled store and an external store, the latter with path-style and with virtual-hosted-style
   requests.
 
@@ -546,8 +564,9 @@ SBOM commands.
 - **SC-005**: In the lifecycle tier, the leak checks of FR-018 find zero credential values in the
   output of every documented command, in every container log, and in the environment of every
   service outside the receiver list, within the boundary of decision 2.
-- **SC-006**: The lifecycle tier passes 10 runs in a row on linux/amd64 and 10 runs in a row on
-  linux/arm64 in CI.
+- **SC-006**: The lifecycle tier passes 10 runs in a row on linux/amd64 in CI and 10 runs in a row
+  on linux/arm64. The arm64 runs are in CI when a CI runner can run the tier; otherwise they run on
+  an arm64 host by hand and are recorded in `research.md`.
 - **SC-007**: The release notes of the next release name the Sync image digest, and that digest
   pulls the image and its SBOM from `registry.opsmill.io`.
 - **SC-008**: The compose contract tests find zero images other than the Sync image without a
@@ -557,13 +576,14 @@ SBOM commands.
 
 - Specification 010 "PR 2" is finished before work on this specification starts, so the preview
   stack and its `prefecthq/prefect` reference no longer exist (decision 1).
-- OpsMill tests the external store with an S3-compatible server outside the deployment that stands
-  in for a customer store. No source names the S3-compatible products customers run, so this
+- OpsMill tests the external store with a Silo instance outside the deployment, over TLS from a test
+  CA and with a bucket domain for virtual-hosted requests, that stands in for a customer store
+  (clarified on 2026-11-12). No source names the S3-compatible products customers run, so this
   specification promises no product by name.
 - The bundled store keeps path-style requests and the endpoint `http://object-store:9000` when no
   external store setting is set.
-- The CA bundle is a directory mounted read-only into the Sync services; whether a single file is
-  also accepted is a plan decision.
+- The CA bundle is a host directory of `*.pem` and `*.crt` files, mounted read-only into the three
+  services of FR-011. A single bundle file is not accepted (clarified on 2026-11-12).
 - The 10-run threshold of SC-006 comes from old 013 SC-010; no other source sets one.
 - Customer teams use only the adapters that Sync bundles in the testing release.
 
@@ -578,8 +598,8 @@ SBOM commands.
   worker holds, and its FR-014 adds the failure name `tls_certificate_rejected`. This specification
   passes the variables and the CA bundle; it does not change those reports. If 020 merges first,
   the documentation of FR-010 refers to its check; if not, FR-010 refers to it as planned.
-- **A linux/arm64 CI runner that can run Docker Compose.** Not known yet (FR-020); the plan finds
-  out.
+- **A linux/arm64 CI runner that can run Docker Compose.** Not known yet (FR-020). Without one,
+  the arm64 runs are made by hand (SC-006).
 - **Jira card INFP-692.** It still lists "temporary MinIO build" as a blocker (010 spec.md:534).
   Updating the card is outside this repository.
 

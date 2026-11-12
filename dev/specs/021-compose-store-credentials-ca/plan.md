@@ -159,8 +159,8 @@ changelog/+compose-store-credentials-ca.added.md
 ## Risks
 
 - **arm64 runner.** Whether `ubuntu-24.04-arm` runs the tier is not known (R6). If it cannot, SC-006
-  cannot be met in CI and the arm64 runs are recorded as a manual check on an arm64 host; the spec
-  is then updated.
+  cannot be met in CI and the arm64 runs are made by hand on an arm64 host and recorded in
+  `research.md`, as SC-006 allows (clarified on 2026-11-12).
 - **A random failure not found in 10 runs.** The 10-run threshold comes from old 013. Causes that do
   not appear in 20 runs are not found by this plan.
 - **Half-set store guard and name resolution.** The guard relies on `object-store` resolving only
@@ -172,8 +172,8 @@ changelog/+compose-store-credentials-ca.added.md
 These test fixtures are not decided by any source. The task that needs each one decides it and
 records the choice in `research.md`:
 
-- which S3-compatible server stands in for the external store, and how a virtual-hosted bucket name
-  resolves inside the test network (T016); FR-007 then names that server in the documentation
+- how a virtual-hosted bucket name resolves inside the test network for the Silo instance that
+  stands in for the external store (T016; the store itself was settled on 2026-11-12)
 - which server accepts a second create-only write, for the negative check (T017)
 - whether a recorded ACI server exists for the lifecycle tier, or which stand-in answers the ACI
   calls (T023)
