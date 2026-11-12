@@ -52,7 +52,9 @@ and `applied.append` ran, so a saved position never runs ahead of a commit.
 
 **Decision**: `StoreApplyProgressObserver` catches the store's errors broadly, as `service/read_progress.py` does
 for the same reason (two unrelated database drivers), logs a warning with the run identifier and the error class,
-and keeps the last successful save time. `should_stop()` returns true once no save has succeeded for 5 minutes.
+and keeps the time of the first failed attempt since the last success. `should_stop()` returns true once that
+first failed attempt is 5 minutes old and no save has succeeded since, so a quiet period between scheduled saves is
+never counted (critique E4).
 The engine checks it before each dispatch, next to `ownership.before_operation()`, and raises
 `ApplyProgressLostError`, which carries the partial `ApplyRecord`. Because at least one write was dispatched, the
 existing ADR 0010 exit records the run as interrupted.
@@ -72,6 +74,10 @@ resume_number))`. A resume reservation runs in one store transaction on the run'
 - no earlier resume admission is unfinished.
 
 The original `write_admissions` row stays, so every existing reader keeps its meaning.
+
+**`verify` on an interrupted run (critique E1)**: `_reserve_existing` refuses every stage on a run that holds a
+`write_admissions` row. The reservation gains one exception: a `verify` (a read stage) is admitted when the run is
+resumable (R1). Every other stage keeps today's refusal.
 
 **Rejected**: changing the `write_admissions` primary key. It needs a table rebuild on both backends and changes
 the meaning of a table that six code paths read.

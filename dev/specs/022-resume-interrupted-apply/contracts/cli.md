@@ -33,6 +33,7 @@ operation OPERATION_ID KIND create: matches
 operation OPERATION_ID KIND update: differs
 operation OPERATION_ID KIND create: missing
 operations not reported: 1200
+note: runs resume writes the plan's values over every operation reported as differs
 ```
 
 The last line appears only when the report was truncated.

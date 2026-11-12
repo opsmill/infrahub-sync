@@ -44,8 +44,10 @@ position is safe.
 - **Resume**: a new execution on an interrupted run that applies the same saved plan, starting after the progress
   marker.
 - **Pre-write checks**: every check that `apply` runs before its first destination write, as defined by spec 019.
-- **Operations after the marker**: the operations of the saved plan that follow the progress marker, up to and
-  including the operation that was uncertain when the apply stopped.
+- **Uncertain operations**: the operations after the progress marker that may have reached the destination. When
+  the failing operation is known, they run through it. When the worker was killed, it is not known, so they are the
+  next 500 operations after the marker if the last save attempt succeeded, and every remaining operation if it did
+  not.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -165,10 +167,13 @@ check that no new plan was created.
 
 #### Stronger `verify` for an interrupted run
 
-- **FR-005**: For an interrupted run, `verify` MUST run every pre-write check, as it does for any run, and MUST also
-  read from the destination the nodes that the operations after the marker write.
-- **FR-006**: For each operation after the marker, `verify` MUST report one of "already matches the plan", "differs
-  from the plan" or "missing at the destination", and MUST return this report through the Sync API and the CLI.
+- **FR-005**: The system MUST accept `verify` on an interrupted run. For such a run, `verify` MUST run every
+  pre-write check, as it does for any run, and MUST also read from the destination the nodes of the uncertain
+  operations: the operations after the marker through the failing operation when it is known; otherwise the next 500
+  operations when the last save attempt succeeded, and every operation after the marker when it did not.
+- **FR-006**: For each uncertain operation, `verify` MUST report one of "already matches the plan", "differs from the
+  plan" or "missing at the destination", and MUST return this report through the Sync API and the CLI. The output
+  MUST say that a resume writes the plan's values over every operation reported as "differs from the plan".
 - **FR-007**: The per-operation report MUST NOT make `verify` fail. Only a failed pre-write check makes it fail.
 - **FR-008**: `verify` MUST NOT write to the destination, for an interrupted run as for any other.
 

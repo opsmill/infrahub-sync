@@ -35,9 +35,9 @@ Primary key `(run_id, resume_number)`. The original `write_admissions` row is ke
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `position` | integer or null | The latest marker of the run's latest write execution. |
+| `position` | integer or null | The highest saved position over all the run's write executions (critique E2). |
 | `saved_at` | time or null | When it was saved. |
-| `by_kind` | list of `{kind, committed, uncertain, not_reached}` | Derived from the marker and the saved plan. `uncertain` is 0 or the operations between the marker and the failed operation, when the failed operation is known; otherwise the first operation after the marker. |
+| `by_kind` | list of `{kind, committed, uncertain, not_reached}` | Derived from the position and the saved plan. `uncertain` counts the uncertain operations: through the failing operation when it is known; otherwise the next 500 after the position when the last save attempt succeeded, and every remaining operation when it did not (critique E3). |
 | `resumable` | boolean | True when the run is interrupted and no execution is unfinished. |
 | `verify_required` | boolean | True when no `verify` passed after the latest interruption. |
 
@@ -49,7 +49,7 @@ List of `{actor, requested_at, reason, start_after, outcome}` in order.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `operation_id` | string | Operation after the marker. |
+| `operation_id` | string | An uncertain operation (see `by_kind.uncertain`). |
 | `kind` | string | Its kind. |
 | `action` | `create` or `update` | Deletes are never written, so never reported. |
 | `state` | `matches`, `differs`, `missing` | Destination state compared with the plan. |
