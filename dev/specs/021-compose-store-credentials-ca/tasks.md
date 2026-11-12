@@ -69,16 +69,16 @@ external store runs. US5 (released image) is independent.
 
 ### Tests for User Story 2
 
-- [ ] T019 [P] [US2] Add a failing contract test in `tests/compose/test_compose_contract.py` that rebuilds the expected credential names from `BUILTIN_ADAPTER_CAPABILITIES` (`infrahub_sync/configuration/capabilities.py:522-606`), every `INFRAHUB_SYNC_CREDENTIAL_*` name in `examples/*/package.yml` and `docs/docs/adapters/*.mdx`, and the added names of `contracts/environment-variables.md`, and checks that `sync-worker` holds exactly those 24 names, each as `${NAME:-}` (FR-008)
-- [ ] T020 [P] [US2] Add a failing contract test in `tests/compose/test_compose_contract.py` that checks the receiver list of `contracts/environment-variables.md` for every credential row, for the root and development files; replace the per-name tests at `:1046` and `:1077` with it (FR-009)
+- [X] T019 [P] [US2] Add a failing contract test in `tests/compose/test_compose_contract.py` that rebuilds the expected credential names from `BUILTIN_ADAPTER_CAPABILITIES` (`infrahub_sync/configuration/capabilities.py:522-606`), every `INFRAHUB_SYNC_CREDENTIAL_*` name in `examples/*/package.yml` and `docs/docs/adapters/*.mdx`, and the added names of `contracts/environment-variables.md`, and checks that `sync-worker` holds exactly those 24 names, each as `${NAME:-}` (FR-008)
+- [X] T020 [P] [US2] Add a failing contract test in `tests/compose/test_compose_contract.py` that checks the receiver list of `contracts/environment-variables.md` for every credential row, for the root and development files; replace the per-name tests at `:1046` and `:1077` with it (FR-009)
 
 ### Implementation for User Story 2
 
-- [ ] T021 [US2] In `docker-compose.yml`, add the 21 missing credential variables to `sync-worker` (`:294-303`) and update its comment; copy the file to `infrahub_sync/testcontainers/docker-compose.yml` (T019, T020)
-- [ ] T022 [US2] Add the same 24 variables to `sync-worker` in `development/docker-compose.yml` (`:274-276`)
-- [ ] T023 [P] [US2] Add a lifecycle test in `tests/compose/test_source_credentials.py` that sets both `CISCO_APIC_*` variables, registers `examples/aci_to_infrahub/package.yml` against a recorded ACI server, and checks that the worker resolves both references and no other service holds either name (SC-003)
-- [ ] T024 [US2] Update `docs/docs/compose-deployment.mdx` (credential table at `:122-123`): the 24 names by adapter, the rule that a Compose package uses these names, which service receives which credential, and the relation to specification 020 FR-035 (FR-010)
-- [ ] T025 [P] [US2] Check each adapter page in `docs/docs/adapters/` names, for each credential setting, a variable on the list; add the missing names (`REST_API_USERNAME`, `REST_API_PASSWORD`, `PEERING_MANAGER_USERNAME`, `PEERING_MANAGER_PASSWORD`, `PROMETHEUS_*`, `SLURPIT_TOKEN`) where a page shows that setting
+- [X] T021 [US2] In `docker-compose.yml`, add the 21 missing credential variables to `sync-worker` (`:294-303`) and update its comment; copy the file to `infrahub_sync/testcontainers/docker-compose.yml` (T019, T020)
+- [X] T022 [US2] Add the same 24 variables to `sync-worker` in `development/docker-compose.yml` (`:274-276`)
+- [X] T023 [P] [US2] Add a lifecycle test in `tests/compose/test_source_credentials.py` that sets both `CISCO_APIC_*` variables, registers `examples/aci_to_infrahub/package.yml` against a recorded ACI server, and checks that the worker resolves both references and no other service holds either name (SC-003)
+- [X] T024 [US2] Update `docs/docs/compose-deployment.mdx` (credential table at `:122-123`): the 24 names by adapter, the rule that a Compose package uses these names, which service receives which credential, and the relation to specification 020 FR-035 (FR-010)
+- [X] T025 [P] [US2] Check each adapter page in `docs/docs/adapters/` names, for each credential setting, a variable on the list; add the missing names (`REST_API_USERNAME`, `REST_API_PASSWORD`, `PEERING_MANAGER_USERNAME`, `PEERING_MANAGER_PASSWORD`, `PROMETHEUS_*`, `SLURPIT_TOKEN`) where a page shows that setting
 
 **Checkpoint**: US2 works on its own: quickstart section 4 passes.
 

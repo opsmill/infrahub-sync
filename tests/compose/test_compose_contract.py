@@ -90,7 +90,39 @@ ROUTED_SERVICES = {"sync-worker"}
 # and only the worker runs one, so the worker is the only service that may be
 # given either. Naming them here rather than deriving them from the file keeps
 # this a statement of the contract instead of a restatement of the YAML.
-SOURCE_TOKEN_SETTINGS = ("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN")
+# Spec 021 FR-008: one documented name for each credential setting of each bundled adapter,
+# and every name the shipped examples and adapter pages use, so those packages run unedited.
+# The table is dev/specs/021-compose-store-credentials-ca/contracts/environment-variables.md.
+CREDENTIAL_PREFIX = "INFRAHUB_SYNC_CREDENTIAL_"
+ADAPTER_CREDENTIAL_NAMES: dict[tuple[str, str], tuple[str, ...]] = {
+    ("aci", "username"): ("CISCO_APIC_USERNAME",),
+    ("aci", "password"): ("CISCO_APIC_PASSWORD",),
+    ("genericrestapi", "token"): ("REST_API_TOKEN", "LIBRENMS_TOKEN", "PEERINGDB_API_KEY"),
+    ("genericrestapi", "username"): ("REST_API_USERNAME", "DEVICE42_USERNAME", "OBSERVIUM_USERNAME"),
+    ("genericrestapi", "password"): ("REST_API_PASSWORD", "DEVICE42_PASSWORD", "OBSERVIUM_PASSWORD"),
+    ("infrahub", "token"): ("INFRAHUB_API_TOKEN", "SOURCE_INFRAHUB_TOKEN"),
+    ("ipfabricsync", "auth"): ("IPF_TOKEN",),
+    ("nautobot", "token"): ("NAUTOBOT_TOKEN",),
+    ("netbox", "token"): ("NETBOX_TOKEN",),
+    ("peeringmanager", "token"): ("PEERING_MANAGER_TOKEN",),
+    ("peeringmanager", "username"): ("PEERING_MANAGER_USERNAME",),
+    ("peeringmanager", "password"): ("PEERING_MANAGER_PASSWORD",),
+    ("prometheus", "token"): ("PROMETHEUS_TOKEN",),
+    ("prometheus", "username"): ("PROMETHEUS_USERNAME",),
+    ("prometheus", "password"): ("PROMETHEUS_PASSWORD",),
+    ("slurpitsync", "api_key"): ("SLURPIT_API_KEY",),
+    ("slurpitsync", "token"): ("SLURPIT_TOKEN",),
+}
+WORKER_CREDENTIAL_SETTINGS = tuple(
+    sorted({f"{CREDENTIAL_PREFIX}{name}" for names in ADAPTER_CREDENTIAL_NAMES.values() for name in names})
+)
+
+# The source credentials the bundled adapters resolve. Only a run consumes one,
+# and only the worker runs one, so the worker is the only service that may be
+# given any of them.
+SOURCE_TOKEN_SETTINGS = tuple(
+    setting for setting in WORKER_CREDENTIAL_SETTINGS if setting != "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
+)
 SOURCE_TOKEN_RECEIVERS = {"sync-worker"}
 
 # The destination credential, and the two services that resolve one. The API
@@ -1112,3 +1144,48 @@ def test_bootstrap_does_not_require_a_left_out_bundled_store(contract_environmen
     assert dependency["condition"] == "service_healthy"
     assert dependency["required"] is False
     assert set(STORE_SERVICES) <= set(resolved)
+
+
+# ---------------------------------------------------------------------------
+# The credential variables of every bundled adapter (spec 021, FR-008)
+# ---------------------------------------------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CREDENTIAL_NAME = re.compile(rf"{CREDENTIAL_PREFIX}[A-Z0-9_]+")
+
+
+def test_the_worker_holds_exactly_the_documented_credential_variables(model: dict[str, Any]) -> None:
+    environment = services(model)["sync-worker"]["environment"]
+
+    held = sorted(name for name in environment if name.startswith(CREDENTIAL_PREFIX))
+    assert held == list(WORKER_CREDENTIAL_SETTINGS)
+    assert len(held) == 24
+
+
+def test_the_list_names_every_credential_setting_of_every_bundled_adapter() -> None:
+    from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES
+
+    settings = {
+        (name, path)
+        for name, capabilities in BUILTIN_ADAPTER_CAPABILITIES.items()
+        for path in capabilities.credential_setting_paths
+    }
+
+    assert settings == set(ADAPTER_CREDENTIAL_NAMES)
+
+
+def test_the_list_holds_every_name_the_examples_and_adapter_pages_use() -> None:
+    """A shipped package or a documented one runs on the Compose deployment unedited."""
+    sources = [*REPO_ROOT.glob("examples/*/package.yml"), *REPO_ROOT.glob("docs/docs/adapters/*.mdx")]
+    used = {name for path in sources for name in CREDENTIAL_NAME.findall(path.read_text(encoding="utf-8"))}
+
+    assert sources
+    assert used <= set(WORKER_CREDENTIAL_SETTINGS), sorted(used - set(WORKER_CREDENTIAL_SETTINGS))
+
+
+@pytest.mark.parametrize("setting", WORKER_CREDENTIAL_SETTINGS)
+def test_each_credential_variable_is_optional_in_the_file(setting: str) -> None:
+    """Written `${NAME:-}`: an unset variable resolves empty and the deployment still starts."""
+    text = COMPOSE_FILE.read_text(encoding="utf-8")
+
+    assert f'{setting}: "${{{setting}:-}}"' in text

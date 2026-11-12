@@ -8,7 +8,7 @@ import ReferenceLink from "../../src/components/Card";
 
 In a [configuration package](../configuration-package.mdx), name `peeringmanager` as the source. Then register the package, create and review a plan, and apply the plan, as described in [Run a sync](../running-a-sync.mdx).
 
-On a Compose deployment, from source or from a release package, the worker receives only the Infrahub, NetBox, and Nautobot tokens, so this adapter's credentials cannot reach it in this release. See [Credentials on a Compose deployment](./choosing-an-adapter.mdx#credentials-on-a-compose-deployment).
+On a Compose deployment, from source or from a release package, the worker receives the credential variables this page names, and no others. For `username` and `password`, use `INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_USERNAME` and `INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_PASSWORD`. See [Credentials on a Compose deployment](./choosing-an-adapter.mdx#credentials-on-a-compose-deployment).
 
 <!-- vale off -->
 ## What is Peering Manager?
