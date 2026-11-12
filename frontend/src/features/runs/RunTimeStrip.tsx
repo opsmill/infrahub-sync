@@ -1139,7 +1139,7 @@ export function RunTimeStrip({
           </div>
         </div>
       </div>
-      <Card className="relative flex flex-col gap-3 p-4 shadow-[var(--card-shadow),0_-10px_22px_-14px_rgb(0_0_0/0.22)]">
+      <Card className="relative flex flex-col gap-3 p-4">
         <p className="text-foreground-muted text-xs">
           Started <time dateTime={run.started_at}>{clock(run.started_at)}</time>
           {run.operation === "sync" && <> · Sync without review</>}
