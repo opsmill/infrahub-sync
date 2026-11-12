@@ -52,11 +52,11 @@ The full unit tier ran on the head of the branch before this report:
   (`uv sync --extra dev --extra prefect --extra service`).
 - Pass line: `7393 passed, 4 skipped, 285 deselected, 3 xfailed, 12 warnings in 249.17s (0:04:09)`.
 - The three expected failures:
-  - `tests/compose/test_image_pins.py`, which belongs to the preview stack, not to this
-    specification.
-  - Two strict expected failures in
-    `tests/plan/test_left_out_walk.py::test_each_problem_of_one_record_is_listed_and_the_record_is_left_out_once`
-    (see "Known gap").
+    - `tests/compose/test_image_pins.py`, which belongs to the preview stack, not to this
+      specification.
+    - Two strict expected failures in
+      `tests/plan/test_left_out_walk.py::test_each_problem_of_one_record_is_listed_and_the_record_is_left_out_once`
+      (see "Known gap").
 
 The branch adds 44 test modules and changes 44 (`git diff --name-status ea83a248..HEAD -- tests`).
 Each chunk subagent reported its own passing runs when it returned. This report does not repeat
