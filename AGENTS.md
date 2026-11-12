@@ -141,6 +141,10 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 
 - Use `structlog` for structured logging (not `print`). Include context (request IDs, endpoints, object counts) but never secrets.
 
+### Sync frontend
+
+- Never name a user in the interface (`frontend/`): no "by <actor>", "registered by" or "started by". There is one user, defined by the API token in use, so naming it tells the reader nothing.
+
 ## Testing
 
 Add targeted tests for new features or bug fixes:

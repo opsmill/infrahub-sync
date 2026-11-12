@@ -13,7 +13,7 @@ import {
   type ListRunState,
   runCounts,
 } from "#/domain/run-state";
-import { formatAbsolute, formatRelative, useNow } from "#/lib/time";
+import { formatRelative, useNow } from "#/lib/time";
 
 const deletesListed = (n: number) => `${n === 1 ? "delete" : "deletes"} listed, not applied`;
 
@@ -118,18 +118,6 @@ function TimeLine({ run }: { run: Run }) {
   return (
     <span>
       Started <When iso={run.started_at} />
-    </span>
-  );
-}
-
-function ActorLine({ run, className }: { run: Run; className?: string }) {
-  if (!run.actor) return null;
-  return (
-    <span
-      className={cn("text-subtle text-xs", className)}
-      title={`Started ${formatAbsolute(run.started_at)}`}
-    >
-      Started by {run.actor}
     </span>
   );
 }
@@ -412,7 +400,6 @@ export function RunsTable({
                 </td>
                 <td className={cn(TD, "text-right text-foreground-muted")}>
                   <TimeLine run={run} />
-                  <ActorLine run={run} className="block" />
                 </td>
               </tr>
             ))}
