@@ -112,6 +112,20 @@ These decisions of old 013 are not reopened:
 - The `cosign` identity accepted by the documentation and the release notes is
   `ci-docker-image.yml` at a release tag (product decision of 2026-10-17).
 
+### Decisions taken while writing this specification, to confirm at review
+
+- **A fixed list of credential variable names.** Compose cannot pass every variable that starts
+  with a prefix. Passing all of `.env` to the worker would give it the PostgreSQL administrator and
+  Prefect database passwords, and a separate worker credential file is the kind of secret file
+  ADR 0016 removed. The root compose file therefore names each credential variable it passes
+  (FR-008). The list follows the names the shipped examples and adapter pages already use, such as
+  `INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_USERNAME` and `INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY`,
+  and not old specification 012's naming rule, which the gap report of 012 found in conflict with
+  those packages. This settles gap-012 open question 6 for the Compose deployment.
+- **Three services receive the CA bundle**: `sync-bootstrap`, `sync-api` and `sync-worker`, the
+  Sync services that make outgoing TLS connections. `prefect-server` and `cli` also run the Sync
+  image but connect to no source, Infrahub or object store.
+
 ### Changes from old 013 made by merged specifications
 
 - The bundled object store is Silo, not MinIO (010 D-5). Every old 013 requirement that names the
@@ -129,7 +143,8 @@ These decisions of old 013 are not reopened:
   with a bucket and a credential for Sync.
 - **Credential variable**: an environment variable named `INFRAHUB_SYNC_CREDENTIAL_<NAME>` that a
   registered package references with `$credential` (`infrahub_sync/configuration/credentials.py:29`).
-  The package author chooses the name.
+  The package author chooses the name; the Compose deployment passes only the names on the
+  documented list of FR-008.
 - **CA bundle**: one or more public CA certificates that the operator names in `.env`. It never
   holds a private key.
 - **Lifecycle tier**: the compose lifecycle tests, `uv run pytest -m compose tests/compose`.
@@ -186,9 +201,10 @@ Check that no bundled store container exists and that the run's objects are in t
 ### User Story 2 - Pass the credentials of every bundled adapter to the worker (Priority: P1)
 
 A customer team registers a package for a bundled adapter other than NetBox or Nautobot, such as
-Cisco ACI. The package references credential variables with `$credential`. The team sets those
-variables in `.env`, starts the deployment, and plans, without editing `docker-compose.yml`. The
-credential values reach `sync-worker`, which runs the adapter, and no other service.
+Cisco ACI. The package references credential variables with `$credential`, using the names the
+adapter's documentation page gives. The team sets those variables in `.env`, starts the
+deployment, and plans, without editing `docker-compose.yml`. The credential values reach
+`sync-worker`, which runs the adapter, and no other service.
 
 **Why this priority**: a package for most bundled adapters cannot run on the root compose file
 today, because its credential variables never reach the worker. INFP-692 lists this as a blocker:
@@ -204,9 +220,9 @@ references and that no other service holds either variable.
    `INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_PASSWORD`, **When** the team starts the deployment and
    plans the ACI example package, **Then** `sync-worker` resolves both references, and no other
    service holds either variable.
-2. **Given** a package whose credential variable the team chose a new name for, **When** the team
-   sets that variable in `.env` and starts the deployment, **Then** `sync-worker` receives it with
-   no edit to `docker-compose.yml`.
+2. **Given** any shipped example package or adapter documentation page, **When** the team sets the
+   credential variables it names in `.env` and starts the deployment, **Then** `sync-worker`
+   receives every one of them with no edit to `docker-compose.yml`.
 3. **Given** `.env` without the variable that a registered package references, **When** the team
    plans, **Then** the run fails with the existing refusal that names the variable and not a
    value, and every service still starts.
@@ -228,7 +244,8 @@ verification.
 
 **Independent Test**: start a test server with a certificate from a test CA, name the test CA
 bundle in `.env`, start the root compose file, and check that a plan reaches the server with
-certificate checks on, and that each Sync service logs the number of certificates and the path.
+certificate checks on, and that `sync-bootstrap`, `sync-api` and `sync-worker` each log the number
+of certificates and the path.
 
 **Acceptance Scenarios**:
 
@@ -305,9 +322,14 @@ SBOM commands.
   a second write replace a stored artifact. FR-004 requires `sync-bootstrap` to detect this.
 - **A store that needs virtual-hosted-style requests.** Some stores accept only one addressing
   style. FR-001 makes it a setting; the default stays path-style, which the bundled store uses.
-- **The external store setting is half set.** An endpoint without the setting that leaves the
-  bundled store out still starts the bundled store, which Sync does not use. The documentation
-  shows both settings together.
+- **A credential variable name outside the documented list.** It does not reach the worker, and
+  a run that selects it fails with the existing refusal that names the variable. The same holds
+  for two packages of one adapter that need different credentials under names the list does not
+  hold. The documentation says to use the listed names.
+- **An external endpoint set without the setting that leaves the bundled store out.** The bundled
+  store takes `INFRAHUB_SYNC_S3_ACCESS_KEY` and `INFRAHUB_SYNC_S3_SECRET_KEY` as its own root
+  credential (`docker-compose.yml:133-134`), so it would receive the credential of the team's
+  store. FR-002 requires `sync-bootstrap` to stop in that case.
 - **A credential variable with an empty value.** It reaches the worker as today; the resolver
   refuses an absent or empty value by name when a run selects it, so the container still starts.
 - **The CA directory exists but holds no certificate file.** Each Sync service logs one info line
@@ -327,7 +349,7 @@ SBOM commands.
 
 #### External S3-compatible store
 
-- **FR-001**: An operator MUST be able to point every Sync service at an S3-compatible store
+- **FR-001**: An operator MUST be able to point the Sync services that use the object store at an S3-compatible store
   outside the deployment from `.env`, without an edit to the shipped `docker-compose.yml`. Next to
   the bucket, key prefix, region, access key and secret key that `.env` already sets, `.env` MUST
   accept:
@@ -338,7 +360,10 @@ SBOM commands.
 - **FR-002**: A documented `.env` setting MUST leave the bundled store out. With it, Compose
   creates no `object-store-init` or `object-store` container, no Sync service waits for them, and
   the external store's credential reaches no Silo process. Without it, the bundled store starts as
-  today.
+  today. When the endpoint names a host other than the bundled store while the bundled store
+  runs, `sync-bootstrap` MUST stop before any S3 request with a fixed failure name that says to
+  leave the bundled store out, because the bundled store has then received the external store's
+  credential as its root credential.
 - **FR-003**: `sync-bootstrap` MUST check whether the bucket exists before it tries to create it,
   and create it only when the store reports it absent. It MUST complete when the bucket exists and
   the credential may not create buckets.
@@ -348,7 +373,7 @@ SBOM commands.
 - **FR-005**: `sync-bootstrap` MUST refuse an endpoint URL that carries a user name or a password
   before it sends any S3 request, with the fixed message that `storage.py:198` uses for the Sync
   API and the worker. The message names the setting and not its value.
-- **FR-006**: Every Sync service MUST verify the certificate of an `https` endpoint against the
+- **FR-006**: Each service of FR-011 MUST verify the certificate of an `https` endpoint against the
   image's default trust store plus the CA bundle of FR-011. No Sync setting turns certificate
   checks off for the object store.
 - **FR-007**: `docs/docs/compose-deployment.mdx` MUST:
@@ -364,31 +389,39 @@ SBOM commands.
 
 #### Credentials of every bundled adapter
 
-- **FR-008**: In the root compose file, every credential variable that a registered package
-  references MUST reach `sync-worker` when the operator sets it in `.env`, without an edit to the
-  shipped `docker-compose.yml`, whatever name the package author chose. This covers the credential
-  settings of every bundled adapter: `aci`, `genericrestapi`, `infrahub`, `ipfabricsync`,
-  `nautobot`, `netbox`, `peeringmanager`, `prometheus` and `slurpitsync`
-  (`infrahub_sync/configuration/capabilities.py:522-606`). ADR 0016 keeps the operator deployment
-  to one self-contained file, so the plan MUST state how this fits that decision.
+- **FR-008**: The root and development compose files MUST pass to `sync-worker`, when the operator
+  sets them in `.env` and without an edit to the shipped file, every credential variable on one
+  documented list. The list MUST hold:
+  - every credential variable name that a shipped example package (`examples/*/package.yml`) or
+    an adapter documentation page (`docs/docs/adapters/*.mdx`) uses, so those packages run
+    unedited
+  - at least one name for each credential setting of each bundled adapter: `aci`,
+    `genericrestapi`, `infrahub`, `ipfabricsync`, `nautobot`, `netbox`, `peeringmanager`,
+    `prometheus` and `slurpitsync` (`infrahub_sync/configuration/capabilities.py:522-606`)
+
+  A variable that is not on the list does not reach the worker. ADR 0016 keeps the operator
+  deployment to one self-contained file with no secret files, so the list is part of that file
+  and adds no second file.
 - **FR-009**: The plan MUST list which services receive each credential variable and each storage,
   database and Prefect credential. A service that does not read a credential MUST NOT receive it.
   `prefect-server` MUST receive no object store credential and no adapter credential, as today
   (010 FR-003). The Infrahub token keeps reaching `sync-api` as today.
-- **FR-010**: `docs/docs/compose-deployment.mdx` MUST say how an operator passes a credential
-  variable to the worker, which services receive which credentials, and how this relates to the
+- **FR-010**: `docs/docs/compose-deployment.mdx` MUST list the credential variables of FR-008 by
+  adapter, say that a package for the Compose deployment uses those names, say which services
+  receive which credentials, and say how this relates to the
   check of specification 020 FR-035, which reports a `$credential` reference that no live worker
   holds.
 
 #### Private certificate authority
 
-- **FR-011**: The operator MUST be able to name in `.env` a CA bundle that every Sync service trusts
-  for TLS connections to sources, to Infrahub and to the object store, in addition to the image's
+- **FR-011**: The operator MUST be able to name in `.env` a CA bundle that the Sync services that
+  make outgoing TLS connections (`sync-bootstrap`, `sync-api` and `sync-worker`) trust for
+  connections to sources, to Infrahub and to the object store, in addition to the image's
   default trust store, without an edit to the shipped `docker-compose.yml` and without turning off
   certificate checks.
-- **FR-012**: A Sync service MUST refuse to start when a file in the CA bundle holds a private key.
-  The error MUST name the file and print none of its content.
-- **FR-013**: At every start, each Sync service MUST log:
+- **FR-012**: Each service of FR-011 MUST refuse to start when a file in the CA bundle holds a
+  private key. The error MUST name the file and print none of its content.
+- **FR-013**: At every start, each service of FR-011 MUST log:
   - the number of certificates it loaded and the bundle path
   - one info line when the directory exists but holds no certificate file
   - for each of `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` and `INFRAHUB_TLS_CA_FILE`
@@ -452,7 +485,10 @@ SBOM commands.
   - the endpoint and addressing-style settings of FR-001 reach every Sync service that uses the
     store
   - each credential reaches only the services the receiver list of FR-009 names
-  - the CA setting of FR-011 reaches every Sync service
+  - the credential variable list of FR-008 holds every name the shipped examples and adapter
+    pages use and a name for each credential setting in the adapter capability registry
+  - the CA setting of FR-011 reaches `sync-bootstrap`, `sync-api` and `sync-worker`, and only
+    them
   - every image other than the Sync image is pinned by digest in every compose file (FR-023)
 - **FR-026**: The image tests (`tests/image`) MUST check that the Sync image starts the Prefect
   server with a read-only root filesystem and serves `/api/health`.
@@ -471,7 +507,7 @@ SBOM commands.
 - **External store**: an S3-compatible store that the customer team runs; Sync holds one access key
   and secret key for one bucket in it.
 - **Credential variable**: an `INFRAHUB_SYNC_CREDENTIAL_<NAME>` environment variable that a
-  registered package references; its name is chosen by the package author.
+  registered package references. The Compose deployment passes the names on the list of FR-008.
 - **Receiver list**: the list, in the plan, of which service receives each credential (FR-009).
 - **CA bundle**: public CA certificates in a directory that `.env` names; never a private key.
 - **Lifecycle tier**: `uv run pytest -m compose tests/compose`.
@@ -555,7 +591,7 @@ SBOM commands.
 | FR-017 | FR-025 | Root file items already delivered by 010 |
 | FR-018 | FR-020, FR-026 | |
 | FR-022 | FR-028 | Prefect image part delivered by 010 |
-| FR-023 | FR-008, FR-009 | Any variable name, not a fixed list |
+| FR-023 | FR-008, FR-009 | List built from the shipped examples, adapter pages and capability registry, not from old 012's naming rule |
 | FR-024 | FR-011, FR-012, FR-013 | |
 | FR-025 | FR-010, FR-014 | First-start wait delivered by 010 |
 | FR-026 | FR-019 | |
