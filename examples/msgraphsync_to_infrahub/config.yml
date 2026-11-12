@@ -1,0 +1,114 @@
+---
+# Read users, security groups and group membership from Microsoft Entra ID
+# (through Microsoft Graph) and write them to Infrahub. The `msgraphsync` adapter
+# is source-only: it sends GET requests to Graph and never writes to Entra ID.
+#
+# Install the optional SDK first: pip install msgraph-sdk azure-identity
+# Load schema.yml into Infrahub first: infrahubctl schema load schema.yml
+#
+# Credentials never go in this file. With `auth: client_secret` the adapter
+# reads these environment variables:
+#   MSGRAPH_TENANT_ID      directory (tenant) ID
+#   MSGRAPH_CLIENT_ID      application (client) ID
+#   MSGRAPH_CLIENT_SECRET  client secret (the only accepted source of the secret)
+# With `auth: default`, DefaultAzureCredential reads the AZURE_* variables, a
+# managed or workload identity, or the Azure CLI login instead.
+# The application needs the Microsoft Graph application permissions
+# User.Read.All and Group.Read.All (or GroupMember.Read.All instead of
+# Group.Read.All), with admin consent. Groups with hidden membership also
+# need Member.Read.Hidden. With `auth: default`, the signed-in
+# identity needs read access to users and groups instead.
+# HTTP 401 from Graph means the token was rejected (check the tenant, the
+# credential and graph_url); HTTP 403 means a permission is missing.
+name: from-msgraphsync
+
+source:
+  name: msgraphsync
+  settings:
+    auth: client_secret
+    # direct: the members of each group; transitive: also the members of
+    # nested groups.
+    membership: direct
+    collections:
+      # Enabled user accounts, read once and split below into
+      # IdentityEmployee and IdentityServiceAccount.
+      accounts:
+        resource: users
+        filter: "accountEnabled eq true"
+      # Security groups that are not Microsoft 365 groups. Graph accepts NOT
+      # only in an advanced query, so the collection sets advanced_query.
+      security_groups:
+        resource: groups
+        filter: "securityEnabled eq true and NOT groupTypes/any(c:c eq 'Unified')"
+        advanced_query: true
+
+destination:
+  name: infrahub
+  settings:
+    url: "http://localhost:8000"
+
+# order: omitted. infrahub-sync computes it from the `reference` edges, so
+# IdentityEmployee loads before IdentityGroup, which references it.
+
+schema_mapping:
+  # Field mappings, filters and transform expressions name Graph properties.
+  # The adapter requests those properties with $select, so `userPrincipalName`
+  # is requested because the filters and the transform read it.
+  - name: IdentityEmployee
+    mapping: accounts
+    identifiers: ["entra_id"]
+    filters:
+      - field: userPrincipalName
+        operation: regex
+        value: "(?i)^(?!svc-)"
+    transforms:
+      - field: name_lower
+        expression: "{{ userPrincipalName | lower }}"
+    fields:
+      - name: entra_id
+        mapping: id
+      - name: name
+        mapping: name_lower
+      - name: display_name
+        mapping: displayName
+      - name: email
+        mapping: mail
+      - name: enabled
+        mapping: accountEnabled
+
+  - name: IdentityServiceAccount
+    mapping: accounts
+    identifiers: ["entra_id"]
+    filters:
+      - field: userPrincipalName
+        operation: regex
+        value: "(?i)^svc-"
+    fields:
+      - name: entra_id
+        mapping: id
+      - name: name
+        mapping: userPrincipalName
+      - name: display_name
+        mapping: displayName
+      - name: email
+        mapping: mail
+      - name: enabled
+        mapping: accountEnabled
+
+  - name: IdentityGroup
+    mapping: security_groups
+    identifiers: ["entra_id"]
+    fields:
+      - name: entra_id
+        mapping: id
+      - name: name
+        mapping: displayName
+      - name: description
+        mapping: description
+      # `members` holds the IDs of the group's user members, read by the
+      # adapter. Only members loaded as IdentityEmployee are kept: members
+      # that are service accounts (or filtered out) are dropped, and the
+      # adapter logs their count in one warning.
+      - name: members
+        mapping: members
+        reference: IdentityEmployee

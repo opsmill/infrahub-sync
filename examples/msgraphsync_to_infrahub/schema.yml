@@ -1,0 +1,66 @@
+---
+# Infrahub schema for the `from-msgraphsync` example.
+# Load it into Infrahub before running the sync:
+#   infrahubctl schema load examples/msgraphsync_to_infrahub/schema.yml
+version: "1.0"
+nodes:
+  - name: Employee
+    namespace: Identity
+    description: "A person's user account, read from Microsoft Entra ID."
+    attributes:
+      - name: entra_id
+        kind: Text
+        unique: true
+        description: "Object ID of the user in Microsoft Entra ID."
+      - name: name
+        kind: Text
+        description: "User principal name in lower case."
+      - name: display_name
+        kind: Text
+        optional: true
+      - name: email
+        kind: Text
+        optional: true
+      - name: enabled
+        kind: Boolean
+        optional: true
+
+  - name: ServiceAccount
+    namespace: Identity
+    description: "A user account used by an application (user principal name starts with 'svc-')."
+    attributes:
+      - name: entra_id
+        kind: Text
+        unique: true
+        description: "Object ID of the user in Microsoft Entra ID."
+      - name: name
+        kind: Text
+        description: "User principal name."
+      - name: display_name
+        kind: Text
+        optional: true
+      - name: email
+        kind: Text
+        optional: true
+      - name: enabled
+        kind: Boolean
+        optional: true
+
+  - name: Group
+    namespace: Identity
+    description: "A security group, read from Microsoft Entra ID."
+    attributes:
+      - name: entra_id
+        kind: Text
+        unique: true
+        description: "Object ID of the group in Microsoft Entra ID."
+      - name: name
+        kind: Text
+      - name: description
+        kind: Text
+        optional: true
+    relationships:
+      - name: members
+        peer: IdentityEmployee
+        cardinality: many
+        optional: true
