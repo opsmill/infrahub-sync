@@ -1,0 +1,35 @@
+dev/specs/021-compose-store-credentials-ca/critiques/critique-20261112.md
+  s_3defe6e8bcd0ab::t_4666d4e9e9a3e6 1-113
+dev/specs/021-compose-store-credentials-ca/research.md
+  s_3defe6e8bcd0ab::t_3b18418dfdb087 275-284
+  s_3defe6e8bcd0ab::t_c4fe49c508eebc 43-46
+  s_3defe6e8bcd0ab::t_d0566e0ca99457 254-256
+  s_3defe6e8bcd0ab::t_3bdde6ad12108e 218
+dev/specs/021-compose-store-credentials-ca/spec.md
+  s_3defe6e8bcd0ab::t_1345eac01f6a87 369-371
+  s_3defe6e8bcd0ab::t_0a6ec4ab17a90a 379-381
+  s_3defe6e8bcd0ab::t_4d5e8cff529ce5 333-335
+dev/specs/021-compose-store-credentials-ca/plan.md
+  s_3defe6e8bcd0ab::t_ab824cf4b7d995 103
+  s_3defe6e8bcd0ab::t_b2cf6b41663dcf 123-125
+dev/specs/021-compose-store-credentials-ca/contracts/bootstrap-and-startup.md
+  s_3defe6e8bcd0ab::t_97987f1be8bde5 22,24
+  s_3defe6e8bcd0ab::t_f62da4817f9db4 28-29
+  s_3defe6e8bcd0ab::t_2aa92bdbf91601 8-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6a64e7f27a480e66e8b8447b88092ca127dc90cb",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+dev/specs/021-compose-store-credentials-ca/research.md
+  s_3defe6e8bcd0ab::t_c820ecd0fb55fb 236-239,257-259,301-303
+dev/specs/021-compose-store-credentials-ca/spec.md
+  s_3defe6e8bcd0ab::t_c820ecd0fb55fb 9-12,75-80,486-492,508,554
+dev/specs/021-compose-store-credentials-ca/tasks.md
+  s_3defe6e8bcd0ab::t_c820ecd0fb55fb 123,149
+dev/specs/021-compose-store-credentials-ca/plan.md
+  s_3defe6e8bcd0ab::t_f7857e7abce897 170-182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9fdf00ccbe380efe66206bfed41317e87765680e",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
