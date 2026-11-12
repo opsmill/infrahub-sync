@@ -73,6 +73,13 @@ x-sync-image: &sync-image "${SYNC_IMAGE:-infrahub-sync:dev}"
 x-sync-source: &sync-source
   - "../infrahub_sync:/opt/infrahub-sync/venv/lib/python3.13/site-packages/infrahub_sync:ro"
   - "../opsmill_prefect_extras:/opt/infrahub-sync/venv/lib/python3.13/site-packages/opsmill_prefect_extras:ro"
+# The same source mounts, plus the operator's CA certificates, read-only, for the three
+# services that make outgoing TLS connections. INFRAHUB_SYNC_CA_CERTIFICATES names a host
+# directory of *.pem and *.crt files; unset, the mount is an empty named volume.
+x-sync-source-and-ca: &sync-source-and-ca
+  - "../infrahub_sync:/opt/infrahub-sync/venv/lib/python3.13/site-packages/infrahub_sync:ro"
+  - "../opsmill_prefect_extras:/opt/infrahub-sync/venv/lib/python3.13/site-packages/opsmill_prefect_extras:ro"
+  - "${INFRAHUB_SYNC_CA_CERTIFICATES:-sync-ca-certificates}:/etc/infrahub-sync/ca:ro"
 
 x-sync-env: &sync-env
   INFRAHUB_SYNC_DATABASE_URL: "postgresql://postgres:devpassword@postgres:5432/infrahub_sync"
@@ -84,6 +91,9 @@ x-sync-env: &sync-env
   # the other.
   INFRAHUB_SYNC_S3_ENDPOINT_URL: "${INFRAHUB_SYNC_S3_ENDPOINT_URL:-http://object-store:9000}"
   INFRAHUB_SYNC_S3_ADDRESSING_STYLE: "${INFRAHUB_SYNC_S3_ADDRESSING_STYLE:-path}"
+  # Where the CA mount lands; each process trusts the certificates in it next to the
+  # public roots (infrahub_sync/service/trust_store.py).
+  INFRAHUB_SYNC_CA_DIRECTORY: "/etc/infrahub-sync/ca"
   INFRAHUB_SYNC_S3_REGION: "us-east-1"
   AWS_ACCESS_KEY_ID: "${MINIO_ACCESS_KEY:-devaccesskey}"
   AWS_SECRET_ACCESS_KEY: "${MINIO_SECRET_KEY:-devsecretkey}"
@@ -237,7 +247,7 @@ services:
         condition: service_healthy
     environment:
       <<: *sync-env
-    volumes: *sync-source
+    volumes: *sync-source-and-ca
 
   sync-api:
     profiles: ["sync"]
@@ -259,7 +269,7 @@ services:
       INFRAHUB_SYNC_PREFECT_UI_URL: "http://127.0.0.1:${PREFECT_PORT:-4230}"
     ports:
       - "127.0.0.1:${SYNC_API_PORT:-8001}:8000"
-    volumes: *sync-source
+    volumes: *sync-source-and-ca
     healthcheck:
       test:
         - "CMD"
@@ -322,7 +332,7 @@ services:
       # slurpitsync
       INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY: "${INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY:-}"
       INFRAHUB_SYNC_CREDENTIAL_SLURPIT_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_SLURPIT_TOKEN:-}"
-    volumes: *sync-source
+    volumes: *sync-source-and-ca
     # The only service that reaches a destination. The root `docker-compose.yml`
     # carries no host route on purpose; here it lets a package reach a service published
     # on this machine that has no Compose network to join, and it costs nothing when unused.
@@ -341,3 +351,5 @@ configs:
 volumes:
   postgres-data:
   object-store-data:
+  # Empty, and never written: the default source of the read-only CA mount.
+  sync-ca-certificates:

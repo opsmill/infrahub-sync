@@ -28,7 +28,6 @@ from tests.compose.conftest import (
     SYNC_SCRATCH_ROOTS,
     SYNC_SERVICES,
     compose,
-    mount_sources,
     resolve,
     resolve_privately,
     service,
@@ -76,6 +75,23 @@ INFRAHUB_PROFILE = ("--profile", "infrahub")
 # owner repair shares the object store's volume before the server starts.
 PERSISTENT_VOLUMES = {"postgres-data", "object-store-data"}
 PERSISTENT_SERVICES = {"postgres", "object-store-init", "object-store"}
+
+# Spec 021 FR-011: the one shared, read-only mount -- the operator's CA directory -- on the
+# three services that make outgoing TLS connections. Unset, its source is an empty named
+# volume that nothing writes.
+CA_TARGET = "/etc/infrahub-sync/ca"
+CA_VOLUME = "sync-ca-certificates"
+CA_SERVICES = {"sync-bootstrap", "sync-api", "sync-worker"}
+
+
+def writable_mounts(definition: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Every mount of one resolved service that its container can write to."""
+    return [mount for mount in definition.get("volumes") or [] if not mount.get("read_only")]
+
+
+def is_ca_mount(mount: Mapping[str, Any]) -> bool:
+    return mount.get("target") == CA_TARGET and mount.get("read_only") is True
+
 
 # The test-only override, and the host route it adds -- in the form Compose
 # resolves it to, since the file writes `name:value` and the model renders
@@ -204,8 +220,8 @@ def test_the_api_and_the_worker_share_no_mount_source(model: dict[str, Any]) -> 
     serves it have no filesystem in common, so the intersection is the thing to
     assert — not that each one's list happens to look right today.
     """
-    api = mount_sources(service(model, "sync-api"))
-    worker = mount_sources(service(model, "sync-worker"))
+    api = {str(mount["source"]) for mount in writable_mounts(service(model, "sync-api"))}
+    worker = {str(mount["source"]) for mount in writable_mounts(service(model, "sync-worker"))}
 
     assert api & worker == set(), f"sync-api and sync-worker both mount {sorted(api & worker)}"
 
@@ -219,8 +235,9 @@ def test_a_sync_service_mounts_nothing_at_all(model: dict[str, Any], name: str) 
     transport exists to replace.
     """
     definition = service(model, name)
+    mounts = [mount for mount in definition.get("volumes") or [] if not is_ca_mount(mount)]
 
-    assert definition.get("volumes") in (None, []), f"{name} mounts {definition['volumes']}"
+    assert mounts == [], f"{name} mounts {mounts}"
 
 
 @pytest.mark.parametrize("name", SYNC_SERVICES)
@@ -243,10 +260,10 @@ def test_only_postgresql_and_the_object_store_keep_a_named_volume(model: dict[st
     holders = {
         name
         for name, definition in services(model).items()
-        if any(mount.get("type") == "volume" for mount in definition.get("volumes") or [])
+        if any(mount.get("type") == "volume" for mount in writable_mounts(definition))
     }
 
-    assert declared == PERSISTENT_VOLUMES, f"the file declares the volumes {sorted(declared)}"
+    assert declared == PERSISTENT_VOLUMES | {CA_VOLUME}, f"the file declares the volumes {sorted(declared)}"
     assert holders == PERSISTENT_SERVICES, f"named volumes are held by {sorted(holders)}"
 
 
@@ -292,6 +309,34 @@ def test_no_service_mounts_a_host_path(cli_model: dict[str, Any]) -> None:
     )
 
     assert binds == [], f"these services mount a host path: {binds}"
+
+
+def test_a_named_ca_directory_is_the_only_host_path_and_is_read_only(contract_environment: dict[str, str]) -> None:
+    """Spec 021: with INFRAHUB_SYNC_CA_CERTIFICATES set, the CA directory is bound read-only, and nothing else."""
+    resolved = resolve({**contract_environment, "INFRAHUB_SYNC_CA_CERTIFICATES": "/srv/infrahub-sync/ca"})
+    binds = {
+        name: (mount.get("source"), mount.get("target"), mount.get("read_only"))
+        for name, definition in services(resolved).items()
+        for mount in definition.get("volumes") or []
+        if mount.get("type") == "bind"
+    }
+
+    assert binds == dict.fromkeys(CA_SERVICES, ("/srv/infrahub-sync/ca", CA_TARGET, True))
+
+
+def test_the_ca_mount_and_setting_reach_only_the_tls_clients(model: dict[str, Any]) -> None:
+    """FR-011: sync-bootstrap, sync-api and sync-worker, and no other service."""
+    mounted = {
+        name for name, definition in services(model).items() if any(map(is_ca_mount, definition.get("volumes") or []))
+    }
+    configured = {
+        name
+        for name, definition in services(model).items()
+        if (definition.get("environment") or {}).get("INFRAHUB_SYNC_CA_DIRECTORY") == CA_TARGET
+    }
+
+    assert mounted == CA_SERVICES
+    assert configured == CA_SERVICES
 
 
 def test_the_bootstrap_script_comes_from_an_inline_config(model: dict[str, Any]) -> None:
@@ -886,9 +931,10 @@ def test_no_sync_service_takes_a_filesystem_input(model: dict[str, Any]) -> None
     what the deployment runs before the operator has registered anything.
     """
     readers = {
-        name: definition.get("volumes") or []
+        name: mounts
         for name, definition in services(model).items()
-        if name.startswith("sync-") and (definition.get("volumes") or [])
+        if name.startswith("sync-")
+        and (mounts := [mount for mount in definition.get("volumes") or [] if not is_ca_mount(mount)])
     }
 
     assert readers == {}, f"Sync services taking a filesystem input: {sorted(readers)}"

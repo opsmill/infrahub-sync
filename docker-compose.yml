@@ -52,6 +52,9 @@ x-sync-storage: &sync-storage
   # the other.
   INFRAHUB_SYNC_S3_ENDPOINT_URL: "${INFRAHUB_SYNC_S3_ENDPOINT_URL:-http://object-store:9000}"
   INFRAHUB_SYNC_S3_ADDRESSING_STYLE: "${INFRAHUB_SYNC_S3_ADDRESSING_STYLE:-path}"
+  # Where the CA mount below lands; each process trusts the certificates in it next to the
+  # public roots (infrahub_sync/service/trust_store.py).
+  INFRAHUB_SYNC_CA_DIRECTORY: "/etc/infrahub-sync/ca"
   INFRAHUB_SYNC_S3_REGION: "${INFRAHUB_SYNC_S3_REGION:-us-east-1}"
   AWS_ACCESS_KEY_ID: "${INFRAHUB_SYNC_S3_ACCESS_KEY:?INFRAHUB_SYNC_S3_ACCESS_KEY is required}"
   AWS_SECRET_ACCESS_KEY: "${INFRAHUB_SYNC_S3_SECRET_KEY:?INFRAHUB_SYNC_S3_SECRET_KEY is required}"
@@ -61,6 +64,12 @@ x-sync-storage: &sync-storage
   # caller that can create a deployment in the work pool decides what the worker
   # runs. Each Sync process presents it; the CLI service is not given it.
   PREFECT_API_AUTH_STRING: "${INFRAHUB_SYNC_PREFECT_AUTH_STRING:?the Prefect API credential is required}"
+
+# The operator's CA certificates, read-only. INFRAHUB_SYNC_CA_CERTIFICATES names a host
+# directory of *.pem and *.crt files; unset, the mount is an empty named volume and the
+# services trust only the image's public roots. It holds public certificates, never a key.
+x-sync-ca: &sync-ca
+  - "${INFRAHUB_SYNC_CA_CERTIFICATES:-sync-ca-certificates}:/etc/infrahub-sync/ca:ro"
 
 services:
   postgres:
@@ -231,6 +240,7 @@ services:
     environment:
       <<: *sync-storage
     read_only: true
+    volumes: *sync-ca
     tmpfs: *sync-scratch
 
   sync-api:
@@ -263,6 +273,7 @@ services:
       # the link off.
       INFRAHUB_SYNC_PREFECT_UI_URL: "${INFRAHUB_SYNC_PREFECT_UI_URL:-}"
     read_only: true
+    volumes: *sync-ca
     tmpfs: *sync-scratch
     ports:
       - "${INFRAHUB_SYNC_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_SYNC_API_PORT:-8001}:8000"
@@ -343,6 +354,7 @@ services:
       INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY: "${INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY:-}"
       INFRAHUB_SYNC_CREDENTIAL_SLURPIT_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_SLURPIT_TOKEN:-}"
     read_only: true
+    volumes: *sync-ca
     tmpfs: *sync-scratch
 
   # The operator's client, in the same image, behind a profile so no ordinary
@@ -414,3 +426,5 @@ configs:
 volumes:
   postgres-data:
   object-store-data:
+  # Empty, and never written: the default source of the read-only CA mount.
+  sync-ca-certificates:

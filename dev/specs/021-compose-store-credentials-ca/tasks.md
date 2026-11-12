@@ -90,19 +90,19 @@ external store runs. US5 (released image) is independent.
 
 ### Tests for User Story 3
 
-- [ ] T026 [P] [US3] Add failing unit tests in a new `tests/service/test_trust_store.py` for `install_custom_ca_bundle`: absent directory changes nothing; empty directory logs one info line; certificates produce a bundle with the `certifi` roots first, mode `0600`, and set the four variables; an already set variable is kept and logged by name; a private key stops the process naming the file only; an invalid file stops naming the file and the `ssl` error class; no log line holds file content or a variable value (FR-011 to FR-013)
-- [ ] T027 [P] [US3] Add failing contract tests in `tests/compose/test_compose_contract.py`: the CA mount `"${INFRAHUB_SYNC_CA_CERTIFICATES:-sync-ca-certificates}:/etc/infrahub-sync/ca:ro"` and `INFRAHUB_SYNC_CA_DIRECTORY` reach `sync-bootstrap`, `sync-api` and `sync-worker` only, in the root and development files (FR-011, FR-025)
-- [ ] T028 [US3] Narrow the four mount tests to writable mounts, with the CA mount as the one read-only exception on the three services: `test_the_api_and_the_worker_share_no_mount_source` (`:171`), `test_a_sync_service_mounts_nothing_at_all` (`:185`), `test_only_postgresql_and_the_object_store_keep_a_named_volume` (`:211`), `test_no_service_mounts_a_host_path` (`:252`) in `tests/compose/test_compose_contract.py` (research R4)
+- [X] T026 [P] [US3] Add failing unit tests in a new `tests/service/test_trust_store.py` for `install_custom_ca_bundle`: absent directory changes nothing; empty directory logs one info line; certificates produce a bundle with the `certifi` roots first, mode `0600`, and set the four variables; an already set variable is kept and logged by name; a private key stops the process naming the file only; an invalid file stops naming the file and the `ssl` error class; no log line holds file content or a variable value (FR-011 to FR-013)
+- [X] T027 [P] [US3] Add failing contract tests in `tests/compose/test_compose_contract.py`: the CA mount `"${INFRAHUB_SYNC_CA_CERTIFICATES:-sync-ca-certificates}:/etc/infrahub-sync/ca:ro"` and `INFRAHUB_SYNC_CA_DIRECTORY` reach `sync-bootstrap`, `sync-api` and `sync-worker` only, in the root and development files (FR-011, FR-025)
+- [X] T028 [US3] Narrow the four mount tests to writable mounts, with the CA mount as the one read-only exception on the three services: `test_the_api_and_the_worker_share_no_mount_source` (`:171`), `test_a_sync_service_mounts_nothing_at_all` (`:185`), `test_only_postgresql_and_the_object_store_keep_a_named_volume` (`:211`), `test_no_service_mounts_a_host_path` (`:252`) in `tests/compose/test_compose_contract.py` (research R4)
 
 ### Implementation for User Story 3
 
-- [ ] T029 [US3] Create `infrahub_sync/service/trust_store.py` with `install_custom_ca_bundle()` as research R4 describes (T026)
-- [ ] T030 [US3] Call `install_custom_ca_bundle()` first in `bootstrap.main()` (`infrahub_sync/service/bootstrap.py:182`), `serve.main()` (`infrahub_sync/service/serve.py:94`) and `worker.main()` (`infrahub_sync/service/worker.py:465`); a refusal exits non-zero with the logged error
-- [ ] T031 [US3] In `docker-compose.yml`, add the CA mount, the named volume `sync-ca-certificates` and `INFRAHUB_SYNC_CA_DIRECTORY` to `sync-bootstrap`, `sync-api` and `sync-worker`, and update the file header that states the mount properties (`:19-25`); copy the file to `infrahub_sync/testcontainers/docker-compose.yml` (T027, T028)
-- [ ] T032 [US3] Apply the same mount and setting to `development/docker-compose.yml`
+- [X] T029 [US3] Create `infrahub_sync/service/trust_store.py` with `install_custom_ca_bundle()` as research R4 describes (T026)
+- [X] T030 [US3] Call `install_custom_ca_bundle()` first in `bootstrap.main()` (`infrahub_sync/service/bootstrap.py:182`), `serve.main()` (`infrahub_sync/service/serve.py:94`) and `worker.main()` (`infrahub_sync/service/worker.py:465`); a refusal exits non-zero with the logged error
+- [X] T031 [US3] In `docker-compose.yml`, add the CA mount, the named volume `sync-ca-certificates` and `INFRAHUB_SYNC_CA_DIRECTORY` to `sync-bootstrap`, `sync-api` and `sync-worker`, and update the file header that states the mount properties (`:19-25`); copy the file to `infrahub_sync/testcontainers/docker-compose.yml` (T027, T028)
+- [X] T032 [US3] Apply the same mount and setting to `development/docker-compose.yml`
 - [ ] T033 [P] [US3] Add a lifecycle test in `tests/compose/test_external_store.py` that serves the external store, a NetBox stand-in and Infrahub over TLS from a test CA, names the CA directory in `.env`, and checks a plan completes with certificate checks on (SC-004); check each bundled adapter's HTTP client honors the bundle, and record any that does not in `research.md` R4
-- [ ] T034 [US3] Document the CA bundle in `docs/docs/compose-deployment.mdx`: how to add it, UID 10001 permissions on the directory, the restart rule for `sync-api` and `sync-worker` (FR-014)
-- [ ] T035 [US3] Replace "Current limit of the Compose deployment" (`docs/docs/custom-certificates.mdx:28-35`) with the setting, for the root and development files (FR-015)
+- [X] T034 [US3] Document the CA bundle in `docs/docs/compose-deployment.mdx`: how to add it, UID 10001 permissions on the directory, the restart rule for `sync-api` and `sync-worker` (FR-014)
+- [X] T035 [US3] Replace "Current limit of the Compose deployment" (`docs/docs/custom-certificates.mdx:28-35`) with the setting, for the root and development files (FR-015)
 
 **Checkpoint**: US3 works on its own: quickstart section 5 passes.
 

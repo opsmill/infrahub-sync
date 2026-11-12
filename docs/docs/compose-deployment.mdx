@@ -137,6 +137,7 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_S3_REGION` | `us-east-1` | The object store region. |
 | `INFRAHUB_SYNC_S3_ENDPOINT_URL` | `http://object-store:9000` | The object store address. Set it, with `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0`, to use your own store; see [Use your own S3-compatible store](#use-your-own-s3-compatible-store). |
 | `INFRAHUB_SYNC_S3_ADDRESSING_STYLE` | `path` | `path` puts the bucket in the request path, `virtual` in the host name. Any other value stops the Sync services and `sync-bootstrap`. |
+| `INFRAHUB_SYNC_CA_CERTIFICATES` | empty (an empty named volume) | A host directory of CA certificate files (`*.pem`, `*.crt`) that `sync-bootstrap`, `sync-api` and `sync-worker` trust next to the public roots. See [Trust a private certificate authority](#trust-a-private-certificate-authority). |
 | `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE` | `1` | `0` leaves the bundled store out: Compose creates no `object-store-init` or `object-store` container. |
 | `INFRAHUB_SYNC_WORK_POOL` | `infrahub-sync` | The Prefect work pool. |
 | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | `300` | How long a run admission stays valid. |
@@ -387,6 +388,35 @@ named as supported.
 Moving from the bundled store to your own does not copy earlier plans and run files. They stay in
 the `object-store-data` volume, and `runs plan` and `runs artifacts` cannot read the files of runs
 made before the move.
+
+## Trust a private certificate authority
+
+When a source, Infrahub or your own object store presents a certificate that a private
+certificate authority signed, give the Sync services that CA's certificate. Put one or more
+public CA certificate files (`*.pem` or `*.crt`) in a directory, name it in `.env`, and start
+the deployment:
+
+```bash
+INFRAHUB_SYNC_CA_CERTIFICATES=./ca
+```
+
+The value is an absolute path or starts with `./`. `sync-bootstrap`, `sync-api` and `sync-worker`
+mount the directory read-only at `/etc/infrahub-sync/ca`, and each one trusts its certificates
+next to the public roots of the image. Certificate checks stay on. A flow run the worker starts
+trusts the same certificates. At every start, each of the three services logs the number of
+certificates it loaded and the path of the bundle it wrote. When a trust variable such as
+`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` or `INFRAHUB_TLS_CA_FILE` is already set,
+it wins, and the service logs a warning that names the variable and not its value.
+
+- The directory holds public certificates only. A service stops at start when a file in it holds
+  a private key, and the error names the file and prints none of its content. A file that is not
+  a readable certificate stops it too.
+- User ID 10001, which the services run as, must be able to list the directory and read its files.
+- A change to the files takes effect only after `sync-api` and `sync-worker` restart:
+  `docker compose up -d` starts only `sync-bootstrap` again. Run
+  `docker compose restart sync-api sync-worker`.
+
+Unset, the mount is an empty named volume, and the services trust only the image's public roots.
 
 ## Start the deployment {#after-the-first-start}
 

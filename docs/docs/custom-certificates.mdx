@@ -25,11 +25,15 @@ The worker opens the connections that matter for a sync: to the source (NetBox, 
 - `INFRAHUB_TLS_CA_FILE` sets the CA file the Infrahub SDK uses for the destination connection directly.
 - `SSL_CERT_FILE` (or `SSL_CERT_DIR`) is the fallback for the Infrahub destination when `INFRAHUB_TLS_CA_FILE` is unset: the SDK's default SSL context consults it the same way the CLI-to-API connection does.
 
-### Current limit of the Compose deployment
+### A custom CA on a Compose deployment
 
-In this release, you cannot configure a custom CA for the Sync worker of a Compose deployment:
+Name a host directory of public CA certificate files (`*.pem`, `*.crt`) in `.env` with
+`INFRAHUB_SYNC_CA_CERTIFICATES`. `sync-bootstrap`, `sync-api` and `sync-worker` mount it
+read-only and trust its certificates next to the image's public roots, for sources, Infrahub
+and the object store. The development stack in `development/docker-compose.yml` reads the same
+setting. See [Trust a private certificate authority](./compose-deployment.mdx#trust-a-private-certificate-authority)
+for the rules: no private key in the directory, read access for user ID 10001, and a restart of
+`sync-api` and `sync-worker` after a change.
 
-- **Run the container image:** the `sync-worker` service of the root `docker-compose.yml` has a fixed `environment` list, a read-only root filesystem, and only `tmpfs` mounts. That list has no CA setting, so none of the variables above reaches the worker from `.env`, and no CA file is mounted.
-- **Run from source:** the `sync-worker` service of the development stack in `development/docker-compose.yml` also has a fixed `environment` list without these variables and no CA file mount.
-
-A worker on either deployment trusts only the certificate authorities in the image's default trust store. If a source or the destination uses a certificate that those authorities did not sign, the worker cannot verify it. `verify_ssl: false` turns off verification for the Infrahub destination and for adapters that support that setting. It does not establish trust, so use it only for development.
+`verify_ssl: false` turns off verification for the Infrahub destination and for adapters that
+support that setting. It does not establish trust, so use it only for development.

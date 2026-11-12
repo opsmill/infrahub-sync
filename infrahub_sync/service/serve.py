@@ -25,6 +25,7 @@ from .orchestration import (
 from .prefect_ui import prefect_ui_url_from_environment
 from .service import RunService
 from .storage import service_product_projection
+from .trust_store import TrustStoreError, install_custom_ca_bundle
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -93,6 +94,10 @@ def build_app(
 
 def main() -> None:
     """Serve the Sync API; Prefect workers and deployments are separate."""
+    try:
+        install_custom_ca_bundle()
+    except TrustStoreError as error:
+        raise SystemExit(str(error)) from None
     uvicorn.run(build_app(), host=os.environ.get("INFRAHUB_SYNC_SERVICE_HOST", "127.0.0.1"), port=8000)
 
 

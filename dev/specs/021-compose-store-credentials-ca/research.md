@@ -225,6 +225,19 @@ source as root); PEM content in a `.env` variable (hard to write correctly); poi
 at the operator's file directly (drops the public roots); installing the CA into the system store at
 start (read-only root filesystem, non-root user).
 
+### Implementation notes for R4 (2026-11-13)
+
+- `trust_store` logs through the standard `logging` module, like `bootstrap`, so pytest's
+  `caplog` and the Prefect handlers see it; it sets its own logger to INFO, and adds a
+  standard-error handler when no handler would print its lines (the Sync API process starts
+  without one).
+- The live check (`test_a_store_behind_a_private_ca_is_trusted_with_checks_on`) serves the
+  external Silo store over TLS from a test CA. `sync-bootstrap`, `sync-api` and `sync-worker` log
+  `loaded 1 CA certificate(s)`, and a plan writes its files to the store with certificate
+  checks on.
+- Not yet checked live (T033 stays open): Infrahub and a source served over TLS from the test
+  CA, and each bundled adapter's HTTP client honoring the bundle.
+
 ## R5. Keeping credential values out of text (FR-016 to FR-018)
 
 **Decision**: this specification relies on no value masking. Each measure keeps a credential out of

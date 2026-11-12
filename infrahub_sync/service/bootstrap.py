@@ -47,6 +47,7 @@ from .storage import (
     build_s3_client,
     service_product_projection,
 )
+from .trust_store import TrustStoreError, install_custom_ca_bundle
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -298,6 +299,11 @@ def _configure_logging() -> None:
 def main() -> int:
     """Converge this deployment's durable objects, reporting only a family on failure."""
     _configure_logging()
+    try:
+        install_custom_ca_bundle()
+    except TrustStoreError as error:
+        logger.error("%s", error)  # noqa: TRY400 - the message names a file, never its content.
+        return 1
     try:
         _converge()
     except BootstrapError as error:
