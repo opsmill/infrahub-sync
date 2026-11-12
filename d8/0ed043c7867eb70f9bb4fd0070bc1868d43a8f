@@ -1,0 +1,27 @@
+dev/specs/019-plan-problem-reporting/spec.md
+  s_d199771aa41449::t_4fbf204366b0db 783
+dev/adr/0020-records-with-problems-are-left-out-of-a-plan.md
+  s_d199771aa41449::t_5bb805aff85603 3-4
+dev/adr/0021-a-failure-record-holds-a-structured-cause.md
+  s_d199771aa41449::t_5bb805aff85603 3-4
+dev/adr/0022-saved-plan-format-4.md
+  s_d199771aa41449::t_5bb805aff85603 3-4
+dev/specs/019-plan-problem-reporting/tasks.md
+  s_d199771aa41449::t_5bb805aff85603 198
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d80ed043c7867eb70f9bb4fd0070bc1868d43a8f",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
