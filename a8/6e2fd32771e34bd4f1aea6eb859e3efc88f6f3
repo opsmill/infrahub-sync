@@ -1,0 +1,47 @@
+docs/docs/adapters/genericrestapi.mdx
+  s_3defe6e8bcd0ab::t_29ab0986db72f8 11
+docs/docs/adapters/slurpit.mdx
+  s_3defe6e8bcd0ab::t_29ab0986db72f8 11
+docs/docs/adapters/prometheus.mdx
+  s_3defe6e8bcd0ab::t_29ab0986db72f8 314
+tests/compose/test_source_credentials.py
+  s_3defe6e8bcd0ab::t_b9b6f51b76f8e5 631-687
+docs/docs/adapters/choosing-an-adapter.mdx
+  s_3defe6e8bcd0ab::t_ec79f225892e3b 42,44
+development/docker-compose.yml
+  s_3defe6e8bcd0ab::t_5ae7c36c08cb7a 286-310,312-324
+infrahub_sync/testcontainers/docker-compose.yml
+  s_3defe6e8bcd0ab::t_5ae7c36c08cb7a 306-330,332-344
+docs/docs/compose-deployment.mdx
+  s_3defe6e8bcd0ab::t_74a487eea249d3 302,304-312
+  s_3defe6e8bcd0ab::t_430636e71939d6 125,293-301,303,313-322
+  s_3defe6e8bcd0ab::t_e9957779aafddf 323
+tests/compose/test_compose_contract.py
+  s_3defe6e8bcd0ab::t_b3269ac942d977 93-125,1147-1191
+docs/docs/adapters/ipfabric.mdx
+  s_3defe6e8bcd0ab::t_ec79f225892e3b 11
+docker-compose.yml
+  s_3defe6e8bcd0ab::t_5ae7c36c08cb7a 306-330,332-344
+docs/docs/adapters/peering-manager.mdx
+  s_3defe6e8bcd0ab::t_29ab0986db72f8 11
+docs/docs/adapters/aci.mdx
+  s_3defe6e8bcd0ab::t_ec79f225892e3b 11
+dev/specs/021-compose-store-credentials-ca/tasks.md
+  s_3defe6e8bcd0ab::t_d1baae1b6810bc 72-73,77-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a86e2fd32771e34bd4f1aea6eb859e3efc88f6f3",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
