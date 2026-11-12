@@ -20,16 +20,16 @@ US2 can ship without US1; US3 extends US1's resume stage.
 
 ## Phase 1: Setup
 
-- [ ] T001 Record the unit-test baseline: run `uv run invoke tests.tests-unit` and `uv run ruff check .` in the worktree and note the pass/skip counts under "Baseline" at the end of this file (no source change)
+- [X] T001 Record the unit-test baseline: run `uv run invoke tests.tests-unit` and `uv run ruff check .` in the worktree and note the pass/skip counts under "Baseline" at the end of this file (no source change)
 
 ## Phase 2: Foundational (blocks US1, US2 and US3)
 
 ### Progress marker in the engine
 
-- [ ] T002 Add `ApplyProgressObserver` (a protocol with `committed(index, operation)`, `kind_finished(index)`, `stopped(index)`, `should_stop() -> bool`) and `ApplyProgressLostError` (carries the partial `ApplyRecord`) in `infrahub_sync/potenda/apply_progress.py`
-- [ ] T003 Extend `Potenda.apply_plan` in `infrahub_sync/potenda/__init__.py` with keyword arguments `progress: ApplyProgressObserver | None = None` and `start_after: int | None = None`: call `committed` only after the destination call returned and `applied.append` ran (FR-002), call `kind_finished` when the next operation's kind differs, call `should_stop()` next to `ownership.before_operation()` and raise `ApplyProgressLostError` when it is true, and skip operations at index `<= start_after` without dispatching them (research R3, R4, R6)
-- [ ] T004 Pass `progress` and `start_after` through `PlanApplier.apply_plan` (`infrahub_sync/utils.py`) and the shared execution surface (`infrahub_sync/execution.py`), defaulting to `None` so the CLI-local and direct Prefect paths behave as today
-- [ ] T005 [P] Test in `tests/test_potenda_apply_progress.py`: `committed` is never reported for an operation whose destination call raised; `kind_finished` fires at each kind boundary; `start_after=k` dispatches only operations after `k` and still runs every pre-write check; `should_stop()` returning true raises `ApplyProgressLostError` with the partial record; with no observer the existing apply tests pass unchanged
+- [X] T002 Add `ApplyProgressObserver` (a protocol with `committed(index, operation)`, `kind_finished(index)`, `stopped(index)`, `should_stop() -> bool`) and `ApplyProgressLostError` (carries the partial `ApplyRecord`) in `infrahub_sync/potenda/apply_progress.py`
+- [X] T003 Extend `Potenda.apply_plan` in `infrahub_sync/potenda/__init__.py` with keyword arguments `progress: ApplyProgressObserver | None = None` and `start_after: int | None = None`: call `committed` only after the destination call returned and `applied.append` ran (FR-002), call `kind_finished` when the next operation's kind differs, call `should_stop()` next to `ownership.before_operation()` and raise `ApplyProgressLostError` when it is true, and skip operations at index `<= start_after` without dispatching them (research R3, R4, R6)
+- [X] T004 Pass `progress` and `start_after` through `PlanApplier.apply_plan` (`infrahub_sync/utils.py`) and the shared execution surface (`infrahub_sync/execution.py`), defaulting to `None` so the CLI-local and direct Prefect paths behave as today
+- [X] T005 [P] Test in `tests/test_potenda_apply_progress.py`: `committed` is never reported for an operation whose destination call raised; `kind_finished` fires at each kind boundary; `start_after=k` dispatches only operations after `k` and still runs every pre-write check; `should_stop()` returning true raises `ApplyProgressLostError` with the partial record; with no observer the existing apply tests pass unchanged
 
 ### Progress marker in the store and the service
 
@@ -118,4 +118,8 @@ changed and some absent, run `verify`, and compare the report.
 
 ## Baseline
 
-To be recorded by T001.
+Recorded on 2026-11-12, on Python 3.11.8 after `uv sync --extra dev --extra prefect --extra service`, before any
+source change of this feature:
+
+- `uv run invoke tests.tests-unit`: 7569 passed, 4 skipped, 311 deselected, 3 xfailed, 12 warnings.
+- `uv run ruff check .`: all checks passed.
