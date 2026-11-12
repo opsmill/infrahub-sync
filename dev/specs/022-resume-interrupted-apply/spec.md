@@ -83,7 +83,7 @@ new plan of the same configuration version and check that it holds no creates an
 ### User Story 2 - Learn what an uncertain write did (Priority: P2)
 
 After an interruption, the operator runs `verify` on the run. Besides the pre-write checks, `verify` reads from the
-destination the nodes that the operations after the marker write, and reports for each one whether the destination
+destination the nodes of the uncertain operations, and reports for each one whether the destination
 already matches the plan.
 
 **Why this priority**: It replaces "inspect the destination by hand" with a report that names each uncertain
@@ -212,7 +212,7 @@ check that no new plan was created.
 - **Saved plan** (existing, cannot change after it is saved): defines the order the marker points into.
 - **Resume** (new kind of execution): the actor, the time, the optional reason, the start position and the expected
   checksum.
-- **Per-operation verify report** (new, part of a `verify` result): for each operation after the marker, its
+- **Per-operation verify report** (new, part of a `verify` result): for each uncertain operation, its
   operation identifier, kind and state.
 
 ## Success Criteria *(mandatory)*
