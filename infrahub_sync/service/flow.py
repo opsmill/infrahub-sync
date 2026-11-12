@@ -83,6 +83,7 @@ from infrahub_sync.runtime_schema import (
 from infrahub_sync.utils import PlanApplier
 
 from .apply_guard import ApplyGuard, hold_apply_guard
+from .apply_progress import StoreApplyProgressObserver
 from .checkpoints import (
     CheckpointUnavailableError,
     publish_final_checkpoint,
@@ -687,7 +688,9 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     A `plan` or `sync` stage records both sides as `waiting` as soon as it starts, before the
     live schema read and before a `sync` waits for its write guard, so a stage that fails
     before either read returns both sides as `not_started`. It then gives the engine an
-    observer that stores each side's read on the execution `flow_run_id`.
+    observer that stores each side's read on the execution `flow_run_id`. An `apply` or `sync`
+    stage gives the engine an observer that saves its progress marker on the same execution
+    (spec 022, research R3).
 
     A `sync` whose plan leaves out records stops after the plan is saved, before any write,
     and gives back its write admission (spec 019 FR-012, research R11): see `_left_out_stop`.
@@ -828,6 +831,9 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 record_applied=tracker.record_applied,
                 base_directory=scratch.root,
                 _lock_already_held=True,
+                _apply_progress=StoreApplyProgressObserver(
+                    projection, run_id, flow_run_id, total=manifest.operations_count
+                ),
             )
         # Outside the guard, so the release this stage reports is already confirmed, and
         # before the product commit, so the run's evidence is durable before its verdict.
@@ -908,6 +914,9 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 base_directory=scratch.root,
                 _lock_already_held=True,
                 _run_file_mode="sync",
+                _apply_progress=StoreApplyProgressObserver(
+                    projection, run_id, flow_run_id, total=manifest.operations_count
+                ),
             )
             assert isinstance(applied, RunResult)
         # Same order the apply stage publishes in, for the same reason.

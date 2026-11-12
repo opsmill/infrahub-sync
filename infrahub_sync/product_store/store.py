@@ -19,7 +19,7 @@ from time import sleep
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from uuid import UUID
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.configuration import ConfigurationPackage, validate_package_credentials
@@ -34,6 +34,7 @@ from infrahub_sync.product_store.models import (
     DEFAULT_LIMIT,
     RUN_ALREADY_CANCELLED_MESSAGE,
     RUN_CANCELLED_MESSAGE,
+    ApplyProgress,
     ArtifactReference,
     AuditEvent,
     BaselineWriteback,
@@ -100,7 +101,7 @@ CREATE TABLE IF NOT EXISTS prefect_executions (
     claimed_at TEXT, claiming_worker_id TEXT, stalled_at TEXT, cancellation_requested_at TEXT,
     cancellation_recovery_deadline_at TEXT, cancellation_receipt_id TEXT, cancellation_acknowledged_at TEXT,
     terminal_at TEXT, terminal_state TEXT, terminal_outcome TEXT, position INTEGER NOT NULL,
-    mutation_receipt_id TEXT UNIQUE, source_read TEXT, destination_read TEXT,
+    mutation_receipt_id TEXT UNIQUE, source_read TEXT, destination_read TEXT, apply_progress TEXT,
     PRIMARY KEY (run_id, flow_run_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id),
     FOREIGN KEY (mutation_receipt_id) REFERENCES mutation_receipts(receipt_id)
 );
@@ -246,6 +247,8 @@ _SIDE_READ_ERROR_CLASS_MAX_LENGTH = 200
 _PREFECT_EXECUTION_READ_COLUMNS: tuple[tuple[str, str], ...] = tuple(
     (column, "TEXT") for column in _SIDE_READ_COLUMNS.values()
 )
+# The last progress marker of a write execution, one JSON document (spec 022, research R2).
+_PREFECT_EXECUTION_PROGRESS_COLUMNS: tuple[tuple[str, str], ...] = (("apply_progress", "TEXT"),)
 _CONFIGURATION_BINDING_CONSTRAINT = "product_runs_configuration_binding_consistent"
 _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
     "(config_id IS NULL AND registry_version IS NULL AND package_checksum IS NULL) "
@@ -464,12 +467,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _SELECT_PREFECT_EXECUTIONS = """SELECT run_id, flow_run_id, deployment_id, purpose, attempt, last_observed_state,
 last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at, cancellation_requested_at,
 cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at, terminal_at, terminal_state,
-terminal_outcome, position, source_read, destination_read FROM prefect_executions WHERE run_id = ? ORDER BY position"""
+terminal_outcome, position, source_read, destination_read, apply_progress FROM prefect_executions WHERE run_id = ?
+ORDER BY position"""
 _INSERT_PREFECT_EXECUTION = """INSERT INTO prefect_executions (run_id, flow_run_id, deployment_id, purpose, attempt,
 last_observed_state, last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at,
 cancellation_requested_at, cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at,
-terminal_at, terminal_state, terminal_outcome, position, mutation_receipt_id, source_read, destination_read)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+terminal_at, terminal_state, terminal_outcome, position, mutation_receipt_id, source_read, destination_read,
+apply_progress) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _INSERT_MUTATION_RECEIPT = """INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation,
 target_run_id, request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body,
 flow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
@@ -628,6 +632,10 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     ) -> None: ...
 
     def record_side_reads(self, run_id: str, flow_run_id: str, documents: Mapping[Side, Mapping[str, Any]]) -> bool: ...
+
+    def record_apply_progress(self, run_id: str, flow_run_id: str, document: ApplyProgress) -> bool: ...
+
+    def run_is_resumable(self, run_id: str) -> bool: ...
 
     def claim_execution(
         self,
@@ -928,9 +936,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             cursor.execute(statement)
 
     def _migrate_prefect_execution_columns(self, cursor: _Cursor) -> None:
-        """Add liveness and read-state columns without fabricating values for legacy links."""
+        """Add liveness, read-state and apply-progress columns without fabricating values for legacy links."""
         existing = self._read_table_columns(cursor, "prefect_executions")
-        for column, sql_type in (*_PREFECT_EXECUTION_LIVENESS_COLUMNS, *_PREFECT_EXECUTION_READ_COLUMNS):
+        for column, sql_type in (
+            *_PREFECT_EXECUTION_LIVENESS_COLUMNS,
+            *_PREFECT_EXECUTION_READ_COLUMNS,
+            *_PREFECT_EXECUTION_PROGRESS_COLUMNS,
+        ):
             if column not in existing:
                 cursor.execute(f"ALTER TABLE prefect_executions ADD COLUMN {column} {sql_type}")
 
@@ -1380,7 +1392,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         the append belongs to a submission still in flight, and it appends at most once. A
         write append additionally requires the run's write-admission row to name this exact
         receipt and this exact operation: the admission is what one request won, and nothing
-        else may spend it. A run holding a write admission accepts no read append at all.
+        else may spend it. A run holding a write admission accepts no read append, except the
+        ``verify`` a resumable run admitted (spec 022, research R5): its receipt must be a
+        ``verify`` receipt, and the run must still be resumable under the lock the caller holds.
         """
         cursor.execute(
             self._sql("SELECT 1 FROM mutation_receipts WHERE receipt_id = ? AND run_id = ? AND state <> 'accepted'"),
@@ -1400,8 +1414,17 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             if admission is None or (str(admission[0]), str(admission[1])) != (receipt_id, purpose):
                 raise ValueError(_ADMITTED_APPEND_REFUSED)
             return
-        if admission is not None:
+        if admission is not None and not (
+            purpose == "verify"
+            and self._receipt_operation(cursor, receipt_id) == "verify"
+            and self._run_is_resumable(cursor, run_id)
+        ):
             raise ValueError(_ADMITTED_APPEND_REFUSED)
+
+    def _receipt_operation(self, cursor: _Cursor, receipt_id: str) -> str | None:
+        cursor.execute(self._sql("SELECT operation FROM mutation_receipts WHERE receipt_id = ?"), (receipt_id,))
+        row = cursor.fetchone()
+        return None if row is None else str(row[0])
 
     def _insert_prefect_execution(
         self,
@@ -1437,6 +1460,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 mutation_receipt_id,
                 None if link.source_read is None else _json(link.source_read),
                 None if link.destination_read is None else _json(link.destination_read),
+                None if link.apply_progress is None else _json(link.apply_progress.model_dump(mode="json")),
             ),
         )
 
@@ -1527,6 +1551,50 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL",
             (*(_json(dict(document)) for document in documents.values()), run_id, flow_run_id),
         )
+
+    def record_apply_progress(self, run_id: str, flow_run_id: str, document: ApplyProgress) -> bool:
+        """Store a write execution's progress marker while the execution is not terminal.
+
+        Returns whether a row changed. A write that arrives after the execution ended, for
+        example from a worker that kept running after liveness marked it interrupted, changes
+        nothing (spec 022, research R2). The document is validated again before any SQL runs,
+        so a caller that bypassed the model's checks cannot store another shape.
+        """
+        checked = ApplyProgress.model_validate(document.model_dump())
+        return self._execution_update(
+            "UPDATE prefect_executions SET apply_progress = ? "
+            "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL",
+            (_json(checked.model_dump(mode="json")), run_id, flow_run_id),
+        )
+
+    def run_is_resumable(self, run_id: str) -> bool:
+        """Whether the run is resumable: see `_run_is_resumable` (spec 022 data-model.md "State rules")."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                return self._run_is_resumable(cursor, run_id)
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def _run_is_resumable(self, cursor: _Cursor, run_id: str) -> bool:
+        """Whether the run's write was interrupted and nothing holds the run now.
+
+        A run is resumable when `reconciliation_required` is true, its phase is not
+        `cancelled`, and none of its executions is unfinished (spec 022 data-model.md
+        "State rules", research R1).
+        """
+        cursor.execute(
+            self._sql(
+                "SELECT 1 FROM product_runs WHERE run_id = ? AND reconciliation_required AND phase <> 'cancelled' "
+                "AND NOT EXISTS (SELECT 1 FROM prefect_executions WHERE prefect_executions.run_id = ? "
+                "AND prefect_executions.terminal_at IS NULL)"
+            ),
+            (run_id, run_id),
+        )
+        return cursor.fetchone() is not None
 
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime) -> bool:
         """Record the first informational stall without changing claim eligibility."""
@@ -2265,7 +2333,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         run_id = receipt.run_id
         assert run_id is not None  # a run receipt carries its run ID (MutationReceipt invariant).
         cursor.execute(self._sql("UPDATE product_runs SET run_id = run_id WHERE run_id = ?"), (run_id,))
-        if not self._reservation_refused(cursor, run_id, receipt.receipt_id, admit_write=admit_write):
+        if not self._reservation_refused(
+            cursor, run_id, receipt.receipt_id, operation=receipt.operation, admit_write=admit_write
+        ):
             return receipt
         return receipt.model_copy(
             update={
@@ -2275,12 +2345,17 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             }
         )
 
-    def _reservation_refused(self, cursor: _Cursor, run_id: str, receipt_id: str, *, admit_write: bool) -> bool:
+    def _reservation_refused(
+        self, cursor: _Cursor, run_id: str, receipt_id: str, *, operation: str, admit_write: bool
+    ) -> bool:
         """Answer whether this run may still admit the requested stage.
 
         A run that has admitted its one write never admits another stage of any kind, even
         after that write becomes terminal: terminal write evidence is immutable and the
-        operator's next step is a new run. A write additionally needs the run quiet — no
+        operator's next step is a new run. The one exception is a ``verify`` on a resumable
+        run (spec 022, research R5, critique E1): it reads the destination and writes nothing,
+        and it is admitted only while no other receipt of the run is unresolved, so two
+        ``verify`` requests never both win. A write additionally needs the run quiet — no
         other unresolved submission and no unfinished execution — so an apply cannot race
         a verify that has reserved but not yet submitted. A write is also refused once the
         run is in phase ``cancelled``: the caller holds the same row lock as
@@ -2288,7 +2363,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         """
         cursor.execute(self._sql("SELECT 1 FROM write_admissions WHERE run_id = ?"), (run_id,))
         if cursor.fetchone() is not None:
-            return True
+            if operation != "verify" or admit_write or not self._run_is_resumable(cursor, run_id):
+                return True
+            return self._other_receipt_unresolved(cursor, run_id, receipt_id)
         if not admit_write:
             return False
         cursor.execute(self._sql("SELECT phase FROM product_runs WHERE run_id = ?"), (run_id,))
@@ -2299,18 +2376,26 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         # targets the execution a write already owns rather than reserving a stage, and
         # approval, which submits no execution: the approval columns decide what an apply
         # may do, and an approve receipt left reserved by a crash must not block every write.
+        if self._other_receipt_unresolved(cursor, run_id, receipt_id):
+            return True
+        cursor.execute(
+            self._sql("SELECT 1 FROM prefect_executions WHERE run_id = ? AND terminal_at IS NULL"),
+            (run_id,),
+        )
+        return cursor.fetchone() is not None
+
+    def _other_receipt_unresolved(self, cursor: _Cursor, run_id: str, receipt_id: str) -> bool:
+        """Whether another stage receipt of the run is still unresolved.
+
+        Cancellation and approval are left out: a cancellation targets the execution a stage
+        already owns, and an approval submits no execution.
+        """
         cursor.execute(
             self._sql(
                 "SELECT 1 FROM mutation_receipts WHERE run_id = ? AND receipt_id <> ? AND state <> 'accepted' "
                 "AND operation NOT IN ('cancel', 'approve')"
             ),
             (run_id, receipt_id),
-        )
-        if cursor.fetchone() is not None:
-            return True
-        cursor.execute(
-            self._sql("SELECT 1 FROM prefect_executions WHERE run_id = ? AND terminal_at IS NULL"),
-            (run_id,),
         )
         return cursor.fetchone() is not None
 
@@ -2497,7 +2582,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 run_id=run_id,
                 mutation_id=receipt_id,
             )
-        if self._reservation_refused(cursor, run_id, receipt_id, admit_write=True):
+        if self._reservation_refused(cursor, run_id, receipt_id, operation="cancel", admit_write=True):
             return 409, _run_execution_conflict_response(run_id, receipt_id)
         return None
 
@@ -3612,6 +3697,18 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """
         return self._records.record_side_reads(run_id, flow_run_id, documents)
 
+    def record_apply_progress(self, run_id: str, flow_run_id: str, document: ApplyProgress) -> bool:
+        """Store a write execution's progress marker on a non-terminal execution; return whether it changed.
+
+        The marker holds positions, an operation identifier and a time, never a value
+        (spec 022 data-model.md "Execution progress marker").
+        """
+        return self._records.record_apply_progress(run_id, flow_run_id, document)
+
+    def run_is_resumable(self, run_id: str) -> bool:
+        """Whether the run's write was interrupted, the run is not cancelled, and no execution is unfinished."""
+        return self._records.run_is_resumable(run_id)
+
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime | None = None) -> bool:
         """Set the first stall marker while leaving a pre-TTL execution claimable."""
         effective_stalled_at = stalled_at if stalled_at is not None else datetime.now(timezone.utc)
@@ -4357,6 +4454,25 @@ def _approval_columns(approval: RunApproval | None) -> tuple[str | None, str | N
     return approval.approved_by, _utc_iso(approval.approved_at), approval.plan_checksum, approval.reason
 
 
+def _stored_apply_progress(value: str | None, *, run_id: str) -> ApplyProgress | None:
+    """Parse the stored progress marker; a value that does not parse reads as ``None``.
+
+    The marker is a progress report, so a damaged value must not stop a run from being read.
+    The warning names the run and the error class, never the stored text.
+    """
+    if value is None:
+        return None
+    try:
+        return ApplyProgress.model_validate_json(value)
+    except ValidationError as exc:
+        logger.warning(
+            "Ignoring an unreadable apply-progress column: run_id=%s error=%s",
+            run_id,
+            type(exc).__name__,
+        )
+        return None
+
+
 def _stored_side_read(value: str | None, *, run_id: str, column: str) -> dict[str, Any] | None:
     """Parse one stored side-read column; a value that is not a JSON object reads as ``None``.
 
@@ -4435,6 +4551,7 @@ def _run_from_rows(
                     "terminal_outcome": item[17],
                     "source_read": _stored_side_read(item[19], run_id=row[0], column="source_read"),
                     "destination_read": _stored_side_read(item[20], run_id=row[0], column="destination_read"),
+                    "apply_progress": _stored_apply_progress(item[21], run_id=row[0]),
                 }
                 for item in links
             ],

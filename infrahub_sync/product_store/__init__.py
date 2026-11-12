@@ -1,6 +1,7 @@
 """Durable Sync product records and immutable artifacts."""
 
 from infrahub_sync.product_store.models import (
+    ApplyProgress,
     ArtifactReference,
     AuditEvent,
     BaselineWriteback,
@@ -45,6 +46,7 @@ from infrahub_sync.product_store.store import (
 )
 
 __all__ = (
+    "ApplyProgress",
     "ArtifactReference",
     "ArtifactUnavailableError",
     "AuditEvent",

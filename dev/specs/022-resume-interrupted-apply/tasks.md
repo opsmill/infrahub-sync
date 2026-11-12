@@ -33,16 +33,16 @@ US2 can ship without US1; US3 extends US1's resume stage.
 
 ### Progress marker in the store and the service
 
-- [ ] T006 Add `ApplyProgress` (fields of data-model.md "Execution progress marker") to `infrahub_sync/product_store/models.py`, add the nullable `apply_progress` column to `prefect_executions` through the existing start-up column migration, and add `record_apply_progress(run_id, flow_run_id, document)` that updates only `WHERE terminal_at IS NULL`, in `infrahub_sync/product_store/store.py` (research R2)
-- [ ] T007 Add `StoreApplyProgressObserver` in `infrahub_sync/service/apply_progress.py`: save after 500 commits, after 30 seconds, at each kind boundary, on `stopped` and at the end; catch store errors broadly, log a warning with the run identifier and the error class; track the first failed attempt since the last success and make `should_stop()` true once it is 5 minutes old (research R4, critique E4)
-- [ ] T008 Pass a `StoreApplyProgressObserver` from the service worker's apply and `sync` stages in `infrahub_sync/service/flow.py`
-- [ ] T009 [P] Test in `tests/product_store/test_apply_progress.py`: the column is added idempotently, a marker round-trips, and a write after the execution is terminal changes nothing
-- [ ] T010 [P] Test in `tests/service/test_apply_progress_observer.py` with an injected clock: the save cadence (500, 30 seconds, kind boundary, end, failure); a failing store keeps writing and logs one warning per failure without the exception message; `should_stop()` turns true 5 minutes after the first failed attempt and never during a quiet period between successful saves
+- [X] T006 Add `ApplyProgress` (fields of data-model.md "Execution progress marker") to `infrahub_sync/product_store/models.py`, add the nullable `apply_progress` column to `prefect_executions` through the existing start-up column migration, and add `record_apply_progress(run_id, flow_run_id, document)` that updates only `WHERE terminal_at IS NULL`, in `infrahub_sync/product_store/store.py` (research R2)
+- [X] T007 Add `StoreApplyProgressObserver` in `infrahub_sync/service/apply_progress.py`: save after 500 commits, after 30 seconds, at each kind boundary, on `stopped` and at the end; catch store errors broadly, log a warning with the run identifier and the error class; track the first failed attempt since the last success and make `should_stop()` true once it is 5 minutes old (research R4, critique E4)
+- [X] T008 Pass a `StoreApplyProgressObserver` from the service worker's apply and `sync` stages in `infrahub_sync/service/flow.py`
+- [X] T009 [P] Test in `tests/product_store/test_apply_progress.py`: the column is added idempotently, a marker round-trips, and a write after the execution is terminal changes nothing
+- [X] T010 [P] Test in `tests/service/test_apply_progress_observer.py` with an injected clock: the save cadence (500, 30 seconds, kind boundary, end, failure); a failing store keeps writing and logs one warning per failure without the exception message; `should_stop()` turns true 5 minutes after the first failed attempt and never during a quiet period between successful saves
 
 ### `verify` on an interrupted run
 
-- [ ] T011 Add the resumable-run rule (data-model.md "State rules": `reconciliation_required`, not cancelled, no unfinished execution) as a store query, and admit a `verify` reservation on a resumable run as the one exception to the write-admission refusal in `_reserve_existing`, in `infrahub_sync/product_store/store.py` (research R5, critique E1)
-- [ ] T012 [P] Test in `tests/product_store/test_resume_admissions.py`: `verify` is admitted on a resumable run; `plan`, `apply`, `approve` and a second `verify` while one is unfinished are still refused; `verify` on an applied run is still refused
+- [X] T011 Add the resumable-run rule (data-model.md "State rules": `reconciliation_required`, not cancelled, no unfinished execution) as a store query, and admit a `verify` reservation on a resumable run as the one exception to the write-admission refusal in `_reserve_existing`, in `infrahub_sync/product_store/store.py` (research R5, critique E1)
+- [X] T012 [P] Test in `tests/product_store/test_resume_admissions.py`: `verify` is admitted on a resumable run; `plan`, `apply`, `approve` and a second `verify` while one is unfinished are still refused; `verify` on an applied run is still refused
 
 **Checkpoint**: applies save a marker; an interrupted run accepts `verify`. Nothing resumes yet.
 

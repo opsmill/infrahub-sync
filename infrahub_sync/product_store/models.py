@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from infrahub_sync.configuration.worker_credentials import is_credential_name
 from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves this annotation at runtime.
+from infrahub_sync.plan.identity import OPERATION_ID_PATTERN
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 # The largest registry version the store can allocate: the signed 64-bit integer limit.
@@ -71,6 +72,42 @@ class ArtifactReference(BaseModel):
         return self
 
 
+class ApplyProgress(BaseModel):
+    """How far one write execution got through its saved plan (spec 022 data-model.md).
+
+    `position` is the index, in the saved plan's stored order, of the last operation this
+    execution knows was committed at the destination; the worker never saves a position ahead
+    of a commit. The document holds positions, an operation identifier and a time only, never
+    a value read from or written to a system.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    position: int = Field(ge=0)
+    operation_id: str = Field(pattern=OPERATION_ID_PATTERN)
+    total: int = Field(ge=1)
+    start_after: int | None = Field(default=None, ge=0)
+    saved_at: datetime
+
+    @field_validator("saved_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            msg = "the apply progress time must include a timezone"
+            raise ValueError(msg)
+        return value
+
+    @model_validator(mode="after")
+    def _require_positions_in_plan(self) -> ApplyProgress:
+        if self.position >= self.total:
+            msg = "the apply progress position is not in the plan"
+            raise ValueError(msg)
+        if self.start_after is not None and self.start_after >= self.position:
+            msg = "the apply progress position must come after the position the resume started after"
+            raise ValueError(msg)
+        return self
+
+
 class PrefectExecutionLink(BaseModel):
     """Historical correlation to one purpose-labelled Prefect flow execution."""
 
@@ -98,6 +135,9 @@ class PrefectExecutionLink(BaseModel):
     # execution that has not reached its planning step.
     source_read: dict[str, Any] | None = None
     destination_read: dict[str, Any] | None = None
+    # The last progress marker a write execution saved (spec 022, research R2); `None` for a
+    # read stage, an execution recorded before that feature, or a write that committed nothing.
+    apply_progress: ApplyProgress | None = None
 
     @field_validator(
         "last_observed_at",

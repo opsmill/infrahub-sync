@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -19,6 +20,7 @@ from infrahub_sync.potenda.read_progress import SideReadReport
 from infrahub_sync.product_store import PrefectExecutionLink, ProductProjection
 from infrahub_sync.product_store.store import FileArtifactStore, SQLiteRunStore
 from infrahub_sync.service import flow as service_flow
+from infrahub_sync.service.apply_progress import StoreApplyProgressObserver
 from infrahub_sync.service.read_progress import StoreSideReadObserver, record_waiting, stage_reads
 from infrahub_sync.service.scratch import stage_scratch
 from tests.product_store.test_contract import _run
@@ -454,12 +456,14 @@ def test_a_verify_stage_records_nothing_and_passes_no_observer(tmp_path: Path, m
     assert (link.source_read, link.destination_read) == (None, None)
 
 
-def test_an_apply_stage_records_nothing_and_passes_no_observer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_apply_stage_records_no_read_and_passes_only_the_apply_progress_observer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     projection = _store(tmp_path, "apply")
     _bind_stage_context(monkeypatch, projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "rehydrate_plan_checkpoint", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: object())
+    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: SimpleNamespace(operations_count=7))
     monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
     seen: dict[str, Any] = {}
 
@@ -474,6 +478,8 @@ def test_an_apply_stage_records_nothing_and_passes_no_observer(tmp_path: Path, m
 
     assert seen["operation"] == "apply"
     assert "_read_observer" not in seen
+    # The apply saves its progress marker instead (spec 022, T008).
+    assert isinstance(seen["_apply_progress"], StoreApplyProgressObserver)
     link = _stored_link(projection)
     assert (link.source_read, link.destination_read) == (None, None)
 
