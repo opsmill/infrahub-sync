@@ -1,0 +1,33 @@
+dev/specs/021-compose-store-credentials-ca/spec.md
+  s_3defe6e8bcd0ab::t_bcd7124b8d5299 392-404
+  s_3defe6e8bcd0ab::t_880723a55560e5 363-366
+  s_3defe6e8bcd0ab::t_ea32398d87a4e5 488-491
+  s_3defe6e8bcd0ab::t_637ee7ce061842 510
+  s_3defe6e8bcd0ab::t_c707b68e4e4639 594
+  s_3defe6e8bcd0ab::t_d924f96875c23a 115-128
+  s_3defe6e8bcd0ab::t_e658924578bc0d 146-147
+  s_3defe6e8bcd0ab::t_ba867ec7ea2857 204-207
+  s_3defe6e8bcd0ab::t_e97d65f1d99a4f 325-332
+  s_3defe6e8bcd0ab::t_fb08452db8df40 409-411
+  s_3defe6e8bcd0ab::t_8e8bb801c5599b 422-424
+  s_3defe6e8bcd0ab::t_fc953be16834b9 223-225
+  s_3defe6e8bcd0ab::t_c969a7b7ad39d8 247-248
+  s_3defe6e8bcd0ab::t_146023678386bd 417-419
+  s_3defe6e8bcd0ab::t_49f687b21e09e3 352,376
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "523c7239a54c70b1121ed09269dabd921e118488",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
