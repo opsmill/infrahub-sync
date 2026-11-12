@@ -1,0 +1,19 @@
+tests/product_store/test_worker_environments.py
+  s_d199771aa41449::t_783356b0f4bcbf 51-52,54-55,57-58,60-61,63-68,71-74,77-92,96-98,100,102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f3e11096b1daf961ff224a0496f10d60f56978d3",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
