@@ -16,6 +16,7 @@ Spec 019 T017 to T028 implement the behavior.
 from __future__ import annotations
 
 import copy
+import dataclasses
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -135,6 +136,75 @@ def test_a_record_with_two_problems_is_left_out_once(plan_problems: PlanProblemF
     assert sorted(site_four[0]["problem_types"]) == ["dropdown_value_not_in_choices", "duplicate_source_identity"]
     report = planned.manifest["report"]
     assert (report["problems"], report["left_out"], report["left_out_with_problem"]) == (2, 2, 2)
+    assert planned.operations == []
+
+
+def _with_more_site_fields(fixture: PlanProblemFixture) -> PlanProblemFixture:
+    """The fixture with four more site fields: Numbers `size` and `floors`, Dropdown `tier` and Text `code`.
+
+    `code` goes through a transform that fails for any value other than `a`.
+    """
+    schema = copy.deepcopy(fixture.schema_record)
+    attributes = schema["LocationSite"]["attributes"]
+    optional = {"optional": True, "default_value": None, "unique": False, "read_only": False}
+    attributes["size"] = {"kind": "Number", **optional}
+    attributes["floors"] = {"kind": "Number", **optional}
+    attributes["tier"] = {"kind": "Dropdown", **optional, "choices": ["gold", "silver"]}
+    attributes["code"] = {"kind": "Text", **optional}
+    config = copy.deepcopy(fixture.config_data)
+    site = next(entry for entry in config["schema_mapping"] if entry["name"] == "LocationSite")
+    site["fields"] += [{"name": name, "mapping": name} for name in ("size", "floors", "tier", "code")]
+    site["transforms"] = [{"field": "code", "expression": "{{ {'a': 'A'}[code] }}"}]
+    return dataclasses.replace(fixture, schema_record=schema, config_data=config)
+
+
+@pytest.mark.parametrize(
+    ("values", "problem_types"),
+    [
+        pytest.param(
+            {"size": 2.5, "floors": 1.5}, ["wrong_value_type", "wrong_value_type"], id="two-wrong-value-types"
+        ),
+        pytest.param(
+            {"status": "decommissioning", "tier": "bronze"},
+            ["dropdown_value_not_in_choices", "dropdown_value_not_in_choices"],
+            id="two-dropdown-values",
+        ),
+        pytest.param(
+            {"size": 2.5, "tier": "bronze"},
+            ["dropdown_value_not_in_choices", "wrong_value_type"],
+            id="wrong-value-type-and-dropdown-value",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="A record that fails validation is not stored, and the dropdown check reads stored records only",
+            ),
+        ),
+        pytest.param(
+            {"code": "zz", "tier": "bronze"},
+            ["dropdown_value_not_in_choices", "transform_failed"],
+            id="failed-transform-and-dropdown-value",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="A record whose transform fails is not stored, and the dropdown check reads stored records only",
+            ),
+        ),
+    ],
+)
+def test_each_problem_of_one_record_is_listed_and_the_record_is_left_out_once(
+    plan_problems: PlanProblemFixture, values: dict[str, Any], problem_types: list[str]
+) -> None:
+    """Spec edge case: site `paris` has two problems in two fields: both are listed, one left-out entry."""
+    fixture = _with_more_site_fields(plan_problems)
+    paris = {**_site(fixture, 1), "code": "a", **values}
+    planned = plan_fixture(fixture, records={"LocationSite": [paris]}, destination={})
+
+    assert sorted(problem["problem_type"] for problem in planned.problems) == problem_types
+    assert sorted(problem.get("field") for problem in planned.problems) == sorted(values)
+    # The left-out entry lists each problem type once.
+    assert _left_out_summary(planned.left_out) == [
+        ("LocationSite", "1", "has_problem", sorted(set(problem_types)), None, None)
+    ]
+    report = planned.manifest["report"]
+    assert (report["problems"], report["left_out"], report["left_out_with_problem"]) == (2, 1, 1)
     assert planned.operations == []
 
 
