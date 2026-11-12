@@ -39,8 +39,8 @@ def projection(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Produ
         yield ProductProjection(SQLiteRunStore(tmp_path / "records.sqlite3"), artifacts)
         return
     schema = request.getfixturevalue("_postgresql_schema")
-    # pylint: disable-next=import-outside-toplevel
-    import psycopg
+    # pylint: disable-next=import-outside-toplevel,import-error
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
 
     from infrahub_sync.service.storage import PsycopgConnectionFactory
 
