@@ -6,6 +6,7 @@ import re
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
+from operator import methodcaller
 from typing import TYPE_CHECKING, Any, cast
 
 # The one costly module-level import: apply's exception boundary must name the SDK's errors.
@@ -121,7 +122,7 @@ def _side_adapter_name(config: SyncInstance | None, role: Side, adapter: Adapter
 
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from diffsync import Adapter, DiffSyncModel
@@ -313,6 +314,24 @@ def _failure_reach_and_remedy(exc: Exception, *, record: ApplyRecord) -> tuple[s
         "this operation may itself have written part of its change before failing — re-applying the plan converges it",
         None,
     )
+
+
+def _report_progress(progress: ApplyProgressObserver | None, report: Callable[[ApplyProgressObserver], object]) -> bool:
+    """Make one call on the apply's progress observer, and return its answer as a `bool`.
+
+    An observer that raises never changes the apply's result, as for spec 018's read observer:
+    its failure is logged once, by error class only, and the apply continues — so a failure
+    in `stopped` cannot replace the error that stopped the apply, nor drop the partial record
+    that error carries. A `should_stop` that raises counts as "do not stop". `None` reports
+    nothing and answers false.
+    """
+    if progress is None:
+        return False
+    try:
+        return bool(report(progress))
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught  # an observer never fails an apply
+        logger.warning("Apply: the progress observer failed (%s)", type(exc).__name__)
+        return False
 
 
 def _operational_failure_summary(exc: Exception) -> str:
@@ -1175,8 +1194,8 @@ class Potenda:
                 # Asked before the ownership proof, so the proof stays immediately before the
                 # dispatch it authorizes. Progress that can no longer be saved stops the next
                 # write rather than letting the apply run on without a resumable position (R4).
-                if progress is not None and progress.should_stop():
-                    progress.stopped(index)
+                if _report_progress(progress, methodcaller("should_stop")):
+                    _report_progress(progress, methodcaller("stopped", index))
                     msg = (
                         f"The apply of run {run_id!r} stopped before operation {operation.operation_id!r} "
                         f"because its progress could not be saved. The {len(applied)} operation(s) applied "
@@ -1202,8 +1221,7 @@ class Potenda:
                         skipped_delete_operations=tuple(skipped_deletes),
                         operations_total=operations_total,
                     )
-                    if progress is not None:
-                        progress.stopped(index)
+                    _report_progress(progress, methodcaller("stopped", index))
                     raise
                 try:
                     destination.apply_planned_operation(operation=operation, peers=peers)
@@ -1230,8 +1248,7 @@ class Potenda:
                     )
                     # Never `committed`: the call raised, so this operation is not known to be
                     # written, and a saved position must not claim it (FR-002).
-                    if progress is not None:
-                        progress.stopped(index)
+                    _report_progress(progress, methodcaller("stopped", index))
                     if not isinstance(exc, OPERATIONAL_APPLY_FAILURES):
                         # An interrupt or a defect: it propagates as itself, with its own
                         # traceback, carrying the record so what was written stays readable from
@@ -1249,10 +1266,9 @@ class Potenda:
                     raise OperationApplyFailedError(msg, apply_record=partial, next_action=next_action) from exc
                 applied.append(operation.operation_id)
                 # Only now, after the destination call returned and the record holds it (FR-002).
-                if progress is not None:
-                    progress.committed(index, operation)
-            if progress is not None and (index + 1 == operations_total or operations[index + 1].kind != operation.kind):
-                progress.kind_finished(index)
+                _report_progress(progress, methodcaller("committed", index, operation))
+            if index + 1 == operations_total or operations[index + 1].kind != operation.kind:
+                _report_progress(progress, methodcaller("kind_finished", index))
 
         completed = ApplyRecord(
             applied_operations=tuple(applied),

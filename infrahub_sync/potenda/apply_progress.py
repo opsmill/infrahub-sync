@@ -22,8 +22,8 @@ class ApplyProgressObserver(Protocol):
     """Receives each committed operation, each finished kind, and the stop of an apply.
 
     The engine calls these methods on the thread that dispatches the operations, one call at a
-    time. An implementation catches its own errors: the engine does not guard these calls, and
-    an exception raised here ends the apply like any other failure in the loop.
+    time. An exception raised here never changes the apply's result: the engine logs it by
+    error class only and continues, and a `should_stop` that raises counts as "do not stop".
     """
 
     def committed(self, index: int, operation: PlannedOperation) -> None:

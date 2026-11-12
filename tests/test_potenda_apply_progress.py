@@ -288,3 +288,49 @@ def test_the_plan_applier_passes_the_observer_and_the_start_position_to_the_engi
 
     assert record.applied_operations == (echo,)
     assert f"committed:4:{echo}" in events
+
+
+class FailingProgress(RecordingProgress):
+    """An observer whose every report raises, as a broken store-backed observer might."""
+
+    def committed(self, index: int, operation: PlannedOperation) -> None:
+        super().committed(index, operation)
+        raise RuntimeError
+
+    def kind_finished(self, index: int) -> None:
+        super().kind_finished(index)
+        raise RuntimeError
+
+    def stopped(self, index: int) -> None:
+        super().stopped(index)
+        raise RuntimeError
+
+
+def test_an_observer_that_raises_never_changes_a_completed_apply(tmp_path: Path) -> None:
+    """Every operation is still dispatched and recorded; the observer's failures are only logged."""
+    directory = _run_dir(tmp_path)
+    alpha, bravo, charlie, delta, echo = _plan(directory)
+    events: list[str] = []
+
+    record = _potenda(directory, RecordingDestination(events)).apply_plan(
+        config_version=CONFIG_VERSION, ownership=RecordingOwnership(events), progress=FailingProgress(events)
+    )
+
+    assert record == ApplyRecord(applied_operations=(alpha, charlie, delta, echo), skipped_delete_operations=(bravo,))
+    assert events[-1] == "final-prove"
+
+
+def test_a_stopped_report_that_raises_keeps_the_destination_error_and_its_record(tmp_path: Path) -> None:
+    """A failing `stopped` cannot replace the error that stopped the apply, nor drop its partial record."""
+    directory = _run_dir(tmp_path)
+    alpha, _bravo, charlie, _delta, _echo = _plan(directory)
+    events: list[str] = []
+
+    with pytest.raises(OperationApplyFailedError) as raised:
+        _potenda(directory, RecordingDestination(events, fail_on=charlie)).apply_plan(
+            config_version=CONFIG_VERSION, ownership=RecordingOwnership(events), progress=FailingProgress(events)
+        )
+
+    assert events[-1] == "stopped:2"
+    assert raised.value.apply_record.applied_operations == (alpha,)
+    assert raised.value.apply_record.failed_operation == charlie
