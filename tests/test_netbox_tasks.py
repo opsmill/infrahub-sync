@@ -200,7 +200,7 @@ def test_up_waits_for_netbox_and_prints_no_seed_step(
     monkeypatch.setattr(netbox, "_compose", lambda *_args, **_kwargs: events.append("compose"))
     monkeypatch.setattr(netbox, "_wait_for_http", lambda *_args, **_kwargs: events.append("wait"))
 
-    cast("Task", netbox.up).body(context)
+    cast("Task", netbox.start).body(context)
 
     assert events == ["compose", "wait"]
     printed = capsys.readouterr().out
@@ -214,7 +214,7 @@ def test_down_removes_containers_and_volumes(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(netbox, "load_netbox_env", lambda: REQUIRED_VALUES)
     monkeypatch.setattr(netbox, "_compose", lambda _context, arguments, _values: calls.append(arguments))
 
-    cast("Task", netbox.down).body(context)
+    cast("Task", netbox.destroy).body(context)
 
     assert calls == ["down --volumes"]
 

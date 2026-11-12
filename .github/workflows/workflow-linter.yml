@@ -181,7 +181,7 @@ jobs:
       - name: "Setup Python environment"
         run: "uv sync --frozen --extra dev"
       - name: "Build docs website"
-        run: "uv run invoke docusaurus"
+        run: "uv run invoke docs.docusaurus"
 
   validate-documentation-style:
     if: |

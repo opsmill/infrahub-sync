@@ -69,7 +69,7 @@ def _resolved_or_skip(profiles: tuple[str, ...] = ("sync", "infrahub")) -> subpr
 
 
 def test_compose_file_is_present() -> None:
-    """The development Compose file exists, which is what `invoke start` runs."""
+    """The development Compose file exists, which is what `invoke dev.start` runs."""
     assert COMPOSE_FILE.is_file(), f"{COMPOSE_FILE} is missing"
 
 

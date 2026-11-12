@@ -35,7 +35,7 @@ preview configuration test fails rather than skipping (see
 Where a suite does skip, **a green result only proves what actually ran**. Before claiming a
 tier passed, confirm it was collected and executed, not skipped. The two places this matters
 most are the preview smoke suite, where every test skips when the stack is unreachable, and
-`uv run invoke check-310`, which skips all three of its legs at once.
+`uv run invoke tests.check-310`, which skips all three of its legs at once.
 
 ### The offline default
 
@@ -632,10 +632,10 @@ the installed `infrahub-testcontainers` package. The `testcontainers` extra requ
 `infrahub-testcontainers` 1.11.9 or later, and `uv.lock` pins 1.11.9, so the fixture runs
 Infrahub 1.11.9. Set `INFRAHUB_TESTING_IMAGE_VER` to run another Infrahub version.
 
-### `check-310`
+### `tests.check-310`
 
 ```bash
-uv run invoke check-310
+uv run invoke tests.check-310
 ```
 
 This reproduces the three CI legs your active environment cannot reach:
@@ -645,7 +645,7 @@ This reproduces the three CI legs your active environment cannot reach:
 3. the unit tests on Python 3.10 with the `dev` extra alone, which is the base install that
    has no service dependencies.
 
-It builds its environments under `.preview/check-310-venv` and leaves your active `.venv`
+It builds its environments under `.dev/check-310-venv` and leaves your active `.venv`
 alone, and it stops at the first failing leg.
 
 **When Python 3.10 is not installed, the task checks nothing and exits zero.** Its output

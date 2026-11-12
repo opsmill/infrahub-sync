@@ -35,6 +35,8 @@ credentials.json
 # file must stay tracked despite the repository-wide *.env rule above — it
 # contains no secrets and `invoke preview.up` depends on it from a fresh clone.
 .preview/
+# Development stack runtime state: the Python 3.10 check environments and smoke evidence.
+.dev/
 !development/preview.env
 development/preview.local.env
 # Local NetBox environment for the saved-plan apply integration test: same shape as the

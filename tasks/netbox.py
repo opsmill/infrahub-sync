@@ -1,6 +1,6 @@
 """Local, disposable NetBox with two datasets: `seed` and the official NetBox `demo` data.
 
-`invoke netbox.up` starts a disposable local NetBox instance and prints its URL and
+`invoke netbox.start` starts a disposable local NetBox instance and prints its URL and
 development token. `invoke netbox.seed` resets the database, loads a named dataset, and
 prints the URL and token banner for both datasets; `seed` also reports its loaded tier:
 
@@ -11,14 +11,14 @@ prints the URL and token banner for both datasets; `seed` also reports its loade
   and restored in place of the whole database. It is never committed.
 
 `invoke netbox.demo-package` writes a copy of the shipped `from-netbox` package that
-points at this local NetBox and a local Infrahub. `invoke netbox.down` removes the
+points at this local NetBox and a local Infrahub. `invoke netbox.destroy` removes the
 containers and their volumes.
 
 NetBox publishes its port on the host's loopback address only. A container cannot reach
 that address, so the local development stack's worker
-(`development/docker-compose.yml`, `invoke start`) joins NetBox's own Compose network
+(`development/docker-compose.yml`, `invoke dev.start`) joins NetBox's own Compose network
 instead and reads NetBox at `WORKER_NETBOX_URL`. These tasks connect the worker when NetBox becomes ready and disconnect it before NetBox's
-network is removed; `invoke start` connects a recreated worker again.
+network is removed; `invoke dev.start` connects a recreated worker again.
 
 Configuration ships in `development/netbox/netbox.env` (no secrets -- local-only
 defaults); personal overrides belong in the gitignored
@@ -41,7 +41,6 @@ from invoke import Context, task
 
 from development.netbox.datasets.tier_data import validate_tier
 
-from .preview import load_preview_env, preview_urls
 from .utils import ESCAPED_REPO_PATH
 
 if TYPE_CHECKING:
@@ -120,6 +119,9 @@ WORKER_NETBOX_URL = "http://netbox:8080"
 # The address the dev stack's worker uses for a local Infrahub started from Infrahub's own
 # Compose file, once it has joined that project's network: the service name and its port.
 WORKER_INFRAHUB_URL = "http://infrahub-server:8000"
+# Where the development stack publishes its Infrahub on the host by default
+# (`development/docker-compose.infrahub-ports.yml`).
+HOST_INFRAHUB_URL = "http://127.0.0.1:8000"
 # NetBox's first migration run took roughly 16 minutes on the reference machine, right at
 # the previous 960s ceiling -- this leaves real headroom instead of racing it.
 WAIT_TIMEOUT_SECONDS = 1800
@@ -459,8 +461,8 @@ def _ready(context: Context, values: dict[str, str]) -> None:
     print(f"     Token: {netbox_token(values)}")
 
 
-@task
-def up(context: Context) -> None:
+@task(name="start")
+def start(context: Context) -> None:
     """Bring up the disposable local NetBox, then print its URL and development token."""
     values = load_netbox_env()
     _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}", values)
@@ -503,15 +505,15 @@ def demo_package(_context: Context, infrahub_url: str = "", dev_stack: bool = Fa
 
     The copy keeps the shipped mapping and credential references and changes only the two
     URLs. Without `--dev-stack`, the URLs are the host addresses of this NetBox and of the
-    preview Infrahub. `--dev-stack` writes the addresses the local development stack's
-    worker uses instead: NetBox and Infrahub on the Compose networks the worker joins at
-    `invoke start`. `--infrahub-url` replaces the Infrahub address in either case.
+    development stack's Infrahub (`HOST_INFRAHUB_URL`). `--dev-stack` writes the addresses
+    the development stack's worker uses instead: NetBox and Infrahub on the Compose
+    networks the worker joins at `invoke dev.start`. `--infrahub-url` replaces the Infrahub address in either case.
     """
     values = load_netbox_env()
     source = WORKER_NETBOX_URL if dev_stack else netbox_url(values)
     destination = infrahub_url
     if not destination:
-        destination = WORKER_INFRAHUB_URL if dev_stack else preview_urls(load_preview_env())["infrahub"]
+        destination = WORKER_INFRAHUB_URL if dev_stack else HOST_INFRAHUB_URL
     text = local_package_text(SHIPPED_PACKAGE.read_text(encoding="utf-8"), source, destination)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     LOCAL_PACKAGE.write_text(text, encoding="utf-8")
@@ -520,8 +522,8 @@ def demo_package(_context: Context, infrahub_url: str = "", dev_stack: bool = Fa
     print(f"     Infrahub: {destination}")
 
 
-@task
-def down(context: Context) -> None:
+@task(name="destroy")
+def destroy(context: Context) -> None:
     """Stop the local NetBox and remove its containers and data volumes."""
     values = load_netbox_env()
     detach_dev_worker(context, values)

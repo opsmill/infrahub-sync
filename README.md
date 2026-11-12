@@ -74,22 +74,22 @@ To run from source, continue below.
 
 You need Docker, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13. The
 development stack, `development/docker-compose.yml`, builds the image from your checkout, for your host's own architecture, and
-runs the Sync API, the worker, PostgreSQL, object storage, and Prefect:
+runs the Sync API, the worker, PostgreSQL, object storage, Prefect and a local Infrahub:
 
 ```bash
 uv sync --extra dev --extra prefect --extra service   # once
-uv run invoke build
-uv run invoke start
+uv run invoke dev.start
 ```
 
-`start` builds the image only when no `infrahub-sync:dev` image exists. Run `build` first
-whenever you test a new revision; otherwise `start` reuses an image built from an older
-checkout. After a code change, run `uv run invoke build && uv run invoke start`.
+`dev.start` builds `infrahub-sync:dev` when the image is missing or its build inputs
+(`Dockerfile`, `pyproject.toml`, `uv.lock`) changed. The stack mounts your checkout's code into
+its containers, so after a code change run `uv run invoke dev.restart`.
 
 | | |
 |---|---|
 | **Sync API** | `http://127.0.0.1:8001` — bearer token `infrahub-sync-dev-token` |
 | **Prefect UI** | `http://127.0.0.1:4230` |
+| **Infrahub** | `http://127.0.0.1:8000` |
 | **PostgreSQL** | `127.0.0.1:5440` |
 
 ```bash
@@ -98,20 +98,20 @@ curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:800
 ```
 
 The stack starts with no source and no destination. To continue to a first sync from a
-local NetBox into a local Infrahub, follow
+local NetBox into the stack's Infrahub, follow
 [Run from source](https://feature-v3-develop.infrahub-sync.pages.dev/development-stack#run-from-source)
 in the documentation. In short:
 
-- Infrahub's own Compose file starts a local Infrahub on `http://localhost:8000`: in a
-  directory outside the checkout, run `curl https://infrahub.opsmill.io > docker-compose.yml`
-  and `docker compose -p infrahub up -d --wait`. `uv run invoke start` connects the worker
-  to Infrahub's network, where it reaches Infrahub at `http://infrahub-server:8000`.
+- The worker reaches the stack's Infrahub at `http://infrahub-server:8000`. To use an Infrahub
+  started from Infrahub's own Compose file instead, run
+  `uv run invoke dev.start --infrahub-network infrahub_default`.
 - `uv run invoke netbox.seed --dataset demo` starts a local NetBox with the official demo
   data. The worker joins NetBox's network and reaches it at `http://netbox:8080`.
-- Set `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`, then run `uv run invoke start` again, so
-  the worker has both tokens.
+- Set `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` (and, with your own Infrahub,
+  `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`), then run `uv run invoke dev.start` again, so
+  the worker has the tokens.
 
-When you are finished, run `uv run invoke destroy` to stop the stack and delete its data.
+When you are finished, run `uv run invoke dev.destroy` to stop the stack and delete its data.
 
 This build keeps its own BuildKit cache, so the first build starts with an empty cache.
 

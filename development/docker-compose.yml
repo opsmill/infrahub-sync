@@ -2,7 +2,7 @@
 # Run from source: the whole Sync service, built from this checkout, and a local
 # Infrahub to sync into.
 #
-#     uv run invoke start
+#     uv run invoke dev.start
 #     # or: docker compose -f development/docker-compose.yml --profile sync --profile infrahub up --detach --wait
 #
 # The operator deployment is the other way to run V3: the root
@@ -38,17 +38,17 @@
 # Infrahub and reaches it at http://infrahub-server:8000; the host reaches it at
 # http://127.0.0.1:${INFRAHUB_PORT:-8000}. To use an Infrahub started from Infrahub's own Compose
 # file (https://infrahub.opsmill.io) with `docker compose -p infrahub` instead,
-# leave the profile off: `uv run invoke start` connects sync-worker to
-# Infrahub's network, `infrahub_default`. Set
+# leave the profile off: `uv run invoke dev.start --infrahub-network infrahub_default`
+# connects sync-worker to that network. Set
 # INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN for either. A package's `env`
 # credential identifiers must start with INFRAHUB_SYNC_CREDENTIAL_, and these
 # three are the ones this stack passes.
 #
-# Source: the local NetBox (`uv run invoke netbox.up` or `netbox.seed`) publishes
+# Source: the local NetBox (`uv run invoke netbox.start` or `netbox.seed`) publishes
 # on the host's loopback address only, which no container can reach. The Invoke
 # tasks connect sync-worker to NetBox's own network instead, where it reads
 # NetBox at http://netbox:8080. `docker compose up` alone does not reconnect a
-# recreated worker to either network; `uv run invoke start` does.
+# recreated worker to either network; `uv run invoke dev.start` does.
 
 name: infrahub-sync-dev
 
