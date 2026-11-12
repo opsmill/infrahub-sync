@@ -1,7 +1,7 @@
 # 20. Records with problems are left out of a plan, counted, and confirmed at apply
 
-**Status**: Proposed
-**Date**: 2026-11-11
+**Status**: Accepted
+**Date**: 2026-11-12
 **Source**: `dev/specs/019-plan-problem-reporting/spec.md` (FR-001 to FR-012, FR-024),
 `dev/specs/019-plan-problem-reporting/research.md` (R3, R6, R10, R11, R14, R21)
 

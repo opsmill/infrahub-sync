@@ -1,7 +1,7 @@
 # 21. A run's failure record holds a structured cause built from allowlisted fields
 
-**Status**: Proposed
-**Date**: 2026-11-11
+**Status**: Accepted
+**Date**: 2026-11-12
 **Source**: `dev/specs/019-plan-problem-reporting/spec.md` (FR-014 to FR-020, FR-029, FR-030),
 `dev/specs/019-plan-problem-reporting/research.md` (R12, R13, R14),
 `dev/specs/019-plan-problem-reporting/data-model.md` ("Stage failure record additions")

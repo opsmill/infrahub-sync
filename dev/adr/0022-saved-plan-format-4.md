@@ -1,7 +1,7 @@
 # 22. Saved plan format 4 holds the plan report
 
-**Status**: Proposed
-**Date**: 2026-11-11
+**Status**: Accepted
+**Date**: 2026-11-12
 **Source**: `dev/specs/019-plan-problem-reporting/research.md` (R9, R14),
 `dev/specs/019-plan-problem-reporting/contracts/plan-artifact-format-4.md`
 
