@@ -40,7 +40,10 @@ hold; every path and line was checked again on `7d7aabba`.
    `object-store` while the name `object-store` resolves (`socket.getaddrinfo`). If so, it stops with
    the new fixed family `bundled-object-store-not-left-out`. Silo has already received the credential
    at that point; the guard makes the operator correct `.env` at the first start instead of running in
-   that state.
+   that state. The reverse case, the endpoint host `object-store` while that name does not resolve
+   (bundled store left out, endpoint not set), stops with `object-store-endpoint-not-set` (critique
+   P4). A `ValueError` from `build_s3_client` stops with `object-store-endpoint-invalid` and logs the
+   check's fixed message, which holds no value (critique E1).
 
 Old 013 probed `scale: ${VAR:-1}` with `depends_on: {condition: service_healthy, required: false}` on
 Compose 5.1.2: unset creates both services; `0` creates only the dependent one. The repository's
@@ -212,7 +215,7 @@ text by construction:
 | Container environments | each credential reaches only the services that read it (R3); with the bundled store left out, no Silo container exists (R1) |
 | Compose output | a missing required setting is reported by name through `:?`; `up` prints no environment |
 | Documented commands | the documentation uses `docker compose config --quiet` and says not to share `docker compose config` or `docker inspect` output |
-| Bootstrap failures | fixed family names and fixed messages, no provider text (`bootstrap.py:55-77`); the new families `bundled-object-store-not-left-out`, `object-store-access-refused` and `object-store-unsupported` follow the same rule |
+| Bootstrap failures | fixed family names and fixed messages, no provider text (`bootstrap.py:55-77`); the new families `object-store-endpoint-invalid`, `bundled-object-store-not-left-out`, `object-store-endpoint-not-set`, `object-store-access-refused` and `object-store-unsupported` follow the same rule |
 | Prefect records | the worker refuses a flow run that carries job variables (`worker.py:125`); this plan adds no deployment parameter |
 | CA setup | logs a count, a path and variable names; errors name a file and an `ssl` error class |
 | Endpoint URL | a user name or password in the URL is refused in every service that builds an S3 client, bootstrap included (R1) |
@@ -248,7 +251,9 @@ value shorter than six characters is not masked there (decision 2 of the spec).
 
 **Decision**: the first lifecycle task adds a manual dispatch with a repeat count and an architecture
 choice to `workflow-nightly-e2e.yml`, and runs the tier 10 times on each architecture before any
-reliability change. Each failure is classified and recorded in this file under "Lifecycle failure
+reliability change. The repeats run as a matrix of parallel jobs, each one full tier run on a fresh
+runner, so no run exceeds the job time limit and a project left over from one run cannot affect the
+next (critique E6). Each failure is classified and recorded in this file under "Lifecycle failure
 causes" with its fix and test. SC-006 is then measured with the same dispatch after the changes. The
 nightly job gains an arm64 leg.
 
@@ -267,8 +272,16 @@ digest as the workflow output `digest` (`:44-45`, `:233-234`), signs it and atta
 when the release is published. It appends a "Container image" section to the GitHub Release body with
 `registry.opsmill.io/opsmill/infrahub-sync:<version>@<digest>` and the `cosign verify` command with
 `--certificate-identity-regexp '^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/tags/'`.
-The job needs `contents: write` (today `workflow-publish.yml:60` grants `contents: read`). It handles
-no credential beyond the workflow's `GITHUB_TOKEN`, and prints none. `docs/docs/container-image.mdx:136`,
+The job needs `contents: write`. A called workflow can only keep or narrow the caller's token, and the
+caller, the `publish` job of `trigger-release.yml:17-21`, grants `contents: read` and
+`id-token: write` (critique E7). So:
+
+- `trigger-release.yml`'s `publish` job grants `contents: write` and `id-token: write`.
+- `workflow-publish.yml` keeps its top-level `contents: read` (`:60`); only the `record_image` job
+  declares `contents: write`.
+- A workflow contract test in `tests/test_workflow_contracts.py` checks both.
+
+The job handles no credential beyond the workflow's `GITHUB_TOKEN`, and prints none. `docs/docs/container-image.mdx:136`,
 `:144` and `:149` use the same identity.
 
 **Alternatives considered**: writing the digest into the changelog fragment (the digest does not exist

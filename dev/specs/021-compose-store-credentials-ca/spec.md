@@ -330,6 +330,9 @@ SBOM commands.
   store takes `INFRAHUB_SYNC_S3_ACCESS_KEY` and `INFRAHUB_SYNC_S3_SECRET_KEY` as its own root
   credential (`docker-compose.yml:133-134`), so it would receive the credential of the team's
   store. FR-002 requires `sync-bootstrap` to stop in that case.
+- **The bundled store left out while the endpoint keeps its default.** No service answers at
+  `object-store`. FR-002 requires `sync-bootstrap` to stop with a failure name that says to set
+  the endpoint, instead of the general "object store unavailable" name.
 - **A credential variable with an empty value.** It reaches the worker as today; the resolver
   refuses an absent or empty value by name when a run selects it, so the container still starts.
 - **The CA directory exists but holds no certificate file.** Each Sync service logs one info line
@@ -363,7 +366,9 @@ SBOM commands.
   today. When the endpoint names a host other than the bundled store while the bundled store
   runs, `sync-bootstrap` MUST stop before any S3 request with a fixed failure name that says to
   leave the bundled store out, because the bundled store has then received the external store's
-  credential as its root credential.
+  credential as its root credential. When the bundled store is left out while the endpoint still
+  names it, `sync-bootstrap` MUST stop before any S3 request with a fixed failure name that says
+  to set the endpoint.
 - **FR-003**: `sync-bootstrap` MUST check whether the bucket exists before it tries to create it,
   and create it only when the store reports it absent. It MUST complete when the bucket exists and
   the credential may not create buckets.
@@ -371,8 +376,9 @@ SBOM commands.
   same key, and stop with a fixed failure name when it does not. The check MUST leave no object
   behind once it completes, whether it passes or fails.
 - **FR-005**: `sync-bootstrap` MUST refuse an endpoint URL that carries a user name or a password
-  before it sends any S3 request, with the fixed message that `storage.py:198` uses for the Sync
-  API and the worker. The message names the setting and not its value.
+  before it sends any S3 request, with a fixed failure name and the fixed message that
+  `storage.py:198` uses for the Sync API and the worker. The message names the setting and not its
+  value.
 - **FR-006**: Each service of FR-011 MUST verify the certificate of an `https` endpoint against the
   image's default trust store plus the CA bundle of FR-011. No Sync setting turns certificate
   checks off for the object store.

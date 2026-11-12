@@ -100,7 +100,7 @@ dev/specs/021-compose-store-credentials-ca/
 ```text
 docker-compose.yml                              # settings, scale, CA mount, credential list
 infrahub_sync/testcontainers/docker-compose.yml # copy of the root file
-development/docker-compose.yml                  # same settings; PostgreSQL digest pin
+development/docker-compose.yml                  # same settings, credential list and CA mount; PostgreSQL digest pin
 infrahub_sync/service/
 ├── storage.py        # build_s3_client, addressing style
 ├── bootstrap.py      # client builder, half-set guard, HeadBucket, create-only check, CA call
@@ -120,8 +120,9 @@ tests/compose/
 tests/image/test_prefect_server_image.py        # new: Prefect server under a read-only root
 tests/test_workflow_contracts.py                # release notes job, arm64 leg, repeat dispatch
 .github/workflows/
-├── workflow-nightly-e2e.yml  # arm64 leg, repeat count
-└── workflow-publish.yml      # record_image job
+├── workflow-nightly-e2e.yml  # arm64 leg, repeat count as a parallel matrix
+├── workflow-publish.yml      # record_image job, the only job with contents: write
+└── trigger-release.yml       # publish job grants contents: write to the called workflow
 docs/docs/
 ├── compose-deployment.mdx    # external store, credential list, CA, receivers
 ├── custom-certificates.mdx   # replace "Current limit of the Compose deployment"

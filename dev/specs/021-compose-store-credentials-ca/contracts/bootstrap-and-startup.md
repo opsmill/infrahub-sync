@@ -5,8 +5,9 @@
 1. Install the CA bundle (`install_custom_ca_bundle`, research R4).
 2. Build the S3 client with `build_s3_client` (research R1): check the endpoint, the region and the
    addressing style. No S3 request is sent before this step passes.
-3. Check that the bundled store is left out when the endpoint names another host (research R1,
-   item 4).
+3. Check that the bundled store and the endpoint agree (research R1, item 4): the bundled store is
+   left out when the endpoint names another host, and the endpoint is set when the bundled store
+   is left out.
 4. Bucket: `HeadBucket`, then `CreateBucket` only when the answer is 404 (research R2).
 5. Create-only check: two create-only writes of one key, then delete it (research R2).
 6. Work pool, deployment and product schema, unchanged.
@@ -18,11 +19,14 @@ Every bootstrap failure is reported as one fixed name and nothing else
 
 | Name | When | Text the operator views |
 | --- | --- | --- |
+| `object-store-endpoint-invalid` | the endpoint is not an absolute `http` or `https` URL, carries a user name or password, or the addressing style is unknown | `refused: object-store-endpoint-invalid`, then the fixed message below |
 | `bundled-object-store-not-left-out` | the endpoint names a host other than `object-store` and `object-store` resolves | `refused: bundled-object-store-not-left-out` |
+| `object-store-endpoint-not-set` | the endpoint names `object-store` and that name does not resolve | `refused: object-store-endpoint-not-set` |
 | `object-store-access-refused` | `HeadBucket` answers 403 | `refused: object-store-access-refused` |
 | `object-store-unsupported` | the second create-only write of the check key succeeds | `refused: object-store-unsupported` |
 
-An endpoint that carries a user name or a password stops bootstrap with the message of
+With `object-store-endpoint-invalid`, bootstrap also logs the fixed message of the check that
+failed. An endpoint that carries a user name or a password logs the message of
 `infrahub_sync/service/storage.py:198`:
 `INFRAHUB_SYNC_S3_ENDPOINT_URL must be an absolute http or https URL without userinfo`. An unknown
 addressing style stops it with
