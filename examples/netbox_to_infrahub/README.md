@@ -98,11 +98,17 @@ How these statements are verified:
   position and the device name cases with records of the same shape:
   `test_wrong_value_type` (position `2.5`) and `test_destination_identity_collision` (two
   devices whose mapping identities differ and whose names are equal).
-- It is not known yet whether the pinned `demo` dataset of the `from-netbox` check holds a
-  device of any of the three kinds. #374 observed them on the public NetBox demo. The
-  [`from-netbox` example check](../../docs/docs/development/guidelines/testing-tiers.md#the-from-netbox-example-check)
-  has not been run with this mapping. When it runs, it records whether the two same-named
-  devices are written or listed.
+- The [`from-netbox` example check](../../docs/docs/development/guidelines/testing-tiers.md#the-from-netbox-example-check)
+  ran with this mapping on 2026-11-12, on the pinned `demo` dataset. #374 observed the three
+  kinds on the public NetBox demo; the pinned dataset gives these results:
+    - All 72 devices have the status `active`, so the status translation changes no value.
+    - No device has a rack position that is not a whole number.
+    - One name is used by three devices at three sites: `PP:MDF`. The mapping does not read
+      these devices, because both `DcimDevice` entries leave out every device whose name
+      contains `PP:`. The plan neither writes nor lists them.
+
+  The plan has 1,688 operations, no problems and no left-out records. So on this dataset only
+  the unit tests above verify the rack position and the same-name cases.
 
 ## Current limitations
 

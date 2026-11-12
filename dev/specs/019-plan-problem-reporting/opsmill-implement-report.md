@@ -1,101 +1,137 @@
 # Spec 019 implementation report
 
-## T072 — not run
+## T072 — from-netbox check
 
-Task T072 runs the `from-netbox` example check on the pinned `demo` dataset and records two
-results (research R18, R19):
+The `from-netbox` example check ran on 2026-11-12 on the pinned `demo` dataset
+(`netbox-demo-v4.7.sql`, SHA-256
+`e9846c189c4c5055abfe52d2ca0b55ff089d815c9b0c20614faba94b9c8f5180`), following
+[The `from-netbox` example check](../../../docs/docs/development/guidelines/testing-tiers.md#the-from-netbox-example-check).
+Each side used a fresh preview stack with new volumes, the same NetBox and the same schema
+snapshot (`tests/data/nightly_schema/`, identical on both commits).
 
-- whether the two same-named devices are written or listed as problems
-- the plan time before and after spec 019
+- After: branch `019-plan-problem-reporting` at `d80ed043`.
+- Before: `feature/v3-develop` at `ea83a248`, in a temporary detached worktree with its own
+  `uv sync --extra dev --extra prefect --extra service`. The worktree was removed afterwards.
 
-The check was not run on 2026-11-11, so T072 is not ticked.
+### Ports and environment
 
-### Why the check was not run
+Port 8080 belongs to an unrelated container, so each worktree had a
+`development/preview.local.env` (ignored by Git, deleted afterwards) with
+`PREVIEW_INFRAHUB_PORT=8085` and its own `COMPOSE_PROJECT_NAME`
+(`infrahub-sync-preview-t072` after, `infrahub-sync-preview-t072before` before). The other
+ports kept their defaults and were free: NetBox 8082, Sync API 8010, Prefect 4210, Sync
+PostgreSQL 5439, MinIO 9010.
 
-The services the check needs were not running, and the implementation chunk does not start,
-stop or reset shared containers or volumes:
+### Commands
 
-- Local NetBox (`http://localhost:8082`): port closed.
-- Sync API of the preview stack (`http://localhost:8010`): port closed. Prefect of the preview
-  stack refused connections too.
-- Preview Infrahub: not running. Port 8080 answers, but it belongs to an unrelated container
-  (`hivemind-waf-1`), not to the preview stack.
-- `.netbox/` does not exist in the worktree, so the `demo` dump has not been downloaded here.
+```bash
+uv run invoke netbox.seed --dataset demo
+INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="<token printed by netbox.seed>" uv run invoke preview.up
+export INFRAHUB_ADDRESS="http://localhost:8085"
+export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
+uv run infrahubctl schema load tests/data/nightly_schema --wait 120
+uv run invoke netbox.demo-package --infrahub-url http://localhost:8085
+export INFRAHUB_SYNC_API_URL="http://localhost:8010"
+export INFRAHUB_SYNC_API_TOKEN="preview-tester-token-0001"
+uv run infrahub-sync configs register .netbox/from-netbox.local.yml --reason "register the local NetBox demo import"
+uv run infrahubctl branch create netbox-import
+uv run infrahub-sync plan --config-id <config-id> --version 1 --branch netbox-import --reason "review the local NetBox demo import"
+uv run infrahub-sync runs show <run-id>
+uv run infrahub-sync runs plan <run-id> --problems
+uv run infrahub-sync runs plan <run-id> --left-out
+uv run infrahub-sync apply <run-id> --expected-checksum <plan-checksum> --branch netbox-import --reason "apply reviewed NetBox plan"
+uv run invoke preview.down --volumes
+uv run invoke netbox.down
+```
 
-### Commands that run the check
+The before side ran `preview.up` to `plan` and `runs show` from its own worktree against the
+same NetBox, with its own shipped package (the package without the `device_status`
+transform). It did not apply.
 
-From the repository root, following
-[The `from-netbox` example check](../../../docs/docs/development/guidelines/testing-tiers.md#the-from-netbox-example-check):
+### Plan time before and after
 
-1. Load the `demo` dataset. The task prints the NetBox URL and the development token.
+One plan on each side, each the first plan on a fresh stack (a full read on both sides).
+Times come from the run record (`source_read` and `destination_read`) and from the Prefect
+worker log (start and end of the flow run `Plan sync of from-netbox`).
 
-   ```bash
-   uv run invoke netbox.seed --dataset demo
-   ```
+| Measure | Before (`ea83a248`) | After (`d80ed043`) |
+| --- | --- | --- |
+| Run ID | `20261112T1107-06e558fc` | `20261112T1102-48d53acb` |
+| Plan flow run, start to end | 9.17 s | 9.10 s |
+| Source read (NetBox) | 5.99 s | 6.43 s |
+| Destination read (Infrahub) | 3.13 s | 3.21 s |
+| `plan` command, submit to summary | 15.2 s | 13.0 s |
 
-2. Start a fresh preview stack with the NetBox token from step 1.
+The two sides differ by less than half a second on each measure. Each side ran once, so this
+check does not show whether that difference is larger than the difference between two runs
+of the same commit.
 
-   ```bash
-   uv run invoke preview.down --volumes
-   INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="<token printed by netbox.seed>" uv run invoke preview.up
-   ```
+### Operations, problems and left-out records
 
-3. Load the pinned schema library snapshot into the preview Infrahub.
+Both sides planned the same operations: 1,688 operations, 1,687 creates and one delete (the
+`IpamNamespace` `default` node, which apply does not execute). This equals the count in
+`testing-tiers.md`.
 
-   ```bash
-   export INFRAHUB_ADDRESS="http://localhost:8080"
-   export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
-   uv run infrahubctl schema load tests/data/nightly_schema --wait 120
-   ```
+Operations per kind: `BuiltinTag` 26, `DcimCircuit` 29, `DcimDevice` 44, `DcimDeviceType` 14,
+`DcimPlatform` 3, `InterfaceLag` 26, `InterfacePhysical` 1,119, `IpamAggregate` 4,
+`IpamIPAddress` 180, `IpamNamespace` 7, `IpamPrefix` 90, `IpamRouteTarget` 12, `IpamVLAN` 24,
+`IpamVLANGroup` 7, `IpamVRF` 6, `LocationRack` 42, `LocationSite` 24,
+`OrganizationManufacturer` 14, `OrganizationProvider` 9, `OrganizationRIR` 8.
 
-4. Write the local package and register it.
+The after plan's summary:
 
-   ```bash
-   uv run invoke netbox.demo-package
-   export INFRAHUB_SYNC_API_URL="http://localhost:8010"
-   export INFRAHUB_SYNC_API_TOKEN="preview-tester-token-0001"
-   uv run infrahub-sync configs register .netbox/from-netbox.local.yml --reason "register the local NetBox demo import"
-   ```
+- problems: 0, so there is no problem type to report
+- left out: 0 (with a problem: 0, depending on one: 0)
+- kept without a relationship: 0
 
-5. Create the branch, then plan and review the problems and left-out records.
+`runs plan <run-id> --problems` and `runs plan <run-id> --left-out` exited 0 and printed
+nothing, because both lists are empty.
 
-   ```bash
-   uv run infrahubctl branch create netbox-import
-   uv run infrahub-sync plan --config-id <config-id> --version <version> --branch netbox-import --reason "review the local NetBox demo import"
-   uv run infrahub-sync runs plan <run-id> --problems
-   uv run infrahub-sync runs plan <run-id> --left-out
-   uv run infrahub-sync sync --config-id <config-id> --version <version> --branch netbox-import --reason "import the local NetBox demo data"
-   ```
+### The #374 cases in the pinned dataset
 
-   After a plan that leaves out records, `sync` stops before apply. Apply the reviewed plan with
-   `apply <run-id> --expected-checksum <checksum> --confirm-left-out --branch netbox-import`.
+These results come from queries on the NetBox database of the restored dump (72 devices) and
+from the after plan.
 
-6. Remove both stacks and their data volumes.
+- Two devices with the same name: the dataset holds one name used three times, `PP:MDF`, at
+  three sites (Grinnells Lab, Butler Communications, D. S. Weaver Labs), each in a different
+  rack. The mapping does not read them: both `DcimDevice` entries of `package.yml` leave out
+  every device whose name contains `PP:` (6 devices). The plan therefore neither writes nor
+  lists them, and `runs plan <run-id> --detail --kind DcimDevice` does not name them. The other
+  44 named devices have distinct names, and 22 devices have no name and are left out by the
+  mapping's filter. The plan has 44 `DcimDevice` creates, equal to these 44 devices. So the
+  check does not show which problem type a same-named pair gets on live data; the unit test
+  `tests/plan/test_problems.py::test_destination_identity_collision` remains the only
+  evidence.
+- Rack position that is not a whole number: no device has one. No `wrong_value_type` problem
+  is reported.
+- Device status other than `active`: all 72 devices are `active`. The `device_status`
+  transform changes no value in this dataset, so the before and after plans are the same.
 
-   ```bash
-   uv run invoke preview.down --volumes
-   uv run invoke netbox.down
-   ```
+### Apply
 
-### What to record when the check runs
+The plan left out no records, so `apply` without `--confirm-left-out` was not refused and
+applied the plan: the run ended with `phase: applied`, `outcome: applied`. The Prefect flow run
+`Apply sync plan of from-netbox` took 63.3 s. There was nothing to confirm, so the check did
+not run `apply --confirm-left-out` or `sync`, and it did not observe the refusal message.
 
-- Whether the pinned `demo` dataset holds two devices with the same name, a device at a rack
-  position that is not a whole number, and a device status other than `active`. The results
-  from #374 came from the public NetBox demo; for the pinned dataset they are not known.
-- For the same-named devices: whether the plan writes them or lists them, and the problem type.
-  The unit tests give `destination_identity_collision` for two creates with the same name
-  (`tests/plan/test_problems.py::test_destination_identity_collision`). Research R18 expected
-  `identities_merge_in_destination`; the live check settles which type the demo data gives.
-- The plan time before and after spec 019 (research R19):
-  - Before: the same steps on a checkout of `main` (or the merge base of
-    `019-plan-problem-reporting`).
-  - After: the steps on `019-plan-problem-reporting`.
-  - Read the plan time from the run record (`runs show <run-id>`, the plan stage's start and
-    end times), and each side's read time from the read progress spec 018 records. Use the same
-    tier, the same dataset and a fresh preview stack for both runs.
-- The operation count. `testing-tiers.md` states 1,688 operations (1,687 creates and one
-  delete) for the mapping before the status translation. A different count needs an
-  explanation in the pull request.
+Object count per kind on the `netbox-import` branch after apply (GraphQL `count` of each kind):
+every kind equals its planned operations, 1,688 objects in total. `IpamNamespace` has 7
+objects: the 6 created namespaces and the `default` namespace, which the delete operation
+names and apply does not delete.
+
+### Product bugs
+
+None found.
+
+### Teardown
+
+Both preview stacks were removed with `preview.down --volumes` from the worktree that started
+them, and NetBox with `netbox.down`. Before each command, the containers and volumes of its
+Compose project were listed; none belonged to another project. Afterwards, no container or
+volume of `infrahub-sync-preview-t072`, `infrahub-sync-preview-t072before` or
+`infrahub-sync-netbox` remains. `netbox.seed` removes the `infrahub-sync-netbox` database
+volume before it restores the dump, so the NetBox volume from an earlier run was replaced.
+The `hivemind*` containers were not stopped or changed.
 
 ## T077 — verification
 
@@ -159,8 +195,9 @@ The offline checks of `quickstart.md` are the three commands above (`tests.tests
 The live steps 1 to 5 of `quickstart.md` were not run. The services they need were not
 running on 2026-11-11 (checked with `nc -z 127.0.0.1 <port>`): NetBox on port 8082, the Sync
 API of the preview stack on port 8010, Prefect on port 4200, and no Sync API on port 8000.
-This chunk does not start shared stacks, so T077 is not ticked: its offline half passed, and its live half waits for the same stacks as T072. "T072 — not run" above lists the same services and
-the commands that start them. When they run, the steps are:
+This chunk does not start shared stacks, so T077 is not ticked: its offline half passed, and its live half needs the same stacks as T072. "T072 — from-netbox check" above lists the
+commands that start them; that check ran on 2026-11-12 but did not run these quickstart steps.
+When they run, the steps are:
 
 ```bash
 uv run infrahub-sync configs register examples/netbox_to_infrahub

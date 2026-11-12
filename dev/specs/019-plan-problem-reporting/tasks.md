@@ -186,7 +186,7 @@ the register response holds no redacted content (FR-034 to FR-038).
 (FR-033). Depends on Phase 3.
 
 - [X] T071 [US6] Add the device status translation transform, reading the choices from the pinned schema, in `examples/netbox_to_infrahub/package.yml` (research R18)
-- [ ] T072 [US6] Run the `from-netbox` check on the pinned `demo` dataset; record whether the two same-named devices are written or listed, and the plan time before and after this feature (research R18, R19), in `dev/specs/019-plan-problem-reporting/opsmill-implement-report.md`
+- [X] T072 [US6] Run the `from-netbox` check on the pinned `demo` dataset; record whether the two same-named devices are written or listed, and the plan time before and after this feature (research R18, R19), in `dev/specs/019-plan-problem-reporting/opsmill-implement-report.md`
 - [X] T073 [US6] State in `examples/netbox_to_infrahub/README.md` which #374 cases are written by the mapping and which are listed as problems (SC-008)
 
 ## Phase 9: Polish and cross-cutting
