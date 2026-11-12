@@ -149,6 +149,11 @@ changelog/+compose-store-credentials-ca.added.md
 
 ## Dependencies on other work
 
+- Status on 2026-11-13 (T001): specification 010 "PR 2" is implemented on branch
+  `010-prefect-pr2-preview-removal`, not yet merged into `feature/v3-develop`. This branch is
+  rebased onto it, so the preview stack does not exist here and T053 does not apply. This
+  branch merges after that one.
+
 - Specification 010 "PR 2" (spec decision 1). Phase 7's digest test over every compose file cannot
   pass while `development/docker-compose.preview.yml` exists. If PR 2 is not merged when phase 7
   starts, phase 7 keeps the existing strict `xfail` on the preview file

@@ -53,6 +53,13 @@ verified. The first implementation task runs the probe on the pinned 2.24.0 imag
 `test_compose_minimum.py`'s helper. If 2.24.0 does not honor it, the fallback is to raise the minimum
 version, recorded in ADR 0026.
 
+**Probe result (T002, 2026-11-13)**: the pinned Compose 2.24.0 binary
+(`docker/compose-bin@sha256:5c6a7907...`, darwin/arm64 export) ran a two-service file with
+`scale: ${BUNDLED:-1}` on the store and `depends_on: {condition: service_healthy, required: false}`
+on the dependent service. Unset: the store ran, reached healthy, and the dependent service ran
+after it. `BUNDLED=0`: Compose created no store container, and the dependent service ran. The
+minimum Compose version does not change.
+
 **How this fits ADR 0016**: every new value is an optional `.env` setting of the one file.
 
 **Alternatives considered**:

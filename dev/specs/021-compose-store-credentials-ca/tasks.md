@@ -25,8 +25,8 @@ external store runs. US5 (released image) is independent.
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm that specification 010 "PR 2" is merged into `feature/v3-develop` (`development/docker-compose.preview.yml`, `development/preview.env` and `tasks/preview.py` no longer exist) and rebase this branch onto it; if it is not merged, record in `dev/specs/021-compose-store-credentials-ca/plan.md` under "Dependencies on other work" that T053 keeps the strict `xfail` of `tests/compose/test_image_pins.py:51-52`
-- [ ] T002 Probe Compose 2.24.0 with the pinned image of `tests/compose/test_compose_minimum.py:43`: a two-service file with `scale: ${VAR:-1}` and `depends_on: {condition: service_healthy, required: false}`, run unset and with `VAR=0`; record the result in `dev/specs/021-compose-store-credentials-ca/research.md` R1; if `0` still creates the container, stop and record the minimum Compose version change for ADR 0026 (T061)
+- [X] T001 Confirm that specification 010 "PR 2" is merged into `feature/v3-develop` (`development/docker-compose.preview.yml`, `development/preview.env` and `tasks/preview.py` no longer exist) and rebase this branch onto it; if it is not merged, record in `dev/specs/021-compose-store-credentials-ca/plan.md` under "Dependencies on other work" that T053 keeps the strict `xfail` of `tests/compose/test_image_pins.py:51-52`
+- [X] T002 Probe Compose 2.24.0 with the pinned image of `tests/compose/test_compose_minimum.py:43`: a two-service file with `scale: ${VAR:-1}` and `depends_on: {condition: service_healthy, required: false}`, run unset and with `VAR=0`; record the result in `dev/specs/021-compose-store-credentials-ca/research.md` R1; if `0` still creates the container, stop and record the minimum Compose version change for ADR 0026 (T061)
 
 ## Phase 2: Foundational
 
