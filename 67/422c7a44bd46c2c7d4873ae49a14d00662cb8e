@@ -1,0 +1,36 @@
+infrahub_sync/potenda/__init__.py
+  s_b91a98d41025f3::t_904ec763860aa2 45,136
+  s_b91a98d41025f3::t_446107de960d21 1027-1028,1074-1083,1091-1092,1102-1103,1155-1167,1170-1171,1174-1197,1200-1206,1208-1255,1275-1277,1279-1280,1284
+  s_b91a98d41025f3::t_dd655e1151a68c 1019
+tests/test_potenda_apply_progress.py
+  s_b91a98d41025f3::t_eefa06a622fdc9 1-290
+infrahub_sync/execution.py
+  s_b91a98d41025f3::t_919de8e631d96e 906-907,928-929,931,1033-1034,1065-1066,1165-1166,1183-1187,1240-1241
+  s_b91a98d41025f3::t_0be55eb633bff9 71,80
+dev/specs/022-resume-interrupted-apply/tasks.md
+  s_b91a98d41025f3::t_46b11d996647e2 23,29-32,121-125
+tests/plan/test_destination_binding.py
+  s_b91a98d41025f3::t_9dd57220f79f18 266-267,269
+  s_b91a98d41025f3::t_422c5ff90137c4 258
+infrahub_sync/utils.py
+  s_b91a98d41025f3::t_56b838fa65855b 442-443,464-465,479-480
+  s_b91a98d41025f3::t_919de8e631d96e 38
+infrahub_sync/potenda/apply_progress.py
+  s_b91a98d41025f3::t_49f06cacf27774 1-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "67422c7a44bd46c2c7d4873ae49a14d00662cb8e",
+  "prompts": {},
+  "sessions": {
+    "s_b91a98d41025f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c1e68d9-bc95-47b9-bd6b-c5aa572517ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
