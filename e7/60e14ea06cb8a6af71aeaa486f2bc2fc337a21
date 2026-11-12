@@ -1,0 +1,58 @@
+tests/compose/test_external_store.py
+  s_3defe6e8bcd0ab::t_2c5afabf26a139 16-17,57,93,97,110,114-115,118-121,129-130,145,175,182,188,243-245,366-495
+  s_3defe6e8bcd0ab::t_ce961e96688ffd 233-234
+  s_3defe6e8bcd0ab::t_f0e53a0c719511 496
+infrahub_sync/testcontainers/docker-compose.yml
+  s_3defe6e8bcd0ab::t_56b0acabdd883f 55-57,68-73,243,276,357,429-430
+docs/docs/custom-certificates.mdx
+  s_3defe6e8bcd0ab::t_9008b40265cd16 28-39
+development/docker-compose.yml
+  s_3defe6e8bcd0ab::t_3830ee88978a35 76-82,354-355
+  s_3defe6e8bcd0ab::t_26be823be47e22 94-96,250,272,335
+docker-compose.yml
+  s_3defe6e8bcd0ab::t_56b0acabdd883f 55-57,68-73,243,276,357,429-430
+docs/docs/compose-deployment.mdx
+  s_3defe6e8bcd0ab::t_71f76c7465eadb 140
+  s_3defe6e8bcd0ab::t_9008b40265cd16 392-420
+tests/compose/test_compose_contract.py
+  s_3defe6e8bcd0ab::t_e2a0a27133c5f4 79-95,223-224,238,240,263,266,314-339
+  s_3defe6e8bcd0ab::t_71f76c7465eadb 934,936-937
+  s_3defe6e8bcd0ab::t_072571cc6e4cde 340-341
+tests/service/test_trust_store.py
+  s_3defe6e8bcd0ab::t_eba33ecef4eadc 1-8,10-89,91-158
+  s_3defe6e8bcd0ab::t_1b928ee155f780 9,90
+infrahub_sync/service/worker.py
+  s_3defe6e8bcd0ab::t_70b085b763cd76 8
+  s_3defe6e8bcd0ab::t_d512b873dbdd19 28
+  s_3defe6e8bcd0ab::t_056f83530cc817 469-473
+infrahub_sync/service/trust_store.py
+  s_3defe6e8bcd0ab::t_cbe6e8615a90fd 32-34
+  s_3defe6e8bcd0ab::t_167db7f1eac973 35-38,81-82
+  s_3defe6e8bcd0ab::t_8a88acc121ff2c 1-31,39-80,83-110
+infrahub_sync/service/serve.py
+  s_3defe6e8bcd0ab::t_056f83530cc817 97-100
+  s_3defe6e8bcd0ab::t_d512b873dbdd19 28
+infrahub_sync/service/bootstrap.py
+  s_3defe6e8bcd0ab::t_056f83530cc817 302-306
+  s_3defe6e8bcd0ab::t_d512b873dbdd19 50
+dev/specs/021-compose-store-credentials-ca/research.md
+  s_3defe6e8bcd0ab::t_0f60e51f9f7696 228-240
+dev/specs/021-compose-store-credentials-ca/tasks.md
+  s_3defe6e8bcd0ab::t_bfc4f54ca83ab4 93-95,99-102,104-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e760e14ea06cb8a6af71aeaa486f2bc2fc337a21",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
