@@ -1,0 +1,37 @@
+infrahub_sync/testcontainers/docker-compose.yml
+  s_3defe6e8bcd0ab::t_8ee8cf896280dc 49-54,109-110,132-133,227-228
+development/docker-compose.yml
+  s_3defe6e8bcd0ab::t_8ee8cf896280dc 81-86,136-137,158-159,234-235
+docker-compose.yml
+  s_3defe6e8bcd0ab::t_8ee8cf896280dc 49-54,109-110,132-133,227-228
+tests/compose/test_compose_contract.py
+  s_3defe6e8bcd0ab::t_c0880f5fae2636 1063-1114
+docs/docs/compose-deployment.mdx
+  s_3defe6e8bcd0ab::t_2f908015e9c2e0 80-82,138-140,299-358
+  s_3defe6e8bcd0ab::t_4588dab519192b 359
+tests/compose/test_external_store.py
+  s_3defe6e8bcd0ab::t_340618ceedfae7 1-247,249-343
+  s_3defe6e8bcd0ab::t_19ccff85aa3bcc 248
+infrahub_sync/service/bootstrap.py
+  s_3defe6e8bcd0ab::t_1b29c49ca318e8 25-28,37-38,44,46-47,51-53,64-73,85-89,105-106,108-158,169-192,246-250,253-257,281
+tests/service/test_compose_bootstrap.py
+  s_3defe6e8bcd0ab::t_10dacc87e146da 26,31-32,39-40,60,62-73,75-80,83,86,89,95,128-162,167,186-285,288-321,362-363,417-418,500-501
+  s_3defe6e8bcd0ab::t_0655f03397995f 286-287
+  s_3defe6e8bcd0ab::t_57f42f6e2a549a 82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "417548fb9aa5f4d84ea07dcebdccd4085e75ea04",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
