@@ -27,19 +27,27 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from diffsync import Adapter, DiffSyncModel
 from diffsync.exceptions import ObjectAlreadyExists
 
-from infrahub_sync import RecordLoadError
+from infrahub_sync import (
+    DiffSyncMixin,
+    DiffSyncModelMixin,
+    RecordLoadError,
+    SchemaMappingFilter,
+    SchemaMappingModel,
+    SyncAdapter,
+    SyncConfig,
+)
+from infrahub_sync.adapters.references import peer_unique_id
+from infrahub_sync.plan.problems import find_problems
 from infrahub_sync.runtime_schema.worker import bind_runtime_models
 from tests.plan.conftest import PlanProblemModel, Variant, load_plan_problem_fixture
-from tests.plan.problem_plan import FixtureSource, build_source
+from tests.plan.problem_plan import FixtureSource, build_source, reference_is_required
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-    from diffsync import DiffSyncModel
-
-    from infrahub_sync import SchemaMappingModel
     from tests.plan.conftest import PlanProblemFixture
 
 
@@ -59,7 +67,7 @@ def _read(source: FixtureSource, *kinds: str) -> None:
         source.model_loader(model_name=kind, model=getattr(source, kind))
 
 
-def _loaded(source: FixtureSource, kind: str) -> list[str]:
+def _loaded(source: Adapter, kind: str) -> list[str]:
     """The source IDs of the stored records of `kind`, sorted."""
     return sorted(str(getattr(item, "local_id", None)) for item in source.get_all(kind))
 
@@ -249,3 +257,157 @@ def test_the_destination_side_catches_nothing() -> None:
 
     with pytest.raises(ObjectAlreadyExists):
         _read(source, "LocationSite")
+
+
+# -- Review fixes: complementary filters, a record read twice, a defaulted identifier ------------
+
+
+class _Device(DiffSyncModelMixin, DiffSyncModel):
+    _modelname = "DcimDevice"
+    _identifiers = ("name",)
+    _attributes = ()
+    name: str
+    local_id: str | None = None
+
+
+class _Tenant(DiffSyncModelMixin, DiffSyncModel):
+    _modelname = "OrgTenant"
+    _identifiers = ("name",)
+    _attributes = ()
+    name: str
+    local_id: str | None = None
+
+
+class _Vlan(DiffSyncModelMixin, DiffSyncModel):
+    _modelname = "IpamVLAN"
+    _identifiers = ("name", "vlan_group")
+    _attributes = ("tenant",)
+    name: str
+    vlan_group: str = "default"
+    tenant: str | None = None
+    local_id: str | None = None
+
+
+class _InlineSource(DiffSyncMixin, Adapter):
+    """A source over inline records; `record_to_data` copies the ID and the name, and resolves `tenant`."""
+
+    DcimDevice = _Device
+    OrgTenant = _Tenant
+    IpamVLAN = _Vlan
+    top_level = ["DcimDevice", "OrgTenant", "IpamVLAN"]  # noqa: RUF012  # the diffsync class attribute
+    target = "source"
+
+    def __init__(self, records: list[dict[str, Any]], entries: list[SchemaMappingModel] | None = None) -> None:
+        super().__init__()
+        self.config = SyncConfig(
+            name="inline-source",
+            source=SyncAdapter(name="inline"),
+            destination=SyncAdapter(name="infrahub"),
+            schema_mapping=entries or [],
+        )
+        self._records = records
+
+    def list_records(self, model_name: str, element: SchemaMappingModel) -> list[dict[str, Any]]:  # noqa: ARG002
+        return [dict(record) for record in self._records]
+
+    def record_to_data(
+        self, record: Mapping[str, Any], element: SchemaMappingModel, model: type[DiffSyncModel]
+    ) -> dict[str, Any]:
+        # A record without an ID carries the local ID its adapter would write for it ("None" or "").
+        source_id = str(record["id"]) if "id" in record else record["local_id"]
+        data: dict[str, Any] = {"local_id": source_id, "name": record["name"]}
+        if record.get("group"):
+            data["vlan_group"] = record["group"]
+        if record.get("tenant"):
+            unique_id = peer_unique_id(
+                self,
+                "OrgTenant",
+                str(record["tenant"]),
+                owner=(element.name, source_id),
+                field="tenant",
+                required=reference_is_required(model, "tenant"),
+            )
+            if unique_id is not None:
+                data["tenant"] = unique_id
+        return data
+
+
+_RACKED = SchemaMappingModel(
+    name="DcimDevice",
+    mapping="dcim.devices",
+    fields=[],
+    filters=[SchemaMappingFilter(field="rack", operation="is_not_empty")],
+)
+_UNRACKED = SchemaMappingModel(
+    name="DcimDevice",
+    mapping="dcim.devices",
+    fields=[],
+    filters=[
+        SchemaMappingFilter(field="rack", operation="is_empty"),
+        SchemaMappingFilter(field="role", operation="!=", value="lab"),
+    ],
+)
+
+
+@pytest.mark.parametrize(
+    "entries", [[_RACKED, _UNRACKED], [_UNRACKED, _RACKED]], ids=["racked-first", "unracked-first"]
+)
+def test_a_record_another_entry_of_its_kind_keeps_is_not_filtered(entries: list[SchemaMappingModel]) -> None:
+    """Two DcimDevice entries split racked and unracked devices: only device 3, which both remove, is filtered."""
+    records = [
+        {"id": 1, "name": "racked", "rack": 7, "role": "leaf"},
+        {"id": 2, "name": "unracked", "rack": None, "role": "leaf"},
+        {"id": 3, "name": "lab", "rack": None, "role": "lab"},
+    ]
+    source = _InlineSource(records, entries)
+
+    source.model_loader(model_name="DcimDevice", model=_Device)
+
+    assert _loaded(source, "DcimDevice") == ["1", "2"]
+    assert set(source.load_report.filtered_ids["DcimDevice"]) == {"3"}
+
+
+def test_a_record_read_twice_under_one_source_id_is_one_record() -> None:
+    """Tenant 5, returned twice by overlapping pages, is stored once and is not its own duplicate."""
+    source = _InlineSource([])
+    element = SchemaMappingModel(name="OrgTenant", mapping="tenancy.tenants", fields=[])
+
+    for record in ({"id": 5, "name": "acme"}, {"id": 5, "name": "acme"}):
+        source.load_record(_Tenant, element, record)
+    report = find_problems(source=source, destination=None, config=None)
+
+    assert _loaded(source, "OrgTenant") == ["5"]
+    assert source.load_report.entries == []
+    assert (report.problems, report.left_out) == ((), ())
+
+
+@pytest.mark.parametrize("local_id", ["None", ""], ids=["none", "empty"])
+def test_two_records_without_a_source_id_are_still_duplicates(local_id: str) -> None:
+    """Two tenants `acme` with no source ID are two records: the second is a `duplicate_source_identity`."""
+    source = _InlineSource([])
+    element = SchemaMappingModel(name="OrgTenant", mapping="tenancy.tenants", fields=[])
+
+    for number in (1, 2):
+        source.load_record(_Tenant, element, {"name": "acme", "n": number, "local_id": local_id})
+    report = find_problems(source=source, destination=None, config=None)
+
+    assert [problem.problem_type for problem in report.problems] == ["duplicate_source_identity"]
+    assert [item.cause for item in report.left_out] == ["has_problem"]
+
+
+def test_a_loaded_record_without_a_defaulted_identifier_is_kept() -> None:
+    """VLAN 7 has no group (defaulted) and names tenant 99, not in the source: it loads and is kept without it."""
+    source = _InlineSource([])
+    element = SchemaMappingModel(name="IpamVLAN", mapping="ipam.vlans", fields=[])
+
+    stored = source.load_record(_Vlan, element, {"id": 7, "name": "users", "tenant": 99})
+    report = find_problems(source=source, destination=None, config=None)
+
+    assert stored is not None
+    assert [(entry.reason, entry.loaded) for entry in source.load_report.entries] == [
+        ("peer_not_found_in_source", True)
+    ]
+    assert report.left_out == ()
+    assert [(item.record.kind, item.record.source_id, item.cause) for item in report.kept] == [
+        ("IpamVLAN", "7", "peer_not_found_in_source")
+    ]

@@ -459,13 +459,16 @@ class _ReadState:
 
     `peer_index` maps (kind, source record ID) to the unique ID of each stored record;
     `not_loaded` maps (kind, source record ID) to the load report entry of a record the read
-    could not build; `read_kinds` names the kinds the source read listed in full.
+    could not build; `read_kinds` names the kinds the source read listed in full;
+    `retained_ids` holds, per kind, the source IDs that the filters of at least one mapping
+    entry kept, so a record that another entry of the kind removes is not recorded as filtered.
     """
 
     report: LoadReport
     peer_index: dict[tuple[str, str], str] = dataclasses.field(default_factory=dict)
     not_loaded: dict[tuple[str, str], LoadReportEntry] = dataclasses.field(default_factory=dict)
     read_kinds: set[str] = dataclasses.field(default_factory=set)
+    retained_ids: dict[str, set[str]] = dataclasses.field(default_factory=dict)
 
 
 class DiffSyncMixin(WarmSourceReadMixin):
@@ -558,7 +561,9 @@ class DiffSyncMixin(WarmSourceReadMixin):
         """Return the source records the entry's filters keep, and record the IDs they remove.
 
         Each removed source ID is recorded with the position of the first filter that removed
-        it, in the load report's `filtered_ids` of the entry's kind.
+        it, in the load report's `filtered_ids` of the entry's kind. A kind can have several
+        mapping entries with complementary filters: a source ID that the filters of any entry
+        of the kind keep is not recorded as filtered, whichever entry is read first.
         """
         if not element.filters:
             return records
@@ -574,8 +579,14 @@ class DiffSyncMixin(WarmSourceReadMixin):
                     retained.add(source_id)
             elif source_id is not None:
                 removed.setdefault(source_id, position)
-        excluded = {source_id: position for source_id, position in removed.items() if source_id not in retained}
-        self.load_report.filtered_ids.setdefault(element.name, {}).update(excluded)
+        kind_retained = self._read_state.retained_ids.setdefault(element.name, set())
+        kind_retained.update(retained)
+        filtered = self.load_report.filtered_ids.setdefault(element.name, {})
+        for source_id in retained:
+            filtered.pop(source_id, None)
+        for source_id, position in removed.items():
+            if source_id not in kind_retained:
+                filtered.setdefault(source_id, position)
         return kept
 
     def filtered_peer_position(self, peer_kind: str, peer_source_id: str) -> tuple[bool, int | None]:
@@ -645,14 +656,14 @@ class DiffSyncMixin(WarmSourceReadMixin):
                 model.apply_transforms(item=record, transforms=element.transforms)
             data = self.record_to_data(record, element, model)  # pylint: disable=assignment-from-no-return  # adapters implement it
             if data is None:
-                self._settle_pending(start, kind, source_id, identity=None)
+                self._settle_pending(start, kind, source_id, loaded=False)
                 return None
             if data.get("local_id") is not None:
                 source_id = str(data["local_id"])
             item = model(**data)
             stored = self._store(item, store_item)
         except TransformError as exc:
-            self._settle_pending(start, kind, source_id, identity=None)
+            self._settle_pending(start, kind, source_id, loaded=False)
             self._report(
                 LoadReportEntry(
                     record=SourceRecordReference(kind=kind, source_id=source_id),
@@ -663,22 +674,22 @@ class DiffSyncMixin(WarmSourceReadMixin):
             )
             return None
         except PeerReferenceError as exc:
-            self._settle_pending(start, kind, source_id, identity=None)
+            self._settle_pending(start, kind, source_id, loaded=False)
             self._record_peer_error(kind, exc)
             return None
         except pydantic.ValidationError as exc:
-            self._settle_pending(start, kind, source_id, identity=None)
+            self._settle_pending(start, kind, source_id, loaded=False)
             self._record_validation_error(kind, model=model, source_id=source_id, data=data, exc=exc)
             return None
         except ObjectAlreadyExists as exc:
-            self._settle_pending(start, kind, source_id, identity=None)
-            self._record_duplicate(kind, model=model, item=item, source_id=source_id, data=data, exc=exc)
-            return None
+            return self._record_duplicate(
+                start, kind, model=model, record=record, item=item, source_id=source_id, data=data, exc=exc
+            )
         except RecordLoadError:
             raise
         except Exception as exc:  # research R2: every other failure fails the plan as RecordLoadError
             raise RecordLoadError(kind=kind, source_id=source_id) from exc
-        self._settle_pending(start, kind, source_id, identity=_identity_of(model, data))
+        self._settle_pending(start, kind, source_id, loaded=True, identity=_identity_of(model, data))
         self._index(stored, data)
         if after_add is not None:
             after_add(stored, record)
@@ -701,22 +712,25 @@ class DiffSyncMixin(WarmSourceReadMixin):
         if not entry.loaded and entry.record.source_id is not None:
             state.not_loaded.setdefault((entry.record.kind, entry.record.source_id), entry)
 
-    def _settle_pending(self, start: int, kind: str, source_id: str | None, *, identity: dict[str, Any] | None) -> None:
+    def _settle_pending(
+        self, start: int, kind: str, source_id: str | None, *, loaded: bool, identity: dict[str, Any] | None = None
+    ) -> None:
         """Settle the entries the reference helper made for the record being admitted.
 
-        When the record loaded, they receive its identity. When it did not, they no longer
-        describe a loaded record, so they are marked `loaded: false`.
+        When the record loaded, they receive its identity, when it is known; a loaded record
+        whose data leaves out an identifier keeps its entries as they are. When it did not
+        load, they no longer describe a loaded record, so they are marked `loaded: false`.
         """
         entries = self.load_report.entries
         for index in range(start, len(entries)):
             entry = entries[index]
             if entry.record.kind != kind or entry.record.source_id != source_id or not entry.loaded:
                 continue
-            if identity is not None:
+            if not loaded:
+                entries[index] = entry.model_copy(update={"loaded": False})
+            elif identity is not None:
                 record = entry.record.model_copy(update={"identity": identity})
                 entries[index] = entry.model_copy(update={"record": record})
-            else:
-                entries[index] = entry.model_copy(update={"loaded": False})
 
     def _record_peer_error(self, kind: str, exc: PeerReferenceError) -> None:
 
@@ -764,21 +778,38 @@ class DiffSyncMixin(WarmSourceReadMixin):
                 )
             )
 
-    def _record_duplicate(
+    def _record_duplicate(  # pylint: disable=too-many-arguments  # the record being admitted, keyword-only
         self,
+        start: int,
         kind: str,
         *,
         model: type[Any],
+        record: Any,
         item: Any,
         source_id: str | None,
         data: Mapping[str, Any] | None,
         exc: ObjectAlreadyExists,
-    ) -> None:
+    ) -> Any:
+        """Record a `duplicate_source_identity`, or return the stored record that `item` repeats.
 
+        A record the source returns again under the same source ID (an overlapping page, for
+        example) is one record, not two with one identity: the first read stands, and the
+        entries of the second read are dropped. Only a real source ID decides this: a record
+        whose raw record has no ID (`record_source_id` is `None`) is always a duplicate.
+        """
         if item is None:
             raise RecordLoadError(kind=kind, source_id=source_id) from exc
         existing = self.store.get(model=item.get_type(), identifier=item.get_unique_id())
         existing_source_id = getattr(existing, "local_id", None)
+        if (
+            self.record_source_id(record) is not None
+            and existing_source_id is not None
+            and str(existing_source_id) == source_id
+        ):
+            del self.load_report.entries[start:]
+            logger.warning("%s record %s was read twice; the first read is kept", kind, source_id)
+            return existing
+        self._settle_pending(start, kind, source_id, loaded=False)
         identity = _identity_of(model, data)
         self._report(
             LoadReportEntry(
@@ -791,6 +822,7 @@ class DiffSyncMixin(WarmSourceReadMixin):
                 ),
             )
         )
+        return None
 
     def cursor_tier_for(self, model_name: str) -> CursorTier:  # noqa: ARG002  # pylint: disable=unused-argument
         """Strongest cursor tier the adapter supports for this model.
@@ -863,16 +895,7 @@ class DiffSyncModelMixin:
     @classmethod
     def apply_filters(cls, item: dict[str, Any], filters: list[SchemaMappingFilter]) -> bool:
         """Apply filters to an item and return True if it passes all filters."""
-        for filter_obj in filters:
-            # Use dot notation to access attributes
-            field_value = get_value(obj=item, name=filter_obj.field)
-            if not cls.apply_filter(
-                field_value=field_value,
-                operation=filter_obj.operation,
-                value=filter_obj.value,
-            ):
-                return False
-        return True
+        return first_failing_filter(cls, item, filters) is None
 
     @classmethod
     def apply_transform(cls, item: dict[str, Any], transform_expr: str, field: str) -> None:

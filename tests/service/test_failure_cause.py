@@ -15,6 +15,7 @@ import pytest
 import requests
 from infrahub_sdk.exceptions import GraphQLError, ServerNotReachableError, ServerNotResponsiveError
 
+from infrahub_sync import RecordLoadError
 from infrahub_sync.client.models import (
     FAILURE_TYPES,
     MAX_FAILURE_CAUSE_TEXT,
@@ -299,6 +300,36 @@ def test_the_classification_table(stage: str, exc: BaseException, failure_type: 
     recorded = failure_record(stage, exc)
 
     assert (recorded["failure_type"], recorded["system"]) == (failure_type, system)
+
+
+def _record_load(inner: BaseException) -> BaseException:
+    return _source(_from(RecordLoadError(kind="DcimInterface", source_id="12"), inner), "netbox")
+
+
+@pytest.mark.parametrize(
+    ("inner", "failure_type"),
+    [
+        pytest.param(requests.ReadTimeout("t"), "system_timeout", id="timeout"),
+        pytest.param(httpx.ConnectError("c"), "system_unreachable", id="connection"),
+        pytest.param(_httpx_status(401), "token_rejected", id="token"),
+    ],
+)
+def test_a_transport_failure_while_a_record_is_converted_names_the_system_and_the_record(
+    inner: BaseException, failure_type: str
+) -> None:
+    """FR-017: a source that stops answering while record 12 is converted is a transport failure, not the record's."""
+    recorded = failure_record("plan", _record_load(inner))
+
+    assert (recorded["failure_type"], recorded["system"]) == (failure_type, SOURCE)
+    assert recorded["record"] == {"kind": "DcimInterface", "source_id": "12"}
+
+
+def test_a_record_load_failure_without_a_transport_cause_stays_a_record_failure() -> None:
+    """A conversion error of record 12 that no transport error caused is still `record_load_failed`."""
+    recorded = failure_record("plan", _record_load(RuntimeError("conversion failed")))
+
+    assert recorded["failure_type"] == "record_load_failed"
+    assert recorded["record"] == {"kind": "DcimInterface", "source_id": "12"}
 
 
 def test_infrahubs_message_goes_through_the_masking_pass() -> None:

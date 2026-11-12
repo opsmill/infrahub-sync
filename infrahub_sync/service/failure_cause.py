@@ -246,6 +246,14 @@ def _classify(exc: BaseException) -> _Classified:
     for errors, failure_type in _TYPED_ERRORS:
         link = next((link for link in explicit if isinstance(link, errors)), None)
         if link is not None:
+            if failure_type == "record_load_failed":
+                # The read loop raises every unrecorded failure of a record as `RecordLoadError`,
+                # including a source that stopped answering while the record was converted (a
+                # peer kind read, for example). That failure names the system, not the record
+                # (FR-017), so the transport classification wins; the record is still named.
+                transport = _transport_failure_type(tuple(cause_chain(exc)))
+                if transport is not None:
+                    return _Classified(transport, link)
             return _Classified(failure_type, link)
     # A certificate error can be set as the `__context__` of the transport error a library
     # raises, so the transport checks walk the whole chain.

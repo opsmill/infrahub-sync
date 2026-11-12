@@ -99,6 +99,7 @@ class WarmSourceReadMixin:
         state = self._read_state
         del state.report.entries[entries_from:]
         state.report.filtered_ids.pop(kind, None)
+        state.retained_ids.pop(kind, None)
         for key in [key for key in state.not_loaded if key[0] == kind]:
             del state.not_loaded[key]
         for key in [key for key in state.peer_index if key[0] == kind]:
