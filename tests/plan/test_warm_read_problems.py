@@ -5,9 +5,9 @@ and reads only the records changed since the saved cursor (`Potenda.load_one_sid
 test plans the fixture twice: a first run that is retained, then a warm run. It compares the
 warm run's plan problems with those of a cold read of the same source records.
 
-`WarmFixtureSource` reads the changed records as the bundled NetBox and Nautobot adapters do
-(`list_changed_since`: filter, transform and convert each record), and advertises a safe cursor
-for every kind, which no bundled adapter does today.
+`WarmFixtureSource` returns the raw changed records through `list_changed_records`, which the
+engine filters and admits through `load_record` (research R22), and advertises a safe cursor for
+every kind, which no bundled adapter does today.
 """
 
 from __future__ import annotations
@@ -19,8 +19,10 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from infrahub_sync.cache.cursors import CursorState, CursorTier
+from infrahub_sync.cache.incremental import source_snapshot_is_complete
+from infrahub_sync.cache.parquet_io import read_table, write_table
 from infrahub_sync.cache.paths import cache_root_for
-from infrahub_sync.potenda import Potenda, SideLoadError
+from infrahub_sync.potenda import Potenda
 from infrahub_sync.runtime_schema.worker import bind_runtime_models
 from tests.plan.conftest import PlanProblemModel, Variant
 from tests.plan.problem_plan import (
@@ -34,20 +36,14 @@ from tests.plan.problem_plan import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Mapping
     from pathlib import Path
 
-    from infrahub_sync import SyncConfig
+    from infrahub_sync import SchemaMappingModel, SyncConfig
     from tests.plan.conftest import PlanProblemFixture
     from tests.plan.problem_plan import PlannedFixture
 
 pytestmark = [pytest.mark.usefixtures("_cache_dir")]
-
-# T081 is blocked: a warm source read cannot match a cold read without a cache format change.
-# The source snapshot holds no source record ID (`local_id` is written for side B only), so a
-# changed record cannot resolve an unchanged peer nor tell a duplicate from a repeated record,
-# and the records a previous run left out are in neither the snapshot nor the changed records.
-BLOCKED = "spec 019 T081 is blocked: the source snapshot holds no source record ID"
 
 SCHEMA_SUBHASH = "matching-schema"
 SAFE_CURSOR = CursorState(CursorTier.TIMESTAMP, "2026-11-11T00:00:00+00:00", safe=True)
@@ -81,18 +77,14 @@ class WarmFixtureSource(FixtureSource):
         """Every kind has a safe cursor, so a retained run makes the next read warm."""
         return SAFE_CURSOR
 
-    def list_changed_since(self, model_name: str, cursor: CursorState) -> Iterator[dict[str, Any]]:  # noqa: ARG002  # pylint: disable=unused-argument
-        """Filter, transform and convert the records changed since `cursor`, as NetBox and Nautobot do."""
-        element = next((entry for entry in self.config.schema_mapping if entry.name == model_name), None)
-        if element is None:
-            return
-        model: type[PlanProblemModel] = getattr(self, model_name)
-        records = copy.deepcopy(self._changed.get(model_name, []))
-        filtered = model.filter_records(records=records, schema_mapping=element)
-        for record in model.transform_records(records=filtered, schema_mapping=element):
-            data = self.record_to_data(record, element, model)
-            if data is not None:
-                yield data
+    def list_changed_records(
+        self,
+        model_name: str,
+        element: SchemaMappingModel,  # noqa: ARG002  # pylint: disable=unused-argument
+        cursor: CursorState,  # noqa: ARG002  # pylint: disable=unused-argument
+    ) -> list[dict[str, Any]]:
+        """Return the raw records changed since `cursor`, before any filter."""
+        return copy.deepcopy(self._changed.get(model_name, []))
 
 
 def _potenda(
@@ -179,7 +171,6 @@ def _changed_groups(fixture: PlanProblemFixture) -> dict[str, list[dict[str, Any
     return {kind: [row for row in rows if row not in valid[kind]] for kind, rows in every.items()}
 
 
-@pytest.mark.xfail(strict=True, raises=SideLoadError, reason=BLOCKED)
 def test_warm_read_of_changed_problem_records_reports_the_cold_problems(plan_problems: PlanProblemFixture) -> None:
     """The problem records and their dependents arrive as changed records after a clean run."""
     every = plan_problems.source_records(Variant.ALL)
@@ -194,7 +185,6 @@ def test_warm_read_of_changed_problem_records_reports_the_cold_problems(plan_pro
     assert _left_out(warm) == _left_out(cold)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=BLOCKED)
 def test_warm_read_with_no_changes_reports_the_cold_problems(plan_problems: PlanProblemFixture) -> None:
     """Nothing changed since a run that found the fixture's problems."""
     every = plan_problems.source_records(Variant.ALL)
@@ -204,7 +194,6 @@ def test_warm_read_with_no_changes_reports_the_cold_problems(plan_problems: Plan
     assert _left_out(warm) == _left_out(cold)
 
 
-@pytest.mark.xfail(strict=True, raises=SideLoadError, reason=BLOCKED)
 def test_changed_record_resolves_an_unchanged_peer(plan_problems: PlanProblemFixture) -> None:
     """A new device at the unchanged site `paris` (source ID 1) is planned, with no problem."""
     valid = plan_problems.source_records(Variant.NO_PROBLEMS)
@@ -216,7 +205,6 @@ def test_changed_record_resolves_an_unchanged_peer(plan_problems: PlanProblemFix
     assert any(item.local_id == "37" for item in warm.source.get_all("DcimDevice"))
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=BLOCKED)
 def test_changed_record_with_the_identity_of_an_unchanged_record_is_a_duplicate(
     plan_problems: PlanProblemFixture,
 ) -> None:
@@ -228,3 +216,61 @@ def test_changed_record_with_the_identity_of_an_unchanged_record_is_a_duplicate(
     warm = _warm_plan(plan_problems, first=valid, records=records, changed={"LocationSite": [site]})
     assert ("duplicate_source_identity", "LocationSite", ["1", "7"]) in _problems(cold)
     assert _problems(warm) == _problems(cold)
+
+
+def test_source_snapshot_carries_the_source_record_id_and_the_complete_marker(
+    plan_problems: PlanProblemFixture,
+) -> None:
+    """A read with no problem marks each source snapshot complete and stores each record's source ID."""
+    valid = plan_problems.source_records(Variant.NO_PROBLEMS)
+    potenda = _potenda(plan_problems, records=valid, changed={}, run_id="20261111T100000-warm0001")
+    potenda.load_both_sides()
+    assert potenda.run_dir is not None
+    for kind in plan_problems.order:
+        snapshot = potenda.run_dir / "A" / f"{kind}.parquet"
+        assert source_snapshot_is_complete(run_dir=potenda.run_dir, resource=kind), kind
+        if valid.get(kind):
+            assert read_table(str(snapshot)).column("local_id").null_count == 0, kind
+
+
+def test_source_snapshot_of_an_older_release_causes_a_cold_read(plan_problems: PlanProblemFixture) -> None:
+    """A snapshot with no source record ID and no marker is read cold, without an error."""
+    every = plan_problems.source_records(Variant.ALL)
+    cold = plan_fixture(plan_problems, Variant.ALL, run_id="20261111T090000-cold0001")
+    valid = plan_problems.source_records(Variant.NO_PROBLEMS)
+    previous = _potenda(plan_problems, records=valid, changed={}, run_id="20261111T100000-warm0001")
+    previous.load_both_sides()
+    previous.write_plan(previous.diff())
+    _retain(previous)
+    assert previous.run_dir is not None
+    for snapshot in (previous.run_dir / "A").glob("*.parquet"):
+        table = read_table(str(snapshot))
+        if "local_id" in table.column_names:
+            table = table.drop_columns(["local_id"])
+        write_table(str(snapshot), table.replace_schema_metadata(None))
+
+    warm = _potenda(
+        plan_problems, records=every, changed=_changed_groups(plan_problems), run_id="20261111T110000-warm0002"
+    )
+    warm.load_both_sides()
+
+    assert warm._side_full_extract["A"] is True
+    planned = finish_plan(warm)
+    assert _problems(planned) == _problems(cold)
+    assert _left_out(planned) == _left_out(cold)
+
+
+def test_source_without_list_changed_records_reads_cold(
+    plan_problems: PlanProblemFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A source adapter with the read loop but no `list_changed_records` cannot admit changed records."""
+    valid = plan_problems.source_records(Variant.NO_PROBLEMS)
+    previous = _potenda(plan_problems, records=valid, changed={}, run_id="20261111T100000-warm0001")
+    previous.load_both_sides()
+    _retain(previous)
+    warm = _potenda(plan_problems, records=valid, changed={}, run_id="20261111T110000-warm0002")
+    monkeypatch.setattr(WarmFixtureSource, "implements_list_changed_records", lambda _self: False)
+
+    warm.load_both_sides()
+
+    assert warm._side_full_extract["A"] is True

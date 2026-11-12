@@ -21,6 +21,7 @@ from infrahub_sync.cache.cursors import CursorTier
 from infrahub_sync.dependency_graph import compute_tiers, flatten_tiers
 from infrahub_sync.load_report import LoadReport, LoadReportEntry, filter_entry, transform_entry
 from infrahub_sync.plan.models import NOT_IN_SOURCE_VALUE_PREFIX, SourceRecordReference
+from infrahub_sync.warm_read import WarmSourceReadMixin
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -467,7 +468,7 @@ class _ReadState:
     read_kinds: set[str] = dataclasses.field(default_factory=set)
 
 
-class DiffSyncMixin:
+class DiffSyncMixin(WarmSourceReadMixin):
     """Adapter base class: owns the per-record read loop and its admission step.
 
     An adapter implements `list_records` and `record_to_data`. The default `model_loader`

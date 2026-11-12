@@ -172,6 +172,39 @@ def snapshot_carries_local_id(*, run_dir: Path, side: str, resource: str) -> boo
     return "local_id" in read_schema(str(parquet_path)).names
 
 
+# The source snapshot metadata key of an adapter with the read loop (research R22), and its
+# values. `complete`: the read of the kind recorded no load report entry and no filtered
+# record, and every row carries its source record ID in `local_id`.
+SOURCE_READ_METADATA_KEY = "infrahub_sync.source_read"
+SOURCE_READ_COMPLETE = "complete"
+SOURCE_READ_INCOMPLETE = "incomplete"
+
+
+def source_snapshot_is_complete(*, run_dir: Path, resource: str) -> bool:
+    """Whether the source snapshot of `resource` can rebuild the kind for a warm read.
+
+    Only a snapshot marked `complete` qualifies. A snapshot written before the marker existed
+    holds no source record ID and not the records the read left out, so it answers `False`,
+    as a missing snapshot does: the caller reads the kind cold.
+    """
+    parquet_path = run_dir / "A" / f"{resource}.parquet"
+    if not parquet_path.exists():
+        return False
+    metadata = read_schema(str(parquet_path)).metadata or {}
+    return metadata.get(SOURCE_READ_METADATA_KEY.encode()) == SOURCE_READ_COMPLETE.encode()
+
+
+def referenced_kinds(config: object, kind: str) -> set[str]:
+    """Return the peer kinds the mapping fields of `kind` reference."""
+    return {
+        field.reference
+        for element in getattr(config, "schema_mapping", None) or []
+        if element.name == kind
+        for field in element.fields
+        if field.reference
+    }
+
+
 def hydrate_from_parquet(
     *,
     run_dir: Path,

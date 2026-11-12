@@ -12,7 +12,7 @@ from infrahub_sdk.exceptions import Error as InfrahubSDKError
 from infrahub_sdk.exceptions import GraphQLError, ServerNotResponsiveError
 from tqdm import tqdm
 
-from infrahub_sync import resolve_effective_diffsync_flags
+from infrahub_sync import DiffSyncMixin, resolve_effective_diffsync_flags
 from infrahub_sync.infrahub_errors import classify_infrahub_error
 
 # These plan imports are cheap; imports that reach pyarrow stay deferred below.
@@ -96,6 +96,11 @@ def _rebuild_side_load_error(message: str, role: Side, adapter: str) -> SideLoad
     return SideLoadError(message, role=role, adapter=adapter)
 
 
+def _admits_records(adapter: Adapter) -> bool:
+    """Tell whether an adapter reads through the read loop of `DiffSyncMixin` (`load_record`)."""
+    return isinstance(adapter, DiffSyncMixin)
+
+
 def _side_adapter_name(config: SyncInstance | None, role: Side, adapter: Adapter) -> str:
     """The adapter name of one side: the configured name, else the adapter's type or class name."""
     declared = getattr(config, role, None) if config is not None else None
@@ -110,7 +115,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from diffsync import Adapter
+    from diffsync import Adapter, DiffSyncModel
     from diffsync.diff import Diff
     from diffsync.enum import DiffSyncFlags
 
@@ -444,8 +449,14 @@ class Potenda:
             return
         from datetime import datetime, timezone
 
+        from infrahub_sync.cache.incremental import (
+            SOURCE_READ_COMPLETE,
+            SOURCE_READ_INCOMPLETE,
+            SOURCE_READ_METADATA_KEY,
+        )
         from infrahub_sync.cache.parquet_io import write_resource_side
 
+        admits = side == "A" and _admits_records(adapter)
         extract_ts = datetime.now(timezone.utc)
         # Snapshot timestamps are diagnostic metadata, never incremental bounds.
         for kind in adapter.top_level:
@@ -455,16 +466,25 @@ class Potenda:
             # keyed by. Without it a warm run rebuilds destination models with no id and
             # every derived update is refused. It is written as its own column and never
             # conflated with the engine-controlled `_source_id`, which is DiffSync's
-            # unique-id string and keys nothing at the destination.
+            # unique-id string and keys nothing at the destination. Side A carries `local_id`,
+            # the source record ID, when the source admits records through `load_record`, so a
+            # warm read resolves references to unchanged records (research R22).
+            carries_local_id = side == "B" or admits
             rows = [
                 {
                     **(r.get_identifiers() if hasattr(r, "get_identifiers") else {}),
                     **r.get_attrs(),
-                    **({"local_id": getattr(r, "local_id", None)} if side == "B" else {}),
+                    **({"local_id": getattr(r, "local_id", None)} if carries_local_id else {}),
                 }
                 for r in records
             ]
             source_ids = [r.get_unique_id() for r in records]
+            metadata = None
+            if admits:
+                complete = adapter.kind_read_is_clean(kind) and all(  # ty: ignore[unresolved-attribute]
+                    getattr(r, "local_id", None) is not None for r in records
+                )
+                metadata = {SOURCE_READ_METADATA_KEY: SOURCE_READ_COMPLETE if complete else SOURCE_READ_INCOMPLETE}
             if side == "A":
                 self._counts[kind] = len(records)
             write_resource_side(
@@ -474,6 +494,7 @@ class Potenda:
                 rows=rows,
                 source_ids=source_ids,
                 extract_ts=extract_ts,
+                metadata=metadata,
             )
 
     def load_one_side(self, *, side: str, adapter: Adapter) -> None:
@@ -523,6 +544,20 @@ class Potenda:
 
         cursors = load_cursors(prev_run / "cursors.json", side=side)
         full_resources: set[str] = set()
+        if side == "A" and _admits_records(adapter):
+            # A source with the read loop admits its changed records through `load_record`.
+            self._load_source_kinds(
+                adapter=cast("DiffSyncMixin", adapter),
+                prev_run=prev_run,
+                models=models,
+                cursors=cursors,
+                next_cursors=next_cursors,
+                full_resources=full_resources,
+            )
+            self._side_full_extract[side] = full_resources == set(adapter.top_level)
+            self._did_full_extract = self._did_full_extract or self._side_full_extract[side]
+            self._side_cursors[side] = next_cursors
+            return
         for resource in adapter.top_level:
             tier_supported = adapter.cursor_tier_for(resource)  # ty: ignore[unresolved-attribute]
             cursor = cursors.get(resource)
@@ -562,6 +597,66 @@ class Potenda:
         self._side_full_extract[side] = full_resources == set(adapter.top_level)
         self._did_full_extract = self._did_full_extract or self._side_full_extract[side]
         self._side_cursors[side] = next_cursors
+
+    def _load_source_kinds(  # pylint: disable=too-many-arguments
+        self,
+        *,
+        adapter: DiffSyncMixin,
+        prev_run: Path,
+        models: Mapping[str, type[DiffSyncModel]],
+        cursors: Mapping[str, CursorState],
+        next_cursors: Mapping[str, CursorState],
+        full_resources: set[str],
+    ) -> None:
+        """Read each kind of a source with the read loop, warm where that gives a cold read's result.
+
+        A kind reads warm only when the adapter implements `list_changed_records`, the previous
+        snapshot of the kind is marked complete, and no peer kind it references was unclean
+        earlier in this read. A warm read that records a load report entry is discarded and the
+        kind is read cold. A kind whose read records an entry is unclean (research R22).
+        """
+        from infrahub_sync.cache.incremental import (
+            hydrate_from_parquet,
+            referenced_kinds,
+            source_snapshot_is_complete,
+        )
+
+        unclean: set[str] = set()
+        for resource in adapter.top_level:
+            model_cls = models[resource]
+            cursor = cursors.get(resource)
+            reason = None
+            if (
+                cursor is None
+                or not cursor.safe
+                or cursor.tier is not adapter.cursor_tier_for(resource)
+                or resource not in next_cursors
+            ):
+                reason = "no safe cursor"
+            elif not adapter.implements_list_changed_records():
+                reason = "the source adapter does not implement list_changed_records"
+            elif not source_snapshot_is_complete(run_dir=prev_run, resource=resource):
+                reason = "the previous snapshot is missing, older, or holds records the read left out"
+            elif referenced_kinds(self.config, resource) & unclean:
+                reason = "a peer kind it references was read with problems"
+            if reason is None:
+                start = len(adapter.load_report.entries)
+                hydrate_from_parquet(
+                    run_dir=prev_run,
+                    side="A",
+                    resource=resource,
+                    add_row=lambda _name, payload, _model=model_cls: adapter.restore_record(_model, payload),
+                )
+                adapter.load_changed_records(resource, model_cls, cast("CursorState", cursor))
+                if adapter.kind_read_is_clean(resource):
+                    continue
+                adapter.discard_kind(resource, entries_from=start)
+                reason = "the changed records hold problems"
+            logger.info("Incremental: reading source kind %s in full (%s)", resource, reason)
+            adapter.model_loader(model_name=resource, model=model_cls)
+            full_resources.add(resource)
+            if not adapter.kind_read_is_clean(resource):
+                unclean.add(resource)
 
     def _load_side(self, *, side: str, adapter: Adapter) -> None:
         """Keep cursors publishable only when loading and snapshotting both succeed.
