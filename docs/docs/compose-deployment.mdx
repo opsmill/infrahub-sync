@@ -77,7 +77,9 @@ is a maintained build of the MinIO server. It is licensed under the AGPLv3, and
 its source is at [github.com/pgsty/silo](https://github.com/pgsty/silo). The
 deployment does not publish the object store port and does not start its
 browser console. The Sync services use it over the deployment's own network,
-and its port is not published on the host.
+and its port is not published on the host. A team that already runs an
+S3-compatible store can use it instead and leave this one out; see
+[Use your own S3-compatible store](#use-your-own-s3-compatible-store).
 
 Run every `docker compose` command on this page from the directory that holds
 `docker-compose.yml` and `.env`. Compose finds both files there without `-f` or
@@ -133,6 +135,9 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_PREFECT_DATABASE`, `INFRAHUB_SYNC_PREFECT_ROLE` | `prefect` | The Prefect database and its owner role. |
 | `INFRAHUB_SYNC_S3_BUCKET`, `INFRAHUB_SYNC_S3_PREFIX` | `infrahub-sync` | The artifact bucket and key prefix. |
 | `INFRAHUB_SYNC_S3_REGION` | `us-east-1` | The object store region. |
+| `INFRAHUB_SYNC_S3_ENDPOINT_URL` | `http://object-store:9000` | The object store address. Set it, with `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0`, to use your own store; see [Use your own S3-compatible store](#use-your-own-s3-compatible-store). |
+| `INFRAHUB_SYNC_S3_ADDRESSING_STYLE` | `path` | `path` puts the bucket in the request path, `virtual` in the host name. Any other value stops the Sync services and `sync-bootstrap`. |
+| `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE` | `1` | `0` leaves the bundled store out: Compose creates no `object-store-init` or `object-store` container. |
 | `INFRAHUB_SYNC_WORK_POOL` | `infrahub-sync` | The Prefect work pool. |
 | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | `300` | How long a run admission stays valid. |
 | `INFRAHUB_SYNC_REQUIRE_APPROVAL` | `false` | Set on `sync-api`. When `true`, `apply` refuses a plan that has no approval matching the checksum it names, and `sync` is refused; operators run `plan`, `approve` and `apply` instead. Accepted values are `true`, `1`, `yes`, `on`, `false`, `0`, `no` and `off`, in any case. Any other value, including an empty one, stops `sync-api` at startup. The service reads it for each `apply` or `sync` request, so restart `sync-api` to change it; stored runs and approvals are not changed. `infrahub-sync whoami` prints the value as `approval_required`. See [Require an approved plan](./running-a-sync.mdx#require-an-approved-plan). |
@@ -290,6 +295,67 @@ That both adapters install and import is a packaging property of this release.
 It is not a statement that any particular NetBox or Nautobot server version has
 been qualified against it.
 :::
+
+## Use your own S3-compatible store
+
+A team that already runs an S3-compatible store can keep plans and run files there. Create a
+bucket and a credential for Sync in that store, then set these values in `.env` together:
+
+```bash
+INFRAHUB_SYNC_S3_ENDPOINT_URL=https://s3.example.com
+INFRAHUB_SYNC_S3_BUCKET=<bucket>
+INFRAHUB_SYNC_S3_PREFIX=infrahub-sync
+INFRAHUB_SYNC_S3_REGION=<region>
+INFRAHUB_SYNC_S3_ACCESS_KEY=<access key for that bucket>
+INFRAHUB_SYNC_S3_SECRET_KEY=<secret key for that bucket>
+INFRAHUB_SYNC_S3_ADDRESSING_STYLE=path
+INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0
+```
+
+With `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0`, Compose creates no `object-store-init` or
+`object-store` container, so the bundled store never receives the credential of your store.
+`sync-bootstrap` refuses to start when the two settings disagree:
+
+- `refused: bundled-object-store-not-left-out`: the endpoint names your store while the bundled
+  store runs. The bundled store takes `INFRAHUB_SYNC_S3_ACCESS_KEY` and
+  `INFRAHUB_SYNC_S3_SECRET_KEY` as its own root credential, so it has received yours. Set
+  `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0`, then run `docker compose up -d --wait --remove-orphans`.
+- `refused: object-store-endpoint-not-set`: the bundled store is left out but the endpoint still
+  names it.
+
+Use `https` for your store. Request signing never sends the secret key, but over `http` object
+content crosses the network unencrypted. An endpoint that carries a user name or a password is
+refused with `refused: object-store-endpoint-invalid`.
+
+### What Sync needs from the store
+
+`sync-bootstrap` checks for the bucket with `HeadBucket` and creates it only when the store
+answers that it is absent, so a credential that may not create buckets works with a bucket you
+created. A `HeadBucket` refusal stops it with `refused: object-store-access-refused`. It then
+writes one empty check object under `<prefix>/.infrahub-sync/bootstrap-check/` twice with
+`If-None-Match: *`, and deletes it. A store that accepts the second write stops it with
+`refused: object-store-unsupported`, because Sync relies on that refusal to never replace a
+stored artifact.
+
+The S3 operations Sync uses:
+
+| Operation | What Sync relies on |
+| --- | --- |
+| `PutObject` | A single request with the whole body |
+| `PutObject` with `If-None-Match: *` | A second write of an existing key is refused with `412 PreconditionFailed` |
+| `GetObject`, `HeadObject` | A missing key answers `404`, not `403` |
+| `CopyObject`, `DeleteObject` | One key at a time, within the bucket |
+| `HeadBucket`, `CreateBucket` | `sync-bootstrap` only |
+
+A missing key must answer `404`. On stores with S3-style access policies that usually means the
+credential may list the bucket.
+
+OpsMill tests this setup with a Silo instance outside the deployment. No other product is
+named as supported.
+
+Moving from the bundled store to your own does not copy earlier plans and run files. They stay in
+the `object-store-data` volume, and `runs plan` and `runs artifacts` cannot read the files of runs
+made before the move.
 
 ## Start the deployment {#after-the-first-start}
 

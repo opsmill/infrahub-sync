@@ -22,7 +22,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Any
+import socket
+import uuid
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -31,14 +34,22 @@ from prefect.client.schemas.actions import WorkPoolCreate
 from prefect.exceptions import ObjectNotFound
 from prefect.workers.process import ProcessWorker
 
+from infrahub_sync.product_store import DuplicateArtifactError
+
 from .deploy import WORK_POOL_ENV
 from .deploy import main as apply_deployment
 from .storage import (
     S3_BUCKET_ENV,
     S3_ENDPOINT_ENV,
+    S3_PREFIX_ENV,
     S3_REGION_ENV,
+    Boto3S3Client,
+    build_s3_client,
     service_product_projection,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +61,16 @@ PROCESS_POOL_TYPE = "process"
 # The exact object-store responses that mean the bucket is already there. Any
 # other client error is a real failure, and is reported as one.
 _BUCKET_PRESENT = frozenset({"BucketAlreadyOwnedByYou", "BucketAlreadyExists"})
+# The exact answers to `HeadBucket` that mean the bucket is absent.
+_BUCKET_ABSENT_CODES = frozenset({"404", "NoSuchBucket", "NotFound"})
+_HTTP_NOT_FOUND = 404
+_HTTP_FORBIDDEN = 403
+# The region in which the S3 API takes no location constraint.
+_DEFAULT_REGION = "us-east-1"
+# The bundled store's service name in the Compose file.
+BUNDLED_STORE_HOST = "object-store"
+# Where the create-only check writes, under the deployment's key prefix.
+CREATE_ONLY_CHECK_PATH = ".infrahub-sync/bootstrap-check"
 
 
 # Every way this job can fail, named. The family is the whole public message:
@@ -61,6 +82,11 @@ WORK_POOL_CONFLICT = "work-pool-conflict"
 DEPLOYMENT_FAILED = "deployment-failed"
 PRODUCT_STORE_UNAVAILABLE = "product-store-unavailable"
 SETTING_MISSING = "required-setting-missing"
+OBJECT_STORE_ENDPOINT_INVALID = "object-store-endpoint-invalid"
+BUNDLED_OBJECT_STORE_NOT_LEFT_OUT = "bundled-object-store-not-left-out"
+OBJECT_STORE_ENDPOINT_NOT_SET = "object-store-endpoint-not-set"
+OBJECT_STORE_ACCESS_REFUSED = "object-store-access-refused"
+OBJECT_STORE_UNSUPPORTED = "object-store-unsupported"
 
 
 class BootstrapError(RuntimeError):
@@ -76,10 +102,60 @@ class BootstrapError(RuntimeError):
         self.family = family
 
 
-def converge_bucket(client: Any, bucket: str) -> bool:
-    """Create the artifact bucket when it is absent. Return whether this call made it."""
+def _resolves(host: str) -> bool:
+    """Report whether a host name resolves on this container's networks."""
     try:
-        client.create_bucket(Bucket=bucket)
+        socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+    return True
+
+
+def check_store_settings(endpoint: str | None, *, resolves: Callable[[str], bool] = _resolves) -> None:
+    """Refuse an object store endpoint that does not agree with the bundled store setting.
+
+    The bundled store runs exactly when its service name resolves. It takes the deployment's
+    S3 keys as its own root credential, so an external endpoint while it runs means it holds
+    the external store's credential. A left-out bundled store with the endpoint still naming
+    it means no store answers. Both are refused before any S3 request, by name only.
+    """
+    host = urlsplit(endpoint).hostname if endpoint else None
+    bundled_runs = resolves(BUNDLED_STORE_HOST)
+    if host == BUNDLED_STORE_HOST and not bundled_runs:
+        raise BootstrapError(OBJECT_STORE_ENDPOINT_NOT_SET)
+    if host != BUNDLED_STORE_HOST and bundled_runs:
+        raise BootstrapError(BUNDLED_OBJECT_STORE_NOT_LEFT_OUT)
+
+
+def _status(error: ClientError) -> int | None:
+    status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    return status if isinstance(status, int) else None
+
+
+def converge_bucket(client: Any, bucket: str, region: str | None = None) -> bool:
+    """Create the artifact bucket only when the store reports it absent. Return whether this call made it.
+
+    Checking first lets a credential that may read and write objects but not create buckets
+    complete against a bucket the team already created.
+    """
+    try:
+        client.head_bucket(Bucket=bucket)
+    except ClientError as error:
+        code = error.response.get("Error", {}).get("Code")
+        status = _status(error)
+        if status == _HTTP_FORBIDDEN:
+            raise BootstrapError(OBJECT_STORE_ACCESS_REFUSED) from None
+        if status != _HTTP_NOT_FOUND and code not in _BUCKET_ABSENT_CODES:
+            raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
+    except BotoCoreError:
+        raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
+    else:
+        return False
+    settings: dict[str, Any] = {}
+    if region and region != _DEFAULT_REGION:
+        settings["CreateBucketConfiguration"] = {"LocationConstraint": region}
+    try:
+        client.create_bucket(Bucket=bucket, **settings)
     except ClientError as error:
         code = error.response.get("Error", {}).get("Code")
         if code in _BUCKET_PRESENT:
@@ -88,6 +164,30 @@ def converge_bucket(client: Any, bucket: str) -> bool:
     except BotoCoreError:
         raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
     return True
+
+
+def check_create_only(objects: Any, bucket: str, prefix: str) -> None:
+    """Check that the store refuses a second create-only write of one key, and leave no object.
+
+    Sync's artifact store writes some objects only when the key is absent, and relies on the
+    store refusing the second write. A store that accepts it would let a write replace a
+    stored artifact.
+    """
+    key = f"{prefix}/{CREATE_ONLY_CHECK_PATH}/{uuid.uuid4()}" if prefix else f"{CREATE_ONLY_CHECK_PATH}/{uuid.uuid4()}"
+    try:
+        try:
+            objects.put(bucket=bucket, key=key, data=b"", if_absent=True)
+            objects.put(bucket=bucket, key=key, data=b"", if_absent=True)
+        except DuplicateArtifactError:
+            return
+        except (ClientError, BotoCoreError):
+            raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
+        raise BootstrapError(OBJECT_STORE_UNSUPPORTED)
+    finally:
+        try:
+            objects.delete(bucket=bucket, key=key)
+        except (ClientError, BotoCoreError):
+            logger.warning("the create-only check could not delete its key under %s", CREATE_ONLY_CHECK_PATH)
 
 
 async def converge_work_pool(client: Any, name: str) -> bool:
@@ -143,14 +243,18 @@ def _converge() -> None:
     and a loop already running here would leave the second unable to start one.
     """
     try:
-        client = boto3.client(
-            "s3",
-            endpoint_url=os.environ.get(S3_ENDPOINT_ENV) or None,
-            region_name=os.environ.get(S3_REGION_ENV) or None,
-        )
+        client = build_s3_client(os.environ, builder=boto3.client)
+    except ValueError as error:
+        # The message names the setting and the rule, never the value (`storage._endpoint`).
+        logger.error("%s", error)  # noqa: TRY400 - a fixed message; the family follows.
+        raise BootstrapError(OBJECT_STORE_ENDPOINT_INVALID) from None
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
-    created_bucket = converge_bucket(client, _required(S3_BUCKET_ENV))
+    check_store_settings(os.environ.get(S3_ENDPOINT_ENV) or None)
+    bucket = _required(S3_BUCKET_ENV)
+    created_bucket = converge_bucket(client, bucket, os.environ.get(S3_REGION_ENV) or None)
+    prefix = (os.environ.get(S3_PREFIX_ENV) or "infrahub-sync").strip("/")
+    check_create_only(Boto3S3Client(client), bucket, prefix)
 
     try:
         created_pool = asyncio.run(_converge_pool(_required(WORK_POOL_ENV)))
@@ -174,14 +278,26 @@ def _converge() -> None:
         raise BootstrapError(PRODUCT_STORE_UNAVAILABLE) from None
 
     logger.info("bucket %s", "created" if created_bucket else "present")
+    logger.info("object store refuses a second create-only write")
     logger.info("work pool %s", "created" if created_pool else "present")
     logger.info("deployment applied")
     logger.info("product schema converged; the configuration registry is the operator's to fill")
 
 
+def _configure_logging() -> None:
+    """Report this job's progress lines at INFO.
+
+    Importing Prefect configures the root logger before `main` runs, so `basicConfig` does
+    nothing, and this logger inherits a level that drops every INFO line: the job would
+    report only its refusals. Its own level is set instead; the root handlers print it.
+    """
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s | infrahub-sync bootstrap | %(message)s")
+    logger.setLevel(logging.INFO)
+
+
 def main() -> int:
     """Converge this deployment's durable objects, reporting only a family on failure."""
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s | infrahub-sync bootstrap | %(message)s")
+    _configure_logging()
     try:
         _converge()
     except BootstrapError as error:

@@ -1060,3 +1060,55 @@ def test_a_declared_source_credential_reaches_only_the_worker(
     }
     assert carriers == SOURCE_TOKEN_RECEIVERS, f"{setting} value reached {sorted(carriers)}"
     assert service(resolved, "sync-worker")["environment"][setting] == planted
+
+
+# ---------------------------------------------------------------------------
+# The team's own S3-compatible store (spec 021, FR-001, FR-002)
+# ---------------------------------------------------------------------------
+
+STORE_SERVICES = ("sync-bootstrap", "sync-api", "sync-worker")
+BUNDLED_STORE_SERVICES = ("object-store-init", "object-store")
+LEAVE_OUT_SETTING = "INFRAHUB_SYNC_BUNDLED_OBJECT_STORE"
+EXTERNAL_STORE = {
+    "INFRAHUB_SYNC_S3_ENDPOINT_URL": "https://s3.example.test",
+    "INFRAHUB_SYNC_S3_ADDRESSING_STYLE": "virtual",
+    LEAVE_OUT_SETTING: "0",
+}
+
+
+@pytest.mark.parametrize("name", STORE_SERVICES)
+def test_the_store_settings_default_to_the_bundled_store(model: dict[str, Any], name: str) -> None:
+    environment = services(model)[name]["environment"]
+
+    assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == "http://object-store:9000"
+    assert environment["INFRAHUB_SYNC_S3_ADDRESSING_STYLE"] == "path"
+
+
+@pytest.mark.parametrize("name", STORE_SERVICES)
+def test_the_store_settings_come_from_the_environment(contract_environment: dict[str, str], name: str) -> None:
+    environment = services(resolve({**contract_environment, **EXTERNAL_STORE}))[name]["environment"]
+
+    assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == "https://s3.example.test"
+    assert environment["INFRAHUB_SYNC_S3_ADDRESSING_STYLE"] == "virtual"
+
+
+@pytest.mark.parametrize("name", BUNDLED_STORE_SERVICES)
+def test_the_bundled_store_runs_by_default(model: dict[str, Any], name: str) -> None:
+    assert services(model)[name].get("scale", 1) == 1
+
+
+@pytest.mark.parametrize("name", BUNDLED_STORE_SERVICES)
+def test_the_bundled_store_can_be_left_out(contract_environment: dict[str, str], name: str) -> None:
+    resolved = services(resolve({**contract_environment, **EXTERNAL_STORE}))
+
+    assert resolved[name].get("scale") == 0
+
+
+def test_bootstrap_does_not_require_a_left_out_bundled_store(contract_environment: dict[str, str]) -> None:
+    """Every Sync service still resolves, and bootstrap waits for the store only when it runs."""
+    resolved = services(resolve({**contract_environment, **EXTERNAL_STORE}))
+    dependency = resolved["sync-bootstrap"]["depends_on"]["object-store"]
+
+    assert dependency["condition"] == "service_healthy"
+    assert dependency["required"] is False
+    assert set(STORE_SERVICES) <= set(resolved)

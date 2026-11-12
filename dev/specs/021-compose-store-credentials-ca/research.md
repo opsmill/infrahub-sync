@@ -110,6 +110,19 @@ permission names.
 The old implementation of both steps is commit `05b1fbf5` on branch `013-compose-images`; it is
 reused, with Silo in place of MinIO in tests and comments.
 
+### Implementation notes (2026-11-13)
+
+- `sync-bootstrap` printed none of its INFO lines in a container: importing Prefect configures
+  the root logger first, so `logging.basicConfig` did nothing and the inherited level dropped
+  INFO. This was already the case on `feature/v3-develop`. `main()` now sets its own logger to
+  INFO, so `bucket present`, the create-only result and the other steps reach `docker logs`.
+- The lifecycle test (`tests/compose/test_external_store.py`) creates the external bucket with
+  the store's root credential, so the live run proves the "bucket present" path but not a
+  credential without create permission; the unit tests cover that path (T007).
+- The negative create-only case uses a forwarding proxy in front of Silo that answers a repeated
+  `If-None-Match: *` write itself and forwards everything else unchanged, so signatures stay
+  valid.
+
 ## R3. Which service receives which credential (FR-008, FR-009)
 
 **Decision**: the root and development files pass each credential only to the services that read it.

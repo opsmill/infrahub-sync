@@ -78,7 +78,12 @@ x-sync-env: &sync-env
   INFRAHUB_SYNC_DATABASE_URL: "postgresql://postgres:devpassword@postgres:5432/infrahub_sync"
   INFRAHUB_SYNC_S3_BUCKET: "infrahub-sync"
   INFRAHUB_SYNC_S3_PREFIX: "infrahub-sync"
-  INFRAHUB_SYNC_S3_ENDPOINT_URL: "http://object-store:9000"
+  # The bundled store by default. To use an S3-compatible store the team runs, set the
+  # endpoint and the addressing style in `.env`, and leave the bundled store out with
+  # INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0; sync-bootstrap refuses either setting without
+  # the other.
+  INFRAHUB_SYNC_S3_ENDPOINT_URL: "${INFRAHUB_SYNC_S3_ENDPOINT_URL:-http://object-store:9000}"
+  INFRAHUB_SYNC_S3_ADDRESSING_STYLE: "${INFRAHUB_SYNC_S3_ADDRESSING_STYLE:-path}"
   INFRAHUB_SYNC_S3_REGION: "us-east-1"
   AWS_ACCESS_KEY_ID: "${MINIO_ACCESS_KEY:-devaccesskey}"
   AWS_SECRET_ACCESS_KEY: "${MINIO_SECRET_KEY:-devsecretkey}"
@@ -128,6 +133,8 @@ services:
   # volume created by an earlier root-run object store is owned by root, which
   # Silo cannot write to; a volume that is already right is left alone.
   object-store-init:
+    # 0 leaves the bundled store out: Compose creates no container for it.
+    scale: ${INFRAHUB_SYNC_BUNDLED_OBJECT_STORE:-1}
     image: *silo-image
     restart: "no"
     user: "0"
@@ -148,6 +155,8 @@ services:
     # Silo, a maintained build of the MinIO server, the same pinned release as the
     # root `docker-compose.yml`. Source: https://github.com/pgsty/silo, licensed
     # under the AGPLv3. It reads the MINIO_* settings below.
+    # 0 leaves the bundled store out: Compose creates no container for it.
+    scale: ${INFRAHUB_SYNC_BUNDLED_OBJECT_STORE:-1}
     image: *silo-image
     user: "65532:65532"
     command: ["server", "/data"]
@@ -222,6 +231,8 @@ services:
         condition: service_healthy
       object-store:
         condition: service_healthy
+        # Absent when the bundled store is left out.
+        required: false
       prefect-server:
         condition: service_healthy
     environment:

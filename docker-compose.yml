@@ -46,7 +46,12 @@ x-sync-storage: &sync-storage
     @postgres:5432/${INFRAHUB_SYNC_PRODUCT_DATABASE:-infrahub_sync}}"
   INFRAHUB_SYNC_S3_BUCKET: "${INFRAHUB_SYNC_S3_BUCKET:-infrahub-sync}"
   INFRAHUB_SYNC_S3_PREFIX: "${INFRAHUB_SYNC_S3_PREFIX:-infrahub-sync}"
-  INFRAHUB_SYNC_S3_ENDPOINT_URL: "http://object-store:9000"
+  # The bundled store by default. To use an S3-compatible store the team runs, set the
+  # endpoint and the addressing style in `.env`, and leave the bundled store out with
+  # INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0; sync-bootstrap refuses either setting without
+  # the other.
+  INFRAHUB_SYNC_S3_ENDPOINT_URL: "${INFRAHUB_SYNC_S3_ENDPOINT_URL:-http://object-store:9000}"
+  INFRAHUB_SYNC_S3_ADDRESSING_STYLE: "${INFRAHUB_SYNC_S3_ADDRESSING_STYLE:-path}"
   INFRAHUB_SYNC_S3_REGION: "${INFRAHUB_SYNC_S3_REGION:-us-east-1}"
   AWS_ACCESS_KEY_ID: "${INFRAHUB_SYNC_S3_ACCESS_KEY:?INFRAHUB_SYNC_S3_ACCESS_KEY is required}"
   AWS_SECRET_ACCESS_KEY: "${INFRAHUB_SYNC_S3_SECRET_KEY:?INFRAHUB_SYNC_S3_SECRET_KEY is required}"
@@ -101,6 +106,8 @@ services:
   # Repair its ownership once in a short-lived service so the long-running server
   # never needs root, even during startup.
   object-store-init:
+    # 0 leaves the bundled store out: Compose creates no container for it.
+    scale: ${INFRAHUB_SYNC_BUNDLED_OBJECT_STORE:-1}
     image: >-
       pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc4155d9a7e41ff58cdb65ddd13ba9304e67184e13c25bc5cb34016269d7
     restart: "no"
@@ -122,6 +129,8 @@ services:
     # Silo, a maintained build of the MinIO server. Source:
     # https://github.com/pgsty/silo, licensed under the AGPLv3. It reads the
     # MINIO_* settings below and accepts the `server` command.
+    # 0 leaves the bundled store out: Compose creates no container for it.
+    scale: ${INFRAHUB_SYNC_BUNDLED_OBJECT_STORE:-1}
     image: >-
       pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc4155d9a7e41ff58cdb65ddd13ba9304e67184e13c25bc5cb34016269d7
     restart: unless-stopped
@@ -215,6 +224,8 @@ services:
         condition: service_completed_successfully
       object-store:
         condition: service_healthy
+        # Absent when the bundled store is left out.
+        required: false
       prefect-server:
         condition: service_healthy
     environment:
