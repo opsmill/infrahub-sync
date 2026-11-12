@@ -636,10 +636,11 @@ export function ConfigurationsPage({
         ) : rows.length === 0 ? (
           <EmptyPanel title="No sync configurations yet">
             <p className="max-w-[52ch] text-pretty text-foreground-muted">
-              A configuration says what to read from a source system, such as NetBox, and how to
-              write it to Infrahub. Register one from a configuration package:
+              A configuration says which data to read from a source system and how to write it to
+              the destination. Write it as a configuration package, a YAML file, then register that
+              file:
             </p>
-            <CopyCommand command="infrahub-sync configs register package.yml" />
+            <CopyCommand command="infrahub-sync configs register path/to/package.yml" />
           </EmptyPanel>
         ) : (
           <>
