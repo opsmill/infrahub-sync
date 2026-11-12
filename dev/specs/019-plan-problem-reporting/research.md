@@ -407,3 +407,77 @@ Compared field by field with old `data-model.md` and `contracts/plan-artifact-fo
   `error_type` keys of `<stage>_failure` (decision 1).
 - **`apply_progress`: mapped** to the existing apply record keys plus `operations_total` and
   `failed_operation_detail`.
+
+## R22. A warm source read reports the problems of a cold read (T081)
+
+Added 2026-11-12, when T081 was taken up again. A warm read rebuilds a kind from the previous
+successful run's snapshot and reads only the records changed since the saved cursor
+(`Potenda.load_one_side`). Two causes make it report fewer problems than a cold read:
+
+1. The source snapshot (`A/<kind>.parquet`) holds no source record ID. A changed record cannot
+   resolve a reference to an unchanged peer (`PeerNotFoundError`), and the read cannot tell a
+   duplicate source identity from a record the cursor overlap returns again.
+2. A record the previous run left out is in neither the snapshot nor the changed records.
+
+A third cause sits in the adapter contract: `list_changed_since` filters, transforms and
+converts records inside a generator, so the first `TransformError` or `PeerNotFoundError` ends
+the read. Its rows cannot pass through `load_record`.
+
+**Decision.**
+
+- **New adapter hook `list_changed_records(model_name, element, cursor)`** on `DiffSyncMixin`:
+  the raw records of one mapping entry changed since `cursor`, before any filter, as
+  `list_records` returns them for a full read. A new mixin method `load_changed_records` is the
+  warm counterpart of `model_loader`: for each changed record it first removes the stored
+  record with the same source record ID (a repeat from the cursor overlap, a rename, a record
+  that a filter now removes or that now fails), then applies the filters
+  (`filter_source_records`) and admits each record through `load_record`. A duplicate is then
+  reported only when two different source record IDs share an identity.
+  `list_changed_since` keeps its contract for the destination and for adapters without the
+  read loop.
+- **Source snapshot format.** For a source adapter with the read loop (a `DiffSyncMixin`),
+  `_write_side_snapshot` writes a `local_id` column (the source record ID) on side A and a
+  Parquet schema metadata key `infrahub_sync.source_read`. The value is `complete` when the
+  read of the kind recorded no load report entry (left out or kept with a problem), no filter
+  removed a record of the kind, and every row has a source record ID; otherwise `incomplete`.
+  An empty kind gets the key too.
+- **When a kind of the source reads warm.** Only when the adapter implements
+  `list_changed_records`, the previous snapshot of the kind carries `complete`, and no peer kind
+  the kind references (`reference` in its mapping fields) was marked unclean earlier in this
+  read. Otherwise the kind is read cold through `model_loader`, and the reason is logged. A
+  snapshot written before this change has no key, so it causes one cold read of the kind; it is
+  never an error and never taken as complete.
+- **A warm read that finds a problem is read again cold.** When the warm read of a kind records
+  any load report entry or filtered ID, the kind's stored records and its read state
+  (entries, filtered IDs, peer index) are discarded and the kind is read cold. A kind whose
+  cold read records entries is marked unclean, and the later kinds that reference it read cold.
+  Kinds are read in `top_level` order, peers first, so a dependent is decided after its peers.
+- **Hydrated records are indexed.** Each snapshot row is added through a new mixin method
+  `restore_record`, which also indexes its source record ID, so a changed record resolves an
+  unchanged peer as a cold read does.
+- **Plan-level problems** (`run_problem_pass`: identities that merge or collide in the
+  destination, the dependency walk, Dropdown values) are computed from the source store at plan
+  time, which holds the same records after a warm read as after a cold read. No change to
+  `run_problem_pass`, to the plan format or to cursors: a kind read cold inside a warm read
+  uses the cursor captured before the first query, as today.
+- **Adapters without the read loop** (plain DiffSync adapters, the test stubs of
+  `tests/cache/`) keep the existing warm path (`apply_changed_rows`) and the snapshot shape:
+  they record no load report, so there is no problem to lose.
+- **Bundled adapters.** No bundled source adapter returns a safe cursor
+  (`safe_cursor_before_load`), so none reads the source warm today, and none implements
+  `list_changed_records` yet. A custom source adapter that returns a safe cursor and
+  implements only `list_changed_since` now reads cold until it implements
+  `list_changed_records`.
+
+**Effect on cold reads.** Operations, problems and the report do not change. The side A
+snapshot of an adapter with the read loop gains the `local_id` column and the metadata key, so
+its digest in the plan manifest (`source_snapshot`) and the plan checksum differ from those of
+an older release for the same data. `tests/plan/test_valid_plan_unchanged.py` excludes both.
+
+**Limits.** An unchanged record whose peer changed identity keeps the reference it had in the
+snapshot; this is the existing behavior of incremental reads and is not changed here. A warm
+destination read still records no `destination_identity_ambiguities`.
+
+**Rejected.** A separate store for the previous run's report: the marker in the snapshot is
+enough to decide that a kind must be read cold. Reading the whole source side cold when any
+kind has a problem: it removes the benefit of warm reads for every kind after one problem.
