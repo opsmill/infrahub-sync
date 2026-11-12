@@ -44,13 +44,13 @@ def test_suite_writes_failure_report_from_clean_checkout(runner: ModuleType, mon
     assert json.loads((runner.REPORTS / "integration.json").read_text())["failure"] == "setup failed"
 
 
-def test_logs_writes_timeout_report_without_preview_directory(
+def test_logs_writes_timeout_report_without_a_report_directory(
     runner: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The recovery step can make JUnit evidence before any suite starts."""
     monkeypatch.setattr(runner, "collect_logs", lambda _name: None)
-    runner.logs("preview")
-    report = ET.parse(runner.REPORTS / "preview.xml").getroot()  # noqa: S314 -- generated local report
+    runner.logs("smoke")
+    report = ET.parse(runner.REPORTS / "smoke.xml").getroot()  # noqa: S314 -- generated local report
     failure = report.find("testcase/failure")
     assert failure is not None
     assert failure.get("message") == "suite step failed or timed out"
@@ -66,40 +66,40 @@ def test_summary_counts_tests_and_setup_failure(
         '<testcase name="skip"><skipped/></testcase></testsuite>'
     )
     (runner.REPORTS / "integration.json").write_text(json.dumps({"duration": 2.5, "failure": ""}))
-    (runner.REPORTS / "preview.xml").write_text('<testsuite><testcase name="pass"/></testsuite>')
-    (runner.REPORTS / "preview.json").write_text(json.dumps({"duration": 1.0, "failure": "seed failed"}))
+    (runner.REPORTS / "smoke.xml").write_text('<testsuite><testcase name="pass"/></testsuite>')
+    (runner.REPORTS / "smoke.json").write_text(json.dumps({"duration": 1.0, "failure": "seed failed"}))
     summary = tmp_path / "summary.md"
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
     runner.summarize("abc")
     contents = summary.read_text()
     assert "| integration | 1 | 1 | 1 | 2.5s |" in contents
-    assert "| preview | 0 | 1 | 0 | 1.0s |" in contents
+    assert "| smoke | 0 | 1 | 0 | 1.0s |" in contents
     assert "| saved-plan | 0 | 1 | 0 | not started |" in contents
 
 
-def test_preview_resets_and_starts_its_own_stack(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Preview starts from a fresh stack even after the integration suite."""
+def test_smoke_resets_and_starts_its_own_stack(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The smoke suite starts from a fresh development stack even after the integration suite."""
     events: list[str] = []
     monkeypatch.setattr(runner, "environment", dict)
-    monkeypatch.setattr(runner, "start_preview", lambda _env: events.append("up"))
+    monkeypatch.setattr(runner, "start_stack", lambda _env: events.append("up"))
 
     def record(*command: str, **_kwargs: object) -> str:
         events.append(" ".join(command))
         return ""
 
     monkeypatch.setattr(runner, "run", record)
-    runner.suite("preview")
-    assert events[0].endswith("invoke preview.down --volumes")
+    runner.suite("smoke")
+    assert events[0].endswith("invoke dev.destroy")
     assert events[1] == "up"
-    assert events[2].endswith("invoke preview.seed")
-    assert "pytest -m preview" in events[3]
+    assert events[2].endswith("invoke dev.seed")
+    assert "pytest -m smoke tests/dev_stack/smoke" in events[3]
 
 
 def test_integration_seeds_the_live_branch(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     """The integration suite seeds the branch its live write tests require."""
     events: list[str] = []
     monkeypatch.setattr(runner, "environment", lambda: {"NETBOX_URL": "unused", "NETBOX_TOKEN": "unused"})
-    monkeypatch.setattr(runner, "start_preview", lambda _env: events.append("up"))
+    monkeypatch.setattr(runner, "start_stack", lambda _env: events.append("up"))
 
     def record(*command: str, **_kwargs: object) -> str:
         events.append(" ".join(command))
@@ -108,7 +108,7 @@ def test_integration_seeds_the_live_branch(runner: ModuleType, monkeypatch: pyte
     monkeypatch.setattr(runner, "run", record)
     runner.suite("integration")
     assert events[0] == "up"
-    assert events[1].endswith("invoke preview.seed")
+    assert events[1].endswith("invoke dev.seed")
     assert "pytest -m integration" in events[2]
 
 

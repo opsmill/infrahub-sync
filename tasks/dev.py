@@ -101,7 +101,7 @@ PUBLIC_INFRAHUB_ADMIN_TOKEN = "06438eb2-8019-4776-878c-0941b1f1d1ec"  # noqa: S1
 
 # What `dev.smoke` sets so the smoke suite reads the development stack's settings.
 SMOKE_STACK_VARIABLE = "INFRAHUB_SYNC_SMOKE_STACK"
-SMOKE_COMMAND = "uv run pytest -m preview tests/preview -q"
+SMOKE_COMMAND = "uv run pytest -m smoke tests/dev_stack/smoke -q"
 # The value `dev.smoke` sets in dependencies mode, where the worker runs on the host and a
 # package therefore names Infrahub by its host publication.
 DEPS_SMOKE_STACK = "dev-deps"

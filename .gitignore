@@ -31,16 +31,12 @@ venv/
 *.pem
 *.key
 credentials.json
-# Preview environment runtime state and local overrides. The shipped defaults
-# file must stay tracked despite the repository-wide *.env rule above — it
-# contains no secrets and `invoke preview.up` depends on it from a fresh clone.
+# Runtime state of the removed preview stack, which an older checkout may have left.
 .preview/
 # Development stack runtime state: the Python 3.10 check environments and smoke evidence.
 .dev/
-!development/preview.env
-development/preview.local.env
-# Local NetBox environment for the saved-plan apply integration test: same shape as the
-# preview override above.
+# Local NetBox environment for the saved-plan apply integration test: the shipped defaults
+# stay tracked despite the repository-wide *.env rule; personal overrides do not.
 !development/netbox/netbox.env
 development/netbox/netbox.local.env
 # The downloaded NetBox demo SQL and the generated local `from-netbox` package.
