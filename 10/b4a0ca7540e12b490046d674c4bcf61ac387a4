@@ -1,0 +1,144 @@
+infrahub_sync/service/flow.py
+  s_d199771aa41449::t_cd0c065f27252c 1,57-58,77-83,86-91,158-165,167-169,368-370,373-380,540,548-550,580-581,583,586,594-645,763-778,786-787,1017-1024
+tests/service/test_plan_checkpoint.py
+  s_d199771aa41449::t_cd0c065f27252c 474-475,511-512
+dev/specs/019-plan-approval/tasks.md
+  s_d199771aa41449::t_cd0c065f27252c 1-191
+tests/service/test_verify_destination.py
+  s_d199771aa41449::t_cd0c065f27252c 1-581
+tests/plan/test_apply_gate.py
+  s_d199771aa41449::t_af46603f1728cc 172-173,177
+infrahub_sync/client/models.py
+  s_d199771aa41449::t_cd0c065f27252c 162-168,256-271,295-297,455-459,463,473-485
+  s_d199771aa41449::t_026d7c7b240e9a 984-986
+  s_d199771aa41449::t_5508f2f5d455fd 486-487
+tests/preview/test_run_completion.py
+  s_d199771aa41449::t_cd0c065f27252c 9-12,25,67,225,278,283-292,304,333-340
+tests/service/test_http_api.py
+  s_d199771aa41449::t_cd0c065f27252c 1842,2421-2445,2463-2464,2473,2485-2500
+  s_d199771aa41449::t_9cff2d459f551e 2501-2502
+dev/specs/019-plan-approval/contracts/http-api.md
+  s_d199771aa41449::t_cd0c065f27252c 1-97
+infrahub_sync/testcontainers/docker-compose.yml
+  s_d199771aa41449::t_cd0c065f27252c 241-242
+tests/cli/test_client_commands.py
+  s_d199771aa41449::t_cd0c065f27252c 22-24,54,660,1561,1748-1827,1943-1980,1986-1990,2245-2335
+  s_d199771aa41449::t_3209274e477a22 2336-2337
+infrahub_sync/utils.py
+  s_d199771aa41449::t_cd0c065f27252c 20,22,24,477-501,508-510,512-513,515-516,525,531
+infrahub_sync/plan/errors.py
+  s_d199771aa41449::t_cd0c065f27252c 23-25,442-447,450-462,551-571
+  s_d199771aa41449::t_4ecd70aba2a23f 572-573
+dev/specs/019-plan-approval/data-model.md
+  s_d199771aa41449::t_cd0c065f27252c 1-90
+dev/specs/019-plan-approval/quickstart.md
+  s_d199771aa41449::t_cd0c065f27252c 1-97
+infrahub_sync/service/app.py
+  s_d199771aa41449::t_cd0c065f27252c 41-42,63,72-81,83-99,211-232,284-290,292-296,306-312,360,384,391,423,427-432,504-513,523
+  s_d199771aa41449::t_f8aa25d2d52571 82,291,297
+  s_d199771aa41449::t_b33f83523b1820 298-299
+infrahub_sync/service/service.py
+  s_d199771aa41449::t_cd0c065f27252c 38-44,46,50-52,86,155,163-164,287-300,381-384,433-436,454-456,503-711,714-720,735-740,769-772,946-1046,1692,1699-1701,1716,1787,1795
+dev/specs/019-plan-approval/research.md
+  s_d199771aa41449::t_cd0c065f27252c 1-213
+tests/service/test_cancel_planned_run.py
+  s_d199771aa41449::t_cd0c065f27252c 1-674
+infrahub_sync/product_store/store.py
+  s_d199771aa41449::t_cd0c065f27252c 35-36,55,60-62,188-197,202,424-425,428,701-722,887,1167,2285-2287,2294-2297,2299-2301,2305,2349-2571,3831-3883,4353-4359,4415
+infrahub_sync/potenda/__init__.py
+  s_d199771aa41449::t_cd0c065f27252c 8,38,132,134,138-149,169-171,257-262,265-279,1095,1115-1122,1243-1343
+  s_d199771aa41449::t_da1fc3ad646121 30-36
+  s_d199771aa41449::t_0ff1c0ee0bd421 1123-1127
+  s_d199771aa41449::t_cd7a74484077d9 1344
+tests/service/test_approval_required.py
+  s_d199771aa41449::t_cd0c065f27252c 1-335
+infrahub_sync/service/models.py
+  s_d199771aa41449::t_cd0c065f27252c 21-23,44,62-64,85
+infrahub_sync/product_store/models.py
+  s_d199771aa41449::t_cd0c065f27252c 22-27,178-282,313-315,495-502,505
+dev/specs/019-plan-approval/contracts/cli.md
+  s_d199771aa41449::t_cd0c065f27252c 1-53
+infrahub_sync/client/__init__.py
+  s_d199771aa41449::t_cd0c065f27252c 18-20,53,72-74,112
+docs/docs/reference/cli.mdx
+  s_d199771aa41449::t_cd0c065f27252c 38-39,115-135,138,351,395-396
+dev/specs/019-plan-approval/plan.md
+  s_d199771aa41449::t_cd0c065f27252c 1-174
+infrahub_sync/client/client.py
+  s_d199771aa41449::t_cd0c065f27252c 35-36,636-654,656,658-664,742-749,757
+.vale/styles/spelling-exceptions.txt
+  s_d199771aa41449::t_cd0c065f27252c 206,215
+dev/specs/019-plan-approval/spec.md
+  s_d199771aa41449::t_cd0c065f27252c 1-293
+dev/specs/019-plan-approval/alignment-check.md
+  s_d199771aa41449::t_cd0c065f27252c 1-31
+infrahub_sync/service/settings.py
+  s_d199771aa41449::t_cd0c065f27252c 1-52
+changelog/+plan-approval.added.md
+  s_d199771aa41449::t_cd0c065f27252c 1
+docs/docs/reference/sync-http-api.mdx
+  s_d199771aa41449::t_cd0c065f27252c 81,390,408-409,411,433,475-476,498,501-503,638,647,705-708,778,780-784,795-876,915-957,1014,1049-1050
+  s_d199771aa41449::t_b6cff7ea510c14 1057
+  s_d199771aa41449::t_f27c4e4b650557 1051
+dev/specs/019-plan-approval/critiques/critique-20261110.md
+  s_d199771aa41449::t_cd0c065f27252c 1-111
+development/docker-compose.yml
+  s_d199771aa41449::t_cd0c065f27252c 87
+docker-compose.yml
+  s_d199771aa41449::t_cd0c065f27252c 241-242
+tests/client/test_models.py
+  s_d199771aa41449::t_cd0c065f27252c 15,25-26,29,155,197-277
+  s_d199771aa41449::t_d9f911f01eccf7 278-279
+tests/test_potenda_check_plan.py
+  s_d199771aa41449::t_cd0c065f27252c 1-264
+tests/client/test_client.py
+  s_d199771aa41449::t_cd0c065f27252c 17-18,789-873
+  s_d199771aa41449::t_3b941c2abe2336 874-875
+tests/service/test_flow_and_prefect.py
+  s_d199771aa41449::t_cd0c065f27252c 824-826,841-842
+infrahub_sync/cli.py
+  s_d199771aa41449::t_cd0c065f27252c 29,670-678,1030,1102-1114,1334-1362,1374,1378,1394-1405,1413-1419,1493-1495,1506-1508
+infrahub_sync/plan/models.py
+  s_d199771aa41449::t_cd0c065f27252c 741-767
+  s_d199771aa41449::t_1390aee56a737c 768
+tests/product_store/test_write_admission.py
+  s_d199771aa41449::t_cd0c065f27252c 38,43,195-211,686-827
+dev/specs/019-plan-approval/checklists/requirements.md
+  s_d199771aa41449::t_cd0c065f27252c 1-38
+tests/service/test_approval.py
+  s_d199771aa41449::t_cd0c065f27252c 1-459
+changelog/+verify-destination-checks.changed.md
+  s_d199771aa41449::t_cd0c065f27252c 1
+tests/product_store/test_run_approval.py
+  s_d199771aa41449::t_cd0c065f27252c 1-409
+infrahub_sync/service/events.py
+  s_d199771aa41449::t_cd0c065f27252c 40-42
+docs/docs/compose-deployment.mdx
+  s_d199771aa41449::t_cd0c065f27252c 138,811-812,816-823
+tests/product_store/test_postgresql_isolation.py
+  s_d199771aa41449::t_cd0c065f27252c 12-14,16,257-494
+docs/docs/running-a-sync.mdx
+  s_d199771aa41449::t_cd0c065f27252c 9,15-17,267,269-277,283-344,399-436,472-475,502-506,528,621-623,672,679
+infrahub_sync/execution.py
+  s_d199771aa41449::t_cd0c065f27252c 861-867,881-886
+AGENTS.md
+  s_d199771aa41449::t_cd0c065f27252c 107,109-113,209
+dev/specs/019-plan-approval/opsmill-implement-report.md
+  s_d199771aa41449::t_cd0c065f27252c 1-173
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "10b4a0ca7540e12b490046d674c4bcf61ac387a4",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
