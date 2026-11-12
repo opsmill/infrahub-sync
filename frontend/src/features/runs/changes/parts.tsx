@@ -26,5 +26,3 @@ export function Kbd({ children }: { children: ReactNode }) {
     </kbd>
   );
 }
-
-export const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
