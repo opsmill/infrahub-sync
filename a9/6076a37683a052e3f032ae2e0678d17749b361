@@ -1,0 +1,21 @@
+tests/compose/test_fixture_prerequisites.py
+  s_3defe6e8bcd0ab::t_4a1d6aabcb17d3 145,149,166-169
+tests/compose/conftest.py
+  s_3defe6e8bcd0ab::t_13c400e1d7de2e 382-383,425-428
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a96076a37683a052e3f032ae2e0678d17749b361",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
