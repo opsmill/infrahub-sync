@@ -17,10 +17,11 @@ from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.generator import render_template
 from infrahub_sync.generic_peers import generic_peers_for_destination as _generic_peers_for_order
 from infrahub_sync.plan.errors import PlanVerificationError
+from infrahub_sync.plan.models import ordered_checks
 from infrahub_sync.plan.reader import read_plan_artifact_bytes
-from infrahub_sync.plan.verify import destination_binding_failure
+from infrahub_sync.plan.verify import destination_binding_failure, manifest_mapping_or_none
 from infrahub_sync.plugin_loader import PluginLoader, PluginLoadError
-from infrahub_sync.potenda import Potenda
+from infrahub_sync.potenda import PlanCheck, Potenda
 from infrahub_sync.runtime_schema import RuntimeModelScopeError, bind_runtime_models
 
 logger = logging.getLogger(__name__)
@@ -473,21 +474,46 @@ class PlanApplier:
             confirm_left_out=confirm_left_out,
         )
 
-    def _require_recorded_destination(self, *, artifact: RawPlanArtifact, allow_destination_change: bool) -> None:
+    def check_plan(self, *, config_version: str | None = None, allow_destination_change: bool = False) -> PlanCheck:
+        """Run every pre-write check `apply_plan` runs, on one read of the artifact, and write nothing.
+
+        The same two steps `apply_plan` takes before its loop — the destination-binding
+        precheck, then the engine's gate — on the same single read, so `verify` fails on
+        exactly the checks `apply` refuses on (SC-004). No ownership is taken and no
+        destination write method is called.
+
+        The returned checks include `destination_binding` only when the comparison ran:
+        a plan that predates the field, or a destination that exposes no binding, skips it.
+
+        Raises:
+            PlanVerificationError: a check failed; `checks` on the error names it.
+            Any error `Potenda.check_plan` raises.
+        """
+        artifact = read_plan_artifact_bytes(self.run_dir)
+        compared = self._require_recorded_destination(
+            artifact=artifact, allow_destination_change=allow_destination_change
+        )
+        result = self.engine.check_plan(run_id=self.run_id, config_version=config_version, artifact=artifact)
+        if not compared:
+            return result
+        return PlanCheck(loaded=result.loaded, checks=ordered_checks((*result.checks, "destination_binding")))
+
+    def _require_recorded_destination(self, *, artifact: RawPlanArtifact, allow_destination_change: bool) -> bool:
         """The apply-time destination-binding guard, on the seam that owns apply-specific assembly.
 
         Here rather than inside `Potenda.apply_plan` because the check's subject is the
         destination this seam constructed, and its refusal is the one pre-apply verdict an
         operator may deliberately override. It answers about `artifact` — the same object the
         engine verifies and applies — rather than a read of its own.
+
+        Returns whether the comparison ran and passed: `False` when it was skipped (a plan
+        without the recorded field, a destination that exposes no binding) or overridden.
         """
-        failure = destination_binding_failure(
-            run_id=self.run_id,
-            artifact=artifact,
-            live=getattr(self.engine.destination, "destination_binding", None),
-        )
+        live = getattr(self.engine.destination, "destination_binding", None)
+        failure = destination_binding_failure(run_id=self.run_id, artifact=artifact, live=live)
         if failure is None:
-            return
+            mapping = manifest_mapping_or_none(artifact.manifest_bytes)
+            return live is not None and mapping is not None and mapping.get("destination_binding") is not None
         if allow_destination_change:
             logger.warning(
                 "Applying run %s to a different destination than it was planned against: "
@@ -496,10 +522,10 @@ class PlanApplier:
                 failure.expected,
                 failure.found,
             )
-            return
+            return False
         msg = (
             f"The plan of run {self.run_id!r} is bound to a different destination than this "
             f"apply would write to: expected {failure.expected}; found {failure.found}. "
             f"Nothing was written."
         )
-        raise PlanVerificationError(msg, next_action=failure.next_action)
+        raise PlanVerificationError(msg, next_action=failure.next_action, checks=[failure.check])

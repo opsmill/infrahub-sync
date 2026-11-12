@@ -858,10 +858,13 @@ def _save_failed_run(
 
 
 def _read_verified_plan(*, sync_instance: SyncInstance, run_id: str, base_directory: Path | None) -> SavedPlan:
-    """Read and independently verify one saved plan without constructing adapters."""
-    saved = read_saved_plan(
-        sync_name=sync_instance.name, run_id=run_id, config=sync_instance, base_directory=base_directory
-    )
+    """Read and independently verify one saved plan without constructing adapters.
+
+    The file checks run before the plan is parsed, as they do before an apply parses it, so
+    a damaged plan file fails `verify` on the same named check it fails `apply` on: a torn
+    operations file, a `last_changes.jsonl` that does not match the manifest, or a manifest
+    with no `format_version`. Parsing first would raise the reader's unnamed refusal instead.
+    """
     run_directory = resolve_run_directory(sync_instance.name, run_id, base_directory=base_directory)
     failures = verify_plan(
         artifact=read_plan_artifact_bytes(run_directory),
@@ -875,8 +878,12 @@ def _read_verified_plan(*, sync_instance: SyncInstance, run_id: str, base_direct
         )
         next_actions = tuple(dict.fromkeys(failure.next_action for failure in failures))
         msg = f"Saved plan {run_id!r} failed verification checks: {checks}. {detail}"
-        raise PlanVerificationError(msg, next_action=" ".join(next_actions))
-    return saved
+        raise PlanVerificationError(
+            msg, next_action=" ".join(next_actions), checks=[failure.check for failure in failures]
+        )
+    return read_saved_plan(
+        sync_name=sync_instance.name, run_id=run_id, config=sync_instance, base_directory=base_directory
+    )
 
 
 def _run_apply_lifecycle(  # pylint: disable=too-many-arguments

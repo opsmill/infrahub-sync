@@ -78,7 +78,7 @@ Tokens must be unique. The resolver compares them with a timing-safe operation a
 persists, returns, or submits them to Prefect.
 
 Any authenticated principal can create and inspect a run. Only the initiating actor or an
-administrator can verify, apply, or cancel it. Every accepted mutation and authorization
+administrator can verify, approve, apply, or cancel it. Every accepted mutation and authorization
 refusal records secret-safe actor, reason, and outcome evidence.
 
 ## Deploy the service flow
@@ -387,7 +387,7 @@ an absent reason and a `null` reason are the same value, and both differ from an
 | --- | --- |
 | `POST /configs` | Register a new configuration package as version 1. Administrator only. The response names the version by `config_id`, `registry_version`, `package_checksum` and `created_at`, without its package content. |
 | `POST /configs/{config_id}/versions` | Register a new version of an existing configuration. Administrator only. The response names the version as `POST /configs` does, without its package content. |
-| `GET /me` | Return the actor that the bearer token authenticates as and its administrator flag. |
+| `GET /me` | Return the actor that the bearer token authenticates as, its administrator flag, and whether the service requires approval. |
 | `GET /configs` | List registered configurations, newest first, one page at a time. Filter by exact `name`. |
 | `GET /configs/{config_id}` | Return one registered configuration's summary, with its `name` and `latest_version`. |
 | `GET /configs/{config_id}/versions` | List a configuration's version summaries, newest first, one page at a time. |
@@ -405,9 +405,10 @@ an absent reason and a `null` reason are the same value, and both differ from an
 | `GET /runs/{run_id}/artifacts/{artifact_id}` | Return verified artifact bytes with their media type and `Digest` header. |
 | `GET /runs/{run_id}/logs` | Return the log lines that Sync wrote during the run's stages, oldest first, one page at a time. |
 | `GET /events` | List typed events about runs and configurations, oldest first, one page at a time. |
-| `POST /runs/{run_id}/verify` | Accept read-only saved-plan verification without changing product lifecycle state. |
+| `POST /runs/{run_id}/verify` | Accept a verification that runs every pre-write check of `apply` against the destination, writes nothing, and does not change the run's phase. |
+| `POST /runs/{run_id}/approve` | Record approval of the run's saved plan for the exact retained checksum. Writes nothing and submits no execution. |
 | `POST /runs/{run_id}/apply` | Accept a confirmed apply for the exact retained reviewed checksum. |
-| `POST /runs/{run_id}/cancel` | Ask Prefect to cancel only the latest active linked execution. |
+| `POST /runs/{run_id}/cancel` | Ask Prefect to cancel only the latest active linked execution, or, when the run has no active execution and is in phase `planned`, withdraw its plan. |
 
 ### CLI commands and the API actions they call
 
@@ -429,6 +430,7 @@ lists their identifiers.
 | `infrahub-sync plan` | `POST /runs` with `operation: plan` |
 | `infrahub-sync sync` | `POST /runs` with `operation: sync` |
 | `infrahub-sync verify RUN_ID` | `POST /runs/{run_id}/verify` |
+| `infrahub-sync approve RUN_ID` | `POST /runs/{run_id}/approve` |
 | `infrahub-sync apply RUN_ID` | `POST /runs/{run_id}/apply` |
 | `infrahub-sync runs list` | `GET /runs` |
 | `infrahub-sync runs show RUN_ID` | `GET /runs/{run_id}` |
@@ -470,7 +472,8 @@ in the same envelope:
   `prefect_executions` are always empty. The list has no `orchestration` field. Read the run
   itself for those values. `destination_branch` is the branch the run writes to. It is
   `null` for runs created before the field existed. Without filters, the list also includes
-  legacy runs that have no `config_id`.
+  legacy runs that have no `config_id`. `approval` is the run's approval, or `null` when the
+  run has none; see [Approve the reviewed plan](#approve-the-reviewed-plan).
 - `GET /configs` orders configurations by `created_at`, newest first. Each item carries
   `config_id`, `name`, `latest_version` and `created_at`.
 - `GET /configs/{config_id}/versions` orders versions by `registry_version`, newest first. Each
@@ -492,10 +495,12 @@ pages with `offset` reads the first page again.
 `GET /me` returns the actor that the token authenticates as:
 
 ```json
-{"actor": "automation@example.com", "administrator": false}
+{"actor": "automation@example.com", "administrator": false, "approval_required": true}
 ```
 
-It performs no other action. Use it to check a token before you submit a run.
+`approval_required` is `true` when the service runs with `INFRAHUB_SYNC_REQUIRE_APPROVAL` on;
+see [Require an approved plan](#require-an-approved-plan). It performs no other action. Use it
+to check a token, and whether `apply` needs an approval, before you submit a run.
 
 ### Find a run's flow runs in Prefect
 
@@ -630,7 +635,7 @@ destination branch. The event types are:
 
 | Event type | Recorded when |
 | --- | --- |
-| `infrahub_sync.run.accepted` | The Sync API accepted a plan, sync, verify or apply request, or a cancel request. For a cancel request, `operation` is `cancel`. |
+| `infrahub_sync.run.accepted` | The Sync API accepted a plan, sync, verify, approve or apply request, or a cancel request. For a cancel request, `operation` is `cancel`; for a cancel that withdrew a finished plan, `outcome` is `accepted-withdrawn`. |
 | `infrahub_sync.run.replayed` | A retry with the same idempotency key received the stored answer. |
 | `infrahub_sync.run.refused` | The Sync API refused a run request. `outcome` names the reason, for example `refused-checksum`. |
 | `infrahub_sync.run.unavailable` | The orchestrator could not confirm a submission or a cancellation request. |
@@ -639,7 +644,7 @@ destination branch. The event types are:
 | `infrahub_sync.run.applied` | An apply stage succeeded. |
 | `infrahub_sync.run.synced` | A sync stage succeeded. |
 | `infrahub_sync.run.failed` | A stage failed, or was interrupted. `outcome` is `failed`, or `ambiguous` when the stage may have written to the destination. The Sync API records this event, with `outcome` `ambiguous`, when it ends an execution whose worker stopped without recording a result. |
-| `infrahub_sync.run.cancelled` | An execution that a cancel request stopped ended cancelled. `actor` and `reason` come from the cancel request. |
+| `infrahub_sync.run.cancelled` | An execution that a cancel request stopped ended cancelled, or a cancel request withdrew a finished plan. `actor` and `reason` come from the cancel request. For a withdrawal, the Sync API records this event itself, with the `run.accepted` event of the request. |
 | `infrahub_sync.config.registered` | A configuration was registered as version 1. |
 | `infrahub_sync.config.version_registered` | A new version of a configuration was registered. |
 | `infrahub_sync.config.version_retrieved` | A version request had the same content as an existing version of the configuration, and the Sync API returned that version with status 200. No version was created. |
@@ -696,6 +701,10 @@ A `sync` that stops after its plan because the plan leaves out records records n
 failure. Its stage result in `GET /runs/{run_id}/results` holds a `failure` object instead,
 with `failure_type: left_out_review_required`, `stage: sync`, the `left_out` count and the
 `next_action`. The run ends with phase `planned` and outcome `left-out-review-required`.
+
+When `verify` or `apply` fails on a check that runs before the first write, `verify_failure` or
+`apply_failure` also holds `failed_checks`: the name of each check that failed, such as
+`destination_schema`. Both stages record the same name for the same problem.
 
 ### Create a plan
 
@@ -766,10 +775,13 @@ which is `null` on the last page. A problem entry holds the `problem_type`, the 
 transform or a filter. A plan saved in format 2 or 3 returns empty lists. An unknown
 `problem_type` is `422`.
 
-### Verify and apply the reviewed plan
+### Verify the reviewed plan
 
-Verification is read-only and retains verification evidence without finishing or otherwise
-advancing the product run:
+Verification runs, against the destination, every check that `apply` runs before its first
+write, and writes nothing. The worker reads the live destination schema for it, with the
+credentials and network access that `apply` uses, and the service passes the run's
+`destination_branch` as the branch. Verification does not take the configuration's write
+guard, does not change the run's phase, and does not approve the plan:
 
 ```bash
 curl --request POST \
@@ -779,6 +791,88 @@ curl --request POST \
   --header "Content-Type: application/json" \
   --data '{"reason":"verify the reviewed plan"}'
 ```
+
+The checks, in the order they run and are reported:
+
+| Check | What it compares |
+| --- | --- |
+| `checkpoint` | The plan this run saved can be read back whole and unaltered. |
+| `run_binding` | The plan belongs to this run. |
+| `plan_checksum` | The plan checksum is unchanged. |
+| `source_snapshot` | The saved source snapshot is unchanged. |
+| `config_version` | The configuration version is the one the plan was created with. |
+| `format_version` | The plan format is one this release can apply. |
+| `destination_schema` | The live destination schema matches the plan's `schema_fingerprint`. |
+| `destination_binding` | The destination URL and branch match the ones the plan recorded. |
+| `write_surface` | The destination adapter can apply a saved plan. |
+| `planned_fields` | Every planned field exists in the destination schema and can be written. Reported only for an Infrahub destination. |
+| `lineage` | The plan records an import account, the apply would run with that same import account, and the `source` and `owner` nodes the package names exist in the destination. Reported only for a destination that records lineage, such as Infrahub. |
+
+On success, `GET /runs/{run_id}/results` holds the result under `verification`, with `checks`
+listing every check that passed, in order, and `destination_checked: true`. A run with no
+registered configuration binding cannot be applied by the service: its verification runs the
+file checks only, from `checkpoint` to `format_version`, and reports
+`destination_checked: false`.
+
+When a check fails, the verification stage fails, and `GET /runs/{run_id}` reports the failure
+with the name of the check, what was expected and what was found, as for a refused `apply`.
+Two failures of the saved plan files have names of their own, and both belong to
+`plan_checksum`: `torn_operations` when the operations file is missing or incomplete, and
+`last_changes` when the last-changes file does not match the manifest.
+When the destination cannot be reached, the stage fails with the destination error, and no
+check after it is reported as passed.
+
+### Approve the reviewed plan
+
+Approval records that the reviewed plan is accepted, bound to its checksum. It writes nothing
+to the destination and submits no execution:
+
+```bash
+curl --request POST \
+  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/approve \
+  --header "Authorization: Bearer $SYNC_API_TOKEN" \
+  --header "Idempotency-Key: approve-20260810T1500-0123abcd" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "expected_checksum": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "reason": "reviewed by the network team"
+  }'
+```
+
+`reason` is optional. Only the actor who created the run, or an administrator, can approve it.
+The service evaluates the request in this order:
+
+1. Authorization (`403 forbidden`), then a replay of the same idempotency key.
+2. A run in phase `cancelled` is refused with `409 run-cancelled`. A run that is not in phase
+   `planned`, or that has an execution in progress, is refused with `409 run-not-approvable`;
+   the message names the phase or the stage that is running.
+3. The saved plan is read as for `GET /runs/{run_id}/plan` (`404 run-not-found`,
+   `410 artifact-expired`, `503 plan-unavailable`).
+4. A plan whose checksum could not be confirmed is refused with `409 plan-checksum-unverified`.
+5. An `expected_checksum` that differs from the plan's checksum is refused with
+   `409 checksum-mismatch`; the message shows both checksums.
+6. A run that already has an approval is refused with `409 already-approved`. The error's
+   `details` carry the existing approval.
+
+A refused approval stores no approval on the run. The service records the refusal in the
+audit history as an `infrahub_sync.run.refused` event. On success, the service answers `200` with the run
+resource, which now carries `approval`, and `plan_summary` with the counts of the plan
+approved: `creates`, `updates` and `deletes_recorded`. The response is stored with the
+mutation receipt, so a retry with the same key returns it unchanged. The run's `approval` is:
+
+```json
+"approval": {
+  "approved_by": "alice",
+  "approved_at": "2026-11-10T14:03:11Z",
+  "plan_checksum": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "reason": "reviewed by the network team"
+}
+```
+
+Approval is not a phase: an approved run stays in phase `planned`. Approval does not run the
+destination checks; `apply` runs them, and `verify` reports their result beforehand.
+
+### Apply the reviewed plan
 
 Apply requires the exact retained checksum and explicit write confirmation:
 
@@ -817,6 +911,49 @@ reviewed plan's `schema_fingerprint`. The worker refuses the retained plan befor
 destination write. Create a new plan against the current schema, review its
 `schema_fingerprint`, operations, and checksum, then apply that new plan. There is no
 schema-drift override.
+
+The service refuses to apply a run in phase `cancelled` with `409 run-cancelled`, whatever the
+approval setting, before it reserves the mutation receipt. The store's write admission refuses
+it too, so a cancel and an apply of the same run cannot both succeed. This applies to every
+cancelled run, including a run whose `verify` stage was cancelled while it ran.
+
+### Require an approved plan
+
+When the service runs with `INFRAHUB_SYNC_REQUIRE_APPROVAL` set to `true`, `1`, `yes` or `on`
+(in any case), it adds these refusals. The setting is off by default, and any value other than
+those and `false`, `0`, `no` or `off` stops the service at startup.
+
+- `POST /runs/{run_id}/apply` on a run with no approval: `409 approval-required`. The message
+  says to approve the plan with `approve RUN_ID --expected-checksum ...`.
+- `POST /runs/{run_id}/apply` with an `expected_checksum` that differs from the approved
+  checksum: `409 approval-checksum-mismatch`. The message shows both checksums.
+- `POST /runs` with `operation: sync`: `409 approval-required-for-sync`, before the run record
+  is created. The message says to run `plan`, `approve` and `apply` instead. `operation: plan`
+  is not affected.
+
+The apply refusals are evaluated after authorization and idempotency replay, and before the
+mutation receipt is reserved. The service reads the setting for each request. When the
+setting is off, `apply` does not read approvals, and approvals stay recorded on their runs.
+`GET /me` reports the setting as `approval_required`.
+
+### Withdraw a plan by cancelling its run
+
+`POST /runs/{run_id}/cancel` takes the same request as before: an optional `reason` and a
+required `Idempotency-Key`. After authorization and a replay of the same key:
+
+1. A run with an active execution: the service asks Prefect to cancel that execution and
+   answers `202`, as before. Cancelling a write can answer `409 cancellation-ambiguous`.
+2. A run with no active execution in phase `planned`: the service withdraws the plan. In one
+   store transaction it checks again that no write was admitted and no other stage is
+   reserved or running, sets the phase and the outcome to `cancelled`, and completes the
+   receipt. It answers `200` with the run resource, which keeps its `approval`, if any. Nothing
+   is sent to Prefect. When the check fails, it answers `409 run-execution-conflict`.
+3. A run with no active execution in phase `cancelled`: `409 run-already-cancelled`.
+4. A run with no active execution in any other phase, such as `applied` or `plan-failed`:
+   `409 execution-terminal`, as before.
+
+After a withdrawal, `approve` and `apply` refuse the run with `409 run-cancelled`. Create a new
+plan run to try again.
 
 ## Idempotency and retries
 
@@ -874,6 +1011,7 @@ destination. Nothing sets it back to `false`.
 | A destination-sensitive check failed under the guard | The existing specific refusal; nothing was written | Fix the cause and create a new plan |
 | The adapter failed after the first operation was dispatched | `interrupted` / `ambiguous`, `reconciliation_required: true`, with the partial `ApplyRecord` in the retained results | Inspect the destination, then create a new plan |
 | You cancelled a run whose worker already held the write | `interrupted` / `ambiguous`, `reconciliation_required: true`; the cancel request answers `409 cancellation-ambiguous` | Inspect the destination, then create a new plan |
+| You cancelled a finished plan before applying it | `cancelled` / `cancelled`; nothing was written, and `approve` and `apply` now answer `409 run-cancelled` | Create a new plan run if you still want the change |
 | The worker or its guard session was lost | `interrupted` / `ambiguous`, `reconciliation_required: true` | Inspect the destination, then create a new plan |
 | The run completed normally | The existing succeeded result | Nothing; this run accepts no further write |
 
@@ -908,12 +1046,15 @@ Every error uses the same envelope:
 }
 ```
 
+A refusal that has structured context also carries `details`, such as the existing approval
+of `already-approved`. Other errors have no `details` field.
+
 | Status | Meaning |
 | --- | --- |
 | `401` | Missing or invalid authentication. |
 | `403` | The actor does not own the mutation and is not an administrator. |
 | `404` | The Sync run or run-owned artifact does not exist, or a list filter names an unknown configuration (`configuration-not-found`) or configuration version (`configuration-version-not-found`). |
-| `409` | Idempotency conflict, missing confirmation, an apply of a plan that leaves out records without `confirm_left_out` (`left-out-confirmation-required`), stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). |
+| `409` | Idempotency conflict, missing confirmation, an apply of a plan that leaves out records without `confirm_left_out` (`left-out-confirmation-required`), stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). For approval: a run that cannot be approved (`run-not-approvable`), a plan whose checksum is unconfirmed (`plan-checksum-unverified`), a checksum that differs from the plan's (`checksum-mismatch`), or a second approval (`already-approved`). When the service requires approval: an apply without an approval (`approval-required`) or with a different checksum (`approval-checksum-mismatch`), or a `sync` (`approval-required-for-sync`). For a cancelled run: an `approve` or `apply` (`run-cancelled`), or a second cancel (`run-already-cancelled`). |
 | `410` | The retained plan or artifact has expired, or the orchestrator no longer holds a flow run whose log `GET /runs/{run_id}/logs` reads (`log-expired`). |
 | `422` | Invalid request schema or query parameter (`request-invalid`), a list cursor that does not decode or was issued for another list or other filters (`invalid-cursor`), missing idempotency key, or a secret-bearing flow parameter. |
 | `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved, or the orchestrator cannot be reached to read a run's log (`log-unavailable`). |

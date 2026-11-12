@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # one module owns every stage's pre-write sequence and failure record
 """Separate Prefect flow for API-created durable Sync runs."""
 
 # pylint: disable=too-many-lines  # one module owns the worker's claim, stage execution and run reporting
@@ -53,8 +54,8 @@ from infrahub_sync.orchestration.flow import (
     RunLoggerBridge,
 )
 from infrahub_sync.plan.config_version import resolve_config_version
-from infrahub_sync.plan.errors import PlanSchemaChangedError, PlanVerificationError
-from infrahub_sync.plan.models import ApplyRecord, PlanManifest
+from infrahub_sync.plan.errors import PlanSchemaChangedError, PlanVerificationError, failed_checks
+from infrahub_sync.plan.models import ApplyRecord, CheckName, PlanManifest, PreWriteCheck, ordered_checks
 from infrahub_sync.plan.ownership import ProvenWriteOwnership, WriteDispatchTracker
 from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import SavedPlan, resolve_run_directory
@@ -73,10 +74,21 @@ from infrahub_sync.product_store import (
     ProductProjection,
     ProductRun,
 )
-from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, RuntimeModelPlan, build_runtime_model_plan
+from infrahub_sync.runtime_schema import (
+    STAGE_RUNTIME_MODEL_SCOPE,
+    RuntimeModelPlan,
+    RuntimeModelScope,
+    build_runtime_model_plan,
+)
+from infrahub_sync.utils import PlanApplier
 
 from .apply_guard import ApplyGuard, hold_apply_guard
-from .checkpoints import publish_final_checkpoint, publish_plan_checkpoint, rehydrate_plan_checkpoint
+from .checkpoints import (
+    CheckpointUnavailableError,
+    publish_final_checkpoint,
+    publish_plan_checkpoint,
+    rehydrate_plan_checkpoint,
+)
 from .events import run_event, stage_result_type
 from .failure_cause import FAILURE_RECORD_KEYS, apply_progress, failure_record, operator_cause
 from .liveness import LivenessPolicy
@@ -143,9 +155,18 @@ class RegisteredPlanVerificationError(PlanVerificationError, ValueError):
     built from, which echoes no manifest value.
     """
 
-    def __init__(self, message: str, recovery_action: RecoveryAction | None, *, guidance: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        recovery_action: RecoveryAction | None,
+        *,
+        guidance: str,
+        checks: Sequence[CheckName] = (),
+    ) -> None:
         super().__init__(
-            message, next_action=guidance if recovery_action is None else RECOVERY_NEXT_ACTIONS[recovery_action]
+            message,
+            next_action=guidance if recovery_action is None else RECOVERY_NEXT_ACTIONS[recovery_action],
+            checks=checks,
         )
         self.recovery_action = recovery_action
         # The message already carries the guidance, so the exception's text stays the message
@@ -344,10 +365,19 @@ def _verify_registered_apply(
                 recovery_action = "rebuild"
             elif format_failure.next_action.endswith(UNSUPPORTED_FORMAT_NEXT_ACTION):
                 recovery_action = "compatible_version"
-        raise RegisteredPlanVerificationError(message, recovery_action, guidance=guidance)
+        raise RegisteredPlanVerificationError(
+            message, recovery_action, guidance=guidance, checks=[failure.check for failure in failures]
+        )
     manifest = parse_plan_artifact(artifact, run_id=run_id, parse_last_changes=False).manifest
     if manifest.configuration_binding != binding:
-        raise ValueError(_REGISTERED_PLAN_BINDING_MISMATCH)
+        # Named `run_binding`: the plan was written for another registered configuration than
+        # this run's, so it is not this run's plan. `verify` and `apply` name the same check.
+        raise RegisteredPlanVerificationError(
+            _REGISTERED_PLAN_BINDING_MISMATCH,
+            "rebuild",
+            guidance=RECOVERY_NEXT_ACTIONS["rebuild"],
+            checks=["run_binding"],
+        )
     if manifest.plan_checksum != expected_checksum:
         raise ValueError(_REGISTERED_PLAN_CHECKSUM_MISMATCH)
     return manifest
@@ -507,6 +537,7 @@ def _worker_execution_context(
     run_branch: str | None,
     stage: str,
     build_models: bool = True,
+    model_scope: RuntimeModelScope | None = None,
 ) -> tuple[ProductProjection, Any, str]:
     """Load the durable run and resolve its registered or legacy runtime.
 
@@ -514,8 +545,9 @@ def _worker_execution_context(
     before any adapter is constructed or any source is extracted. A saved-plan apply defers
     that build until its artifact binding is verified. What the plan covers follows the stage:
     both sides for plan and sync, the destination only for a saved-plan apply, and nothing at
-    all for verify, which constructs no adapter. The legacy path keeps its generated-code
-    resolution and builds no plan.
+    all for verify's file checks. `model_scope` asks for a scope the stage does not build by
+    itself: verify's destination checks request the destination scope once its file checks
+    have passed. The legacy path keeps its generated-code resolution and builds no plan.
     """
     stored = projection.lookup_run(run_id)
     if stored.value is None:
@@ -545,17 +577,70 @@ def _worker_execution_context(
         raise ValueError(_REGISTERED_VERSION_INVALID) from None
     if registered.package_checksum != package_checksum or package.checksum() != package_checksum:
         raise ValueError(_REGISTERED_CHECKSUM_MISMATCH)
-    # A saved-plan apply constructs the destination only, so it resolves no source credential.
+    # A saved-plan apply and a verify construct the destination only, so they resolve no
+    # source credential.
     instance = resolve_runtime_instance(
-        package, directory=_NO_CONFIGURATION_DIRECTORY, resolve_source_credentials=stage != "apply"
+        package, directory=_NO_CONFIGURATION_DIRECTORY, resolve_source_credentials=stage not in ("apply", "verify")
     )
     instance._configuration_binding = binding
-    scope = STAGE_RUNTIME_MODEL_SCOPE.get(stage)
+    scope = model_scope if model_scope is not None else STAGE_RUNTIME_MODEL_SCOPE.get(stage)
     if scope is not None and build_models:
         instance._runtime_models = build_runtime_model_plan(
             package=package, instance=instance, run_branch=run_branch, scope=scope
         )
     return projection, instance, package.configuration.name
+
+
+# The checks a verify runs on the plan files alone, before it contacts the destination.
+_FILE_CHECKS: tuple[PreWriteCheck, ...] = (
+    "checkpoint",
+    "run_binding",
+    "plan_checksum",
+    "source_snapshot",
+    "config_version",
+    "format_version",
+)
+
+
+def _check_destination(  # pylint: disable=too-many-arguments
+    instance: Any,
+    *,
+    run_id: str,
+    binding: tuple[str, int, str],
+    manifest_checksum: str,
+    branch: str | None,
+    config_directory: str | None,
+    projection: ProductProjection,
+    scratch: StageScratch,
+) -> tuple[PreWriteCheck, ...]:
+    """Run, against the destination, every pre-write check a saved-plan apply runs, and write nothing.
+
+    The same steps the apply stage takes before its loop, in its order: the configuration
+    binding, one live destination schema read and its fingerprint comparison, the
+    destination adapter, then `PlanApplier.check_plan` — the destination binding and the
+    engine's gate. No write guard is taken: nothing here writes, and the result describes
+    the destination as it was when it was read. Returns every check that passed, in order.
+    """
+    manifest = _verify_registered_apply(
+        instance=instance,
+        run_id=run_id,
+        binding=binding,
+        expected_checksum=manifest_checksum,
+        base_directory=scratch.root,
+    )
+    _, destination_instance, _ = _worker_execution_context(
+        run_id,
+        binding,
+        config_directory=config_directory,
+        projection=projection,
+        run_branch=branch,
+        stage="verify",
+        model_scope="destination",
+    )
+    _require_planned_schema(run_id=run_id, manifest=manifest, models=destination_instance._runtime_models)
+    applier = PlanApplier.open_existing(destination_instance, run_id=run_id, branch=branch, base_directory=scratch.root)
+    passed = applier.check_plan()
+    return ordered_checks((*_FILE_CHECKS, "destination_schema", *passed.checks))
 
 
 def _configuration_write_guard(configuration_id: str) -> AbstractContextManager[ApplyGuard]:
@@ -675,6 +760,22 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             _require_verified=True,
         )
         assert isinstance(saved, SavedPlan)
+        if parameter_binding is None:
+            # A legacy run cannot be applied by the service, so it has no destination checks
+            # to run: it reports its file checks and says the destination was not checked.
+            checks, destination_checked = _FILE_CHECKS, False
+        else:
+            checks = _check_destination(
+                instance,
+                run_id=run_id,
+                binding=parameter_binding,
+                manifest_checksum=saved.manifest.plan_checksum,
+                branch=branch,
+                config_directory=config_directory,
+                projection=projection,
+                scratch=scratch,
+            )
+            destination_checked = True
         result = {
             "run_id": run_id,
             "stage": stage,
@@ -682,6 +783,8 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             "checksum": saved.manifest.plan_checksum,
             "checksum_ok": saved.checksum_ok,
             "verification_notes": list(saved.verification_notes),
+            "checks": list(checks),
+            "destination_checked": destination_checked,
         }
         writeback = ExecutionMergeWriteback(results={"verification": result})
     elif stage == "apply":
@@ -911,6 +1014,14 @@ def _failure_evidence(
         evidence.update(reason=UNSUPPORTED_STORE_REASON, message=UNSUPPORTED_STORE_MESSAGE)
     evidence.update(operator_cause(exc, secrets))
     evidence.update(_structured_cause(stage, exc, secrets, evidence))
+    if stage in ("verify", "apply"):
+        # The pre-write check a verify or an apply failed on, by name, so an operator reads
+        # which check refuses the apply, and both stages name the same one (SC-004). Both
+        # rehydrate the plan checkpoint first. Names from this repository's own vocabulary,
+        # never a message.
+        named = ("checkpoint",) if isinstance(exc, CheckpointUnavailableError) else failed_checks(exc)
+        if named:
+            evidence["failed_checks"] = list(named)
     if stage == "apply" and isinstance(exc, RegisteredPlanVerificationError) and exc.recovery_action is not None:
         evidence["recovery_action"] = exc.recovery_action
     written = effective_apply_record(exc, record)

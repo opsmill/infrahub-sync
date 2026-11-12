@@ -738,6 +738,34 @@ VerificationCheck: TypeAlias = Literal[
     "destination_binding",
 ]
 
+# The pre-write checks `apply` runs before its first write and `verify` reports as passed,
+# in the order `verify` reports them. `verify` and `apply` share one gate, so a check that
+# refuses an apply fails a verify under the same name.
+PreWriteCheck: TypeAlias = Literal[
+    "checkpoint",
+    "run_binding",
+    "plan_checksum",
+    "source_snapshot",
+    "config_version",
+    "format_version",
+    "destination_schema",
+    "destination_binding",
+    "write_surface",
+    "planned_fields",
+    "lineage",
+]
+PRE_WRITE_CHECKS: tuple[PreWriteCheck, ...] = get_args(PreWriteCheck)
+# The name a refusal records for the check it failed on. A file check can fail under a name
+# narrower than the pre-write check that covers it (`torn_operations` and `last_changes`
+# belong to the plan files), so a failure names either vocabulary.
+CheckName: TypeAlias = VerificationCheck | PreWriteCheck
+
+
+def ordered_checks(checks: Iterable[PreWriteCheck]) -> tuple[PreWriteCheck, ...]:
+    """Return `checks` once each, in the order `PRE_WRITE_CHECKS` lists them."""
+    present = set(checks)
+    return tuple(check for check in PRE_WRITE_CHECKS if check in present)
+
 
 class VerificationFailure(BaseModel):
     """One failed pre-apply check. The apply refuses when the list is non-empty (FR-009)."""

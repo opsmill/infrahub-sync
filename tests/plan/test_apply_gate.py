@@ -169,11 +169,12 @@ def test_the_us1_fixture_plan_needs_the_confirmation_and_then_reaches_the_write(
     Without it, the apply is refused with the plan's own count before any operation. With it,
     the apply passes the left-out gate and reaches its first operation, where the stand-in
     ownership boundary stops it: the stand-in destination cannot take writes. The stand-in
-    client serves no live schema, so the Infrahub payload check, which runs after the left-out
-    gate, is replaced by a no-op.
+    client serves no live schema, so the Infrahub payload check, which `check_plan` runs
+    before the left-out gate, is replaced by a no-op.
     """
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "cache"))
     planned = plan_fixture(plan_problems)
+    monkeypatch.setattr(planned.potenda.destination, "validate_planned_payload_fields", lambda _operations: None)
     left_out = planned.manifest["report"]["left_out"]
     assert left_out > 0
     checksum = planned.manifest["plan_checksum"]
@@ -185,7 +186,6 @@ def test_the_us1_fixture_plan_needs_the_confirmation_and_then_reaches_the_write(
     assert refused.value.left_out == left_out
     assert f"{left_out} records" in str(refused.value)
     assert refused_ownership.proofs == 0
-    monkeypatch.setattr(planned.potenda.destination, "validate_planned_payload_fields", lambda _operations: None)
     confirmed_ownership = _StopAtFirstOperation()
 
     with pytest.raises(_ReachedTheWrite):

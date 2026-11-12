@@ -135,6 +135,7 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_S3_REGION` | `us-east-1` | The object store region. |
 | `INFRAHUB_SYNC_WORK_POOL` | `infrahub-sync` | The Prefect work pool. |
 | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | `300` | How long a run admission stays valid. |
+| `INFRAHUB_SYNC_REQUIRE_APPROVAL` | `false` | Set on `sync-api`. When `true`, `apply` refuses a plan that has no approval matching the checksum it names, and `sync` is refused; operators run `plan`, `approve` and `apply` instead. Accepted values are `true`, `1`, `yes`, `on`, `false`, `0`, `no` and `off`, in any case. Any other value, including an empty one, stops `sync-api` at startup. The service reads it for each `apply` or `sync` request, so restart `sync-api` to change it; stored runs and approvals are not changed. `infrahub-sync whoami` prints the value as `approval_required`. See [Require an approved plan](./running-a-sync.mdx#require-an-approved-plan). |
 | `PREFECT_WORKER_QUERY_SECONDS`, `PREFECT_WORKER_HEARTBEAT_SECONDS` | `10` | The worker's polling and heartbeat intervals. |
 | `INFRAHUB_SYNC_PREFECT_UI_URL` | empty | The address you open the Prefect UI at, for example `http://127.0.0.1:4200`. Run responses and `infrahub-sync runs show` then link each flow run to its Prefect UI page. Empty turns the link off. The Sync API refuses to start when the value is not an absolute `http` or `https` URL, or when it carries credentials, a query or a fragment; see [Valid values of `INFRAHUB_SYNC_PREFECT_UI_URL`](#valid-values-of-infrahub_sync_prefect_ui_url). |
 
@@ -807,17 +808,19 @@ with SyncClient("http://127.0.0.1:8001", "<the principal token>") as client:
 
 ### Plan verification details
 
-A managed write is admitted once and approved against the checksum of the plan
-you reviewed. Nothing is written at the destination until the apply names that
+A managed write is admitted once and bound to the checksum of the plan you
+reviewed. Nothing is written at the destination until the apply names that
 exact checksum. The checksum is the confirmation; there is no interactive prompt.
 
 The operator sequence above is the authoritative command sequence for planning,
-reviewing, applying, and reading a run. The following API verification is
-optional and does not create another plan or apply sequence.
+reviewing, applying, and reading a run. The following verification is optional
+and does not create another plan or apply sequence.
 
-An independent verification of a retained plan is the one step here with no CLI
-command. It is a direct authenticated call, so it creates its own private curl
-configuration and removes it afterwards:
+`infrahub-sync verify RUN_ID` runs every check that `apply` runs before its first
+write, against the destination, and writes nothing; see
+[Verify the plan against the destination](./running-a-sync.mdx#verify-the-plan-against-the-destination).
+The same verification is a direct authenticated call to the API, which creates its
+own private curl configuration and removes it afterwards:
 
 ```bash
 umask 077

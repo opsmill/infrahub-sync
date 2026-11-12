@@ -35,7 +35,8 @@ $ infrahub-sync [OPTIONS] COMMAND [ARGS]...
 * `plan`: Create a plan run and review its saved...
 * `sync`: Create a confirmed synchronization run.
 * `apply`: Apply a service-owned plan after binding...
-* `verify`: Start verification of the saved plan of...
+* `approve`: Record approval of the named run&#x27;s saved...
+* `verify`: Check that the named run&#x27;s saved plan...
 * `whoami`: Show the actor the API token authenticates...
 * `events`: List typed events, oldest first: time,...
 * `configs`: Register and inspect configuration packages.
@@ -111,9 +112,30 @@ $ infrahub-sync apply [OPTIONS] {run_id}
 * `--poll-interval <float>`: Poll interval in seconds.  [default: 2.0]
 * `--help`: Show this message and exit.
 
+## `infrahub-sync approve`
+
+Record approval of the named run&#x27;s saved plan without applying it.
+
+**Usage**:
+
+```console
+$ infrahub-sync approve [OPTIONS] {run_id}
+```
+
+**Arguments**:
+
+* `run_id`: Service-issued run ID whose saved plan was reviewed.  [required]
+
+**Options**:
+
+* `--expected-checksum <str>`: Checksum printed by `runs plan`.  [required]
+* `--reason <str>`: Optional audit reason for the approval.
+* `--idempotency-key <str>`: Retry key.
+* `--help`: Show this message and exit.
+
 ## `infrahub-sync verify`
 
-Start verification of the saved plan of the named run.
+Check that the named run&#x27;s saved plan would apply now, without writing.
 
 **Usage**:
 
@@ -326,7 +348,7 @@ $ infrahub-sync runs [OPTIONS] COMMAND [ARGS]...
 
 * `list`: List runs, newest first: run,...
 * `artifacts`: List the artifacts one run recorded.
-* `cancel`: Request cancellation of a run.
+* `cancel`: Cancel a run.
 * `show`: Show one run&#x27;s service record and its...
 * `results`: Print the results the service recorded for...
 * `plan`: Review a saved plan summary, checksum, and...
@@ -370,7 +392,8 @@ $ infrahub-sync runs artifacts [OPTIONS] {run_id}
 
 ### `infrahub-sync runs cancel`
 
-Request cancellation of a run. Cancelling a write can leave its outcome ambiguous.
+Cancel a run. Cancelling a finished plan withdraws it so it cannot be approved or applied;
+cancelling a write can leave its outcome ambiguous.
 
 **Usage**:
 
