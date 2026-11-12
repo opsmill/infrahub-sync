@@ -613,7 +613,8 @@ class Potenda:
         A kind reads warm only when the adapter implements `list_changed_records`, the previous
         snapshot of the kind is marked complete, and no peer kind it references was unclean
         earlier in this read. A warm read that records a load report entry is discarded and the
-        kind is read cold. A kind whose read records an entry is unclean (research R22).
+        kind is read cold. A kind whose read records an entry, or whose warm read stored a
+        changed record under another unique ID, is unclean (research R22).
         """
         from infrahub_sync.cache.incremental import (
             hydrate_from_parquet,
@@ -638,7 +639,7 @@ class Potenda:
             elif not source_snapshot_is_complete(run_dir=prev_run, resource=resource):
                 reason = "the previous snapshot is missing, older, or holds records the read left out"
             elif referenced_kinds(self.config, resource) & unclean:
-                reason = "a peer kind it references was read with problems"
+                reason = "a peer kind it references was read with problems or renamed records"
             if reason is None:
                 start = len(adapter.load_report.entries)
                 hydrate_from_parquet(
@@ -647,8 +648,11 @@ class Potenda:
                     resource=resource,
                     add_row=lambda _name, payload, _model=model_cls: adapter.restore_record(_model, payload),
                 )
-                adapter.load_changed_records(resource, model_cls, cast("CursorState", cursor))
+                identities_changed = adapter.load_changed_records(resource, model_cls, cast("CursorState", cursor))
                 if adapter.kind_read_is_clean(resource):
+                    if identities_changed:
+                        # Unchanged records that reference a renamed record hold its old identity.
+                        unclean.add(resource)
                     continue
                 adapter.discard_kind(resource, entries_from=start)
                 reason = "the changed records hold problems"

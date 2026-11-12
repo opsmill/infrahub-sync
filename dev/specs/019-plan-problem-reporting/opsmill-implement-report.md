@@ -120,8 +120,9 @@ documentation and test changes of T074 to T079.
 
 The five expected failures:
 
-- four strict `xfail` tests in `tests/plan/test_warm_read_problems.py`, which record that a warm
-  incremental read does not record problems (T081, deferred);
+- four strict `xfail` tests in `tests/plan/test_warm_read_problems.py`, which recorded that a warm
+  incremental read did not record problems (T081, deferred then; done on 2026-11-12, research
+  R22, and the markers are removed);
 - `tests/compose/test_image_pins.py`, which belongs to the preview stack, not to spec 019.
 
 ### CLI sanity

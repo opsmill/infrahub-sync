@@ -33,8 +33,9 @@ since the saved cursor. It reported fewer problems than a full read of the same 
   record ID, `incomplete` otherwise. A kind reads warm only from a `complete` snapshot. A
   snapshot without the key, written by an earlier release, causes one full read of the kind.
 - A warm read of a kind that records a load report entry or a filtered record is discarded, and
-  the kind is read in full. A kind whose read records an entry makes the later kinds that
-  reference it read in full.
+  the kind is read in full. A kind whose read records an entry, or whose warm read stores a
+  changed record under another identity (a rename), makes the later kinds that reference it
+  read in full, so they resolve the new identity.
 - Cursors, the plan format and the plan's own problem pass do not change.
 
 ## Consequences
@@ -49,6 +50,5 @@ since the saved cursor. It reported fewer problems than a full read of the same 
   The operations do not change.
 - A custom source adapter that defined `safe_cursor_before_load` and `list_changed_since` must
   implement `list_changed_records` to keep reading warm.
-- An unchanged record whose peer changed identity keeps the reference stored in the snapshot,
-  as before this decision. A warm destination read still records no
-  `destination_identity_ambiguities`.
+- A warm destination read still records no `destination_identity_ambiguities`, and a warm
+  read still computes no deletes.

@@ -170,7 +170,9 @@ Every source adapter reads through the loop that `DiffSyncMixin` owns in
 `infrahub_sync/__init__.py`: an adapter lists its records (`list_records`) and converts each
 one (`record_to_data`), and `load_record` admits it or records why it cannot. The entries go
 to the adapter's `load_report`, whose types are in `infrahub_sync/load_report.py`; the problem
-pass of a plan reads them.
+pass of a plan reads them. `infrahub_sync/warm_read.py` holds the methods a warm read of the
+source calls on the adapter (`list_changed_records`, `load_changed_records`), so that the
+changed records go through `load_record` too.
 
 Every bundled adapter has a matching entry in `BUILTIN_ADAPTER_CAPABILITIES`; the pair is what
 makes a package using that adapter admissible. [Adapter anatomy](adapter-anatomy.md) explains

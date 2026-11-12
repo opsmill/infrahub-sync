@@ -40,33 +40,48 @@ class WarmSourceReadMixin:
         self.add(item)  # ty: ignore[unresolved-attribute] -- DiffSync adapter method
         self._index(item, data)
 
-    def load_changed_records(self: DiffSyncMixin, model_name: str, model: type[Any], cursor: CursorState) -> None:
+    def load_changed_records(self: DiffSyncMixin, model_name: str, model: type[Any], cursor: CursorState) -> bool:
         """Admit the records of `model_name` changed since `cursor` through `load_record`.
 
         Each changed record first replaces the stored record with the same source record ID, so
         a record the cursor overlap returns again, a renamed record, and a record that a filter
         now removes or that now fails give the result of a cold read. The kind then counts as
         read in full: the stored records and the changed records are its whole population.
+
+        Return whether a replaced record is now stored under another unique ID: the unchanged
+        records that reference it still hold its earlier identity, so the caller reads the
+        kinds that reference this kind in full.
         """
+        identities_changed = False
         for element in self.config.schema_mapping:
             if element.name != model_name or not element.mapping:
                 continue
             records = list(self.list_changed_records(model_name, element, cursor))
+            replaced: dict[str, str] = {}
             for record in records:
-                self.forget_record(model_name, self.record_source_id(record))
+                source_id = self.record_source_id(record)
+                unique_id = self.forget_record(model_name, source_id)
+                if source_id is not None and unique_id is not None:
+                    replaced[source_id] = unique_id
             for record in self.filter_source_records(model, element, records):
                 self.load_record(model, element, record)
+            identities_changed = identities_changed or any(
+                self._read_state.peer_index.get((model_name, source_id)) != unique_id
+                for source_id, unique_id in replaced.items()
+            )
         self._read_state.read_kinds.add(model_name)
+        return identities_changed
 
-    def forget_record(self: DiffSyncMixin, kind: str, source_id: str | None) -> None:
-        """Remove the stored record `source_id` of `kind`, when the read stored one."""
+    def forget_record(self: DiffSyncMixin, kind: str, source_id: str | None) -> str | None:
+        """Remove the stored record `source_id` of `kind`, and return its unique ID, when the read stored one."""
         if source_id is None:
-            return
+            return None
         unique_id = self._read_state.peer_index.pop((kind, source_id), None)
         if unique_id is None:
-            return
+            return None
         item = self.store.get(model=kind, identifier=unique_id)
         self.remove(item)  # ty: ignore[unresolved-attribute] -- DiffSync adapter method
+        return unique_id
 
     def kind_read_is_clean(self: DiffSyncMixin, kind: str) -> bool:
         """Tell whether the read of `kind` recorded no load report entry and no filtered record."""

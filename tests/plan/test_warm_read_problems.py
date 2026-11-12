@@ -203,6 +203,7 @@ def test_changed_record_resolves_an_unchanged_peer(plan_problems: PlanProblemFix
     warm = _warm_plan(plan_problems, first=valid, records=records, changed={"DcimDevice": [device]})
     assert _problems(warm) == _problems(cold) == []
     assert any(item.local_id == "37" for item in warm.source.get_all("DcimDevice"))
+    assert _non_delete_operations(warm) == _non_delete_operations(cold)
 
 
 def test_changed_record_with_the_identity_of_an_unchanged_record_is_a_duplicate(
@@ -274,3 +275,57 @@ def test_source_without_list_changed_records_reads_cold(
     warm.load_both_sides()
 
     assert warm._side_full_extract["A"] is True
+
+
+def _non_delete_operations(planned: PlannedFixture) -> list[dict[str, Any]]:
+    """The plan's operations other than deletes, which a warm read does not compute."""
+    lines = (planned.run_dir / "plan" / "operations.jsonl").read_text(encoding="utf-8").splitlines()
+    operations = [json.loads(line) for line in lines if line]
+    return sorted(
+        (operation for operation in operations if operation.get("action") != "delete"),
+        key=lambda operation: json.dumps(operation, sort_keys=True),
+    )
+
+
+def _with_replaced(
+    records: Mapping[str, list[dict[str, Any]]], kind: str, replacement: dict[str, Any]
+) -> dict[str, Any]:
+    replaced = copy.deepcopy(dict(records))
+    replaced[kind] = [replacement if row["id"] == replacement["id"] else row for row in replaced[kind]]
+    return replaced
+
+
+def test_changed_record_with_the_same_source_id_replaces_the_stored_record(
+    plan_problems: PlanProblemFixture, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A changed rack replaces the stored rack: no duplicate, and every kind stays warm."""
+    valid = plan_problems.source_records(Variant.NO_PROBLEMS)
+    rack = {"id": 20, "name": "r1", "facility_id": "F1", "description": "row one"}
+    records = _with_replaced(valid, "LocationRack", rack)
+    cold = plan_fixture(plan_problems, records=records, run_id="20261111T090000-cold0001")
+    caplog.set_level("INFO", logger="infrahub_sync.potenda")
+    warm = _warm_plan(plan_problems, first=valid, records=records, changed={"LocationRack": [rack]})
+
+    assert not [message for message in caplog.messages if "reading source kind" in message]
+    assert _problems(warm) == _problems(cold) == []
+    assert [item.description for item in warm.source.get_all("LocationRack")] == ["row one"]
+    assert _non_delete_operations(warm) == _non_delete_operations(cold)
+
+
+def test_renamed_peer_makes_the_kinds_that_reference_it_read_in_full(
+    plan_problems: PlanProblemFixture, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Site 1 is renamed and its devices are unchanged: the devices reference the new name."""
+    valid = plan_problems.source_records(Variant.NO_PROBLEMS)
+    site = {"id": 1, "name": "nice", "status": "active"}
+    records = _with_replaced(valid, "LocationSite", site)
+    cold = plan_fixture(plan_problems, records=records, run_id="20261111T090000-cold0001")
+    caplog.set_level("INFO", logger="infrahub_sync.potenda")
+    warm = _warm_plan(plan_problems, first=valid, records=records, changed={"LocationSite": [site]})
+
+    full = [message for message in caplog.messages if "reading source kind" in message]
+    assert any("DcimDevice" in message for message in full)
+    assert not any("LocationSite" in message for message in full)
+    assert _problems(warm) == _problems(cold)
+    assert _left_out(warm) == _left_out(cold)
+    assert _non_delete_operations(warm) == _non_delete_operations(cold)

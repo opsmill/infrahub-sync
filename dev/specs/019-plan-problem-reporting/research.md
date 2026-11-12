@@ -451,7 +451,9 @@ the read. Its rows cannot pass through `load_record`.
   any load report entry or filtered ID, the kind's stored records and its read state
   (entries, filtered IDs, peer index) are discarded and the kind is read cold. A kind whose
   cold read records entries is marked unclean, and the later kinds that reference it read cold.
-  Kinds are read in `top_level` order, peers first, so a dependent is decided after its peers.
+  A kind whose warm read stored a changed record under another unique ID is marked unclean as
+  well (see "Renamed records" below). Kinds are read in `top_level` order, peers first, so a
+  dependent is decided after its peers.
 - **Hydrated records are indexed.** Each snapshot row is added through a new mixin method
   `restore_record`, which also indexes its source record ID, so a changed record resolves an
   unchanged peer as a cold read does.
@@ -474,9 +476,14 @@ snapshot of an adapter with the read loop gains the `local_id` column and the me
 its digest in the plan manifest (`source_snapshot`) and the plan checksum differ from those of
 an older release for the same data. `tests/plan/test_valid_plan_unchanged.py` excludes both.
 
-**Limits.** An unchanged record whose peer changed identity keeps the reference it had in the
-snapshot; this is the existing behavior of incremental reads and is not changed here. A warm
-destination read still records no `destination_identity_ambiguities`.
+**Renamed records.** A changed record that replaces a stored record under another unique ID (its
+identity changed) leaves the unchanged records that reference it holding its earlier identity.
+`load_changed_records` returns whether this happened, and the engine then marks the kind
+unclean, so the kinds that reference it read cold and resolve the new identity. The earlier warm
+path kept both versions of such a record in the store; this one keeps only the new version.
+
+**Limits.** A warm destination read still records no `destination_identity_ambiguities`. A
+warm read computes no deletes, as before.
 
 **Rejected.** A separate store for the previous run's report: the marker in the snapshot is
 enough to decide that a kind must be read cold. Reading the whole source side cold when any

@@ -379,8 +379,9 @@ The two files must agree: a product test parses every `examples/*/package.yml` a
 
 If the source can filter by change, override `cursor_tier_for` to return the right `CursorTier`
 and implement `list_changed_since`, and optionally `list_existing_ids`. `list_changed_since`
-yields model data, so it filters, transforms and calls `record_to_data` itself. A warm read does
-not record problems as a full read does; see
+yields model data, so it filters, transforms and calls `record_to_data` itself. For a warm read
+of the source, also implement `list_changed_records`, which returns the raw changed records; the
+engine admits them through `load_record`, so the read reports the problems of a full read. See
 [incremental sync and cache](../knowledge/incremental-and-cache.md#what-an-adapter-implements). Set
 `incremental_extraction=True` in the capability entry at the same time. Skip this and the
 adapter performs full extracts.

@@ -65,7 +65,9 @@ follows (spec 019 research R22):
    configured filters run, and each record goes through `load_record`, as in a full read.
 3. When the warm read records a load report entry or a filtered record, the kind's records
    and what its read recorded are discarded (`discard_kind`), and the kind is read in full.
-   A kind whose read records an entry makes the later kinds that reference it read in full.
+   A kind whose read records an entry, or whose warm read stores a changed record under another
+   identity (a rename), makes the later kinds that reference it read in full, so they resolve
+   the new identity.
 
 The source snapshot of such an adapter carries a `local_id` column (the source record ID) and
 the Parquet metadata key `infrahub_sync.source_read`. Its value is `complete` when the read of
