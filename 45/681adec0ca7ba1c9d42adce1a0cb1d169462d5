@@ -1,0 +1,38 @@
+infrahub_sync/potenda/__init__.py
+  s_d199771aa41449::t_2594f9ff487af4 616-617,642,651,653-655
+docs/docs/development/knowledge/repository-tour.md
+  s_d199771aa41449::t_374506327d6edc 173-175
+docs/docs/development/knowledge/incremental-and-cache.md
+  s_d199771aa41449::t_486562a3a13a76 68-70
+dev/specs/019-plan-problem-reporting/opsmill-implement-report.md
+  s_d199771aa41449::t_a6a12d9655d062 123-125
+infrahub_sync/warm_read.py
+  s_d199771aa41449::t_2594f9ff487af4 43,50-53,55,60,62-65,68-71,73,75-76,78,81,84
+tests/plan/test_warm_read_problems.py
+  s_d199771aa41449::t_a125631b5c1996 206
+  s_d199771aa41449::t_a99c32931a330a 278-331
+dev/adr/0025-a-warm-source-read-admits-changed-records.md
+  s_d199771aa41449::t_486562a3a13a76 36-38,53-54
+docs/docs/development/knowledge/adapter-anatomy.md
+  s_d199771aa41449::t_374506327d6edc 61-62
+dev/specs/019-plan-problem-reporting/research.md
+  s_d199771aa41449::t_486562a3a13a76 454-456,479-486
+docs/docs/development/guides/adding-an-adapter.md
+  s_d199771aa41449::t_374506327d6edc 382-384
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "45681adec0ca7ba1c9d42adce1a0cb1d169462d5",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
