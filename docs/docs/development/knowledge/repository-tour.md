@@ -82,16 +82,14 @@ write guard (`apply_guard.py`) and artifact storage (`storage.py`). `prefect_ser
 `create_prefect_app`, the application factory that the root `docker-compose.yml`, the
 development stack's `development/docker-compose.yml` and the copy that
 `infrahub_sync.testcontainers` ships (`infrahub_sync/testcontainers/docker-compose.yml`) pass to uvicorn. These stacks run the Prefect server from the Sync image, so they need no
-separate Prefect image. The preview stack still runs the upstream `prefecthq/prefect` image
-with `prefect server start`.
+separate Prefect image.
 
 Two facts about it are often missed:
 
 - Each stage creates its own private scratch directory. The service reads no shared cache
   location.
 - It resolves its flow as an installed module, so it declares no working directory and needs
-  no source tree. That is why the preview stack starts the worker from an empty directory
-  — see [Run the preview stack](../guides/preview-stack.md).
+  no source tree.
 
 [The configuration write guard](apply-guard.md) covers the advisory lock that serializes one
 configuration's writes.
@@ -216,12 +214,11 @@ records the upstream commit and the local additions.
 
 | Module | Owns |
 |---|---|
-| `__init__.py` | The `format`, `lint`, `tests-*` aggregates and `check-310` |
+| `__init__.py` | The `format` and `lint` aggregates, the only top-level tasks |
 | `linter.py`, `docs.py` | The individual lint and documentation legs |
-| `tests.py` | `tests.tests-unit` and `tests.tests-integration` |
-| `dev.py` | The local development stack: the `dev` namespace (`dev.start`, `dev.deps`, `dev.api`, `dev.worker`, `dev.restart`, `dev.smoke` and the rest), and the earlier top-level `build`, `start` and `destroy` |
-| `smoke_dataset.py` | The smoke dataset that `dev.seed`, `dev.smoke`, `preview.seed` and `preview.smoke` load; no task of its own |
-| `preview.py` | The disposable preview environment, which the development stack replaces |
+| `tests.py` | `tests.tests-unit`, `tests.tests-integration`, `tests.all` and `tests.check-310` |
+| `dev.py` | The local development stack: the `dev` namespace (`dev.start`, `dev.deps`, `dev.api`, `dev.worker`, `dev.restart`, `dev.smoke` and the rest) |
+| `smoke_dataset.py` | The smoke dataset that `dev.seed` and `dev.smoke` load; no task of its own |
 | `release.py` | Keeping the image pin in `docker-compose.yml` in step with the package version |
 
 [Quality gates](quality-gates.md) explains what the aggregates really run, and
@@ -232,11 +229,9 @@ records the upstream commit and the local additions.
 - [`development/`][src-development] holds the local stacks. `docker-compose.yml` is the
   development stack the `dev` tasks run, formerly `docker-compose.dev.yml`; it includes the
   Infrahub services from `docker-compose.infrahub.yml`, with `docker-compose.infrahub-ports.yml`
-  as the override file of that include, which changes only their host ports. `docker-compose.preview.yml`, the shipped
-  `preview.env` defaults and `preview.local.env`, which Git ignores, belong to the preview stack,
-  whose runtime state lives under `.preview/`.
-  [Local development stack](../../development-stack.mdx) and
-  [Run the preview stack](../guides/preview-stack.md) are the procedures.
+  as the override file of that include, which changes only their host ports. Runtime state the
+  tasks and tests write lives under `.dev/`, which Git ignores.
+  [Local development stack](../../development-stack.mdx) is the procedure.
 - The root `docker-compose.yml` is the operator deployment. It pulls the released image from
   `registry.opsmill.io/opsmill/infrahub-sync` and carries its own database bootstrap script;
   the development stack in `development/docker-compose.yml` builds from the checkout instead.
@@ -256,8 +251,8 @@ records the upstream commit and the local additions.
 [`tests/`][src-tests] mirrors the source tree: `adapters/`, `api/`, `cache/`, `cli/`, `client/`,
 `configuration/`, `conformance/`, `plan/`, `product_store/`, `runtime_schema/`, `service/`,
 `orchestration/`, `release/` and `testcontainers/`, plus `dev_stack/` for the development
-stack's tasks and Compose file, the opt-in `integration/`, `preview/`, `image/` and `compose/`
-suites, and the frozen `vendored_prefect_extras/` copy.
+stack's tasks, Compose file and opt-in smoke suite (`dev_stack/smoke/`), the opt-in
+`integration/`, `image/` and `compose/` suites, and the frozen `vendored_prefect_extras/` copy.
 
 Which of these the default gate runs, and which need something live, is
 [Testing tiers](../guidelines/testing-tiers.md).
