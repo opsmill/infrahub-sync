@@ -1086,12 +1086,15 @@ export function RunTimeStrip({
     const iso = wait ? wait.from : (first?.o.submitted_at ?? first?.o.claimed_at ?? undefined);
     marks.push({ at: z.left, iso: iso ?? undefined });
   });
-  const lastEvent = steps
-    .flatMap((s) => [s.exec?.terminal_at, s.kind === "review" ? s.end : undefined])
+  // A plan run finishes when its plan is saved, but its review and its apply come after that.
+  const lastEvent = [
+    run.finished_at,
+    ...steps.flatMap((s) => [s.exec?.terminal_at, s.kind === "review" ? s.end : undefined]),
+  ]
     .filter((t): t is string => Boolean(t))
     .sort()
     .at(-1);
-  const endIso = run.finished_at ?? (open ? undefined : lastEvent);
+  const endIso = open ? undefined : lastEvent;
   const placed = zs.filter(Boolean) as Zone[];
   const endAt = placed.length ? Math.max(...placed.map((z) => z.left + z.width)) : 100;
   if (endAt > 90) marks.push({ at: 100, iso: endIso });
