@@ -22,8 +22,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-# Worker names stay namespaced to one test session, so a case reads only the rows it wrote.
-_SESSION = uuid4().hex[:10]
 _NOW = datetime(2026, 11, 11, 9, tzinfo=timezone.utc)
 _NETBOX = "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"
 _INFRAHUB = "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
@@ -50,35 +48,55 @@ def projection(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Produ
     yield ProductProjection(PostgreSQLRunStore(connect), artifacts)
 
 
-def _worker(name: str) -> str:
-    return f"{name}-{_SESSION}"
+class _Workers:
+    """Worker names namespaced to one test case.
+
+    The PostgreSQL schema lives for the whole session, so a case reads only the rows it wrote.
+    """
+
+    def __init__(self) -> None:
+        self.suffix = uuid4().hex[:10]
+
+    def name(self, name: str) -> str:
+        return f"{name}-{self.suffix}"
+
+    def mine(self, projection: ProductProjection, *, observed_after: datetime) -> dict[str, tuple[str, ...]]:
+        return {
+            environment.worker_id: environment.credential_names
+            for environment in projection.live_worker_environments(observed_after=observed_after)
+            if environment.worker_id.endswith(self.suffix)
+        }
 
 
-def _mine(projection: ProductProjection, *, observed_after: datetime) -> dict[str, tuple[str, ...]]:
-    return {
-        environment.worker_id: environment.credential_names
-        for environment in projection.live_worker_environments(observed_after=observed_after)
-        if environment.worker_id.endswith(_SESSION)
-    }
+@pytest.fixture
+def workers() -> _Workers:
+    """A fresh worker-name namespace for each test case."""
+    return _Workers()
 
 
-def test_a_publication_replaces_the_names_the_worker_published_before(projection: ProductProjection) -> None:
-    projection.publish_worker_environment(_worker("a"), [_NETBOX, _INFRAHUB], observed_at=_NOW)
-    projection.publish_worker_environment(_worker("a"), [_INFRAHUB], observed_at=_NOW + timedelta(seconds=10))
+def test_a_publication_replaces_the_names_the_worker_published_before(
+    projection: ProductProjection, workers: _Workers
+) -> None:
+    projection.publish_worker_environment(workers.name("a"), [_NETBOX, _INFRAHUB], observed_at=_NOW)
+    projection.publish_worker_environment(workers.name("a"), [_INFRAHUB], observed_at=_NOW + timedelta(seconds=10))
 
-    assert _mine(projection, observed_after=_NOW - timedelta(hours=1)) == {_worker("a"): (_INFRAHUB,)}
+    assert workers.mine(projection, observed_after=_NOW - timedelta(hours=1)) == {workers.name("a"): (_INFRAHUB,)}
 
 
-def test_only_workers_that_published_after_the_threshold_are_live(projection: ProductProjection) -> None:
-    projection.publish_worker_environment(_worker("stale"), [_NETBOX], observed_at=_NOW - timedelta(minutes=5))
-    projection.publish_worker_environment(_worker("live"), [_INFRAHUB], observed_at=_NOW)
+def test_only_workers_that_published_after_the_threshold_are_live(
+    projection: ProductProjection, workers: _Workers
+) -> None:
+    projection.publish_worker_environment(workers.name("stale"), [_NETBOX], observed_at=_NOW - timedelta(minutes=5))
+    projection.publish_worker_environment(workers.name("live"), [_INFRAHUB], observed_at=_NOW)
 
-    assert _mine(projection, observed_after=_NOW - timedelta(seconds=30)) == {_worker("live"): (_INFRAHUB,)}
+    assert workers.mine(projection, observed_after=_NOW - timedelta(seconds=30)) == {workers.name("live"): (_INFRAHUB,)}
 
 
 @pytest.mark.parametrize("name", ["INFRAHUB_SYNC_DATABASE_URL", "postgresql://sync:secret@db/sync", ""])
-def test_anything_but_a_credential_variable_name_is_refused(projection: ProductProjection, name: str) -> None:
+def test_anything_but_a_credential_variable_name_is_refused(
+    projection: ProductProjection, workers: _Workers, name: str
+) -> None:
     with pytest.raises(pydantic.ValidationError):
-        projection.publish_worker_environment(_worker("refused"), [name], observed_at=_NOW)
+        projection.publish_worker_environment(workers.name("refused"), [name], observed_at=_NOW)
 
-    assert _mine(projection, observed_after=_NOW - timedelta(hours=1)) == {}
+    assert workers.mine(projection, observed_after=_NOW - timedelta(hours=1)) == {}
