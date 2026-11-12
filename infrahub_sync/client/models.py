@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # one module holds every request and resource model of the Sync HTTP API
 """Standalone request and resource models for the Sync HTTP API."""
 
 from __future__ import annotations
