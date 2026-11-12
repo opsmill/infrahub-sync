@@ -471,7 +471,8 @@ SBOM commands.
 
 - **FR-021**: The release notes of each Sync release MUST name the image by the address users pull,
   `registry.opsmill.io/opsmill/infrahub-sync`, and its multi-architecture digest, which
-  `ci-docker-image.yml` already outputs.
+  `ci-docker-image.yml` already outputs, and the `cosign verify-attestation` command that reads the
+  SBOM attested to that digest, so that an evaluator can find the SBOM of that release.
 - **FR-022**: The documented `cosign` verification (`docs/docs/container-image.mdx`) and the release
   notes MUST accept only the certificate identity of `ci-docker-image.yml` at a release tag:
   `^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/tags/`.
