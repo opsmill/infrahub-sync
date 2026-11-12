@@ -1,0 +1,19 @@
+dev/specs/021-compose-store-credentials-ca/tasks.md
+  s_3defe6e8bcd0ab::t_1f498735bb3840 1-207
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c9b9d182c9c7e29dcda02355e8085160b3f1fcf9",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

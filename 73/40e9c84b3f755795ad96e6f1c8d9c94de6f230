@@ -1,0 +1,21 @@
+dev/specs/021-compose-store-credentials-ca/checklists/requirements.md
+  s_3defe6e8bcd0ab::t_cffc4a4102241c 1-39
+dev/specs/021-compose-store-credentials-ca/spec.md
+  s_3defe6e8bcd0ab::t_49438470abe2bb 1-580
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7340e9c84b3f755795ad96e6f1c8d9c94de6f230",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+infrahub_sync/service/storage.py
+  s_3defe6e8bcd0ab::t_b74510cea1ebe3 238
+  s_3defe6e8bcd0ab::t_cd378335f2ed93 11,33-37,214-237,239-246,259,262
+tests/service/test_storage.py
+  s_3defe6e8bcd0ab::t_9b41bdbb6aa16e 333-336,572-613,616-638
+  s_3defe6e8bcd0ab::t_b74510cea1ebe3 614-615
+  s_3defe6e8bcd0ab::t_8b85626608fef3 639-640
+dev/specs/021-compose-store-credentials-ca/tasks.md
+  s_3defe6e8bcd0ab::t_32e506cd499300 33-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bd6b9c136cd60211391b006eeab89dd737f33459",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
