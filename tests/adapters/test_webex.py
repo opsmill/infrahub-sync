@@ -98,6 +98,11 @@ def test_parent_requires_explicit_load_order(adapter: WebexAdapter) -> None:
         adapter.model_loader("Record", Record)
 
 
+def test_unknown_model_name_raises(adapter: WebexAdapter) -> None:
+    with pytest.raises(ValueError, match="no schema mapping"):
+        adapter.model_loader("Unmapped", Record)
+
+
 def test_detail_merge_precedes_shared_filter_and_transform(adapter: WebexAdapter) -> None:
 
     mapping = adapter.config.schema_mapping[0]
@@ -123,6 +128,7 @@ def test_query_values_and_overrides(adapter: WebexAdapter) -> None:
         "types": "a,b",
         "orgId": "example-org",
         "max": "1000",
+        "removed": None,
     }
 
 
@@ -286,3 +292,28 @@ def test_calling_workspace_fixed_query_uses_returned_set(
     adapter.model_loader("Record", Record)
     assert http.call_count == 2
     assert {record.get_unique_id() for record in adapter.get_all("Record")} == {"Example room one", "Example room two"}
+
+
+@pytest.mark.parametrize("scope", ["source", "resource"])
+def test_null_query_overrides_remove_path_values_on_every_page(
+    scope: str, adapter: WebexAdapter, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter.config.schema_mapping[0].mapping = "/v1/example?foo=bar&max=10"
+    overrides = {"foo": None, "max": None}
+    if scope == "source":
+        adapter.client.options.params = overrides
+    else:
+        adapter.client.options.resources["Record"] = WebexResource(params=overrides)
+    http = Mock(
+        side_effect=[
+            _http_response({"items": []}, Link='</v1/example?after=one&foo=bar&max=10>; rel="next"'),
+            _http_response({"items": []}),
+        ]
+    )
+    monkeypatch.setattr(requests, "request", http)
+    adapter.model_loader("Record", Record)
+    queries = [
+        urlsplit(requests.Request("GET", call.args[1], params=call.kwargs["params"]).prepare().url).query
+        for call in http.call_args_list
+    ]
+    assert queries == ["", "after=one"]

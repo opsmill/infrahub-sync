@@ -8,6 +8,8 @@ artifact_name
 async
 Authentik
 boolean
+booleans
+Booleans
 check_definitions
 class_name
 CloudFormation
@@ -96,6 +98,7 @@ Newsfragment
 Nornir
 npm
 o'brian
+OAuth
 Observium
 openconfig
 opentelemetry
@@ -140,6 +143,7 @@ validators
 Version Control
 VRFs
 walkthrough
+Webex
 runbook
 runbooks
 Splunk

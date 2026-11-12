@@ -8,7 +8,7 @@ Webex is supported as a **source only**. Every data request uses GET. Service Ap
 
 ## Authentication and permissions
 
-Choose a fixed access token for short runs, or an authorized Service App for scheduled runs. Credentials are read exclusively from environment variables. Provide them through your shell or secret manager; do not put their values in YAML.
+Choose a fixed access token for short runs, or an authorized Service App for scheduled runs. Credentials are read exclusively from environment variables. The `token_env`, `client_id_env`, `client_secret_env` and `refresh_token_env` settings take literal variable names; `{env: ...}` references are accepted only in `org_id` and query parameter values. Provide them through your shell or secret manager; do not put their values in YAML.
 
 | Authentication | Required environment variables | Behavior |
 | --- | --- | --- |
@@ -66,6 +66,7 @@ Set `source.name: webex` and configure the connection under `source.settings`.
 | `refresh_token_env` | `WEBEX_REFRESH_TOKEN` | Service App refresh-token variable name. |
 | `timeout` | `30` | Positive timeout in seconds for each request. |
 | `retries` | `3` | Retries per request for rate limits, server errors, timeouts and connection failures. |
+| `max_retry_delay` | `300` | Maximum delay in seconds. A valid `Retry-After` above this value stops the run; default exponential retry delays are capped at this value. |
 | `page_size` | `100` | Initial `max` value unless overridden by a resource or parameter. |
 | `org_id` | Unset | Organization identifier, or an environment reference; omit to use the credential's organization. |
 | `params` | `{}` | Query parameters applied across resources. |
@@ -83,13 +84,13 @@ source:
 
 Parameter names are unrestricted. Values can be strings, numbers, booleans, lists, `{env: VARIABLE_NAME}` or, for dependent resources, `{parent: field.path}`. Booleans serialize as `true` or `false`, and lists as comma-separated values. Query encoding preserves spaces and special characters. A resource parameter overrides a source parameter; `null` omits it. Organization scope is the exception: all nonempty `orgId` values must name the same organization as `org_id`. A different resource, endpoint or pagination organization is rejected. When no organization is configured, the first endpoint or pagination `orgId` is pinned for the client lifetime; later links must use the same organization. This learned ID is used for validation without adding `orgId` to other resource requests. Use one project per organization. A literal or environment-supplied `orgId` in query settings also establishes the project scope when `org_id` is unset; parent-derived organization IDs are rejected. For endpoints that reject `orgId` or `max`, omit those parameters in the resource with `orgId: null` or `max: null`.
 
-Missing environment variables fail before any request, including token refresh. Pagination follows Webex `Link` headers until no next page remains, including empty intermediate pages. The adapter retains configured query parameters when a next-page link omits them. Initial `before` and `after` parameters are accepted in source settings, resource settings or endpoint queries, then removed before the first request to read the complete inventory. Webex continuation cursors still control subsequent pages. This prevents a configured start position from excluding earlier records. See [Webex pagination](https://developer.webex.com/meeting/docs/basics) for the response-header format.
+Missing environment variables fail before any request, including token refresh. Pagination follows Webex `Link` headers until no next page remains, including empty intermediate pages. The adapter merges query parameters from the mapping path with the source and resource parameters, preserving repeated query keys and their values. Explicit source or resource parameters replace all path values of the same name. A `null` override removes that parameter from the first request and subsequent pages, even when a next-page link includes it. These fixed parameters remain on later pages when a next-page link omits them, including `orgId`. Initial `before` and `after` parameters are accepted in source settings, resource settings or endpoint queries, then removed before the first request to read the complete inventory. Webex continuation cursors still control subsequent pages. This prevents a configured start position from excluding earlier records. See [Webex pagination](https://developer.webex.com/meeting/docs/basics) for the response-header format.
 
 The example uses `page_size: 100` for locations and devices, and `page_size: 1000` for workspaces. Choose an accepted size for each endpoint; a page-size setting never limits the total number of records loaded.
 
 ## Resource settings and other endpoints
 
-Each schema mapping's `mapping` is its GET path, including `/v1/`. Fields, filters, Jinja2 transforms, identifiers and references follow the [schema-mapping configuration](../reference/config.mdx).
+The `mapping` field of each schema mapping is its GET path, including `/v1/`. Fields, filters, Jinja2 transforms, identifiers and references follow the [schema-mapping configuration](../reference/config.mdx).
 
 | Resource option | Default | Meaning |
 | --- | --- | --- |
@@ -100,7 +101,7 @@ Each schema mapping's `mapping` is its GET path, including `/v1/`. Fields, filte
 | `details` | Unset | GET path expanded once per record; returned fields overwrite list fields. |
 | `read_only` | `false` | Excludes source models from diff operations while keeping them available for references. |
 
-For example, a location-dependent request can retrieve workspaces once per location and then request each workspace's details. The destination kinds and fields must exist in your schema. Replace the workspace resource options in a project that already loads the location mapping:
+For example, a location-dependent request can retrieve workspaces once per location and then request the details of each workspace. The destination kinds and fields must exist in your schema. Replace the workspace resource options in a project that already loads the location mapping:
 
 ```yaml
 source:
@@ -122,7 +123,7 @@ For a fixed filter on the [Calling List Workspaces endpoint](https://developer.w
 
 For an endpoint returning one object, set `response_key: null` and `params: {max: null}`. Records without their own ID receive an internal source identifier; map the destination identifiers explicitly. Details load before the shared filters and transforms.
 
-A scalar reference value is already the peer's sync identifier, as in the inventory project's `locationId` and `workspaceId`. A native dict such as `{{ {'id': locationId} }}` instead resolves the peer by its source `local_id`; an absent dict reference raises an error. Choose the form that matches the peer mapping's identifiers.
+A scalar reference value is already the peer's sync identifier, as in the inventory project's `locationId` and `workspaceId`. A native dict such as `{{ {'id': locationId} }}` instead resolves the peer by its source `local_id`; an absent dict reference raises an error. Choose the form that matches the identifiers in the peer mapping.
 
 ## Failure handling
 
@@ -132,10 +133,10 @@ A scalar reference value is already the peer's sync identifier, as in the invent
 | HTTP 403 | Reports insufficient permission for the resource; check read scopes and administrator authorization. |
 | HTTP 400 | Reports the endpoint, status and Webex message after redacting credentials, bearer values and URLs; check the named query parameter. Other response fields and raw bodies are excluded. |
 | Other rejected response | Reports the resource and status; check endpoint and query settings. |
-| HTTP 429 | Waits for `Retry-After`, then retries up to `retries`; persistent limits stop the run. |
-| Timeout, connection failure or HTTP 5xx | Retries with bounded attempts, then stops with resource context. |
+| HTTP 429 | Waits for `Retry-After`, then retries up to `retries`; persistent limits stop the run. A valid `Retry-After` longer than `max_retry_delay` stops the run without waiting. Missing or invalid headers use exponential retry delays capped at `max_retry_delay`. |
+| Timeout, connection failure or HTTP 5xx | Retries with bounded attempts and default exponential retry delays capped at `max_retry_delay`, then stops with resource context. |
 | Missing response key or malformed JSON | Stops rather than treating the resource as empty. A missing-key error names the endpoint and configured key, for example `/v1/devices: missing configured response key records`. |
 | Redirect, external pagination link or pagination cycle | Stops; credentials are never forwarded to another origin. |
 | Conflicting organization IDs | Stops before HTTP for conflicting settings, or before following a conflicting endpoint or pagination link. |
 
-Errors and logs exclude credentials, raw response bodies and underlying request-exception text. Each attempted HTTP request logs a cumulative `requests` counter, including retries, OAuth requests and failed parent requests. A `Webex mapping requests` event reports the mapping count and client-wide `total_requests`, including when a mapping fails. Incremental change tracking is not implemented for Webex.
+Errors and logs exclude credentials, raw response bodies and underlying request-exception text. Each attempted HTTP request logs a debug-level event with a cumulative `requests` counter, including retries, OAuth requests and failed parent requests. A `Webex mapping requests` event reports the mapping count and client-wide `total_requests`, including when a mapping fails. Incremental change tracking is not implemented for Webex.

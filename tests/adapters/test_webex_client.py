@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import traceback
 from unittest.mock import Mock
-from urllib.parse import quote, quote_plus
+from urllib.parse import parse_qs, quote, quote_plus, urlsplit
 
 import pytest
 import requests
@@ -64,6 +64,39 @@ def test_get_and_pagination_through_empty_page(org_id: str | None, http: Mock) -
     assert client.options.org_id == org_id
     assert all(call.args[0] == "GET" and call.kwargs["allow_redirects"] is False for call in http.call_args_list)
     assert http.call_args_list[0].kwargs["headers"]["Authorization"] == "Bearer invented-access-value"
+
+
+@pytest.mark.parametrize("explicit_filter", [None, "explicit-room"])
+def test_endpoint_query_is_preserved_without_duplicate_parameters(explicit_filter: str | None, http: Mock) -> None:
+    http.side_effect = [
+        response(Link='</v1/devices?after=one>; rel="next"'),
+        response(Link='</v1/devices?after=two&max=50>; rel="next"'),
+        response(),
+    ]
+    params: dict[str, object] = {"max": 100, "before": "ignored", "after": "ignored"}
+    if explicit_filter is not None:
+        params["workspaceId"] = explicit_filter
+    WebexClient({}).pages(
+        "/v1/devices?workspaceId=first-room&workspaceId=url-room&max=10&before=ignored&after=ignored", params
+    )
+    queries = []
+    for call in http.call_args_list:
+        prepared = requests.Request("GET", call.args[1], params=call.kwargs["params"]).prepare()
+        queries.append(parse_qs(urlsplit(prepared.url).query))
+    fixed = {"workspaceId": [explicit_filter] if explicit_filter else ["first-room", "url-room"], "max": ["100"]}
+    assert queries == [fixed, {**fixed, "after": ["one"]}, {**fixed, "after": ["two"], "max": ["50"]}]
+
+
+def test_endpoint_organization_is_preserved_when_next_link_omits_it(http: Mock) -> None:
+    http.side_effect = [response(Link='</v1/devices?after=one>; rel="next"'), response()]
+    client = WebexClient({})
+    client.pages("/v1/devices?orgId=example-org", {})
+    queries = []
+    for call in http.call_args_list:
+        prepared = requests.Request("GET", call.args[1], params=call.kwargs["params"]).prepare()
+        queries.append(parse_qs(urlsplit(prepared.url).query))
+    assert queries == [{"orgId": ["example-org"]}, {"orgId": ["example-org"], "after": ["one"]}]
+    assert client.options.org_id is None
 
 
 @pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE", "HEAD"])
@@ -136,6 +169,22 @@ def test_rate_limit_retry_after(http: Mock) -> None:
     WebexClient({}).get("/v1/locations")
 
     webex_client.time.sleep.assert_called_once_with(7.0)  # ty: ignore[unresolved-attribute]
+
+
+@pytest.mark.parametrize(("settings", "header"), [({}, "301"), ({"max_retry_delay": 5}, "6")])
+def test_retry_after_above_limit_fails_without_sleeping(settings: dict[str, int], header: str, http: Mock) -> None:
+    http.return_value = response(status=429, **{"Retry-After": header})
+    with pytest.raises(WebexHTTPError, match="exceeds max_retry_delay"):
+        WebexClient(settings).get("/v1/locations")
+    webex_client.time.sleep.assert_not_called()  # ty: ignore[unresolved-attribute]
+    assert http.call_count == 1
+
+
+@pytest.mark.usefixtures("http")
+def test_request_events_are_debug_level() -> None:
+    with capture_logs() as logs:
+        WebexClient({}).get("/v1/locations")
+    assert [event["log_level"] for event in logs if event["event"] == "Webex request"] == ["debug"]
 
 
 @pytest.mark.parametrize("status", [429, 503])
@@ -222,6 +271,49 @@ def _render_failure(client: WebexClient) -> str:
     with console.capture() as captured:
         console.print(rendered)
     return captured.get()
+
+
+def _render_settings_failure(settings: dict) -> tuple[str, str]:
+    rendered: Traceback | None = None
+    message = ""
+    try:
+        WebexClient(settings)
+    except ValueError as exc:
+        message = str(exc)
+        rendered = Traceback.from_exception(type(exc), exc, exc.__traceback__, show_locals=True)
+    else:
+        pytest.fail("expected invalid Webex settings")
+    assert rendered is not None
+    console = Console(width=200)
+    with console.capture() as captured:
+        console.print(rendered)
+    return message, captured.get()
+
+
+@pytest.mark.parametrize("field", ["token_env", "client_id_env", "client_secret_env", "refresh_token_env"])
+def test_credential_environment_names_are_not_resolved(field: str, http: Mock, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WEBEX_REVIEW_CREDENTIAL", "invented-review-secret")
+    message, traceback_output = _render_settings_failure({field: {"env": "WEBEX_REVIEW_CREDENTIAL"}})
+    assert "invalid source settings" in message
+    assert "invented-review-secret" not in message
+    assert "invented-review-secret" not in traceback_output
+    http.assert_not_called()
+
+
+def test_environment_references_resolve_only_in_supported_settings(http: Mock, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WEBEX_REVIEW_ORG", "example-org")
+    monkeypatch.setenv("WEBEX_REVIEW_FILTER", "meetingRoom")
+    client = WebexClient(
+        {
+            "org_id": {"env": "WEBEX_REVIEW_ORG"},
+            "params": {"type": {"env": "WEBEX_REVIEW_FILTER"}},
+            "resources": {"Workspace": {"params": {"type": {"env": "WEBEX_REVIEW_FILTER"}}}},
+        }
+    )
+    assert client.options.org_id == "example-org"
+    assert client.options.params == {"type": "meetingRoom"}
+    assert client.options.resources["Workspace"].params == {"type": "meetingRoom"}
+    http.assert_not_called()
 
 
 @pytest.mark.parametrize("auth_method", ["token", "service_app"])
@@ -475,3 +567,57 @@ def test_query_400_redacts_credentials_with_special_characters(
     assert "Invalid query" in output
     assert "invented-token" not in output
     assert "invented-token" not in str(logs)
+
+
+@pytest.mark.parametrize("status", [429, 503])
+@pytest.mark.parametrize("retry_after", [None, "invalid", "nan", "inf"])
+def test_default_backoff_is_capped_until_retry_exhaustion(status: int, retry_after: str | None, http: Mock) -> None:
+    headers = {} if retry_after is None else {"Retry-After": retry_after}
+    http.return_value = response(status=status, **headers)
+    with pytest.raises(WebexHTTPError, match=r"retries exhausted|retry budget exhausted"):
+        WebexClient({"retries": 10}).get("/v1/locations")
+    assert http.call_count == 11
+    assert [call.args[0] for call in webex_client.time.sleep.call_args_list] == [  # ty: ignore[unresolved-attribute]
+        1,
+        2,
+        4,
+        8,
+        16,
+        32,
+        64,
+        128,
+        256,
+        300,
+    ]
+
+
+@pytest.mark.parametrize("failure", [requests.Timeout, requests.ConnectionError])
+def test_transport_backoff_is_capped(failure: type[requests.RequestException], http: Mock) -> None:
+    http.side_effect = failure("invented failure")
+    with pytest.raises(ValueError, match="bounded retries"):
+        WebexClient({"retries": 4, "max_retry_delay": 3}).get("/v1/locations")
+    assert http.call_count == 5
+    assert [call.args[0] for call in webex_client.time.sleep.call_args_list] == [1, 2, 3, 3]  # ty: ignore[unresolved-attribute]
+
+
+def test_repeated_endpoint_query_values_survive_pagination(http: Mock) -> None:
+    http.side_effect = [response(Link='</v1/example?after=one>; rel="next"'), response()]
+    WebexClient({}).pages("/v1/example?type=a&type=b", {})
+    queries = [
+        parse_qs(urlsplit(requests.Request("GET", call.args[1], params=call.kwargs["params"]).prepare().url).query)
+        for call in http.call_args_list
+    ]
+    assert queries == [{"type": ["a", "b"]}, {"type": ["a", "b"], "after": ["one"]}]
+
+
+@pytest.mark.parametrize("org_query", ["orgId=example-org", "orgId=example-org&orgId=example-org"])
+def test_endpoint_organization_with_repeated_values(org_query: str, http: Mock) -> None:
+    WebexClient({}).pages(f"/v1/example?{org_query}", {})
+    prepared = requests.Request("GET", http.call_args.args[1], params=http.call_args.kwargs["params"]).prepare()
+    assert parse_qs(urlsplit(prepared.url).query)["orgId"] == ["example-org"] * org_query.count("orgId=")
+
+
+def test_null_initial_cursors_allow_server_continuation(http: Mock) -> None:
+    http.side_effect = [response(Link='</v1/example?after=one>; rel="next"'), response()]
+    WebexClient({}).pages("/v1/example?before=ignored", {"before": None, "after": None})
+    assert urlsplit(http.call_args_list[1].args[1]).query == "after=one"

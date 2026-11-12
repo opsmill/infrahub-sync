@@ -44,6 +44,7 @@ class WebexSettings(BaseModel):
     refresh_token_env: str = "WEBEX_REFRESH_TOKEN"
     timeout: float = Field(default=30, gt=0, allow_inf_nan=False)
     retries: int = Field(default=3, ge=0)
+    max_retry_delay: float = Field(default=300, gt=0, allow_inf_nan=False)
     page_size: int = Field(default=100, gt=0)
     org_id: str | dict[str, str] | None = None
     params: dict[str, Any] = Field(default_factory=dict)
@@ -83,10 +84,14 @@ class WebexClient(RestApiClient):
 
     def __init__(self, settings: dict[str, Any]) -> None:  # pylint: disable=super-init-not-called
         try:
-            self.options = WebexSettings.model_validate(resolve_environment(settings))
+            self.options = WebexSettings.model_validate(settings)
         except ValidationError:
             msg = "Webex: invalid source settings; check the documented connection/resource options"
             raise ValueError(msg) from None
+        self.options.org_id = resolve_environment(self.options.org_id)
+        self.options.params = resolve_environment(self.options.params)
+        for resource in self.options.resources.values():
+            resource.params = resolve_environment(resource.params)
         self.base_url = self.options.url.rstrip("/")
         origin = urlsplit(self.base_url)
         extra_components = any((origin.username, origin.password, origin.path, origin.query, origin.fragment))
@@ -163,11 +168,13 @@ class WebexClient(RestApiClient):
         )
         return " ".join(text.split())
 
-    def _resource(self, endpoint: str) -> str:
+    def resource_name(self, endpoint: str) -> str:
+        """Return an endpoint path with credentials and query values excluded."""
         return self._redact(urlsplit(endpoint).path)
 
     @staticmethod
-    def _retry_delay(response: requests.Response, attempt: int) -> float:
+    def _retry_after(response: requests.Response) -> float | None:
+        """Return a valid server-requested delay, or None for default backoff."""
         value = response.headers.get("Retry-After", "")
         try:
             delay = float(value)
@@ -175,8 +182,8 @@ class WebexClient(RestApiClient):
             try:
                 delay = (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
             except (ValueError, TypeError, OverflowError):
-                delay = float(2**attempt)
-        return max(0.0, delay) if math.isfinite(delay) else float(2**attempt)
+                return None
+        return max(0.0, delay) if math.isfinite(delay) else None
 
     def _perform_request(
         self,
@@ -202,7 +209,7 @@ class WebexClient(RestApiClient):
                 "refresh_token": self._refresh_token,
             }
         self.request_count += 1
-        logger.info("Webex request", resource=self._resource(url), method=method, requests=self.request_count)
+        logger.debug("Webex request", resource=self.resource_name(url), method=method, requests=self.request_count)
         return requests.request(
             method,
             url,
@@ -216,7 +223,7 @@ class WebexClient(RestApiClient):
     def _send(
         self, method: Literal["GET", "POST"], url: str, *, params: dict[str, Any] | None = None
     ) -> requests.Response:
-        resource = self._resource(url)
+        resource = self.resource_name(url)
         for attempt in range(self.options.retries + 1):
             try:
                 response = self._perform_request(method, url, params=params)
@@ -224,7 +231,7 @@ class WebexClient(RestApiClient):
                 if attempt == self.options.retries:
                     msg = f"Webex: {resource}: timeout or connection failure after bounded retries"
                     raise ValueError(msg) from None
-                time.sleep(2**attempt)
+                time.sleep(min(2**attempt, self.options.max_retry_delay))
                 continue
             except requests.RequestException:
                 msg = f"Webex: {resource}: request failed"
@@ -235,7 +242,12 @@ class WebexClient(RestApiClient):
                 raise TypeError(msg)
             if status == 429 or status >= 500:
                 if attempt < self.options.retries:
-                    delay = self._retry_delay(response, attempt)
+                    delay = self._retry_after(response)
+                    if delay is not None and delay > self.options.max_retry_delay:
+                        reason = f"Retry-After of {delay:.0f}s exceeds max_retry_delay of {self.options.max_retry_delay:.0f}s"
+                        raise WebexHTTPError(status, resource, reason)
+                    if delay is None:
+                        delay = min(2**attempt, self.options.max_retry_delay)
                     logger.warning("Webex retry", resource=resource, status=status, delay=delay)
                     time.sleep(delay)
                     continue
@@ -306,10 +318,13 @@ class WebexClient(RestApiClient):
 
     def _get_response(self, endpoint: str, params: dict[str, Any] | None = None) -> requests.Response:
         url = self._url(endpoint)
-        resource = self._resource(endpoint)
-        if params and params.get("orgId") is not None and params["orgId"] != self.options.org_id:
-            msg = f"Webex: {resource}: query orgId differs from the project organization"
-            raise ValueError(msg)
+        resource = self.resource_name(endpoint)
+        organization = self.options.org_id or self._linked_org_id
+        if params and params.get("orgId") is not None:
+            organizations = params["orgId"] if isinstance(params["orgId"], list) else [params["orgId"]]
+            if any(value != organization for value in organizations):
+                msg = f"Webex: {resource}: query orgId differs from the project organization"
+                raise ValueError(msg)
         if self.options.auth_method == "service_app" and time.monotonic() >= self._expires_at:
             self._refresh_for(resource)
         response = self._send("GET", url, params=params)
@@ -341,18 +356,24 @@ class WebexClient(RestApiClient):
         if method != "GET" or data is not None:
             msg = "Webex: this adapter permits only GET data requests"
             raise ValueError(msg)
-        return self._json(self._get_response(endpoint, params), self._resource(endpoint))
+        return self._json(self._get_response(endpoint, params), self.resource_name(endpoint))
 
     def pages(self, endpoint: str, params: dict[str, Any]) -> list[Any]:
         """Read all pages, including empty intermediate pages, without leaking credentials."""
         parts = urlsplit(endpoint)
-        query = [
-            (key, value)
-            for key, value in parse_qsl(parts.query, keep_blank_values=True)
-            if key not in {"before", "after"}
-        ]
-        endpoint = urlunsplit(parts._replace(query=urlencode(query)))
-        params = {key: value for key, value in params.items() if key not in {"before", "after"}}
+        omitted = {key for key, value in params.items() if value is None and key not in {"before", "after"}}
+        path_params = {
+            key: values[0] if len(values) == 1 else values
+            for key, values in parse_qs(parts.query, keep_blank_values=True).items()
+        }
+        params = {
+            key: value
+            for key, value in (path_params | params).items()
+            if value is not None and key not in {"before", "after"}
+        }
+        # Validate and pin the effective organization before stripping the endpoint query.
+        self._url(urlunsplit(parts._replace(query=urlencode(params, doseq=True))))
+        endpoint = urlunsplit(parts._replace(query=""))
         request_start = self.request_count
         pages: list[Any] = []
         seen: set[str] = set()
@@ -362,18 +383,25 @@ class WebexClient(RestApiClient):
             prepared = requests.Request("GET", next_url, params=next_params).prepare()
             fingerprint = prepared.url or next_url
             if fingerprint in seen:
-                msg = f"Webex: {self._resource(endpoint)}: pagination cycle detected"
+                msg = f"Webex: {self.resource_name(endpoint)}: pagination cycle detected"
                 raise ValueError(msg)
             seen.add(fingerprint)
             response = self._get_response(next_url, next_params)
-            pages.append(self._json(response, self._resource(endpoint)))
+            pages.append(self._json(response, self.resource_name(endpoint)))
             link = response.links.get("next", {}).get("url")
-            next_url = self._url(urljoin(next_url, link)) if link else ""
+            if link:
+                linked = urlsplit(urljoin(next_url, link))
+                query = [
+                    (key, value) for key, value in parse_qsl(linked.query, keep_blank_values=True) if key not in omitted
+                ]
+                next_url = self._url(urlunsplit(linked._replace(query=urlencode(query))))
+            else:
+                next_url = ""
             linked_params = parse_qs(urlsplit(next_url).query, keep_blank_values=True)
             next_params = {key: value for key, value in params.items() if key not in linked_params} or None
         logger.info(
             "Webex resource fetched",
-            resource=self._resource(endpoint),
+            resource=self.resource_name(endpoint),
             requests=self.request_count - request_start,
             total_requests=self.request_count,
         )

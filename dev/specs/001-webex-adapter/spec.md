@@ -111,8 +111,8 @@ A partner or managed service provider administers several Webex customer organiz
 - **FR-002c**: Operators MUST be able to ask for the full details of each record with a second request per record, and merge the fields from that request into the record.
 - **FR-003**: The adapter MUST apply the mapping's fields, filters, transforms, identifiers and peer references in the same way as the other adapters in this project.
 - **FR-004**: The adapter MUST read Webex credentials from environment variables or a secret manager, and MUST support two credential types, chosen in the configuration:
-  - A Webex service app: the adapter reads the client ID, client secret and refresh token, obtains an access token, and obtains a new one when the current one expires or Webex returns 401 for an expired token. This is the credential type for scheduled runs.
-  - A fixed access token supplied by the operator, for testing and short runs. The adapter does not renew it.
+    - A Webex service app: the adapter reads the client ID, client secret and refresh token, obtains an access token, and obtains a new one when the current one expires or Webex returns 401 for an expired token. This is the credential type for scheduled runs.
+    - A fixed access token supplied by the operator, for testing and short runs. The adapter does not renew it.
 - **FR-005**: The adapter MUST NOT print, log or include credentials in error messages or tracebacks.
 - **FR-006**: The adapter MUST follow Webex pagination until every record of a resource is loaded.
 - **FR-007**: The adapter MUST wait and retry when Webex returns a rate-limit response, honoring the wait period Webex returns, up to a configured number of retries.

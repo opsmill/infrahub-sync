@@ -55,8 +55,7 @@ class WebexAdapter(GenericrestapiAdapter):
     def _path(cls, template: str, record: dict[str, Any]) -> str:
         return re.sub(r"\{([^{}]+)\}", lambda match: quote(str(cls._field(record, match[1])), safe=""), template)
 
-    def _params(self, options: WebexResource, parent: dict[str, Any]) -> dict[str, str]:
-        self.client._validate_organization()
+    def _params(self, options: WebexResource, parent: dict[str, Any]) -> dict[str, str | None]:
         values = dict(self.client.options.params)
         if self.client.options.org_id is not None:
             values["orgId"] = self.client.options.org_id
@@ -67,7 +66,7 @@ class WebexAdapter(GenericrestapiAdapter):
         values.setdefault("max", options.page_size or self.client.options.page_size)
         if options.page_size is not None:
             values["max"] = options.page_size
-        result: dict[str, str] = {}
+        result: dict[str, str | None] = {}
         for key, raw_value in values.items():
             value = raw_value
             if isinstance(value, dict):
@@ -76,6 +75,7 @@ class WebexAdapter(GenericrestapiAdapter):
                     raise ValueError(msg)
                 value = self._field(parent, value["parent"])
             if value is None:
+                result[key] = None
                 continue
             result[key] = (
                 ",".join(self._query_scalar(item) for item in value)
@@ -134,7 +134,7 @@ class WebexAdapter(GenericrestapiAdapter):
                     continue
                 raise
             for page in pages:
-                page_records = self._extract(page, options.response_key, element.name, self.client._resource(path))
+                page_records = self._extract(page, options.response_key, element.name, self.client.resource_name(path))
                 for index, record in enumerate(page_records, start=len(records)):
                     if record.get("id") is None and not any(key.endswith("_id") for key in record):
                         identity = json.dumps([path, params, index], sort_keys=True)
@@ -144,7 +144,7 @@ class WebexAdapter(GenericrestapiAdapter):
         return records
 
     def _load_details(
-        self, records: list[dict[str, Any]], options: WebexResource, params: dict[str, str], name: str
+        self, records: list[dict[str, Any]], options: WebexResource, params: dict[str, str | None], name: str
     ) -> None:
         if options.details:
             detail_params = {key: value for key, value in params.items() if key != "max"}
@@ -162,7 +162,10 @@ class WebexAdapter(GenericrestapiAdapter):
 
     def model_loader(self, model_name: str, model: type[GenericrestapiModel]) -> None:
         """Fetch, filter and transform records, then use the shared field/peer mapping."""
-        element = next(item for item in self.config.schema_mapping if item.name == model_name)
+        element = next((item for item in self.config.schema_mapping if item.name == model_name), None)
+        if element is None:
+            msg = f"Webex: {model_name}: no schema mapping is configured for this model"
+            raise ValueError(msg)
         options = self.client.options.resources.get(model_name, WebexResource())
         request_start = self.client.request_count
         try:

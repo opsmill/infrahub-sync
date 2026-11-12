@@ -1,1 +1,1 @@
-Added a Webex source adapter with configurable read-only resources, token renewal, pagination and an example mapping locations, workspaces and devices with peer relationships.
+Added a Webex source adapter with configurable read-only resources, token renewal, pagination and an example mapping locations, workspaces and devices with peer relationships. Rate-limit waits are capped by the `max_retry_delay` setting, and `{env: ...}` references are accepted in `org_id` and `params` only; the `*_env` credential settings take environment variable names.
