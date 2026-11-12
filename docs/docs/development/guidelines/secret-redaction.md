@@ -32,7 +32,7 @@ See the [CLI][cli-source], [HTTP client][client-source], [API handlers][api-sour
 implementations. See the [shared execution surface](../knowledge/execution-surface.md)
 for the operations each route supports.
 
-### Build a run's failure record from allowlisted fields
+### Build a run's failure record from a fixed set of fields
 
 A failed run's `results.<stage>_failure` record follows
 [ADR 0021](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0021-a-failure-record-holds-a-structured-cause.md).

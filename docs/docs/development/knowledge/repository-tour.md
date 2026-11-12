@@ -100,7 +100,7 @@ configuration's writes.
 Three service modules carry what a run tells the operator:
 
 - `failure_cause.py` builds the stage failure record: it classifies the error into a
-  `failure_type` and copies allowlisted fields of typed errors (system, Infrahub error code,
+  `failure_type` and copies a fixed set of fields of typed errors (system, Infrahub error code,
   node kind, attribute, record, field). It never copies `str(exc)`; an error class missing from
   its classification table becomes `internal_error`. ADR 0021 records why.
 - `run_artifact.py` builds the markdown artifact the worker publishes on each Prefect flow run,
