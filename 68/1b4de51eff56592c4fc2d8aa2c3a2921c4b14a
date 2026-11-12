@@ -1,0 +1,27 @@
+docs/docs/development/knowledge/incremental-and-cache.md
+  s_d199771aa41449::t_c6e043424288ef 41-48,53-81
+dev/adr/0025-a-warm-source-read-admits-changed-records.md
+  s_d199771aa41449::t_19e91734918e56 1-54
+dev/adr/README.md
+  s_d199771aa41449::t_0340ca72fa64e3 69-72
+changelog/+019-upgrade-steps.changed.md
+  s_d199771aa41449::t_089a27a3c04f08 1
+docs/docs/operations/day-2-operations.mdx
+  s_d199771aa41449::t_089a27a3c04f08 90-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "681b4de51eff56592c4fc2d8aa2c3a2921c4b14a",
+  "prompts": {},
+  "sessions": {
+    "s_d199771aa41449": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "eeae47f7-eedb-4dbb-8c50-81fd90c8a040",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
