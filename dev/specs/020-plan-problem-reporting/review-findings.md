@@ -1,6 +1,6 @@
-# Review findings for spec 019
+# Review findings for spec 020
 
-The review covered `2c7caaee..HEAD` on branch `019-plan-problem-reporting`. It ran these
+The review covered `2c7caaee..HEAD` on branch `020-plan-problem-reporting`. It ran these
 `speckit-review-run` reviews: code (twice: one pass on six named risks, one general pass),
 errors, types, tests, comments and simplify.
 

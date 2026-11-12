@@ -1,6 +1,6 @@
 # Tasks: Plan problem reporting
 
-**Input**: design documents in `dev/specs/019-plan-problem-reporting/`: [spec.md](spec.md),
+**Input**: design documents in `dev/specs/020-plan-problem-reporting/`: [spec.md](spec.md),
 [plan.md](plan.md), [research.md](research.md), [data-model.md](data-model.md),
 [contracts/](contracts/), [quickstart.md](quickstart.md).
 
@@ -186,7 +186,7 @@ the register response holds no redacted content (FR-034 to FR-038).
 (FR-033). Depends on Phase 3.
 
 - [X] T071 [US6] Add the device status translation transform, reading the choices from the pinned schema, in `examples/netbox_to_infrahub/package.yml` (research R18)
-- [X] T072 [US6] Run the `from-netbox` check on the pinned `demo` dataset; record whether the two same-named devices are written or listed, and the plan time before and after this feature (research R18, R19), in `dev/specs/019-plan-problem-reporting/opsmill-implement-report.md`
+- [X] T072 [US6] Run the `from-netbox` check on the pinned `demo` dataset; record whether the two same-named devices are written or listed, and the plan time before and after this feature (research R18, R19), in `dev/specs/020-plan-problem-reporting/opsmill-implement-report.md`
 - [X] T073 [US6] State in `examples/netbox_to_infrahub/README.md` which #374 cases are written by the mapping and which are listed as problems (SC-008)
 
 ## Phase 9: Polish and cross-cutting
@@ -196,7 +196,7 @@ the register response holds no redacted content (FR-034 to FR-038).
 - [X] T076 [P] Update `docs/docs/development/knowledge/orchestration-prefect.md` and `docs/docs/development/knowledge/repository-tour.md` for the new modules, the stopped `sync` and the artifact lines
 - [X] T079 [P] Find the tests on `feature/v3-develop` that prove old FR-004 (a plan writes nothing to the destination) and old FR-013 (a rejected write stops the apply); if a case has no test, add one
 - [X] T080 SIGN-OFF gate (merge blocker, not implementation work): the product owner accepts ADR 0020, ADR 0021 and ADR 0022, written with the status Proposed (decision 3 of 2026-11-11). Leave unticked until that sign-off is recorded
-- [X] T077 Run the full quickstart (offline and live), the required workflow of AGENTS.md, and the CLI sanity commands; record results in `dev/specs/019-plan-problem-reporting/opsmill-implement-report.md`
+- [X] T077 Run the full quickstart (offline and live), the required workflow of AGENTS.md, and the CLI sanity commands; record results in `dev/specs/020-plan-problem-reporting/opsmill-implement-report.md`
 
 ## Dependencies and execution order
 

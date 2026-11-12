@@ -2,9 +2,9 @@
 
 **Status**: Accepted
 **Date**: 2026-11-12
-**Source**: `dev/specs/019-plan-problem-reporting/spec.md` (FR-014 to FR-020, FR-029, FR-030),
-`dev/specs/019-plan-problem-reporting/research.md` (R12, R13, R14),
-`dev/specs/019-plan-problem-reporting/data-model.md` ("Stage failure record additions")
+**Source**: `dev/specs/020-plan-problem-reporting/spec.md` (FR-014 to FR-020, FR-029, FR-030),
+`dev/specs/020-plan-problem-reporting/research.md` (R12, R13, R14),
+`dev/specs/020-plan-problem-reporting/data-model.md` ("Stage failure record additions")
 
 This record replaces the rule "a class name, never a message" that a comment in
 `_failure_evidence` (`infrahub_sync/service/flow.py`) stated before this decision. It keeps

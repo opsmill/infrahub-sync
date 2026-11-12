@@ -1,6 +1,6 @@
 # Feature Specification: Plan problem reporting
 
-**Feature Branch**: `019-plan-problem-reporting`
+**Feature Branch**: `020-plan-problem-reporting`
 
 **Created**: 2026-11-11
 

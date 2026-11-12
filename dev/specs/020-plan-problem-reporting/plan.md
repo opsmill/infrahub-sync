@@ -1,8 +1,8 @@
 # Implementation Plan: Plan problem reporting
 
-**Branch**: `019-plan-problem-reporting` | **Date**: 2026-11-11 | **Spec**: [spec.md](spec.md)
+**Branch**: `020-plan-problem-reporting` | **Date**: 2026-11-11 | **Spec**: [spec.md](spec.md)
 
-**Input**: Feature specification from `dev/specs/019-plan-problem-reporting/spec.md`
+**Input**: Feature specification from `dev/specs/020-plan-problem-reporting/spec.md`
 
 ## Summary
 
@@ -87,7 +87,7 @@ Post-design check: unchanged. The design adds one product-store table and no ser
 ### Documentation (this feature)
 
 ```text
-dev/specs/019-plan-problem-reporting/
+dev/specs/020-plan-problem-reporting/
 ├── spec.md
 ├── plan.md
 ├── research.md          # R1 to R20, drafts of ADR 0020, 0021, 0022

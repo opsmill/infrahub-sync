@@ -2,8 +2,8 @@
 
 **Status**: Accepted
 **Date**: 2026-11-12
-**Source**: `dev/specs/019-plan-problem-reporting/research.md` (R9, R14),
-`dev/specs/019-plan-problem-reporting/contracts/plan-artifact-format-4.md`
+**Source**: `dev/specs/020-plan-problem-reporting/research.md` (R9, R14),
+`dev/specs/020-plan-problem-reporting/contracts/plan-artifact-format-4.md`
 
 ## Context
 

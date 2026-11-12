@@ -1,10 +1,10 @@
-# Spec 019 implementation report
+# Spec 020 implementation report
 
 ## Summary
 
 - Feature: plan problem reporting, the rebuild of old specification 009 on `feature/v3-develop`.
-- Specification directory: `dev/specs/019-plan-problem-reporting/`.
-- Branch: `019-plan-problem-reporting`, from base commit `ea83a248`. Head commit: the commit
+- Specification directory: `dev/specs/020-plan-problem-reporting/`.
+- Branch: `020-plan-problem-reporting`, from base commit `ea83a248`. Head commit: the commit
   that adds this report. 57 commits before it, 199 files changed. Nothing is pushed.
 - Status: DONE. All 83 tasks of `tasks.md` are ticked. The unit tier passes. Two strict expected
   failures record a known gap (see "Known gap: some problems of one record are not listed").
@@ -138,7 +138,7 @@ The `from-netbox` example check ran on 2026-11-12 on the pinned `demo` dataset
 Each side used a fresh preview stack with new volumes, the same NetBox and the same schema
 snapshot (`tests/data/nightly_schema/`, identical on both commits).
 
-- After: branch `019-plan-problem-reporting` at `d80ed043`.
+- After: branch `020-plan-problem-reporting` at `d80ed043`.
 - Before: `feature/v3-develop` at `ea83a248`, in a temporary detached worktree with its own
   `uv sync --extra dev --extra prefect --extra service`. The worktree was removed afterwards.
 
@@ -269,7 +269,7 @@ The `hivemind*` containers were not stopped or changed.
 
 ## T077 — verification
 
-Run on 2026-11-11 in the worktree on branch `019-plan-problem-reporting`, with the full
+Run on 2026-11-11 in the worktree on branch `020-plan-problem-reporting`, with the full
 development profile (`uv sync --extra dev --extra prefect --extra service`), after the
 documentation and test changes of T074 to T079.
 
@@ -278,9 +278,9 @@ documentation and test changes of T074 to T079.
 | Command | Result |
 | --- | --- |
 | `uv run invoke format` | exit 0 |
-| `uv run invoke lint` | exit 0; Pylint passed (0 diagnostics, score 10.0); ty reports the 20 `unused-ignore-comment` warnings that were there before spec 019's last chunks, and no error |
+| `uv run invoke lint` | exit 0; Pylint passed (0 diagnostics, score 10.0); ty reports the 20 `unused-ignore-comment` warnings that were there before spec 020's last chunks, and no error |
 | `uv run ruff check .` | exit 0, `All checks passed!` |
-| `uv run ty check .` | exit 0, 20 warnings (`unused-ignore-comment`, files not touched by spec 019), no error |
+| `uv run ty check .` | exit 0, 20 warnings (`unused-ignore-comment`, files not touched by spec 020), no error |
 | `uv run invoke tests.tests-unit` | exit 0, `7365 passed, 4 skipped, 285 deselected, 5 xfailed, 9 warnings in 215.22s (0:03:35)`, finished 2026-11-11T06:57:19Z |
 | `uv run rumdl check` on the changed Markdown files | `No issues found` |
 | `uv run invoke docs.lint` | exit 0, rumdl `No issues found in 144 files` |
@@ -293,7 +293,7 @@ The five expected failures:
 - four strict `xfail` tests in `tests/plan/test_warm_read_problems.py`, which recorded that a warm
   incremental read did not record problems (T081, deferred then; done on 2026-11-12, research
   R22, and the markers are removed);
-- `tests/compose/test_image_pins.py`, which belongs to the preview stack, not to spec 019.
+- `tests/compose/test_image_pins.py`, which belongs to the preview stack, not to spec 020.
 
 ### CLI sanity
 
@@ -327,7 +327,7 @@ The offline checks of `quickstart.md` are the three commands above (`tests.tests
 ### Live quickstart checks
 
 The live steps 1 to 5 of `quickstart.md` ran on 2026-11-12 on branch
-`019-plan-problem-reporting` at `f09a1f3f`. Every expectation held, so T077 is ticked.
+`020-plan-problem-reporting` at `f09a1f3f`. Every expectation held, so T077 is ticked.
 
 #### Step 1: stacks, schema, package and branch
 

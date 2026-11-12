@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-11-12
-**Source**: `dev/specs/019-plan-problem-reporting/research.md` (R22)
+**Source**: `dev/specs/020-plan-problem-reporting/research.md` (R22)
 
 ## Context
 
