@@ -18,6 +18,7 @@ rendered from one fixed template per problem type over typed fields (research R1
 from __future__ import annotations
 
 import logging
+from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -311,8 +312,6 @@ class _Findings:
     not_loaded_peer: list[tuple[_RecordKey, LoadReportEntry]] = field(default_factory=list)
     # Optional references to a peer that was not built: the record is kept.
     not_loaded_optional: list[tuple[_RecordKey, LoadReportEntry]] = field(default_factory=list)
-    # Identities that two or more Infrahub nodes hold, by kind (`destination_identity_ambiguous`).
-    ambiguous: set[tuple[str, bytes]] = field(default_factory=set)
 
     def add(self, problem: PlanProblem, keys: Iterable[_RecordKey], *, leaves_out: bool = True) -> None:
         self.problems.append(problem)
@@ -466,8 +465,6 @@ def _destination_ambiguity_problems(
         else:
             identity = _destination_identity(destination, ambiguity.kind, ambiguity.identity, config)
             reference, keys = SourceRecordReference(kind=ambiguity.kind, identity=identity), []
-        if reference.identity is not None:
-            findings.ambiguous.add((ambiguity.kind, _identity_bytes(reference.identity)))
         problem = _problem(
             "destination_identity_ambiguous",
             reference,
@@ -561,9 +558,9 @@ def _walk(  # pylint: disable=too-many-arguments  # the walk's inputs, all keywo
         )
     referrers = _referrers(source=source, view=view, config=config)
     optional: list[tuple[_RecordKey, str, _RecordKey]] = []
-    pending = sorted(left)
+    pending = deque(sorted(left))
     while pending:
-        target = pending.pop(0)
+        target = pending.popleft()
         for referrer, field_name in referrers.get(target, ()):
             if referrer in left:
                 continue

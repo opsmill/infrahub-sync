@@ -999,8 +999,11 @@ class PlanReport:
         return cls(problems=tuple(problems), left_out=tuple(left_out), kept=tuple(kept))
 
     def summary_counts(self) -> dict[str, Any]:
-        """The plan summary counts of this report (FR-007, FR-008; data-model.md "Plan summary additions")."""
-        record = self.record()
+        """The plan summary counts of this report (FR-007, FR-008; data-model.md "Plan summary additions").
+
+        Counted from the records, as `record` counts them, without encoding and hashing the report.
+        """
+        with_problem = sum(1 for item in self.left_out if item.cause == "has_problem")
         left_out_by_kind: dict[str, int] = {}
         for item in self.left_out:
             left_out_by_kind[item.record.kind] = left_out_by_kind.get(item.record.kind, 0) + 1
@@ -1008,13 +1011,13 @@ class PlanReport:
         for problem in self.problems:
             problems_by_type[problem.problem_type] = problems_by_type.get(problem.problem_type, 0) + 1
         return {
-            "left_out": record.left_out,
-            "left_out_with_problem": record.left_out_with_problem,
-            "left_out_dependent": record.left_out_dependent,
+            "left_out": len(self.left_out),
+            "left_out_with_problem": with_problem,
+            "left_out_dependent": len(self.left_out) - with_problem,
             "left_out_by_kind": dict(sorted(left_out_by_kind.items())),
-            "problems": record.problems,
+            "problems": len(self.problems),
             "problems_by_type": dict(sorted(problems_by_type.items())),
-            "kept": record.kept,
+            "kept": len(self.kept),
             "deletes_withheld_by_kind": self.deletes_withheld_by_kind(),
         }
 
