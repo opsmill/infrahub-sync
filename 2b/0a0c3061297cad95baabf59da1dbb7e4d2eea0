@@ -1,0 +1,67 @@
+tests/dev_stack/test_netbox_network.py
+  s_3defe6e8bcd0ab::t_af881d4b38b6dc 108,179,184,193,218,281
+  s_3defe6e8bcd0ab::t_e67bcd78ad8e32 173
+  s_3defe6e8bcd0ab::t_5267d6f3dd6478 230
+tasks/netbox.py
+  s_3defe6e8bcd0ab::t_2cff6ad7a83d8b 3,14,19,21,122-124,464-465,508-510,516,525-526
+development/docker-compose.yml
+  s_3defe6e8bcd0ab::t_970a1f5e8ae3be 5,41-42,47,51
+tasks/tests.py
+  s_3defe6e8bcd0ab::t_3d414391e77b45 10-11,74-109,113-141
+  s_3defe6e8bcd0ab::t_5267d6f3dd6478 110-112
+tasks/__init__.py
+  s_3defe6e8bcd0ab::t_3d414391e77b45 5,23
+tests/test_netbox_tasks.py
+  s_3defe6e8bcd0ab::t_af881d4b38b6dc 203,217
+docs/docs/creating-a-sync-project.mdx
+  s_3defe6e8bcd0ab::t_591e64e6cb5978 98
+pyproject.toml
+  s_3defe6e8bcd0ab::t_970a1f5e8ae3be 468
+.github/workflows/workflow-linter.yml
+  s_3defe6e8bcd0ab::t_2f16539f8bc5c4 184
+tasks/dev.py
+  s_3defe6e8bcd0ab::t_623fdeac871460 32-34
+tests/test_task_inventory.py
+  s_3defe6e8bcd0ab::t_e9287905bb3a62 1-100
+tests/dev_stack/test_compose_valid.py
+  s_3defe6e8bcd0ab::t_af881d4b38b6dc 72
+.github/workflows/workflow-tests.yml
+  s_3defe6e8bcd0ab::t_970a1f5e8ae3be 78
+docs/docs/contributing.mdx
+  s_3defe6e8bcd0ab::t_591e64e6cb5978 119,126,158-160,163-165,168-172
+  s_3defe6e8bcd0ab::t_15afac67813116 173
+README.md
+  s_3defe6e8bcd0ab::t_b0a3c90e631a3b 77,81,84-86,92,101,105-107,110-112,114
+.gitignore
+  s_3defe6e8bcd0ab::t_36dfd308ffa578 38-39
+dev/specs/010-prefect-from-sync-image/tasks.md
+  s_3defe6e8bcd0ab::t_1b576d9d3bc92c 122,133-134,213
+docs/docs/development/guidelines/testing-tiers.md
+  s_3defe6e8bcd0ab::t_8a6c19f21c5816 38,635,638,648
+tasks/bench.py
+  s_3defe6e8bcd0ab::t_2cff6ad7a83d8b 360
+tests/cli/test_parity_and_closure.py
+  s_3defe6e8bcd0ab::t_bba6e172b99e6c 344
+tests/test_benchmark_runner.py
+  s_3defe6e8bcd0ab::t_2f16539f8bc5c4 1203,1332,1364
+tests/dev_stack/test_infrahub_network.py
+  s_3defe6e8bcd0ab::t_af881d4b38b6dc 5,92
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_3defe6e8bcd0ab::t_bba6e172b99e6c 177,180,183-184,203-204,228,435,438,466,472,482,484-486
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2b0a0c3061297cad95baabf59da1dbb7e4d2eea0",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
