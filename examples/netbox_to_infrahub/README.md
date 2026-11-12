@@ -107,8 +107,9 @@ How these statements are verified:
       these devices, because both `DcimDevice` entries leave out every device whose name
       contains `PP:`. The plan neither writes nor lists them.
 
-  The plan has 1,688 operations, no problems and no left-out records. So on this dataset only
-  the unit tests above verify the rack position and the same-name cases.
+  The plan has 1,688 operations, no problems and no left-out records. The check therefore did
+  not exercise the rack position and the same-name cases; the unit tests above are the only
+  verification of those two cases.
 
 ## Current limitations
 

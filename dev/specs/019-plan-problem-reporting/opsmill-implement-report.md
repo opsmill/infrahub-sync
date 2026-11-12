@@ -62,14 +62,18 @@ worker log (start and end of the flow run `Plan sync of from-netbox`).
 | Destination read (Infrahub) | 3.13 s | 3.21 s |
 | `plan` command, submit to summary | 15.2 s | 13.0 s |
 
-The two sides differ by less than half a second on each measure. Each side ran once, so this
-check does not show whether that difference is larger than the difference between two runs
-of the same commit.
+The plan flow run and the two reads differ by less than half a second between the two sides.
+The `plan` command took 2.2 s longer before than after; this time includes the wait until the
+Prefect worker picks up the flow run, and the cause of the difference is not known. Each side
+ran once, so this check does not show whether either difference is larger than the difference
+between two runs of the same commit.
 
 ### Operations, problems and left-out records
 
-Both sides planned the same operations: 1,688 operations, 1,687 creates and one delete (the
-`IpamNamespace` `default` node, which apply does not execute). This equals the count in
+Both sides planned the same operations: 1,688 operations, 1,687 creates and one delete, which apply does not
+execute. The delete is of kind `IpamNamespace`: the destination read found one `IpamNamespace`
+node before the import, presumably the `default` namespace; the check did not view the
+operation's identity. This equals the count in
 `testing-tiers.md`.
 
 Operations per kind: `BuiltinTag` 26, `DcimCircuit` 29, `DcimDevice` 44, `DcimDeviceType` 14,
@@ -105,7 +109,8 @@ from the after plan.
 - Rack position that is not a whole number: no device has one. No `wrong_value_type` problem
   is reported.
 - Device status other than `active`: all 72 devices are `active`. The `device_status`
-  transform changes no value in this dataset, so the before and after plans are the same.
+  transform changes no value in this dataset, and the before and after plans have the same
+operation counts per kind and action.
 
 ### Apply
 
@@ -116,8 +121,8 @@ not run `apply --confirm-left-out` or `sync`, and it did not observe the refusal
 
 Object count per kind on the `netbox-import` branch after apply (GraphQL `count` of each kind):
 every kind equals its planned operations, 1,688 objects in total. `IpamNamespace` has 7
-objects: the 6 created namespaces and the `default` namespace, which the delete operation
-names and apply does not delete.
+objects: the 6 created namespaces and the namespace that was there before the import, which
+the delete operation names and apply does not delete.
 
 ### Product bugs
 
