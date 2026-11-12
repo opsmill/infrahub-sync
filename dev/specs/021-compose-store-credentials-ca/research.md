@@ -233,7 +233,10 @@ value shorter than six characters is not masked there (decision 2 of the spec).
 **What the sources say**:
 
 - The tier runs only in the `compose-suite` job of `.github/workflows/workflow-nightly-e2e.yml:189-254`,
-  on `ubuntu-22.04`, with `-x`, once a night.
+  on `ubuntu-22.04`, with `-x`. Despite its name, the workflow has no schedule: it starts only through
+  `workflow_dispatch` with a commit SHA (`:5-11`), and no other workflow calls it. The file exists on
+  `feature/v3-develop` but not on `main`. GitHub starts a `workflow_dispatch` workflow only when the
+  file exists on the default branch, so how the existing runs were started is not known.
 - One cause was fixed: commit `bbdd103e` "Make the Compose preflight interruption test tolerate a busy
   machine".
 - No record of other failures was found in the repository.
@@ -251,7 +254,9 @@ value shorter than six characters is not masked there (decision 2 of the spec).
 
 **Decision**: the first lifecycle task adds a manual dispatch with a repeat count and an architecture
 choice to `workflow-nightly-e2e.yml`, and runs the tier 10 times on each architecture before any
-reliability change. The repeats run as a matrix of parallel jobs, each one full tier run on a fresh
+reliability change. Before that, T039 finds out how to start the workflow from a branch other than `main`; if it
+cannot be dispatched, the repeat runs use a `pull_request` trigger limited to a label on this
+branch's pull request, recorded here. The repeats run as a matrix of parallel jobs, each one full tier run on a fresh
 runner, so no run exceeds the job time limit and a project left over from one run cannot affect the
 next (critique E6). Each failure is classified and recorded in this file under "Lifecycle failure
 causes" with its fix and test. SC-006 is then measured with the same dispatch after the changes. The
@@ -293,8 +298,9 @@ then); creating the release after the image (reorders the release process of ADR
 **Decision**: `development/docker-compose.yml:96` names `postgres:16-alpine` with the `sha256` digest
 of its multi-architecture index, resolved with `docker buildx imagetools inspect` at implementation
 time and checked to list linux/amd64 and linux/arm64. `test_every_image_other_than_sync_is_named_by_digest`
-(`tests/compose/test_compose_contract.py:636`) runs over every compose file in the repository, not only
-the root file. The root file's PostgreSQL pin is the reference for the tag.
+(`tests/compose/test_compose_contract.py:636`) runs over the root file, its packaged copy and
+`development/docker-compose.yml`. The Infrahub fixture files, the NetBox file and the preview file
+are out of scope (spec FR-023). The root file's PostgreSQL pin is the reference for the tag.
 
 ## R9. Packaged copy of the root compose file
 

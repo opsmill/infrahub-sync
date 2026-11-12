@@ -120,7 +120,7 @@ external store runs. US5 (released image) is independent.
 
 ### Reliability (FR-019, FR-020)
 
-- [ ] T039 [US4] Add to `.github/workflows/workflow-nightly-e2e.yml` a `workflow_dispatch` input for a repeat count and an architecture choice; the `compose-suite` job runs as a matrix over `runner: [ubuntu-22.04, ubuntu-24.04-arm]` and `repeat`, each entry one full tier run without `-x`; add a workflow contract test in `tests/test_workflow_contracts.py`
+- [ ] T039 [US4] Find out how `workflow-nightly-e2e.yml` can be started from a branch other than `main` (it has only a `workflow_dispatch` trigger and is not on `main`; research R6); if it cannot, add a `pull_request` trigger limited to a label; record the answer in `research.md` R6. Then add to `.github/workflows/workflow-nightly-e2e.yml` a `workflow_dispatch` input for a repeat count and an architecture choice; the `compose-suite` job runs as a matrix over `runner: [ubuntu-22.04, ubuntu-24.04-arm]` and `repeat`, each entry one full tier run without `-x`; add a workflow contract test in `tests/test_workflow_contracts.py`
 - [ ] T040 [US4] Dispatch the workflow with a repeat count of 10 on both architectures before any reliability change; record every failure, its job link and its class (C1 to C4 of research R6 or new) in `dev/specs/021-compose-store-credentials-ca/research.md` under "Lifecycle failure causes"; if the arm64 runner cannot run the tier, record it and apply the plan's arm64 risk fallback
 - [ ] T041 [US4] Fix or remove each cause found in T040 in `tests/compose/lifecycle.py`, `tests/compose/conftest.py` or the test module concerned, one commit per cause, and record the fix and the test that shows it in `research.md`
 - [ ] T042 [US4] Dispatch the workflow again with a repeat count of 10 on both architectures and record the result in `research.md` (SC-006)
@@ -146,7 +146,7 @@ external store runs. US5 (released image) is independent.
 ## Phase 8: Image pins (FR-023, FR-024)
 
 - [ ] T050 [P] Resolve the `sha256` digest of the multi-architecture index of `postgres:16-alpine` with `docker buildx imagetools inspect`, check it lists linux/amd64 and linux/arm64, and pin it in `development/docker-compose.yml:96` (decision 3)
-- [ ] T051 Make `test_every_image_other_than_sync_is_named_by_digest` (`tests/compose/test_compose_contract.py:636`) run over every compose file in the repository
+- [ ] T051 Make `test_every_image_other_than_sync_is_named_by_digest` (`tests/compose/test_compose_contract.py:636`) run over the root file, `infrahub_sync/testcontainers/docker-compose.yml` and `development/docker-compose.yml` (FR-023)
 - [ ] T052 [P] Check `tests/compose/test_image_pins.py` covers the development PostgreSQL pin
 - [ ] T053 If T001 found specification 010 "PR 2" unmerged, keep the strict `xfail` on the preview file and note it in the PR description
 

@@ -6,10 +6,10 @@
 
 **Status**: Draft
 
-**Release**: the V3 testing release. Specification 010 names the items of this specification
-"the remaining 3.0 blockers listed under Jira card INFP-692"
-([010 spec.md](../010-prefect-from-sync-image/spec.md), Summary and decision D-4). Work this
-specification names as out of scope belongs to 3.0 or 3.x.
+**Release**: not settled. Old specification 013 placed these items in the testing release.
+Specification 010 calls them "the remaining 3.0 blockers listed under Jira card INFP-692"
+([010 spec.md](../010-prefect-from-sync-image/spec.md), Summary and decision D-4). No source says
+which of the two releases they ship in.
 
 **Input**: rebuild of what is left of old specification 013 "Fewer images in the Compose
 deployment" on `feature/v3-develop` at `7d7aabba`. Specification 010 calls itself "the first of
@@ -72,8 +72,12 @@ Specification 010 and specification 007 delivered most of old 013:
 ### What OpsMill engineers and evaluators cannot do today
 
 - Rely on the compose lifecycle tier as a regression check. It fails at random; one cause was
-  fixed (commit `bbdd103e`), and whether other causes remain is not known. CI runs the tier once a
-  night on linux/amd64 only (`.github/workflows/workflow-nightly-e2e.yml:191`, `:254`).
+  fixed (commit `bbdd103e`), and whether other causes remain is not known. The tier runs only in
+  the `compose-suite` job of `.github/workflows/workflow-nightly-e2e.yml` (`:189-254`), on
+  linux/amd64 only. That workflow starts only through `workflow_dispatch` with a commit SHA, and the
+  file exists on `feature/v3-develop` but not on `main`. GitHub starts a `workflow_dispatch` workflow
+  only when the file exists on the default branch, so how these runs are started today is not
+  known.
 - Pull the released image by digest from the release notes. `ci-docker-image.yml` outputs the
   digest (`:45-47`), but the release body holds only the changelog section
   (`.github/workflows/release-publish.yml:124-139`). The documented `cosign` check accepts any
@@ -479,8 +483,13 @@ SBOM commands.
 
 #### Image pins
 
-- **FR-023**: Every compose file in the repository MUST name every image other than the Sync image
-  with a `sha256` digest.
+- **FR-023**: The root compose file, its packaged copy
+  (`infrahub_sync/testcontainers/docker-compose.yml`) and `development/docker-compose.yml` MUST name
+  every image other than the Sync image with a `sha256` digest. Out of scope: the Infrahub fixture
+  files (`development/docker-compose.infrahub.yml`, `development/docker-compose.infrahub-ports.yml`),
+  which `update-infrahub.yml` maintains; the NetBox file
+  (`development/netbox/docker-compose.netbox.yml`), already pinned; and the preview file, which
+  specification 010 deletes.
 - **FR-024**: `development/docker-compose.yml` MUST pin its PostgreSQL image by the `sha256` digest
   of its multi-architecture index (decision 3).
 
@@ -496,7 +505,7 @@ SBOM commands.
     pages use and a name for each credential setting in the adapter capability registry
   - the CA setting of FR-011 reaches `sync-bootstrap`, `sync-api` and `sync-worker`, and only
     them
-  - every image other than the Sync image is pinned by digest in every compose file (FR-023)
+  - every image other than the Sync image is pinned by digest in the three files of FR-023
 - **FR-026**: The image tests (`tests/image`) MUST check that the Sync image starts the Prefect
   server with a read-only root filesystem and serves `/api/health`.
 - **FR-027**: A decision record MUST record the external store and CA settings and how they fit
@@ -542,7 +551,7 @@ SBOM commands.
 - **SC-007**: The release notes of the next release name the Sync image digest, and that digest
   pulls the image and its SBOM from `registry.opsmill.io`.
 - **SC-008**: The compose contract tests find zero images other than the Sync image without a
-  digest across every compose file in the repository.
+  digest across the three compose files of FR-023.
 
 ## Assumptions
 

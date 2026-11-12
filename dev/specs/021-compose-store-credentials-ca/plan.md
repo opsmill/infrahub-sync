@@ -167,6 +167,19 @@ changelog/+compose-store-credentials-ca.added.md
   when the bundled store runs. A team network that resolves that name otherwise is not known; the
   guard message names the setting to change.
 
+## Open questions for implementation
+
+These test fixtures are not decided by any source. The task that needs each one decides it and
+records the choice in `research.md`:
+
+- which S3-compatible server stands in for the external store, and how a virtual-hosted bucket name
+  resolves inside the test network (T016); FR-007 then names that server in the documentation
+- which server accepts a second create-only write, for the negative check (T017)
+- whether a recorded ACI server exists for the lifecycle tier, or which stand-in answers the ACI
+  calls (T023)
+- how Infrahub and a NetBox stand-in are served over TLS from the test CA (T033)
+- how `workflow-nightly-e2e.yml` is started from a branch other than `main` (T039)
+
 ## Complexity Tracking
 
 No constitution violation to justify.
