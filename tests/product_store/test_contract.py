@@ -102,6 +102,7 @@ EXPECTED_PUBLIC_NAMES = {
     "WriteAdmissionConflictError",
     "local_product_projection",
     "production_product_projection",
+    "run_apply_progress",
 }
 
 

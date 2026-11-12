@@ -43,6 +43,7 @@ from infrahub_sync.product_store.store import (
     WriteAdmissionConflictError,
     local_product_projection,
     production_product_projection,
+    run_apply_progress,
 )
 
 __all__ = (
@@ -86,4 +87,5 @@ __all__ = (
     "WriteAdmissionConflictError",
     "local_product_projection",
     "production_product_projection",
+    "run_apply_progress",
 )
