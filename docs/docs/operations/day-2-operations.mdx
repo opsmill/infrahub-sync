@@ -87,9 +87,13 @@ changes these steps of an image change:
   to this new table, never their values. Each worker restart adds a row under a new worker name,
   and the rows of earlier worker processes stay in the table. If you return to an earlier
   image, the table stays in the database and the earlier release does not read it.
-- Warm incremental reads: a source adapter that reads only the records changed since the
-  last run does not check those records for problems. No adapter bundled with Sync reads this
-  way; a custom adapter that defines `safe_cursor_before_load` does.
+- Warm incremental reads: no adapter bundled with Sync reads only the records changed since
+  the last run, and the Sync API and the Prefect flow always read every record. A custom
+  source adapter that defines `safe_cursor_before_load` reads this way only when it also
+  implements `list_changed_records`; it then checks the changed records for problems as a
+  full read does. Without `list_changed_records`, it reads every record. A source snapshot
+  saved by an earlier release has no source record IDs, so the first run after the upgrade
+  reads each kind in full once.
 
 No in-place upgrade or return to an earlier release is verified; see
 [Supported platforms and limits](./supported-platforms-and-limits.mdx).

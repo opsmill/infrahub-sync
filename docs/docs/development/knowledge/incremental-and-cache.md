@@ -38,19 +38,47 @@ The extraction methods are layered on top of the full read, which `list_records`
 
 - `cursor_tier_for(model_name)` — declare eligibility for a model. A tier alone does not
   establish a safe cursor.
-- `list_changed_since(model_name, cursor)` — **required when the tier is not `NONE`.** Yield
-  the model data of the records changed since `cursor`: filtered, transformed and converted
-  with `record_to_data`. `DiffSyncMixin` raises `NotImplementedError` until you override it.
+- `list_changed_records(model_name, element, cursor)` — **required for a warm read of the
+  source.** Return the raw records of the mapping entry changed since `cursor`, before any
+  filter, as `list_records` returns them for a full read. A source adapter without it reads
+  every kind in full, even with a safe cursor.
+- `list_changed_since(model_name, cursor)` — **required for a warm read of the destination,
+  and of a source that does not inherit `DiffSyncMixin`.** Yield the model data of the records
+  changed since `cursor`: filtered, transformed and converted with `record_to_data`.
+  `DiffSyncMixin` raises `NotImplementedError` for both methods until you override them.
 - `list_existing_ids(model_name)` — optional. Yield the current `unique_id` strings present
   in the source so deletions can be detected between runs. Without it, a warm run cannot tell
   that an object disappeared.
 
-A warm read does not pass the changed records through `load_record`, so it does not record
-the problems a full read records: a transform that fails or a required peer that is not stored
-stops the read, and a changed record with the identity of a stored record is merged into it.
-The source snapshot holds no source record ID, so a changed record cannot resolve a reference
-to an unchanged peer. Spec 019 task T081 tracks this. No bundled adapter defines
-`safe_cursor_before_load`, so no bundled source reads warm today.
+#### A warm source read reports the problems of a full read
+
+For a source that inherits `DiffSyncMixin`, `Potenda._load_source_kinds` reads each kind as
+follows (spec 019 research R22):
+
+1. The kind reads warm only when the adapter implements `list_changed_records`, the previous
+   run's snapshot of the kind is marked complete, and no peer kind the kind references (the
+   `reference` of its mapping fields) was read with problems earlier in this read. Otherwise
+   it reads in full, and the reason is logged.
+2. A warm read rebuilds the kind from the snapshot (`restore_record`, which also indexes each
+   record's source record ID), then passes the changed records to `load_changed_records`. Each
+   changed record first replaces the stored record with the same source record ID; the
+   configured filters run, and each record goes through `load_record`, as in a full read.
+3. When the warm read records a load report entry or a filtered record, the kind's records
+   and what its read recorded are discarded (`discard_kind`), and the kind is read in full.
+   A kind whose read records an entry makes the later kinds that reference it read in full.
+
+The source snapshot of such an adapter carries a `local_id` column (the source record ID) and
+the Parquet metadata key `infrahub_sync.source_read`. Its value is `complete` when the read of
+the kind recorded no load report entry and no filtered record and every row has a source
+record ID, and `incomplete` otherwise. A snapshot written before this key existed has no key:
+the kind reads in full once, and the next snapshot carries the key. The plan's own problems
+(identities that merge in the destination, the dependency walk) are computed from the source
+store at plan time, which holds the same records after a warm read as after a full read.
+
+A source that does not inherit `DiffSyncMixin` keeps the earlier warm path
+(`apply_changed_rows`) and snapshot shape: it records no load report. A warm destination read
+does not record `destination_identity_ambiguities`. No bundled adapter defines
+`safe_cursor_before_load` or `list_changed_records`, so no bundled source reads warm today.
 
 `CursorState` (also in `cache/cursors.py`) carries the tier and the saved value (a timestamp
 or opaque watermark) from the previous run. Its `safe` flag defaults to `False`.

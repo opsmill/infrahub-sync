@@ -66,6 +66,10 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why a stage's last log line and run summary artifact are written after the outcome is
   stored, where their outcome and next action come from, what the artifact may contain, and
   why a recorded verdict is the reported state.
+- [0025 — A warm source read admits its changed records and reads a kind in full after a problem](0025-a-warm-source-read-admits-changed-records.md)
+  — **Proposed** — why the source snapshot stores the source record ID and a completeness
+  marker, and why a kind with a problem is read in full, so a warm read reports the problems
+  of a full read.
 
 ## Related
 
