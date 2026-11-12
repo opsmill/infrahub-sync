@@ -314,6 +314,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Events
+         * @description Return one page of typed events, oldest first, that match every given filter.
+         */
+        get: operations["list_events_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Run Logs
+         * @description Return one page of the lines Sync wrote during the run, oldest first.
+         */
+        get: operations["read_run_logs_runs__run_id__logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -520,6 +560,79 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * EventPage
+         * @description One page of the event list, oldest first; ``has_more`` says whether events follow the page.
+         */
+        EventPage: {
+            /** Items */
+            items: components["schemas"]["EventResource"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Has More */
+            has_more: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * EventPrimaryResource
+         * @description The resource an event is about: its run, or else its configuration.
+         *
+         *     ``kind`` is a plain string so the client still reads a kind a newer server adds.
+         */
+        EventPrimaryResource: {
+            /** Kind */
+            kind: string;
+            /** Id */
+            id: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * EventRelatedResource
+         * @description One resource an event names besides its primary resource, such as ``account:alice`` or ``branch:main``.
+         */
+        EventRelatedResource: {
+            /** Kind */
+            kind: string;
+            /** Id */
+            id: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * EventResource
+         * @description One typed event: a Sync API decision or a stage result, with the resources it names.
+         */
+        EventResource: {
+            /** Event Id */
+            event_id: string;
+            /** Event Type */
+            event_type: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /** Actor */
+            actor: string;
+            /** Operation */
+            operation: string;
+            /** Outcome */
+            outcome: string;
+            /** Reason */
+            reason?: string | null;
+            primary_resource?: components["schemas"]["EventPrimaryResource"] | null;
+            /**
+             * Related
+             * @default []
+             */
+            related: components["schemas"]["EventRelatedResource"][];
+        } & {
+            [key: string]: unknown;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -560,6 +673,9 @@ export interface components {
             terminal_state: ("completed" | "failed" | "cancelled" | "abandoned" | "interrupted") | null;
             /** Terminal Outcome */
             terminal_outcome: ("succeeded" | "failed" | "cancelled" | "abandoned" | "ambiguous") | null;
+            /** Prefect Flow Run Url */
+            prefect_flow_run_url?: string | null;
+            reads?: components["schemas"]["StageReads"] | null;
         } & {
             [key: string]: unknown;
         };
@@ -831,6 +947,52 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * RunLogLine
+         * @description One log line that Sync's own code wrote during a run, tagged with its stage.
+         *
+         *     ``stage`` and ``level`` are plain strings so the client still reads a value a newer
+         *     server adds.
+         */
+        RunLogLine: {
+            /** Stage */
+            stage: string;
+            /** Attempt */
+            attempt: number;
+            /**
+             * Timestamp
+             * Format: date-time
+             */
+            timestamp: string;
+            /** Level */
+            level: string;
+            /** Source */
+            source: string;
+            /** Message */
+            message: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RunLogPage
+         * @description One page of a run's log, oldest first, with the run's phase so a poller knows when to stop.
+         */
+        RunLogPage: {
+            /** Run Id */
+            run_id: string;
+            /** Items */
+            items: components["schemas"]["RunLogLine"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Has More */
+            has_more: boolean;
+            /** Run Phase */
+            run_phase: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * RunPage
          * @description One page of the run list, newest first.
          *
@@ -889,6 +1051,45 @@ export interface components {
              */
             service: "ready";
             worker: components["schemas"]["WorkerStatusResource"];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SideRead
+         * @description The read state of one side of a `plan` or `sync` execution.
+         *
+         *     `not_started` and `interrupted` are never stored: the Sync API returns a side stored as
+         *     `waiting` or `reading` with them once the execution ended without completing. No field holds
+         *     an exception message; `error_class` is the class name of the error that ended the read.
+         *
+         *     `state` is one of `SideReadState` and `read_mode` is `full` or `incremental` today. Both are
+         *     plain strings, so a state or mode a later Sync API adds does not fail the whole run response.
+         */
+        SideRead: {
+            /** State */
+            state: string;
+            /** Started At */
+            started_at?: string | null;
+            /** Ended At */
+            ended_at?: string | null;
+            /** Read Mode */
+            read_mode?: string | null;
+            /** Nodes By Kind */
+            nodes_by_kind?: {
+                [key: string]: number;
+            };
+            /** Error Class */
+            error_class?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * StageReads
+         * @description The read state of the source and the destination of one execution.
+         */
+        StageReads: {
+            source?: components["schemas"]["SideRead"] | null;
+            destination?: components["schemas"]["SideRead"] | null;
         } & {
             [key: string]: unknown;
         };
@@ -2189,6 +2390,187 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_events_events_get: {
+        parameters: {
+            query?: {
+                run_id?: string | null;
+                config_id?: string | null;
+                event_type?: string[] | null;
+                related?: string[] | null;
+                since?: string | null;
+                until?: string | null;
+                limit?: string | null;
+                offset?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventPage"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    read_run_logs_runs__run_id__logs_get: {
+        parameters: {
+            query?: {
+                stage?: string | null;
+                limit?: string | null;
+                offset?: string | null;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunLogPage"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

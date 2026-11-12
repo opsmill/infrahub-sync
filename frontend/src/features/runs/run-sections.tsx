@@ -135,7 +135,7 @@ export function Details({
           <Link
             to="/configs/$configId"
             params={{ configId: run.config_id }}
-            search={{ tab: "versions" }}
+            search={{ version: run.registry_version ?? undefined }}
             className={cn(
               "relative rounded-sm text-accent before:absolute before:inset-x-0 before:-inset-y-3 before:content-[''] hover:underline",
               FOCUS

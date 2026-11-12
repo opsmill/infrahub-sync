@@ -87,11 +87,21 @@ export const configVersionQuery = (configId: string, version: number) =>
     staleTime: "static",
   });
 
-export const runsQuery = (filters: { config_id?: string } = {}) =>
+export const runsQuery = (filters: { config_id?: string; registry_version?: number } = {}) =>
   $api.queryOptions(
     "get",
     "/runs",
-    { params: { query: { ...filters, limit: String(PAGE_LIMIT) } } },
+    {
+      params: {
+        query: {
+          ...(filters.config_id !== undefined && { config_id: filters.config_id }),
+          ...(filters.registry_version !== undefined && {
+            registry_version: String(filters.registry_version),
+          }),
+          limit: String(PAGE_LIMIT),
+        },
+      },
+    },
     { refetchInterval: poll(LIST_REFRESH_MS) }
   );
 

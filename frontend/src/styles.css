@@ -154,6 +154,22 @@ html:active-view-transition-type(changes-close)::view-transition-new(changes-sur
     opacity: 0;
   }
 }
+/* The line between the source and the destination of a configuration: dashes that move towards the destination. */
+.flow-dashes {
+  background-image: repeating-linear-gradient(90deg, currentColor 0 6px, transparent 6px 12px);
+  animation: flow-dashes 1.2s linear infinite;
+}
+@keyframes flow-dashes {
+  from {
+    transform: translateX(-12px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow-dashes {
+    animation: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-group(*),
   ::view-transition-old(*),

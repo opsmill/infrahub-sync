@@ -1,16 +1,30 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { configQuery, runsQuery, versionsQuery } from "#/api/queries";
-import { type ConfigTab, ConfigurationPage } from "#/features/configurations/ConfigurationPage";
+import { ConfigurationPage } from "#/features/configurations/ConfigurationPage";
 
-const TABS: ConfigTab[] = ["runs", "versions", "mapping"];
+const positive = (value: unknown) => {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+};
 
 export const Route = createFileRoute("/configs/$configId")({
-  validateSearch: (search: Record<string, unknown>): { tab?: ConfigTab; version?: number } => {
-    const version = Number(search.version);
+  validateSearch: (
+    search: Record<string, unknown>
+  ): {
+    /** The version shown; the latest when absent. */
+    version?: number;
+    /** An earlier version the mapping is compared with. */
+    compare?: number;
+    /** The mapping open in the panel: its kind, with `~2` for the second mapping of a kind. */
+    kind?: string;
+  } => {
+    const version = positive(search.version);
+    const compare = positive(search.compare);
     return {
-      ...(TABS.includes(search.tab as ConfigTab) ? { tab: search.tab as ConfigTab } : {}),
-      ...(Number.isInteger(version) && version > 0 ? { version } : {}),
+      ...(version !== undefined ? { version } : {}),
+      ...(compare !== undefined ? { compare } : {}),
+      ...(typeof search.kind === "string" && search.kind ? { kind: search.kind } : {}),
     };
   },
   loader: ({ context: { queryClient }, params: { configId } }) => {
@@ -23,6 +37,14 @@ export const Route = createFileRoute("/configs/$configId")({
 
 function ConfigurationRoute() {
   const { configId } = Route.useParams();
-  const { tab = "runs", version } = Route.useSearch();
-  return <ConfigurationPage key={configId} configId={configId} tab={tab} version={version} />;
+  const { version, compare, kind } = Route.useSearch();
+  return (
+    <ConfigurationPage
+      key={configId}
+      configId={configId}
+      version={version}
+      compare={compare}
+      kind={kind}
+    />
+  );
 }

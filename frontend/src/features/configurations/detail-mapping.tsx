@@ -1,471 +1,476 @@
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  Select,
-  SelectItem,
-  SelectList,
-  SelectTrigger,
-} from "@infrahub/ui";
-import { useNavigate } from "@tanstack/react-router";
+import { Card } from "@infrahub/ui";
+import { Link } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { cn } from "tailwind-variants";
 
-import type { ConfigurationVersion, DeclaredAdapter, DeclaredMapping } from "#/api/types";
-import { ArrowRightIcon, ChevronRightIcon } from "#/components/icons";
-import { expandChevron, FOCUS, FOCUS_INSET, SectionHeading, textAction } from "#/components/page";
-import { BranchBadge } from "#/components/run-status";
-import { fmt } from "#/domain/run-state";
-import { describeSystem, mappedKinds } from "#/domain/systems";
+import { ArrowRightIcon, ChevronRightIcon, XIcon } from "#/components/icons";
+import { FOCUS_INSET } from "#/components/page";
+import { PANEL_ICON_BUTTON, ShiftPanel } from "#/components/shift-panel";
+import {
+  fieldSource,
+  filterWords,
+  groupBySource,
+  type MappingChange,
+  type MappingDiff,
+  type MappingEntry,
+} from "#/domain/mapping";
+import { fmt, plural } from "#/domain/run-state";
 
-/** Words for the operations in `FILTERS_OPERATIONS` (infrahub_sync/__init__.py). */
-const OP_WORDS: Record<string, string> = {
-  "==": "equals",
-  "!=": "does not equal",
-  ">": "is greater than",
-  "<": "is less than",
-  ">=": "is at least",
-  "<=": "is at most",
-  in: "is one of",
-  "not in": "is not one of",
-  contains: "contains",
-  "not contains": "does not contain",
-  is_empty: "is empty",
-  is_not_empty: "is not empty",
-  regex: "matches the pattern",
-  is_ip_within: "is within",
-};
+/** The rows shown before "Show more". Whole source models are shown, so the count can be higher. */
+const ROWS_SHOWN = 8;
 
-type Filter = NonNullable<DeclaredMapping["filters"]>[number];
+const HOVER =
+  "transition-colors duration-150 ease-out hover:bg-content-muted aria-expanded:bg-content-strong motion-reduce:transition-none";
+const ROW =
+  "grid min-h-9 grid-cols-1 items-center gap-y-0.5 rounded-lg px-2.5 py-1.5 text-[13px] @2xl:grid-cols-[minmax(0,1fr)_11rem_minmax(0,1fr)] @2xl:py-0 pointer-coarse:min-h-11";
 
-function Operation({ op }: { op: string }) {
-  return Object.hasOwn(OP_WORDS, op) ? OP_WORDS[op] : <code className="font-mono">{op}</code>;
-}
+const CHANGE_WORD = { added: "New", changed: "Changed", removed: "Removed" };
 
-function FilterWords({ filter }: { filter: Filter }) {
+/** How a mapping or a field differs from the version compared with. */
+function ChangeBadge({ status }: { status: MappingChange["status"] }) {
   return (
-    <>
-      <code className="font-mono">{filter.field}</code> <Operation op={filter.operation} />
-      {filter.value != null && (
-        <>
-          {" "}
-          <code className="font-mono">{JSON.stringify(filter.value)}</code>
-        </>
+    <span
+      className={cn(
+        "shrink-0 rounded-md px-1.5 font-medium font-sans text-[11px] leading-5",
+        status === "added" && "bg-(--change-create-surface) text-(--change-create-text)",
+        status === "changed" && "bg-(--change-update-surface) text-(--change-update-text)",
+        status === "removed" && "bg-content-strong text-foreground-muted"
       )}
-    </>
+    >
+      {CHANGE_WORD[status]}
+    </span>
   );
 }
 
-const filterKey = (f: Filter) => `${f.field}|${f.operation}|${JSON.stringify(f.value)}`;
+const isRemoved = (entry: MappingEntry) => entry.change?.status === "removed";
 
-/** The first filter of `m` that some other mapping of the same kind lacks, so two rows read apart. */
-function distinctFilter(m: DeclaredMapping, all: DeclaredMapping[]): Filter | undefined {
-  const siblings = all.filter((o) => o !== m && o.name === m.name);
-  if (siblings.length === 0) return undefined;
-  return (m.filters ?? []).find((f) =>
-    siblings.some((s) => !(s.filters ?? []).some((g) => filterKey(g) === filterKey(f)))
-  );
-}
-
-const plural = (n: number, one: string, many: string) => `${fmt(n)} ${n === 1 ? one : many}`;
-
-/** An identifier or a dotted path that wraps only after its underscores and dots. */
-function withBreaks(text: string): ReactNode[] {
-  const out: ReactNode[] = [];
-  let offset = 0;
-  for (const part of text.split(/(?<=[._])/)) {
-    offset += part.length;
-    out.push(part);
-    if (offset < text.length) out.push(<wbr key={`wbr-${offset}`} />);
-  }
-  return out;
-}
-
-const settingText = (adapter: DeclaredAdapter, key: string) => {
-  const v = adapter.settings?.[key];
-  return typeof v === "string" && v.trim() ? v.trim() : undefined;
-};
-
-function Credential({
-  adapter,
-  version,
+/** A row that opens the mapping in the panel. A removed mapping is text only. */
+function Row({
+  configId,
+  entry,
+  open,
+  children,
 }: {
-  adapter: DeclaredAdapter;
-  version: ConfigurationVersion;
+  configId: string;
+  entry: MappingEntry;
+  open?: string;
+  children: ReactNode;
 }) {
-  const token = adapter.settings?.token as { $credential?: unknown } | undefined;
-  const ref = typeof token?.$credential === "string" ? token.$credential : undefined;
-  if (!ref) return null;
-  const record = version.declared_content.credentials?.[ref];
+  if (isRemoved(entry)) return <div className={cn(ROW, "text-subtle")}>{children}</div>;
+  const selected = entry.key === open;
   return (
-    <>
-      <dt className="text-subtle max-sm:mt-1.5">Credential</dt>
-      <dd className="min-w-0">
-        <span className="block font-mono text-xs leading-5">{ref}</span>
-        {record && (
-          <span className="block text-pretty text-subtle text-xs">
-            {record.provider === "env" ? (
-              <>
-                The Sync worker reads it from the environment variable{" "}
-                <code className="font-mono">{withBreaks(record.identifier)}</code> when a run
-                starts.
-              </>
-            ) : (
-              <>
-                Read from {record.provider} as{" "}
-                <code className="font-mono">{withBreaks(record.identifier)}</code>
-              </>
-            )}
-          </span>
-        )}
-      </dd>
-    </>
+    <Link
+      to="/configs/$configId"
+      params={{ configId }}
+      search={(s) => ({ ...s, kind: selected ? undefined : entry.key })}
+      replace
+      resetScroll={false}
+      aria-expanded={selected}
+      className={cn(ROW, HOVER, FOCUS_INSET)}
+    >
+      {children}
+    </Link>
   );
 }
 
-function SystemCard({
-  side,
-  adapter,
-  version,
+/** A source model is written once and branches to the kinds it fills. */
+function Groups({
+  configId,
+  entries,
+  open,
 }: {
-  side: "Source" | "Destination";
-  adapter: DeclaredAdapter;
-  version: ConfigurationVersion;
+  configId: string;
+  entries: MappingEntry[];
+  open?: string;
 }) {
-  const s = describeSystem(adapter);
-  const url = settingText(adapter, "url") ?? settingText(adapter, "base_url");
-  const branchNotDeclared =
-    side === "Destination" && !s.branch && adapter.name.toLowerCase() === "infrahub";
   return (
-    <Card className="min-w-0">
-      <CardHeader>
-        <p className="font-normal text-subtle text-xs">{side}</p>
-        <p className="font-semibold text-sm">{s.label}</p>
-      </CardHeader>
-      <CardContent className="p-3">
-        <dl className="grid grid-cols-1 gap-y-0.5 text-[13px] sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-1">
-          <dt className="text-subtle">Adapter</dt>
-          <dd className="font-mono text-xs leading-5">{adapter.name}</dd>
-          {url && (
-            <>
-              <dt className="text-subtle max-sm:mt-1.5">Address</dt>
-              <dd className="break-words font-mono text-xs leading-5">{url}</dd>
-            </>
-          )}
-          {side === "Destination" && (s.branch || branchNotDeclared) && (
-            <>
-              <dt className="text-subtle max-sm:mt-1.5">Branch</dt>
-              <dd className="min-w-0">
-                {s.branch ? (
-                  <BranchBadge branch={s.branch} />
-                ) : (
-                  <span className="text-pretty text-foreground-muted">
-                    Not declared in this version. Each run records the branch it used.
-                  </span>
+    <ul className="p-1.5">
+      {groupBySource(entries).flatMap((group) =>
+        group.map((entry, i) => (
+          <li key={entry.key}>
+            <Row configId={configId} entry={entry} open={open}>
+              <span
+                className={cn(
+                  "order-2 truncate font-mono text-foreground-muted text-xs @2xl:order-none @2xl:pr-4 @2xl:text-right",
+                  i > 0 && "@2xl:invisible"
                 )}
-              </dd>
-            </>
+              >
+                <span className="font-sans text-subtle @2xl:hidden">from </span>
+                {entry.mapping.mapping}
+              </span>
+              <span aria-hidden="true" className="relative hidden h-9 items-center @2xl:flex">
+                {group.length > 1 && (
+                  <span
+                    className={cn(
+                      "absolute left-10 w-px bg-border-strong",
+                      i === 0 ? "top-1/2 -bottom-px" : "-top-px",
+                      i > 0 && (i === group.length - 1 ? "bottom-1/2" : "-bottom-px")
+                    )}
+                  />
+                )}
+                <span className={cn("h-px flex-1 bg-border-strong", i > 0 && "ml-10")} />
+                <ArrowRightIcon className="mr-3 -ml-2 size-3.5 text-subtle" />
+              </span>
+              <span className="flex min-w-0 items-center gap-2 @2xl:pl-4">
+                <span
+                  className={cn(
+                    "min-w-0 shrink-0 truncate font-medium font-mono",
+                    isRemoved(entry) && "font-normal line-through"
+                  )}
+                >
+                  {entry.mapping.name}
+                </span>
+                {entry.change && <ChangeBadge status={entry.change.status} />}
+                <span className="min-w-0 flex-1 truncate font-mono text-subtle text-xs">
+                  {entry.conditions.join(" and ")}
+                </span>
+                <span className="ml-auto shrink-0 whitespace-nowrap text-subtle text-xs tabular-nums">
+                  {plural((entry.mapping.fields ?? []).length, "field", "fields")}
+                </span>
+              </span>
+            </Row>
+          </li>
+        ))
+      )}
+    </ul>
+  );
+}
+
+const EXPAND = cn(
+  HOVER,
+  FOCUS_INSET,
+  "flex min-h-10 w-full cursor-pointer items-center justify-center gap-1.5 rounded-b-[inherit] border-t font-medium text-[13px] text-foreground-muted hover:text-foreground pointer-coarse:min-h-11"
+);
+
+/**
+ * The mappings of one version: each source model next to the kinds it fills. While the version is
+ * compared with an earlier one, the mappings that differ come first and the others are folded.
+ */
+export function MappingList({
+  configId,
+  entries,
+  removed,
+  diff,
+  open,
+}: {
+  configId: string;
+  entries: MappingEntry[];
+  /** The mappings of the version compared with that this version no longer has. */
+  removed: MappingEntry[];
+  diff?: MappingDiff;
+  /** The key of the mapping open in the panel. */
+  open?: string;
+}) {
+  const [all, setAll] = useState(false);
+  const expand = (label: string) => (
+    <button type="button" aria-expanded={all} onClick={() => setAll((v) => !v)} className={EXPAND}>
+      {label}
+      <ChevronRightIcon className={cn("size-3.5", all ? "-rotate-90" : "rotate-90")} />
+    </button>
+  );
+
+  if (diff) {
+    // The mappings that differ stay first, in the same order, whether the others are shown or not.
+    const differing = [...entries, ...removed].filter((e) => e.change);
+    const unchanged = entries.filter((e) => !e.change);
+    return (
+      <Card className="@container overflow-hidden">
+        {differing.length > 0 ? (
+          <Groups configId={configId} entries={differing} open={open} />
+        ) : (
+          <p className="px-4 py-5 text-center text-foreground-muted text-sm">
+            The two versions declare the same mappings.
+          </p>
+        )}
+        {all && unchanged.length > 0 && (
+          <>
+            <h3 className="border-t px-4 pt-2.5 font-medium text-subtle text-xs">
+              Same in version {diff.against}
+            </h3>
+            <Groups configId={configId} entries={unchanged} open={open} />
+          </>
+        )}
+        {unchanged.length > 0 &&
+          expand(
+            all
+              ? "Show less"
+              : `Show ${plural(unchanged.length, "unchanged mapping", "unchanged mappings")}`
           )}
-          <Credential adapter={adapter} version={version} />
-        </dl>
-      </CardContent>
+      </Card>
+    );
+  }
+
+  // Whole source models are shown, so that "Show more" adds rows below and moves none.
+  const groups = groupBySource(entries);
+  let rows = 0;
+  const first = groups.filter((group) => {
+    const shown = rows < ROWS_SHOWN;
+    rows += group.length;
+    return shown;
+  });
+  return (
+    <Card className="@container overflow-hidden">
+      <Groups configId={configId} entries={all ? entries : first.flat()} open={open} />
+      {first.length < groups.length && expand(all ? "Show less" : "Show more")}
     </Card>
   );
 }
 
-function MappingRow({
-  m,
-  all,
-  source,
-  destination,
-  open,
-  onToggle,
+const BADGE_AFTER = "ml-2 inline-block align-middle";
+
+/** The fields, filters and computed fields of one mapping, with what differs when compared. */
+function MappingDetail({
+  entry,
+  sourceLabel,
+  destinationLabel,
+  against,
 }: {
-  m: DeclaredMapping;
-  all: DeclaredMapping[];
-  source: string;
-  destination: string;
-  open: boolean;
-  onToggle: () => void;
+  entry: MappingEntry;
+  sourceLabel: string;
+  destinationLabel: string;
+  against?: number;
 }) {
-  const fields = m.fields ?? [];
-  const filters = m.filters ?? [];
-  const transforms = m.transforms ?? [];
-  const distinct = distinctFilter(m, all);
-  const where = distinct
-    ? `where ${distinct.field} ${Object.hasOwn(OP_WORDS, distinct.operation) ? OP_WORDS[distinct.operation] : distinct.operation}${distinct.value != null ? ` ${JSON.stringify(distinct.value)}` : ""}`
-    : "";
-  const fromText = `from ${m.mapping}${where ? ` · ${where}` : ""}`;
-  const computed = new Set(transforms.map((t) => t.field));
+  const { mapping, change } = entry;
+  const fields = mapping.fields ?? [];
+  const filters = mapping.filters ?? [];
+  const transforms = mapping.transforms ?? [];
+  const added = new Set(change?.fieldsAdded);
+  const changed = new Set(change?.fieldsChanged);
+  const before = new Map((change?.was?.fields ?? []).map((f) => [f.name, f]));
+  const removed = (change?.fieldsRemoved ?? []).flatMap((name) => before.get(name) ?? []);
   return (
-    <li>
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        className={cn(
-          "grid w-full cursor-pointer grid-cols-[16px_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5 px-4 py-2.5 text-left text-[13px] transition-colors duration-150 ease-out hover:bg-content-muted motion-reduce:transition-none md:grid-cols-[16px_minmax(0,16rem)_minmax(0,1fr)_auto]",
-          FOCUS_INSET
-        )}
-      >
-        <ChevronRightIcon className={expandChevron({ open, className: "text-subtle" })} />
-        <span className="min-w-0 truncate font-medium font-mono" title={m.name}>
-          {m.name}
-        </span>
-        <span
-          className="hidden min-w-0 font-mono text-foreground-muted text-xs md:flex"
-          title={fromText}
-        >
-          <span className="min-w-[4ch] truncate">from {m.mapping}</span>
-          {where && <span className="max-w-[75%] shrink-0 truncate">&nbsp;· {where}</span>}
-        </span>
-        {where && (
-          <span className="col-start-2 truncate font-mono text-foreground-muted text-xs md:hidden">
-            {where}
-          </span>
-        )}
-        <span className="col-start-2 whitespace-nowrap text-left text-subtle text-xs tabular-nums max-md:whitespace-normal md:col-start-auto md:justify-self-end md:text-right">
-          {plural(fields.length, "field", "fields")}
-          {filters.length > 0 && ` · ${plural(filters.length, "filter", "filters")}`}
-          {transforms.length > 0 &&
-            ` · ${plural(transforms.length, "computed field", "computed fields")}`}
-        </span>
-      </button>
-      {open && (
-        <div className="border-t bg-content-muted px-4 py-3 text-[13px] md:pl-11">
-          <p className="mb-2 font-mono text-foreground-muted text-xs [overflow-wrap:anywhere] md:hidden">
-            {fromText}
-          </p>
-          {m.identifiers?.length ? (
-            <p className="mb-2 text-xs">
-              <span className="text-subtle">Matched on </span>
-              <span className="font-mono">{m.identifiers.join(", ")}</span>
-            </p>
-          ) : null}
-          {fields.length > 0 && (
-            <table className="max-w-3xl text-left">
-              <thead>
-                <tr className="font-medium text-[11px] text-subtle">
-                  <th scope="col" className="pr-3 pb-1 font-medium">
-                    {source} field
-                  </th>
-                  <th scope="col" className="w-6 pb-1">
-                    <span className="sr-only">to</span>
-                  </th>
-                  <th scope="col" className="pb-1 font-medium">
-                    {destination} attribute or relationship
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {fields.map((f) => (
-                  <tr key={f.name} className="align-top">
-                    <td className="py-0.5 pr-3 font-mono text-xs leading-5 break-words">
-                      {/* The column fits its longest path up to this width, so short paths sit next to their arrow. */}
-                      <div className="max-w-72">
-                        {f.mapping ? (
-                          <>
-                            <span className="text-foreground-muted">{withBreaks(f.mapping)}</span>
-                            {computed.has(f.mapping) && (
-                              <span className="font-sans text-subtle"> (computed)</span>
-                            )}
-                          </>
-                        ) : f.static != null ? (
-                          <>
-                            <span className="font-sans text-foreground-muted">Fixed value </span>
-                            <code>{JSON.stringify(f.static)}</code>
-                          </>
-                        ) : (
-                          <span className="font-sans text-subtle">Not declared</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="py-0.5">
-                      <ArrowRightIcon className="mt-1 size-3 text-subtle-muted" />
-                    </td>
-                    <td className="py-0.5 font-mono text-foreground text-xs leading-5 break-words">
-                      {withBreaks(f.name)}
-                      {f.reference && (
-                        <code
-                          className="ml-1.5 inline-block max-w-full truncate rounded bg-content-strong px-1 py-px align-top text-[0.85em] text-foreground-muted [overflow-wrap:normal]"
-                          title={f.reference}
-                        >
-                          <span className="sr-only">peer kind </span>
-                          {f.reference}
-                        </code>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-          {filters.length > 0 && (
-            <>
-              <h3 className="mt-3 mb-1 text-subtle text-xs">Only source records where</h3>
-              <ul className="flex flex-col gap-0.5 text-xs">
-                {filters.map((f) => (
-                  <li key={filterKey(f)}>
-                    <FilterWords filter={f} />
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          {transforms.length > 0 && (
-            <>
-              <h3 className="mt-3 mb-1 text-subtle text-xs">Computed source fields</h3>
-              <div className="flex flex-col gap-2">
-                {transforms.map((t) => (
-                  <div key={t.field}>
-                    <p className="font-mono text-xs">{t.field} =</p>
-                    <pre className="mt-0.5 max-w-3xl whitespace-pre-wrap break-words rounded-md border bg-content px-2 py-1 font-mono text-[11px] text-foreground-muted leading-5">
-                      {t.expression}
-                    </pre>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+    <div className="flex flex-col gap-3 text-[13px]">
+      <p className="font-mono text-foreground-muted text-xs [overflow-wrap:anywhere]">
+        from {mapping.mapping}
+        {mapping.identifiers?.length ? (
+          <span className="font-sans text-subtle"> · matched on </span>
+        ) : null}
+        {mapping.identifiers?.join(", ")}
+      </p>
+      {change && against !== undefined && (
+        <p className="text-pretty text-foreground-muted text-xs">
+          {change.status === "added"
+            ? `Version ${against} does not have this mapping.`
+            : `Compared with version ${against}: ${
+                [
+                  change.fieldsAdded.length &&
+                    `${plural(change.fieldsAdded.length, "field", "fields")} added`,
+                  change.fieldsChanged.length &&
+                    `${plural(change.fieldsChanged.length, "field", "fields")} changed`,
+                  change.fieldsRemoved.length &&
+                    `${plural(change.fieldsRemoved.length, "field", "fields")} removed`,
+                  change.rulesChanged &&
+                    "the source model, identifiers, filters or computed fields differ",
+                ]
+                  .filter(Boolean)
+                  .join(", ") || "the order of the fields differs"
+              }.`}
+        </p>
       )}
-    </li>
-  );
-}
-
-const andList = (names: string[]) =>
-  names.length <= 1
-    ? (names[0] ?? "")
-    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-
-function mappingSentence(version: ConfigurationVersion): string {
-  const cfg = version.declared_content.configuration;
-  const mapping = cfg.schema_mapping ?? [];
-  const kinds = mappedKinds(mapping);
-  const counts = new Map<string, number>();
-  for (const m of mapping) counts.set(m.name, (counts.get(m.name) ?? 0) + 1);
-  const repeated = [...counts].filter(([, n]) => n > 1);
-  const parts = [`Version ${version.registry_version}, in declaration order.`];
-  if (repeated.length === 1) {
-    const [name, n] = repeated[0];
-    parts.push(
-      `${plural(mapping.length, "mapping", "mappings")} for ${plural(kinds.length, "kind", "kinds")}: ${name} is mapped ${n === 2 ? "twice" : `${fmt(n)} times`}.`
-    );
-  } else if (repeated.length > 1) {
-    parts.push(
-      `${plural(mapping.length, "mapping", "mappings")} for ${plural(kinds.length, "kind", "kinds")}: ${andList(repeated.map(([name]) => name))} are mapped more than once.`
-    );
-  }
-  parts.push(
-    cfg.order?.length
-      ? `Write order: ${cfg.order.join(", ")}.`
-      : "Write order is computed from schema references."
-  );
-  return parts.join(" ");
-}
-
-/** The declared source, destination and mappings of one registered version. */
-export function Mapping({
-  configId,
-  version,
-  versionNumbers,
-  latestVersion,
-}: {
-  configId: string;
-  version: ConfigurationVersion;
-  /** Every registered version, newest first; a selector appears when there is more than one. */
-  versionNumbers: number[];
-  latestVersion?: number;
-}) {
-  const navigate = useNavigate();
-  const cfg = version.declared_content.configuration;
-  const mapping = cfg.schema_mapping ?? [];
-  const source = describeSystem(cfg.source);
-  const destination = describeSystem(cfg.destination);
-  const [open, setOpen] = useState<{ version: number; rows: Set<number> }>({
-    version: version.registry_version,
-    rows: new Set(),
-  });
-  const rows = open.version === version.registry_version ? open.rows : new Set<number>();
-  const allOpen = mapping.length > 0 && rows.size === mapping.length;
-  const setRows = (next: Set<number>) => setOpen({ version: version.registry_version, rows: next });
-  const toggle = (i: number) => {
-    const next = new Set(rows);
-    if (!next.delete(i)) next.add(i);
-    setRows(next);
-  };
-
-  return (
-    <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-1 items-stretch gap-3 md:grid-cols-[minmax(0,1fr)_40px_minmax(0,1fr)]">
-        <SystemCard side="Source" adapter={cfg.source} version={version} />
-        <div className="hidden items-center justify-center md:flex" aria-hidden="true">
-          <ArrowRightIcon className="size-4 text-subtle-muted" />
-        </div>
-        <SystemCard side="Destination" adapter={cfg.destination} version={version} />
-      </div>
-      <section aria-labelledby="mapping" className="flex flex-col gap-2">
-        <SectionHeading
-          id="mapping"
-          title="Mappings"
-          actions={
-            <div className="flex items-center gap-3">
-              {mapping.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setRows(allOpen ? new Set() : new Set(mapping.map((_, i) => i)))}
-                  className={textAction()}
-                >
-                  {allOpen ? "Collapse all" : "Expand all"}
-                </button>
-              )}
-              {versionNumbers.length > 1 && (
-                <Select
-                  aria-label="Version"
-                  value={version.registry_version}
-                  onChange={(key) => {
-                    const n = Number(key);
-                    void navigate({
-                      to: "/configs/$configId",
-                      params: { configId },
-                      search: (s) => ({ ...s, version: n === latestVersion ? undefined : n }),
-                      replace: true,
-                      resetScroll: false,
-                    });
-                  }}
-                  className="w-32"
-                >
-                  <SelectTrigger size="sm" className={FOCUS} />
-                  <SelectList items={versionNumbers.map((n) => ({ id: n }))}>
-                    {(item) => (
-                      <SelectItem id={item.id} textValue={`Version ${item.id}`}>
-                        Version {item.id}
-                      </SelectItem>
+      {(fields.length > 0 || removed.length > 0) && (
+        <table className="max-w-3xl text-left">
+          <thead>
+            <tr className="text-[11px] text-subtle">
+              <th scope="col" className="pr-3 pb-1 font-medium">
+                {sourceLabel} field
+              </th>
+              <th scope="col" className="w-6 pb-1">
+                <span className="sr-only">to</span>
+              </th>
+              <th scope="col" className="pb-1 font-medium">
+                {destinationLabel} attribute or relationship
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {fields.map((f) => {
+              const was = changed.has(f.name) ? before.get(f.name) : undefined;
+              return (
+                <tr key={f.name} className="align-top">
+                  <td className="py-0.5 pr-3 font-mono text-foreground-muted text-xs leading-5 [overflow-wrap:anywhere]">
+                    {fieldSource(f)}
+                    {was && fieldSource(was) !== fieldSource(f) && (
+                      <span className="ml-1.5 font-sans text-[11px] text-subtle">
+                        was <span className="font-mono line-through">{fieldSource(was)}</span>
+                      </span>
                     )}
-                  </SelectList>
-                </Select>
-              )}
-            </div>
-          }
-        >
-          {mappingSentence(version)}
-        </SectionHeading>
-        <Card className="overflow-hidden">
-          <ul className="divide-y">
-            {mapping.map((m, i) => (
-              <MappingRow
-                key={i}
-                m={m}
-                all={mapping}
-                source={source.label}
-                destination={destination.label}
-                open={rows.has(i)}
-                onToggle={() => toggle(i)}
-              />
+                  </td>
+                  <td className="py-0.5">
+                    <ArrowRightIcon className="mt-1 size-3 text-subtle-muted" />
+                  </td>
+                  <td className="py-0.5 font-mono text-xs leading-5 [overflow-wrap:anywhere]">
+                    {f.name}
+                    {f.reference && (
+                      <code className="ml-1.5 rounded bg-content-strong px-1 py-px text-[0.85em] text-foreground-muted">
+                        <span className="sr-only">peer kind </span>
+                        {f.reference}
+                      </code>
+                    )}
+                    {added.has(f.name) && (
+                      <span className={BADGE_AFTER}>
+                        <ChangeBadge status="added" />
+                      </span>
+                    )}
+                    {was && (
+                      <span className={BADGE_AFTER}>
+                        <ChangeBadge status="changed" />
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+            {removed.map((f) => (
+              <tr key={f.name} className="align-top text-subtle">
+                <td className="py-0.5 pr-3 font-mono text-xs leading-5 line-through [overflow-wrap:anywhere]">
+                  {fieldSource(f)}
+                </td>
+                <td className="py-0.5">
+                  <ArrowRightIcon className="mt-1 size-3 text-subtle-muted" />
+                </td>
+                <td className="py-0.5 font-mono text-xs leading-5 [overflow-wrap:anywhere]">
+                  <span className="line-through">{f.name}</span>
+                  <span className={BADGE_AFTER}>
+                    <ChangeBadge status="removed" />
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {filters.length > 0 && (
+        <div>
+          <h3 className="mb-1 text-subtle text-xs">Only source records where</h3>
+          <ul className="flex flex-col gap-0.5 font-mono text-xs">
+            {filters.map((f) => (
+              <li key={filterWords(f)}>{filterWords(f)}</li>
             ))}
           </ul>
-        </Card>
-      </section>
+        </div>
+      )}
+      {transforms.length > 0 && (
+        <div>
+          <h3 className="mb-1 text-subtle text-xs">Computed source fields</h3>
+          <div className="flex flex-col gap-2">
+            {transforms.map((t) => (
+              <div key={t.field}>
+                <p className="font-mono text-xs">{t.field} =</p>
+                <pre className="mt-0.5 max-w-3xl whitespace-pre-wrap break-words rounded-md border bg-content px-2 py-1 font-mono text-[11px] text-foreground-muted leading-5">
+                  {t.expression}
+                </pre>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+/** A link that opens another mapping in the panel, drawn as an icon button. */
+function Step({
+  configId,
+  entry,
+  label,
+  up = false,
+}: {
+  configId: string;
+  entry?: MappingEntry;
+  label: string;
+  up?: boolean;
+}) {
+  return (
+    <Link
+      to="/configs/$configId"
+      params={{ configId }}
+      search={(s) => ({ ...s, kind: entry?.key ?? s.kind })}
+      replace
+      resetScroll={false}
+      aria-label={label}
+      aria-disabled={!entry}
+      tabIndex={entry ? undefined : -1}
+      className={cn(PANEL_ICON_BUTTON, FOCUS_INSET)}
+    >
+      <ChevronRightIcon className={cn("size-3.5", up ? "-rotate-90" : "rotate-90")} />
+    </Link>
+  );
+}
+
+/**
+ * The mapping named by `open`, in a panel on the right of the page. The previous and next buttons
+ * follow the order of the declaration.
+ */
+export function MappingPanel({
+  configId,
+  version,
+  entries,
+  open,
+  against,
+  sourceLabel,
+  destinationLabel,
+  shiftTargetId,
+  onClose,
+}: {
+  configId: string;
+  version?: number;
+  entries: MappingEntry[];
+  /** The key of the mapping to show; the panel is closed when no mapping has it. */
+  open?: string;
+  /** The version the mapping is compared with. */
+  against?: number;
+  sourceLabel: string;
+  destinationLabel: string;
+  /** The id of the element the panel moves left to make room for itself. */
+  shiftTargetId: string;
+  onClose: () => void;
+}) {
+  const at = entries.findIndex((e) => e.key === open);
+  const entry = entries[at];
+  return (
+    <ShiftPanel
+      open={entry !== undefined}
+      label={`Mapping of ${entry?.mapping.name}`}
+      onClose={onClose}
+      shiftTargetId={shiftTargetId}
+      widthKey="mapping-panel-width"
+    >
+      {entry && (
+        <>
+          <div className="flex flex-col gap-1 border-b px-4 pt-2 pb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-subtle text-xs">Version {version}</span>
+              <span className="ml-auto flex shrink-0 items-center">
+                <span className="mr-1 text-subtle text-xs tabular-nums">
+                  {fmt(at + 1)} of {fmt(entries.length)}
+                </span>
+                <Step configId={configId} entry={entries[at - 1]} label="Previous mapping" up />
+                <Step configId={configId} entry={entries[at + 1]} label="Next mapping" />
+                <button
+                  type="button"
+                  aria-label="Close the panel"
+                  onClick={onClose}
+                  className={cn(PANEL_ICON_BUTTON, FOCUS_INSET)}
+                >
+                  <XIcon />
+                </button>
+              </span>
+            </div>
+            <h2 className="flex min-w-0 items-center gap-2 font-medium font-mono text-base">
+              <span className="truncate">{entry.mapping.name}</span>
+              {entry.change && <ChangeBadge status={entry.change.status} />}
+            </h2>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3">
+            <MappingDetail
+              entry={entry}
+              sourceLabel={sourceLabel}
+              destinationLabel={destinationLabel}
+              against={against}
+            />
+          </div>
+        </>
+      )}
+    </ShiftPanel>
   );
 }

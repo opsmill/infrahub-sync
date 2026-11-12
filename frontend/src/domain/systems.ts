@@ -18,6 +18,8 @@ export interface System {
   label: string;
   /** Host and port of `settings.url` or `settings.base_url`; a value that is not a URL is kept as declared. */
   host?: string;
+  /** `settings.url` or `settings.base_url` in full, as declared. */
+  address?: string;
   /** `settings.branch`, declared on Infrahub adapters. */
   branch?: string;
 }
@@ -37,14 +39,15 @@ function hostOf(url: string | undefined): string | undefined {
 }
 
 export function describeSystem(adapter: DeclaredAdapter): System {
-  const host = hostOf(setting(adapter, "url") ?? setting(adapter, "base_url"));
+  const address = setting(adapter, "url") ?? setting(adapter, "base_url");
+  const host = hostOf(address);
   const name = adapter.name.toLowerCase();
   // A generic REST source reads one system; its host names that system better than "REST API".
   const label =
     name === "genericrestapi" && host?.includes(".")
       ? host.replace(/^www\./, "")
       : (PRODUCT_NAMES[name] ?? adapter.name);
-  return { label, host, branch: setting(adapter, "branch") };
+  return { label, host, address, branch: setting(adapter, "branch") };
 }
 
 /** The destination kinds a mapping writes, once each, in declaration order. */

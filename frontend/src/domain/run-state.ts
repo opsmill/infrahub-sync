@@ -107,6 +107,9 @@ export function runSteps(
 const num = (v: unknown) => (typeof v === "number" ? v : 0);
 export const fmt = (n: number) => n.toLocaleString("en-US");
 
+/** A count with its noun: `1 mapping`, `1,204 fields`. */
+export const plural = (n: number, one: string, many: string) => `${fmt(n)} ${n === 1 ? one : many}`;
+
 export interface Counts {
   create: number;
   update: number;

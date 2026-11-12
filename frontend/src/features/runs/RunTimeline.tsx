@@ -558,7 +558,7 @@ function StartFacts({
             <Link
               to="/configs/$configId"
               params={{ configId: versioned }}
-              search={{ tab: "versions" }}
+              search={{ version: run.registry_version ?? undefined }}
               className={cn("rounded-sm text-accent tabular-nums hover:underline", FOCUS)}
             >
               Version {run.registry_version}

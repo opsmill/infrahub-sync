@@ -238,12 +238,7 @@ function MetaLine({
           <span className="text-subtle">
             {" "}
             (
-            <Link
-              to="/configs/$configId"
-              params={{ configId: newer }}
-              search={{ tab: "versions" }}
-              className={LINK}
-            >
+            <Link to="/configs/$configId" params={{ configId: newer }} className={LINK}>
               version {latestVersion} is the latest
             </Link>
             )
