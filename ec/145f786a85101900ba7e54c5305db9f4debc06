@@ -1,0 +1,21 @@
+dev/specs/022-resume-interrupted-apply/spec.md
+  s_b91a98d41025f3::t_67a9ad201469b7 86,215
+dev/specs/022-resume-interrupted-apply/tasks.md
+  s_b91a98d41025f3::t_5b646bf3d85e63 1-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ec145f786a85101900ba7e54c5305db9f4debc06",
+  "prompts": {},
+  "sessions": {
+    "s_b91a98d41025f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c1e68d9-bc95-47b9-bd6b-c5aa572517ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
