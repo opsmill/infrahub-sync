@@ -59,6 +59,7 @@ from .models import (
     OrchestrationSummary,
     PlanResource,
     ResultsResource,
+    ResumeRunRequest,
     RunLogLine,
     RunLogPage,
     RunPage,
@@ -81,6 +82,7 @@ from .orchestration import (
 from .paging import FilterValue, decode_cursor, timestamp_cursor, timestamp_key, validate_limit
 from .prefect_ui import flow_run_url
 from .read_progress import stage_reads
+from .resume_view import WRITE_PURPOSES, apply_progress_view, run_resumes
 from .run_log import page as log_page
 from .run_log import sync_lines
 from .settings import approval_required
@@ -99,6 +101,14 @@ PLAN_ARTIFACT_ID = "plan-review"
 PLAN_REPORT_KEY = "report"
 # The `entry` of a plan report line, one per report route.
 ReportEntry = Literal["problem", "left_out", "kept"]
+
+
+def _refusal_code(receipt: MutationReceipt) -> str | None:
+    """The error code a stored refusal carries, or `None` for an accepted request."""
+    body = receipt.response_body
+    error = body.get("error") if isinstance(body, dict) else None
+    code = error.get("code") if isinstance(error, dict) else None
+    return code if isinstance(code, str) else None
 
 
 def _reservation_outcome(receipt: MutationReceipt) -> str:
@@ -500,6 +510,113 @@ class RunService:
         )
         return await self._resume_or_replay(receipt, parameters, principal, request.reason)
 
+    async def resume_run(  # pylint: disable=too-many-locals
+        self, run_id: str, request: ResumeRunRequest, principal: Principal, idempotency_key: str
+    ) -> tuple[int, dict[str, Any]]:
+        """Accept a resume of an interrupted write from the run's saved position (spec 022).
+
+        The checks are `apply`'s, in the same order: ownership, non-secret parameters,
+        `confirm_writes`, a cancelled run, approval, the supported configuration, the checksum
+        and the left-out confirmation (FR-011, FR-018). The store then decides, on the run's
+        locked row, whether the run is resumable, whether a `verify` passed after its latest
+        interruption and whether another resume is unfinished (FR-012, FR-013). Every request,
+        accepted or refused, is recorded in the run's audit history and event list with
+        operation `resume` and the optional reason (FR-014).
+        """
+        operation = "resume"
+        run = self._owned_run(run_id, principal, operation, request.reason)
+        body = request.model_dump(mode="json")
+        # The branch the run was planned against, as `verify` uses: the saved plan's destination.
+        parameters = self._stage_parameters(
+            run,
+            operation,
+            branch=run.destination_branch,
+            expected_checksum=request.expected_checksum,
+            confirm_writes=True,
+        )
+        if request.confirm_left_out:
+            parameters["confirm_left_out"] = True
+        existing = self._lookup_existing_receipt(
+            run, principal, idempotency_key, operation=operation, reason=request.reason, body=body
+        )
+        if existing is not None:
+            if existing.state != "accepted" and approval_required():
+                self._require_matching_approval(run, request, principal, operation=operation)
+            return await self._resume_or_replay(existing, parameters, principal, request.reason)
+        self._require_non_secret_parameters(principal.actor, operation, request.reason, run_id=run_id)
+        if not request.confirm_writes:
+            self._audit(
+                run_id,
+                actor=principal.actor,
+                operation=operation,
+                reason=request.reason,
+                outcome="refused-confirmation",
+            )
+            raise self._error(409, "confirmation-required", "confirm_writes=true is required for resume", run_id=run_id)
+        if run.phase == "cancelled":
+            # The contract's code for a cancelled run: a resume refuses every run it cannot resume
+            # with `run-not-resumable`, and the message says why (FR-013).
+            self._audit(
+                run_id,
+                actor=principal.actor,
+                operation=operation,
+                reason=request.reason,
+                outcome="refused-run-not-resumable",
+            )
+            raise self._error(409, "run-not-resumable", "this Sync run is cancelled", run_id=run_id)
+        if approval_required():
+            self._require_matching_approval(run, request, principal, operation=operation)
+        self._require_supported_run_configuration(run)
+        plan = self._plan(run_id)
+        if not plan.checksum_ok or plan.checksum != request.expected_checksum:
+            self._audit(
+                run_id, actor=principal.actor, operation=operation, reason=request.reason, outcome="refused-checksum"
+            )
+            raise self._error(
+                409,
+                "checksum-conflict",
+                f"expected_checksum {request.expected_checksum} does not match the saved plan's checksum "
+                f"{plan.checksum}",
+                run_id=run_id,
+            )
+        left_out = plan.summary.left_out
+        if left_out > 0 and not request.confirm_left_out:
+            self._audit(
+                run_id,
+                actor=principal.actor,
+                operation=operation,
+                reason=request.reason,
+                outcome="refused-left-out-not-confirmed",
+            )
+            raise ServiceAPIError(
+                409,
+                "left-out-confirmation-required",
+                f"this plan leaves out {left_out} records; confirm with confirm_left_out=true",
+                run_id=run_id,
+                secrets=self._secrets,
+                left_out=left_out,
+            )
+        requested = self._new_receipt(
+            actor=principal.actor,
+            idempotency_key=idempotency_key,
+            operation=operation,
+            target_run_id=run_id,
+            run_id=run_id,
+            body=body,
+            reason=request.reason,
+            now=datetime.now(timezone.utc),
+        )
+        reserved, created = self._projection.reserve_resume(run_id, requested, secrets=self._secrets)
+        self._require_matching_receipt(reserved, requested)
+        refusal = _refusal_code(reserved) if reserved.state == "accepted" else None
+        if created and refusal is not None:
+            # The store answered the request with its refusal; the event records which one.
+            self._audit(
+                run_id, actor=principal.actor, operation=operation, reason=request.reason, outcome=f"refused-{refusal}"
+            )
+            return self._stored_response(reserved)
+        return await self._resume_or_replay(reserved, parameters, principal, request.reason)
+
     def _refuse_cancelled(self, run: ProductRun, principal: Principal, operation: str, reason: str | None) -> None:
         """Refuse to approve or apply a run in phase ``cancelled``, before any receipt is reserved.
 
@@ -511,8 +628,15 @@ class RunService:
         self._audit(run.run_id, actor=principal.actor, operation=operation, reason=reason, outcome="refused-cancelled")
         raise self._error(409, "run-cancelled", RUN_CANCELLED_MESSAGE, run_id=run.run_id)
 
-    def _require_matching_approval(self, run: ProductRun, request: ApplyRunRequest, principal: Principal) -> None:
-        """Refuse an ``apply`` whose run has no approval, or an approval of another checksum.
+    def _require_matching_approval(
+        self,
+        run: ProductRun,
+        request: ApplyRunRequest | ResumeRunRequest,
+        principal: Principal,
+        *,
+        operation: str = "apply",
+    ) -> None:
+        """Refuse an ``apply`` or a ``resume`` whose run has no approval, or an approval of another checksum.
 
         Called only when ``INFRAHUB_SYNC_REQUIRE_APPROVAL`` is on, before the receipt is reserved,
         so a refusal submits nothing.
@@ -526,7 +650,7 @@ class RunService:
         self._audit(
             run.run_id,
             actor=principal.actor,
-            operation="apply",
+            operation=operation,
             reason=request.reason,
             outcome="refused-approval-required",
         )
@@ -534,7 +658,7 @@ class RunService:
             raise self._error(
                 409,
                 "approval-required",
-                "this Sync API requires an approved plan before apply; approve the plan with "
+                f"this Sync API requires an approved plan before {operation}; approve the plan with "
                 f"`infrahub-sync approve {run.run_id} --expected-checksum {request.expected_checksum}`",
                 run_id=run.run_id,
             )
@@ -1349,6 +1473,8 @@ class RunService:
         resource = self._resource_with_observations(
             self._required_run(receipt.run_id),
             {submission.flow_run_id: Observation(available=True, state=submission.state)},
+            # Not yet completed, so the store cannot find this receipt by its flow run.
+            pending=(submission.flow_run_id, receipt),
         )
         body = resource.model_dump(mode="json")
         completed = self._projection.complete_mutation(
@@ -1437,12 +1563,14 @@ class RunService:
     ) -> tuple[int, dict[str, Any]]:
         """Replay completed receipts and revalidate configurations before submission."""
         if receipt.state == "accepted":
+            refusal = _refusal_code(receipt) if receipt.operation == "resume" else None
             self._audit(
                 receipt.run_id,
                 actor=principal.actor,
                 operation=receipt.operation,
                 reason=reason,
-                outcome=_reservation_outcome(receipt),
+                # A resume's stored refusal names its own code; see `reserve_resume`.
+                outcome=_reservation_outcome(receipt) if refusal is None else f"refused-{refusal}",
             )
             return self._stored_response(receipt)
         assert receipt.run_id is not None
@@ -1614,7 +1742,40 @@ class RunService:
         )
         return run.model_copy(update={"prefect_executions": links})
 
-    def _resource_with_observations(self, run: ProductRun, observations: dict[str, Observation]) -> RunResource:
+    def _plan_operations(self, run: ProductRun) -> tuple[tuple[str, str], ...] | None:
+        """The saved plan's `(operation_id, kind)` pairs in stored order, or `None` when unreadable.
+
+        Read only for a run with a write execution. A plan that expired or cannot be read leaves
+        the progress view without per-kind counts rather than failing the read of the run.
+        """
+        if not any(link.purpose in WRITE_PURPOSES for link in run.prefect_executions):
+            return None
+        try:
+            plan = self._plan(run.run_id)
+        except ServiceAPIError:
+            return None
+        return tuple((operation.operation_id, operation.kind) for operation in plan.operations)
+
+    def _resume_receipt(
+        self, run: ProductRun, link: PrefectExecutionLink, pending: tuple[str, MutationReceipt] | None
+    ) -> MutationReceipt | None:
+        """The request that started one resume execution, or `None` when it cannot be read."""
+        if pending is not None and pending[0] == link.flow_run_id:
+            return pending[1]
+        return self._projection.lookup_mutation_for_execution(run.run_id, link.flow_run_id, "resume").value
+
+    def _resource_with_observations(
+        self,
+        run: ProductRun,
+        observations: dict[str, Observation],
+        *,
+        pending: tuple[str, MutationReceipt] | None = None,
+    ) -> RunResource:
+        """Build the run resource, with its apply progress view and resume history (spec 022).
+
+        `pending` is the flow run ID and receipt of a request whose execution was just added and
+        whose receipt is not completed yet.
+        """
         orchestration = []
         for link in run.prefect_executions:
             observed = observations.get(link.flow_run_id)
@@ -1675,7 +1836,12 @@ class RunService:
                     ),
                 )
             )
-        return RunResource(run=public_run_resource(run), orchestration=tuple(orchestration))
+        return RunResource(
+            run=public_run_resource(run),
+            orchestration=tuple(orchestration),
+            apply_progress=apply_progress_view(run, self._plan_operations(run)),
+            resumes=run_resumes(run, lambda link: self._resume_receipt(run, link, pending)),
+        )
 
     def _event(
         self,

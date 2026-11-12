@@ -57,6 +57,7 @@ from .models import (
     RegisteredConfigurationResource,
     RegisteredVersionResource,
     ResultsResource,
+    ResumeRunRequest,
     RunLogPage,
     RunPage,
     RunResource,
@@ -632,6 +633,16 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         """Apply a reviewed saved plan idempotently."""
 
         return self.apply_run(run_id, request, idempotency_key)
+
+    def resume_run(self, run_id: str, request: ResumeRunRequest, idempotency_key: str) -> RunResource:
+        """Resume an interrupted apply from the run's saved position, idempotently (spec 022)."""
+
+        return self._run_mutation("resume_run", run_id, "resume", request=request, idempotency_key=idempotency_key)
+
+    def resume(self, run_id: str, request: ResumeRunRequest, idempotency_key: str) -> RunResource:
+        """Resume an interrupted apply from the run's saved position, idempotently (spec 022)."""
+
+        return self.resume_run(run_id, request, idempotency_key)
 
     def approve_run(self, run_id: str, request: ApproveRunRequest, idempotency_key: str) -> ApprovedRunResource:
         """Record approval of a reviewed saved plan without applying it, idempotently."""

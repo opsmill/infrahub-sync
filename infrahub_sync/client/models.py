@@ -55,7 +55,7 @@ MAX_LIMIT = 200
 # Page sizes of a run's log (spec 017, contracts/logs-route.md), and the stages it filters by.
 DEFAULT_LOG_LIMIT = 200
 MAX_LOG_LIMIT = 1000
-LOG_STAGES: tuple[str, ...] = ("plan", "verify", "apply", "sync")
+LOG_STAGES: tuple[str, ...] = ("plan", "verify", "apply", "sync", "resume")
 
 # The largest page of a saved plan's problem, left-out or kept list, and the default (spec 019,
 # contracts/sync-api.md).

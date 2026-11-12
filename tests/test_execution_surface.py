@@ -40,6 +40,7 @@ from infrahub_sync.execution import (
     run_remote_request,
 )
 from infrahub_sync.plan.models import ApplyRecord
+from infrahub_sync.potenda.apply_progress import ApplyProgressLostError
 from infrahub_sync.utils import get_all_sync, get_potenda_from_instance
 
 SYNC_NAME = "canary-example"
@@ -1929,6 +1930,75 @@ def test_an_apply_is_accepted_on_the_run_a_sync_planned(config_dir: str, cache_r
     assert [call["confirm_left_out"] for call in applier.calls] == [True]
     run_file = RunFile.load_or_default(run_dir / "run.json")
     assert (run_file.mode, run_file.status) == ("apply", "applied")
+
+
+def test_an_apply_passes_the_progress_observer_and_the_resume_position_to_the_applier(
+    config_dir: str, cache_root: Path
+) -> None:
+    """Spec 022: the worker's private seams reach `PlanApplier.apply_plan` unchanged."""
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root, rows=[_plan_row("create", "core01")])
+    execute_run(instance, operation="plan", potenda_factory=factory)
+    (cache_root / RUN_ID / "plan").mkdir(exist_ok=True)
+    assert factory.engine is not None
+    applier = _RecordingApplier(factory.engine)
+    observer = object()
+
+    execute_run(  # ty: ignore[no-matching-overload] - the seams are recording doubles.
+        instance,
+        operation="apply",
+        run_id=RUN_ID,
+        confirm_writes=True,
+        ownership=object(),
+        record_applied=lambda _record: None,
+        _plan_applier_factory=lambda *_args, **_kwargs: applier,
+        _apply_progress=observer,
+        _start_after=41,
+    )
+
+    [call] = applier.calls
+    assert call["progress"] is observer
+    assert call["start_after"] == 41
+
+
+def test_progress_lost_during_an_apply_records_the_partial_record_and_propagates(
+    config_dir: str, cache_root: Path
+) -> None:
+    """Spec 022: `ApplyProgressLostError` takes the ADR 0010 failure exit of `_run_apply_lifecycle`.
+
+    The run file is saved `failed` with the operations written before the stop, and the error
+    reaches the caller with its partial record, so the service worker records the run as
+    interrupted.
+    """
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root, rows=[_plan_row("create", "core01")])
+    execute_run(instance, operation="plan", potenda_factory=factory)
+    run_dir = cache_root / RUN_ID
+    (run_dir / "plan").mkdir(exist_ok=True)
+    assert factory.engine is not None
+    partial = ApplyRecord(applied_operations=("op_00000000000000a1",), operations_total=3)
+
+    class _ProgressLostApplier(_RecordingApplier):
+        def apply_plan(self, **kwargs: object) -> NoReturn:
+            self.calls.append(kwargs)
+            msg = "the progress of the apply could not be saved"
+            raise ApplyProgressLostError(msg, apply_record=partial)
+
+    with pytest.raises(ApplyProgressLostError) as raised:
+        execute_run(  # ty: ignore[no-matching-overload] - the seam is a recording double.
+            instance,
+            operation="apply",
+            run_id=RUN_ID,
+            confirm_writes=True,
+            ownership=object(),
+            record_applied=lambda _record: pytest.fail("a stopped apply reported a completed record"),
+            _plan_applier_factory=lambda *_args, **_kwargs: _ProgressLostApplier(factory.engine),
+        )
+
+    assert raised.value.apply_record is partial
+    run_file = RunFile.load_or_default(run_dir / "run.json")
+    assert run_file.status == "failed"
+    assert run_file.summary["applied_operations"] == ["op_00000000000000a1"]
 
 
 def test_composed_operation_skips_nested_core_lock(

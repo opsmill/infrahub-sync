@@ -1162,9 +1162,6 @@ class Potenda:
         # check. The Sync API checks this too, and a direct caller of this method cannot skip
         # it; refused before the first dispatch, so nothing is written.
         _require_left_out_confirmation(loaded.manifest, run_id=run_id, confirm_left_out=confirm_left_out)
-        self._last_applied_plan_action_counts = {
-            action: sum(operation.action == action for operation in loaded.operations) for action in ACTIONS
-        }
 
         # One memo for the whole apply, discarded with it — the same lifetime as the run. The
         # destination supplies it, so the engine builds a resolver for a destination it does
@@ -1183,6 +1180,11 @@ class Potenda:
         # A resume starts after the last operation an earlier execution committed; the
         # operations before it belong to that execution's record, not to this one (R6).
         first = 0 if start_after is None else start_after + 1
+        # The counts this execution reports: a resume reports only the operations it reaches,
+        # and the run's progress view combines every execution (R6).
+        self._last_applied_plan_action_counts = {
+            action: sum(operation.action == action for operation in operations[first:]) for action in ACTIONS
+        }
 
         applied: list[str] = []
         skipped_deletes: list[str] = []

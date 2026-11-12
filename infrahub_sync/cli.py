@@ -37,6 +37,7 @@ from infrahub_sync.client import (
     ProtocolError,
     RegisteredConfigurationResource,
     RegisteredVersionResource,
+    ResumeRunRequest,
     RunResource,
     RunTerminalError,
     RunWaitTimeoutError,
@@ -694,6 +695,44 @@ def _echo_reads(resource: RunResource) -> None:
         )
 
 
+def _echo_apply_progress(resource: RunResource) -> None:
+    """Print a write's progress, whether the run can be resumed, each kind's counts and its resumes.
+
+    Nothing is printed for a run that never started a write (spec 022 contracts/cli.md). The
+    lines hold positions, counts, kinds, actors and times only, never a value from the plan.
+    """
+    progress = resource.apply_progress
+    if progress is None:
+        return
+    saved = f"saved {progress.saved_at.isoformat()}" if progress.saved_at is not None else "no position saved"
+    if progress.by_kind:
+        committed = sum(entry.committed for entry in progress.by_kind)
+        total = sum(entry.committed + entry.uncertain + entry.not_reached for entry in progress.by_kind)
+        typer.echo(_display(f"progress: {committed}/{total} operations committed ({saved})"))
+    else:
+        # The saved plan cannot be read, so only the saved position is known.
+        position = "<none>" if progress.position is None else progress.position
+        typer.echo(_display(f"progress: last committed position {position} ({saved})"))
+    if not progress.resumable:
+        resumable = "no"
+    elif progress.verify_required:
+        resumable = "yes (verify required)"
+    else:
+        resumable = "yes"
+    typer.echo(f"resumable: {resumable}")
+    for entry in progress.by_kind:
+        typer.echo(
+            _display(
+                f"kind {entry.kind}: committed {entry.committed}, uncertain {entry.uncertain}, "
+                f"not reached {entry.not_reached}"
+            )
+        )
+    for number, resume in enumerate(resource.resumes, start=1):
+        start = "from the first operation" if resume.start_after is None else f"after {resume.start_after}"
+        outcome = resume.outcome or "unfinished"
+        typer.echo(_display(f"resume {number}: {resume.actor} {resume.requested_at.isoformat()} {start} {outcome}"))
+
+
 def _side_read_text(side: SideRead | None) -> str | None:
     """Render one side's read state as `key=value` pairs, leaving out the keys with no value."""
     if side is None:
@@ -1056,6 +1095,10 @@ _LEFT_OUT_CONFIRMATION_REQUIRED = "left-out-confirmation-required"
 # The refusal of a stage on a run that already admitted a write, or that has an unresolved
 # submission or a running execution (spec 019 FR-023 keeps the code, decision 4).
 _RUN_EXECUTION_CONFLICT = "run-execution-conflict"
+_VERIFY_REQUIRED = "verify-required"
+_RESUME_REFUSAL_HINTS = {
+    _VERIFY_REQUIRED: "run infrahub-sync verify {run_id} first",
+}
 _RUN_EXECUTION_CONFLICT_NEXT_ACTION = (
     "If this run already admitted a write, its plan is not applied again: review the run with "
     "`infrahub-sync runs show`, then create and review a new plan with `infrahub-sync plan`. "
@@ -1516,6 +1559,74 @@ def runs_cancel(
         _echo_run(client.cancel_run(run_id, request, key))
 
 
+@runs_app.command("resume")
+def runs_resume(
+    ctx: typer.Context,
+    *,
+    run_id: str = typer.Argument(..., help="Service-issued run ID whose write was interrupted."),
+    expected_checksum: str = typer.Option(..., "--expected-checksum", help="Checksum printed by `runs plan`."),
+    confirm_left_out: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--confirm-left-out",
+        help="Confirm that you reviewed the records the plan leaves out; required when it leaves out any.",
+    ),
+    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the resume."),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
+    wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for this run's resume execution."),  # noqa: FBT003
+    wait_timeout: float = typer.Option(DEFAULT_WAIT_TIMEOUT, "--wait-timeout", help="Bounded wait in seconds."),
+    poll_interval: float = typer.Option(DEFAULT_POLL_INTERVAL, "--poll-interval", help="Poll interval in seconds."),
+) -> None:
+    """Resume an interrupted apply from the run's saved position, after a `verify` passed.
+
+    The resume applies the rest of the run's saved plan in a new execution on the same run. It writes
+    the plan's values over every operation that `verify` reported as differing from the plan.
+    """
+    with _client_errors():
+        client = _waiting_client(ctx, wait_timeout=wait_timeout, poll_interval=poll_interval)
+        key = _idempotency_key(idempotency_key)
+        _echo_idempotency_key(key)
+        request = cast(
+            "ResumeRunRequest",
+            _request(
+                ResumeRunRequest,
+                expected_checksum=expected_checksum,
+                confirm_writes=True,
+                confirm_left_out=confirm_left_out,
+                reason=reason,
+            ),
+        )
+        try:
+            accepted = client.resume(run_id, request, key)
+        except APIError as error:
+            if error.code == _LEFT_OUT_CONFIRMATION_REQUIRED:
+                left_out = _left_out_refusal_count(client, run_id, error)
+                count = "" if left_out is None else f" {left_out}"
+                typer.echo(
+                    f"resume refused: this plan leaves out{count} records; confirm with --confirm-left-out", err=True
+                )
+                raise typer.Exit(1) from None
+            hint = _RESUME_REFUSAL_HINTS.get(error.code)
+            if hint is None:
+                raise
+            label, fields = _error_fields(error)
+            typer.echo(f"error: {label}", err=True)
+            _echo_fields(fields, err=True)
+            typer.echo(_display(f"hint: {hint.format(run_id=run_id)}"), err=True)
+            raise typer.Exit(1) from None
+        _echo_run(accepted)
+        # The run's position when the resume was accepted is where the resume starts.
+        position = accepted.apply_progress.position if accepted.apply_progress is not None else None
+        _echo_fields((("start_after", position),))
+        try:
+            completed = _wait(client, accepted, wait=wait, wait_timeout=wait_timeout, poll_interval=poll_interval)
+        except RunTerminalError as error:
+            _echo_stage_failure(client, error.run_id, stage="resume")
+            raise
+        if wait:
+            _echo_run(completed)
+            _echo_apply_progress(completed)
+
+
 @runs_app.command("show")
 def runs_show(
     ctx: typer.Context,
@@ -1531,11 +1642,14 @@ def runs_show(
     stage whose read state the worker could not store.
     A failed stage adds its error type and, when the run recorded them, a `cause:` and a `hint:` line.
     A `sync` that stopped after a plan that leaves out records adds a `sync stopped:` and a `hint:` line.
+    A run with a write adds a `progress:` line, a `resumable:` line, one `kind` line per kind with its committed,
+    uncertain and not reached operations, and one `resume` line per resume of the run.
     """
     with _client_errors():
         resource = _client(ctx).get_run(run_id)
     _echo_run(resource)
     _echo_reads(resource)
+    _echo_apply_progress(resource)
     # The latest execution of each stage; the orchestration list is in run order.
     latest_by_stage = {execution.purpose: execution for execution in resource.orchestration}
     # A failed stage's cause and next action, as the run's results recorded them (FR-002).
