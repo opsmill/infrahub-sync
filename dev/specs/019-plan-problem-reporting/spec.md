@@ -780,7 +780,8 @@ to start implementation and are confirmed or changed at review.
      apply.
 3. **The sign-off of 2026-10-17 does not cover the rewritten records.** ADR 0020, ADR 0021 and
    ADR 0022 are written with the status Proposed. The sign-off task stays open and blocks the
-   merge, not the implementation. The product owner accepted all three records on 2026-11-12.
+   merge, not the implementation. The product owner accepted all three records on 2026-11-12,
+   and accepted ADR 0025, the warm-read design of task T081, the same day.
 4. **Plan format 4 does not reserve `cleared_relationships`.** A field that nothing writes cannot
    be tested, and a reader that ignored it would skip relationship clears without saying so. The
    rebuild of old specification 010 adds its own plan format.

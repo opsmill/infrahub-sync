@@ -1,6 +1,6 @@
 # 25. A warm source read admits its changed records and reads a kind in full after a problem
 
-**Status**: Proposed
+**Status**: Accepted
 **Date**: 2026-11-12
 **Source**: `dev/specs/019-plan-problem-reporting/research.md` (R22)
 
