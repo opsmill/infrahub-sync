@@ -558,7 +558,47 @@ def test_records_that_refer_to_each_other_in_a_cycle_still_load() -> None:
     source = _tree("LocationGeneric", [{"id": 1, "name": "a", "parent": 2}, {"id": 2, "name": "b", "parent": 1}])
 
     assert _loaded(source, "LocationGeneric") == ["1", "2"]
-    assert [entry.reason for entry in source.load_report.entries] == ["peer_not_found_in_source"]
+    assert [(entry.reason, entry.in_cycle) for entry in source.load_report.entries] == [
+        ("peer_not_found_in_source", True)
+    ]
+
+
+def test_a_record_that_waits_for_a_cycle_member_listed_later_resolves_it() -> None:
+    """c (parent 1), a (parent 2), b (parent 1): a and b form a cycle, and c still names a."""
+    source = _tree(
+        "LocationGeneric",
+        [
+            {"id": 3, "name": "c", "parent": 1},
+            {"id": 1, "name": "a", "parent": 2},
+            {"id": 2, "name": "b", "parent": 1},
+        ],
+    )
+
+    assert _loaded(source, "LocationGeneric") == ["1", "2", "3"]
+    assert source.get("LocationGeneric", "c").model_dump()["parent"] == "a"
+    assert source.get("LocationGeneric", "b").model_dump()["parent"] == "a"
+    assert _entries(source) == [
+        ("peer_not_found_in_source", "LocationGeneric", "1", "parent", ("LocationGeneric", "2"), None, None, True)
+    ]
+
+
+def test_a_reference_that_closes_a_cycle_has_its_own_reason() -> None:
+    """The problem says the peer refers back in a cycle, not that the source does not return it."""
+    source = _tree(
+        "LocationGeneric",
+        [
+            {"id": 3, "name": "c", "parent": 1},
+            {"id": 1, "name": "a", "parent": 2},
+            {"id": 2, "name": "b", "parent": 1},
+        ],
+    )
+
+    report = find_problems(source=source, destination=None, config=None)
+
+    assert [problem.problem_type for problem in report.problems] == ["peer_not_found_in_source"]
+    assert "in a cycle" in report.problems[0].reason
+    assert "does not return" not in report.problems[0].reason
+    assert [(item.record.source_id, item.cause) for item in report.kept] == [("1", "peer_not_found_in_source")]
 
 
 def test_a_child_admitted_again_runs_its_transforms_once() -> None:

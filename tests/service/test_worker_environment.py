@@ -31,6 +31,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
+import anyio
 import pytest
 
 pytest.importorskip("prefect")
@@ -463,3 +464,23 @@ async def test_a_store_that_does_not_answer_does_not_hold_the_poll(monkeypatch: 
     release.set()
 
     assert opened == [1]
+
+
+async def test_a_publication_whose_thread_never_started_does_not_block_the_next_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The limit expires before the thread starts: the next poll starts a publication again."""
+    queued: list[object] = []
+
+    async def never_started(*args: object, **_kwargs: object) -> None:
+        queued.append(args)
+        await anyio.sleep(5)
+
+    monkeypatch.setattr(service_worker.anyio.to_thread, "run_sync", never_started)
+    monkeypatch.setattr(service_worker, "_PUBLICATION_TIMEOUT_SECONDS", 0.05)
+    worker = _worker()
+
+    await _poll(worker)
+    await _poll(worker)
+
+    assert len(queued) == 2

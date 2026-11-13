@@ -93,6 +93,15 @@ _REASON_TEMPLATES: Mapping[ProblemType, str] = {
 }
 
 
+# A reference within one kind that closes a cycle (`LoadReportEntry.in_cycle`): the source returns
+# the peer, and the read admitted the record without that reference. Spec 020 has no problem type
+# for it, so it is a `peer_not_found_in_source` problem with this reason.
+_IN_CYCLE_REASON = (
+    "{record}: the relationship {field} refers to {peer}, which the source returns, but which refers back "
+    "to {record} through records of the same kind, in a cycle."
+)
+
+
 def _named(reference: SourceRecordReference) -> str:
     source_id = "with no source ID" if reference.source_id is None else f"source ID {reference.source_id}"
     return f"{reference.kind} record {source_id}"
@@ -122,12 +131,18 @@ def _problem(  # pylint: disable=too-many-arguments  # the fields of one problem
     destination_ids: Sequence[str] | None = None,
     identity: Mapping[str, Any] | None = None,
     config_entry: str | None = None,
+    in_cycle: bool = False,
 ) -> PlanProblem:
-    """Build one problem, its reason rendered from the fixed template of its type."""
+    """Build one problem, its reason rendered from the fixed template of its type.
+
+    `in_cycle` gives a `peer_not_found_in_source` problem the reason of a reference that closes a
+    cycle within one kind.
+    """
     others = ", ".join(_named(other) for other in other_records[:3])
     if len(other_records) > 3:
         others += f" and {len(other_records) - 3} other record(s)"
-    reason = _REASON_TEMPLATES[problem_type].format(
+    template = _IN_CYCLE_REASON if in_cycle else _REASON_TEMPLATES[problem_type]
+    reason = template.format(
         record=_named(record),
         value=_shown(value),
         field=field_name,
@@ -417,7 +432,9 @@ def _load_report_problems(
             findings.add(problem, [key])
         elif entry.reason == "peer_not_found_in_source":
             missing = None if entry.peer is None else entry.peer.model_copy(update={"identity": None})
-            problem = _problem("peer_not_found_in_source", reference, field_name=entry.field, peer=missing)
+            problem = _problem(
+                "peer_not_found_in_source", reference, field_name=entry.field, peer=missing, in_cycle=entry.in_cycle
+            )
             findings.add(problem, [key], leaves_out=not optional)
             if optional:
                 findings.not_found_optional.append((key, entry))

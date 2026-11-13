@@ -99,7 +99,7 @@ class WarmSourceReadMixin:
         return not report.entries_for(kind) and not report.filtered_ids.get(kind)
 
     def discard_kind(self: DiffSyncMixin, kind: str, *, entries_from: int) -> None:
-        """Remove the stored records of `kind` and what its read recorded, before a cold read.
+        """Remove the stored records of `kind`, their index and what its read recorded, before a cold read.
 
         `entries_from` is the number of load report entries before the read of `kind` started;
         only that read added the entries after it.
@@ -112,6 +112,9 @@ class WarmSourceReadMixin:
         state.retained_ids.pop(kind, None)
         for key in [key for key in state.not_loaded if key[0] == kind]:
             del state.not_loaded[key]
+        # The removed records no longer resolve a reference; the cold read indexes its own.
+        for key in [key for key in state.peer_index if key[0] == kind]:
+            del state.peer_index[key]
         for key in [key for key in state.peer_index if key[0] == kind]:
             del state.peer_index[key]
         state.read_kinds.discard(kind)

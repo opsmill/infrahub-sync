@@ -14,14 +14,18 @@ from __future__ import annotations
 
 import copy
 import json
-from typing import TYPE_CHECKING, Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncConfig
+from infrahub_sync.cache import incremental
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.cache.incremental import source_snapshot_is_complete
 from infrahub_sync.cache.parquet_io import read_table, write_table
 from infrahub_sync.cache.paths import cache_root_for
+from infrahub_sync.load_report import LoadReport
 from infrahub_sync.potenda import Potenda
 from infrahub_sync.runtime_schema.worker import bind_runtime_models
 from tests.plan.conftest import PlanProblemModel, Variant
@@ -39,7 +43,6 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from infrahub_sync import SchemaMappingModel, SyncConfig
     from tests.plan.conftest import PlanProblemFixture
     from tests.plan.problem_plan import PlannedFixture
 
@@ -329,3 +332,69 @@ def test_renamed_peer_makes_the_kinds_that_reference_it_read_in_full(
     assert _problems(warm) == _problems(cold)
     assert _left_out(warm) == _left_out(cold)
     assert _non_delete_operations(warm) == _non_delete_operations(cold)
+
+
+class _SelfReferencingSource:
+    """A source whose one kind references itself and whose warm read renamed a record."""
+
+    top_level = ["LocationGeneric"]  # noqa: RUF012  # read by `_load_source_kinds`
+
+    def __init__(self) -> None:
+        self.load_report = LoadReport()
+        self.read_in_full: list[str] = []
+        self.discarded: list[str] = []
+
+    def cursor_tier_for(self, model_name: str) -> CursorTier:  # noqa: ARG002, PLR6301  # pylint: disable=unused-argument
+        return CursorTier.TIMESTAMP
+
+    def implements_list_changed_records(self) -> bool:  # noqa: PLR6301
+        return True
+
+    def restore_record(self, model: object, payload: object) -> None:
+        """Nothing to restore in this stand-in."""
+
+    def load_changed_records(self, model_name: str, model: object, cursor: object) -> bool:  # noqa: ARG002, PLR6301  # pylint: disable=unused-argument
+        return True  # a changed record is now stored under another unique ID
+
+    def kind_read_is_clean(self, kind: str) -> bool:  # noqa: ARG002, PLR6301  # pylint: disable=unused-argument
+        return True
+
+    def discard_kind(self, kind: str, *, entries_from: int) -> None:  # noqa: ARG002  # pylint: disable=unused-argument
+        self.discarded.append(kind)
+
+    def model_loader(self, model_name: str, model: object) -> None:  # noqa: ARG002  # pylint: disable=unused-argument
+        self.read_in_full.append(model_name)
+
+
+def test_a_renamed_record_of_a_self_referencing_kind_makes_the_kind_read_in_full(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Location 1 is renamed and location 2 names it as its parent: the warm read is discarded."""
+    config = SyncConfig(
+        name="locations",
+        source=SyncAdapter(name="netbox"),
+        destination=SyncAdapter(name="infrahub"),
+        schema_mapping=[
+            SchemaMappingModel(
+                name="LocationGeneric",
+                mapping="dcim.locations",
+                fields=[SchemaMappingField(name="parent", mapping="parent", reference="LocationGeneric")],
+            )
+        ],
+    )
+    monkeypatch.setattr(incremental, "source_snapshot_is_complete", lambda **_kwargs: True)
+    monkeypatch.setattr(incremental, "hydrate_from_parquet", lambda **_kwargs: (0, None))
+    source = _SelfReferencingSource()
+
+    Potenda._load_source_kinds(  # pylint: disable=protected-access
+        cast("Potenda", SimpleNamespace(config=config)),
+        adapter=cast("Any", source),
+        prev_run=tmp_path,
+        models={"LocationGeneric": cast("Any", object)},
+        cursors={"LocationGeneric": SAFE_CURSOR},
+        next_cursors={"LocationGeneric": SAFE_CURSOR},
+        full_resources=set(),
+    )
+
+    assert source.discarded == ["LocationGeneric"]
+    assert source.read_in_full == ["LocationGeneric"]

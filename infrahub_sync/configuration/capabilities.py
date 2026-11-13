@@ -465,7 +465,10 @@ def _read_infrahub_destination_access(package: ConfigurationPackage, branch: str
             if parts is None:
                 continue
             missing = missing_permissions(
-                identifiers, needs=write_needs(*parts), branch=branch, default_branch=default_branch
+                identifiers,
+                needs=write_needs(*parts, branch=branch, default_branch=default_branch),
+                branch=branch,
+                default_branch=default_branch,
             )
             if missing:
                 missing_by_kind[mapping.name] = tuple(need.identifier for need in missing)

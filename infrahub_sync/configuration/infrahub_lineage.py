@@ -149,6 +149,11 @@ def parse_infrahub_lineage_settings(settings: Mapping[str, object] | None) -> Li
 # The actions an import needs on each kind its mapping writes (spec 020 FR-036).
 WRITE_ACTIONS: tuple[str, ...] = ("view", "create", "update")
 _SUPER_ADMIN = "super_admin"
+# Infrahub's global permission to change data on the default branch (`GlobalPermissions`), which
+# every mutation on the default branch needs besides its object permission.
+EDIT_DEFAULT_BRANCH = "edit_default_branch"
+_GLOBAL = "global"
+_DENY = "deny"
 _OBJECT_PERMISSION_PARTS = 5
 _GLOBAL_PERMISSION_PARTS = 3
 
@@ -164,6 +169,8 @@ class PermissionNeed:
     @property
     def identifier(self) -> str:
         """The need written as Infrahub writes a permission, without its decision."""
+        if self.namespace == _GLOBAL:
+            return f"global:{self.name}"
         return f"object:{self.namespace}:{self.name}:{self.action}"
 
 
@@ -215,6 +222,18 @@ def _grants(grant: _Grant, need: PermissionNeed, *, branch: str, default_branch:
     )
 
 
+def _grants_global(grants: list[_Grant], name: str) -> bool:
+    """Whether the grants hold the global permission `name`, as Infrahub resolves it.
+
+    Infrahub reads a global permission's decision only for `deny`, which takes precedence over
+    every allow of that permission; `super_admin` grants every global permission.
+    """
+    if any(grant.namespace == _GLOBAL and grant.name == _SUPER_ADMIN and grant.decision != _DENY for grant in grants):
+        return True
+    held = [grant for grant in grants if grant.namespace == _GLOBAL and grant.name == name]
+    return bool(held) and all(grant.decision != _DENY for grant in held)
+
+
 def missing_permissions(
     identifiers: Iterable[object], *, needs: Iterable[PermissionNeed], branch: str, default_branch: str
 ) -> tuple[PermissionNeed, ...]:
@@ -223,14 +242,26 @@ def missing_permissions(
     missing = {
         need
         for need in needs
-        if not any(_grants(grant, need, branch=branch, default_branch=default_branch) for grant in grants)
+        if not (
+            _grants_global(grants, need.name)
+            if need.namespace == _GLOBAL
+            else any(_grants(grant, need, branch=branch, default_branch=default_branch) for grant in grants)
+        )
     }
     return tuple(sorted(missing, key=lambda need: (need.namespace, need.name, need.action)))
 
 
-def write_needs(namespace: str, name: str) -> tuple[PermissionNeed, ...]:
-    """The permissions an import needs on one kind it writes: view, create and update."""
-    return tuple(PermissionNeed(namespace, name, action) for action in WRITE_ACTIONS)
+def write_needs(
+    namespace: str, name: str, *, branch: str | None = None, default_branch: str | None = None
+) -> tuple[PermissionNeed, ...]:
+    """The permissions an import needs on one kind it writes: view, create and update.
+
+    On the default branch, a write also needs the global `edit_default_branch` permission.
+    """
+    needs = tuple(PermissionNeed(namespace, name, action) for action in WRITE_ACTIONS)
+    if branch is not None and branch == default_branch:
+        needs = (*needs, PermissionNeed(_GLOBAL, EDIT_DEFAULT_BRANCH, "any"))
+    return needs
 
 
 def validate_infrahub_lineage_settings(

@@ -49,6 +49,8 @@ _LINEAGE_VIEW = (
     "object:Core:Repository:view:allow_all",
 )
 _SUPER_ADMIN = ("global:super_admin:allow_all",)
+# Infrahub renders a global permission as `global:<action>:<decision>` (`GlobalPermission.__str__`).
+_EDIT_DEFAULT_BRANCH = "global:edit_default_branch:allow_all"
 
 
 def _attribute(name: str) -> SimpleNamespace:
@@ -234,7 +236,31 @@ def test_a_grant_for_the_default_branch_only_is_missing_on_another_branch(monkey
 def test_a_grant_for_the_default_branch_is_enough_on_the_default_branch(monkeypatch: pytest.MonkeyPatch) -> None:
     default_only = tuple(item.replace(":allow_all", ":allow_default") for item in _DEVICE_WRITE)
 
-    found, _client = _validate(monkeypatch, permissions=default_only, branch="main")
+    found, _client = _validate(monkeypatch, permissions=(*default_only, _EDIT_DEFAULT_BRANCH), branch="main")
+
+    assert found == []
+
+
+def test_a_write_on_the_default_branch_needs_edit_default_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Infrahub refuses every mutation on the default branch without `global:edit_default_branch`."""
+    found, _client = _validate(monkeypatch, permissions=_DEVICE_WRITE, branch="main")
+
+    assert [finding.code for finding in found] == ["destination-permission-missing"]
+    assert "global:edit_default_branch" in found[0].message
+    assert "object:Infra:Device" not in found[0].message
+
+
+def test_a_denied_edit_default_branch_is_missing_on_the_default_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `deny` of the global permission takes precedence over its allow, as in Infrahub."""
+    permissions = (*_DEVICE_WRITE, _EDIT_DEFAULT_BRANCH, "global:edit_default_branch:deny")
+
+    found, _client = _validate(monkeypatch, permissions=permissions, branch="main")
+
+    assert ["global:edit_default_branch" in finding.message for finding in found] == [True]
+
+
+def test_edit_default_branch_is_not_needed_on_another_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    found, _client = _validate(monkeypatch, permissions=_DEVICE_WRITE, branch="review")
 
     assert found == []
 

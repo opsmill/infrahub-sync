@@ -48,8 +48,10 @@ A plan finds every problem in one pass and plans the rest of the data:
 
 ## Consequences
 
-- The team sees every problem of a source in one plan, and the plan writes the records that
-  have none.
+- The plan lists every problem that the read can find, and writes the records that have none.
+  Some problems appear only after another one is fixed: a transform that fails for a record,
+  for example, stops the read of that record before its references are resolved, so a problem
+  with one of its references shows in a later plan.
 - A left-out record produces no create, update or delete. The next plan checks it again.
 - The plan report becomes part of the saved plan, which needs plan format 4
   ([ADR 0022](0022-saved-plan-format-4.md)).

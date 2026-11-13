@@ -700,13 +700,20 @@ class Potenda:
                     add_row=lambda _name, payload, _model=model_cls: adapter.restore_record(_model, payload),
                 )
                 identities_changed = adapter.load_changed_records(resource, model_cls, cast("CursorState", cursor))
-                if adapter.kind_read_is_clean(resource):
-                    if identities_changed:
-                        # Unchanged records that reference a renamed record hold its old identity.
-                        unclean.add(resource)
+                if not adapter.kind_read_is_clean(resource):
+                    reason = "the changed records hold problems"
+                elif not identities_changed:
                     continue
+                elif resource not in referenced_kinds(self.config, resource):
+                    # Unchanged records that reference a renamed record hold its old identity.
+                    unclean.add(resource)
+                    continue
+                else:
+                    # The kind references itself: its own unchanged records hold the old identity
+                    # of a renamed record, so the kind is read in full, and so are its referrers.
+                    unclean.add(resource)
+                    reason = "a record that other records of its kind reference was renamed"
                 adapter.discard_kind(resource, entries_from=start)
-                reason = "the changed records hold problems"
             logger.info("Incremental: reading source kind %s in full (%s)", resource, reason)
             adapter.model_loader(model_name=resource, model=model_cls)
             full_resources.add(resource)

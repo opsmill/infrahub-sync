@@ -162,11 +162,20 @@ def record_to_data(self, record, element, model):
 
 `record_to_data` always sets `local_id` to the source record ID, and resolves each reference with
 `peer_unique_id`, or `peer_unique_ids` for a list of peers. Do not filter, transform or catch
-errors in either method. On the source side, `load_record` records a record it cannot build for
-one of the reasons of the load report (a value of the wrong type, a duplicate identity, a peer
-that is filtered, not loaded or not in the source, a failed transform) in the adapter's
-`load_report`, and the plan lists it as a problem and leaves it out. Any other error is raised as
-`RecordLoadError` and fails the plan; see
+errors in either method. On the source side, `load_record` records in the adapter's
+`load_report` what it finds while it builds a record, and the plan reads each entry in one of
+three ways:
+
+- A value of the wrong type, a duplicate identity, a required peer that a filter removed, a
+  peer the source does not return and a failed transform are problems of the record: the plan
+  lists the problem and leaves the record out. A peer the source does not return through an
+  optional relationship is listed too, and the record is kept without that relationship.
+- A required peer that the read could not build makes the record a dependent: the plan lists
+  it as left out, naming the record it depends on, with no problem of its own.
+- An optional peer that the read could not build keeps the record without that relationship,
+  in the kept records, with no problem of its own.
+
+Any other error is raised as `RecordLoadError` and fails the plan; see
 [The read loop](../knowledge/adapter-anatomy.md#the-read-loop). Override `record_source_id` when
 your records do not name their ID `id`. `examples/custom_adapter/custom_adapter_src/custom_adapter.py`
 has a complete version, including the single and list reference cases.
