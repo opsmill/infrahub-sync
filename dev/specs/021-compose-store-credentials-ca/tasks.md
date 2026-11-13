@@ -145,10 +145,10 @@ external store runs. US5 (released image) is independent.
 
 ## Phase 8: Image pins (FR-023, FR-024)
 
-- [ ] T050 [P] Resolve the `sha256` digest of the multi-architecture index of `postgres:16-alpine` with `docker buildx imagetools inspect`, check it lists linux/amd64 and linux/arm64, and pin it in `development/docker-compose.yml:96` (decision 3)
-- [ ] T051 Make `test_every_image_other_than_sync_is_named_by_digest` (`tests/compose/test_compose_contract.py:636`) run over the root file, `infrahub_sync/testcontainers/docker-compose.yml` and `development/docker-compose.yml` (FR-023)
-- [ ] T052 [P] Check `tests/compose/test_image_pins.py` covers the development PostgreSQL pin
-- [ ] T053 If T001 found specification 010 "PR 2" unmerged, keep the strict `xfail` on the preview file and note it in the PR description
+- [X] T050 [P] Resolve the `sha256` digest of the multi-architecture index of `postgres:16-alpine` with `docker buildx imagetools inspect`, check it lists linux/amd64 and linux/arm64, and pin it in `development/docker-compose.yml:96` (decision 3)
+- [X] T051 Make `test_every_image_other_than_sync_is_named_by_digest` (`tests/compose/test_compose_contract.py:636`) run over the root file, `infrahub_sync/testcontainers/docker-compose.yml` and `development/docker-compose.yml` (FR-023)
+- [X] T052 [P] Check `tests/compose/test_image_pins.py` covers the development PostgreSQL pin
+- [X] T053 If T001 found specification 010 "PR 2" unmerged, keep the strict `xfail` on the preview file and note it in the PR description (does not apply: this branch is rebased on the PR 2 branch, so the preview file is gone)
 
 ## Phase 9: Polish and records
 

@@ -1235,3 +1235,32 @@ def test_each_credential_variable_is_optional_in_the_file(setting: str) -> None:
     text = COMPOSE_FILE.read_text(encoding="utf-8")
 
     assert f'{setting}: "${{{setting}:-}}"' in text
+
+
+# ---------------------------------------------------------------------------
+# Image pins of the development stack (spec 021 FR-023, FR-024)
+# ---------------------------------------------------------------------------
+
+DEVELOPMENT_FILE = DEVELOPMENT_COMPOSE / "docker-compose.yml"
+DEVELOPMENT_SYNC_IMAGE = "infrahub-sync:dev"
+
+
+def test_every_development_image_other_than_the_checkout_build_is_named_by_digest(compose_version: str) -> None:
+    """The development stack builds the Sync image from the checkout; every other image is pinned.
+
+    The root file's own case covers the packaged copy, which is byte-identical to it.
+    """
+    del compose_version
+    result = compose(
+        ["--profile", "sync", "--profile", "infrahub", "config", "--format", "json"],
+        files=(DEVELOPMENT_FILE,),
+        inherit_environment=False,
+    )
+    assert result.returncode == 0, result.stderr
+    mutable = sorted(
+        f"{name}: {definition['image']}"
+        for name, definition in services(json.loads(result.stdout)).items()
+        if definition["image"] != DEVELOPMENT_SYNC_IMAGE and not IMMUTABLE_REFERENCE.fullmatch(str(definition["image"]))
+    )
+
+    assert mutable == [], f"these development services are not pinned to a digest: {mutable}"
