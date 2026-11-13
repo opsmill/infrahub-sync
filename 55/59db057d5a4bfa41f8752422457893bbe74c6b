@@ -1,0 +1,33 @@
+infrahub_sync/service/trust_store.py
+  s_3defe6e8bcd0ab::t_fbaca6126e635b 23,124-125
+dev/specs/021-compose-store-credentials-ca/data-model.md
+  s_3defe6e8bcd0ab::t_2357bbf8ee75f9 37
+dev/specs/021-compose-store-credentials-ca/opsmill-implement-report.md
+  s_3defe6e8bcd0ab::t_a1227378fd58b3 62-64
+infrahub_sync/service/storage.py
+  s_3defe6e8bcd0ab::t_fbaca6126e635b 205-208
+tests/service/test_compose_bootstrap.py
+  s_3defe6e8bcd0ab::t_fbaca6126e635b 603-604
+dev/specs/021-compose-store-credentials-ca/research.md
+  s_3defe6e8bcd0ab::t_2357bbf8ee75f9 184
+infrahub_sync/service/bootstrap.py
+  s_3defe6e8bcd0ab::t_fbaca6126e635b 265,267-270
+dev/specs/021-compose-store-credentials-ca/reviews/review-run-20261113.md
+  s_3defe6e8bcd0ab::t_d5425cbecba6f7 57-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5559db057d5a4bfa41f8752422457893bbe74c6b",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
