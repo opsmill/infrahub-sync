@@ -60,9 +60,13 @@ their values.
 
 - Infrahub's own message of a rejected write reaches the run record (FR-016). It describes the
   write that Infrahub received. It still goes through the masking pass.
-- A credential value cannot enter the record, whatever its length or characters, because no
-  field is built from connection settings or from error text (FR-029). This protection does not
-  depend on replacing values in text.
+- No field is built from connection settings or from error text, except the messages Infrahub
+  returns: the message of a rejected write and the permission or message of a 403 (FR-029).
+  Through the other fields, a credential value cannot enter the record, whatever its length or
+  characters, and this protection does not depend on replacing values in text. A credential
+  that Infrahub repeats in one of its messages can reach the record: the masking pass that the
+  message of a rejected write goes through does not replace a value shorter than
+  `MIN_SECRET_LENGTH`.
 - The masking pass is neither extended nor removed (FR-030). The worker log and the Prefect
   logs keep the masked error text until version 3.0.
 - The comment in `_failure_evidence` and the

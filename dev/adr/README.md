@@ -53,21 +53,21 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why Sync runs its own Prefect server and PostgreSQL server instead of Infrahub's task
   manager and `task-manager-db`, and what that costs.
 - [0020 — Records with problems are left out of a plan, counted, and confirmed at apply](0020-records-with-problems-are-left-out-of-a-plan.md)
-  — **Proposed** — why a plan finds every problem in one pass, leaves out the records with a
+  — why a plan finds every problem in one pass, leaves out the records with a
   problem and the records that depend on them, keeps records through optional relationships,
   withholds the deletes of a kind it cannot match, and asks for a confirmation at apply.
 - [0021 — A run's failure record holds a structured cause built from allowlisted fields](0021-a-failure-record-holds-a-structured-cause.md)
-  — **Proposed** — why a failed run records a failure type, the system involved and
+  — why a failed run records a failure type, the system involved and
   Infrahub's own message of a rejected write, and never the text of any other error.
 - [0022 — Saved plan format 4 holds the plan report](0022-saved-plan-format-4.md)
-  — **Proposed** — the report file and the manifest's `report` record, how the plan checksum
+  — the report file and the manifest's `report` record, how the plan checksum
   binds the left-out count the apply checks, and why formats 2 and 3 can no longer be applied.
 - [0024 — Prefect shows a Sync stage's outcome only after the run record stores it](0024-prefect-surfaces-follow-the-stored-run-record.md)
   — why a stage's last log line and run summary artifact are written after the outcome is
   stored, where their outcome and next action come from, what the artifact may contain, and
   why a recorded verdict is the reported state.
 - [0025 — A warm source read admits its changed records and reads a kind in full after a problem](0025-a-warm-source-read-admits-changed-records.md)
-  — **Proposed** — why the source snapshot stores the source record ID and a completeness
+  — why the source snapshot stores the source record ID and a completeness
   marker, and why a kind with a problem is read in full, so a warm read reports the problems
   of a full read.
 

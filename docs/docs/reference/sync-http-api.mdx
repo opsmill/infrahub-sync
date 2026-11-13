@@ -392,7 +392,7 @@ an absent reason and a `null` reason are the same value, and both differ from an
 | `GET /configs/{config_id}` | Return one registered configuration's summary, with its `name` and `latest_version`. |
 | `GET /configs/{config_id}/versions` | List a configuration's version summaries, newest first, one page at a time. |
 | `GET /configs/{config_id}/versions/{registry_version}` | Return one registered version, with its package content. |
-| `POST /configs/{config_id}/versions/{registry_version}/validate` | Re-check a registered version against the adapter declarations installed now. With `branch=<name>`, also check the mapping, the import account's permissions and the named `source` and `owner` against that Infrahub branch, and the `$credential` variables against what the live workers hold. |
+| `POST /configs/{config_id}/versions/{registry_version}/validate` | Re-check a registered version against the adapter declarations installed now. With `branch=<name>`, also check the mapping, the import account's permissions and the named `source` and `owner` against that Infrahub branch, and check that a live worker holds a variable of each `$credential` name. It checks names only, not whether a credential's value is accepted. |
 | `GET /runs` | List runs, newest first, one page at a time. Filter by `config_id` and `registry_version`. |
 | `POST /runs` | Create one Sync run and accept `plan` or confirmed composed `sync`. |
 | `GET /runs/{run_id}` | Return the durable product record, with current linked Prefect detail for non-terminal executions. |
@@ -405,7 +405,7 @@ an absent reason and a `null` reason are the same value, and both differ from an
 | `GET /runs/{run_id}/artifacts/{artifact_id}` | Return verified artifact bytes with their media type and `Digest` header. |
 | `GET /runs/{run_id}/logs` | Return the log lines that Sync wrote during the run's stages, oldest first, one page at a time. |
 | `GET /events` | List typed events about runs and configurations, oldest first, one page at a time. |
-| `POST /runs/{run_id}/verify` | Accept a verification that runs every pre-write check of `apply` against the destination, writes nothing, and does not change the run's phase. |
+| `POST /runs/{run_id}/verify` | Accept a verification that runs every pre-write check of `apply` against the destination, except the left-out confirmation, writes nothing, and does not change the run's phase. |
 | `POST /runs/{run_id}/approve` | Record approval of the run's saved plan for the exact retained checksum. Writes nothing and submits no execution. |
 | `POST /runs/{run_id}/apply` | Accept a confirmed apply for the exact retained reviewed checksum. |
 | `POST /runs/{run_id}/cancel` | Ask Prefect to cancel only the latest active linked execution, or, when the run has no active execution and is in phase `planned`, withdraw its plan. |
@@ -684,6 +684,8 @@ is `null` or absent:
     - the destination's answer: `destination_rejected_write`, `destination_peer_missing`,
       `destination_peer_ambiguous`, `lineage_refused`, `destination_schema_unavailable`;
     - the checks of a saved plan: `verification_failed`, `apply_refused`;
+    - a `sync` that stopped after its plan for a review of the left-out records:
+      `left_out_review_required`;
     - any other error: `internal_error`.
 - `system`: `{"role": "source" or "destination", "adapter": <name>}`.
 - `error_code`, `node_kind`, `attribute` and `infrahub_message`: Infrahub's error code, node
@@ -781,7 +783,9 @@ Verification runs, against the destination, every check that `apply` runs before
 write, and writes nothing. The worker reads the live destination schema for it, with the
 credentials and network access that `apply` uses, and the service passes the run's
 `destination_branch` as the branch. Verification does not take the configuration's write
-guard, does not change the run's phase, and does not approve the plan:
+guard, does not change the run's phase, and does not approve the plan. It does not check the
+confirmation that the left-out records were reviewed: only an apply request carries it
+(`confirm_left_out`, described under the apply request):
 
 ```bash
 curl --request POST \
@@ -895,8 +899,8 @@ deletes remain disabled.
 When the plan leaves out records (`summary.left_out` greater than 0), the request must also
 hold `"confirm_left_out": true`, the confirmation that the person reviewed the left-out
 records. Without it, the service answers `409 left-out-confirmation-required` before any
-write, with the count in the error's `left_out` field and the message `this plan leaves out
-6 records; confirm with confirm_left_out=true`. The worker checks the confirmation again.
+write, with the count in the error's `left_out` field and a message such as `this plan leaves
+out 6 records; confirm with confirm_left_out=true`, where 6 is the plan's count. The worker checks the confirmation again.
 `confirm_left_out` must be a JSON boolean; any other value is `422`. On a plan that leaves out
 nothing, it has no effect.
 

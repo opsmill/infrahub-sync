@@ -40,8 +40,8 @@ The extraction methods are layered on top of the full read, which `list_records`
   establish a safe cursor.
 - `list_changed_records(model_name, element, cursor)` — **required for a warm read of the
   source.** Return the raw records of the mapping entry changed since `cursor`, before any
-  filter, as `list_records` returns them for a full read. A source adapter without it reads
-  every kind in full, even with a safe cursor.
+  filter, as `list_records` returns them for a full read. A `DiffSyncMixin` source adapter
+  without it reads every kind in full, even with a safe cursor.
 - `list_changed_since(model_name, cursor)` — **required for a warm read of the destination,
   and of a source that does not inherit `DiffSyncMixin`.** Yield the model data of the records
   changed since `cursor`: filtered, transformed and converted with `record_to_data`.
@@ -53,7 +53,7 @@ The extraction methods are layered on top of the full read, which `list_records`
 #### A warm source read reports the problems of a full read
 
 For a source that inherits `DiffSyncMixin`, `Potenda._load_source_kinds` reads each kind as
-follows (spec 019 research R22):
+follows (spec 020 research R22):
 
 1. The kind reads warm only when the adapter implements `list_changed_records`, the previous
    run's snapshot of the kind is marked complete, and no peer kind the kind references (the

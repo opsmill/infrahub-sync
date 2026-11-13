@@ -36,8 +36,9 @@ for the operations each route supports.
 
 A failed run's `results.<stage>_failure` record follows
 [ADR 0021](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0021-a-failure-record-holds-a-structured-cause.md).
-The record holds the class name of the error and of its immediate cause, and only these
-fields:
+The keys the record held before that decision (such as `outcome`, `error_type`, `cause`,
+`next_action` and the apply record keys) keep their values. Beyond them, the record holds the class name of the error
+and of its immediate cause, and only these fields:
 
 - the stage and a failure type from a fixed list
 - the system involved: `source` or `destination`, and the adapter name

@@ -66,7 +66,7 @@ def service_sync_run(
 ```
 
 `confirm_left_out` is the person's confirmation that they reviewed the records a plan leaves
-out (spec 019). The API adds it to the flow parameters only when it is true, so an apply that
+out (spec 020). The API adds it to the flow parameters only when it is true, so an apply that
 confirms nothing keeps the parameters of earlier releases. The worker passes it to
 `Potenda.apply_plan`, which checks it again against the plan manifest's left-out count and
 raises `LeftOutConfirmationRequiredError` before any write when it is missing. Because the
