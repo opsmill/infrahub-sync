@@ -19,6 +19,7 @@ from infrahub_sync.client import (
     ApplyProgressKindResource,
     ApplyProgressResource,
     ClientInputError,
+    ResultsResource,
     ResumeResource,
     RunResource,
     RunTerminalError,
@@ -26,6 +27,7 @@ from infrahub_sync.client import (
 from tests.cli.test_client_commands import (
     CHECKSUM,
     _invoke,
+    _plan,
     _restore_package_logging,  # noqa: F401 - the CLI suite's autouse fixture, used by name.
     _run,
     client,  # noqa: F401 - the fixture is used by name.
@@ -152,6 +154,18 @@ def test_other_refusals_exit_with_the_code_apply_uses(client: MagicMock, code: s
     assert f"code: {code}" in resumed.output
 
 
+def test_a_checksum_conflict_shows_the_given_and_the_saved_checksum(client: MagicMock) -> None:  # noqa: F811
+    client.resume.side_effect = APIError(409, "checksum-conflict", run_id=_RUN_ID)
+    client.get_plan.return_value = _plan()
+    given = "b" * 64
+
+    result = _invoke(client, "runs", "resume", _RUN_ID, "--expected-checksum", given)
+
+    assert result.exit_code == 1, result.output
+    assert "code: checksum-conflict" in result.output
+    assert f"hint: the saved plan's checksum is {CHECKSUM}; you gave {given}" in result.output
+
+
 def test_a_resume_that_ends_failed_exits_like_a_failed_apply(client: MagicMock) -> None:  # noqa: F811
     client.resume.return_value = _interrupted(verify_required=False)
     client.apply.return_value = _interrupted(verify_required=False)
@@ -168,6 +182,31 @@ def test_a_resume_that_ends_failed_exits_like_a_failed_apply(client: MagicMock) 
     applied = _invoke(client, "apply", _RUN_ID, "--expected-checksum", CHECKSUM)
 
     assert resumed.exit_code == applied.exit_code == 1
+
+
+def test_a_failed_resume_prints_its_recorded_failure(client: MagicMock) -> None:  # noqa: F811
+    client.resume.return_value = _interrupted(verify_required=False)
+    client.wait_for_run.side_effect = RunTerminalError(
+        _RUN_ID, terminal_state="failed", terminal_outcome="failed", phase="resume-failed", outcome="failed"
+    )
+    client.get_results.return_value = ResultsResource(
+        run_id=_RUN_ID,
+        results={
+            "resume_failure": {
+                "stage": "resume",
+                "outcome": "failed",
+                "error_type": "OperationApplyFailedError",
+                "next_action": "Re-run `plan` for this sync to record the destination's current ids.",
+            }
+        },
+    )
+
+    result = _invoke(client, *_resume_arguments())
+
+    assert result.exit_code == 1, result.output
+    assert "resume failed: OperationApplyFailedError" in result.output
+    assert "hint: Re-run `plan` for this sync to record the destination's current ids." in result.output
+    client.get_results.assert_called_with(_RUN_ID)
 
 
 def test_a_client_input_error_exits_2_like_apply(client: MagicMock) -> None:  # noqa: F811

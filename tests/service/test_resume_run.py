@@ -942,6 +942,8 @@ def test_a_failed_resume_names_the_operation_and_the_window_ends_with_it(
     partial = ApplyRecord(
         applied_operations=tuple(_operation_id(index) for index in range(_MARKER + 1, 6_100)),
         failed_operation=failed,
+        # What the engine records for a destination "not found": this operation wrote nothing.
+        failed_operation_wrote=False,
         operations_total=_TOTAL,
         failed_operation_detail={"action": "update", "kind": "BuiltinTag", "identity": {"name": "node-6100"}},
     )
@@ -959,9 +961,14 @@ def test_a_failed_resume_names_the_operation_and_the_window_ends_with_it(
     stored = projection.lookup_run(run_id).value
     assert stored is not None
     assert stored.results["resume_failure"]["failed_operation"] == failed
-    assert stored.reconciliation_required is True
+    # The failing operation wrote nothing, so the resume failed rather than ended ambiguous; the
+    # run's earlier write is still uncertain, so it still requires reconciliation and a new
+    # `verify` before the next resume.
+    assert (stored.phase, stored.outcome, stored.reconciliation_required) == ("resume-failed", "failed", True)
+    assert stored.prefect_executions[-1].terminal_state == "failed"
     view = apply_progress_view(stored, _plan_operations())
     assert view is not None
+    assert (view.resumable, view.verify_required) == (True, True)
     # Uncertain: after the run's position, through the failing operation (6,000 to 6,100).
     assert [(entry.kind, entry.committed, entry.uncertain, entry.not_reached) for entry in view.by_kind] == [
         ("BuiltinTag", 6000, 101, 399),

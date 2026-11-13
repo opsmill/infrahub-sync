@@ -1096,6 +1096,7 @@ _LEFT_OUT_CONFIRMATION_REQUIRED = "left-out-confirmation-required"
 # submission or a running execution (spec 019 FR-023 keeps the code, decision 4).
 _RUN_EXECUTION_CONFLICT = "run-execution-conflict"
 _VERIFY_REQUIRED = "verify-required"
+_CHECKSUM_CONFLICT = "checksum-conflict"
 _RESUME_REFUSAL_HINTS = {
     _VERIFY_REQUIRED: "run infrahub-sync verify {run_id} first",
 }
@@ -1606,11 +1607,14 @@ def runs_resume(
                 )
                 raise typer.Exit(1) from None
             hint = _RESUME_REFUSAL_HINTS.get(error.code)
-            if hint is None:
+            if hint is None and error.code != _CHECKSUM_CONFLICT:
                 raise
             label, fields = _error_fields(error)
             typer.echo(f"error: {label}", err=True)
             _echo_fields(fields, err=True)
+            if hint is None:
+                # Scenario 3: the error shows the given checksum and the saved plan's checksum.
+                hint = f"the saved plan's checksum is {client.get_plan(run_id).checksum}; you gave {expected_checksum}"
             typer.echo(_display(f"hint: {hint.format(run_id=run_id)}"), err=True)
             raise typer.Exit(1) from None
         _echo_run(accepted)
