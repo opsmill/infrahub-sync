@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
+from diffsync import Adapter
 
 from infrahub_sync.cache.cursors import CursorTier
 
@@ -32,11 +33,12 @@ def _make_adapter(schema_kinds: list[str]) -> "InfrahubAdapter":
     # Build an adapter, then overwrite client/schema rather than running
     # the constructor's I/O. Skip __init__ entirely.
     adapter = InfrahubAdapter.__new__(InfrahubAdapter)
+    # The DiffSync part only: the read loop stores each record in the adapter's store.
+    Adapter.__init__(adapter)  # noqa: PLC2801 - the Infrahub constructor reads the server
     adapter.target = "test"
     adapter.config = config
     adapter.client = fake_client
     adapter.schema = {k: MagicMock() for k in schema_kinds}
-    adapter.continue_on_error = False
     return adapter
 
 
@@ -145,14 +147,14 @@ def test_model_loader_requests_identifiers_and_mapped_attributes() -> None:
     adapter.infrahub_node_to_diffsync = MagicMock(  # ty: ignore[invalid-assignment]
         return_value={"local_id": "device-id", "device": "leaf1", "name": "eth0", "description": "test"}
     )
-    adapter.update_or_add_model_instance = MagicMock()  # ty: ignore[invalid-assignment]
-
     fake_model = MagicMock()
     fake_model._identifiers = ("device", "name")
     fake_model._attributes = ("description", "name")
     fake_item = MagicMock()
     fake_item.get_unique_id.return_value = "leaf1"
     fake_model.return_value = fake_item
+    # `update_or_add_model_instance` returns the stored model and whether it was created.
+    adapter.update_or_add_model_instance = MagicMock(return_value=(fake_item, True))  # ty: ignore[invalid-assignment]
 
     adapter.model_loader("InfraDevice", fake_model)
 

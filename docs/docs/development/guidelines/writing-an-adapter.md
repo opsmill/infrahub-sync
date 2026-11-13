@@ -27,21 +27,25 @@ class MyAdapter(Adapter, DiffSyncMixin): ...
 Set a `type` class attribute (for example `type = "NetBox"`); it is used in log lines and to
 decide whether the adapter is acting as the source.
 
-### Reuse the loading helpers
+### Reuse the read loop
 
-**Always filter and transform through the model mixin:**
+**Always implement `list_records` and `record_to_data`, and keep the base-class `model_loader`:**
 
 ```python
-# ✅ Good — honors the schema mapping consistently
-filtered = model.filter_records(records=records, schema_mapping=element)
-records = model.transform_records(records=filtered, schema_mapping=element)
+# ✅ Good — the base-class read loop filters, transforms and admits each record
+def list_records(self, model_name, element):
+    return self.client.get(element.mapping)
 
 # ❌ Bad — re-implements filtering, diverges from every other adapter
-records = [r for r in records if r["status"] == "active"]
+def list_records(self, model_name, element):
+    return [r for r in self.client.get(element.mapping) if r["status"] == "active"]
 ```
 
-Filtering and transforming are defined once on `DiffSyncModelMixin`. Re-implementing them in
-an adapter means filters and transforms in `config.yml` behave differently per system. For a
+On a source read, the base-class `model_loader` applies each mapping entry's filters of
+`config.yml`, and `load_record` applies its transforms and records each source record it cannot
+build in `load_report`. A destination read applies neither. Filtering,
+transforming or catching errors in an adapter means filters and transforms behave differently
+per system, and the plan does not list the records the adapter skipped. For a
 REST source, subclass `GenericrestapiAdapter` instead of writing HTTP handling from scratch —
 override only the settings defaults you need (see `infrahub_sync/adapters/peeringmanager.py`).
 
@@ -155,7 +159,7 @@ If a destination does not implement both methods, the pre-write gate refuses `sy
 | Splitting a `unique_id` on `__` to get identifiers | Read the nested `{peer_kind, identity}` pair |
 | Silently dropping an unresolvable peer on the apply path | Raise, naming the peer and the next action |
 | Implementing model `create` / `update` / `delete` for V3 writes | Implement the planned-write surface on the adapter |
-| Inline filtering / transforming in the adapter | `model.filter_records` / `model.transform_records` |
+| Inline filtering / transforming in the adapter, or an adapter-own `model_loader` | `list_records` and `record_to_data`, with the base-class read loop |
 | Hand-rolled HTTP for a REST source | Subclass `GenericrestapiAdapter` |
 | `except Exception: pass` | Catch the specific error; surface the rest |
 | `print()` for diagnostics | `structlog` with context |

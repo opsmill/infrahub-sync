@@ -20,12 +20,12 @@ rules, and a programmatic caller must not have to catch an exception to learn a 
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from infrahub_sync.cache.paths import cache_root_for, run_dir
 from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.errors import UnknownPlanKindError, UnknownRunIdentifierError, UnsafeRunIdentifierError
-from infrahub_sync.plan.models import PlanSummary
+from infrahub_sync.plan.models import PlanReport, PlanSummary
 from infrahub_sync.plan.reader import (
     RUN_ID_LISTING_LIMIT,
     load_plan_artifact,
@@ -37,7 +37,7 @@ from infrahub_sync.plan.verify import manifest_mapping_or_none, plan_checksum_fa
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, PLAN_DIR_NAME
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
     from pathlib import Path
 
     from infrahub_sync import SyncConfig
@@ -79,6 +79,9 @@ class SavedPlan:
             manifest's digest or count is refused while reading, not noted. A file that
             matches but holds a bad record is `None` too, with a verification note naming
             the first bad line and the reason.
+        report: The lines of `report.jsonl` (plan format 4, spec 020): problems, left-out
+            records and kept records, in the report's order. Empty for a format 2 or 3 plan.
+            The reader has checked them against the manifest's digest and counts.
     """
 
     def __init__(
@@ -90,8 +93,10 @@ class SavedPlan:
         verification_notes: Iterable[str],
         declared_kinds: Iterable[str] | None = None,
         last_changes: Iterable[LastChangeRecord] | None = None,
+        report: Iterable[Mapping[str, Any]] = (),
     ) -> None:
         self.manifest = manifest
+        self.report = tuple(dict(line) for line in report)
         self.last_changes = None if last_changes is None else list(last_changes)
         self.checksum_ok = checksum_ok
         self.verification_notes = list(verification_notes)
@@ -119,12 +124,18 @@ class SavedPlan:
         for operation in self._operations:
             by_action[operation.action] = by_action.get(operation.action, 0) + 1
             by_kind[operation.kind] = by_kind.get(operation.kind, 0) + 1
+        # Spec 020 FR-007: the report's counts. A format 2 or 3 plan has no report and could
+        # not check Dropdown values; a format 4 manifest records `false` only when it could not.
+        has_report = self.manifest.report is not None
+        counts = PlanReport.from_lines(self.report).summary_counts() if has_report else {}
         return PlanSummary(
             by_action=dict(sorted(by_action.items())),
             by_kind=dict(sorted(by_kind.items())),
             total=len(self._operations),
             delete_operations_computed=self.manifest.delete_operations_computed,
             deletes_not_executed=by_action.get("delete", 0),
+            dropdown_values_checked=has_report and self.manifest.dropdown_values_checked is not False,
+            **counts,
         )
 
     def operations(self, *, kind: str | None = None) -> list[PlannedOperation]:
@@ -439,4 +450,5 @@ def read_saved_plan(
         verification_notes=notes,
         declared_kinds=declared_kinds,
         last_changes=loaded.last_changes,
+        report=loaded.report,
     )

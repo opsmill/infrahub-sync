@@ -1,0 +1,14 @@
+{
+  "LocationSite": [
+    {"local_id": "18d52a8a-0000-0000-0000-000000000061", "name": "twin", "status": "active"},
+    {"local_id": "18d52a8a-0000-0000-0000-000000000062", "name": "twin", "status": "planned"}
+  ],
+  "LocationRack": [
+    {
+      "local_id": "18d52a8a-0000-0000-0000-000000000021",
+      "name": "comms-closet",
+      "facility_id": "F1",
+      "description": "old description"
+    }
+  ]
+}

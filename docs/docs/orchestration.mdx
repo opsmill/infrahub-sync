@@ -102,8 +102,15 @@ same key. The artifact holds:
 - the Sync run ID, the stage and the outcome;
 - the configuration and its version, and the destination branch, when the run has them;
 - the operation counts by action and by kind, when the run has them;
+- for a `plan` or `sync` stage, the number of records the plan left out, with how many have a
+  problem and how many depend on one, and the number of problems, when the run records them;
 - the next steps: `infrahub-sync runs show <run_id>`, then `infrahub-sync runs plan <run_id> --detail`
-  when the run saved a plan review, then the run's recorded next action, when there is one.
+  when the run saved a plan review, then `infrahub-sync runs plan <run_id> --problems` and
+  `--left-out` when the plan left out records, then the run's recorded next action, when there is one.
+
+A `sync` whose plan leaves out records stops after the plan, before any write. Its last log line
+reads `stage=sync outcome=left-out-review-required`, and its next step names the review commands
+and `infrahub-sync apply <run_id> --expected-checksum <checksum> --confirm-left-out`.
 
 The artifact is built from the run record's named fields and fixed text only, and the stage's
 secrets are removed from it. It never holds an error message. If the artifact cannot be

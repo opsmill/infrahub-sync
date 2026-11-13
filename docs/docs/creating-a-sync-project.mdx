@@ -120,13 +120,15 @@ breaks either one registers without an error:
 
 - **Identifiers must stay unique under the kind's uniqueness constraint.** Two source records
   that produce the same values for the destination kind's uniqueness constraint are one object
-  to Infrahub, and the plan refuses them. For example, the `DcimDevice` kind in the
-  `infrahub/traditional-infrastructure-sot` schema is unique by name, so two NetBox devices
-  with the same name in different sites stop the plan. Filter one of them out, or build a
-  unique name with a transform.
-- **A Dropdown attribute takes one of the schema's choices.** A source value outside them
-  reaches the plan unchanged, and Infrahub rejects it during the apply. Translate source values
-  to the schema's choices with a transform.
+  to Infrahub, and the plan lists them as a problem and leaves them out. For example, the
+  `DcimDevice` kind in the `infrahub/traditional-infrastructure-sot` schema is unique by name,
+  so the plan leaves out two NetBox devices with the same name in different sites. Filter one
+  of them out, or build a unique name with a transform.
+- **A Dropdown attribute takes one of the schema's choices.** When the run has a destination
+  schema snapshot, the plan lists a source value outside them as a
+  `dropdown_value_not_in_choices` problem and leaves the record out. Without a snapshot, the
+  value reaches the plan unchanged, and Infrahub rejects it during the apply. Translate source
+  values to the schema's choices with a transform.
 
 For all mapping options, including filters and transforms, see the
 [Schema mapping reference](./reference/schema-mapping.mdx).

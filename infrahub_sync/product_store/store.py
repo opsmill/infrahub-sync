@@ -8,7 +8,7 @@ import json
 import logging
 import os
 import sqlite3
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -56,6 +56,7 @@ from infrahub_sync.product_store.models import (
     RunFilters,
     RunPage,
     RunReference,
+    WorkerEnvironment,
     already_approved_body,
     approval_error_body,
     not_approvable_message,
@@ -138,6 +139,9 @@ CREATE TABLE IF NOT EXISTS configuration_versions (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS configuration_versions_checksum
     ON configuration_versions (config_id, package_checksum);
+CREATE TABLE IF NOT EXISTS worker_environments (
+    worker_id TEXT PRIMARY KEY, credential_names TEXT NOT NULL, observed_at TEXT NOT NULL
+);
 """
 _SQLITE_EXECUTION_TIMESTAMP_FUNCTION = "infrahub_sync_execution_timestamp_microseconds"
 _UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
@@ -342,6 +346,12 @@ _RUN_EXECUTION_CONFLICT_MESSAGE = (
     "this Sync run already has a write admission, an unresolved submission, or a running "
     "execution; review the run and create a new plan or sync run"
 )
+# Gives back the write admission a `sync` reserved at creation. Only the `sync`'s own
+# admission matches, never an apply's, and never on a run that requires reconciliation.
+_RELEASE_STOPPED_SYNC_ADMISSION = (
+    "DELETE FROM write_admissions WHERE run_id = ? AND operation = 'sync' AND NOT EXISTS "
+    "(SELECT 1 FROM product_runs WHERE run_id = ? AND reconciliation_required)"
+)
 _ADMITTED_APPEND_REFUSED = (
     "appending a write execution requires the mutation receipt that holds this run's write admission"
 )
@@ -367,6 +377,7 @@ _POSTGRESQL_SCHEMA_INITIALIZATION_LOCK = (
 # supports up to 8 concurrent writers with margin above that observed worst case.
 _CONFIGURATION_VERSION_ATTEMPTS = 8
 _JSON_MAPPING_ADAPTER = TypeAdapter(dict[str, Any])
+_JSON_LIST_ADAPTER = TypeAdapter(list[str])
 _INVALID_SERVICE_WORKER_ID = "service worker identity is invalid"
 
 _INSERT_CONFIGURATION = "INSERT INTO configurations (config_id, created_at) VALUES (?, ?)"
@@ -459,6 +470,12 @@ manifest_key, created_at, expires_at, published, visibility FROM artifact_refs
 WHERE run_id = ? AND artifact_id = ? AND visibility = ?"""
 _SELECT_CONFIGURATION_BASELINE = """SELECT config_id, source_row_counts, runs_since_full_extract, updated_at
 FROM configuration_baselines WHERE config_id = ?"""
+_UPSERT_WORKER_ENVIRONMENT = """INSERT INTO worker_environments (worker_id, credential_names, observed_at)
+VALUES (?, ?, ?)
+ON CONFLICT (worker_id) DO UPDATE SET credential_names = EXCLUDED.credential_names,
+observed_at = EXCLUDED.observed_at"""
+_SELECT_WORKER_ENVIRONMENTS = """SELECT worker_id, credential_names, observed_at FROM worker_environments
+ORDER BY worker_id"""
 _UPSERT_CONFIGURATION_BASELINE = """INSERT INTO configuration_baselines (config_id, source_row_counts,
 runs_since_full_extract, updated_at) VALUES (?, ?, ?, ?)
 ON CONFLICT (config_id) DO UPDATE SET source_row_counts = EXCLUDED.source_row_counts,
@@ -619,6 +636,10 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def has_pending_artifacts(self, run_id: str) -> bool: ...
 
     def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]: ...
+
+    def publish_worker_environment(self, environment: WorkerEnvironment) -> None: ...
+
+    def worker_environments(self) -> tuple[WorkerEnvironment, ...]: ...
 
     def add_prefect_execution(
         self, run_id: str, link: PrefectExecutionLink, *, receipt_id: str, allocate_attempt: bool = False
@@ -1625,6 +1646,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         "succeeded",
                     ):
                         self._record_configuration_baseline(cursor, run_id, writeback.baseline, terminal_at)
+                    # A `sync` that stopped after its plan, before any dispatch, gives back
+                    # its write admission in this same transaction, so the team can apply
+                    # the reviewed plan once (spec 020 FR-012, ADR 0020).
+                    if _releases_write_admission(writeback, terminal_state, terminal_outcome):
+                        cursor.execute(self._sql(_RELEASE_STOPPED_SYNC_ADMISSION), (run_id, run_id))
                 else:
                     cursor.execute(
                         self._sql(_SELECT_LATEST_EXECUTION_RESULTS),
@@ -1706,6 +1732,52 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 runs_since_full_extract,
                 updated_at.isoformat(),
             ),
+        )
+
+    def publish_worker_environment(self, environment: WorkerEnvironment) -> None:
+        """Replace one worker's published credential variable names (spec 020 FR-035)."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql(_UPSERT_WORKER_ENVIRONMENT),
+                    (
+                        environment.worker_id,
+                        _json(list(environment.credential_names)),
+                        environment.observed_at.isoformat(),
+                    ),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def worker_environments(self) -> tuple[WorkerEnvironment, ...]:
+        """Return every worker's last published credential variable names, by worker."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(_SELECT_WORKER_ENVIRONMENTS))
+                rows = cursor.fetchall()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return tuple(
+            WorkerEnvironment.model_validate(
+                {
+                    "worker_id": row[0],
+                    "credential_names": tuple(_JSON_LIST_ADAPTER.validate_json(str(row[1]))),
+                    "observed_at": row[2],
+                }
+            )
+            for row in rows
         )
 
     def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]:
@@ -3633,6 +3705,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
                 summary=cast("dict[str, Any]", _redact_value(_normalize_mapping(writeback.summary), secrets)),
                 results=cast("dict[str, Any]", _redact_value(_normalize_mapping(writeback.results), secrets)),
                 baseline=_redacted_baseline(writeback.baseline, secrets),
+                release_write_admission=writeback.release_write_admission,
             )
         else:
             sanitized = ExecutionMergeWriteback(
@@ -4061,6 +4134,30 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Return one configuration's durable source-count and full-extract reference."""
         return self._records.lookup_configuration_baseline(config_id)
 
+    def publish_worker_environment(
+        self, worker_id: str, credential_names: Iterable[str], *, observed_at: datetime | None = None
+    ) -> None:
+        """Record the credential variable NAMES one worker holds now; never a value (spec 020 FR-035).
+
+        Each call replaces that worker's previous names, so the record follows the variables
+        the worker holds at its latest poll.
+        """
+        self._records.publish_worker_environment(
+            WorkerEnvironment(
+                worker_id=worker_id,
+                credential_names=tuple(credential_names),
+                observed_at=observed_at or datetime.now(timezone.utc),
+            )
+        )
+
+    def live_worker_environments(self, *, observed_after: datetime) -> tuple[WorkerEnvironment, ...]:
+        """Return the publications of the workers that published at or after `observed_after`, by worker."""
+        return tuple(
+            environment
+            for environment in self._records.worker_environments()
+            if environment.observed_at >= observed_after
+        )
+
     def lookup_artifact(self, run_id: str, artifact_id: str) -> LookupResult[bytes]:
         """Resolve only a published, public, run-owned reference, with explicit unavailability."""
         return self._resolve_artifact(run_id, artifact_id, visibility="public")
@@ -4411,6 +4508,23 @@ def _receipt_from_row(row: Sequence[Any]) -> MutationReceipt:
             "created_at": row[15],
             "updated_at": row[16],
         }
+    )
+
+
+def _releases_write_admission(writeback: ExecutionFinishWriteback, terminal_state: str, terminal_outcome: str) -> bool:
+    """Answer whether a finish writeback gives back the run's write admission.
+
+    The writeback must ask for the release, and the run record it commits must show that no
+    operation was dispatched: a succeeded verdict, the `planned` phase, and no applied
+    operation in the summary or the results. The SQL statement adds the last two conditions:
+    the admission is a `sync`'s, and the run does not require reconciliation.
+    """
+    return (
+        writeback.release_write_admission
+        and (terminal_state, terminal_outcome) == ("completed", "succeeded")
+        and writeback.phase == "planned"
+        and not writeback.summary.get("applied_operations")
+        and not writeback.results.get("applied_operations")
     )
 
 

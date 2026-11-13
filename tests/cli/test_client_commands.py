@@ -32,6 +32,7 @@ from infrahub_sync.client import (
     ConfigurationPage,
     ConfigurationSummaryResource,
     ConfigurationVersionPage,
+    ConfigurationVersionReferenceResource,
     ConfigurationVersionResource,
     ConfigurationVersionSummaryResource,
     CreateRunRequest,
@@ -84,6 +85,12 @@ def _version(version: int = 1) -> ConfigurationVersionResource:
         package_checksum=CHECKSUM,
         declared_content={"name": "edge-sync"},
         created_at=NOW,
+    )
+
+
+def _version_reference(version: int = 1) -> ConfigurationVersionReferenceResource:
+    return ConfigurationVersionReferenceResource(
+        config_id="edge-sync", registry_version=version, package_checksum=CHECKSUM, created_at=NOW
     )
 
 
@@ -199,9 +206,9 @@ def client() -> MagicMock:
     injected.get_config_version.return_value = _version()
     injected.register_config.return_value = RegisteredConfigurationResource(
         configuration=ConfigurationSummaryResource(config_id="edge-sync", created_at=NOW),
-        version=_version(),
+        version=_version_reference(),
     )
-    injected.create_config_version.return_value = RegisteredVersionResource(version=_version(2), created=True)
+    injected.create_config_version.return_value = RegisteredVersionResource(version=_version_reference(2), created=True)
     injected.validate_config.return_value = ValidationReportResource(
         config_id="edge-sync",
         registry_version=1,
@@ -309,6 +316,49 @@ def test_configuration_reads_and_validation_keep_machine_fields_and_finding_orde
     assert "total_findings: 7" in validated.output
     assert "next_offset: 5" in validated.output
     assert validated.output.index("first finding") < validated.output.index("second finding")
+
+
+def test_configs_validate_passes_the_named_branch_to_the_service(client: MagicMock) -> None:
+    """Spec 020 FR-034 (T061): `--branch` is the only new option; the service receives the branch."""
+    validated = _invoke(client, "configs", "validate", "edge-sync", "1", "--branch", "review")
+
+    # The exit code on an error finding is not pinned here: contracts/cli.md says 1, and the
+    # test above pins 0 for today's report, which holds an error finding.
+    assert "No such option" not in validated.output
+    client.validate_config.assert_called_once_with("edge-sync", 1, offset=0, limit=256, branch="review")
+
+
+@pytest.mark.parametrize(
+    ("arguments", "severities", "exit_code"),
+    [
+        (("--branch", "review"), ("warning", "error"), 1),
+        (("--branch", "review"), ("warning",), 0),
+        ((), ("warning", "error"), 0),
+    ],
+    ids=["branch-with-an-error", "branch-with-warnings-only", "no-branch-with-an-error"],
+)
+def test_configs_validate_exits_1_on_an_error_finding_only_with_a_branch(
+    client: MagicMock, arguments: tuple[str, ...], severities: tuple[Literal["error", "warning"], ...], exit_code: int
+) -> None:
+    """contracts/cli.md: with `--branch`, an error finding exits 1; without it the exit code is unchanged."""
+    client.validate_config.return_value = ValidationReportResource(
+        config_id="edge-sync",
+        registry_version=1,
+        package_checksum=CHECKSUM,
+        findings=tuple(
+            ValidationFindingResource(code="finding", severity=severity, location="/a", message="a finding")
+            for severity in severities
+        ),
+        offset=0,
+        limit=256,
+        total_findings=len(severities),
+        next_offset=None,
+    )
+
+    result = _invoke(client, "configs", "validate", "edge-sync", "1", *arguments)
+
+    assert result.exit_code == exit_code, result.output
+    assert "code=finding" in result.output
 
 
 def test_plan_uses_registered_tuple_waits_and_renders_service_plan(client: MagicMock) -> None:

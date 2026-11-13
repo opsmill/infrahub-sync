@@ -487,6 +487,27 @@ def test_a_failure_after_part_of_a_write_names_the_operation_and_marks_the_parti
     assert "re-applying" in message.lower(), "and the convergent remedy (AD033)"
 
 
+def test_a_stopped_apply_records_the_plan_size_and_the_failed_operation(tmp_path: Path) -> None:
+    """Spec 020 FR-014: the failure record of a stopped apply names the operation from the plan."""
+    directory = _run_dir(tmp_path)
+    records = [operation_record(identity={"name": "first"}), operation_record(identity={"name": "second"})]
+    write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
+
+    with pytest.raises(OperationApplyFailedError) as caught:
+        _potenda(directory, PartiallyWritingDestination()).apply_plan(
+            ownership=granted_ownership(), config_version=CONFIG_VERSION
+        )
+
+    record = caught.value.apply_record
+    assert record.operations_total == len(records)
+    assert record.failed_operation_detail == {
+        "action": records[1]["action"],
+        "kind": records[1]["kind"],
+        "identity": {"name": "second"},
+    }
+    assert "operations_total" not in record.as_summary_keys(), "the run summary keys are unchanged"
+
+
 class DefectiveDestination(RecordingDestination):
     """A destination whose second operation raises the defect it is constructed with.
 
@@ -545,6 +566,45 @@ def test_a_known_destination_failure_is_wrapped_with_the_operation_and_run_conte
     assert "stay written" in message, "…and says the earlier writes were kept"
     assert caught.value.next_action, "every member of the taxonomy carries a next action (AD059)"
     assert "Next action:" in message
+
+
+class SecondOperationRejectingDestination(RecordingDestination):
+    """A destination where Infrahub rejects the second operation only, and every attempt is recorded."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.attempted: list[str] = []
+
+    def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
+        self.attempted.append(operation.operation_id)
+        if len(self.attempted) == 2:
+            raise GraphQLError([{"message": "planned is not a valid value for status"}])
+        return super().apply_planned_operation(operation=operation, peers=peers)
+
+
+def test_an_infrahub_rejection_stops_the_apply_before_the_next_operation(tmp_path: Path) -> None:
+    """Old 009 FR-013 (spec 020 T079): a rejected write stops the apply; no later operation is attempted.
+
+    The left-out policy of the plan does not apply during an apply, so the rejected operation is
+    not skipped: the third operation, which the destination would accept, is never sent.
+    """
+    directory = _run_dir(tmp_path)
+    records = [
+        operation_record(identity={"name": "first"}),
+        operation_record(identity={"name": "second"}),
+        operation_record(identity={"name": "third"}),
+    ]
+    write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
+    destination = SecondOperationRejectingDestination()
+
+    with pytest.raises(OperationApplyFailedError) as caught:
+        _potenda(directory, destination).apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
+
+    first, second, third = (str(record["operation_id"]) for record in records)
+    assert destination.attempted == [first, second], "the apply stops at the rejection"
+    assert third not in destination.dispatched
+    assert caught.value.apply_record.applied_operations == (first,)
+    assert caught.value.apply_record.failed_operation == second
 
 
 CODE_DEFECTS = (

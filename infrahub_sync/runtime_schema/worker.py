@@ -47,6 +47,8 @@ if TYPE_CHECKING:
     from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
     from infrahub_sync.configuration.models import ConfigurationPackage
 
+    from .domain import DestinationSchemaSnapshot
+
 
 # What one stage's runtime preparation must produce. A saved-plan apply constructs the
 # destination only, so building — and therefore resolving — the source would reintroduce
@@ -78,6 +80,37 @@ class RuntimeModelPlan:
     destination: RuntimeSideModels
     source: RuntimeSideModels | None
     generic_peers: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    # The choices of each mapped Dropdown attribute, by kind and attribute name, from the same
+    # snapshot (spec 020 research R4). The plan checks each mapped value against them.
+    dropdown_choices: Mapping[str, Mapping[str, tuple[str, ...]]] = field(default_factory=dict)
+
+
+def mapped_dropdown_choices(
+    snapshot: DestinationSchemaSnapshot, configuration: SyncConfig
+) -> dict[str, dict[str, tuple[str, ...]]]:
+    """Return the choices of every Dropdown attribute the configuration maps, by kind and attribute."""
+    found: dict[str, dict[str, tuple[str, ...]]] = {}
+    for mapping in configuration.schema_mapping:
+        node = snapshot.kinds.get(mapping.name)
+        if node is None:
+            continue
+        mapped = {field.name for field in mapping.fields or ()}
+        for attribute in node.attributes:
+            if attribute.choices is not None and attribute.name in mapped:
+                found.setdefault(mapping.name, {})[attribute.name] = attribute.choices
+    return found
+
+
+def planned_dropdown_choices(configuration: Any) -> Mapping[str, Mapping[str, tuple[str, ...]]] | None:
+    """The Dropdown choices of a run's runtime model plan, or `None` when the run has none.
+
+    A run without a runtime model plan (a direct Prefect flow run) has no destination schema
+    snapshot, so its plan cannot check Dropdown values (spec 020 research R4).
+    """
+    plan = getattr(configuration, "_runtime_models", None)
+    if not isinstance(plan, RuntimeModelPlan):
+        return None
+    return plan.dropdown_choices
 
 
 def read_destination_schema_snapshot(package: ConfigurationPackage, branch: str) -> Mapping[str, Any]:
@@ -199,6 +232,7 @@ def build_runtime_model_plan(
         destination=side(instance.destination),
         source=side(instance.source) if scope == "both" else None,
         generic_peers=snapshot.generic_peers,
+        dropdown_choices=mapped_dropdown_choices(snapshot, instance),
     )
 
 

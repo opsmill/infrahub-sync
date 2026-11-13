@@ -40,6 +40,9 @@ class NormalizedAttribute:
     default_value: Any
     unique: bool
     read_only: bool = False
+    # The choice names of a `Dropdown` attribute, sorted; `None` for any other attribute, or for
+    # a snapshot that does not record them (spec 020 research R4).
+    choices: tuple[str, ...] | None = None
 
     def mutable_default(self) -> Any:
         """Return this attribute's declared default as a mutable JSON-native value."""
@@ -170,7 +173,17 @@ def _normalized_attribute(name: str, entry: object, *, kind: str) -> NormalizedA
         default_value=_require_json_default(member["default_value"], detail=detail),
         unique=_require_bool(member["unique"], detail=detail),
         read_only=_require_bool(member.get("read_only", False), detail=detail),
+        choices=_choices(member.get("choices"), detail=detail),
     )
+
+
+def _choices(value: object, *, detail: str) -> tuple[str, ...] | None:
+    """Normalize a Dropdown attribute's choice names: sorted, so delivery order changes nothing."""
+    if value is None:
+        return None
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        _refuse(f"{detail} declares non-list choices")
+    return tuple(sorted(_require_str(item, detail=f"{detail} declares a non-string choice") for item in value))
 
 
 def _normalized_relationship(name: str, entry: object, *, kind: str) -> NormalizedRelationship:
