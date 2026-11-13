@@ -1,0 +1,280 @@
+infrahub_sync/service/app.py
+  s_b91a98d41025f3::t_3124edd856c48b 140,158,180,199
+infrahub_sync/plan/writer.py
+  s_b91a98d41025f3::t_3124edd856c48b 4,163,275
+infrahub_sync/service/worker.py
+  s_b91a98d41025f3::t_3124edd856c48b 46-47,256-257,355-361,368-370,372-373,375,377-384,394
+docs/docs/adapters/local-adapters.mdx
+  s_b91a98d41025f3::t_3124edd856c48b 52
+tests/service/test_plan_checkpoint.py
+  s_b91a98d41025f3::t_3124edd856c48b 200
+dev/adr/README.md
+  s_b91a98d41025f3::t_3124edd856c48b 57,61,64,71
+dev/adr/0020-records-with-problems-are-left-out-of-a-plan.md
+  s_b91a98d41025f3::t_3124edd856c48b 28-33,58
+docs/docs/running-a-sync.mdx
+  s_b91a98d41025f3::t_3124edd856c48b 219-220,231-237
+  s_b91a98d41025f3::t_fffce3c87cb715 238
+tests/integration/test_destination_schema_live_read.py
+  s_b91a98d41025f3::t_3124edd856c48b 82
+tests/service/test_run_artifact.py
+  s_b91a98d41025f3::t_3124edd856c48b 154
+tests/client/test_client.py
+  s_b91a98d41025f3::t_3124edd856c48b 11,1167-1171,1177,1203-1227
+tests/cli/test_client_commands.py
+  s_b91a98d41025f3::t_3124edd856c48b 322
+dev/adr/0022-saved-plan-format-4.md
+  s_b91a98d41025f3::t_3124edd856c48b 24-26
+tests/plan/test_format_4.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,14,25,29,35-36,306-354
+tests/service/test_flow_and_prefect.py
+  s_b91a98d41025f3::t_3124edd856c48b 555,615
+tests/adapters/test_netbox_namespace_identity.py
+  s_b91a98d41025f3::t_3124edd856c48b 243
+infrahub_sync/plan/models.py
+  s_b91a98d41025f3::t_3124edd856c48b 39,42,472,529,533,554-563,631,680,797,799-801,950,962,1018,1069
+tests/plan/test_source_identity_collision.py
+  s_b91a98d41025f3::t_3124edd856c48b 192,194
+tests/cli/test_apply_confirm_left_out.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,25,117-127
+  s_b91a98d41025f3::t_348f525acbbae3 128-129
+infrahub_sync/service/service.py
+  s_b91a98d41025f3::t_3124edd856c48b 100,485,1372
+docs/docs/development/guidelines/secret-redaction.md
+  s_b91a98d41025f3::t_3124edd856c48b 39-41
+docs/docs/development/knowledge/incremental-and-cache.md
+  s_b91a98d41025f3::t_3124edd856c48b 43-44,56
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_b91a98d41025f3::t_3124edd856c48b 69
+tests/plan/test_last_changes.py
+  s_b91a98d41025f3::t_3124edd856c48b 215
+infrahub_sync/runtime_schema/domain.py
+  s_b91a98d41025f3::t_3124edd856c48b 44
+infrahub_sync/client/models.py
+  s_b91a98d41025f3::t_3124edd856c48b 60,143,660,676,683,794,828-829,996,1065
+infrahub_sync/warm_read.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,13-14,57-60,62-66,68-71,73,75-78,80-83
+docs/docs/development/knowledge/repository-tour.md
+  s_b91a98d41025f3::t_3124edd856c48b 166-168,170,172-174
+infrahub_sync/adapters/references.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,6-8,26,74-77
+changelog/+continue-on-error-source-references.changed.md
+  s_b91a98d41025f3::t_3124edd856c48b 1
+tests/configuration/test_validate_permissions.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,6
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_b91a98d41025f3::t_3124edd856c48b 188
+tests/service/test_config_routes.py
+  s_b91a98d41025f3::t_3124edd856c48b 1684
+infrahub_sync/cache/incremental.py
+  s_b91a98d41025f3::t_3124edd856c48b 17,24-25,200-206
+infrahub_sync/configuration/capabilities.py
+  s_b91a98d41025f3::t_3124edd856c48b 75,257,319,334,438,564
+infrahub_sync/plan/last_changes.py
+  s_b91a98d41025f3::t_3124edd856c48b 105
+docs/docs/development/guidelines/writing-an-adapter.md
+  s_b91a98d41025f3::t_3124edd856c48b 44-46
+infrahub_sync/potenda/__init__.py
+  s_b91a98d41025f3::t_3124edd856c48b 19,89,231,249,536,974
+  s_b91a98d41025f3::t_c39170e147a01b 1093,1173
+infrahub_sync/adapters/infrahub.py
+  s_b91a98d41025f3::t_3124edd856c48b 1341
+tests/plan/test_writer.py
+  s_b91a98d41025f3::t_3124edd856c48b 66
+tests/adapters/test_infrahub_read_loop.py
+  s_b91a98d41025f3::t_3124edd856c48b 1
+tests/cli/test_failure_output.py
+  s_b91a98d41025f3::t_3124edd856c48b 1
+tests/plan/test_plan_format_3.py
+  s_b91a98d41025f3::t_3124edd856c48b 93
+tests/service/test_failure_record_compat.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,6-7,98,118
+infrahub_sync/plan/review.py
+  s_b91a98d41025f3::t_3124edd856c48b 82,127
+infrahub_sync/configuration/schema_validation.py
+  s_b91a98d41025f3::t_3124edd856c48b 23,25,73,75,90,203,242,274,335
+tests/plan/test_problem_baseline.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,3,65,90,115
+tests/plan/artifact_fixtures.py
+  s_b91a98d41025f3::t_3124edd856c48b 144
+docs/docs/configuration-package.mdx
+  s_b91a98d41025f3::t_3124edd856c48b 108
+infrahub_sync/client/client.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,89-91,315,324-325,527,529-533,536-543,547-553,555,557-565,568-574,576,578-586,598,601-604,614-615
+infrahub_sync/service/flow.py
+  s_b91a98d41025f3::t_3124edd856c48b 133,325,794,1069,1114,1469
+tests/adapters/test_infrahub_peer_identifier.py
+  s_b91a98d41025f3::t_3124edd856c48b 7
+tests/plan/problem_plan.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,9
+docs/docs/development/guides/adding-an-adapter.md
+  s_b91a98d41025f3::t_3124edd856c48b 133,140,149-159,165-169
+tests/plan/test_report_credentials_absent.py
+  s_b91a98d41025f3::t_3124edd856c48b 1
+tests/service/test_failure_cause.py
+  s_b91a98d41025f3::t_3124edd856c48b 5,119,121
+tests/runtime_schema/test_accessor_snapshot.py
+  s_b91a98d41025f3::t_3124edd856c48b 73
+tests/cache/test_apply_plan.py
+  s_b91a98d41025f3::t_3124edd856c48b 491,586
+tests/product_store/test_stopped_sync_admission.py
+  s_b91a98d41025f3::t_3124edd856c48b 3
+infrahub_sync/runtime_schema/projection.py
+  s_b91a98d41025f3::t_3124edd856c48b 51
+tests/test_writable_convergence_identity.py
+  s_b91a98d41025f3::t_3124edd856c48b 186
+tests/service/test_failure_cause_credentials.py
+  s_b91a98d41025f3::t_3124edd856c48b 1
+infrahub_sync/cli.py
+  s_b91a98d41025f3::t_3124edd856c48b 470,628-629,641,920,927-928,1017,1032,1059,1061,1105,1130,1329-1332,1385,1394,1737
+tests/integration/test_infrahub_keyed_write_integration.py
+  s_b91a98d41025f3::t_3124edd856c48b 521
+tests/plan/test_problems.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,9,12
+docs/docs/reference/sync-http-api.mdx
+  s_b91a98d41025f3::t_3124edd856c48b 395,408,689-690,788-790,920-921
+tests/product_store/test_validate_destination_schema.py
+  s_b91a98d41025f3::t_3124edd856c48b 81
+tests/plan/test_placeholder_peer.py
+  s_b91a98d41025f3::t_3124edd856c48b 1-50
+tests/plan/test_report_models.py
+  s_b91a98d41025f3::t_3124edd856c48b 1
+tests/configuration/test_schema_validation.py
+  s_b91a98d41025f3::t_3124edd856c48b 532,534,613,1034
+tests/test_execution_surface.py
+  s_b91a98d41025f3::t_3124edd856c48b 1524,1904
+infrahub_sync/execution.py
+  s_b91a98d41025f3::t_3124edd856c48b 1181
+dev/specs/020-plan-problem-reporting/spec.md
+  s_b91a98d41025f3::t_3124edd856c48b 353-358,687-691
+docs/docs/development/guidelines/testing-adapters.md
+  s_b91a98d41025f3::t_3124edd856c48b 39-41
+infrahub_sync/plan/problems.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,27,183-188,236-237,247-251,255-261,274-288,443,534
+infrahub_sync/service/failure_cause.py
+  s_b91a98d41025f3::t_3124edd856c48b 4,14,65,164,465
+tests/adapters/test_netbox_filtered_references.py
+  s_b91a98d41025f3::t_3124edd856c48b 3,350-376
+infrahub_sync/plan/verify.py
+  s_b91a98d41025f3::t_3124edd856c48b 245
+tests/plan/test_plan_writes_nothing.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,7
+tests/plan/test_warm_read_problems.py
+  s_b91a98d41025f3::t_3124edd856c48b 1
+tests/service/test_sync_left_out_stop.py
+  s_b91a98d41025f3::t_3124edd856c48b 1
+infrahub_sync/configuration/worker_credentials.py
+  s_b91a98d41025f3::t_3124edd856c48b 1
+tests/adapters/test_aci_reference_conversion.py
+  s_b91a98d41025f3::t_3124edd856c48b 86,88
+tests/plan/test_replan_after_stopped_apply.py
+  s_b91a98d41025f3::t_3124edd856c48b 1
+infrahub_sync/service/run_artifact.py
+  s_b91a98d41025f3::t_3124edd856c48b 90
+infrahub_sync/plan/derive.py
+  s_b91a98d41025f3::t_3124edd856c48b 222-228,822,924
+tests/service/test_plan_report_routes.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,14
+tests/service/failure_cases.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,119
+tests/plan/test_keyed_create_refusal.py
+  s_b91a98d41025f3::t_3124edd856c48b 249
+tests/plan/test_models.py
+  s_b91a98d41025f3::t_3124edd856c48b 708,819
+tests/plan/test_problem_pass.py
+  s_b91a98d41025f3::t_3124edd856c48b 1
+tests/plan/test_netbox_device_status.py
+  s_b91a98d41025f3::t_3124edd856c48b 1
+tests/plan/test_lineage_manifest.py
+  s_b91a98d41025f3::t_3124edd856c48b 103
+tests/test_potenda_plan_artifact.py
+  s_b91a98d41025f3::t_3124edd856c48b 85,88
+tests/cli/test_stopped_apply_output.py
+  s_b91a98d41025f3::t_3124edd856c48b 1
+tests/plan/test_apply_gate.py
+  s_b91a98d41025f3::t_3124edd856c48b 3,195-208
+tests/service/test_worker_environment.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,27,29,422-465
+changelog/+019-netbox-device-status.changed.md
+  s_b91a98d41025f3::t_3124edd856c48b 1
+infrahub_sync/service/checkpoints.py
+  s_b91a98d41025f3::t_3124edd856c48b 73
+tests/runtime_schema/test_dropdown_choices.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,107
+tests/test_schema_mapping_transforms.py
+  s_b91a98d41025f3::t_3124edd856c48b 268
+tests/adapters/test_reference_conversion.py
+  s_b91a98d41025f3::t_3124edd856c48b 5,10
+tests/test_custom_adapter_example.py
+  s_b91a98d41025f3::t_3124edd856c48b 4
+infrahub_sync/infrahub_errors.py
+  s_b91a98d41025f3::t_3124edd856c48b 218
+tests/service/test_apply_left_out_confirmation.py
+  s_b91a98d41025f3::t_3124edd856c48b 1
+dev/adr/0021-a-failure-record-holds-a-structured-cause.md
+  s_b91a98d41025f3::t_3124edd856c48b 63-69
+infrahub_sync/__init__.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,23,28,114,340,351,403-416,473,487-490,532,561,575-576,580-628,638-647,653,682-683,689,703,711,715-716,718-721,734-735,740,746-747,773-775,780-785,798,800,804-808,818,900,902,904,918
+tests/plan/test_left_out_walk.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,13
+docs/docs/reference/cli.mdx
+  s_b91a98d41025f3::t_3124edd856c48b 333
+tests/cache/test_referenced_kinds.py
+  s_b91a98d41025f3::t_3124edd856c48b 1-36
+tests/test_load_record.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,22,39,76,387,396,415-653
+tests/test_potenda_read_progress.py
+  s_b91a98d41025f3::t_3124edd856c48b 308
+infrahub_sync/product_store/store.py
+  s_b91a98d41025f3::t_3124edd856c48b 1750,1840,4461,4475,4479
+infrahub_sync/product_store/models.py
+  s_b91a98d41025f3::t_3124edd856c48b 435,447-452,478
+tests/plan/test_valid_plan_unchanged.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,3,8,90
+infrahub_sync/adapters/netbox.py
+  s_b91a98d41025f3::t_3124edd856c48b 168-172
+infrahub_sync/runtime_schema/worker.py
+  s_b91a98d41025f3::t_3124edd856c48b 84,108
+infrahub_sync/plan/errors.py
+  s_b91a98d41025f3::t_3124edd856c48b 18,126-129,133,149-153,305,323,436,701
+tests/adapters/test_same_type_sync_filter_role.py
+  s_b91a98d41025f3::t_3124edd856c48b 10
+tests/cli/test_plan_problem_output.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,13,21,222
+infrahub_sync/configuration/infrahub_lineage.py
+  s_b91a98d41025f3::t_3124edd856c48b 149
+infrahub_sync/product_store/configs.py
+  s_b91a98d41025f3::t_3124edd856c48b 892,957
+tests/plan/test_stores_unchanged.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,8
+tests/product_store/test_worker_environments.py
+  s_b91a98d41025f3::t_3124edd856c48b 1
+infrahub_sync/load_report.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,35-50,68-70,83
+infrahub_sync/plan/reader.py
+  s_b91a98d41025f3::t_3124edd856c48b 23,67,111,160,214-218,228-231,236,743
+tests/adapters/test_peer_not_found_in_source.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,13,193
+tests/plan/conftest.py
+  s_b91a98d41025f3::t_3124edd856c48b 1,7,40
+docs/docs/compose-deployment.mdx
+  s_b91a98d41025f3::t_3124edd856c48b 759
+infrahub_sync/plan/keying.py
+  s_b91a98d41025f3::t_3124edd856c48b 73,654,725
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ae1084745d4681560ca4c3a88eadddde2768d3c3",
+  "prompts": {},
+  "sessions": {
+    "s_b91a98d41025f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c1e68d9-bc95-47b9-bd6b-c5aa572517ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
