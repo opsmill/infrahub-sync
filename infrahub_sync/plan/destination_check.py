@@ -62,13 +62,15 @@ class DestinationNode:
 class PlannedNodeRead:
     """The node read for one planned operation, and the plan's peers as destination node ids.
 
-    `node` is `None` when the destination holds no node for the operation. `planned_peers`
-    maps each relationship the operation writes to the ids its planned peers resolve to, or to
-    `None` when one of them matches no node, or several, at the destination.
+    `node` is `None` when the destination holds no node for the operation, or several that
+    share its key: `ambiguous` is then true, as the apply's peer resolver refuses such a key.
+    `planned_peers` maps each relationship the operation writes to the ids its planned peers
+    resolve to, or to `None` when one of them matches no node, or several, at the destination.
     """
 
     node: DestinationNode | None
     planned_peers: Mapping[str, frozenset[str] | None] = field(default_factory=dict)
+    ambiguous: bool = False
 
 
 @runtime_checkable
@@ -97,29 +99,39 @@ def comparable_value(value: Any) -> Any:
 def compare_planned_operation(operation: PlannedOperation, read: PlannedNodeRead) -> DestinationState:
     """Return whether the destination node matches the planned create or update.
 
-    `missing` when no node was read. Otherwise `matches` when every attribute of the payload
-    and every relationship the operation writes equals the destination's: a cardinality-many
-    relationship as a set of peer ids. Any difference, or a planned peer that resolves to no
-    single node, is `differs`. Fields the plan does not write are not compared.
+    `differs` when several destination nodes share the operation's key: which of them the
+    plan names is not known, so it never `matches`. Otherwise `missing` when no node was read,
+    and `matches` when every attribute of the payload and every relationship the operation
+    writes equals the destination's: a cardinality-many relationship as a set of peer ids. Any
+    difference, or a planned peer that resolves to no single node, is `differs`. Fields the
+    plan does not write are not compared.
     """
-    node = read.node
-    if node is None:
+    if read.ambiguous:
+        return "differs"
+    if read.node is None:
         return "missing"
+    return "matches" if _node_holds_the_plan(operation, read.node, read.planned_peers) else "differs"
+
+
+def _node_holds_the_plan(
+    operation: PlannedOperation, node: DestinationNode, planned_peers: Mapping[str, frozenset[str] | None]
+) -> bool:
+    """Whether every field the operation writes holds the planned value in `node`."""
     for name, planned in (operation.payload or {}).items():
         if name in node.attributes:
             if comparable_value(node.attributes[name]) != comparable_value(planned):
-                return "differs"
+                return False
         elif name in node.peers:
             # A null cardinality-one relationship a hand-built payload carries.
             if planned is not None or node.peers[name]:
-                return "differs"
+                return False
         else:
-            return "differs"
+            return False
     for reference in operation.relationships or ():
-        expected = read.planned_peers.get(reference.field)
+        expected = planned_peers.get(reference.field)
         if expected is None or node.peers.get(reference.field, frozenset()) != expected:
-            return "differs"
-    return "matches"
+            return False
+    return True
 
 
 def reported_operations(

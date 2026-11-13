@@ -136,6 +136,8 @@ check that no new plan was created.
   next resume.
 - **Another run holds the configuration's write lock.** The resume is refused cleanly, as `apply` is, and nothing is
   written.
+- **Several destination nodes have the key of an uncertain create.** `verify` reports the operation as "differs from
+  the plan", never "already matches the plan", because which node the plan names is not known (research R13).
 - **The marker cannot be saved during an apply.** Writing continues and the next save tries again with a newer
   position. After 5 minutes with no successful save, the apply stops and the run is interrupted.
 - **The apply stopped before its first write.** The run is an ordinary failed run, not an interrupted one, and

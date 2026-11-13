@@ -581,3 +581,26 @@ def test_a_failed_destination_read_records_its_class_and_never_its_text(
     assert LEAKED_ADDRESS not in json.dumps(stored.results)
     assert LEAKED_ADDRESS not in caplog.text
     assert harness.writes == []
+
+
+def test_a_defect_in_the_destination_read_records_its_class_and_never_its_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A `ValueError` while building the destination node is a defect, not an unreachable destination.
+
+    It is not mapped to `DestinationReadError`, and the run's failure record still names its class only.
+    """
+    harness = _harness(tmp_path, monkeypatch)
+    _requiring_reconciliation(harness, monkeypatch)
+    _reading_destination(harness, error=ValueError(f"unexpected value from {LEAKED_ADDRESS}"))
+
+    with caplog.at_level(logging.DEBUG), suppress(Exception):
+        _verify(harness)
+
+    stored = _stored(harness)
+    failure = stored.results["verify_failure"]
+    assert failure["error_type"] == "ValueError"
+    assert "verification" not in stored.results
+    assert LEAKED_ADDRESS not in json.dumps(stored.results)
+    assert LEAKED_ADDRESS not in caplog.text
+    assert harness.writes == []

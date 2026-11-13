@@ -137,7 +137,7 @@ relationships with what it reads:
 
 - an update is fetched by its recorded `destination_id`;
 - a create is fetched by its complete human-friendly identifier, which plan format 3 and later guarantee
-  (ADR 0013);
+  (ADR 0013); R13 states the matching rule, including a kind with no human-friendly identifier;
 - "already matches the plan" when every planned field and relationship equals the destination value, "differs from
   the plan" when the node exists with any difference, "missing at the destination" when it does not exist.
 
@@ -233,3 +233,38 @@ The resume's `approval-required` message, and the CLI hint for it, name
 
 **Rejected**: letting a resume skip the approval when the run has none. Approval gates every write on a site that
 requires it, and a resume writes.
+
+## R13. How `verify` matches a create to a destination node
+
+**Question**: R7 reads a create by its key. A review found three gaps in the first implementation: a key that
+several destination nodes share was compared with one of them, chosen arbitrarily, and could be reported as "already
+matches the plan"; for a kind with no human-friendly identifier, a create that does not set every identity attribute
+of the other creates got no key and was reported as "missing at the destination" even when the node exists; and the
+query of a key made of an attribute and a relationship filtered on the attribute only, so it listed every node with
+that attribute value.
+
+**Decision**:
+
+- A kind with a human-friendly identifier is keyed on its components. An attribute component is filtered with
+  `<attribute>__values`, and a relationship component with `<relationship>__ids` on the ids the plan's peers resolve
+  to. The query sends both kinds of filter; the destination combines them with AND, as it does the peer resolver's
+  several `__value` filters.
+- A kind with no human-friendly identifier is keyed, for each create, on the identity's direct values that are not
+  null, which is the rule the apply's peer resolver uses for such a kind. Creates are grouped by the set of attributes
+  in their key, with one query for each set.
+- When more than one destination node has the create's key, `verify` reports the operation as "differs from the
+  plan", never "already matches the plan". The apply's peer resolver refuses the same key as ambiguous. The report
+  has no reason field, so only the state records this.
+
+The relationship filters were tested only against the in-memory client of the unit tests, not against a live
+Infrahub.
+
+**Not decided**: a kind with no human-friendly identifier is not keyed on its uniqueness constraints, which is what
+the destination matches the create's upsert on. A constraint that includes a relationship, such as (device, name),
+is therefore not part of the key, and two nodes that differ only on that relationship are reported as "differs from
+the plan".
+
+**Error mapping**: a `ValueError`, `KeyError` or `AttributeError` raised while the destination nodes are read is a
+defect in Sync or in the data shape, not an unreachable destination. It is not mapped to `DestinationReadError`; the
+`verify` fails, and its failure record names the error class only, without the message (secret-redaction
+guideline). A unit test records this behaviour.

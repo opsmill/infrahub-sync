@@ -14,6 +14,8 @@ from typing import Any
 
 import pytest
 from infrahub_sdk.node import InfrahubNodeSync
+from infrahub_sdk.schema import NodeSchemaAPI
+from infrahub_sdk.schema.main import AttributeKind, AttributeSchemaAPI
 
 from infrahub_sync.plan.destination_check import (
     VERIFY_REPORT_LIMIT,
@@ -29,6 +31,7 @@ from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 from tests.adapters.test_infrahub_planned_write import (
     DEFAULT_DESTINATION_ID,
     DEVICE_KIND,
+    KEYLESS_KIND,
     SCHEMAS,
     SITE_KIND,
     TAG_KIND,
@@ -41,6 +44,21 @@ from tests.adapters.test_infrahub_planned_write import (
 )
 
 CANARY = "destination-check-canary-value"
+
+# A kind with no human-friendly ID and two attributes, so a create can set one or both of them.
+PORT_KIND = "TestPort"
+PORT_SCHEMA = NodeSchemaAPI(
+    id="port-schema",
+    name="Port",
+    namespace="Test",
+    label="Port",
+    attributes=[
+        AttributeSchemaAPI(id="port-name", name="name", kind=AttributeKind.TEXT, optional=False),
+        AttributeSchemaAPI(id="port-code", name="code", kind=AttributeKind.TEXT, optional=True),
+    ],
+    relationships=[],
+)
+LOCAL_SCHEMAS: dict[str, NodeSchemaAPI] = {**SCHEMAS, PORT_KIND: PORT_SCHEMA}
 
 
 def _site_update(description: str = "planned") -> Any:  # noqa: ANN401
@@ -181,7 +199,7 @@ class DestinationClient(RecordingClient):
             raise self.filter_error
         kind = kwargs["kind"]
         return [
-            InfrahubNodeSync(client=self, schema=SCHEMAS[kind], data=data)
+            InfrahubNodeSync(client=self, schema=LOCAL_SCHEMAS[kind], data=data)
             for data in self.nodes.get(kind, [])
             if _matches(data, kwargs)
         ]
@@ -227,6 +245,12 @@ def _site(node_id: str, name: str, description: str = "planned") -> dict[str, An
 
 def _tag(node_id: str, name: str) -> dict[str, Any]:
     return {"id": node_id, "name": {"value": name}}
+
+
+def _port_adapter(client: DestinationClient) -> Any:  # noqa: ANN401
+    adapter = make_adapter(client)
+    adapter.schema[PORT_KIND] = PORT_SCHEMA
+    return adapter
 
 
 def test_the_infrahub_adapter_is_a_destination_node_reader() -> None:
@@ -445,3 +469,69 @@ def test_an_update_of_a_plan_without_recorded_ids_is_matched_on_its_key() -> Non
     assert compare_planned_operation(update, reads[update.operation_id]) == "matches"
     [query] = client.node_reads(SITE_KIND)
     assert query["name__values"] == ["site-a"]
+
+
+def test_a_key_that_several_destination_nodes_share_differs_and_never_matches() -> None:
+    """The apply's resolver refuses a key that matches several nodes, so verify compares against none."""
+    client = DestinationClient({KEYLESS_KIND: [_tag("keyless-1", "eth0"), _tag("keyless-2", "eth0")]})
+    create = make_operation(kind=KEYLESS_KIND, identity={"name": "eth0"}, payload={"name": "eth0"})
+
+    reads = make_adapter(client).read_planned_nodes([create])
+
+    read = reads[create.operation_id]
+    assert read.node is None
+    assert read.ambiguous
+    assert compare_planned_operation(create, read) == "differs"
+
+
+@pytest.mark.parametrize("unset_code", [{}, {"code": None}], ids=["absent", "null"])
+def test_a_create_of_a_kind_without_human_friendly_id_is_keyed_on_the_attributes_it_sets(
+    unset_code: dict[str, Any],
+) -> None:
+    """A create that sets no `code` is keyed on `name` alone, not left without a key."""
+    client = DestinationClient(
+        {
+            PORT_KIND: [
+                {"id": "port-1", "name": {"value": "p1"}, "code": {"value": "c1"}},
+                {"id": "port-2", "name": {"value": "p2"}, "code": {"value": None}},
+            ]
+        }
+    )
+    with_code = make_operation(
+        kind=PORT_KIND, identity={"name": "p1", "code": "c1"}, payload={"name": "p1", "code": "c1"}
+    )
+    without_code = make_operation(
+        kind=PORT_KIND, identity={"name": "p2", **unset_code}, payload={"name": "p2", **unset_code}
+    )
+
+    reads = _port_adapter(client).read_planned_nodes([with_code, without_code])
+
+    assert compare_planned_operation(with_code, reads[with_code.operation_id]) == "matches"
+    assert compare_planned_operation(without_code, reads[without_code.operation_id]) == "matches"
+    # One query per key shape.
+    queries = client.node_reads(PORT_KIND)
+    assert sorted(sorted(key for key in query if key.endswith("__values")) for query in queries) == [
+        ["code__values", "name__values"],
+        ["name__values"],
+    ]
+
+
+def test_a_create_keyed_on_an_attribute_and_a_peer_is_filtered_on_both() -> None:
+    """The query filters on the peer ids too, so it does not list every node that shares the name."""
+    client = DestinationClient(
+        {
+            SITE_KIND: [_site("site-a-id", "site-a"), _site("site-b-id", "site-b")],
+            DEVICE_KIND: [
+                {"id": "dev-1", "name": {"value": "dev"}, "site": {"id": "site-a-id", "__typename": SITE_KIND}},
+                {"id": "dev-2", "name": {"value": "dev"}, "site": {"id": "site-b-id", "__typename": SITE_KIND}},
+            ],
+        }
+    )
+    on_site_a = device_operation("dev", site_name="site-a")
+
+    reads = make_adapter(client).read_planned_nodes([on_site_a])
+
+    assert compare_planned_operation(on_site_a, reads[on_site_a.operation_id]) == "matches"
+    [query] = client.node_reads(DEVICE_KIND)
+    assert query["name__values"] == ["dev"]
+    assert query["site__ids"] == ["site-a-id"]
