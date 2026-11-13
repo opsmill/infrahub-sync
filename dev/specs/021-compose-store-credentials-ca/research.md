@@ -295,9 +295,29 @@ next (critique E6). Each failure is classified and recorded in this file under "
 causes" with its fix and test. SC-006 is then measured with the same dispatch after the changes. The
 nightly job gains an arm64 leg.
 
+### How the repeat runs are started (T039, 2026-11-13)
+
+The workflow's own comment says an external scheduler dispatches it against
+`feature/v3-develop`. Whether `gh workflow run workflow-nightly-e2e.yml --ref <branch>` works for a
+branch other than `feature/v3-develop` was not tried: it needs this branch pushed. The workflow
+now takes `compose_repeat` (1 to 20) and `compose_architectures` (`both`, `amd64`, `arm64`;
+default `both`), and a `compose-matrix` job turns them into one `compose-suite` job per
+architecture and run, each on a fresh runner, without `-x`.
+
 ### Lifecycle failure causes
 
-To be filled in during implementation.
+Not measured yet. T040 (10 runs on each architecture before any change), T041 (fixes) and T042
+(10 runs after) need the branch pushed and the workflow dispatched.
+
+Found while building this specification, outside the 10-run measurement:
+
+- The compose tier's Infrahub fixture inherited the suite's `VERSION=compose-test` once the
+  preview env file was gone, and asked for `infrahub:compose-test`. Fixed on the 010 "PR 2"
+  branch (`a96076a3`): the fixture drops the Infrahub image settings.
+- `test_only_the_newest_stable_release_is_called_newest` (`tests/test_workflow_contracts.py`)
+  failed several times while Docker builds ran on the same machine, and passed on every rerun,
+  also on unchanged code. Its step runner has a timeout; load is the likely cause. Not a
+  compose tier test.
 
 ## R7. Release notes digest and cosign identity (FR-021, FR-022)
 

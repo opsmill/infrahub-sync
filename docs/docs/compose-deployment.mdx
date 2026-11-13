@@ -586,13 +586,17 @@ Docker Compose reads one `docker-compose.override.yml`, and merges it into
 - If the file already has a `prefect-server` entry, add the two `environment`
   keys and the `ports` entry of the snippet to it. Keep the entries it already
   has.
-- Check the result before you start it. The command prints the merged file, so
-  look for `PREFECT_UI_ENABLED: "true"` and one `prefect-server` port bound to
-  `127.0.0.1`:
+- Check the result before you start it. The command prints the merged service without
+  filling in the values from `.env`, so it prints no credential. Look for
+  `PREFECT_UI_ENABLED: "true"` and one `prefect-server` port bound to `127.0.0.1`:
 
   ```bash
-  docker compose config prefect-server
+  docker compose config --no-interpolate prefect-server
   ```
+
+  Without `--no-interpolate`, `docker compose config` prints every credential the service
+  receives. Do not run it that way, and do not share `docker inspect` output, which prints a
+  container's whole environment.
 
 To keep the snippet in its own file instead, save it under another name, for
 example `prefect-ui.override.yml`, and name every file on each command, starting

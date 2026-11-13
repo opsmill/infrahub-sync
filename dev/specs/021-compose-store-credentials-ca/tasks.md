@@ -114,17 +114,17 @@ external store runs. US5 (released image) is independent.
 
 ### Leak checks (FR-016 to FR-018)
 
-- [ ] T036 [P] [US4] Extend `tests/compose/redaction.py` with searches of `docker compose logs` per service and of each service's environment (read through `docker inspect` by the test, never printed) for generated credential values; report names only
-- [ ] T037 [US4] Add a lifecycle test `tests/compose/test_credential_leaks.py` that generates a distinct value of 24 or more characters for each credential the deployment receives (store keys, the 24 credential variables, the Infrahub token), runs the documented commands, and checks the three surfaces of FR-018; the `sync-worker` and `prefect-server` log checks state the six-character boundary of decision 2 in their docstring (SC-005)
-- [ ] T038 [P] [US4] Check `docs/docs/compose-deployment.mdx` and `docs/docs/operations/*.mdx` for any command that prints interpolated values (`docker compose config` without `--quiet`, shared `docker inspect` output) and fix each one (FR-017); extend `tests/compose/test_documentation.py` to fail on them
+- [X] T036 [P] [US4] Extend `tests/compose/redaction.py` with searches of `docker compose logs` per service and of each service's environment (read through `docker inspect` by the test, never printed) for generated credential values; report names only
+- [X] T037 [US4] Add a lifecycle test `tests/compose/test_credential_leaks.py` that generates a distinct value of 24 or more characters for each credential the deployment receives (store keys, the 24 credential variables, the Infrahub token), runs the documented commands, and checks the three surfaces of FR-018; the `sync-worker` and `prefect-server` log checks state the six-character boundary of decision 2 in their docstring (SC-005)
+- [X] T038 [P] [US4] Check `docs/docs/compose-deployment.mdx` and `docs/docs/operations/*.mdx` for any command that prints interpolated values (`docker compose config` without `--quiet`, shared `docker inspect` output) and fix each one (FR-017); extend `tests/compose/test_documentation.py` to fail on them
 
 ### Reliability (FR-019, FR-020)
 
-- [ ] T039 [US4] Find out how `workflow-nightly-e2e.yml` can be started from a branch other than `main` (it has only a `workflow_dispatch` trigger and is not on `main`; research R6); if it cannot, add a `pull_request` trigger limited to a label; record the answer in `research.md` R6. Then add to `.github/workflows/workflow-nightly-e2e.yml` a `workflow_dispatch` input for a repeat count and an architecture choice; the `compose-suite` job runs as a matrix over `runner: [ubuntu-22.04, ubuntu-24.04-arm]` and `repeat`, each entry one full tier run without `-x`; add a workflow contract test in `tests/test_workflow_contracts.py`
+- [X] T039 [US4] Find out how `workflow-nightly-e2e.yml` can be started from a branch other than `main` (it has only a `workflow_dispatch` trigger and is not on `main`; research R6); if it cannot, add a `pull_request` trigger limited to a label; record the answer in `research.md` R6. Then add to `.github/workflows/workflow-nightly-e2e.yml` a `workflow_dispatch` input for a repeat count and an architecture choice; the `compose-suite` job runs as a matrix over `runner: [ubuntu-22.04, ubuntu-24.04-arm]` and `repeat`, each entry one full tier run without `-x`; add a workflow contract test in `tests/test_workflow_contracts.py`
 - [ ] T040 [US4] Dispatch the workflow with a repeat count of 10 on both architectures before any reliability change; record every failure, its job link and its class (C1 to C4 of research R6 or new) in `dev/specs/021-compose-store-credentials-ca/research.md` under "Lifecycle failure causes"; if the arm64 runner cannot run the tier, record it and make the arm64 runs by hand on an arm64 host (SC-006)
 - [ ] T041 [US4] Fix or remove each cause found in T040 in `tests/compose/lifecycle.py`, `tests/compose/conftest.py` or the test module concerned, one commit per cause, and record the fix and the test that shows it in `research.md`
 - [ ] T042 [US4] Dispatch the workflow again with a repeat count of 10 on both architectures and record the result in `research.md` (SC-006)
-- [ ] T043 [US4] Make the nightly `compose-suite` job run on both architectures by default
+- [X] T043 [US4] Make the nightly `compose-suite` job run on both architectures by default
 
 **Checkpoint**: US4 passes: 20 runs pass and the leak checks report nothing.
 

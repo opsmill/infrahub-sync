@@ -743,10 +743,52 @@ def test_nightly_runs_the_compose_suite_against_an_image_it_builds() -> None:
     suite = next(
         index
         for index, run in enumerate(runs)
-        if run == "uv run --no-sync pytest -m compose tests/compose -x --compose-zero-skip"
+        if run == "uv run --no-sync pytest -m compose tests/compose --compose-zero-skip"
     )
     assert install < build < suite
     assert steps[suite]["env"] == {"INFRAHUB_SYNC_DOCKER_IMAGE": "infrahub-sync", "VERSION": "compose-test"}
+
+
+def test_the_compose_suite_runs_once_per_entry_of_its_matrix() -> None:
+    """Spec 021 FR-020: each architecture and repeat is its own job, and one failure stops none of the others."""
+    job = jobs(NIGHTLY_WORKFLOW)["compose-suite"]
+
+    assert job["needs"] == "compose-matrix"
+    assert job["runs-on"] == "${{ matrix.runner }}"
+    assert job["strategy"]["fail-fast"] is False
+    assert job["strategy"]["matrix"] == {
+        "runner": "${{ fromJSON(needs.compose-matrix.outputs.runners) }}",
+        "run": "${{ fromJSON(needs.compose-matrix.outputs.runs) }}",
+    }
+
+
+@pytest.mark.parametrize(
+    ("repeat", "architectures", "runners", "runs"),
+    [
+        ("1", "both", '["ubuntu-22.04", "ubuntu-24.04-arm"]', "[1]"),
+        ("10", "both", '["ubuntu-22.04", "ubuntu-24.04-arm"]', "[1,2,3,4,5,6,7,8,9,10]"),
+        ("3", "arm64", '["ubuntu-24.04-arm"]', "[1,2,3]"),
+        ("2", "amd64", '["ubuntu-22.04"]', "[1,2]"),
+    ],
+)
+def test_the_compose_matrix_step_plans_the_requested_runs(
+    repeat: str, architectures: str, runners: str, runs: str
+) -> None:
+    (step,) = jobs(NIGHTLY_WORKFLOW)["compose-matrix"]["steps"]
+
+    run = _run_step(str(step["run"]), {"REPEAT": repeat, "ARCHITECTURES": architectures})
+
+    assert run.returncode == 0, run.output
+    assert run.outputs == {"runners": runners, "runs": runs}
+
+
+@pytest.mark.parametrize(("repeat", "architectures"), [("0", "both"), ("21", "both"), ("two", "both"), ("1", "riscv")])
+def test_the_compose_matrix_step_refuses_a_bad_input(repeat: str, architectures: str) -> None:
+    (step,) = jobs(NIGHTLY_WORKFLOW)["compose-matrix"]["steps"]
+
+    run = _run_step(str(step["run"]), {"REPEAT": repeat, "ARCHITECTURES": architectures})
+
+    assert run.returncode != 0
 
 
 def develop_jobs() -> dict[str, dict]:
