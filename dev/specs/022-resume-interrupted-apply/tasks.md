@@ -89,12 +89,14 @@ changed and some absent, run `verify`, and compare the report.
 
 ## Phase 6: Polish and cross-cutting
 
-- [ ] T031 [P] Write `dev/adr/0026-an-interrupted-apply-resumes-from-its-saved-position.md`, replacing ADR 0010's "an uncertain run is terminal" and its rejected "write-attempt table" alternative for writes proven safe to repeat, and mark ADR 0010 as partly superseded
-- [ ] T032 [P] Update `docs/docs/running-a-sync.mdx` (what to do after an interruption: `runs show`, `verify`, `runs resume`, and that a resume overwrites nodes reported as differs), `docs/docs/development/knowledge/planned-write-and-apply.md` (marker and resume), and regenerate the CLI and HTTP reference with `uv run invoke docs.generate`
-- [ ] T033 [P] Add the changelog fragment `changelog/+resume-interrupted-apply.added.md`
+- [X] T031 [P] Write `dev/adr/0026-an-interrupted-apply-resumes-from-its-saved-position.md`, replacing ADR 0010's "an uncertain run is terminal" and its rejected "write-attempt table" alternative for writes proven safe to repeat, and mark ADR 0010 as partly superseded
+- [X] T032 [P] Update `docs/docs/running-a-sync.mdx` (what to do after an interruption: `runs show`, `verify`, `runs resume`, and that a resume overwrites nodes reported as differs), `docs/docs/development/knowledge/planned-write-and-apply.md` (marker and resume), and regenerate the CLI and HTTP reference with `uv run invoke docs.generate`
+- [X] T033 [P] Add the changelog fragment `changelog/+resume-interrupted-apply.added.md`
 - [ ] T034 Opt-in integration test (`-m integration`) against the preview stack following quickstart.md: kill `sync-worker` during an apply, `verify`, `runs resume`, then a new plan shows 0 creates and 0 updates (SC-001, SC-005)
+  - Written; not run — needs the preview stack. `tests/preview/test_resume_interrupted_apply.py`, marked `integration`; it skips unless the stack is reachable and `INFRAHUB_SYNC_RESUME_CHECK_CONFIG` names a registered `CONFIG_ID@VERSION` of the local NetBox `demo` package. Run command under "Phase 6 results".
 - [ ] T035 Measure SC-003 and SC-004 with the existing benchmark runner on tiers M and L, first without the marker and then with it on the same machine (critique E5), and record the results in the implementation report
-- [ ] T036 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit` and the CLI sanity commands of AGENTS.md; record the results under "Phase 6 results"
+  - Deferred — needs the benchmark stack. Commands under "Phase 6 results".
+- [X] T036 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit` and the CLI sanity commands of AGENTS.md; record the results under "Phase 6 results"
 
 ## Dependencies and execution order
 
@@ -123,3 +125,70 @@ source change of this feature:
 
 - `uv run invoke tests.tests-unit`: 7569 passed, 4 skipped, 311 deselected, 3 xfailed, 12 warnings.
 - `uv run ruff check .`: all checks passed.
+
+## Phase 6 results
+
+Recorded on 2026-11-13, on Python 3.11.8 with the `dev`, `prefect` and `service` extras:
+
+- `uv run invoke format`: exit 0.
+- `uv run invoke lint`: exit 0 (rumdl, ruff, pylint 10.00 with 0 diagnostics, yamllint, ty).
+- `uv run ruff check .`: all checks passed.
+- `uv run invoke docs.lint`: no issues in 146 files. Vale on the changed pages: no error added by this
+  feature.
+- `uv run invoke tests.tests-unit` (started 2026-11-13T00:57:46Z): 7739 passed, 4 skipped, 339 deselected,
+  3 xfailed, 12 warnings. The new integration test is deselected in this tier.
+- `uv run infrahub-sync --help`, `configs --help`, `runs --help`: exit 0; `runs --help` lists `resume`.
+- `uv run invoke docs.generate`: regenerated `docs/docs/reference/cli.mdx` with `runs resume`. The Sync HTTP
+  API reference is written by hand; `POST /runs/{run_id}/resume`, `apply_progress`, `resumes` and the
+  `verify` report were added to `docs/docs/reference/sync-http-api.mdx`.
+
+### T034: run the integration test (not run here)
+
+`tests/preview/test_resume_interrupted_apply.py` was observed to skip cleanly with no stack running
+(`pytest -m integration`). To run it:
+
+1. Follow steps 1 to 4 of "The `from-netbox` example check" in
+   `docs/docs/development/guidelines/testing-tiers.md` (local NetBox `demo` dataset, `preview.up`, the schema
+   library, `configs register .netbox/from-netbox.local.yml`).
+2. Run:
+
+   ```bash
+   INFRAHUB_SYNC_RESUME_CHECK_CONFIG="<config_id>@<registry_version>" \
+     uv run pytest -m integration tests/preview/test_resume_interrupted_apply.py
+   ```
+
+   On the development stack instead of the preview stack, add `INFRAHUB_SYNC_SMOKE_STACK=dev`; the test then
+   kills and starts the `sync-worker` container. The test creates its own branch, kills the worker once a
+   progress marker is saved, and restarts the worker afterwards.
+
+### T035: benchmark commands (deferred — needs the benchmark stack)
+
+`bench.run` has no switch that turns the progress marker off, so the baseline runs on commit `5f005776`, the
+last commit before the marker, in a separate worktree on the same Linux host. Follow
+`docs/docs/development/guides/netbox-benchmark-runner.md` (seed and dump each tier, `dev.destroy` before each
+cell, `INFRAHUB_SYNC_API_TOKEN` set):
+
+```bash
+uv run invoke netbox.seed --tier M && uv run invoke netbox.dump --tier M
+uv run invoke netbox.seed --tier L && uv run invoke netbox.dump --tier L
+
+# Without the progress marker, in a worktree at 5f005776:
+uv run invoke dev.destroy
+uv run invoke bench.run --line v3 --tier M --scenario cold --repetitions 3
+uv run invoke dev.destroy
+uv run invoke bench.run --line v3 --tier L --scenario cold --repetitions 1
+
+# With the progress marker, in this worktree:
+uv run invoke dev.destroy
+uv run invoke bench.run --line v3 --tier M --scenario cold --repetitions 3
+uv run invoke dev.destroy
+uv run invoke bench.run --line v3 --tier L --scenario cold --repetitions 1
+
+uv run invoke bench.report
+```
+
+SC-003 passes when the median apply stage time with the marker is at most 2% above the baseline. The runner
+does not time `verify` on an interrupted run, so SC-004 is a manual step on tier L: start the cold sync
+cell's apply, kill the worker (`docker compose -f development/docker-compose.yml kill sync-worker`), wait for
+`phase: sync-interrupted` in `runs show`, then time `uv run infrahub-sync verify RUN_ID`; it passes under 1
+minute.

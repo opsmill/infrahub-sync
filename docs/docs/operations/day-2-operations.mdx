@@ -134,8 +134,10 @@ destination. `infrahub-sync runs show RUN_ID` then reports
 `reconciliation_required: true`, or an apply ends with phase `apply-failed` and
 `summary.may_have_partially_written` set.
 
-Do not retry that write. Follow the
+Do not apply that plan again. For an interrupted run (`reconciliation_required: true`), run
+`verify RUN_ID` and then `runs resume RUN_ID --expected-checksum CHECKSUM`; see
+[Resume an interrupted apply](../running-a-sync.mdx#resume-an-interrupted-apply). Otherwise,
+follow the
 [reconciliation procedure](../compose-deployment#when-the-outcome-of-a-write-is-uncertain):
-read the run record, which no longer changes once the run has ended, inspect the
-destination, and then create a fresh plan. The fresh plan reads the destination as it is
-now, so it holds only the changes that are still outstanding.
+read the run record, inspect the destination, and then create a fresh plan. The fresh plan
+reads the destination as it is now, so it holds only the changes that are still outstanding.

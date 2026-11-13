@@ -441,6 +441,71 @@ The boundary is deliberately narrow rather than generous. An `httpx` error the S
 translate escapes as a defect instead of being wrapped on suspicion, because a defect labelled as a
 destination refusal is the more expensive mistake — the run records what was written either way.
 
+### The progress marker and resume
+
+An apply that the service runs saves a **progress marker**: the position, in the plan's stored order,
+of the last operation it committed. A resume applies the rest of the same saved plan on the same run,
+starting after that position. [ADR 0026](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0026-an-interrupted-apply-resumes-from-its-saved-position.md)
+records why; it partly supersedes ADR 0010's "an uncertain run is terminal". The progress marker is
+not the `may_have_partially_written` flag above: that flag describes the failing operation, and the
+progress marker describes every operation before it.
+
+The engine stays free of the store. `Potenda.apply_plan` takes two optional keywords:
+
+- `progress: ApplyProgressObserver | None` (`infrahub_sync/potenda/apply_progress.py`). The engine
+  calls `committed(index, operation)` only after the destination call for that operation returned and
+  the identifier was appended to `applied`, so a reported position is never ahead of a commit. It
+  calls `kind_finished(index)` when the next operation's kind differs and after the last operation,
+  and `stopped(index)` when the apply stops at an operation without recording it as applied. Before
+  each dispatch, next to `ownership.before_operation()`, it calls `should_stop()`; when that returns
+  true it raises `ApplyProgressLostError` with the partial record. An exception raised by the
+  observer never changes the apply's result: the engine logs its error class and continues, and a
+  `should_stop()` that raises counts as "do not stop".
+- `start_after: int | None`. Operations at an index up to and including `start_after` are not
+  dispatched and are not counted as applied by this execution. Every check that runs before the
+  first write still runs on the whole plan.
+
+The CLI-local path and the direct Prefect path pass neither and behave as before.
+
+The service worker passes `StoreApplyProgressObserver` (`infrahub_sync/service/apply_progress.py`)
+from its apply, `sync` and resume stages. It saves through `record_apply_progress` after 500
+committed operations, after 30 seconds, at each kind boundary, and when the apply stops or ends. The
+document is stored in `prefect_executions.apply_progress` (`position`, `operation_id`, `total`,
+`start_after`, `saved_at`), and the update applies only `WHERE terminal_at IS NULL`, so a worker
+that keeps running after the liveness monitor ended its execution changes nothing. A failed save is
+logged as a warning with the run ID and the error class, and writing continues. `should_stop()`
+turns true 5 minutes after the first failed save since the last successful one, so a quiet period
+between scheduled saves is never counted.
+
+A run is **resumable** when `reconciliation_required` is set, the run is not cancelled and none of
+its executions is unfinished (`infrahub_sync/service/resume_view.py`). On such a run:
+
+- `_reserve_existing` admits a `verify`, the one exception to the refusal of every stage on a run
+  that holds a `write_admissions` row. After the pre-write checks pass, the `verify` stage computes
+  the uncertain window (`uncertain_positions`): the operations after the position through the
+  failing operation when it is known, otherwise the next 500, or every remaining operation when the
+  last save attempt failed. It reads their nodes through `DestinationNodeReader.read_planned_nodes`
+  (one query per kind in the Infrahub adapter) and stores `results.verification.operations`, with
+  `matches`, `differs` or `missing` for each operation and never a value. Above 2,000 operations it
+  stores `operations_truncated`. A failed read fails the `verify` with a fixed message, and the
+  original error stays the cause, so the failure record classifies it by its class.
+- `reserve_resume` admits a resume in one transaction on the run's locked row, when the latest
+  `verify` execution comes after the latest write execution and succeeded and no earlier resume is
+  unfinished. It writes a `resume_admissions` row (`run_id`, `resume_number`, `receipt_id`); the
+  run's `write_admissions` row is kept, so every reader of that table keeps its meaning.
+- The `resume` flow purpose reads the run's saved plan and never runs the plan stage, for an apply
+  run and for a `sync` run. Its `start_after` is the highest saved position over all the run's write
+  executions, so a resume that saved nothing before it stopped does not move the run back.
+- When a resume execution ends `succeeded`, `_terminalize_execution` clears
+  `reconciliation_required` and sets the phase `applied` in the same transaction. A resume that ends
+  interrupted keeps the run resumable and makes a new `verify` necessary.
+
+Repeating the operations between the saved position and the point of failure is safe only because
+each create and update is a convergent upsert keyed by the recorded ID or the complete human-friendly
+ID ([ADR 0012](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0012-the-convergent-upsert-is-the-replace-set-write.md),
+[ADR 0013](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0013-writes-are-keyed-by-recorded-id-and-complete-hfid.md)).
+A destination whose writes are not safe to repeat must not be resumed this way.
+
 ### Deletes are recorded, never executed
 
 Deletes are derived by set difference and recorded as first-class operations. V3 apply does not

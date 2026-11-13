@@ -356,7 +356,9 @@ change.
 
 To finish the import, remove the cause, then run `plan` again on the same branch and apply
 the new plan. The new plan compares NetBox with what the branch now holds, so it contains only
-what is still missing or different.
+what is still missing or different. A run with `phase: apply-interrupted` can instead be
+resumed from its saved position with `verify` and `runs resume`; see
+[Resume an interrupted apply](../running-a-sync.mdx#resume-an-interrupted-apply).
 
 ## Verify the imported data
 

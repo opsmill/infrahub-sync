@@ -588,11 +588,122 @@ that failed:
 - If the failed operation is known not to have written, the run ends with
   `phase: apply-failed` and `outcome: failed`.
 - If the service cannot tell whether it wrote, the run ends with `phase: apply-interrupted`
-  and `outcome: ambiguous`, and the failed operation may have written part of its change.
+  and `outcome: ambiguous`, and the failed operation may have written part of its change. The
+  same happens when the worker stops during the apply, for example when its container is
+  killed. A `sync` run ends with `phase: sync-interrupted` in the same cases.
 
-Remove the cause first, in the source data or in the package. Then create a new plan for the
-same branch with `plan`, review it, and apply it. The new plan compares the source with what
-the destination now holds, so it contains only what is still missing or different.
+An `apply-failed` run cannot be continued. Remove the cause first, in the source data or in
+the package. Then create a new plan for the same branch with `plan`, review it, and apply it.
+The new plan compares the source with what the destination now holds, so it contains only
+what is still missing or different.
+
+An interrupted run can be resumed: Sync applies the rest of its saved plan on the same run,
+without reading the source or creating a new plan. See
+[Resume an interrupted apply](#resume-an-interrupted-apply).
+
+### Resume an interrupted apply
+
+During an apply, the worker saves the position of the last operation that it committed, in the
+order of the saved plan. It saves this progress marker after every 500 operations, every 30
+seconds, at the end of each kind, and when the apply stops. A resume starts after the saved
+position, so it repeats at most the operations written since the last save. Repeating them
+does not change the nodes they wrote, because each create and update is keyed by the node's
+recorded ID or its complete human-friendly ID.
+
+1. View how far the write got:
+
+   ```bash
+   infrahub-sync runs show RUN_ID
+   ```
+
+   For a run that started a write, `runs show` prints the progress, whether the run can be
+   resumed, and, for each kind, how many operations were committed, are uncertain, and were
+   not reached:
+
+   ```text
+   progress: 6000/10000 operations committed (saved 2026-11-12T10:15:00+00:00)
+   resumable: yes (verify required)
+   kind DcimDevice: committed 1200, uncertain 0, not reached 0
+   kind DcimInterface: committed 4800, uncertain 500, not reached 3500
+   ```
+
+   The uncertain operations are the ones that may have reached the destination after the saved
+   position. When the failed operation is known, they run up to it. When the worker stopped,
+   they are the next 500 operations, or every remaining operation when the last save failed.
+
+2. Check the destination:
+
+   ```bash
+   infrahub-sync verify RUN_ID --reason "check the destination after the interruption"
+   ```
+
+   `verify` runs every check that runs before the first write of an apply, as described in
+   [Verify the plan against the destination](#verify-the-plan-against-the-destination). On an
+   interrupted run, it then reads the node of each uncertain operation from the destination and
+   prints one line for each:
+
+   ```text
+   operation OPERATION_ID DcimInterface create: matches
+   operation OPERATION_ID DcimInterface update: differs
+   operation OPERATION_ID DcimInterface create: missing
+   note: runs resume writes the plan's values over every operation reported as differs
+   ```
+
+   `matches` means the node already holds the planned values, `differs` means the node exists
+   with other values, and `missing` means the node does not exist. These states never make
+   `verify` fail. `verify` fails when a check fails, or when it cannot read the nodes from the
+   destination; the failure record then names the cause, such as an unreachable destination
+   or a refused token. When more than 2,000 operations are uncertain,
+   `verify` reports the first 2,000 and prints `operations not reported: COUNT`.
+
+   A resume writes the plan's values over every node reported as `differs`, including a change
+   that someone made at the destination after the plan. When that change must stay, do not
+   resume: create a new plan instead.
+
+3. Resume the run with the checksum of its saved plan:
+
+   ```bash
+   infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM \
+     --reason "resume after the worker restart"
+   ```
+
+   `runs resume` prints the run, the position the resume starts after (`start_after`), and,
+   when it has waited for the resume to end, the progress lines of `runs show`. `--reason` is
+   optional. `--confirm-left-out`, `--idempotency-key`, `--wait`, `--no-wait`,
+   `--wait-timeout` and `--poll-interval` work as they do for `apply`. A resume writes to the
+   branch that the plan recorded; it has no `--branch` option.
+
+When the resume ends, `runs show` reports `phase: applied` and
+`reconciliation_required: false`, and lists each resume with its actor, time, start position
+and outcome. The run keeps the interrupted execution and every resume in its history.
+
+The service refuses a resume before any write, and prints `error: CODE` with the reason, in
+these cases:
+
+- No `verify` passed on the run after its latest interruption (`verify-required`). The command
+  prints `hint: run infrahub-sync verify RUN_ID first`.
+- The checksum differs from the saved plan's checksum (`checksum-conflict`). The hint shows the
+  saved plan's checksum and the one you gave.
+- The run is not interrupted, was cancelled, or has a stage that is still running
+  (`run-not-resumable`). This includes an applied run, a run whose apply failed before its
+  first write, a run that was never applied, and a `sync` run that stopped after its plan.
+- The plan leaves out records and `--confirm-left-out` is missing. The command prints
+  `resume refused: this plan leaves out COUNT records; confirm with --confirm-left-out`.
+- The Sync API requires approval and the run has no approval for this checksum
+  (`approval-required` or `approval-checksum-mismatch`).
+- Another resume of the run is running (`run-execution-conflict`).
+
+Only the actor who started the run, or an administrator, can resume it. Every resume request,
+accepted or refused, is recorded in the run's audit history and event list.
+
+A resume runs again the checks that run before the first write of an apply. When a node of an
+update was deleted at the destination after the plan, the resume stops on that operation with
+a failure that names the operation and the node. When a resume is itself interrupted, the run
+gets a newer progress marker, and the next resume needs a new `verify`. When the worker cannot
+save the progress marker for 5 minutes, the apply stops and the run is interrupted.
+
+An interrupted `sync` run is resumed in the same way, with the checksum of the plan that the
+`sync` run saved. Read it with `runs plan RUN_ID`.
 
 ## Change a registered package
 
