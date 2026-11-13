@@ -319,8 +319,11 @@ Which service receives which credential:
   schema reads it serves.
 - `sync-bootstrap`, `prefect-server` and `cli` receive no adapter credential.
 
-The configuration check of `configs validate` reports a `$credential` reference that no live
-worker holds, by name and without its value, once that check is available in your release.
+`configs validate` reports, as an error, each `INFRAHUB_SYNC_CREDENTIAL_*` variable that a
+package's `$credential` references name and that no live worker holds. It names the variable and
+never prints a value. Each live worker publishes the names of the credential variables it holds.
+When no live worker has published them, the check cannot run and `configs validate` reports a
+warning instead.
 
 :::note
 That both adapters install and import is a packaging property of this release.
