@@ -1,0 +1,22 @@
+tasks/netbox.py
+  s_11782fc4bc9a91::t_5e69de26d33594 423-444
+  s_11782fc4bc9a91::t_7e54678b0bf7ee 527,535
+tests/test_netbox_tasks.py
+  s_11782fc4bc9a91::t_4693bd7ecbe5b2 11,18,487-515
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "704bcedb39f0c2eda9406753130f27e19773eeed",
+  "prompts": {},
+  "sessions": {
+    "s_11782fc4bc9a91": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d1b81fa-9ee2-4fcb-b7c2-e14783f62cad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
