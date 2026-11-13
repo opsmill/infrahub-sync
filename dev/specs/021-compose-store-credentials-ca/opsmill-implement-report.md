@@ -78,6 +78,14 @@ They fail the same way on unchanged `feature/v3-develop` on this host: Python 3.
 Five review lenses (code, comments, tests, errors, types) were applied in one pass, not as
 separate agents. The simplify pass was not run.
 
+A second review on 2026-11-13 ran all six aspects as separate agents
+(`reviews/review-run-20261113.md`). Its critical finding and the important findings that need no
+running Compose stack were fixed in the commit that follows this report change. The review file
+marks each finding fixed or open. Two important test findings stay open: a TLS run without the CA
+that must fail, and a leak test that runs a plan. Both need the Compose stack and belong with T033.
+No `/code-review --fix` pass ran on this branch: every forked attempt stopped on an authentication
+error.
+
 ## Autonomous decisions
 
 - Spec 010 "PR 2" was implemented as its own branch before spec 021, as you chose. Its

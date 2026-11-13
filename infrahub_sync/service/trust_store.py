@@ -40,7 +40,7 @@ _FALLBACK_HANDLER.setFormatter(logging.Formatter("%(levelname)s | infrahub-sync 
 CA_DIRECTORY_ENV = "INFRAHUB_SYNC_CA_DIRECTORY"
 TRUST_VARIABLES = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "AWS_CA_BUNDLE", "INFRAHUB_TLS_CA_FILE")
 CERTIFICATE_SUFFIXES = frozenset({".pem", ".crt"})
-BUNDLE_NAME = "infrahub-sync-ca-bundle.pem"
+BUNDLE_PREFIX = "infrahub-sync-ca-bundle-"
 _PRIVATE_KEY_MARKER = b"PRIVATE KEY-----"
 _CERTIFICATE_MARKER = b"-----BEGIN CERTIFICATE-----"
 
@@ -90,6 +90,9 @@ def install_custom_ca_bundle(directory: Path | None = None) -> Path | None:
             return None
         directory = Path(configured)
     if not directory.is_dir():
+        logger.warning(
+            "%s names %s, which is not a directory; no CA certificate is loaded", CA_DIRECTORY_ENV, directory
+        )
         return None
     try:
         files = _certificate_files(directory)
@@ -103,14 +106,23 @@ def install_custom_ca_bundle(directory: Path | None = None) -> Path | None:
         return None
     contents = [_checked(path) for path in files]
     count = sum(content.count(_CERTIFICATE_MARKER) for content in contents)
-    bundle = Path(tempfile.gettempdir()) / BUNDLE_NAME
-    roots = Path(certifi.where()).read_bytes()
-    descriptor = os.open(bundle, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "wb") as written:
-        written.write(roots if roots.endswith(b"\n") else roots + b"\n")
-        for content in contents:
-            written.write(content)
-    bundle.chmod(0o600)
+    try:
+        roots = Path(certifi.where()).read_bytes()
+    except OSError as error:
+        msg = f"cannot read the public root certificates ({type(error).__name__})"
+        raise TrustStoreError(msg) from None
+    try:
+        # One file per process: two processes on one host never rewrite each other's bundle.
+        # mkstemp creates it with mode 0600.
+        descriptor, name = tempfile.mkstemp(prefix=BUNDLE_PREFIX, suffix=".pem")
+        bundle = Path(name)
+        with os.fdopen(descriptor, "wb") as written:
+            written.write(roots if roots.endswith(b"\n") else roots + b"\n")
+            for content in contents:
+                written.write(content)
+    except OSError as error:
+        msg = f"cannot write the CA bundle in {tempfile.gettempdir()} ({type(error).__name__})"
+        raise TrustStoreError(msg) from None
     for name in TRUST_VARIABLES:
         if os.environ.get(name):
             logger.warning("%s is already set and overrides the CA bundle", name)

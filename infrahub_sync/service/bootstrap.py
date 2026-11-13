@@ -44,6 +44,7 @@ from .storage import (
     S3_PREFIX_ENV,
     S3_REGION_ENV,
     Boto3S3Client,
+    EndpointSettingError,
     build_s3_client,
     service_product_projection,
 )
@@ -63,9 +64,10 @@ PROCESS_POOL_TYPE = "process"
 # other client error is a real failure, and is reported as one.
 _BUCKET_PRESENT = frozenset({"BucketAlreadyOwnedByYou", "BucketAlreadyExists"})
 # The exact answers to `HeadBucket` that mean the bucket is absent.
-_BUCKET_ABSENT_CODES = frozenset({"404", "NoSuchBucket", "NotFound"})
+_BUCKET_ABSENT_CODES = frozenset({"NoSuchBucket", "NotFound"})
 _HTTP_NOT_FOUND = 404
 _HTTP_FORBIDDEN = 403
+_HTTP_NOT_IMPLEMENTED = 501
 # The region in which the S3 API takes no location constraint.
 _DEFAULT_REGION = "us-east-1"
 # The bundled store's service name in the Compose file.
@@ -88,6 +90,7 @@ BUNDLED_OBJECT_STORE_NOT_LEFT_OUT = "bundled-object-store-not-left-out"
 OBJECT_STORE_ENDPOINT_NOT_SET = "object-store-endpoint-not-set"
 OBJECT_STORE_ACCESS_REFUSED = "object-store-access-refused"
 OBJECT_STORE_UNSUPPORTED = "object-store-unsupported"
+OBJECT_STORE_SETTING_INVALID = "object-store-setting-invalid"
 
 
 class BootstrapError(RuntimeError):
@@ -133,6 +136,16 @@ def _status(error: ClientError) -> int | None:
     return status if isinstance(status, int) else None
 
 
+def _refusal(error: ClientError) -> BootstrapError:
+    """Name the failure family of one store answer: a refused credential, a missing feature, or neither."""
+    status = _status(error)
+    if status == _HTTP_FORBIDDEN:
+        return BootstrapError(OBJECT_STORE_ACCESS_REFUSED)
+    if status == _HTTP_NOT_IMPLEMENTED or error.response.get("Error", {}).get("Code") == "NotImplemented":
+        return BootstrapError(OBJECT_STORE_UNSUPPORTED)
+    return BootstrapError(OBJECT_STORE_UNAVAILABLE)
+
+
 def converge_bucket(client: Any, bucket: str, region: str | None = None) -> bool:
     """Create the artifact bucket only when the store reports it absent. Return whether this call made it.
 
@@ -143,11 +156,8 @@ def converge_bucket(client: Any, bucket: str, region: str | None = None) -> bool
         client.head_bucket(Bucket=bucket)
     except ClientError as error:
         code = error.response.get("Error", {}).get("Code")
-        status = _status(error)
-        if status == _HTTP_FORBIDDEN:
-            raise BootstrapError(OBJECT_STORE_ACCESS_REFUSED) from None
-        if status != _HTTP_NOT_FOUND and code not in _BUCKET_ABSENT_CODES:
-            raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
+        if _status(error) != _HTTP_NOT_FOUND and code not in _BUCKET_ABSENT_CODES:
+            raise _refusal(error) from None
     except BotoCoreError:
         raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
     else:
@@ -161,7 +171,7 @@ def converge_bucket(client: Any, bucket: str, region: str | None = None) -> bool
         code = error.response.get("Error", {}).get("Code")
         if code in _BUCKET_PRESENT:
             return False
-        raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
+        raise _refusal(error) from None
     except BotoCoreError:
         raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
     return True
@@ -174,14 +184,17 @@ def check_create_only(objects: Any, bucket: str, prefix: str) -> None:
     store refusing the second write. A store that accepts it would let a write replace a
     stored artifact.
     """
-    key = f"{prefix}/{CREATE_ONLY_CHECK_PATH}/{uuid.uuid4()}" if prefix else f"{CREATE_ONLY_CHECK_PATH}/{uuid.uuid4()}"
+    path = f"{CREATE_ONLY_CHECK_PATH}/{uuid.uuid4()}"
+    key = f"{prefix}/{path}" if prefix else path
     try:
         try:
             objects.put(bucket=bucket, key=key, data=b"", if_absent=True)
             objects.put(bucket=bucket, key=key, data=b"", if_absent=True)
         except DuplicateArtifactError:
             return
-        except (ClientError, BotoCoreError):
+        except ClientError as error:
+            raise _refusal(error) from None
+        except BotoCoreError:
             raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
         raise BootstrapError(OBJECT_STORE_UNSUPPORTED)
     finally:
@@ -245,10 +258,14 @@ def _converge() -> None:
     """
     try:
         client = build_s3_client(os.environ, builder=boto3.client)
-    except ValueError as error:
+    except EndpointSettingError as error:
         # The message names the setting and the rule, never the value (`storage._endpoint`).
         logger.error("%s", error)  # noqa: TRY400 - a fixed message; the family follows.
         raise BootstrapError(OBJECT_STORE_ENDPOINT_INVALID) from None
+    except ValueError:
+        # Another refused S3 setting: the addressing style, or a region botocore refuses.
+        # botocore's own message may quote the value, so only the family is reported.
+        raise BootstrapError(OBJECT_STORE_SETTING_INVALID) from None
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
     check_store_settings(os.environ.get(S3_ENDPOINT_ENV) or None)

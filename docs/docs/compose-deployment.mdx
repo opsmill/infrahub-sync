@@ -137,7 +137,7 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_S3_REGION` | `us-east-1` | The object store region. |
 | `INFRAHUB_SYNC_S3_ENDPOINT_URL` | `http://object-store:9000` | The object store address. Set it, with `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0`, to use your own store; see [Use your own S3-compatible store](#use-your-own-s3-compatible-store). |
 | `INFRAHUB_SYNC_S3_ADDRESSING_STYLE` | `path` | `path` puts the bucket in the request path, `virtual` in the host name. Any other value stops the Sync services and `sync-bootstrap`. |
-| `INFRAHUB_SYNC_CA_CERTIFICATES` | empty (an empty named volume) | A host directory of CA certificate files (`*.pem`, `*.crt`) that `sync-bootstrap`, `sync-api` and `sync-worker` trust next to the public roots. See [Trust a private certificate authority](#trust-a-private-certificate-authority). |
+| `INFRAHUB_SYNC_CA_CERTIFICATES` | empty (an empty named volume) | A host directory of CA certificate files in PEM text format, named `*.pem` or `*.crt`, that `sync-bootstrap`, `sync-api` and `sync-worker` trust next to the public roots. See [Trust a private certificate authority](#trust-a-private-certificate-authority). |
 | `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE` | `1` | `0` leaves the bundled store out: Compose creates no `object-store-init` or `object-store` container. |
 | `INFRAHUB_SYNC_WORK_POOL` | `infrahub-sync` | The Prefect work pool. |
 | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | `300` | How long a run admission stays valid. |
@@ -357,14 +357,16 @@ With `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0`, Compose creates no `object-store-in
 
 Use `https` for your store. Request signing never sends the secret key, but over `http` object
 content crosses the network unencrypted. An endpoint that carries a user name or a password is
-refused with `refused: object-store-endpoint-invalid`.
+refused with `refused: object-store-endpoint-invalid`. An unknown addressing style or a region
+that the S3 client refuses stops it with `refused: object-store-setting-invalid`.
 
 ### What Sync needs from the store
 
 `sync-bootstrap` checks for the bucket with `HeadBucket` and creates it only when the store
 answers that it is absent, so a credential that may not create buckets works with a bucket you
-created. A `HeadBucket` refusal stops it with `refused: object-store-access-refused`. It then
-writes one empty check object under `<prefix>/.infrahub-sync/bootstrap-check/` twice with
+created. A 403 answer to `HeadBucket`, `CreateBucket` or the check write stops it with
+`refused: object-store-access-refused`, and a 501 answer with `refused: object-store-unsupported`.
+It then writes one empty check object under `<prefix>/.infrahub-sync/bootstrap-check/` twice with
 `If-None-Match: *`, and deletes it. A store that accepts the second write stops it with
 `refused: object-store-unsupported`, because Sync relies on that refusal to never replace a
 stored artifact.
@@ -393,7 +395,7 @@ made before the move.
 
 When a source, Infrahub or your own object store presents a certificate that a private
 certificate authority signed, give the Sync services that CA's certificate. Put one or more
-public CA certificate files (`*.pem` or `*.crt`) in a directory, name it in `.env`, and start
+public CA certificate files in PEM text format, named `*.pem` or `*.crt`, in a directory, name it in `.env`, and start
 the deployment:
 
 ```bash

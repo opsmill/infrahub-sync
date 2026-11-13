@@ -196,6 +196,10 @@ def service_guard_secrets(*, environ: Mapping[str, str] | None = None) -> tuple[
     return dsn_secret_values(_database_url(values))
 
 
+class EndpointSettingError(ValueError):
+    """The S3 endpoint setting is refused; the message names the setting, never its value."""
+
+
 def _endpoint(values: Mapping[str, str]) -> str | None:
     """Validate the optional S3-compatible endpoint, passing the operator string to Boto3."""
     endpoint = _optional_setting(values, S3_ENDPOINT_ENV)
@@ -205,9 +209,9 @@ def _endpoint(values: Mapping[str, str]) -> str | None:
     try:
         parsed = _ENDPOINT_URL_ADAPTER.validate_python(endpoint)
     except ValidationError:
-        raise ValueError(msg) from None
+        raise EndpointSettingError(msg) from None
     if parsed.username is not None or parsed.password is not None:
-        raise ValueError(msg)
+        raise EndpointSettingError(msg)
     return endpoint
 
 
@@ -239,7 +243,9 @@ def build_s3_client(values: Mapping[str, str], *, builder: Callable[..., Any] = 
     """Build the S3 client the Sync API, the worker and bootstrap share.
 
     Raises:
-        ValueError: when a setting is refused; the message names the setting only.
+        EndpointSettingError: when the endpoint is refused; the message names the setting only.
+        ValueError: when another setting is refused, by the checks here or by botocore's own
+            (an invalid region, for example); the message names the setting only.
     """
     return builder("s3", **s3_client_arguments(values))
 

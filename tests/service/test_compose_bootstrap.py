@@ -172,7 +172,7 @@ def test_a_bucket_that_is_already_there_is_left_alone(code: str) -> None:
 
 def test_an_object_store_failure_carries_no_endpoint_or_credential() -> None:
     """Its inputs are an endpoint and a key pair, and the SDK renders both into its text."""
-    client = _Bucket(response=_client_error("AccessDenied"))
+    client = _Bucket(response=_client_error("InternalError", 500))
 
     with pytest.raises(BootstrapError) as refusal:
         converge_bucket(client, BUCKET)
@@ -220,9 +220,16 @@ def test_matching_store_settings_pass(endpoint: str, running: tuple[str, ...]) -
 class _Objects:
     """The create-only protocol of `Boto3S3Client`: put, with or without `if_absent`, and delete."""
 
-    def __init__(self, *, honors_create_only: bool = True, put_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        honors_create_only: bool = True,
+        put_error: Exception | None = None,
+        delete_error: Exception | None = None,
+    ) -> None:
         self.honors_create_only = honors_create_only
         self.put_error = put_error
+        self.delete_error = delete_error
         self.keys: set[str] = set()
         self.deleted: list[str] = []
 
@@ -237,6 +244,8 @@ class _Objects:
     def delete(self, *, bucket: str, key: str) -> None:
         del bucket
         self.deleted.append(key)
+        if self.delete_error is not None:
+            raise self.delete_error
         self.keys.discard(key)
 
 
@@ -530,3 +539,64 @@ def test_a_real_client_context_failure_stays_behind_the_work_pool_family(
     assert result == 1
     assert "work-pool-unavailable" in caplog.text
     assert PROVIDER_CANARY not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "family"),
+    [
+        (403, "AccessDenied", "object-store-access-refused"),
+        (501, "NotImplemented", "object-store-unsupported"),
+        (500, "InternalError", "object-store-unavailable"),
+    ],
+)
+def test_a_refused_bucket_creation_names_its_family(status: int, code: str, family: str) -> None:
+    client = _Bucket(response=_client_error(code, status))
+
+    with pytest.raises(BootstrapError) as refusal:
+        converge_bucket(client, BUCKET)
+
+    assert refusal.value.family == family
+    rendered = repr(refusal.value) + str(refusal.value)
+    assert ENDPOINT_CANARY not in rendered
+    assert CREDENTIAL_CANARY not in rendered
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "family"),
+    [(403, "AccessDenied", "object-store-access-refused"), (501, "NotImplemented", "object-store-unsupported")],
+)
+def test_a_refused_check_write_names_its_family(status: int, code: str, family: str) -> None:
+    objects = _Objects(put_error=ClientError(_client_error(code, status), "PutObject"))
+
+    with pytest.raises(BootstrapError) as refusal:
+        check_create_only(objects, BUCKET, "infrahub-sync")
+
+    assert refusal.value.family == family
+    assert len(objects.deleted) == 1
+
+
+def test_a_check_key_that_cannot_be_deleted_is_logged_without_failing(caplog: pytest.LogCaptureFixture) -> None:
+    objects = _Objects(delete_error=ClientError(_client_error("AccessDenied", 403), "DeleteObject"))
+
+    with caplog.at_level("WARNING"):
+        check_create_only(objects, BUCKET, "infrahub-sync")
+
+    assert "the create-only check could not delete its key under .infrahub-sync/bootstrap-check" in caplog.text
+    assert CREDENTIAL_CANARY not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("INFRAHUB_SYNC_S3_ADDRESSING_STYLE", "sideways"), ("INFRAHUB_SYNC_S3_REGION", "not a region!")],
+)
+def test_another_refused_s3_setting_is_not_reported_as_the_endpoint(
+    name: str, value: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.delenv("INFRAHUB_SYNC_S3_ENDPOINT_URL", raising=False)
+    monkeypatch.setenv(name, value)
+
+    with caplog.at_level("ERROR"):
+        assert bootstrap.main() == 1
+
+    assert "refused: object-store-setting-invalid" in caplog.text
+    assert value not in caplog.text

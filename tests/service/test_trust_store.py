@@ -171,3 +171,56 @@ def test_an_unreadable_directory_is_refused_naming_it(tmp_path: Path, monkeypatc
     assert str(refusal.value) == (
         f"cannot read the CA directory {directory} (PermissionError); user ID 10001 must be able to list it"
     )
+
+
+def test_a_setting_that_names_no_directory_is_logged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    not_a_directory = tmp_path / "ca.pem"
+    not_a_directory.write_bytes(_ca_certificate("Not A Directory CA"))
+    monkeypatch.setenv(trust_store.CA_DIRECTORY_ENV, str(not_a_directory))
+
+    with caplog.at_level(logging.WARNING, logger=trust_store.logger.name):
+        assert install_custom_ca_bundle() is None
+
+    assert f"names {not_a_directory}, which is not a directory" in caplog.text
+    assert not any(name in os.environ for name in TRUST_VARIABLES)
+
+
+def test_a_bundle_that_cannot_be_written_is_refused_naming_the_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "ca").mkdir()
+    (tmp_path / "ca" / "ca.pem").write_bytes(_ca_certificate("Unwritable Scratch CA"))
+
+    def full_disk(**_settings: object) -> tuple[int, str]:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(trust_store.tempfile, "mkstemp", full_disk)
+
+    with pytest.raises(TrustStoreError, match=r"cannot write the CA bundle in .* \(OSError\)"):
+        install_custom_ca_bundle(tmp_path / "ca")
+
+    assert not any(name in os.environ for name in TRUST_VARIABLES)
+
+
+def test_unreadable_public_roots_are_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "ca").mkdir()
+    (tmp_path / "ca" / "ca.pem").write_bytes(_ca_certificate("Missing Roots CA"))
+    monkeypatch.setattr(trust_store.certifi, "where", lambda: str(tmp_path / "absent-roots.pem"))
+
+    with pytest.raises(TrustStoreError, match=r"cannot read the public root certificates \(FileNotFoundError\)"):
+        install_custom_ca_bundle(tmp_path / "ca")
+
+
+def test_two_processes_write_two_bundles(tmp_path: Path) -> None:
+    (tmp_path / "ca").mkdir()
+    (tmp_path / "ca" / "ca.pem").write_bytes(_ca_certificate("Two Bundles CA"))
+
+    first = install_custom_ca_bundle(tmp_path / "ca")
+    second = install_custom_ca_bundle(tmp_path / "ca")
+
+    assert first is not None
+    assert second is not None
+    assert first != second
+    assert stat.S_IMODE(second.stat().st_mode) == 0o600

@@ -150,7 +150,7 @@ class ExternalStore:
         started = docker(command)
         assert started.returncode == 0, started.stderr
         self.containers.append(started.stdout.strip())
-        wait_for("the external store creating its bucket", lambda: self.keys(create=True) == [], timeout=120)
+        wait_for("the external store creating its bucket", lambda: self.listing(create=True) == [], timeout=120)
 
     def start_proxy(self) -> None:
         """Start the proxy that accepts a second create-only write, as `PROXY_HOST`."""
@@ -173,8 +173,18 @@ class ExternalStore:
         assert started.returncode == 0, started.stderr
         self.containers.append(started.stdout.strip())
 
-    def keys(self, *, create: bool = False) -> list[str] | None:
-        """Every key in the bucket, read with the Sync image on the store's network."""
+    def keys(self) -> list[str]:
+        """Every key in the bucket. A failed listing fails the test.
+
+        Read as an empty bucket, a failed listing would let a check that no key remains
+        pass without listing anything.
+        """
+        keys = self.listing()
+        assert keys is not None, "listing the bucket failed"
+        return keys
+
+    def listing(self, *, create: bool = False) -> list[str] | None:
+        """Every key in the bucket, read with the Sync image on the store's network; None on failure."""
         trust = [] if self.tls is None else ["--volume", f"{self.tls / 'ca'}:/ca:ro", "--env", "PROBE_CA=/ca/ca.pem"]
         listed = docker(
             [
@@ -306,14 +316,14 @@ def test_bootstrap_found_the_bucket_and_checked_create_only_writes(
 
     assert "bucket present" in logs
     assert "object store refuses a second create-only write" in logs
-    keys = external_store.keys() or []
+    keys = external_store.keys()
     assert not [key for key in keys if key.startswith(CHECK_PATH)], keys
 
 
 def test_a_plan_and_an_apply_keep_their_files_in_the_external_bucket(
     started: Deployment, external_store: ExternalStore
 ) -> None:
-    before = set(external_store.keys() or [])
+    before = set(external_store.keys())
     principal = json.loads(started.setting("INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"))["compose-suite"]["token"]
     with api_client(started, principal) as client:
         config_id, registry_version = register(
@@ -335,7 +345,7 @@ def test_a_plan_and_an_apply_keep_their_files_in_the_external_bucket(
         run_id = created.json()["run"]["run_id"]
         await_phase(client, run_id, "applied")
 
-    written = set(external_store.keys() or []) - before
+    written = set(external_store.keys()) - before
     assert written, "the run wrote no object to the external bucket"
 
 
@@ -362,7 +372,7 @@ def test_a_store_that_accepts_a_second_create_only_write_stops_bootstrap(
         logs = bootstrap_log(deployment)
         assert "refused: object-store-unsupported" in logs, logs[-2000:]
         assert launched.returncode != 0
-        keys = external_store.keys() or []
+        keys = external_store.keys()
         assert not [key for key in keys if key.startswith(CHECK_PATH)], keys
     finally:
         deployment.down(volumes=True)
@@ -475,7 +485,7 @@ def test_a_store_behind_a_private_ca_is_trusted_with_checks_on(
         assert "loaded 1 CA certificate(s)" in logs
         for name in ("sync-api", "sync-worker"):
             assert "loaded 1 CA certificate(s)" in deployment.logs(name).output, name
-        before = set(tls_store.keys() or [])
+        before = set(tls_store.keys())
         principal = json.loads(deployment.setting("INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"))["compose-suite"]["token"]
         with api_client(deployment, principal) as client:
             config_id, registry_version = register(
@@ -494,6 +504,6 @@ def test_a_store_behind_a_private_ca_is_trusted_with_checks_on(
             )
             assert created.status_code == 202, created.text
             await_phase(client, created.json()["run"]["run_id"], "planned")
-        assert set(tls_store.keys() or []) - before, "the plan wrote no object to the TLS store"
+        assert set(tls_store.keys()) - before, "the plan wrote no object to the TLS store"
     finally:
         deployment.down(volumes=True)
