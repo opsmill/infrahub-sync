@@ -1,4 +1,3 @@
-# pylint: disable=too-many-lines  # one module owns every stage's pre-write sequence and failure record
 """Separate Prefect flow for API-created durable Sync runs."""
 
 # pylint: disable=too-many-lines  # one module owns the worker's claim, stage execution and run reporting

@@ -409,6 +409,14 @@ def test_a_resume_while_a_verify_is_reserved_is_refused_as_not_resumable(project
     _assert_resume_refused(_reserve_resume(projection, run_id, "m-resume"), _NOT_RESUMABLE_CODE)
 
 
+def test_a_verify_while_a_resume_is_reserved_is_refused(projection: ProductProjection) -> None:
+    """A resume reserved and not yet submitted holds the run, so a `verify` cannot race it."""
+    run_id = _verified_run(projection, "verify-resume-reserved")
+    assert _reserve_resume(projection, run_id, "m-resume").state == "reserved"
+
+    _assert_refused(_reserve(projection, run_id, "m-verify-2", operation="verify"))
+
+
 def test_a_second_resume_while_the_first_is_reserved_is_refused_as_a_conflict(projection: ProductProjection) -> None:
     run_id = _verified_run(projection, "resume-reserved-twice")
     assert _reserve_resume(projection, run_id, "m-resume-1").state == "reserved"
