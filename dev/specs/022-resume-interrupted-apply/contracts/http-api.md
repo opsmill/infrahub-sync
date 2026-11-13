@@ -21,7 +21,7 @@ Responses:
 | 409 | `checksum-conflict` | The checksum does not match the saved plan. |
 | 409 | `left-out-confirmation-required` | The plan left out records and `confirm_left_out` is not true. |
 | 409 | `approval-required` / `approval-checksum-mismatch` | The site requires approval and the run has none for this checksum. The `approval-required` message names `infrahub-sync approve RUN_ID --expected-checksum CHECKSUM`. |
-| 409 | `run-not-resumable` | The run is not interrupted, is cancelled, or has an unfinished execution. The message says which. |
+| 409 | `run-not-resumable` | The run is not interrupted, is cancelled, saved no plan, or has an unfinished execution. The message says which. A run that saved no plan is a `sync` whose worker was killed while it was still planning; its message says that no plan was saved and that a new `plan` or `sync` run is the next step (research R14). |
 | 409 | `verify-required` | No `verify` passed on the run after its latest interruption. |
 | 409 | `run-execution-conflict` | Another resume of the run is in progress. |
 | 403 | `forbidden` | The actor did not start the run and is not an administrator. |
@@ -31,7 +31,7 @@ Every request, accepted or refused, is recorded in the run's audit history and e
 ## `POST /runs/{run_id}/approve` (extended)
 
 Spec 019's approve request also accepts a resumable run: `reconciliation_required` is true, the run is not
-cancelled, and no execution is unfinished (spec FR-019, research R12). The request, the checks and the responses
+cancelled, its plan is saved, and no execution is unfinished (spec FR-019, research R12). The request, the checks and the responses
 are unchanged. The `run-not-approvable` message names the run's phase and says that only a run in phase `planned`,
 or a run whose write stopped part-way and can be resumed, can be approved.
 
@@ -62,6 +62,16 @@ After a resume that succeeded, `resumable` is false, every operation is `committ
 ```
 
 Positions count from 0 and include recorded deletes: position 5999 is the 6,000th operation of the plan.
+
+For a `sync` whose worker was killed while it was still planning, `apply_progress` has `position: null`,
+`resumable: false`, `verify_required: false` and an empty `by_kind`: the run saved no plan. A `verify` of that run
+is refused with `409 run-execution-conflict`, as for any run whose write started and that cannot be resumed, and the
+refusal is recorded in the audit history (research R14).
+
+The Sync API reads the operations' kinds and actions from the saved plan once per run and plan, and keeps them in
+memory, so a client that polls the run, for example with `--wait`, does not make the API read the whole plan on every
+request (research R14). When the plan cannot be read, `by_kind` is empty and the API logs a warning that names the
+run, the error class and the error code.
 
 `by_kind` counts are over plan positions, so a recorded delete is `committed` at or before `position`,
 `uncertain` inside the uncertain window, and `not_reached` after it. The uncertain window starts after

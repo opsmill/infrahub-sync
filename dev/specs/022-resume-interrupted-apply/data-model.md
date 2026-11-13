@@ -53,8 +53,8 @@ Primary key `(run_id, resume_number)`. The original `write_admissions` row is ke
 | `position` | integer or null | The highest saved position over all the run's write executions (critique E2). |
 | `saved_at` | time or null | When it was saved. |
 | `by_kind` | list of `{kind, committed, uncertain, not_reached}` | Derived from the position and the saved plan, over the plan's positions, recorded deletes included. `uncertain` counts the uncertain operations: through the failing operation when it is known; otherwise through the 500th create or update after the position when the last save attempt succeeded, and every remaining operation when it did not or when that is not known (critique E3, research R11). |
-| `resumable` | boolean | True when the run is interrupted and no execution is unfinished. |
-| `verify_required` | boolean | True when no `verify` passed after the latest interruption. |
+| `resumable` | boolean | True when the run is interrupted, its plan is saved and no execution is unfinished. |
+| `verify_required` | boolean | True when the run is interrupted, its plan is saved and no `verify` passed after the latest interruption. |
 
 ## Resumes (`RunResource.resumes`, derived from executions and receipts)
 
@@ -77,8 +77,9 @@ operations) gives how many were not reported. The report never holds values.
 
 ## State rules
 
-- A run is **resumable** when `reconciliation_required` is true, it is not cancelled, and none of its executions is
-  unfinished.
+- A run is **resumable** when `reconciliation_required` is true, it is not cancelled, none of its executions is
+  unfinished, and its plan review document (artifact `plan-review`) is published. A `sync` whose worker was killed
+  while it was still planning requires reconciliation but saved no plan, so it is not resumable (research R14).
 - A resume is **admitted** only when the run is resumable and its latest `verify` execution comes after its latest
   write execution and succeeded.
 - A resumable run with no approval can be approved, as a run in phase `planned` can (FR-019, research R12).

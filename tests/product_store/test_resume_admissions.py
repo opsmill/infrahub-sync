@@ -28,6 +28,7 @@ from uuid import uuid4
 import pytest
 
 from infrahub_sync.product_store import (
+    PLAN_ARTIFACT_ID,
     ApplyProgress,
     ExecutionFinishWriteback,
     ExecutionMergeWriteback,
@@ -128,6 +129,17 @@ def _submit(projection: ProductProjection, run_id: str, receipt: MutationReceipt
     return flow_run_id
 
 
+def _publish_plan(projection: ProductProjection, run_id: str) -> None:
+    """Publish the run's review document, as the plan and `sync` workers do before any write."""
+    projection.publish_artifact(
+        run_id,
+        artifact_id=PLAN_ARTIFACT_ID,
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=b"{}",
+    )
+
+
 def _interrupted_run(projection: ProductProjection, name: str) -> str:
     """A run whose claimed apply was interrupted: it requires reconciliation and is resumable."""
     run_id = _rid(name)
@@ -144,6 +156,7 @@ def _interrupted_run(projection: ProductProjection, name: str) -> str:
             phase="accepted",
         )
     )
+    _publish_plan(projection, run_id)
     apply_receipt = _reserve(projection, run_id, "m-apply", operation="apply")
     assert apply_receipt.state == "reserved"
     flow_run_id = _submit(projection, run_id, apply_receipt, purpose="apply")
@@ -558,6 +571,7 @@ def test_the_run_position_is_the_highest_saved_position_over_all_write_execution
             phase="accepted",
         )
     )
+    _publish_plan(projection, run_id)
     apply_flow = _submit(
         projection, run_id, _reserve(projection, run_id, "m-apply", operation="apply"), purpose="apply"
     )
@@ -582,3 +596,61 @@ def test_a_run_without_a_saved_marker_has_no_position(projection: ProductProject
     run_id = _interrupted_run(projection, "no-position")
 
     assert run_apply_progress(_run(projection, run_id)) is None
+
+
+def _sync_killed_while_planning(projection: ProductProjection, name: str) -> str:
+    """A `sync` run whose claimed execution liveness ended before the worker published a plan."""
+    run_id = _rid(name)
+    projection.create_run(
+        ProductRun(
+            run_id=run_id,
+            operation="sync",
+            configuration_reference="config-001@1",
+            config_id="config-001",
+            registry_version=1,
+            package_checksum="a" * 64,
+            actor="operator@example.com",
+            started_at=_STARTED_AT,
+            phase="accepted",
+        )
+    )
+    sync_receipt = _reserve(projection, run_id, "m-sync", operation="sync")
+    assert sync_receipt.state == "reserved"
+    flow_run_id = _submit(projection, run_id, sync_receipt, purpose="sync")
+    assert projection.interrupt_execution(run_id, flow_run_id) is True
+    # The flag is kept: a worker liveness ended may still publish its plan and write (research R14).
+    assert _run(projection, run_id).reconciliation_required is True
+    return run_id
+
+
+def test_a_sync_killed_before_it_saved_a_plan_is_not_resumable(projection: ProductProjection) -> None:
+    run_id = _sync_killed_while_planning(projection, "sync-no-plan")
+
+    assert projection.run_is_resumable(run_id) is False
+
+
+def test_a_resume_of_a_sync_killed_before_it_saved_a_plan_is_refused_and_says_why(
+    projection: ProductProjection,
+) -> None:
+    run_id = _sync_killed_while_planning(projection, "sync-no-plan-resume")
+
+    refused = _reserve_resume(projection, run_id, "m-resume")
+
+    _assert_resume_refused(refused, _NOT_RESUMABLE_CODE)
+    assert refused.response_body is not None
+    assert "saved no plan" in refused.response_body["error"]["message"]
+
+
+def test_a_verify_of_a_sync_killed_before_it_saved_a_plan_is_refused(projection: ProductProjection) -> None:
+    run_id = _sync_killed_while_planning(projection, "sync-no-plan-verify")
+
+    _assert_refused(_reserve(projection, run_id, "m-verify", operation="verify"))
+
+
+def test_a_sync_becomes_resumable_once_its_plan_is_saved(projection: ProductProjection) -> None:
+    """A worker liveness ended can still publish its plan, and then it may have written."""
+    run_id = _sync_killed_while_planning(projection, "sync-late-plan")
+
+    _publish_plan(projection, run_id)
+
+    assert projection.run_is_resumable(run_id) is True

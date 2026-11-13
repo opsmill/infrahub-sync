@@ -43,6 +43,10 @@ latest write execution names it; the next 500 creates and updates, with the reco
 last save is known to have succeeded; every remaining operation otherwise, for example after a killed worker
 (research R11).
 
+For a `sync` whose worker was killed while it was still planning, the run saved no plan, so `runs show` prints
+`progress: last committed position <none> (no position saved)` and `resumable: no`, and `runs resume` is refused
+with `run-not-resumable` and a message that says to start a new `plan` or `sync` run (research R14).
+
 `, wrote N operations` is left out when the saved plan cannot be read. For a stopped apply or resume, the
 `written: N of M operations` line counts the creates and updates of the whole run, every execution included
 (research R6).

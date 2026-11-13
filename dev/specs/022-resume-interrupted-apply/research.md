@@ -11,8 +11,8 @@ ADR 0010 derives `product_runs.reconciliation_required` from the verdict and the
 fails after its first proven dispatch ends `interrupted` / `ambiguous` through the same column.
 
 **Decision**: a run is resumable exactly when `reconciliation_required` is true, its latest write execution is
-terminal, and the run is not cancelled. No new detection is added (spec FR-013; the user confirmed the existing
-interrupted state is the trigger).
+terminal, the run is not cancelled, and its plan is saved (R14 added the last condition). No new detection is added
+(spec FR-013; the user confirmed the existing interrupted state is the trigger).
 
 ## R2. Where the progress marker is stored
 
@@ -223,7 +223,7 @@ the site required approval. Such a run could never be resumed: the resume was re
 `approve` was refused with `run-not-approvable`.
 
 **Decision**: `approve` also accepts a resumable run: `reconciliation_required` is true, the run is not cancelled,
-and no execution is unfinished (the state rules in data-model.md). The service checks this before it reads the
+its plan is saved, and no execution is unfinished (the state rules in data-model.md). The service checks this before it reads the
 plan, and the store checks it again in the conditional update that stores the approval, under the run's row lock,
 so an approval is never stored while a `verify` or a resume runs. Every other check of spec 019 is unchanged: the
 checksum must be the saved plan's, the plan's checksum must have been verified when it was published, and a run has
@@ -273,3 +273,66 @@ the plan".
 defect in Sync or in the data shape, not an unreachable destination. It is not mapped to `DestinationReadError`; the
 `verify` fails, and its failure record names the error class only, without the message (secret-redaction
 guideline). A unit test records this behaviour.
+
+## R14. A `sync` killed while planning, and reading the plan for the progress view
+
+**Finding 1**: the liveness monitor ends a claimed execution whose worker stopped reporting with `interrupted` /
+`ambiguous`, and `_record_write_ambiguity` sets `reconciliation_required` for every execution of purpose `apply`,
+`sync` or `resume`. A `sync` runs its plan part and its apply part in one execution, so a `sync` worker killed while
+it was still planning also sets the flag. Before this decision such a run was reported as `resumable: yes (verify
+required)`; `verify` answered `503 plan-unavailable` and `resume` answered `503 plan-unavailable`, and neither
+answer was recorded in the audit history.
+
+**Question**: should `reconciliation_required` stay unset for a `sync` that saved no plan? A `sync` publishes its
+plan before its first write (R9), so at the time liveness ends the execution, a run without a plan has written
+nothing. But ending the execution does not stop the worker. Before each write the apply checks the configuration's
+write lock (`ProvenWriteOwnership`), not the execution; it stops only when a progress save is answered `ended` (R4),
+and the first save follows the first commits. A worker that liveness ended while it was planning can still publish
+its plan and write afterwards. So the absence of a plan when liveness acts
+does not prove that nothing will be written, and clearing the flag could hide a write.
+
+**Decision**: keep the flag as ADR 0010 derives it, and add a condition to the resumable-run rule: the run's plan
+review document (artifact `plan-review`) is published. The rule is checked when a request arrives, not when liveness
+acts, so a run whose worker published its plan late becomes resumable at that point.
+
+- The store's `_run_is_resumable` checks the published `artifact_refs` row in the same query, on SQLite and on
+  PostgreSQL. It checks the row, not whether the plan can be read, so an expired plan still answers `410` and an
+  unreadable one `503` at the later plan read.
+- `resume` refuses such a run with `409 run-not-resumable` before it reads the plan. The message says that no plan was
+  saved and that a new `plan` or `sync` run is the next step, and the refusal is recorded in the audit history like
+  the other resume refusals. The store gives the same answer on the run's locked row.
+- A `resume` whose plan cannot be read is now recorded in the audit history too, with outcome
+  `refused-plan-unavailable`, as `approve` does (FR-014).
+- `verify` reads the plan before it reserves the request only when the run never started a write or is resumable.
+  A run whose write started and that is not resumable, such as this one, reaches the reservation, which refuses it
+  with `409 run-execution-conflict`, the refusal every other non-resumable run with a write gets, and records it.
+- The progress view (`apply_progress`) reports `resumable: false` and `verify_required: false` for such a run.
+- `approve` keeps its own checks: it reads the plan and needs its checksum, so a run without a plan is refused.
+
+**Rejected**: not setting `reconciliation_required` for a `sync` that has no plan when liveness ends it, for the
+reason above.
+
+**Finding 2**: `GET /runs/{run_id}` read and parsed the whole saved plan on every request for a run with a write
+execution, to count each kind's operations. A client that waits for a run (`--wait`) polls this route, and a tier L
+plan has about 88,000 operations (R2).
+
+**Decision**: the Sync API keeps the plan's `(operation_id, kind, action)` triples, in stored order, in an in-process
+cache keyed by the run ID and the plan artifact's digest, which the run's artifact reference holds without a read.
+
+- A run publishes its plan once, and a published artifact never changes, so an entry is never stale. Each API
+  process fills its own cache and computes the same entry, so several API processes need no shared state and no
+  invalidation.
+- The cache is checked after the reference's `expires_at`, with the rule the artifact store applies, so every
+  process stops reporting per-kind counts at the same time once the plan expired.
+- A failed read is not cached. It is logged as a warning with the run ID, the error class and the error code, never
+  the message.
+- The bound is 200,000 operations over all cached runs, with the least recently read run dropped first; a plan
+  larger than the bound is not cached. Kind and action strings are interned, so one cached operation takes about
+  200 bytes and the cache stays under about 40 MB per API process. That holds two tier L plans, or many smaller ones.
+
+**Rejected**:
+
+- Storing the layout in the store when the write execution starts (a column or a results entry): it needs a column
+  migration on both backends and a write in the worker, for data the published plan already holds.
+- A bound counted in runs (for example 32 runs): 32 tier L plans would take about 560 MB.
+

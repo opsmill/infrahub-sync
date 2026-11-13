@@ -341,7 +341,30 @@ _WRITE_OPERATIONS = ("apply", "sync")
 # the run's `write_admissions` row, so it is kept out of `_WRITE_OPERATIONS`. Public, so the
 # Sync API's run progress view tests the same set (`service/resume_view.py`).
 WRITE_PURPOSES: tuple[str, ...] = ("apply", "sync", "resume")
+# The artifact ID of a run's published plan review document. The plan stage and a `sync`
+# publish it before any write, so a run without it wrote nothing. Public, so the Sync API
+# reads the same plan the store's resumable-run rule tests (spec 022, research R14).
+PLAN_ARTIFACT_ID = "plan-review"
+# Why a run whose write stage stopped before it published its plan is not resumable.
+NO_SAVED_PLAN_MESSAGE = (
+    "this Sync run saved no plan, so its write stage stopped before any write and there is "
+    "nothing to resume; start a new `plan` or `sync` run"
+)
 _RUN_NOT_RESUMABLE = "run-not-resumable"
+# Whether the run's plan review document is published: the same predicate as the references
+# a run lookup returns (`_SELECT_RUN_ARTIFACT_REFERENCES`). Parameters: the run ID, the artifact ID.
+_SELECT_PLAN_PUBLISHED = (
+    "SELECT 1 FROM artifact_refs WHERE run_id = ? AND artifact_id = ? AND published = 1 AND visibility = 'public'"
+)
+# The resumable-run rule (`_run_is_resumable`). Parameters: the run ID three times, the
+# plan's artifact ID.
+_SELECT_RESUMABLE_RUN = (
+    "SELECT 1 FROM product_runs WHERE run_id = ? AND reconciliation_required AND phase <> 'cancelled' "
+    "AND NOT EXISTS (SELECT 1 FROM prefect_executions WHERE prefect_executions.run_id = ? "
+    "AND prefect_executions.terminal_at IS NULL) "
+    "AND EXISTS (SELECT 1 FROM artifact_refs WHERE artifact_refs.run_id = ? AND artifact_refs.artifact_id = ? "
+    "AND artifact_refs.published = 1 AND artifact_refs.visibility = 'public')"
+)
 _VERIFY_REQUIRED = "verify-required"
 _RESUME_IN_PROGRESS_MESSAGE = "another resume of this Sync run is in progress"
 _VERIFY_REQUIRED_MESSAGE = (
@@ -1639,17 +1662,18 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         """Whether the run's write was interrupted and nothing holds the run now.
 
         A run is resumable when `reconciliation_required` is true, its phase is not
-        `cancelled`, and none of its executions is unfinished (spec 022 data-model.md
-        "State rules", research R1).
+        `cancelled`, none of its executions is unfinished, and its plan is published (spec
+        022 data-model.md "State rules", research R1 and R14). A `sync` whose worker was
+        ended while it was still planning requires reconciliation, because a worker that
+        liveness ended can still publish its plan and write; until that plan exists the run
+        wrote nothing and there is nothing to resume.
         """
-        cursor.execute(
-            self._sql(
-                "SELECT 1 FROM product_runs WHERE run_id = ? AND reconciliation_required AND phase <> 'cancelled' "
-                "AND NOT EXISTS (SELECT 1 FROM prefect_executions WHERE prefect_executions.run_id = ? "
-                "AND prefect_executions.terminal_at IS NULL)"
-            ),
-            (run_id, run_id),
-        )
+        cursor.execute(self._sql(_SELECT_RESUMABLE_RUN), (run_id, run_id, run_id, PLAN_ARTIFACT_ID))
+        return cursor.fetchone() is not None
+
+    def _plan_published(self, cursor: _Cursor, run_id: str) -> bool:
+        """Whether the run's plan review document is published (see `_run_is_resumable`)."""
+        cursor.execute(self._sql(_SELECT_PLAN_PUBLISHED), (run_id, PLAN_ARTIFACT_ID))
         return cursor.fetchone() is not None
 
     def mark_execution_stalled(self, run_id: str, flow_run_id: str, *, stalled_at: datetime) -> bool:
@@ -2601,6 +2625,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             return "this Sync run has no interrupted write to resume"
         if row[1] == "cancelled":
             return "this Sync run is cancelled"
+        if not self._plan_published(cursor, run_id):
+            return NO_SAVED_PLAN_MESSAGE
         if self._other_receipt_unresolved(cursor, run_id, receipt_id) or not self._run_is_resumable(cursor, run_id):
             return "this Sync run has an unfinished execution; wait for it to end"
         return None

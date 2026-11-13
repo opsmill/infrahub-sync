@@ -657,6 +657,11 @@ complete human-friendly ID.
 
    While the first apply or `sync` of a run still runs, no operation is counted as uncertain.
 
+   When the worker of a `sync` run was killed while it was still planning, the run saved no
+   plan, so it wrote nothing and there is nothing to resume. `runs show` prints
+   `resumable: no`, `verify` is refused with `run-execution-conflict`, and `runs resume` is
+   refused with `run-not-resumable`. Start a new `plan` or `sync` run instead.
+
    The `written: N of M operations` line of a failed write counts the creates and updates of
    every execution of the run, the earlier ones included.
 
@@ -724,9 +729,11 @@ these cases:
   prints `hint: run infrahub-sync verify RUN_ID first`.
 - The checksum differs from the saved plan's checksum (`checksum-conflict`). The hint shows the
   saved plan's checksum and the one you gave.
-- The run is not interrupted, was cancelled, or has a stage that is still running
-  (`run-not-resumable`). This includes an applied run, a run whose apply failed before its
-  first write, a run that was never applied, and a `sync` run that stopped after its plan.
+- The run is not interrupted, was cancelled, saved no plan, or has a stage that is still
+  running (`run-not-resumable`). This includes an applied run, a run whose apply failed before
+  its first write, a run that was never applied, a `sync` run that stopped after its plan, and a
+  `sync` run whose worker was killed before it saved its plan. For the last one, the message
+  says that no plan was saved and that a new `plan` or `sync` run is the next step.
 - The plan leaves out records and `--confirm-left-out` is missing. The command prints
   `resume refused: this plan leaves out COUNT records; confirm with --confirm-left-out`.
 - The Sync API requires approval and the run has no approval for this checksum

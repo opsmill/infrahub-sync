@@ -42,6 +42,7 @@ from infrahub_sync.product_store import (
     ApplyProgress,
     ExecutionFinishWriteback,
     ExecutionMergeWriteback,
+    LookupResult,
     MutationReceipt,
     PrefectExecutionLink,
     ProductProjection,
@@ -745,6 +746,101 @@ def test_a_sync_run_that_failed_in_its_plan_part_is_refused_with_run_not_resumab
     assert _resume_outcomes(projection, run_id) == ["refused-run-not-resumable"]
 
 
+def _sync_run_killed_while_planning(api: _API) -> str:
+    """A `sync` run whose worker liveness ended before the worker saved a plan."""
+    _client, projection, _orchestration = api
+    run_id, flow_run_id = _sync_run(api)
+    assert projection.interrupt_execution(run_id, flow_run_id)
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    # Liveness cannot tell the plan part from the apply part, and a worker it ended can still
+    # publish its plan and write afterwards, so the flag stays set (research R14).
+    assert stored.reconciliation_required is True
+    return run_id
+
+
+def test_a_sync_run_killed_before_it_saved_a_plan_is_not_resumable(service_api: _API) -> None:
+    """The progress view of a `sync` killed in its plan part says it is not resumable."""
+    client, _projection, _orchestration = service_api
+    run_id = _sync_run_killed_while_planning(service_api)
+
+    body = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {OWNER_TOKEN}"}).json()
+
+    progress = body["apply_progress"]
+    assert progress["resumable"] is False
+    assert progress["verify_required"] is False
+    assert progress["by_kind"] == []
+
+
+def test_a_resume_of_a_sync_run_killed_before_it_saved_a_plan_is_refused_and_recorded(service_api: _API) -> None:
+    client, projection, orchestration = service_api
+    run_id = _sync_run_killed_while_planning(service_api)
+
+    response = _resume(client, run_id)
+
+    assert response.status_code == 409, response.json()
+    assert _error_code(response) == "run-not-resumable"
+    message = response.json()["error"]["message"]
+    assert "saved no plan" in message
+    assert "`plan` or `sync`" in message
+    assert _resume_submissions(orchestration) == []
+    assert _resume_outcomes(projection, run_id) == ["refused-run-not-resumable"]
+
+
+def test_a_verify_of_a_sync_run_killed_before_it_saved_a_plan_is_refused_with_run_execution_conflict(
+    service_api: _API,
+) -> None:
+    client, projection, orchestration = service_api
+    run_id = _sync_run_killed_while_planning(service_api)
+
+    response = client.post(f"/runs/{run_id}/verify", headers=_headers("verify-no-plan"), json={})
+
+    assert response.status_code == 409, response.json()
+    assert _error_code(response) == "run-execution-conflict"
+    assert [submitted["stage"] for submitted, _key in orchestration.submissions] == ["sync"]
+    outcomes = [event.outcome for event in projection.audit_events(run_id) if event.operation == "verify"]
+    assert outcomes == ["refused-run-execution-conflict"]
+
+
+def test_reading_a_run_twice_reads_its_saved_plan_once(service_api: _API, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every `--wait` poll reads the run; the plan's layout is read once per run and plan (research R14)."""
+    client, projection, _orchestration = service_api
+    # The `sync` run was created before its plan existed, so no response has read the plan yet.
+    run_id = _interrupted_sync_run(service_api)
+    reads: list[str] = []
+    lookup = projection.lookup_artifact
+
+    def counting_lookup(read_run_id: str, artifact_id: str) -> object:
+        reads.append(artifact_id)
+        return lookup(read_run_id, artifact_id)
+
+    monkeypatch.setattr(projection, "lookup_artifact", counting_lookup)
+    headers = {"Authorization": f"Bearer {OWNER_TOKEN}"}
+
+    first = client.get(f"/runs/{run_id}", headers=headers).json()
+    second = client.get(f"/runs/{run_id}", headers=headers).json()
+
+    assert reads.count(PLAN_ARTIFACT_ID) == 1
+    assert second["apply_progress"] == first["apply_progress"]
+    assert first["apply_progress"]["by_kind"][0]["committed"] == _MARKER + 1
+
+
+def test_a_plan_that_cannot_be_read_is_logged_with_its_error_class_only(
+    service_api: _API, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    client, projection, _orchestration = service_api
+    run_id = _interrupted_sync_run(service_api)
+    monkeypatch.setattr(projection, "lookup_artifact", lambda *_args: LookupResult(None, "provider-unavailable"))
+
+    with caplog.at_level(logging.WARNING, logger="infrahub_sync.service.service"):
+        body = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {OWNER_TOKEN}"}).json()
+
+    assert body["apply_progress"]["by_kind"] == []
+    [record] = [record for record in caplog.records if run_id in record.getMessage()]
+    assert "ServiceAPIError" in record.getMessage()
+    assert "cannot be retrieved" not in record.getMessage()
+
+
 # --- the uncertain window (critique E3) -----------------------------------------------------
 
 
@@ -847,6 +943,8 @@ def _store_run(tmp_path: Path, run_id: str) -> ProductProjection:
             summary={"sync_name": "inventory"},
         )
     )
+    # The plan stage publishes its review document before any write.
+    _publish_plan(projection, run_id, total=3)
     return projection
 
 

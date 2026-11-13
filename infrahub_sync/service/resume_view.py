@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from infrahub_sync.client.models import ApplyProgressKindResource, ApplyProgressResource, ResumeResource
-from infrahub_sync.product_store import WRITE_PURPOSES, run_apply_progress
+from infrahub_sync.product_store import PLAN_ARTIFACT_ID, WRITE_PURPOSES, run_apply_progress
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -86,12 +86,25 @@ def verify_passed_after_latest_write(run: ProductRun) -> bool:
     return all(index < verify for index, other in enumerate(executions) if other.purpose in WRITE_PURPOSES)
 
 
+def run_has_saved_plan(run: ProductRun) -> bool:
+    """Whether the run's plan review document is published, the store's `_plan_published` rule.
+
+    The plan stage and a `sync` publish it before any write, so a run without it wrote nothing.
+    """
+    return any(reference.artifact_id == PLAN_ARTIFACT_ID for reference in run.artifact_refs)
+
+
 def run_is_resumable(run: ProductRun) -> bool:
-    """The store's resumable-run rule: an interrupted write, not cancelled, nothing unfinished."""
+    """The store's resumable-run rule: an interrupted write, not cancelled, nothing unfinished, a saved plan.
+
+    A `sync` whose worker was ended while it was still planning requires reconciliation but
+    saved no plan, so it is not resumable (research R14).
+    """
     return (
         run.reconciliation_required
         and run.phase != "cancelled"
         and all(link.terminal_at is not None for link in run.prefect_executions)
+        and run_has_saved_plan(run)
     )
 
 
@@ -209,7 +222,10 @@ def apply_progress_view(
         position=None if marker is None else marker.position,
         saved_at=None if marker is None else marker.saved_at,
         resumable=run_is_resumable(run),
-        verify_required=run.reconciliation_required and not verify_passed_after_latest_write(run),
+        # A run with no saved plan has nothing to verify against or resume.
+        verify_required=(
+            run.reconciliation_required and run_has_saved_plan(run) and not verify_passed_after_latest_write(run)
+        ),
         by_kind=() if operations is None else _by_kind(run, operations),
     )
 

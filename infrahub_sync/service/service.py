@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
+import threading
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Literal, NoReturn
@@ -24,6 +27,8 @@ from infrahub_sync.configuration.validation import credential_namespace_finding
 from infrahub_sync.execution import collect_secret_values, redact, sanitize_exception_chain
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
+    NO_SAVED_PLAN_MESSAGE,
+    PLAN_ARTIFACT_ID,
     WRITE_PURPOSES,
     AuditEvent,
     DuplicatePrefectExecutionError,
@@ -83,7 +88,13 @@ from .orchestration import (
 from .paging import FilterValue, decode_cursor, timestamp_cursor, timestamp_key, validate_limit
 from .prefect_ui import flow_run_url
 from .read_progress import stage_reads
-from .resume_view import apply_progress_view, run_is_resumable, run_resumes
+from .resume_view import (
+    apply_progress_view,
+    latest_write_execution,
+    run_has_saved_plan,
+    run_is_resumable,
+    run_resumes,
+)
 from .run_log import page as log_page
 from .run_log import sync_lines
 from .settings import approval_required
@@ -96,7 +107,10 @@ if TYPE_CHECKING:
     from .auth import Principal
 
 logger = logging.getLogger(__name__)
-PLAN_ARTIFACT_ID = "plan-review"
+# How many plan operations the in-process cache of plan layouts holds, over all its runs
+# (research R14). A tier L plan has about 88,000 operations, and one cached operation takes
+# about 200 bytes, so the bound keeps the cache under about 40 MB in every API process.
+PLAN_LAYOUT_CACHE_OPERATIONS = 200_000
 # The key of the published review document that holds the plan report's lines (spec 020).
 # `GET /runs/{run_id}/plan` does not return it; the paged report routes do.
 PLAN_REPORT_KEY = "report"
@@ -116,6 +130,22 @@ def _reservation_outcome(receipt: MutationReceipt) -> str:
     """Name what an already-answered receipt is: a replay, or this run's stored refusal."""
     assert receipt.response_status is not None  # an accepted receipt always stores its status.
     return "replayed" if receipt.response_status < 400 else "refused-run-execution-conflict"
+
+
+def _not_resumable_before_plan(run: ProductRun) -> str | None:
+    """Why a resume of the run is refused before its plan is read, or `None`.
+
+    A cancelled run, a run with no interrupted write, and a run that saved no plan, such as a
+    `sync` whose worker was ended while it was still planning (research R14). The store checks
+    the same conditions again on the run's locked row.
+    """
+    if run.phase == "cancelled":
+        return "this Sync run is cancelled"
+    if not run.reconciliation_required:
+        return "this Sync run has no interrupted write to resume"
+    if not run_has_saved_plan(run):
+        return NO_SAVED_PLAN_MESSAGE
+    return None
 
 
 def _service_status(snapshot: PoolStatus) -> ServiceStatusResource:
@@ -230,6 +260,45 @@ def _related_resource(value: str) -> RelatedResource:
     return RelatedResource.model_validate({"kind": kind, "id": identifier})
 
 
+PlanLayout = tuple[tuple[str, str, str], ...]
+
+
+class _PlanLayoutCache:
+    """The saved plans' `(operation_id, kind, action)` triples, keyed by run and plan digest (research R14).
+
+    A run publishes its plan once, and a published artifact never changes, so an entry is
+    never stale and every API process computes the same one: no invalidation is needed. The
+    least recently read run is dropped first once the cache holds more than `max_operations`
+    operations; a plan larger than the bound is not cached. A failed read is never cached.
+    """
+
+    def __init__(self, max_operations: int) -> None:
+        self._max_operations = max_operations
+        self._entries: OrderedDict[tuple[str, str], PlanLayout] = OrderedDict()
+        self._operations = 0
+        # Sync routes run in a thread pool, so two requests can use the cache at once.
+        self._lock = threading.Lock()
+
+    def get(self, key: tuple[str, str]) -> PlanLayout | None:
+        with self._lock:
+            layout = self._entries.get(key)
+            if layout is not None:
+                self._entries.move_to_end(key)
+            return layout
+
+    def put(self, key: tuple[str, str], layout: PlanLayout) -> None:
+        if len(layout) > self._max_operations:
+            return
+        with self._lock:
+            if key in self._entries:
+                return
+            self._entries[key] = layout
+            self._operations += len(layout)
+            while self._operations > self._max_operations:
+                _key, dropped = self._entries.popitem(last=False)
+                self._operations -= len(dropped)
+
+
 class RunService:
     """Direct application service; Prefect owns all execution mechanics."""
 
@@ -249,6 +318,7 @@ class RunService:
         self._secrets = tuple(dict.fromkeys((*collect_secret_values(), *secrets)))
         self._cancellation_recovery_seconds = cancellation_recovery_seconds
         self._clock = clock
+        self._plan_layouts = _PlanLayoutCache(PLAN_LAYOUT_CACHE_OPERATIONS)
 
     async def create_run(
         self, request: CreateRunRequest, principal: Principal, idempotency_key: str
@@ -404,7 +474,11 @@ class RunService:
         if existing is not None:
             return await self._resume_or_replay(existing, parameters, principal, request.reason)
         self._require_supported_run_configuration(run)
-        self._plan(run_id)
+        if latest_write_execution(run) is None or run_is_resumable(run):
+            # A run whose write started and that is not resumable, such as a `sync` stopped
+            # before it saved a plan, is refused by the reservation with `run-execution-conflict`,
+            # which the audit history records. Reading its plan first would answer 503 instead.
+            self._plan(run_id)
         receipt = self._reserve_existing(
             run,
             principal,
@@ -558,14 +632,10 @@ class RunService:
             )
             raise self._error(409, "confirmation-required", "confirm_writes=true is required for resume", run_id=run_id)
         # A resume refuses every run it cannot resume with `run-not-resumable`, and the message
-        # says why (FR-013). Both checks come before the saved plan is read: a `sync` run that
-        # stopped in its plan part wrote nothing and may have saved no plan (FR-017). The store
-        # checks both again on the run's locked row.
-        not_resumable: str | None = None
-        if run.phase == "cancelled":
-            not_resumable = "this Sync run is cancelled"
-        elif not run.reconciliation_required:
-            not_resumable = "this Sync run has no interrupted write to resume"
+        # says why (FR-013). These checks come before the saved plan is read: a `sync` run that
+        # stopped in its plan part wrote nothing and may have saved no plan (FR-017, research
+        # R14). The store checks them again on the run's locked row.
+        not_resumable = _not_resumable_before_plan(run)
         if not_resumable is not None:
             self._audit(
                 run_id,
@@ -578,7 +648,18 @@ class RunService:
         if approval_required():
             self._require_matching_approval(run, request, principal, operation=operation)
         self._require_supported_run_configuration(run)
-        plan = self._plan(run_id)
+        try:
+            plan = self._plan(run_id)
+        except ServiceAPIError:
+            # FR-014: every resume request is recorded, including one whose plan cannot be read.
+            self._audit(
+                run_id,
+                actor=principal.actor,
+                operation=operation,
+                reason=request.reason,
+                outcome="refused-plan-unavailable",
+            )
+            raise
         if not plan.checksum_ok or plan.checksum != request.expected_checksum:
             self._audit(
                 run_id, actor=principal.actor, operation=operation, reason=request.reason, outcome="refused-checksum"
@@ -1755,19 +1836,44 @@ class RunService:
         )
         return run.model_copy(update={"prefect_executions": links})
 
-    def _plan_operations(self, run: ProductRun) -> tuple[tuple[str, str, str], ...] | None:
+    def _plan_operations(self, run: ProductRun) -> PlanLayout | None:
         """The saved plan's `(operation_id, kind, action)` triples in stored order, or `None` when unreadable.
 
-        Read only for a run with a write execution. A plan that expired or cannot be read leaves
-        the progress view without per-kind counts rather than failing the read of the run.
+        Read only for a run with a write execution and a published plan. The triples are read
+        from the plan once per run and plan digest, then from an in-process cache, so a client
+        that polls the run does not read the whole plan on every request (research R14). A plan
+        that expired or cannot be read leaves the progress view without per-kind counts rather
+        than failing the read of the run, and is logged with its error class and code only.
         """
         if not any(link.purpose in WRITE_PURPOSES for link in run.prefect_executions):
             return None
+        reference = next((ref for ref in run.artifact_refs if ref.artifact_id == PLAN_ARTIFACT_ID), None)
+        if reference is None:
+            return None
+        if reference.expires_at is not None and reference.expires_at <= datetime.now(timezone.utc):
+            # The same rule the artifact store applies, so every process answers alike once it expired.
+            return None
+        key = (run.run_id, reference.digest)
+        cached = self._plan_layouts.get(key)
+        if cached is not None:
+            return cached
         try:
             plan = self._plan(run.run_id)
-        except ServiceAPIError:
+        except ServiceAPIError as exc:
+            # The class and the fixed error code only: the message can name the provider.
+            logger.warning(
+                "the saved plan of run %s could not be read for its progress view (%s: %s)",
+                run.run_id,
+                type(exc).__name__,
+                exc.code,
+            )
             return None
-        return tuple((operation.operation_id, operation.kind, operation.action) for operation in plan.operations)
+        layout = tuple(
+            (operation.operation_id, sys.intern(operation.kind), sys.intern(operation.action))
+            for operation in plan.operations
+        )
+        self._plan_layouts.put(key, layout)
+        return layout
 
     def _resume_receipt(
         self, run: ProductRun, link: PrefectExecutionLink, pending: tuple[str, MutationReceipt] | None

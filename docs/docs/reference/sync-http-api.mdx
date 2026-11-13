@@ -1003,8 +1003,20 @@ ones the execution wrote. After a kill, operations an earlier execution wrote pa
 saved position are counted only once a later execution writes them again.
 
 A run is `resumable` when `reconciliation_required` is `true`, the run is not
-cancelled, and no execution of it is unfinished. `verify_required` is `true` until a
-verification passes after the latest interruption.
+cancelled, its plan is saved, and no execution of it is unfinished. `verify_required` is `true`
+until a verification passes after the latest interruption.
+
+When the worker of a `sync` run is killed while it is still planning, the run requires
+reconciliation but saved no plan, so it wrote nothing. Its `apply_progress` has `position: null`,
+`resumable: false`, `verify_required: false` and an empty `by_kind`. A verification of that run
+is refused with `409 run-execution-conflict`, and a resume with `409 run-not-resumable`; both
+refusals are recorded in the run's audit history. Start a new `plan` or `sync` run instead.
+
+The service reads the kind and action of each operation from the saved plan once per run, and
+keeps them in memory, so polling `GET /runs/{run_id}` does not read the whole plan on every
+request. When the plan expired or cannot be read, `by_kind` is empty. When it cannot be read,
+the service also logs a warning that names the run, the error class and the error code, without
+the error message.
 
 A resume applies the run's saved plan from the operation after `position`, in a new execution
 of purpose `resume` on the same run. It does not read the source or create a plan, for an
@@ -1031,12 +1043,13 @@ run. It refuses a resume before any write:
 | Status | Code | When |
 | --- | --- | --- |
 | 409 | `confirmation-required` | `confirm_writes` is not `true`. |
-| 409 | `run-not-resumable` | The run is not interrupted, is cancelled, or has an unfinished execution. This includes an applied run, a run whose apply failed before its first write, a run that was never applied, and a `sync` run that stopped after its plan. The message says which. |
+| 409 | `run-not-resumable` | The run is not interrupted, is cancelled, saved no plan, or has an unfinished execution. This includes an applied run, a run whose apply failed before its first write, a run that was never applied, a `sync` run that stopped after its plan, and a `sync` run whose worker was killed before it saved its plan. The message says which; for a run that saved no plan, it says that a new `plan` or `sync` run is the next step. |
 | 409 | `checksum-conflict` | `expected_checksum` differs from the saved plan's checksum. |
 | 409 | `left-out-confirmation-required` | The plan leaves out records and `confirm_left_out` is not `true`. |
 | 409 | `approval-required` / `approval-checksum-mismatch` | The service requires approval and the run has none for this checksum. The `approval-required` message names `infrahub-sync approve RUN_ID --expected-checksum CHECKSUM`; an interrupted run can be approved. |
 | 409 | `verify-required` | No verification passed on the run after its latest interruption. |
 | 409 | `run-execution-conflict` | Another resume of the run is unfinished. |
+| 410 / 503 | `artifact-expired` / `plan-unavailable` | The saved plan expired or cannot be read. |
 
 Every resume request, accepted or refused, is recorded in the run's audit history and event
 list with the operation `resume`. The worker runs every pre-write check again before its first

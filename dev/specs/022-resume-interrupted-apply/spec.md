@@ -144,6 +144,11 @@ check that no new plan was created.
   cannot be resumed; the operator applies it again as today.
 - **The operator resumes a run that was not interrupted** (applied, failed before writing, withdrawn, or never
   applied). The resume is refused with the reason.
+- **A `sync` worker is killed while it is still planning.** The liveness monitor marks the run as requiring
+  reconciliation, because it cannot tell the plan part from the apply part. The run saved no plan, so it wrote
+  nothing: the run's progress view says it is not resumable, `verify` is refused with `run-execution-conflict`, and a
+  resume is refused with `run-not-resumable` and a message that says no plan was saved and that a new `plan` or
+  `sync` run is the next step. Both refusals are recorded in the run's audit history (research R14).
 - **The interrupted run's plan left out records** (spec 020). The resume requires the same left-out confirmation as
   `apply`.
 - **The site requires approval.** The resume requires the run's recorded approval for the same checksum, as `apply`
@@ -201,8 +206,9 @@ check that no new plan was created.
 - **FR-012**: The system MUST refuse a resume unless a `verify` ran on the run after its latest interruption and all
   of that `verify`'s pre-write checks passed. The refusal MUST say that a `verify` is required.
 - **FR-013**: The system MUST refuse a resume of a run that is not interrupted, including a run that was applied, a
-  run that failed before its first write, a run that was never applied, and a withdrawn run. The refusal MUST say
-  why.
+  run that failed before its first write, a run that was never applied, and a withdrawn run. The system MUST also
+  refuse a resume of a run that saved no plan, such as a `sync` whose worker was killed while it was still planning.
+  The refusal MUST say why (research R14).
 - **FR-014**: The system MUST record, for each resume, the actor who started it, the time, the start position and,
   when given, the reason. The reason MUST be optional. Each resume request, accepted or refused, MUST appear in the
   run's audit history and event list, as for `apply`.
