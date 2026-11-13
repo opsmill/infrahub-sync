@@ -1,0 +1,21 @@
+infrahub_sync/service/bootstrap.py
+  s_3defe6e8bcd0ab::t_6797a6ec726633 48,260,266-267,269-278
+tests/service/test_compose_bootstrap.py
+  s_3defe6e8bcd0ab::t_6797a6ec726633 605-619
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "069862b9bf7c77aa12846d19faf20b302ced1bf6",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
