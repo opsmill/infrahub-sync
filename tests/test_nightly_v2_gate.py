@@ -391,13 +391,13 @@ def test_v2_gate_plans_the_converted_package_and_keeps_the_result(
         runner.v2_gate(GATE_ENV, CONTEXT)
     convert, convert_env = cli.calls[3]
     assert convert[4:6] == ("configs", "convert")
-    assert convert[-1] == "--yes"
+    assert convert[-2:] == ("--live-schema", "--yes")
     assert convert_env["NETBOX_ADDRESS"] == CONTEXT["netbox_address"]
     assert convert_env["INFRAHUB_ADDRESS"] == CONTEXT["infrahub_address"]
-    register, diff = cli.commands[4], cli.commands[5]
+    register, plan = cli.commands[4], cli.commands[5]
     assert register[4:6] == ("configs", "register")
     assert register[6].endswith("package.yml")
-    assert diff[diff.index("--branch") + 1] == "v2-gate"
+    assert plan[plan.index("--branch") + 1] == "v2-gate"
     assert cli.commands[-1][4:] == ("runs", "plan", "gate-1", "--detail")
     result = json.loads((runner.REPORTS / "gate-result.json").read_text(encoding="utf-8"))
     assert result["v2_version"] == "2.0.1"

@@ -183,3 +183,35 @@ the v2 gate data with `ip_namespace` as `static: default` and in the identifiers
 So the conversion can write the value, but V3 must first accept a static relationship value whose
 peer kind is not mapped: read it as the peer's name on the Infrahub side, and resolve it by name
 when it writes.
+
+## 9. `--live-schema` and the next gate finding (2026-11-13)
+
+The planner already records a peer that exists only in Infrahub by name
+(`plan/destination_only_peer.py`), as long as the peer kind is mapped. So no engine change was
+needed. `configs convert --live-schema` (FR-002, FR-031) reads the destination schema without a
+token. For each mapped kind whose uniqueness constraint names an IP namespace that the file
+does not map, it:
+
+- writes `{name: ip_namespace, static: default, reference: IpamNamespace}`
+- sets the identifiers to the constraint fields, such as `[prefix, ip_namespace]`
+- adds an `IpamNamespace` mapping with no source endpoint
+
+Two forms were tried and failed:
+
+- A bare `static: default`: the Infrahub side drops the value.
+- Keeping `vrf` in the identifiers: a NetBox address with no VRF is refused, with
+  `identifier field 'vrf' cannot be None`.
+
+Infrahub declares `ip_namespace` optional, so the rule uses the uniqueness constraint, not a
+mandatory flag. The anonymous read works on a default preview Infrahub.
+
+The gate now passes `--live-schema`. On the next run, v2 synced 1,119 models, the conversion
+filled both kinds, and the plan got past the identity check. It then stopped with
+`DestinationIdentityCollisionError`: two planned creates of `DcimDevice` named `PP:MDF`. The
+v2 log reports three `PP:MDF` devices created, in IDF117, IDF118 and IDF128. Infrahub holds
+one, in IDF118. v2 merged three NetBox devices into one Infrahub node without reporting it, and
+V3 refuses the plan instead. The counts of creates and updates are still not known, because
+this refusal stops the plan first. What the gate expects for these devices is not decided.
+
+During these runs, the branch `010-prefect-pr2-preview-removal` used ports 8000 and 9010. The
+local preview settings now use 8090 and 9020.

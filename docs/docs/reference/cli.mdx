@@ -334,8 +334,11 @@ $ infrahub-sync configs validate [OPTIONS] {CONFIG} {version}
 Convert a v1 or v2 config.yml into a V3 configuration package. Needs no Sync API.
 
 
-The command opens no network connection and never prints a credential
-value. It prints a report, asks before it writes, and writes nothing
+The command never prints or reads a credential value. It opens no network
+connection unless --live-schema is given; then it reads the Infrahub schema
+without a token and maps each IP namespace that a uniqueness constraint
+needs and config.yml does not map to the &#x27;default&#x27; namespace, where v2
+wrote it. It prints a report, asks before it writes, and writes nothing
 without a terminal unless --yes is given.
 
 
@@ -390,6 +393,7 @@ $ infrahub-sync configs convert [OPTIONS] {path}
 * `--yes`: Write without asking.
 * `--source-url <str>`: The source address. Overrides the file and the v2 variables.
 * `--destination-url <str>`: The Infrahub address. Overrides the file and the v2 variables.
+* `--live-schema`: Read the Infrahub schema, without a token, and map an unmapped IP namespace to &#x27;default&#x27;.
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync runs`

@@ -66,9 +66,31 @@ does at the destination.
 ## Move a V2 configuration to V3
 
 `infrahub-sync configs convert` reads a v1 or v2 `config.yml` and writes a V3 configuration
-package next to it. You run it on your own machine: it needs no Sync API URL or token, opens no
-network connection, and does not read the adapter and model files that V2 generated. It never
-prints a credential value.
+package next to it. You run it on your own machine: it needs no Sync API URL or token, and it
+does not read the adapter and model files that V2 generated. It never reads or prints a
+credential value. It opens no network connection unless you pass `--live-schema`.
+
+### Prefixes and IP addresses: `--live-schema`
+
+V2 configurations did not map the IP namespace, so V2 wrote every prefix and IP address into
+Infrahub's `default` namespace. Infrahub identifies a prefix or an address by its value and its
+namespace, and V3 does not plan a kind unless the configuration maps every part of that identity.
+Without a change, the first V3 plan of such a configuration fails with
+`UnwritableConvergenceIdentityError`.
+
+With `--live-schema`, the command reads the schema of the destination Infrahub, without a token,
+and finds each mapped kind whose uniqueness constraint names an IP namespace that `config.yml`
+does not map. For each one, it:
+
+- sets the namespace to `default`, as a reference to the namespace kind
+- makes the identifiers of that kind the fields of the uniqueness constraint, for example
+  `prefix` and `ip_namespace`
+- adds a mapping for the namespace kind with no source endpoint, which loads nothing from the
+  source
+
+The report lists each change under `Notes`. When Infrahub refuses an anonymous schema read, the
+report says so and the command changes nothing. Without `--live-schema`, edit the package by
+hand in the same way.
 
 ### Convert the file and read the report
 

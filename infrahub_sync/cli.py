@@ -57,6 +57,7 @@ from infrahub_sync.client.models import (
 )
 from infrahub_sync.configuration.conversion import (
     ConversionInputError,
+    ConversionResult,
     convert_v2_configuration,
     visible_v2_variables,
 )
@@ -716,6 +717,19 @@ def _is_same_file(first: Path, second: Path) -> bool:
         return False
 
 
+def _with_live_schema(path: Path, result: ConversionResult) -> tuple[ConversionResult, Mapping[str, Any]]:
+    """Fill IP namespaces from the live Infrahub schema; a filled package that fails a check is refused."""
+    # Imported here: the schema reader pulls in the Infrahub SDK, which no other convert path needs.
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.configuration.conversion_live_schema import with_live_schema
+
+    filled = with_live_schema(result)
+    if filled.package is None:
+        _echo_lines(refusal_lines(path.name, filled.refusals), err=True)
+        raise typer.Exit(1)
+    return filled, filled.package
+
+
 @configs_app.command("convert")
 def configs_convert(
     path: Path = typer.Argument(..., help="The v1 or v2 config.yml to read."),
@@ -731,12 +745,20 @@ def configs_convert(
     destination_url: str | None = typer.Option(
         None, "--destination-url", help="The Infrahub address. Overrides the file and the v2 variables."
     ),
+    live_schema: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--live-schema",
+        help="Read the Infrahub schema, without a token, and map an unmapped IP namespace to 'default'.",
+    ),
 ) -> None:
     """Convert a v1 or v2 config.yml into a V3 configuration package. Needs no Sync API.
 
     \b
-    The command opens no network connection and never prints a credential
-    value. It prints a report, asks before it writes, and writes nothing
+    The command never prints or reads a credential value. It opens no network
+    connection unless --live-schema is given; then it reads the Infrahub schema
+    without a token and maps each IP namespace that a uniqueness constraint
+    needs and config.yml does not map to the 'default' namespace, where v2
+    wrote it. It prints a report, asks before it writes, and writes nothing
     without a terminal unless --yes is given.
 
     \b
@@ -796,6 +818,9 @@ def configs_convert(
     if result.package is None:
         _echo_lines(refusal_lines(path.name, result.refusals), err=True)
         raise typer.Exit(1)
+    package = result.package
+    if live_schema:
+        result, package = _with_live_schema(path, result)
     _echo_lines([*report_lines(path.name, cast("dict[str, Any]", data)["name"], result), ""])
     if not yes:
         if not _stdin_is_terminal():
@@ -804,7 +829,7 @@ def configs_convert(
             typer.echo("nothing written")
             raise typer.Exit(0)
     try:
-        _write_package(target, result.package, replace=force)
+        _write_package(target, package, replace=force)
     except FileExistsError:
         _convert_fail(f"{target} exists; pass --force to replace it", 1)
     except OSError as error:

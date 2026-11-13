@@ -492,7 +492,8 @@ def v3_plan(project: Path, env: dict[str, str], context: dict[str, str]) -> tupl
         "INFRAHUB_ADDRESS": context["infrahub_address"],
     }
     cli = ("uv", "run", "--no-sync", "infrahub-sync")
-    run(*cli, "configs", "convert", str(project / "config.yml"), "--yes", env=convert_env)
+    # `--live-schema` maps the IP namespace v2 never mapped to `default`, where v2 wrote it.
+    run(*cli, "configs", "convert", str(project / "config.yml"), "--live-schema", "--yes", env=convert_env)
     registered = parsed_fields(
         run(
             *cli,

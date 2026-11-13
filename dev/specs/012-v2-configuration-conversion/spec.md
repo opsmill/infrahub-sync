@@ -201,7 +201,17 @@ the operations.
 
 - **FR-001**: The CLI MUST provide `infrahub-sync configs convert <path>`, which reads one v1 or v2
   `config.yml` and writes one V3 configuration package.
-- **FR-002**: The command MUST run without the Sync API and without a network connection.
+- **FR-002**: The command MUST run without the Sync API and without a network connection, except
+  with `--live-schema`, which reads the destination schema without a token. Added on 2026-11-13
+  by the product owner, together with FR-031.
+- **FR-031**: With `--live-schema`, for each mapped kind whose destination uniqueness constraint
+  names a cardinality-one relationship to an IP namespace that the file does not map, the
+  command MUST set it to the `default` namespace as a static reference to the one concrete
+  namespace kind, make the constraint fields the identifiers, add a mapping of that kind with
+  no source endpoint, and say so in the report. v2 wrote every prefix and address into
+  `default`. The rule uses the uniqueness constraint, not the relationship's `optional` flag,
+  because Infrahub declares `ip_namespace` optional and fills it on write. When the schema
+  read fails, the command MUST say so and change nothing.
 - **FR-003**: The command MUST print the full report before it writes anything, then ask
   `Write package.yml? [y/N]`. `--yes` MUST skip the question. Without a terminal and without
   `--yes`, the command MUST print the report, write nothing, say to run it again with `--yes`, and

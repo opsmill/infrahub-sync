@@ -16,8 +16,10 @@ infrahub-sync configs convert PATH
 | `--yes` | write without asking |
 | `--source-url URL` | the source address; overrides the file and the v2 variables |
 | `--destination-url URL` | the Infrahub address; overrides the file and the v2 variables |
+| `--live-schema` | read the destination schema without a token, and map each IP namespace that a uniqueness constraint needs and the file does not map to `default` |
 
-The command needs no Sync API URL or token and opens no network connection.
+The command needs no Sync API URL or token. It opens no network connection unless
+`--live-schema` is given, and it never reads a credential value.
 
 ## Sequence
 
