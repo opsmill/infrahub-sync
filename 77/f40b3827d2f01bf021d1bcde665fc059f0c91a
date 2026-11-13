@@ -1,0 +1,23 @@
+development/docker-compose.yml
+  s_3defe6e8bcd0ab::t_f1363126eea66a 111
+tests/compose/test_compose_contract.py
+  s_3defe6e8bcd0ab::t_1173b18d9cedd2 1238-1266
+dev/specs/021-compose-store-credentials-ca/tasks.md
+  s_3defe6e8bcd0ab::t_8adbdbd51ad102 148-151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "77f40b3827d2f01bf021d1bcde665fc059f0c91a",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
