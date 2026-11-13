@@ -219,19 +219,25 @@ def _resume_written(
 ) -> int | None:
     """The creates and updates one resume committed: those after `start_after`, through its own marker.
 
-    Exact when the resume's last save succeeded; a resume that was stopped may have written more
-    after its marker, so the count is then a lower bound. A resume that saved no marker counts 0.
-    `None` when the plan cannot be read, or the marker does not point into it.
+    A resume that succeeded wrote every create and update after `start_after`, whatever its
+    marker says: a save can fail while the write goes on (FR-003). For any other resume the count
+    ends at its own last marker, so it is a lower bound when the resume was stopped after writing
+    past it; a resume that saved no marker counts 0. `None` when the plan cannot be read, or the
+    marker does not point into it.
     """
     if operations is None:
         return None
-    marker = link.apply_progress
-    if marker is None:
-        return 0
-    if marker.position >= len(operations) or operations[marker.position][0] != marker.operation_id:
-        return None
     first = 0 if start_after is None else start_after + 1
-    return sum(action != "delete" for _operation_id, _kind, action in operations[first : marker.position + 1])
+    marker = link.apply_progress
+    if link.terminal_outcome == "succeeded":
+        end = len(operations) - 1
+    elif marker is None:
+        return 0
+    elif marker.position >= len(operations) or operations[marker.position][0] != marker.operation_id:
+        return None
+    else:
+        end = marker.position
+    return sum(action != "delete" for _operation_id, _kind, action in operations[first : end + 1])
 
 
 def run_resumes(

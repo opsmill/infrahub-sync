@@ -59,9 +59,9 @@ Primary key `(run_id, resume_number)`. The original `write_admissions` row is ke
 ## Resumes (`RunResource.resumes`, derived from executions and receipts)
 
 List of `{actor, requested_at, reason, start_after, outcome, operations_written}` in order. `operations_written` is
-the number of creates and updates the resume wrote: those after `start_after` through the position of the resume's
-own last marker, 0 when it saved none, and `null` when the saved plan cannot be read. It is a lower bound for a
-resume that was stopped (research R6).
+the number of creates and updates the resume wrote: every one after `start_after` for a resume that succeeded;
+otherwise those after `start_after` through the position of the resume's own last marker, 0 when it saved none.
+It is `null` when the saved plan cannot be read, and a lower bound for a resume that was stopped (research R6).
 
 ## Verify report (`results.verification.operations`)
 

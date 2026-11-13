@@ -1015,7 +1015,20 @@ def test_an_interrupted_apply_resumes_after_its_marker_and_the_run_ends_applied(
     # The resume's own entry keeps its own count: positions 6,000 to 9,999, from its last marker.
     [resume_entry] = run_resumes(applied, lambda _link: None, operations)
     assert (resume_entry.start_after, resume_entry.operations_written) == (_MARKER, _TOTAL - _MARKER - 1)
-    assert run_resumes(applied, lambda _link: None)[0].operations_written is None
+    # No count without the plan; and a resume that succeeded wrote its whole tail, even when its
+    # last marker save failed (FR-003).
+    unsaved = applied.model_copy(
+        update={
+            "prefect_executions": (
+                *applied.prefect_executions[:-1],
+                applied.prefect_executions[-1].model_copy(update={"apply_progress": None}),
+            )
+        }
+    )
+    assert (
+        run_resumes(applied, lambda _link: None)[0].operations_written,
+        run_resumes(unsaved, lambda _link: None, operations)[0].operations_written,
+    ) == (None, _TOTAL - _MARKER - 1)
     final_view = apply_progress_view(applied, operations)
     assert final_view is not None
     assert final_view.resumable is False

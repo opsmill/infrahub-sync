@@ -111,7 +111,8 @@ one.
   "written N of M" line uses this count, and falls back to the length of `applied_operations` for a record written
   before the field existed.
 - Each entry of `RunResource.resumes` keeps that resume's own count, `operations_written`: the creates and updates
-  after its `start_after`, through the position of its own last marker.
+  after its `start_after`, through the end of the plan for a resume that succeeded, and through the position of its
+  own last marker otherwise. A resume that succeeded wrote its whole tail even when its last save failed (FR-003).
 
 **Rule chosen**: the count before a resume is derived from the saved position and the plan, not stored by the
 earlier executions. Positions are not used directly (`position + 1`), because a recorded delete has a position and

@@ -510,9 +510,10 @@ class ResumeResource(_ResourceModel):
     """One resume request of a run: who asked, when, why, where it started, and how it ended.
 
     `outcome` is the resume execution's terminal outcome, or `None` while it has not ended.
-    `operations_written` is the number of creates and updates this resume committed, from its own
-    last saved position: exact when that save succeeded, and a lower bound for a resume that was
-    stopped, which may have written more after it. `None` when the saved plan cannot be read.
+    `operations_written` is the number of creates and updates this resume committed: every one after
+    `start_after` for a resume that succeeded, otherwise those through its own last saved position,
+    a lower bound for a resume that was stopped after writing past it. `None` when the saved plan
+    cannot be read.
     """
 
     actor: str
