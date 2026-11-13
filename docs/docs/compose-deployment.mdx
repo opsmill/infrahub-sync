@@ -406,7 +406,8 @@ The value is an absolute path or starts with `./`. `sync-bootstrap`, `sync-api` 
 mount the directory read-only at `/etc/infrahub-sync/ca`, and each one trusts its certificates
 next to the public roots of the image. Certificate checks stay on. A flow run the worker starts
 trusts the same certificates. At every start, each of the three services logs the number of
-certificates it loaded and the path of the bundle it wrote. When a trust variable such as
+certificates it loaded and the path of the bundle it wrote, or that the directory holds no
+certificate file. When a trust variable such as
 `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` or `INFRAHUB_TLS_CA_FILE` is already set,
 it wins, and the service logs a warning that names the variable and not its value.
 
@@ -414,6 +415,12 @@ it wins, and the service logs a warning that names the variable and not its valu
   a private key, and the error names the file and prints none of its content. A file that is not
   a readable certificate stops it too.
 - User ID 10001, which the services run as, must be able to list the directory and read its files.
+- Each server certificate that the authority signed must carry an authority key identifier, and
+  the CA certificate a subject key identifier. Python 3.13 checks certificates in strict mode, and
+  the adapters refuse a server certificate without these extensions, even though the services
+  start and the object store accepts it. Most certificate tools add both by default.
+- The IP Fabric and Slurp'it adapters use their vendors' Python libraries. Whether those libraries read the bundle
+  has not been checked.
 - A change to the files takes effect only after `sync-api` and `sync-worker` restart:
   `docker compose up -d` starts only `sync-bootstrap` again. Run
   `docker compose restart sync-api sync-worker`.
