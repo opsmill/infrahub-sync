@@ -480,6 +480,30 @@ def test_a_run_whose_verify_execution_was_cancelled_cannot_be_applied(api: _Api)
     assert orchestration.submissions == []
 
 
+@pytest.mark.parametrize("ending", ["abandoned", "interrupted"])
+def test_a_verify_that_ends_without_finishing_does_not_undo_a_withdrawal(api: _Api, ending: str) -> None:
+    """A verify of a withdrawn run is allowed; when it is abandoned or interrupted, the run stays cancelled."""
+    client, projection, orchestration, version = api
+    _stored_run(projection, version)
+    assert _approve(client).status_code == 200
+    assert _cancel(client).status_code == 200
+    flow_run_id = _start_execution(projection, "verify")
+    if ending == "abandoned":
+        assert projection.abandon_execution(RUN_ID, flow_run_id)
+    else:
+        projection.claim_execution(RUN_ID, flow_run_id, worker_id=_WORKER_ID)
+        assert projection.interrupt_execution(RUN_ID, flow_run_id, terminal_at=datetime.now(timezone.utc))
+    submitted = len(orchestration.submissions)
+
+    response = _apply(client, key=f"apply-after-{ending}-verify")
+
+    assert len(orchestration.submissions) == submitted
+    assert (response.status_code, response.json()["error"]["code"]) == (409, "run-cancelled")
+    stored = projection.lookup_run(RUN_ID).value
+    assert stored is not None
+    assert stored.phase == "cancelled"
+
+
 def test_the_cancel_route_documents_the_withdrawal_status(api: _Api) -> None:
     """A withdrawal answers ``200`` and a cancelled execution ``202``; the OpenAPI document lists both."""
     client, _projection, _orchestration, _version = api

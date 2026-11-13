@@ -158,8 +158,10 @@ _UPDATE_LATEST_EXECUTION_FINISH = (
     "WHERE run_id = ? AND (SELECT latest.flow_run_id FROM prefect_executions AS latest "
     "WHERE latest.run_id = product_runs.run_id ORDER BY latest.position DESC LIMIT 1) = ?"
 )
+# A run in phase ``cancelled`` keeps it: a withdrawn plan admits only a ``verify``, and that
+# verify being abandoned or interrupted must not move the run to a phase that admits an apply.
 _UPDATE_LATEST_EXECUTION_TERMINAL = (
-    "UPDATE product_runs SET phase = ?, outcome = ?, finished_at = ? WHERE run_id = ? "
+    "UPDATE product_runs SET phase = ?, outcome = ?, finished_at = ? WHERE run_id = ? AND phase <> 'cancelled' "
     "AND (SELECT latest.flow_run_id FROM prefect_executions AS latest "
     "WHERE latest.run_id = product_runs.run_id ORDER BY latest.position DESC LIMIT 1) = ?"
 )
@@ -320,6 +322,12 @@ _CATALOG_NULLABILITY_VALUES = frozenset({"YES", "NO"})
 # deliberately outside the set: it targets the execution a write already owns and never
 # reserves a stage of its own, so a claimed write stays cancellable.
 _ARBITRATED_OPERATIONS = ("plan", "verify", "apply", "sync")
+# Another unresolved receipt of an arbitrated stage on the run. Built from the tuple above, so
+# an operation the service answers itself, such as ``approve``, is outside it without a second list.
+_SELECT_UNRESOLVED_ARBITRATED_RECEIPT = (
+    "SELECT 1 FROM mutation_receipts WHERE run_id = ? AND receipt_id <> ? AND state <> 'accepted' "  # noqa: S608 - placeholders only.
+    f"AND operation IN ({', '.join('?' for _ in _ARBITRATED_OPERATIONS)})"
+)
 # The two stages that reach a destination. The store's SQL spells them literally; this is
 # the Python-side membership test for the same pair.
 _WRITE_OPERATIONS = ("apply", "sync")
@@ -2228,11 +2236,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         # approval, which submits no execution: the approval columns decide what an apply
         # may do, and an approve receipt left reserved by a crash must not block every write.
         cursor.execute(
-            self._sql(
-                "SELECT 1 FROM mutation_receipts WHERE run_id = ? AND receipt_id <> ? AND state <> 'accepted' "
-                "AND operation NOT IN ('cancel', 'approve')"
-            ),
-            (run_id, receipt_id),
+            self._sql(_SELECT_UNRESOLVED_ARBITRATED_RECEIPT),
+            (run_id, receipt_id, *_ARBITRATED_OPERATIONS),
         )
         if cursor.fetchone() is not None:
             return True
@@ -2418,13 +2423,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 409, "run-already-cancelled", RUN_ALREADY_CANCELLED_MESSAGE, run_id=run_id, mutation_id=receipt_id
             )
         if phase != "planned":
-            return 409, approval_error_body(
-                409,
-                "execution-terminal",
-                "the service execution is already terminal",
-                run_id=run_id,
-                mutation_id=receipt_id,
-            )
+            return 409, _cancellation_terminal_response(run_id, receipt_id)
         if self._reservation_refused(cursor, run_id, receipt_id, admit_write=True):
             return 409, _run_execution_conflict_response(run_id, receipt_id)
         return None
@@ -3771,7 +3770,14 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
             Whether this call stored the approval; when it did not, the receipt holds the refusal
             and no event of ``events`` is written.
         """
-        sanitized_approval = RunApproval.model_validate(_redact_value(approval.model_dump(mode="json"), secrets))
+        # Only the caller's text is redacted. The checksum and the time are written by the service,
+        # and a secret that occurs inside either would corrupt the values the approval is checked by.
+        sanitized_approval = approval.model_copy(
+            update={
+                "approved_by": redact(approval.approved_by, secrets),
+                "reason": None if approval.reason is None else redact(approval.reason, secrets),
+            }
+        )
         sanitized = cast("Mapping[str, Any]", _redact_value(_normalize_mapping(response), secrets))
         return self._records.record_approval(
             run_id,

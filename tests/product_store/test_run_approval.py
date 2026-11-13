@@ -18,7 +18,8 @@ import pytest
 from pydantic import ValidationError
 from typing_extensions import LiteralString
 
-from infrahub_sync.product_store import MutationReceipt, PrefectExecutionLink, ProductRun
+from infrahub_sync.execution import REDACTED
+from infrahub_sync.product_store import MutationReceipt, PrefectExecutionLink, ProductRun, local_product_projection
 from infrahub_sync.product_store.models import RunApproval
 from infrahub_sync.product_store.store import PostgreSQLRunStore, SQLiteRunStore
 from tests.product_store.postgresql_isolation import dsn_or_skip, isolated_schema
@@ -407,3 +408,28 @@ def test_record_approval_rolls_back_when_the_receipt_cannot_be_completed(backend
     loaded = store.lookup("run-001").value
     assert loaded is not None
     assert loaded.approval is None
+
+
+def test_the_projection_redacts_the_approvals_caller_text_but_not_its_checksum_or_time(tmp_path: Path) -> None:
+    """A configured secret that occurs inside the checksum or the timestamp leaves both intact.
+
+    Only ``approved_by`` and ``reason`` carry caller text. Redacting the checksum or the time would
+    corrupt values the approval is validated and compared by, and fail the approval.
+    """
+    projection = local_product_projection(tmp_path.resolve())
+    projection.create_run(_planned_run())
+    receipt, created = projection.reserve_mutation(_approve_receipt(1))
+    assert created
+    approval = _approval(reason="CHG-42 reviewed with hunter2")
+
+    stored = projection.record_approval(
+        "run-001", approval, receipt, _APPROVED_RESPONSE, secrets=("aaaa", "2026", "hunter2")
+    )
+
+    assert stored is True
+    loaded = projection.lookup_run("run-001").value
+    assert loaded is not None
+    assert loaded.approval is not None
+    assert loaded.approval.plan_checksum == _CHECKSUM
+    assert loaded.approval.approved_at == approval.approved_at
+    assert loaded.approval.reason == f"CHG-42 reviewed with {REDACTED}"

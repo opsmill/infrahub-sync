@@ -278,6 +278,10 @@ def test_sync_is_refused_before_any_run_record_is_created(api: _Api) -> None:
     assert projection.list_runs(RunFilters()).items == ()
     assert projection.lookup_mutation("owner", _key_digest("sync-key")).value is None
     assert _outcomes(projection, "sync") == ["refused-approval-required"]
+    # The refusal names the configuration and version, as the confirmation refusal does, so a
+    # search of the events by configuration finds it.
+    refusal = next(event for event in projection.audit_events() if event.operation == "sync")
+    assert (refusal.config_id, refusal.registry_version) == (version.config_id, version.registry_version)
 
 
 def test_plan_is_not_affected_by_the_setting(api: _Api) -> None:

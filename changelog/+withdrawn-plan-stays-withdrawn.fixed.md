@@ -1,0 +1,1 @@
+A withdrawn plan stays withdrawn when a later verify is abandoned or interrupted, so `apply` refuses it. When the service stores an approval, it no longer redacts the plan checksum or the approval time, only the approver and the reason. The refused-sync event now names the configuration, version and branch.
