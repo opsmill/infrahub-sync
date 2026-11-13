@@ -335,7 +335,7 @@ export function ChangesSheet({
       <div
         aria-hidden="true"
         onClick={leave}
-        className="fixed inset-0 z-[44] bg-black/35"
+        className="fixed inset-0 z-[44] bg-black/35 dark:bg-black/50"
         style={{ opacity: progress, transition: timing === "none" ? "none" : `opacity ${timing}` }}
       />
       <div
@@ -343,7 +343,11 @@ export function ChangesSheet({
         aria-modal="true"
         aria-labelledby={titleId}
         ref={sheet}
-        className="fixed inset-x-0 top-3 bottom-0 z-[45] flex flex-col overflow-hidden rounded-t-2xl border-t bg-background shadow-[0_-8px_32px_-12px_rgb(0_0_0/0.25)]"
+        className={cn(
+          "fixed inset-x-0 top-3 bottom-0 z-[45] flex flex-col overflow-hidden rounded-t-2xl border-t bg-background shadow-[0_-8px_32px_-12px_rgb(0_0_0/0.25)] md:inset-x-4 md:border-x dark:border-border-strong dark:bg-panel",
+          // The details panel is placed from the window's edge; this keeps it inside the sheet's.
+          "md:[&_aside]:mr-4"
+        )}
         style={{
           // No transform once open and still: a transform makes the fixed details panel inside the
           // sheet position itself from the sheet instead of the window.
