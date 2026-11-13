@@ -192,7 +192,8 @@ check that no new plan was created.
   in the plan's order. It MUST NOT read the source or create a new plan.
 - **FR-011**: Before its first write, a resume MUST pass the same conditions as `apply`: the expected checksum, the
   configuration write lock, every pre-write check, the left-out confirmation when the plan left out records, and the
-  run's approval when the site requires approval.
+  run's approval when the site requires approval. A run that has no approval can be approved after its
+  interruption (FR-019).
 - **FR-012**: The system MUST refuse a resume unless a `verify` ran on the run after its latest interruption and all
   of that `verify`'s pre-write checks passed. The refusal MUST say that a `verify` is required.
 - **FR-013**: The system MUST refuse a resume of a run that is not interrupted, including a run that was applied, a
@@ -209,6 +210,15 @@ check that no new plan was created.
   the `sync` run saved.
 - **FR-018**: Only the actor who started the run, or an administrator, MAY resume it, as for the other stages of a
   run.
+- **FR-019**: When the site requires approval, users MUST be able to approve an interrupted run with `approve RUN_ID
+  --expected-checksum CHECKSUM`, so that a run that was never approved can be resumed. This covers every `sync` run
+  and an apply that was interrupted before the site required approval. `approve` MUST accept a resumable run (see
+  the state rules in data-model.md) as it accepts a run in phase `planned`, with the same checks: the checksum of
+  the saved plan, no unfinished execution, one approval per run. An approval recorded before the interruption stays
+  valid for the resume; a second `approve` is refused with `already-approved`. `approve` MUST keep refusing every
+  other run: an applied run, a run that failed before its first write, a run still planning and a withdrawn run. The
+  `approval-required` refusal of a resume MUST name `infrahub-sync approve RUN_ID --expected-checksum CHECKSUM` as
+  the next step (research R12).
 
 ### Key Entities
 

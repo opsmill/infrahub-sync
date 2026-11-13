@@ -10,7 +10,13 @@ infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM [--confirm-left-ou
 - Takes the same options as `apply`, which sends `confirm_writes=true` itself.
 - Prints the run identifier, the position the resume starts after, and the new execution.
 - Exit codes and error lines follow `apply`: a refusal prints `error: CODE` and the message, and
-  `hint: run infrahub-sync verify RUN_ID first` for `verify-required`.
+  `hint: run infrahub-sync verify RUN_ID first` for `verify-required`, and
+  `hint: run infrahub-sync approve RUN_ID --expected-checksum CHECKSUM first` for `approval-required`.
+
+## `infrahub-sync approve RUN_ID` (extended)
+
+Also accepts an interrupted run that can be resumed, so a site that requires approval can resume a run that was
+never approved (spec FR-019). Options and output are unchanged.
 
 ## `infrahub-sync runs show RUN_ID` (extended)
 

@@ -202,7 +202,8 @@ def test_every_other_stage_is_still_refused_on_a_resumable_run(projection: Produ
     _assert_refused(_reserve(projection, run_id, f"m-later-{operation}", operation=operation))
 
 
-def test_approve_is_still_refused_on_a_resumable_run(projection: ProductProjection) -> None:
+def test_approve_is_accepted_on_a_resumable_run(projection: ProductProjection) -> None:
+    """Spec 022 FR-019: a run whose write stopped part-way can be approved, so a site that requires approval can resume it."""
     run_id = _interrupted_run(projection, "approve")
     approve, _created = projection.reserve_mutation(_receipt("m-approve", run_id=run_id, operation="approve"))
     approval = RunApproval.model_validate(
@@ -216,14 +217,14 @@ def test_approve_is_still_refused_on_a_resumable_run(projection: ProductProjecti
 
     stored = projection.record_approval(run_id, approval, approve, {"run": {"run_id": run_id}})
 
-    assert stored is False
+    assert stored is True
     answered = projection.lookup_mutation(approve.actor, approve.key_digest).value
     assert answered is not None
-    assert answered.response_status is not None
-    assert answered.response_status >= 400
+    assert answered.response_status == 200
     run = projection.lookup_run(run_id).value
     assert run is not None
-    assert run.approval is None
+    assert run.approval is not None
+    assert run.approval.plan_checksum == "b" * 64
 
 
 def test_verify_is_still_refused_on_an_applied_run(projection: ProductProjection) -> None:

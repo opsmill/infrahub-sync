@@ -494,6 +494,121 @@ def test_a_site_that_requires_approval_refuses_a_resume_of_another_checksum_than
     assert _resume_outcomes(projection, run_id) == ["refused-approval-required", "accepted"]
 
 
+def _approve(client: TestClient, run_id: str, key: str = "approve-after-interruption", **body: object) -> Response:
+    request = {"expected_checksum": _CHECKSUM, **body}
+    return client.post(f"/runs/{run_id}/approve", headers=_headers(key), json=request)
+
+
+@pytest.mark.parametrize("operation", ["apply", "sync"])
+def test_an_interrupted_run_that_was_never_approved_is_approved_and_then_resumed(
+    service_api: _API, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    """Spec 022 FR-019: the approval-required refusal names `approve`, and `approve` accepts the run."""
+    client, projection, orchestration = service_api
+    run_id = _interrupted_run(service_api) if operation == "apply" else _interrupted_sync_run(service_api)
+    _verified(service_api, run_id)
+    monkeypatch.setenv(REQUIRE_APPROVAL_ENV, "true")
+
+    refused = _resume(client, run_id, key="resume-unapproved")
+    approved = _approve(client, run_id)
+    accepted = _resume(client, run_id, key="resume-approved")
+
+    assert refused.status_code == 409
+    assert _error_code(refused) == "approval-required"
+    assert f"infrahub-sync approve {run_id} --expected-checksum {_CHECKSUM}" in refused.json()["error"]["message"]
+    assert approved.status_code == 200, approved.json()
+    assert approved.json()["run"]["approval"]["plan_checksum"] == _CHECKSUM
+    assert approved.json()["run"]["phase"] == "interrupted"
+    assert accepted.status_code == 202, accepted.json()
+    assert len(_resume_submissions(orchestration)) == 1
+    assert _resume_outcomes(projection, run_id) == ["refused-approval-required", "accepted"]
+
+
+def test_an_approval_of_an_interrupted_run_needs_the_checksum_of_its_saved_plan(service_api: _API) -> None:
+    client, projection, _orchestration = service_api
+    run_id = _interrupted_run(service_api)
+
+    response = _approve(client, run_id, expected_checksum=_OTHER_CHECKSUM)
+
+    assert response.status_code == 409
+    assert _error_code(response) == "checksum-mismatch"
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert stored.approval is None
+
+
+def test_an_approval_recorded_before_the_interruption_stays_valid_for_the_resume(
+    service_api: _API, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A second approval is refused with the existing one, which still admits the resume."""
+    client, projection, _orchestration = service_api
+    run_id = _interrupted_run(service_api, approve=True)
+    _verified(service_api, run_id)
+    monkeypatch.setenv(REQUIRE_APPROVAL_ENV, "true")
+
+    again = _approve(client, run_id)
+    accepted = _resume(client, run_id)
+
+    assert again.status_code == 409
+    assert _error_code(again) == "already-approved"
+    assert again.json()["error"]["details"]["approval"]["plan_checksum"] == _CHECKSUM
+    assert accepted.status_code == 202, accepted.json()
+    assert _resume_outcomes(projection, run_id) == ["accepted"]
+
+
+def test_an_interrupted_run_is_not_approvable_while_its_verify_runs(service_api: _API) -> None:
+    client, projection, _orchestration = service_api
+    run_id = _interrupted_run(service_api)
+    verify = client.post(f"/runs/{run_id}/verify", headers=_headers("verify-running"), json={})
+    assert verify.status_code == 202, verify.json()
+
+    response = _approve(client, run_id)
+
+    assert response.status_code == 409
+    assert _error_code(response) == "run-not-approvable"
+    assert "a verify execution is in progress" in response.json()["error"]["message"]
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert stored.approval is None
+
+
+def test_a_resumed_run_that_ended_applied_is_not_approvable(service_api: _API) -> None:
+    """Approval accepts only a planned or a resumable run; an applied run is neither."""
+    client, projection, _orchestration = service_api
+    run_id = _create(client).json()["run"]["run_id"]
+    _publish_plan(projection, run_id, total=_TOTAL)
+    _finish_planned(projection, run_id)
+    applied = client.post(
+        f"/runs/{run_id}/apply",
+        headers=_headers("apply-to-end"),
+        json={"expected_checksum": _CHECKSUM, "confirm_writes": True},
+    )
+    assert applied.status_code == 202, applied.json()
+    flow_run_id = _latest_flow_run_id(projection, run_id)
+    assert projection.claim_execution(run_id, flow_run_id, worker_id=_WORKER_ID)
+    assert projection.commit_claimed_execution(
+        run_id,
+        flow_run_id,
+        worker_id=_WORKER_ID,
+        terminal_at=datetime.now(timezone.utc),
+        terminal_state="completed",
+        terminal_outcome="succeeded",
+        writeback=ExecutionFinishWriteback(
+            phase="applied",
+            outcome="applied",
+            finished_at=datetime.now(timezone.utc),
+            summary={"sync_name": "registered-inventory"},
+            results={},
+        ),
+    )
+
+    response = _approve(client, run_id)
+
+    assert response.status_code == 409
+    assert _error_code(response) == "run-not-approvable"
+    assert "'applied'" in response.json()["error"]["message"]
+
+
 def test_only_the_runs_actor_or_an_administrator_may_resume_it(service_api: _API) -> None:
     client, projection, orchestration = service_api
     run_id = _interrupted_run(service_api)

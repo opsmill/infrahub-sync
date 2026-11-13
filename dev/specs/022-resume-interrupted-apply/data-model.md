@@ -74,5 +74,6 @@ operations) gives how many were not reported. The report never holds values.
   unfinished.
 - A resume is **admitted** only when the run is resumable and its latest `verify` execution comes after its latest
   write execution and succeeded.
+- A resumable run with no approval can be approved, as a run in phase `planned` can (FR-019, research R12).
 - A resume that ends `succeeded` clears `reconciliation_required` and sets the run's phase to `applied`. A resume
   that ends interrupted keeps the run resumable and makes a new `verify` necessary.

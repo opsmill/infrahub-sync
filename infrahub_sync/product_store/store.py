@@ -2675,14 +2675,16 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
         The run's row is locked first, with the write-first pattern a write admission and a
         withdrawal take, so the execution check and the update below see one state. The
-        conditional update stores the approval only on a run in phase ``planned`` that has none
-        and no unfinished execution, so of two concurrent approvals exactly one stores, and no
+        conditional update stores the approval only on a run that has none and no unfinished
+        execution, and that is in phase ``planned`` or is resumable: its write stopped part-way,
+        so it requires reconciliation, and it is not cancelled (spec 022 FR-019). Of two
+        concurrent approvals exactly one stores, and no
         approval is stored while an execution such as an ``apply`` is running. A write admitted
         but not yet submitted does not block the approval: once approval is required, retrying
         that ``apply`` needs this approval. The loser's receipt is completed with a stored
         refusal instead: ``already-approved`` with the approval that won, ``run-cancelled`` for
-        a withdrawn run, or ``run-not-approvable`` when an execution is unfinished or the run
-        left phase ``planned``. Either way a retry with the same key replays what this
+        a withdrawn run, or ``run-not-approvable`` when an execution is unfinished or the run is
+        neither planned nor resumable. Either way a retry with the same key replays what this
         transaction stored. ``events`` are written only with a stored approval, in the same
         transaction (spec 017, FR-014).
 
@@ -2703,7 +2705,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     cursor.execute(
                         self._sql(
                             "UPDATE product_runs SET approved_by = ?, approved_at = ?, approved_checksum = ?, "
-                            "approval_reason = ? WHERE run_id = ? AND approved_by IS NULL AND phase = 'planned'"
+                            "approval_reason = ? WHERE run_id = ? AND approved_by IS NULL "
+                            "AND (phase = 'planned' OR (reconciliation_required AND phase <> 'cancelled'))"
                         ),
                         (*_approval_columns(approval), run_id),
                     )

@@ -20,13 +20,20 @@ Responses:
 | 409 | `confirmation-required` | `confirm_writes` is not true. |
 | 409 | `checksum-conflict` | The checksum does not match the saved plan. |
 | 409 | `left-out-confirmation-required` | The plan left out records and `confirm_left_out` is not true. |
-| 409 | `approval-required` / `approval-checksum-mismatch` | The site requires approval and the run has none for this checksum. |
+| 409 | `approval-required` / `approval-checksum-mismatch` | The site requires approval and the run has none for this checksum. The `approval-required` message names `infrahub-sync approve RUN_ID --expected-checksum CHECKSUM`. |
 | 409 | `run-not-resumable` | The run is not interrupted, is cancelled, or has an unfinished execution. The message says which. |
 | 409 | `verify-required` | No `verify` passed on the run after its latest interruption. |
 | 409 | `run-execution-conflict` | Another resume of the run is in progress. |
 | 403 | `forbidden` | The actor did not start the run and is not an administrator. |
 
 Every request, accepted or refused, is recorded in the run's audit history and event list with operation `resume`.
+
+## `POST /runs/{run_id}/approve` (extended)
+
+Spec 019's approve request also accepts a resumable run: `reconciliation_required` is true, the run is not
+cancelled, and no execution is unfinished (spec FR-019, research R12). The request, the checks and the responses
+are unchanged. The `run-not-approvable` message names the run's phase and says that only a run in phase `planned`,
+or a run whose write stopped part-way and can be resumed, can be approved.
 
 ## `GET /runs/{run_id}` (extended)
 

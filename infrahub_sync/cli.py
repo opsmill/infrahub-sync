@@ -1097,8 +1097,12 @@ _LEFT_OUT_CONFIRMATION_REQUIRED = "left-out-confirmation-required"
 _RUN_EXECUTION_CONFLICT = "run-execution-conflict"
 _VERIFY_REQUIRED = "verify-required"
 _CHECKSUM_CONFLICT = "checksum-conflict"
+_APPROVAL_REQUIRED = "approval-required"
 _RESUME_REFUSAL_HINTS = {
     _VERIFY_REQUIRED: "run infrahub-sync verify {run_id} first",
+    # An interrupted run that was never approved, a `sync` run for example, is approved like a
+    # planned one (spec 022 FR-019).
+    _APPROVAL_REQUIRED: "run infrahub-sync approve {run_id} --expected-checksum {expected_checksum} first",
 }
 _RUN_EXECUTION_CONFLICT_NEXT_ACTION = (
     "If this run already admitted a write, its plan is not applied again: review the run with "
@@ -1645,7 +1649,8 @@ def runs_resume(
                     f"resume refused: this plan leaves out{count} records; confirm with --confirm-left-out", err=True
                 )
                 raise typer.Exit(1) from None
-            hint = _RESUME_REFUSAL_HINTS.get(error.code)
+            template = _RESUME_REFUSAL_HINTS.get(error.code)
+            hint = None if template is None else template.format(run_id=run_id, expected_checksum=expected_checksum)
             if hint is None and error.code != _CHECKSUM_CONFLICT:
                 raise
             label, fields = _error_fields(error)
@@ -1654,7 +1659,7 @@ def runs_resume(
             if hint is None:
                 # Scenario 3: the error shows the given checksum and the saved plan's checksum.
                 hint = _checksum_conflict_hint(client, run_id, expected_checksum)
-            typer.echo(_display(f"hint: {hint.format(run_id=run_id)}"), err=True)
+            typer.echo(_display(f"hint: {hint}"), err=True)
             raise typer.Exit(1) from None
         _echo_run(accepted)
         # The run's position when the resume was accepted is where the resume starts.

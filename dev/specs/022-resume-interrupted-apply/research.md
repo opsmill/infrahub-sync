@@ -179,3 +179,28 @@ because its counts are over plan positions; the `verify` report never lists a de
 execution of the same purpose. The worker stores the writing execution's `flow_run_id` in the record, and the view
 uses the failing operation only from a record of the latest write execution. A record stored before this field
 existed counts as not belonging to it, so the window falls back to every remaining operation.
+
+## R12. Approving an interrupted run
+
+**Question**: when the site requires approval (`INFRAHUB_SYNC_REQUIRE_APPROVAL`), a resume needs an approval of the
+plan checksum (FR-011). Spec 019's `approve` accepts only a run in phase `planned`. A `sync` run is never approved
+before its write, because the site refuses `sync` when it requires approval, and an apply can be interrupted before
+the site required approval. Such a run could never be resumed: the resume was refused with `approval-required`, and
+`approve` was refused with `run-not-approvable`.
+
+**Decision**: `approve` also accepts a resumable run: `reconciliation_required` is true, the run is not cancelled,
+and no execution is unfinished (the state rules in data-model.md). The service checks this before it reads the
+plan, and the store checks it again in the conditional update that stores the approval, under the run's row lock,
+so an approval is never stored while a `verify` or a resume runs. Every other check of spec 019 is unchanged: the
+checksum must be the saved plan's, the plan's checksum must have been verified when it was published, and a run has
+at most one approval. An approval recorded before the interruption stays valid for the resume, and a second
+`approve` is refused with `already-approved`, which carries the existing approval.
+
+An `approve` receipt does not take part in a run's stage arbitration, so the write admission an interrupted run
+holds does not refuse it.
+
+The resume's `approval-required` message, and the CLI hint for it, name
+`infrahub-sync approve RUN_ID --expected-checksum CHECKSUM`.
+
+**Rejected**: letting a resume skip the approval when the run has none. Approval gates every write on a site that
+requires it, and a resume writes.

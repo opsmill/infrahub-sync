@@ -83,7 +83,7 @@ from .orchestration import (
 from .paging import FilterValue, decode_cursor, timestamp_cursor, timestamp_key, validate_limit
 from .prefect_ui import flow_run_url
 from .read_progress import stage_reads
-from .resume_view import apply_progress_view, run_resumes
+from .resume_view import apply_progress_view, run_is_resumable, run_resumes
 from .run_log import page as log_page
 from .run_log import sync_lines
 from .settings import approval_required
@@ -781,13 +781,15 @@ class RunService:
         return status, content
 
     def _require_approvable(self, run: ProductRun, principal: Principal, reason: str | None) -> None:
-        """Refuse a run that is still running a stage or is not in phase ``planned``.
+        """Refuse a run that is still running a stage, or that is neither planned nor resumable.
 
-        Checked before the plan lookup, so a run still planning is not reported as a run
-        whose plan is missing.
+        A resumable run is one whose write stopped part-way (spec 022): approving it lets a site
+        that requires approval resume it, for example a `sync` run, which is never approved
+        before its write (FR-019). Checked before the plan lookup, so a run still planning is
+        not reported as a run whose plan is missing.
         """
         active = next((link for link in reversed(run.prefect_executions) if link.terminal_at is None), None)
-        if active is None and run.phase == "planned":
+        if active is None and (run.phase == "planned" or run_is_resumable(run)):
             return
         self._audit(
             run.run_id, actor=principal.actor, operation="approve", reason=reason, outcome="refused-not-approvable"

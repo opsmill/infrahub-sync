@@ -3,6 +3,7 @@
 - `runs resume` sends `confirm_writes=true` itself, the checksum, the left-out confirmation and
   the optional reason, and prints the run, the position it starts after and the new execution;
 - a `verify-required` refusal prints the error lines and `hint: run infrahub-sync verify RUN_ID first`;
+- an `approval-required` refusal prints `hint: run infrahub-sync approve RUN_ID --expected-checksum CHECKSUM first`;
 - refusals and failures exit with the codes `apply` uses;
 - `runs show` prints the progress, resumable, per-kind and resume lines, and nothing from the plan.
 """
@@ -128,6 +129,18 @@ def test_a_verify_required_refusal_prints_the_hint_and_exits_1(client: MagicMock
     assert "error: api" in result.output
     assert "code: verify-required" in result.output
     assert f"hint: run infrahub-sync verify {_RUN_ID} first" in result.output
+    client.wait_for_run.assert_not_called()
+
+
+def test_an_approval_required_refusal_prints_the_approve_hint_and_exits_1(client: MagicMock) -> None:  # noqa: F811
+    """Spec 022 FR-019: a run that was never approved, a `sync` run for example, is approved with `approve`."""
+    client.resume.side_effect = APIError(409, "approval-required", run_id=_RUN_ID, mutation_id="m-1")
+
+    result = _invoke(client, *_resume_arguments())
+
+    assert result.exit_code == 1, result.output
+    assert "code: approval-required" in result.output
+    assert f"hint: run infrahub-sync approve {_RUN_ID} --expected-checksum {CHECKSUM} first" in result.output
     client.wait_for_run.assert_not_called()
 
 

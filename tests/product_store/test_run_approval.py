@@ -407,3 +407,42 @@ def test_record_approval_rolls_back_when_the_receipt_cannot_be_completed(backend
     loaded = store.lookup("run-001").value
     assert loaded is not None
     assert loaded.approval is None
+
+
+def _interrupted_run(store: SQLiteRunStore | PostgreSQLRunStore, phase: str) -> None:
+    """``run-001`` after its admitted write stopped part-way: it requires reconciliation and nothing runs."""
+    store.create(_planned_run(phase).model_copy(update={"reconciliation_required": True}))
+    _admit_apply(store, submitted=False)
+
+
+@pytest.mark.parametrize("phase", ["interrupted", "failed"])
+def test_record_approval_stores_the_approval_of_a_resumable_run(backend: _Backend, phase: str) -> None:
+    """Spec 022 FR-019: a run whose write stopped part-way can be approved, so it can be resumed."""
+    store = backend.make_store()
+    _interrupted_run(store, phase)
+    receipt = _reserved(store, 1)
+
+    stored = store.record_approval(
+        "run-001", _approval(), receipt, _APPROVED_RESPONSE, updated_at=datetime.now(timezone.utc)
+    )
+
+    assert stored is True
+    loaded = store.lookup("run-001").value
+    assert loaded is not None
+    assert loaded.approval == _approval()
+    assert _stored_receipt(store, receipt).response_status == 200
+
+
+def test_record_approval_refuses_a_cancelled_run_that_requires_reconciliation(backend: _Backend) -> None:
+    store = backend.make_store()
+    store.create(_planned_run("cancelled").model_copy(update={"reconciliation_required": True}))
+    receipt = _reserved(store, 1)
+
+    stored = store.record_approval(
+        "run-001", _approval(), receipt, _APPROVED_RESPONSE, updated_at=datetime.now(timezone.utc)
+    )
+
+    assert stored is False
+    refused = _stored_receipt(store, receipt)
+    assert refused.response_body is not None
+    assert refused.response_body["error"]["code"] == "run-cancelled"
