@@ -1014,9 +1014,8 @@ refusals are recorded in the run's audit history. Start a new `plan` or `sync` r
 
 The service reads the kind and action of each operation from the saved plan once per run, and
 keeps them in memory, so polling `GET /runs/{run_id}` does not read the whole plan on every
-request. When the plan expired or cannot be read, `by_kind` is empty. When it cannot be read,
-the service also logs a warning that names the run, the error class and the error code, without
-the error message.
+request. When the plan expired or cannot be read, `by_kind` is empty, and the service logs a
+warning that names the run, the error class and the error code, without the error message.
 
 A resume applies the run's saved plan from the operation after `position`, in a new execution
 of purpose `resume` on the same run. It does not read the source or create a plan, for an

@@ -54,7 +54,7 @@ from infrahub_sync.service.apply_progress import StoreApplyProgressObserver
 from infrahub_sync.service.flow import resume_start_after, service_sync_run
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
 from infrahub_sync.service.resume_view import apply_progress_view, run_resumes, uncertain_window
-from infrahub_sync.service.service import PLAN_ARTIFACT_ID
+from infrahub_sync.service.service import PLAN_ARTIFACT_ID, _PlanLayoutCache  # noqa: PLC2701  # the cache under test
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
 from tests.configuration.validation_packages import package
 from tests.plan.artifact_fixtures import CONFIG_VERSION, operation_record, write_artifact
@@ -839,6 +839,74 @@ def test_a_plan_that_cannot_be_read_is_logged_with_its_error_class_only(
     [record] = [record for record in caplog.records if run_id in record.getMessage()]
     assert "ServiceAPIError" in record.getMessage()
     assert "cannot be retrieved" not in record.getMessage()
+
+
+def test_a_verify_of_a_sync_stopped_after_its_plan_still_reads_the_plan_first(
+    service_api: _API, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `sync` that gave back its write admission is not resumable, but its `verify` still checks the plan."""
+    client, projection, orchestration = service_api
+    run_id, flow_run_id = _sync_run(service_api)
+    _publish_plan(projection, run_id, total=3, left_out=1)
+    # What the worker records when the `sync` stops for its left-out records (spec 020 FR-012).
+    assert projection.commit_claimed_execution(
+        run_id,
+        flow_run_id,
+        worker_id=_WORKER_ID,
+        terminal_at=datetime.now(timezone.utc),
+        terminal_state="completed",
+        terminal_outcome="succeeded",
+        writeback=ExecutionFinishWriteback(
+            phase="planned",
+            outcome="planned",
+            finished_at=datetime.now(timezone.utc),
+            summary={"sync_name": "registered-inventory"},
+            results={"sync": {"outcome": "planned"}},
+            release_write_admission=True,
+        ),
+    )
+    monkeypatch.setattr(projection, "lookup_artifact", lambda *_args: LookupResult(None, "provider-unavailable"))
+
+    response = client.post(f"/runs/{run_id}/verify", headers=_headers("verify-stopped-sync"), json={})
+
+    assert response.status_code == 503, response.json()
+    assert _error_code(response) == "plan-unavailable"
+    assert [submitted["stage"] for submitted, _key in orchestration.submissions] == ["sync"]
+
+
+def test_a_resume_whose_plan_cannot_be_read_is_refused_and_recorded(
+    service_api: _API, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, projection, orchestration = service_api
+    run_id = _interrupted_run(service_api)
+    _verified(service_api, run_id)
+    monkeypatch.setattr(projection, "lookup_artifact", lambda *_args: LookupResult(None, "provider-unavailable"))
+
+    response = _resume(client, run_id)
+
+    assert response.status_code == 503, response.json()
+    assert _error_code(response) == "plan-unavailable"
+    assert _resume_submissions(orchestration) == []
+    assert _resume_outcomes(projection, run_id) == ["refused-plan-unavailable"]
+
+
+def test_the_plan_layout_cache_drops_the_least_recently_read_run_and_skips_a_plan_over_its_bound() -> None:
+    cache = _PlanLayoutCache(max_operations=4)
+    first = (("op-1", "BuiltinTag", "create"), ("op-2", "BuiltinTag", "create"))
+    second = (("op-3", "BuiltinTag", "create"), ("op-4", "BuiltinTag", "update"))
+    third = (("op-5", "BuiltinStatus", "delete"), ("op-6", "BuiltinStatus", "create"))
+    cache.put(("run-1", "a"), first)
+    cache.put(("run-2", "b"), second)
+    assert cache.get(("run-1", "a")) == first
+
+    cache.put(("run-3", "c"), third)
+
+    assert cache.get(("run-2", "b")) is None
+    assert cache.get(("run-1", "a")) == first
+    assert cache.get(("run-3", "c")) == third
+    cache.put(("run-4", "d"), first + second + third)
+    assert cache.get(("run-4", "d")) is None
+    assert cache.get(("run-1", "a")) == first
 
 
 # --- the uncertain window (critique E3) -----------------------------------------------------

@@ -303,11 +303,13 @@ acts, so a run whose worker published its plan late becomes resumable at that po
   the other resume refusals. The store gives the same answer on the run's locked row.
 - A `resume` whose plan cannot be read is now recorded in the audit history too, with outcome
   `refused-plan-unavailable`, as `approve` does (FR-014).
-- `verify` reads the plan before it reserves the request only when the run never started a write or is resumable.
-  A run whose write started and that is not resumable, such as this one, reaches the reservation, which refuses it
-  with `409 run-execution-conflict`, the refusal every other non-resumable run with a write gets, and records it.
+- `verify` no longer reads the plan before it reserves the request when the run requires reconciliation and saved
+  no plan. Such a run keeps its write admission, because only a `sync` that ended `planned` without requiring
+  reconciliation gives it back, so the reservation refuses it with `409 run-execution-conflict`, the refusal every
+  other non-resumable run with a write admission gets, and records it. Every other run still reads the plan first.
 - The progress view (`apply_progress`) reports `resumable: false` and `verify_required: false` for such a run.
-- `approve` keeps its own checks: it reads the plan and needs its checksum, so a run without a plan is refused.
+- `approve` refuses such a run with `409 run-not-approvable` before it reads the plan, because the run is neither in
+  phase `planned` nor resumable.
 
 **Rejected**: not setting `reconciliation_required` for a `sync` that has no plan when liveness ends it, for the
 reason above.
@@ -322,13 +324,14 @@ cache keyed by the run ID and the plan artifact's digest, which the run's artifa
 - A run publishes its plan once, and a published artifact never changes, so an entry is never stale. Each API
   process fills its own cache and computes the same entry, so several API processes need no shared state and no
   invalidation.
-- The cache is checked after the reference's `expires_at`, with the rule the artifact store applies, so every
-  process stops reporting per-kind counts at the same time once the plan expired.
-- A failed read is not cached. It is logged as a warning with the run ID, the error class and the error code, never
-  the message.
+- A plan whose reference has passed its `expires_at` bypasses the cache, with the rule the artifact store applies,
+  so every process stops reporting per-kind counts at the same time once the plan expired.
+- A failed read, an expired plan included, is not cached. It is logged as a warning with the run ID, the error class
+  and the error code, never the message. The module logs through the standard `logging` module, as the rest of
+  `service/service.py` does.
 - The bound is 200,000 operations over all cached runs, with the least recently read run dropped first; a plan
   larger than the bound is not cached. Kind and action strings are interned, so one cached operation takes about
-  200 bytes and the cache stays under about 40 MB per API process. That holds two tier L plans, or many smaller ones.
+  200 bytes (an estimate, not measured) and the cache stays under about 40 MB per API process. That holds two tier L plans, or many smaller ones.
 
 **Rejected**:
 

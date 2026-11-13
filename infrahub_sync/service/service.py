@@ -90,7 +90,6 @@ from .prefect_ui import flow_run_url
 from .read_progress import stage_reads
 from .resume_view import (
     apply_progress_view,
-    latest_write_execution,
     run_has_saved_plan,
     run_is_resumable,
     run_resumes,
@@ -474,10 +473,11 @@ class RunService:
         if existing is not None:
             return await self._resume_or_replay(existing, parameters, principal, request.reason)
         self._require_supported_run_configuration(run)
-        if latest_write_execution(run) is None or run_is_resumable(run):
-            # A run whose write started and that is not resumable, such as a `sync` stopped
-            # before it saved a plan, is refused by the reservation with `run-execution-conflict`,
-            # which the audit history records. Reading its plan first would answer 503 instead.
+        if not run.reconciliation_required or run_has_saved_plan(run):
+            # A run that requires reconciliation but saved no plan, a `sync` stopped while it
+            # was still planning, keeps its write admission, so the reservation refuses it with
+            # `run-execution-conflict`, which the audit history records. Reading its plan first
+            # would answer 503 instead (research R14).
             self._plan(run_id)
         receipt = self._reserve_existing(
             run,
@@ -1850,11 +1850,11 @@ class RunService:
         reference = next((ref for ref in run.artifact_refs if ref.artifact_id == PLAN_ARTIFACT_ID), None)
         if reference is None:
             return None
-        if reference.expires_at is not None and reference.expires_at <= datetime.now(timezone.utc):
-            # The same rule the artifact store applies, so every process answers alike once it expired.
-            return None
         key = (run.run_id, reference.digest)
-        cached = self._plan_layouts.get(key)
+        # An expired plan bypasses the cache, with the rule the artifact store applies, so every
+        # process stops reporting per-kind counts once it expired; the read below then fails.
+        expired = reference.expires_at is not None and reference.expires_at <= datetime.now(timezone.utc)
+        cached = None if expired else self._plan_layouts.get(key)
         if cached is not None:
             return cached
         try:

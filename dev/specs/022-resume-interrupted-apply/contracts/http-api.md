@@ -70,8 +70,8 @@ refusal is recorded in the audit history (research R14).
 
 The Sync API reads the operations' kinds and actions from the saved plan once per run and plan, and keeps them in
 memory, so a client that polls the run, for example with `--wait`, does not make the API read the whole plan on every
-request (research R14). When the plan cannot be read, `by_kind` is empty and the API logs a warning that names the
-run, the error class and the error code.
+request (research R14). When the plan expired or cannot be read, `by_kind` is empty and the API logs a warning that
+names the run, the error class and the error code.
 
 `by_kind` counts are over plan positions, so a recorded delete is `committed` at or before `position`,
 `uncertain` inside the uncertain window, and `not_reached` after it. The uncertain window starts after
