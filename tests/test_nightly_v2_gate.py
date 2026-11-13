@@ -451,6 +451,24 @@ def test_v2_gate_stops_on_an_empty_plan_because_left_out_and_problems_are_not_co
     assert destination == []
 
 
+def test_v2_gate_removes_the_previous_result_when_an_early_step_fails(
+    runner: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that fails before the comparison leaves no result from an earlier run to publish."""
+    runner.REPORTS.mkdir(parents=True)
+    stale = runner.REPORTS / "gate-result.json"
+    stale.write_text(json.dumps({"passed": True}), encoding="utf-8")
+
+    def _fail(*_command: str, **_kwargs: object) -> str:
+        msg = "branch create failed"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(runner, "run", _fail)
+    with pytest.raises(RuntimeError, match="branch create failed"):
+        runner.v2_gate(GATE_ENV, CONTEXT)
+    assert not stale.exists()
+
+
 def test_summary_includes_the_gate_result(runner: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The run summary lists the v2-gate suite and the gate's counts."""
     runner.REPORTS.mkdir(parents=True)

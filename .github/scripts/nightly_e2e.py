@@ -605,6 +605,8 @@ def v3_plan(project: Path, env: dict[str, str], context: dict[str, str]) -> tupl
 
 def v2_gate(env: dict[str, str], context: dict[str, str]) -> None:
     """Plan from the converted package against the data v2 wrote, and fail on every difference."""
+    # A run that fails before the comparison must not leave an earlier run's result to publish.
+    (REPORTS / GATE_RESULT).unlink(missing_ok=True)
     run("uv", "run", "--no-sync", "infrahubctl", "branch", "create", V2_GATE_BRANCH, env=env)
     with tempfile.TemporaryDirectory(prefix="v2-gate-") as work:
         project = v2_sync(Path(work), env, context)
