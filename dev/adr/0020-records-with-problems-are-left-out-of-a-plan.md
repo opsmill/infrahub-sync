@@ -53,6 +53,6 @@ A plan finds every problem in one pass and plans the rest of the data:
   ([ADR 0022](0022-saved-plan-format-4.md)).
 - The store rule "a run that admitted its one write never admits another stage" gets one
   exception: a `sync` run that stopped after its plan, before any dispatch, gives back its write
-  admission (research R11). The product owner is asked to confirm this exception.
+  admission (research R11). The product owner accepted this exception with ADR 0020.
 - Deletes are withheld for a whole kind when one of its left-out records has no known identity.
   A source with many such records computes fewer deletes until the records are fixed.
