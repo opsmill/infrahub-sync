@@ -339,6 +339,14 @@ _PREFECT_POSITION_ATTEMPTS = 3
 _FIXED_CHECKPOINT_ARTIFACT_IDS = frozenset({PLAN_CHECKPOINT_ARTIFACT_ID, FINAL_CHECKPOINT_ARTIFACT_ID})
 _RESULT_MERGE_ATTEMPTS = 5
 _SCHEMA_INITIALIZATION_ATTEMPTS = 2
+# Serializes schema initialization across processes that start together, per schema. Each
+# `CREATE INDEX IF NOT EXISTS` takes a SHARE lock on its table even when the index exists,
+# and the audit-event fill that follows needs ROW EXCLUSIVE on the same table, so two
+# unserialized initializers deadlock. The transaction-level lock is released at commit or
+# rollback.
+_POSTGRESQL_SCHEMA_INITIALIZATION_LOCK = (
+    "SELECT pg_advisory_xact_lock(hashtextextended('infrahub_sync.product_store.schema.' || current_schema(), 0))"
+)
 # Measured, not guessed: across roughly 4,800 trials of 8 concurrent distinct-checksum
 # add_configuration_version() callers against SQLite (the tightest case, single-writer
 # locking), the worst observed attempt count for any one caller was 5-7. This budget
@@ -810,6 +818,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             try:
                 cursor = connection.cursor()
                 try:
+                    if self._dialect == "postgresql":
+                        cursor.execute(_POSTGRESQL_SCHEMA_INITIALIZATION_LOCK)
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             cursor.execute(statement)
