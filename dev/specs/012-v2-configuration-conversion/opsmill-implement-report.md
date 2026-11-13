@@ -87,3 +87,26 @@ simplification findings, which were applied.
 2. Run T033 on a machine where the preview stack and NetBox can be reset, attach `gate-result.json`, and open a defect for each finding.
 3. Do T031 once spec 009 is merged.
 4. Open a pull request when you ask for it.
+
+## 7. Move onto `feature/v3-develop` (2026-11-13)
+
+The branch `012-v2-configuration-conversion` was deleted after this report, and its worktree was
+removed. Its 22 commits (`be804847..65d20c55`) were cherry-picked onto `feature/v3-develop` at
+`7d7aabba`. The conflicts were in `CLAUDE.md` (develop's active-spec line was kept) and in the
+imports of `infrahub_sync/cli.py`.
+
+Changes made for the code that `feature/v3-develop` gained since 2026-10-22:
+
+- Spec 014 refuses a bare `source` or `owner` name. The conversion now writes a v2 group name as
+  `{kind: CoreAccountGroup, name}`, the kind v2 2.0.2 looked up (`adapters/infrahub.py` lines
+  339-357 at tag `2.0.2`), and notes that V3 stops the run where v2 fell back to an account.
+  Spec FR-019 and the lineage assumption are updated.
+- Spec 019 added `approve`. The migration page now says to approve the plan before `apply` when
+  the Sync API requires approval.
+- Spec 009 is now spec 020 (`020-plan-problem-reporting`, not merged). T031 still waits for it.
+
+Still open:
+
+- T031 (blocked on spec 020) and T033 (the first real gate run, which resets the preview stack).
+- Whether the conversion sets `protect: true`, so that V3 protects what it creates as v2 did.
+- 19 of the 22 commits carry a `Claude-Session` trailer, which must be removed before a push.

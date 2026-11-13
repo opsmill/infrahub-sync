@@ -673,7 +673,7 @@ def _convert_settings(  # pylint: disable=too-many-arguments,too-many-positional
         elif name in _ENV_VARS_ADAPTERS and isinstance(key, str) and key.endswith(_ENV_VARS_SUFFIX):
             report.dropped.append(DroppedEntry(location, _ENV_VARS_REASON))
         elif not _refuse_other_setting(name, key, value, location, report):
-            converted[key] = copy.deepcopy(value)
+            converted[key] = _convert_lineage(role, name, key, value, location, report)
     for key in credential_settings:
         if key not in settings:
             _set_resolved(converted, key, _reference_credential(role, name, key, None, used, report, replaced))
@@ -682,6 +682,23 @@ def _convert_settings(  # pylint: disable=too-many-arguments,too-many-positional
             location = f"{role}.settings.{key}"
             _set_resolved(converted, key, _resolve(location, row, None, visible, flag, report))
     return converted
+
+
+def _convert_lineage(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    role: AdapterRole, name: str, key: object, value: object, location: str, report: _Report
+) -> object:
+    """Return an accepted setting, writing a v2 lineage group name as ``{kind, name}`` (spec 014 FR-003).
+
+    v2 2.0.2 looked a bare name up as a ``CoreAccountGroup`` and fell back to an account; V3 has no fallback.
+    """
+    if role != "destination" or name != "infrahub" or key not in {"source", "owner"} or not value:
+        return copy.deepcopy(value)
+    if not isinstance(value, str):
+        return copy.deepcopy(value)
+    fallback = "v2 fell back to the account named after the source adapter when no such group existed"
+    note = f"{location}: v2 group name {value!r} becomes {{kind: CoreAccountGroup, name: {value!r}}}; {fallback}"
+    report.notes.append(NoteEntry(f"{note}, V3 stops the run before any write"))
+    return {"kind": "CoreAccountGroup", "name": value}
 
 
 def _set_resolved(settings: dict[str, Any], key: str, value: object) -> None:

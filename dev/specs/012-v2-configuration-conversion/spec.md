@@ -290,7 +290,11 @@ the operations.
   input, and the report MUST say that V3 has no generation step.
 - **FR-019**: The command MUST copy without change `name`, `schema_mapping`, `order`,
   `diffsync_flags`, `incremental` for sources that support it, and every destination setting that
-  V3 accepts, including the `source` and `owner` lineage settings.
+  V3 accepts. The `source` and `owner` lineage settings are the exception: a v2 group name becomes
+  `{kind: CoreAccountGroup, name}`, the kind v2 2.0.2 looked up, because spec 014 FR-003 refuses
+  a bare name. A `{kind, name}` value is copied. The report says that V3 stops the run when the
+  group does not exist, where v2 fell back to the account named after the source adapter (spec
+  014 FR-005). Added on 2026-11-13, when the work was moved onto `feature/v3-develop`.
 - **FR-020**: Before it writes, the command MUST run every registration check that needs no
   connection to the Sync API, the source or Infrahub.
 - **FR-021**: The command MUST refuse an input that already holds a format version, and an input
@@ -373,9 +377,11 @@ the operations.
   depends on the Infrahub adapter
   ([ADR 0002](../../adr/0002-planned-write-destination-protocol.md)). No decision record says
   this must stay so.
-- **Lineage.** The V3 Infrahub adapter accepts the `source` and `owner` settings and creates nodes
-  as protected, as v2 did ([`infrahub.py`](../../../infrahub_sync/adapters/infrahub.py)). Lineage
-  is not expected to cause an update in the gate; the gate would show it if it did.
+- **Lineage.** The V3 Infrahub adapter accepts the `source` and `owner` settings as `{kind, name}`
+  ([spec 014](../014-import-lineage/spec.md) FR-003). v2 protected every attribute it created;
+  V3 protects none unless the package sets `protect` (spec 014 D-4). Whether the conversion sets
+  `protect` is not decided. Lineage and protection are not compared by a plan, so they are not
+  expected to cause an update in the gate; the gate would show it if they did.
 - **No v2 state moves.** No cache directory, Redis store or saved plan is moved. The first V3
   plan reads Infrahub as it finds it.
 - **Deletes** are not executed in the testing release.

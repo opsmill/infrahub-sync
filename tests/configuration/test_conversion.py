@@ -825,8 +825,25 @@ def test_top_level_and_destination_settings_are_copied_unchanged() -> None:
     assert configuration["order"] == ["BuiltinTag"]
     assert configuration["diffsync_flags"] == ["SKIP_UNMATCHED_DST"]
     settings = configuration["destination"]["settings"]
-    for key in ("branch", "source", "owner", "verify_ssl"):
+    for key in ("branch", "verify_ssl"):
         assert settings[key] == destination[key]
+
+
+@pytest.mark.parametrize("setting", ["source", "owner"])
+def test_v2_lineage_group_name_becomes_a_named_account_group(setting: str) -> None:
+    data = _config(destination_settings={"url": "http://infrahub.example.com:8000", setting: "network-team"})
+    result = _convert(data)
+    settings = _configuration(result)["destination"]["settings"]
+    assert settings[setting] == {"kind": "CoreAccountGroup", "name": "network-team"}
+    assert any(f"destination.settings.{setting}" in note.text and "stops the run" in note.text for note in result.notes)
+
+
+def test_named_lineage_node_is_copied_unchanged() -> None:
+    owner = {"kind": "CoreAccount", "name": "sync-bot"}
+    data = _config(destination_settings={"url": "http://infrahub.example.com:8000", "owner": copy.deepcopy(owner)})
+    result = _convert(data)
+    assert _configuration(result)["destination"]["settings"]["owner"] == owner
+    assert not any("destination.settings.owner" in note.text for note in result.notes)
 
 
 @pytest.mark.parametrize("source_name", ["infrahub", "nautobot", "netbox"])

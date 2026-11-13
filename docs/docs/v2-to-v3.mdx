@@ -136,7 +136,9 @@ prints a credential value.
      3. infrahub-sync configs register package.yml
    ```
 
-   Then review the first plan before you apply it. See [Run a sync](./running-a-sync.mdx).
+   Then review the first plan before you apply it. When the Sync API requires approval, approve
+   the plan with `infrahub-sync approve` before `apply`; `sync` is refused in that mode. See
+   [Run a sync](./running-a-sync.mdx).
 
 Before it writes, the command runs every registration check that needs no connection. A
 package it writes registers without edits, as long as the addresses are ones the Sync worker
@@ -207,6 +209,7 @@ and names the setting.
 | `url` and other settings that V2 read from the environment first | Writes the value from the flag, the variable or the file, and reports its origin. |
 | `genericrestapi` and `peeringmanager` settings that end in `_env_vars` | Drops them and lists them under `Dropped`. The command does not read the variables they name. |
 | An address that holds a user name or password | Refuses it, without printing the address. |
+| `destination.settings.source`, `destination.settings.owner` | Writes a V2 group name as `{kind: CoreAccountGroup, name: <name>}`, the kind V2 looked up, and adds a note. V2 fell back to the account named after the source adapter when no such group existed; V3 stops the run before any write. A `{kind, name}` value is copied. |
 | Other settings that the bundled adapter accepts | Copies them. |
 | Other settings | Refuses them. |
 | Other keys of `source` or `destination` | Drops them, because V2 did not read them. |
