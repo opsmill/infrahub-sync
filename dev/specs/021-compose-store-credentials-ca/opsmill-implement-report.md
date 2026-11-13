@@ -1,7 +1,8 @@
 # Implementation report: spec 021, an external object store, every adapter's credentials and a private CA
 
-- **Status**: INCOMPLETE. 57 of 61 tasks are done. T033 is partly done and T040 to T042 need CI
-  runs on a pushed branch.
+- **Status**: INCOMPLETE. 57 of 61 tasks are done. T033 is partly done: only the IP Fabric and
+  Slurp'it adapters are left, because their SDK packages are not in the image. T040 to T042 need CI runs on
+  a pushed branch.
 - **Spec directory**: `dev/specs/021-compose-store-credentials-ca/`
 - **Branch**: `021-compose-store-credentials-ca`, on top of `010-prefect-pr2-preview-removal`
   (spec 010 "PR 2", implemented in the same session as the prerequisite of decision 1). Neither
@@ -20,7 +21,7 @@
 | Phase 2, foundational | T003, T004 | 2 / 0 / 0 | `bd6b9c13` | `build_s3_client` and `s3_client_arguments` in `storage.py`. |
 | US1, external store | T005 to T018 | 14 / 0 / 0 | `5b0a80b2` | Found and fixed: `sync-bootstrap` printed none of its INFO lines in a container, already the case on `feature/v3-develop`. Found a PR 2 regression in the compose tier's Infrahub fixture, fixed on the PR 2 branch (`a96076a3`). |
 | US2, adapter credentials | T019 to T025 | 7 / 0 / 0 | `a86e2fd3` | Five adapter pages said the worker receives only three tokens; corrected. |
-| US3, private CA | T026 to T035 | 9 / 1 / 0 | `e760e14e`, `c174e98c` | T033 is partly done: the object store over TLS from a test CA is checked live; Infrahub and a source over TLS, and each adapter client, are not. |
+| US3, private CA | T026 to T035 | 9 / 1 / 0 | `e760e14e`, `c174e98c`, `f64f7e8f` | T033 is partly done: the store, Infrahub and a NetBox stand-in over TLS, a plan, a run without the CA, and seven adapters' clients are checked live; IP Fabric and Slurp'it cannot be checked in the image. |
 | US5, released image | T044 to T049 | 6 / 0 / 0 | `bcdd7016` | The `record_image` step is tested against a stub `gh`, not on a release. |
 | Phase 8, image pins | T050 to T053 | 4 / 0 / 0 | `77f40b38` | T053 does not apply: the preview file is gone on this branch. |
 | US4, lifecycle tier | T036 to T043 | 5 / 0 / 3 | `ce26d1d6` | Leak checks pass live. A docs page told operators to run `docker compose config prefect-server`, which prints credentials; changed to `--no-interpolate`. T040 to T042 need the workflow dispatched. |
@@ -29,9 +30,10 @@
 
 ## Tasks not completed
 
-- **T033** (partly): the lifecycle test covers the external store over TLS from a test CA. Not
-  done: Infrahub and a NetBox stand-in served over the test CA, and a check that every bundled
-  adapter's HTTP client honors the bundle.
+- **T033** (partly): the store, Infrahub and a NetBox stand-in over TLS from the test CA, a plan
+  with certificate checks on, and seven adapters' clients are checked live. Not done: the
+  `ipfabricsync` and `slurpitsync` clients. Their SDK packages are not in the image, so neither can be
+  checked there, and whether they read the bundle is not known (`research.md` R4).
 - **T040**: dispatch the nightly workflow with 10 repeats on each architecture before any
   reliability change. Needs the branch pushed. Whether the workflow can be dispatched from a
   branch other than `feature/v3-develop` is not known.
@@ -62,6 +64,9 @@ Exact per-test times were not recorded; the date is the run date.
 | Review fixes: `tests/service/test_compose_bootstrap.py` (store refusal families, delete failure, setting family), `test_trust_store.py` (4 new cases), `test_trust_store_entry_points.py` (6 cases, new file), `test_storage*.py` | unit | `uv run pytest tests/service/test_compose_bootstrap.py tests/service/test_trust_store.py tests/service/test_trust_store_entry_points.py tests/service/test_storage*.py` | 2026-11-13 | n/a | `124 passed` |
 | Review fixes: `tests/compose/test_external_store.py` (failed listing now fails the test) | e2e | `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose/test_external_store.py` | 2026-11-13 | image built after the store-family fix, before the final logging change | `8 passed in 235.18s` |
 | Full unit tier after the review fixes | unit | `uv run invoke tests.tests-unit` | 2026-11-13 | Python 3.13 | `7342 passed`, the 4 SQLite failures below, and `test_benchmark_runner.py::test_setup_interrupt_stops_sleeping_grandchild_and_records_reason[False]`, which then passed alone (`2 passed`) |
+| `tests/compose/test_credential_leaks.py` (6 cases; the fixture now plans the smoke package first, and the S3 access key has a generated value) | e2e | `INFRAHUB_SYNC_COMPOSE_PROJECT_PREFIX=s021t INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose -p no:cacheprovider tests/compose/test_credential_leaks.py` | 2026-11-13 | image built from `069862b9`, test change in `aa457dcd`; Infrahub 1.11.9 fixture; Docker shared with the development stack | `6 passed in 153.68s (0:02:33)` |
+| `tests/compose/test_external_store.py::test_a_plan_reaches_netbox_infrahub_and_the_store_behind_a_private_ca`, `::test_without_the_ca_bootstrap_refuses_the_tls_store`, `::test_each_bundled_adapter_client_follows_the_ca_bundle[with-ca]`, `[without-ca]` | e2e | same prefix and image settings, `uv run pytest -m compose -p no:cacheprovider tests/compose/test_external_store.py -k "private_ca or without_the_ca or follows_the_ca"` | 2026-11-13 | image built from `069862b9`, tests in `f64f7e8f`; Silo and a TLS front (Infrahub forwarder, NetBox stand-in) on their own network, test CA with key identifiers | `4 passed, 7 deselected in 220.91s (0:03:40)` |
+| `tests/compose/test_external_store.py` (whole file, 11 cases) | e2e | same prefix and image settings, `uv run pytest -m compose -p no:cacheprovider tests/compose/test_external_store.py` | 2026-11-13 | as above | `11 passed in 389.15s (0:06:29)` |
 | Nightly 10-run lifecycle measurement (T040, T042) | e2e | `gh workflow run workflow-nightly-e2e.yml -f sha=<sha> -f compose_repeat=10` | deferred — needs CI on a pushed branch | GitHub Actions, linux/amd64 and linux/arm64 | — |
 
 The 4 unit-tier failures are SQLite migration tests in `tests/product_store/test_contract.py`.
@@ -84,8 +89,8 @@ separate agents. The simplify pass was not run.
 A second review on 2026-11-13 ran all six aspects as separate agents
 (`reviews/review-run-20261113.md`). Its critical finding and the important findings that need no
 running Compose stack were fixed in the commit that follows this report change. The review file
-marks each finding fixed or open. Two important test findings stay open: a TLS run without the CA
-that must fail, and a leak test that runs a plan. Both need the Compose stack and belong with T033.
+marks each finding fixed or open. The two test findings that needed the Compose stack, a TLS run
+without the CA that must fail and a leak test that runs a plan, were fixed on 2026-11-13.
 No `/code-review --fix` pass ran on this branch: every forked attempt stopped on an authentication
 error.
 
@@ -107,5 +112,7 @@ error.
 1. Push `010-prefect-pr2-preview-removal` and this branch (on your request), then dispatch the
    nightly workflow with `compose_repeat=10` for T040.
 2. Investigate the live write guard test failure on the development stack before merging PR 2.
-3. Finish T033: Infrahub and a source over TLS from the test CA.
+3. Decide how to check the IP Fabric and Slurp'it adapters against a private CA, since their
+   SDK packages are not in the image (T033). Decide whether the private CA documentation should say that
+   server certificates need an authority key identifier (`research.md` R4).
 4. Open the PR for PR 2 first, then this one.

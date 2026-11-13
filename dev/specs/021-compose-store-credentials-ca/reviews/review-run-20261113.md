@@ -42,10 +42,15 @@ configuration file exists, so every aspect was on.
 - tests: no test checks that `serve`, `worker` and `bootstrap` call `install_custom_ca_bundle()`
   before building clients and exit non-zero on `TrustStoreError`. **Fixed:**
   `tests/service/test_trust_store_entry_points.py`.
-- tests: the TLS store test has no negative case (a run without the CA that must fail). **Open**,
-  with T033.
+- tests: the TLS store test has no negative case (a run without the CA that must fail). **Fixed:**
+  `test_without_the_ca_bootstrap_refuses_the_tls_store` checks that bootstrap exits non-zero with
+  `refused: object-store-unavailable`, and that a listing without the CA fails with
+  `CERTIFICATE_VERIFY_FAILED` while one with the CA succeeds.
 - tests: the leak test runs no plan, so no adapter credential is resolved before the logs are
-  searched; the S3 access key gets no generated value. **Open**, with T033.
+  searched; the S3 access key gets no generated value. **Fixed:** the fixture plans the smoke
+  package before any search, and the S3 access key gets a generated value before the bundled
+  store first starts. The smoke package resolves the Infrahub token only; the other 23 adapter
+  variables reach the worker but no run resolves them.
 - tests: the cleanup branch of `check_create_only` (delete fails) has no test. **Fixed.**
 
 ## Suggestions

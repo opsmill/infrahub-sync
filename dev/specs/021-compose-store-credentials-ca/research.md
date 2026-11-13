@@ -192,9 +192,11 @@ beside it. No second file.
 
 **Rationale** (library versions from `uv.lock`):
 
-- `requests` 2.34.2 (NetBox, Nautobot, ACI): `REQUESTS_CA_BUNDLE` when `verify` is true.
-- `httpx` 0.28.1 (IP Fabric, Prometheus, the generic REST API adapter where it uses `httpx`):
-  `SSL_CERT_FILE` when `trust_env` is true.
+- `requests` 2.34.2 (NetBox, Nautobot, ACI, Prometheus, the generic REST API adapter and Peering
+  Manager): `REQUESTS_CA_BUNDLE` when `verify` is true or unset (`Session.merge_environment_settings`).
+- `httpx` 0.28.1 (the Infrahub SDK, and the IP Fabric and Slurp'it SDK packages): `SSL_CERT_FILE` when
+  `trust_env` is true. Corrected on 2026-11-13: this line first listed Prometheus and the generic
+  REST API adapter under `httpx`; both call `requests`.
 - Infrahub SDK 1.23.2: `INFRAHUB_TLS_CA_FILE`, otherwise `ssl.create_default_context()`, which reads
   `SSL_CERT_FILE`. `docs/docs/custom-certificates.mdx:25-26` documents both.
 - botocore 1.43.118: `AWS_CA_BUNDLE`, falling back to `REQUESTS_CA_BUNDLE`.
@@ -204,8 +206,26 @@ beside it. No second file.
   from `os.environ`.
 - No Sync setting passes `verify=False` to the S3 client (FR-006).
 
-Which adapters build their HTTP client with `trust_env` off, if any, is not verified; a task checks
-each bundled adapter against the test CA in the lifecycle tier (SC-004).
+Each bundled adapter was checked on 2026-11-13 (T033): the code that builds its HTTP client, and,
+where the image installs the SDK, a live run in the image against a TLS server with a certificate
+from the test CA. No adapter passes a CA file, an `ssl` context or `trust_env=False`. Each passes
+`verify` only from the declared `verify_ssl` (or `verify` for ACI) setting, which defaults to on.
+A declared `verify_ssl: false` turns certificate checks off, as before.
+
+| Adapter | HTTP client and TLS argument | In the image, with the CA | In the image, without the CA |
+| --- | --- | --- | --- |
+| `infrahub` | Infrahub SDK, `httpx` with `verify=config.tls_context`; the adapter sets only `tls_insecure`, and only when `verify_ssl` is declared; the SDK reads `INFRAHUB_TLS_CA_FILE` | trusted | certificate refused |
+| `netbox` | `pynetbox`, a `requests.Session` whose `verify` is `verify_ssl` (default true) | trusted | certificate refused |
+| `nautobot` | `pynautobot.api(verify=verify_ssl)`, which sets the session's `verify` | trusted | certificate refused |
+| `aci` | `requests.Session`, `verify=<bool>` on each request | trusted | certificate refused |
+| `prometheus` | `requests.get(verify=verify_ssl)` in both the scrape and the API client | trusted | certificate refused |
+| `genericrestapi` | `RestApiClient`, `requests.request(verify=verify_ssl)` | trusted | certificate refused |
+| `peeringmanager` | the generic REST API adapter's `RestApiClient` | trusted | certificate refused |
+| `ipfabricsync` | `IPFClient(verify=verify_ssl)`, true when unset | not checked: the `ipfabric` extra is not in the image | not checked |
+| `slurpitsync` | `slurpit.api(verify=verify_ssl)`, an `httpx.AsyncClient` | not checked: the `slurpit` extra conflicts with the `service` extra and is not in the image | not checked |
+
+How the IP Fabric and Slurp'it SDK packages treat `verify=True`, and whether they read `SSL_CERT_FILE`,
+is not known: neither SDK is installed in the image or in the local development environment.
 
 **Change to existing contract properties**: these tests hold properties that the CA mount narrows.
 Each is narrowed to writable mounts, with the CA mount as the one read-only exception on the three
@@ -235,8 +255,26 @@ start (read-only root filesystem, non-root user).
   external Silo store over TLS from a test CA. `sync-bootstrap`, `sync-api` and `sync-worker` log
   `loaded 1 CA certificate(s)`, and a plan writes its files to the store with certificate
   checks on.
-- Not yet checked live (T033 stays open): Infrahub and a source served over TLS from the test
-  CA, and each bundled adapter's HTTP client honoring the bundle.
+- `test_a_plan_reaches_netbox_infrahub_and_the_store_behind_a_private_ca` replaces that test
+  on 2026-11-13. A TLS front on the store's network answers as `infrahub.external.test`, which it
+  forwards to the Infrahub fixture, and as `netbox.external.test`, which it answers itself as a
+  NetBox stand-in. `.env` names the CA directory, the package declares no `verify_ssl`, and a
+  NetBox to Infrahub plan completes: the front logs the plan's NetBox and Infrahub requests, and
+  the plan writes its files to the TLS store.
+- `test_without_the_ca_bootstrap_refuses_the_tls_store`: the same store with no CA named in
+  `.env`. Bootstrap exits non-zero with `refused: object-store-unavailable` and loads no CA. That
+  family also covers a store that is down, so the test also runs the listing without the CA,
+  which fails with `CERTIFICATE_VERIFY_FAILED`, and with the CA, which succeeds.
+- `test_each_bundled_adapter_client_follows_the_ca_bundle` builds each adapter's client with the
+  adapter's own code in the image, after `install_custom_ca_bundle()`, and sends one request to
+  the TLS front. The table above gives the results.
+- Found while doing so: on Python 3.13, `ssl.create_default_context()` and urllib3 2.8.0 verify
+  in strict X.509 mode, which refuses a certificate that has no authority key identifier.
+  `botocore` builds its own context without that mode. The first test CA had no key identifiers,
+  so the store passed while all seven adapters checked refused the certificate. The test CA now
+  adds them. So a server certificate from a private CA that has no authority key identifier
+  works for the object store but not for those seven adapters on the image's Python 3.13. The
+  documentation does not say this yet.
 
 ## R5. Keeping credential values out of text (FR-016 to FR-018)
 
