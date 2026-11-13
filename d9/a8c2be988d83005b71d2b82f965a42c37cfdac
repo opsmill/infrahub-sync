@@ -1,0 +1,21 @@
+dev/specs/020-plan-problem-reporting/spec.md
+  s_11782fc4bc9a91::t_e8c6508285e6fd 353-358,687-691
+docs/docs/running-a-sync.mdx
+  s_11782fc4bc9a91::t_36d8d1f2d696d3 229-236
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d9a8c2be988d83005b71d2b82f965a42c37cfdac",
+  "prompts": {},
+  "sessions": {
+    "s_11782fc4bc9a91": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d1b81fa-9ee2-4fcb-b7c2-e14783f62cad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
