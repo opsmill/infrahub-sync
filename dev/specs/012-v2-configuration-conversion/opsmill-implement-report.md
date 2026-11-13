@@ -153,3 +153,14 @@ the conversion add a namespace mapping, or document that a v2 NetBox configurati
 before its first V3 plan.
 
 The suite now calls `plan` instead of the deprecated `diff`.
+
+Decided by the product owner on 2026-11-13: the namespace comes from the destination schema, so
+the conversion does not force it. A team edits the converted package by hand. The owner also
+suggested raising the case with the Infrahub team.
+
+No working edit is known yet. Mapping `ip_namespace` as a reference needs an `IpamNamespace`
+mapping on the source side, and no NetBox endpoint yields the one `default` namespace that v2
+used. Mapping each VRF to a namespace, as the V3 example does, puts prefixes in other namespaces
+than v2 did. V3 has no way to set an identity component to a peer that exists only in Infrahub,
+such as the built-in `default` namespace. Until such an edit exists, the gate cannot plan the
+NetBox example.
