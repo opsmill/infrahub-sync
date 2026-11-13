@@ -13,6 +13,7 @@ import time
 import xml.etree.ElementTree as ET  # noqa: S405 -- only local pytest reports are parsed
 from hashlib import sha256
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORTS = ROOT / ".dev" / "nightly-e2e"
@@ -102,16 +103,14 @@ DEV_STACK_COMMAND = (
 )
 
 
-def third_party_images(resolved: dict[str, object]) -> list[str]:
+def third_party_images(resolved: dict[str, Any]) -> list[str]:
     """Return the images of the services a resolved Compose file pulls rather than builds."""
-    services = resolved.get("services")
-    if not isinstance(services, dict):
-        return []
+    services: dict[str, dict[str, Any]] = resolved.get("services") or {}
     return sorted(
         {
             str(definition["image"])
             for definition in services.values()
-            if isinstance(definition, dict) and definition.get("image") and "build" not in definition
+            if definition.get("image") and "build" not in definition
         }
     )
 
