@@ -404,4 +404,67 @@ def test_the_dev_namespace_holds_the_contract_tasks() -> None:
         "deps",
         "api",
         "worker",
+        "frontend",
     }
+
+
+SHELL_TOKEN = "a-token-the-shell-exports"  # noqa: S105 -- a test value
+
+
+@pytest.mark.parametrize(
+    ("bearer_tokens", "shell_token", "expected"),
+    [
+        (json.dumps({"dev": {"token": dev.API_TOKEN}}), "", dev.API_TOKEN),
+        (json.dumps({"dev": {"token": dev.API_TOKEN}}), SHELL_TOKEN, SHELL_TOKEN),
+        (json.dumps({"mine": {"token": CUSTOM_TOKEN}}), "", CUSTOM_TOKEN),
+        (json.dumps({"mine": {"token": CUSTOM_TOKEN}, "dev": {"token": dev.API_TOKEN}}), "", dev.API_TOKEN),
+    ],
+    ids=["dev-token", "shell-wins", "only-principal", "dev-token-among-several"],
+)
+def test_the_frontend_token_comes_from_the_shell_or_the_stack(
+    bearer_tokens: str, shell_token: str, expected: str
+) -> None:
+    assert dev.frontend_token(bearer_tokens, shell_token) == expected
+
+
+@pytest.mark.parametrize(
+    "bearer_tokens",
+    [
+        json.dumps({"one": {"token": CUSTOM_TOKEN}, "two": {"token": f"{CUSTOM_TOKEN}-2"}}),
+        json.dumps({}),
+        "{not json",
+    ],
+    ids=["two-principals", "no-principal", "invalid-json"],
+)
+def test_the_frontend_token_asks_for_the_variable_when_it_cannot_choose(bearer_tokens: str) -> None:
+    with pytest.raises(dev.DevStackError, match=dev.FRONTEND_TOKEN_VARIABLE) as raised:
+        dev.frontend_token(bearer_tokens)
+
+    assert CUSTOM_TOKEN not in str(raised.value)
+
+
+def test_dev_frontend_runs_the_dev_server_against_the_stacks_sync_api(
+    context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(dev.FRONTEND_TOKEN_VARIABLE, raising=False)
+    monkeypatch.setattr(dev, "_frontend_submodule_present", lambda: True)
+
+    _body(dev.dev_frontend)(context)
+
+    assert fake.commands[-2:] == ["pnpm install --frozen-lockfile", "pnpm dev"]
+    assert fake.envs[-1] == {
+        dev.FRONTEND_URL_VARIABLE: "http://127.0.0.1:8001",
+        dev.FRONTEND_TOKEN_VARIABLE: dev.API_TOKEN,
+    }
+    assert not any(command.startswith("git submodule") for command in fake.commands)
+
+
+def test_dev_frontend_fetches_a_missing_submodule_first(
+    context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(dev.FRONTEND_TOKEN_VARIABLE, raising=False)
+    monkeypatch.setattr(dev, "_frontend_submodule_present", lambda: False)
+
+    _body(dev.dev_frontend)(context)
+
+    assert fake.commands[-3] == f"git submodule update --init {dev.FRONTEND_SUBMODULE}"
