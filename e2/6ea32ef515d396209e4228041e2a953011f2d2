@@ -1,0 +1,33 @@
+tests/data/v2_gate/expected_left_out.yml
+  s_efeb25921ce544::t_fb4b9aa95c46d3 23-368
+  s_efeb25921ce544::t_1608ab8d4c5636 18
+  s_efeb25921ce544::t_4ab478ef1d2570 1-17,19-22
+.github/scripts/nightly_e2e.py
+  s_efeb25921ce544::t_b97cb2d9343160 359-361,405,412-420,425,427-428,432-434,436-437,439-445
+  s_efeb25921ce544::t_cd641fec1d82a1 40-43,346-357,371,380-381,406-411,446-448,450-454,458-484
+  s_efeb25921ce544::t_eab7f1e9efdf04 382,399-404,485-486
+tests/data/v2_gate/expected_deletes.yml
+  s_efeb25921ce544::t_fb4b9aa95c46d3 18-21
+  s_efeb25921ce544::t_484fe22371d2d6 4,15-17
+docs/docs/development/guidelines/testing-tiers.md
+  s_efeb25921ce544::t_24591f382822c9 430-437,441-448,450-457
+tests/test_nightly_v2_gate.py
+  s_efeb25921ce544::t_dbe2475c275d09 475,501
+  s_efeb25921ce544::t_e70dee3972fb6a 206-264,396-400
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e26ea32ef515d396209e4228041e2a953011f2d2",
+  "prompts": {},
+  "sessions": {
+    "s_efeb25921ce544": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88805765-f610-4acc-a224-7c6f256e1599",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
