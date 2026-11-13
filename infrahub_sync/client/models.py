@@ -607,7 +607,7 @@ class PlanReportPageResource(_ResourceModel):
     """
 
     run_id: str
-    plan_checksum: str
+    plan_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     entries: tuple[dict[str, Any], ...]
     offset: int = Field(ge=0)
     limit: int = Field(ge=MIN_LIMIT, le=MAX_REPORT_LIMIT)

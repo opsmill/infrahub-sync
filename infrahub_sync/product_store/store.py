@@ -4128,11 +4128,11 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         )
 
     def live_worker_environments(self, *, observed_after: datetime) -> tuple[WorkerEnvironment, ...]:
-        """Return the publications of the workers that published after `observed_after`, by worker."""
+        """Return the publications of the workers that published at or after `observed_after`, by worker."""
         return tuple(
             environment
             for environment in self._records.worker_environments()
-            if environment.observed_at > observed_after
+            if environment.observed_at >= observed_after
         )
 
     def lookup_artifact(self, run_id: str, artifact_id: str) -> LookupResult[bytes]:

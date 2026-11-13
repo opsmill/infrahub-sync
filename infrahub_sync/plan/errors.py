@@ -15,6 +15,7 @@ outside `PlanArtifactError` so no caller reads it as an error or asks it for a r
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from infrahub_sync.client.models import SCHEMA_CHANGED_NEXT_ACTION
@@ -122,6 +123,10 @@ class PlanFormatApplyUnsupportedError(PlanArtifactError):
     )
 
 
+# The product run ID form (`infrahub_sync.service.flow`), for a run ID copied into guidance.
+_GUIDANCE_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+
+
 class LeftOutConfirmationRequiredError(PlanArtifactError):
     """The plan leaves out records, and the apply did not confirm that they were reviewed.
 
@@ -141,7 +146,11 @@ class LeftOutConfirmationRequiredError(PlanArtifactError):
         super().__init__(
             f"The plan of run {run_id!r} leaves out {left_out} records, and the apply did not confirm "
             "that they were reviewed. Nothing was written to the destination.",
-            next_action=type(self).next_action.replace("<run_id>", run_id),
+            # A run ID outside the product run ID form (a newline, a control sequence) is not
+            # copied into the guidance, which is printed as it is.
+            next_action=type(self).next_action.replace(
+                "<run_id>", run_id if _GUIDANCE_RUN_ID.fullmatch(run_id) else "<run_id>"
+            ),
         )
 
 

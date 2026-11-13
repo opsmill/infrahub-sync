@@ -8,6 +8,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, cast
 
 import httpx
+import pydantic
 import pytest
 from typing_extensions import override
 
@@ -1163,6 +1164,11 @@ def _report_page(entries: list[dict[str, object]], *, next_offset: int | None) -
             "kept",
             "offset=0&limit=2&kind=IpamIPAddress",
         ),
+        (
+            lambda client: client.get_plan_left_out("run-1", limit=2, expected_checksum="a" * 64),
+            "left-out",
+            f"offset=0&limit=2&expected_checksum={'a' * 64}",
+        ),
     ],
 )
 def test_the_plan_report_reads_send_paging_and_filters_and_parse_the_page(
@@ -1193,4 +1199,29 @@ def test_the_plan_report_reads_refuse_paging_outside_the_contract(offset: int, l
 
     with pytest.raises(ClientInputError):
         client.get_plan_problems("run-1", offset=offset, limit=limit)
+    assert requests == []
+
+
+@pytest.mark.parametrize("checksum", ["A" * 64, "a" * 63, "g" * 64, 7])
+def test_the_plan_report_reads_refuse_a_malformed_expected_checksum(checksum: object) -> None:
+    requests: list[httpx.Request] = []
+    client = _list_client({}, requests)
+
+    with pytest.raises(ClientInputError):
+        client.get_plan_kept("run-1", expected_checksum=checksum)  # ty: ignore[invalid-argument-type]
+    assert requests == []
+
+
+def test_a_report_page_with_a_malformed_checksum_is_refused() -> None:
+    with pytest.raises(pydantic.ValidationError):
+        PlanReportPageResource.model_validate(_report_page([], next_offset=None) | {"plan_checksum": "not-a-checksum"})
+
+
+@pytest.mark.parametrize("branch", [" main", "main ", "\tmain"])
+def test_validate_config_refuses_a_branch_with_surrounding_whitespace(branch: str) -> None:
+    requests: list[httpx.Request] = []
+    client = _list_client({}, requests)
+
+    with pytest.raises(ClientInputError):
+        client.validate_config("cfg", 1, branch=branch)
     assert requests == []

@@ -393,6 +393,12 @@ class WorkerEnvironment(BaseModel):
     credential_names: tuple[str, ...]
     observed_at: datetime
 
+    @field_validator("observed_at")
+    @classmethod
+    def _aware(cls, value: datetime) -> datetime:
+        """Read a time without a zone as UTC, so it compares with the liveness cutoff, which is in UTC."""
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
     @field_validator("credential_names")
     @classmethod
     def _names_only(cls, value: tuple[str, ...]) -> tuple[str, ...]:
