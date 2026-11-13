@@ -355,7 +355,7 @@ _WRITE_OPERATIONS = ("apply", "sync")
 # `resume` of an interrupted one (spec 022). A resume holds a `resume_admissions` row, not
 # the run's `write_admissions` row, so it is kept out of `_WRITE_OPERATIONS`. Public, so the
 # Sync API's run progress view tests the same set (`service/resume_view.py`).
-WRITE_PURPOSES: tuple[str, ...] = ("apply", "sync")
+WRITE_PURPOSES: tuple[str, ...] = ("apply", "sync", "resume")
 # The artifact ID of a run's published plan review document. The plan stage and a `sync`
 # publish it before any write, so a run without it wrote nothing. Public, so the Sync API
 # reads the same plan the store's resumable-run rule tests (spec 022, research R14).
