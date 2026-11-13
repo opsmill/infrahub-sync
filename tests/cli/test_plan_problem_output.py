@@ -219,6 +219,7 @@ def test_runs_plan_prints_the_left_out_problem_and_kept_counts(client: MagicMock
     lines = result.output.splitlines()
     assert "left_out: 6 (with a problem: 1, depending on one: 5)" in lines
     assert "problems: 1" in lines
+    assert "problems_by_type: dropdown_value_not_in_choices=1" in lines
     assert "kept_without_relationship: 0" in lines
     assert lines.index("left_out: 6 (with a problem: 1, depending on one: 5)") < lines.index("problems: 1")
     assert not _lines_starting(result.output, "deletes not computed for")

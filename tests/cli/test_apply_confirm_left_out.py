@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from infrahub_sync.client import APIError, ApplyRunRequest, PlanSummaryResource, ResultsResource, SyncClient
+from infrahub_sync.client.errors import TransportError
 from tests.cli.test_client_commands import (
     CHECKSUM,
     _invoke,
@@ -111,6 +112,19 @@ def test_a_stopped_sync_prints_the_stop_and_its_hint_from_the_stage_result(clien
     assert "sync stopped: left_out_review_required (12 records left out)" in result.output
     assert f"hint: {_NEXT_ACTION}" in result.output
     client.get_results.assert_called_with(_RUN_ID)
+
+
+def test_a_stopped_sync_exits_1_when_its_stage_result_cannot_be_read(client: MagicMock) -> None:  # noqa: F811
+    """The stop's details are missing, and the exit status still says the sync did not write."""
+    stopped = _run(
+        operation="sync", phase="planned", outcome="left-out-review-required", terminal=("completed", "succeeded")
+    )
+    client.wait_for_run.side_effect = lambda _accepted, **_kwargs: stopped
+    client.get_results.side_effect = TransportError("get_results")
+
+    result = _invoke(client, "sync", "--config-id", "edge-sync", "--version", "1", "--reason", "import")
+
+    assert result.exit_code == 1, result.output
 
 
 def test_the_client_sends_the_field_only_when_it_is_true() -> None:

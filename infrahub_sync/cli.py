@@ -624,7 +624,8 @@ def configs_validate(
         "--branch",
         help=(
             "Also check the mapping, the import account's permissions and the workers' credential "
-            "variables against this Infrahub branch. Exits 1 when a finding is an error."
+            "variables against this Infrahub branch. Exits 1 when a finding on the returned page is "
+            "an error; read every page, or raise --limit, to check them all."
         ),
     ),
 ) -> None:
@@ -881,6 +882,8 @@ def _echo_report_summary(plan: PlanResource) -> None:
         f"depending on one: {summary.left_out_dependent})"
     )
     typer.echo(f"problems: {summary.problems}")
+    if summary.problems_by_type:
+        _echo_counts("problems_by_type", summary.problems_by_type)
     typer.echo(f"kept_without_relationship: {summary.kept}")
     for kind, count in summary.deletes_withheld_by_kind.items():
         typer.echo(_display(f"deletes not computed for {kind}: {count} records without identity"))
@@ -1254,9 +1257,9 @@ def sync_cmd(
             _echo_completed_destination_branch(client, completed.run.run_id)
             # A `sync` whose plan leaves out records ends completed, without writing, and
             # waits for the team to review the plan and apply it (spec 019 FR-012).
-            if completed.run.outcome == "left-out-review-required" and _echo_stopped_stage(
-                client, completed.run.run_id, stage="sync"
-            ):
+            # The exit status follows the outcome; the stop's details are printed when they can be read.
+            if completed.run.outcome == "left-out-review-required":
+                _echo_stopped_stage(client, completed.run.run_id, stage="sync")
                 raise typer.Exit(1)
 
 
