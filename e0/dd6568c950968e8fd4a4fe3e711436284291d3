@@ -1,0 +1,225 @@
+infrahub_sync/__init__.py
+  s_3defe6e8bcd0ab::t_647cbe9e7a5af8 1,114,340,351,473,703
+infrahub_sync/adapters/infrahub.py
+  s_3defe6e8bcd0ab::t_e843121e7805c4 1342
+infrahub_sync/adapters/references.py
+  s_3defe6e8bcd0ab::t_71a1ec4fa5eec9 1
+infrahub_sync/cli.py
+  s_3defe6e8bcd0ab::t_f530626e857049 469,628,640,878,975,990,1014,1016,1060,1073,1259,1315,1324,1556
+infrahub_sync/client/client.py
+  s_3defe6e8bcd0ab::t_b9ddf5a7a351fd 1,314
+infrahub_sync/client/models.py
+  s_3defe6e8bcd0ab::t_c1e8721a09580b 60,143,587,603,721,755-756,920,989
+infrahub_sync/configuration/capabilities.py
+  s_3defe6e8bcd0ab::t_85d29c34540127 75,257,319,334,438,564
+infrahub_sync/configuration/infrahub_lineage.py
+  s_3defe6e8bcd0ab::t_9f49fc59745015 149
+infrahub_sync/configuration/schema_validation.py
+  s_3defe6e8bcd0ab::t_c88228433c285e 23,25,73,75,90,203,242,274,335
+infrahub_sync/configuration/worker_credentials.py
+  s_3defe6e8bcd0ab::t_c535ffa14f9c84 1
+infrahub_sync/execution.py
+  s_3defe6e8bcd0ab::t_8c9fa280a7041b 1169
+infrahub_sync/infrahub_errors.py
+  s_3defe6e8bcd0ab::t_3fde1c8b0bec7f 218
+infrahub_sync/load_report.py
+  s_3defe6e8bcd0ab::t_3932adea025d8d 1
+infrahub_sync/plan/derive.py
+  s_3defe6e8bcd0ab::t_2824350f9c5e26 822,924
+infrahub_sync/plan/errors.py
+  s_3defe6e8bcd0ab::t_f3f5f172d8a095 133,305,323,436,701
+infrahub_sync/plan/keying.py
+  s_3defe6e8bcd0ab::t_92c31e2aba9f8b 73,654,725
+infrahub_sync/plan/last_changes.py
+  s_3defe6e8bcd0ab::t_784cd54ab3c233 105
+infrahub_sync/plan/problems.py
+  s_3defe6e8bcd0ab::t_f8719dd3747084 1
+infrahub_sync/plan/reader.py
+  s_3defe6e8bcd0ab::t_9d4c33016e826c 23,111,160,236,743
+infrahub_sync/plan/review.py
+  s_3defe6e8bcd0ab::t_47a0ce664be416 82,127
+infrahub_sync/plan/verify.py
+  s_3defe6e8bcd0ab::t_3f3d0851cab974 245
+infrahub_sync/plan/writer.py
+  s_3defe6e8bcd0ab::t_540e874876c199 4,163,275
+infrahub_sync/potenda/__init__.py
+  s_3defe6e8bcd0ab::t_b90d2c3b747135 87,228,246,953,1070,1141
+infrahub_sync/product_store/configs.py
+  s_3defe6e8bcd0ab::t_fb4856a8612b69 892,957
+infrahub_sync/product_store/models.py
+  s_3defe6e8bcd0ab::t_480b44afb2d1e9 384,427
+infrahub_sync/product_store/store.py
+  s_3defe6e8bcd0ab::t_f2728c580ddad8 1626,1713,4117
+infrahub_sync/runtime_schema/domain.py
+  s_3defe6e8bcd0ab::t_477e80fa7e34d8 44
+infrahub_sync/runtime_schema/projection.py
+  s_3defe6e8bcd0ab::t_a39557271f0fc1 51
+infrahub_sync/runtime_schema/worker.py
+  s_3defe6e8bcd0ab::t_66cd4215ecd875 84,108
+infrahub_sync/service/app.py
+  s_3defe6e8bcd0ab::t_7405b5a87a40c3 139,157,179,198
+infrahub_sync/service/checkpoints.py
+  s_3defe6e8bcd0ab::t_7357ee9570ea27 73
+infrahub_sync/service/failure_cause.py
+  s_3defe6e8bcd0ab::t_1e4291c4573764 4,14,65,149,418
+infrahub_sync/service/flow.py
+  s_3defe6e8bcd0ab::t_3bec42f6e0450e 110,294,693,942,986,1322
+infrahub_sync/service/run_artifact.py
+  s_3defe6e8bcd0ab::t_8740d0e22a81ac 90
+infrahub_sync/service/service.py
+  s_3defe6e8bcd0ab::t_e4f7d225d47ded 97,474,1235
+infrahub_sync/service/worker.py
+  s_3defe6e8bcd0ab::t_4da2c6c26bd2cc 394
+infrahub_sync/warm_read.py
+  s_3defe6e8bcd0ab::t_ebff221fd073ac 1
+tests/adapters/test_aci_reference_conversion.py
+  s_3defe6e8bcd0ab::t_a63a41a55d0caf 86,88
+tests/adapters/test_infrahub_peer_identifier.py
+  s_3defe6e8bcd0ab::t_dfa6b0263d5b5a 7
+tests/adapters/test_infrahub_read_loop.py
+  s_3defe6e8bcd0ab::t_cf82ec7bd46e38 1
+tests/adapters/test_netbox_filtered_references.py
+  s_3defe6e8bcd0ab::t_c7869e367e4adf 3
+tests/adapters/test_netbox_namespace_identity.py
+  s_3defe6e8bcd0ab::t_d03dc4b2721844 243
+tests/adapters/test_peer_not_found_in_source.py
+  s_3defe6e8bcd0ab::t_4ab6b38ea36226 1,13,193
+tests/adapters/test_reference_conversion.py
+  s_3defe6e8bcd0ab::t_2132d36236a5ed 5,10
+tests/adapters/test_same_type_sync_filter_role.py
+  s_3defe6e8bcd0ab::t_923152d9ef111b 10
+tests/cache/test_apply_plan.py
+  s_3defe6e8bcd0ab::t_e366f97b412370 491,586
+tests/cli/test_apply_confirm_left_out.py
+  s_3defe6e8bcd0ab::t_53f5cca9c9474e 1
+tests/cli/test_client_commands.py
+  s_3defe6e8bcd0ab::t_241773f1771058 322
+tests/cli/test_failure_output.py
+  s_3defe6e8bcd0ab::t_be280a50a4a156 1
+tests/cli/test_plan_problem_output.py
+  s_3defe6e8bcd0ab::t_e8db30b9e48a01 1,13,21
+tests/cli/test_stopped_apply_output.py
+  s_3defe6e8bcd0ab::t_14b2be6d0535e8 1
+tests/client/test_client.py
+  s_3defe6e8bcd0ab::t_1a11791a63a920 1177
+tests/configuration/test_schema_validation.py
+  s_3defe6e8bcd0ab::t_14256cfc50883d 532,534,613,1034
+tests/configuration/test_validate_permissions.py
+  s_3defe6e8bcd0ab::t_0a017422a55e5d 1,6
+tests/integration/test_destination_schema_live_read.py
+  s_3defe6e8bcd0ab::t_b530269069f29d 82
+tests/integration/test_infrahub_keyed_write_integration.py
+  s_3defe6e8bcd0ab::t_46888b2d336cb6 521
+tests/plan/artifact_fixtures.py
+  s_3defe6e8bcd0ab::t_aff65d3b6771f3 144
+tests/plan/conftest.py
+  s_3defe6e8bcd0ab::t_ab5ed8b10db7ac 1,7,40
+tests/plan/problem_plan.py
+  s_3defe6e8bcd0ab::t_be7457b9e52c03 1,9
+tests/plan/test_apply_gate.py
+  s_3defe6e8bcd0ab::t_a3ef4a1611d783 3
+tests/plan/test_format_4.py
+  s_3defe6e8bcd0ab::t_a6f29b61bf0aaf 1,14
+tests/plan/test_keyed_create_refusal.py
+  s_3defe6e8bcd0ab::t_52cb8814382ada 249
+tests/plan/test_last_changes.py
+  s_3defe6e8bcd0ab::t_a7616531cb9be2 215
+tests/plan/test_left_out_walk.py
+  s_3defe6e8bcd0ab::t_b906c62aa26f20 1,13
+tests/plan/test_lineage_manifest.py
+  s_3defe6e8bcd0ab::t_1bd8fd26b6dff5 103
+tests/plan/test_models.py
+  s_3defe6e8bcd0ab::t_cd3450ac2b9afe 708,819
+tests/plan/test_netbox_device_status.py
+  s_3defe6e8bcd0ab::t_4f7ce39e3143fa 1
+tests/plan/test_plan_format_3.py
+  s_3defe6e8bcd0ab::t_e25079bff640d9 93
+tests/plan/test_plan_writes_nothing.py
+  s_3defe6e8bcd0ab::t_d56122c19ba953 1,7
+tests/plan/test_problem_baseline.py
+  s_3defe6e8bcd0ab::t_e519e85bce736a 1,3,65,90,115
+tests/plan/test_problem_pass.py
+  s_3defe6e8bcd0ab::t_3973775746da5c 1
+tests/plan/test_problems.py
+  s_3defe6e8bcd0ab::t_acde0b07d86dc2 1,9,12
+tests/plan/test_replan_after_stopped_apply.py
+  s_3defe6e8bcd0ab::t_21dcfe6d566a50 1
+tests/plan/test_report_credentials_absent.py
+  s_3defe6e8bcd0ab::t_c03c3e940180d1 1
+tests/plan/test_report_models.py
+  s_3defe6e8bcd0ab::t_c33296a4664848 1
+tests/plan/test_source_identity_collision.py
+  s_3defe6e8bcd0ab::t_9f63ad9d8768df 192,194
+tests/plan/test_stores_unchanged.py
+  s_3defe6e8bcd0ab::t_4948208e2f3fe0 1,8
+tests/plan/test_valid_plan_unchanged.py
+  s_3defe6e8bcd0ab::t_915abf2e3466a6 1,3,8,90
+tests/plan/test_warm_read_problems.py
+  s_3defe6e8bcd0ab::t_8bbf43d6e95121 1
+tests/plan/test_writer.py
+  s_3defe6e8bcd0ab::t_9e94d626c0a5de 66
+tests/product_store/test_stopped_sync_admission.py
+  s_3defe6e8bcd0ab::t_0377490b7b7d1a 3
+tests/product_store/test_validate_destination_schema.py
+  s_3defe6e8bcd0ab::t_7ef2f148239757 81
+tests/product_store/test_worker_environments.py
+  s_3defe6e8bcd0ab::t_5cc8d23fb865db 1
+tests/runtime_schema/test_accessor_snapshot.py
+  s_3defe6e8bcd0ab::t_e3303e6b89d4cc 73
+tests/runtime_schema/test_dropdown_choices.py
+  s_3defe6e8bcd0ab::t_e69d6ed030abb2 1,107
+tests/service/failure_cases.py
+  s_3defe6e8bcd0ab::t_2d38864fccf438 1,119
+tests/service/test_apply_left_out_confirmation.py
+  s_3defe6e8bcd0ab::t_cd31623ec7659d 1
+tests/service/test_config_routes.py
+  s_3defe6e8bcd0ab::t_ec3a752ac9a535 1684
+tests/service/test_failure_cause.py
+  s_3defe6e8bcd0ab::t_091e709e1f90c6 5,119,121
+tests/service/test_failure_cause_credentials.py
+  s_3defe6e8bcd0ab::t_c34e280cea34f9 1
+tests/service/test_failure_record_compat.py
+  s_3defe6e8bcd0ab::t_1d5ac6483eda33 1,6-7,98,118
+tests/service/test_flow_and_prefect.py
+  s_3defe6e8bcd0ab::t_c4657304854dcb 550,608
+tests/service/test_plan_checkpoint.py
+  s_3defe6e8bcd0ab::t_9eca33c30d1692 200
+tests/service/test_plan_report_routes.py
+  s_3defe6e8bcd0ab::t_bfa663af1b0791 1,14
+tests/service/test_run_artifact.py
+  s_3defe6e8bcd0ab::t_7cd112ee759247 154
+tests/service/test_sync_left_out_stop.py
+  s_3defe6e8bcd0ab::t_f6623139e30c4f 1
+tests/service/test_worker_environment.py
+  s_3defe6e8bcd0ab::t_114d03f24e354e 1
+tests/test_custom_adapter_example.py
+  s_3defe6e8bcd0ab::t_4f55160a4c5c79 4
+tests/test_execution_surface.py
+  s_3defe6e8bcd0ab::t_560f4e949d423c 1523,1903
+tests/test_load_record.py
+  s_3defe6e8bcd0ab::t_e575944b7374b8 1,22
+tests/test_potenda_plan_artifact.py
+  s_3defe6e8bcd0ab::t_f50701a3877d78 85,88
+tests/test_potenda_read_progress.py
+  s_3defe6e8bcd0ab::t_ac843dfc33a2f8 308
+tests/test_schema_mapping_transforms.py
+  s_3defe6e8bcd0ab::t_be9cbff777c261 268
+tests/test_writable_convergence_identity.py
+  s_3defe6e8bcd0ab::t_2aff29c75c8d76 186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e0dd6568c950968e8fd4a4fe3e711436284291d3",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
