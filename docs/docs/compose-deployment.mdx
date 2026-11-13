@@ -356,7 +356,7 @@ With `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0`, Compose creates no `object-store-in
   names it.
 
 Use `https` for your store. Request signing never sends the secret key, but over `http` object
-content crosses the network unencrypted. An endpoint that carries a user name or a password is
+content crosses the network in plain text. An endpoint that carries a user name or a password is
 refused with `refused: object-store-endpoint-invalid`. An unknown addressing style or a region
 that the S3 client refuses stops it with `refused: object-store-setting-invalid`.
 
@@ -394,7 +394,7 @@ made before the move.
 ## Trust a private certificate authority
 
 When a source, Infrahub or your own object store presents a certificate that a private
-certificate authority signed, give the Sync services that CA's certificate. Put one or more
+certificate authority signed, give the Sync services the certificate of that authority. Put one or more
 public CA certificate files in PEM text format, named `*.pem` or `*.crt`, in a directory, name it in `.env`, and start
 the deployment:
 
