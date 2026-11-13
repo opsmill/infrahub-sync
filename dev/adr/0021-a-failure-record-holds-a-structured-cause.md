@@ -14,7 +14,11 @@ the remote boundary only, by the service worker.
 ## Context
 
 When a run fails, the service worker writes a `results.<stage>_failure` record, which
-`GET /runs/{run_id}`, `GET /runs/{run_id}/results`, the CLI and `runs show` return. Before this
+`GET /runs/{run_id}`, `GET /runs/{run_id}/results`, the CLI and `runs show` return. Writing it
+is best effort (`_record_failure` in `infrahub_sync/service/flow.py`): when the store cannot
+record it, or the worker no longer holds the run, the run has no failure record, the worker
+reports `failed` and points to `runs show`, and the store keeps the run nonterminal until
+reconciliation decides its outcome. Before this
 decision the comment in `_failure_evidence` said the record holds the class name of the error
 and of its immediate cause, and never a message, because a destination's text can hold
 anything. The code no longer matched the comment: spec 017 already recorded fixed-template
