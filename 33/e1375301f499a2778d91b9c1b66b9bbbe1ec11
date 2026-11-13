@@ -1,0 +1,21 @@
+infrahub_sync/service/serve.py
+  s_3defe6e8bcd0ab::t_c6eaf4c4cc571f 68-76,106,109
+tests/service/test_trust_store_entry_points.py
+  s_3defe6e8bcd0ab::t_961ddf9cb81025 19-25,81-93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "33e1375301f499a2778d91b9c1b66b9bbbe1ec11",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
