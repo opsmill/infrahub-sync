@@ -161,6 +161,7 @@ def install_custom_ca_bundle(directory: Path | None = None) -> Path | None:
     except OSError as error:
         msg = f"cannot read the public root certificates ({type(error).__name__})"
         raise TrustStoreError(msg) from None
+    bundle: Path | None = None
     try:
         # One file per process: two processes on one host never rewrite each other's bundle.
         # mkstemp creates it with mode 0600.
@@ -173,6 +174,9 @@ def install_custom_ca_bundle(directory: Path | None = None) -> Path | None:
         # Removed when this process ends, so restarts do not leave one file each.
         atexit.register(bundle.unlink, missing_ok=True)
     except OSError as error:
+        # A bundle that failed while written is removed, so failed starts leave no file each.
+        if bundle is not None:
+            bundle.unlink(missing_ok=True)
         msg = f"cannot write the CA bundle in {tempfile.gettempdir()} ({type(error).__name__})"
         raise TrustStoreError(msg) from None
     for name in TRUST_VARIABLES:

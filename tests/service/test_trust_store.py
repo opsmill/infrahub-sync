@@ -299,6 +299,24 @@ def test_a_bundle_that_cannot_be_written_is_refused_naming_the_directory(
     assert not any(name in os.environ for name in TRUST_VARIABLES)
 
 
+def test_a_bundle_that_fails_while_written_is_removed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A write that fails after the file was created leaves no partial bundle behind."""
+    (tmp_path / "ca").mkdir()
+    (tmp_path / "ca" / "ca.pem").write_bytes(_ca_certificate("Partial Bundle CA"))
+    scratch = tmp_path / "scratch"  # where the autouse fixture points `tempfile`
+
+    def failing_fdopen(descriptor: int, *_args: object, **_kwargs: object) -> object:
+        os.close(descriptor)
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(trust_store.os, "fdopen", failing_fdopen)
+
+    with pytest.raises(TrustStoreError, match=r"cannot write the CA bundle"):
+        install_custom_ca_bundle(tmp_path / "ca")
+
+    assert list(scratch.iterdir()) == []
+
+
 def test_unreadable_public_roots_are_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "ca").mkdir()
     (tmp_path / "ca" / "ca.pem").write_bytes(_ca_certificate("Missing Roots CA"))
