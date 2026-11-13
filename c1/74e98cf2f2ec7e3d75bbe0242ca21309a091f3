@@ -1,0 +1,23 @@
+tests/service/test_trust_store.py
+  s_3defe6e8bcd0ab::t_dd82da46ccae04 157-173
+infrahub_sync/service/trust_store.py
+  s_3defe6e8bcd0ab::t_dd82da46ccae04 60-64,94-100
+tests/compose/test_external_store.py
+  s_3defe6e8bcd0ab::t_dd82da46ccae04 99-102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c174e98cf2f2ec7e3d75bbe0242ca21309a091f3",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
