@@ -50,14 +50,12 @@ class TrustStoreError(RuntimeError):
     """The CA directory holds a file this process refuses to trust; the message names the file only."""
 
 
-def _certificate_files(directory: Path) -> list[Path]:
-    return sorted(
-        path for path in directory.iterdir() if path.is_file() and path.suffix.lower() in CERTIFICATE_SUFFIXES
-    )
+def _regular_files(directory: Path) -> list[Path]:
+    return sorted(path for path in directory.iterdir() if path.is_file())
 
 
-def _checked(path: Path) -> bytes:
-    """Return one file's content after refusing a private key and an unreadable certificate."""
+def _read_without_private_key(path: Path) -> bytes:
+    """Return one file's content after refusing an unreadable file and a private key."""
     try:
         content = path.read_bytes()
     except OSError as error:
@@ -66,6 +64,11 @@ def _checked(path: Path) -> bytes:
     if _PRIVATE_KEY_MARKER in content:
         msg = f"{path.name} holds a private key; the CA directory takes public certificates only"
         raise TrustStoreError(msg)
+    return content
+
+
+def _checked(path: Path, content: bytes) -> bytes:
+    """Return one certificate file's content after refusing an unreadable certificate."""
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     try:
         # Read as a file, the way every client reads the bundle: OpenSSL takes PEM blocks and
@@ -99,16 +102,20 @@ def install_custom_ca_bundle(directory: Path | None = None) -> Path | None:
         )
         return None
     try:
-        files = _certificate_files(directory)
+        regular = _regular_files(directory)
     except OSError as error:
         msg = (
             f"cannot read the CA directory {directory} ({type(error).__name__}); user ID 10001 must be able to list it"
         )
         raise TrustStoreError(msg) from None
+    # Every file is searched for a private key, whatever its name: a key next to the
+    # certificates reaches the services through the mount even when it is never trusted.
+    read = {path: _read_without_private_key(path) for path in regular}
+    files = [path for path in regular if path.suffix.lower() in CERTIFICATE_SUFFIXES]
     if not files:
         logger.info("no CA certificate file in %s", directory)
         return None
-    contents = [_checked(path) for path in files]
+    contents = [_checked(path, read[path]) for path in files]
     count = sum(content.count(_CERTIFICATE_MARKER) for content in contents)
     try:
         roots = Path(certifi.where()).read_bytes()

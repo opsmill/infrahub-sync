@@ -138,6 +138,30 @@ def test_a_file_holding_a_private_key_is_refused_by_name_only(tmp_path: Path, ca
     assert not any(name in os.environ for name in TRUST_VARIABLES)
 
 
+@pytest.mark.parametrize("name", ["server.key", "notes.txt", "ca.pem.bak"])
+def test_a_private_key_under_any_file_name_is_refused(tmp_path: Path, name: str) -> None:
+    """A key is refused even under a name the bundle never reads, because the mount still carries it."""
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    (directory / "ca.pem").write_bytes(_ca_certificate("Spec 021 Test CA"))
+    (directory / name).write_bytes(_private_key())
+
+    with pytest.raises(TrustStoreError) as refusal:
+        install_custom_ca_bundle(directory)
+
+    assert str(refusal.value) == f"{name} holds a private key; the CA directory takes public certificates only"
+    assert not any(variable in os.environ for variable in TRUST_VARIABLES)
+
+
+def test_a_private_key_alone_is_refused(tmp_path: Path) -> None:
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    (directory / "server.key").write_bytes(_private_key())
+
+    with pytest.raises(TrustStoreError):
+        install_custom_ca_bundle(directory)
+
+
 def test_a_file_that_is_not_a_certificate_is_refused_with_the_ssl_error_class(tmp_path: Path) -> None:
     directory = tmp_path / "ca"
     directory.mkdir()
@@ -198,7 +222,7 @@ def test_an_unreadable_directory_is_refused_naming_it(tmp_path: Path, monkeypatc
     def refuse(_directory: Path) -> list[Path]:
         raise PermissionError(13, "Permission denied")
 
-    monkeypatch.setattr(trust_store, "_certificate_files", refuse)
+    monkeypatch.setattr(trust_store, "_regular_files", refuse)
 
     with pytest.raises(TrustStoreError) as refusal:
         install_custom_ca_bundle(directory)
