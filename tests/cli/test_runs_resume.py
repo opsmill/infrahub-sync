@@ -166,6 +166,21 @@ def test_a_checksum_conflict_shows_the_given_and_the_saved_checksum(client: Magi
     assert f"hint: the saved plan's checksum is {CHECKSUM}; you gave {given}" in result.output
 
 
+def test_a_checksum_conflict_whose_plan_cannot_be_read_keeps_the_refusal(client: MagicMock) -> None:  # noqa: F811
+    client.resume.side_effect = APIError(409, "checksum-conflict", run_id=_RUN_ID)
+    client.get_plan.side_effect = APIError(410, "artifact-expired", run_id=_RUN_ID)
+    given = "b" * 64
+
+    result = _invoke(client, "runs", "resume", _RUN_ID, "--expected-checksum", given)
+
+    assert result.exit_code == 1, result.output
+    assert "code: checksum-conflict" in result.output
+    assert "artifact-expired" not in result.output
+    assert f"hint: you gave {given}; `infrahub-sync runs plan {_RUN_ID}` prints the saved plan's checksum" in (
+        result.output
+    )
+
+
 def test_a_resume_that_ends_failed_exits_like_a_failed_apply(client: MagicMock) -> None:  # noqa: F811
     client.resume.return_value = _interrupted(verify_required=False)
     client.apply.return_value = _interrupted(verify_required=False)

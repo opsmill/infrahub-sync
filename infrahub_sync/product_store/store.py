@@ -337,8 +337,9 @@ _ARBITRATED_OPERATIONS = ("plan", "verify", "apply", "sync")
 _WRITE_OPERATIONS = ("apply", "sync")
 # Every execution purpose that reaches a destination: the two admitted writes, and a
 # `resume` of an interrupted one (spec 022). A resume holds a `resume_admissions` row, not
-# the run's `write_admissions` row, so it is kept out of `_WRITE_OPERATIONS`.
-_WRITE_PURPOSES = ("apply", "sync", "resume")
+# the run's `write_admissions` row, so it is kept out of `_WRITE_OPERATIONS`. Public, so the
+# Sync API's run progress view tests the same set (`service/resume_view.py`).
+WRITE_PURPOSES: tuple[str, ...] = ("apply", "sync", "resume")
 _RUN_NOT_RESUMABLE = "run-not-resumable"
 _VERIFY_REQUIRED = "verify-required"
 _RESUME_IN_PROGRESS_MESSAGE = "another resume of this Sync run is in progress"
@@ -1985,7 +1986,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 claimed = row[0] is not None
                 # A claimed apply or sync may already have reached the destination, so
                 # acknowledgement cannot promise a clean stop however early it arrives.
-                claimed_write = claimed and str(row[4]) in _WRITE_PURPOSES
+                claimed_write = claimed and str(row[4]) in WRITE_PURPOSES
                 if claimed_write or acknowledged_at >= datetime.fromisoformat(str(row[1])):
                     state, outcome, phase = (
                         ("interrupted", "ambiguous", "interrupted")
@@ -4870,7 +4871,7 @@ def run_apply_progress(run: ProductRun) -> ApplyProgress | None:
     markers = [
         link.apply_progress
         for link in run.prefect_executions
-        if link.purpose in _WRITE_PURPOSES and link.apply_progress is not None
+        if link.purpose in WRITE_PURPOSES and link.apply_progress is not None
     ]
     if not markers:
         return None

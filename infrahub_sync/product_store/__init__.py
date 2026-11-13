@@ -28,6 +28,7 @@ from infrahub_sync.product_store.models import (
     WorkerEnvironment,
 )
 from infrahub_sync.product_store.store import (
+    WRITE_PURPOSES,
     ArtifactUnavailableError,
     ConfigurationNotFoundError,
     ConfigurationVersionAllocationError,
@@ -47,6 +48,7 @@ from infrahub_sync.product_store.store import (
 )
 
 __all__ = (
+    "WRITE_PURPOSES",
     "ApplyProgress",
     "ArtifactReference",
     "ArtifactUnavailableError",

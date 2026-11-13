@@ -24,6 +24,7 @@ from infrahub_sync.configuration.validation import credential_namespace_finding
 from infrahub_sync.execution import collect_secret_values, redact, sanitize_exception_chain
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
+    WRITE_PURPOSES,
     AuditEvent,
     DuplicatePrefectExecutionError,
     EventFilters,
@@ -82,7 +83,7 @@ from .orchestration import (
 from .paging import FilterValue, decode_cursor, timestamp_cursor, timestamp_key, validate_limit
 from .prefect_ui import flow_run_url
 from .read_progress import stage_reads
-from .resume_view import WRITE_PURPOSES, apply_progress_view, run_resumes
+from .resume_view import apply_progress_view, run_resumes
 from .run_log import page as log_page
 from .run_log import sync_lines
 from .settings import approval_required

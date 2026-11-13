@@ -1143,6 +1143,19 @@ def _left_out_refusal_count(client: SyncClient, run_id: str, error: APIError) ->
         return None
 
 
+def _checksum_conflict_hint(client: SyncClient, run_id: str, given: str) -> str:
+    """The hint of a resume refused for its checksum: the saved plan's checksum and the one given.
+
+    The saved checksum is read with one more request. When that request fails, the hint names
+    the command that prints it, so the refusal already printed stays the error this command reports.
+    """
+    try:
+        saved = client.get_plan(run_id).checksum
+    except SyncClientError:
+        return f"you gave {given}; `infrahub-sync runs plan {run_id}` prints the saved plan's checksum"
+    return f"the saved plan's checksum is {saved}; you gave {given}"
+
+
 def _echo_failed_checks(recorded: object, *, err: bool = True) -> None:
     """Print one `failed_check:` line per pre-write check a failed `verify` or `apply` recorded (SC-004).
 
@@ -1640,7 +1653,7 @@ def runs_resume(
             _echo_fields(fields, err=True)
             if hint is None:
                 # Scenario 3: the error shows the given checksum and the saved plan's checksum.
-                hint = f"the saved plan's checksum is {client.get_plan(run_id).checksum}; you gave {expected_checksum}"
+                hint = _checksum_conflict_hint(client, run_id, expected_checksum)
             typer.echo(_display(f"hint: {hint.format(run_id=run_id)}"), err=True)
             raise typer.Exit(1) from None
         _echo_run(accepted)

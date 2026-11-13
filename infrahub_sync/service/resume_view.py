@@ -14,15 +14,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from infrahub_sync.client.models import ApplyProgressKindResource, ApplyProgressResource, ResumeResource
-from infrahub_sync.product_store import run_apply_progress
+from infrahub_sync.product_store import WRITE_PURPOSES, run_apply_progress
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from infrahub_sync.product_store import MutationReceipt, PrefectExecutionLink, ProductRun
 
-# Every execution purpose that writes to a destination (spec 022): the store uses the same set.
-WRITE_PURPOSES = ("apply", "sync", "resume")
 # How many operations after the saved position may have been written when the failing operation
 # is unknown and the last save succeeded: the worker saves at least every 500 commits (R3).
 UNCERTAIN_AFTER_SUCCESSFUL_SAVE = 500
