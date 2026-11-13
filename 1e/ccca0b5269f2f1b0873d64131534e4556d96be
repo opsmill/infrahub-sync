@@ -1,0 +1,21 @@
+tests/dev_stack/test_smoke_dataset.py
+  s_11782fc4bc9a91::t_cc4288f782c3c0 1-9,11-22,26-128
+  s_11782fc4bc9a91::t_7997be2bb6cf57 23-25
+  s_11782fc4bc9a91::t_810de29508b5b7 10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1eccca0b5269f2f1b0873d64131534e4556d96be",
+  "prompts": {},
+  "sessions": {
+    "s_11782fc4bc9a91": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d1b81fa-9ee2-4fcb-b7c2-e14783f62cad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
