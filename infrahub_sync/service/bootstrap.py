@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import boto3
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import BotoCoreError, ClientError, InvalidRegionError
 from prefect.client.orchestration import get_client
 from prefect.client.schemas.actions import WorkPoolCreate
 from prefect.exceptions import ObjectNotFound
@@ -41,11 +41,11 @@ from .deploy import main as apply_deployment
 from .storage import (
     S3_BUCKET_ENV,
     S3_ENDPOINT_ENV,
-    S3_PREFIX_ENV,
     S3_REGION_ENV,
     Boto3S3Client,
     EndpointSettingError,
     s3_client_arguments,
+    s3_key_prefix,
     service_product_projection,
 )
 from .trust_store import TrustStoreError, install_custom_ca_bundle
@@ -107,9 +107,14 @@ class BootstrapError(RuntimeError):
 
 
 def _resolves(host: str) -> bool:
-    """Report whether a host name resolves on this container's networks."""
+    """Report whether a host name resolves on this container's networks.
+
+    The name is looked up as an absolute name, with a trailing dot, so the resolver does not
+    try the search domains the container inherits from the Docker host: a site record such as
+    `object-store.<search domain>` must not read as the bundled store running.
+    """
     try:
-        socket.getaddrinfo(host, None)
+        socket.getaddrinfo(f"{host.rstrip('.')}.", None)
     except OSError:
         return False
     return True
@@ -177,26 +182,32 @@ def converge_bucket(client: Any, bucket: str, region: str | None = None) -> bool
     return True
 
 
+def _write_if_absent(objects: Any, bucket: str, key: str) -> bool:
+    """Write one empty object create-only. Return False when the store refuses it as present."""
+    try:
+        objects.put(bucket=bucket, key=key, data=b"", if_absent=True)
+    except DuplicateArtifactError:
+        return False
+    except ClientError as error:
+        raise _refusal(error) from None
+    except BotoCoreError:
+        raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
+    return True
+
+
 def check_create_only(objects: Any, bucket: str, prefix: str) -> None:
-    """Check that the store refuses a second create-only write of one key, and leave no object.
+    """Check that the store accepts a first create-only write of one key, refuses a second, and leave no object.
 
     Sync's artifact store writes some objects only when the key is absent, and relies on the
     store refusing the second write. A store that accepts it would let a write replace a
-    stored artifact.
+    stored artifact. The key is new, so a store that refuses the first write refuses every
+    create-only write, and no artifact could be stored.
     """
     path = f"{CREATE_ONLY_CHECK_PATH}/{uuid.uuid4()}"
     key = f"{prefix}/{path}" if prefix else path
     try:
-        try:
-            objects.put(bucket=bucket, key=key, data=b"", if_absent=True)
-            objects.put(bucket=bucket, key=key, data=b"", if_absent=True)
-        except DuplicateArtifactError:
-            return
-        except ClientError as error:
-            raise _refusal(error) from None
-        except BotoCoreError:
-            raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
-        raise BootstrapError(OBJECT_STORE_UNSUPPORTED)
+        if not _write_if_absent(objects, bucket, key) or _write_if_absent(objects, bucket, key):
+            raise BootstrapError(OBJECT_STORE_UNSUPPORTED)
     finally:
         try:
             objects.delete(bucket=bucket, key=key)
@@ -249,6 +260,29 @@ async def _converge_pool(name: str) -> bool:
         return await converge_work_pool(client, name)
 
 
+def _s3_client(arguments: dict[str, Any]) -> Any:
+    """Build the S3 client from checked arguments, naming only the setting botocore refuses.
+
+    botocore's own refusals quote the value they refuse ("Invalid endpoint: <url>"), so
+    none of their text is logged: only a fixed line and the family.
+    """
+    try:
+        return boto3.client("s3", **arguments)
+    except InvalidRegionError:
+        logger.error("the S3 client refused %s", S3_REGION_ENV)  # noqa: TRY400 - botocore's text quotes the value.
+        raise BootstrapError(OBJECT_STORE_SETTING_INVALID) from None
+    except BotoCoreError as error:
+        # Another client setting, such as a partial key pair or an absent AWS_PROFILE: the
+        # class names the cause, and its text, which may quote a value, is not logged.
+        logger.error("the S3 client refused its settings (%s)", type(error).__name__)  # noqa: TRY400 - see above.
+        raise BootstrapError(OBJECT_STORE_SETTING_INVALID) from None
+    except ValueError:
+        logger.error("the S3 client refused %s", S3_ENDPOINT_ENV)  # noqa: TRY400 - botocore's text quotes the value.
+        raise BootstrapError(OBJECT_STORE_ENDPOINT_INVALID) from None
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
+
+
 def _converge() -> None:
     """Run every convergence step in the order a deployment depends on.
 
@@ -258,6 +292,7 @@ def _converge() -> None:
     """
     try:
         arguments = s3_client_arguments(os.environ)
+        prefix = s3_key_prefix(os.environ)
     except EndpointSettingError as error:
         # The message names the setting and the rule, never the value (`storage._endpoint`).
         logger.error("%s", error)  # noqa: TRY400 - a fixed message; the family follows.
@@ -266,22 +301,10 @@ def _converge() -> None:
         # Storage's own checks: the message names the setting, never its value.
         logger.error("%s", error)  # noqa: TRY400 - a fixed message; the family follows.
         raise BootstrapError(OBJECT_STORE_SETTING_INVALID) from None
-    # botocore's own refusals quote the value they refuse ("Invalid endpoint: <url>"), so
-    # none of their text is logged: only a fixed line and the family.
-    try:
-        client = boto3.client("s3", **arguments)
-    except BotoCoreError:
-        logger.error("the S3 client refused %s", S3_REGION_ENV)  # noqa: TRY400 - botocore's text quotes the value.
-        raise BootstrapError(OBJECT_STORE_SETTING_INVALID) from None
-    except ValueError:
-        logger.error("the S3 client refused %s", S3_ENDPOINT_ENV)  # noqa: TRY400 - botocore's text quotes the value.
-        raise BootstrapError(OBJECT_STORE_ENDPOINT_INVALID) from None
-    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
-        raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
-    check_store_settings(os.environ.get(S3_ENDPOINT_ENV) or None)
+    client = _s3_client(arguments)
+    check_store_settings(arguments["endpoint_url"])
     bucket = _required(S3_BUCKET_ENV)
-    created_bucket = converge_bucket(client, bucket, os.environ.get(S3_REGION_ENV) or None)
-    prefix = (os.environ.get(S3_PREFIX_ENV) or "infrahub-sync").strip("/")
+    created_bucket = converge_bucket(client, bucket, arguments["region_name"])
     check_create_only(Boto3S3Client(client), bucket, prefix)
 
     try:

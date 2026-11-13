@@ -2143,7 +2143,9 @@ def test_only_the_record_image_job_of_the_publish_workflow_writes() -> None:
     job = job_of(PUBLISH_WORKFLOW, "record_image")
 
     assert job["needs"] == "publish_docker_image"
-    assert job["if"] == "inputs.publish && inputs.version != ''"
+    # A manual dispatch from a branch signs with the branch's identity, which the recorded
+    # `cosign` commands refuse, so only a run for a tag records the image.
+    assert job["if"] == "inputs.publish && inputs.version != '' && startsWith(github.ref, 'refs/tags/')"
     assert job_permissions(PUBLISH_WORKFLOW, "record_image") == {"contents": "write"}
     assert permissions(PUBLISH_WORKFLOW) == {"contents": "read"}
     writers = [

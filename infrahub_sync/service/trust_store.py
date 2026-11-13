@@ -68,8 +68,11 @@ def _checked(path: Path) -> bytes:
         raise TrustStoreError(msg)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     try:
-        context.load_verify_locations(cadata=content.decode("ascii"))
-    except (ssl.SSLError, UnicodeDecodeError, ValueError) as error:
+        # Read as a file, the way every client reads the bundle: OpenSSL takes PEM blocks and
+        # skips the text around them, which may be UTF-8 (a subject line, for example). A
+        # DER file or a file with no certificate is refused.
+        context.load_verify_locations(cafile=str(path))
+    except (OSError, ValueError) as error:  # ssl.SSLError is an OSError.
         msg = f"{path.name} is not a readable CA certificate ({type(error).__name__})"
         raise TrustStoreError(msg) from None
     return content if content.endswith(b"\n") else content + b"\n"

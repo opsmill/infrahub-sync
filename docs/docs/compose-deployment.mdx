@@ -353,12 +353,15 @@ With `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0`, Compose creates no `object-store-in
   `INFRAHUB_SYNC_S3_SECRET_KEY` as its own root credential, so it has received yours. Set
   `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0`, then run `docker compose up -d --wait --remove-orphans`.
 - `refused: object-store-endpoint-not-set`: the bundled store is left out but the endpoint still
-  names it.
+  names it. `sync-bootstrap` depends on the bundled store as an optional service, so Compose also
+  starts it, with a warning, when the bundled store failed to start, and the refusal is the same.
+  Run `docker compose ps --all object-store` to tell the two apart.
 
 Use `https` for your store. Request signing never sends the secret key, but over `http` object
 content crosses the network in plain text. An endpoint that carries a user name or a password is
-refused with `refused: object-store-endpoint-invalid`. An unknown addressing style or a region
-that the S3 client refuses stops it with `refused: object-store-setting-invalid`.
+refused with `refused: object-store-endpoint-invalid`. An unknown addressing style, an empty key
+prefix, a region that the S3 client refuses, or another client setting it refuses, such as a key
+pair with one half missing, stops it with `refused: object-store-setting-invalid`.
 
 ### What Sync needs from the store
 
@@ -369,7 +372,8 @@ created. A 403 answer to `HeadBucket`, `CreateBucket` or the check write stops i
 It then writes one empty check object under `<prefix>/.infrahub-sync/bootstrap-check/` twice with
 `If-None-Match: *`, and deletes it. A store that accepts the second write stops it with
 `refused: object-store-unsupported`, because Sync relies on that refusal to never replace a
-stored artifact.
+stored artifact. A store that refuses the first write, to a key that did not exist, stops it with
+the same refusal, because it would refuse every artifact that Sync writes this way.
 
 The S3 operations Sync uses:
 

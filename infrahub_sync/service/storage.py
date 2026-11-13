@@ -35,6 +35,10 @@ S3_ADDRESSING_STYLE_ENV = "INFRAHUB_SYNC_S3_ADDRESSING_STYLE"
 # bundled store answers; `virtual` puts the bucket in the host name.
 S3_ADDRESSING_STYLES = frozenset({"path", "virtual"})
 DEFAULT_S3_ADDRESSING_STYLE = "path"
+# With no endpoint URL the client reaches AWS S3, and botocore chooses the style itself, as
+# it did before the addressing style was a setting: forcing `path` there would change it.
+_SDK_ADDRESSING_STYLE = "auto"
+DEFAULT_S3_PREFIX = "infrahub-sync"
 _ENDPOINT_URL_ADAPTER = TypeAdapter(AnyHttpUrl)
 
 
@@ -218,11 +222,11 @@ def _endpoint(values: Mapping[str, str]) -> str | None:
     return endpoint
 
 
-def _addressing_style(values: Mapping[str, str]) -> str:
+def _addressing_style(values: Mapping[str, str], *, endpoint: str | None) -> str:
     """Return the configured S3 addressing style; an unknown value is refused without its value."""
     style = _optional_setting(values, S3_ADDRESSING_STYLE_ENV)
     if style is None:
-        return DEFAULT_S3_ADDRESSING_STYLE
+        return DEFAULT_S3_ADDRESSING_STYLE if endpoint is not None else _SDK_ADDRESSING_STYLE
     if style not in S3_ADDRESSING_STYLES:
         msg = f"{S3_ADDRESSING_STYLE_ENV} must be path or virtual"
         raise ValueError(msg)
@@ -232,25 +236,22 @@ def _addressing_style(values: Mapping[str, str]) -> str:
 def s3_client_arguments(values: Mapping[str, str]) -> dict[str, Any]:
     """Validate the S3 settings and return the keyword arguments of `boto3.client("s3", ...)`.
 
-    Every check runs before any client exists, so a refused endpoint, region or addressing
-    style never reaches the SDK, and no refusal reflects the setting's value.
+    The Sync API, the worker and bootstrap all build their client from these. Every check runs
+    before any client exists, so a refused endpoint, region or addressing style never reaches
+    the SDK, and no refusal reflects the setting's value.
     """
+    endpoint = _endpoint(values)
+    region = _optional_setting(values, S3_REGION_ENV)
     return {
-        "endpoint_url": _endpoint(values),
-        "region_name": _optional_setting(values, S3_REGION_ENV),
-        "config": Config(s3={"addressing_style": _addressing_style(values)}),
+        "endpoint_url": endpoint,
+        "region_name": region,
+        "config": Config(s3={"addressing_style": _addressing_style(values, endpoint=endpoint)}),
     }
 
 
-def build_s3_client(values: Mapping[str, str], *, builder: Callable[..., Any] = boto3.client) -> Any:
-    """Build the S3 client the Sync API, the worker and bootstrap share.
-
-    Raises:
-        EndpointSettingError: when the endpoint is refused; the message names the setting only.
-        ValueError: when another setting is refused, by the checks here or by botocore's own
-            (an invalid region, for example); the message names the setting only.
-    """
-    return builder("s3", **s3_client_arguments(values))
+def s3_key_prefix(values: Mapping[str, str]) -> str:
+    """Return the object-key prefix without surrounding slashes; unset means `infrahub-sync`."""
+    return (_optional_setting(values, S3_PREFIX_ENV) or DEFAULT_S3_PREFIX).strip("/")
 
 
 def service_product_projection(
@@ -264,7 +265,7 @@ def service_product_projection(
     values: Mapping[str, str] = os.environ if environ is None else environ
     database_url = _database_url(values)
     bucket = _required_setting(values, S3_BUCKET_ENV)
-    prefix = (_optional_setting(values, S3_PREFIX_ENV) or "infrahub-sync").strip("/")
+    prefix = s3_key_prefix(values)
     arguments = s3_client_arguments(values)
     connect = database_connect or (lambda: PsycopgConnectionFactory()(database_url))
     try:

@@ -217,6 +217,20 @@ def test_matching_store_settings_pass(endpoint: str, running: tuple[str, ...]) -
     check_store_settings(endpoint, resolves=_resolves(*running))
 
 
+def test_the_bundled_store_name_is_looked_up_without_search_domains(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A site record `object-store.<search domain>` must not read as the bundled store running."""
+    looked_up: list[str] = []
+
+    def getaddrinfo(host: str, *_arguments: object) -> list[object]:
+        looked_up.append(host)
+        return []
+
+    monkeypatch.setattr(bootstrap.socket, "getaddrinfo", getaddrinfo)
+
+    assert bootstrap._resolves("object-store") is True
+    assert looked_up == ["object-store."]
+
+
 class _Objects:
     """The create-only protocol of `Boto3S3Client`: put, with or without `if_absent`, and delete."""
 
@@ -268,6 +282,17 @@ def test_a_store_that_accepts_a_second_create_only_write_is_refused_and_cleaned_
 
     assert refusal.value.family == "object-store-unsupported"
     assert objects.keys == set()
+    assert len(objects.deleted) == 1
+
+
+def test_a_store_that_refuses_the_first_create_only_write_is_refused() -> None:
+    """The key is new, so such a store would refuse every artifact Sync writes create-only."""
+    objects = _Objects(put_error=DuplicateArtifactError("S3 object already exists"))
+
+    with pytest.raises(BootstrapError) as refusal:
+        check_create_only(objects, BUCKET, "infrahub-sync")
+
+    assert refusal.value.family == "object-store-unsupported"
     assert len(objects.deleted) == 1
 
 
@@ -602,6 +627,26 @@ def test_another_refused_s3_setting_is_not_reported_as_the_endpoint(
     assert value not in caplog.text
     if name == "INFRAHUB_SYNC_S3_ADDRESSING_STYLE":
         assert "INFRAHUB_SYNC_S3_ADDRESSING_STYLE must be path or virtual" in caplog.text
+
+
+def test_another_s3_client_refusal_is_not_reported_as_the_region(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A partial key pair or an absent profile is not the region's fault."""
+    from botocore.exceptions import PartialCredentialsError
+
+    def refuse(*_arguments: object, **_settings: object) -> NoReturn:
+        raise PartialCredentialsError(provider="env", cred_var=PROVIDER_CANARY)
+
+    monkeypatch.setattr(bootstrap.boto3, "client", refuse)
+
+    with caplog.at_level("ERROR"):
+        assert bootstrap.main() == 1
+
+    assert "refused: object-store-setting-invalid" in caplog.text
+    assert "the S3 client refused its settings (PartialCredentialsError)" in caplog.text
+    assert "INFRAHUB_SYNC_S3_REGION" not in caplog.text
+    assert PROVIDER_CANARY not in caplog.text
 
 
 @pytest.mark.parametrize("endpoint", ["http://bad_host:9000", "http://[::1"])

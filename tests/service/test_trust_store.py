@@ -6,6 +6,7 @@ import datetime
 import logging
 import os
 import stat
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -50,10 +51,18 @@ def _private_key() -> bytes:
 
 @pytest.fixture(autouse=True)
 def _clean_trust_variables(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Start each test without the trust variables, and remove the ones the bundle sets.
+
+    `install_custom_ca_bundle` writes `os.environ` itself, and `delenv` records nothing to
+    restore for an absent variable, so each one is set first: the teardown then removes it.
+    `tempfile` caches its directory on first use, so the scratch directory replaces that cache
+    rather than `TMPDIR`.
+    """
     for name in TRUST_VARIABLES:
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("TMPDIR", str(tmp_path / "scratch"))
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
     (tmp_path / "scratch").mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "scratch"))
 
 
 def test_an_absent_directory_changes_nothing(tmp_path: Path) -> None:
@@ -139,6 +148,32 @@ def test_a_file_that_is_not_a_certificate_is_refused_with_the_ssl_error_class(tm
 
     assert str(refusal.value).startswith("broken.pem is not a readable CA certificate (")
     assert KEY_CANARY not in str(refusal.value)
+
+
+def test_text_around_the_certificate_may_hold_utf8(tmp_path: Path) -> None:
+    """OpenSSL skips the text around PEM blocks, such as the subject line `openssl x509` prints."""
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    certificate = _ca_certificate("Spec 021 Test CA")
+    (directory / "ca.pem").write_bytes("subject=CN = Société Test CA\n".encode() + certificate)
+
+    bundle = install_custom_ca_bundle(directory)
+
+    assert bundle is not None
+    assert certificate in bundle.read_bytes()
+    assert bundle.parent == tmp_path / "scratch"
+
+
+def test_a_der_certificate_is_refused(tmp_path: Path) -> None:
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    pem = _ca_certificate("Spec 021 DER CA")
+    (directory / "ca.crt").write_bytes(x509.load_pem_x509_certificate(pem).public_bytes(serialization.Encoding.DER))
+
+    with pytest.raises(TrustStoreError) as refusal:
+        install_custom_ca_bundle(directory)
+
+    assert str(refusal.value).startswith("ca.crt is not a readable CA certificate (")
 
 
 def test_the_directory_setting_is_read_from_the_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
