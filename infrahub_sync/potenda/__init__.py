@@ -15,6 +15,7 @@ from tqdm import tqdm
 
 from infrahub_sync import DiffSyncMixin, resolve_effective_diffsync_flags
 from infrahub_sync.infrahub_errors import classify_infrahub_error
+from infrahub_sync.load_report import source_record_id
 
 # These plan imports are cheap; imports that reach pyarrow stay deferred below.
 from infrahub_sync.plan.config_version import resolve_config_version, validate_config_version
@@ -511,7 +512,7 @@ class Potenda:
             metadata = None
             if admits:
                 complete = adapter.kind_read_is_clean(kind) and all(  # ty: ignore[unresolved-attribute]
-                    getattr(r, "local_id", None) is not None for r in records
+                    source_record_id(getattr(r, "local_id", None)) is not None for r in records
                 )
                 metadata = {SOURCE_READ_METADATA_KEY: SOURCE_READ_COMPLETE if complete else SOURCE_READ_INCOMPLETE}
             if side == "A":

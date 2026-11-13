@@ -3,7 +3,9 @@
 Every adapter that resolves references while it reads (NetBox, Nautobot, ACI, generic REST and
 the adapters built on it) calls `peer_unique_id` or `peer_unique_ids` from its `record_to_data`.
 A peer is looked up by its kind and source record ID (`local_id`) among the stored records.
-When it is not stored:
+A peer of the kind being read that the read lists and has not admitted yet raises
+`PeerNotAdmittedYetError`, and `DiffSyncMixin.load_records` admits the record again after the
+rest of the kind. When the peer is not stored otherwise:
 
 - through a required relationship, the helper raises `ExcludedRequiredPeerError` (a configured
   filter removed the peer), `PeerNotLoadedError` (the read could not build the peer) or
@@ -21,6 +23,7 @@ from typing import TYPE_CHECKING, Any, get_args
 
 from infrahub_sync import (
     ExcludedRequiredPeerError,
+    PeerNotAdmittedYetError,
     PeerNotFoundError,
     PeerNotLoadedError,
     PeerReferenceError,
@@ -68,6 +71,10 @@ def peer_unique_id(
     if unique_id is not None:
         return unique_id
 
+    if adapter.peer_is_pending(peer_kind, source_id):
+        # A record of the kind being read that is listed and not admitted yet (a parent after
+        # its child): `load_records` admits the referring record again later.
+        raise PeerNotAdmittedYetError(peer_kind=peer_kind, peer_source_id=source_id)
     owner_kind, owner_source_id = owner
     details = {
         "kind": owner_kind,

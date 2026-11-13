@@ -19,12 +19,12 @@ from netutils.ip import is_ip_within as netutils_is_ip_within
 from infrahub_sync.adapters.utils import get_value
 from infrahub_sync.cache.cursors import CursorTier
 from infrahub_sync.dependency_graph import compute_tiers, flatten_tiers
-from infrahub_sync.load_report import LoadReport, LoadReportEntry, filter_entry, transform_entry
+from infrahub_sync.load_report import LoadReport, LoadReportEntry, filter_entry, source_record_id, transform_entry
 from infrahub_sync.plan.models import NOT_IN_SOURCE_VALUE_PREFIX, SourceRecordReference
 from infrahub_sync.warm_read import WarmSourceReadMixin
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Sequence
 
     from diffsync.store import BaseStore
 
@@ -399,6 +399,20 @@ class PeerNotFoundError(PeerReferenceError):
     problem = "refers to a required peer that is not in the source"
 
 
+class PeerNotAdmittedYetError(Exception):
+    """A record refers to a record of its own kind that the read lists and has not admitted yet.
+
+    A reference within one kind (a location's `parent`, for example) gets no read order, so a
+    child can come before its parent. `load_records` admits the record again after the other
+    records of the kind; it is never recorded and never leaves the read loop.
+    """
+
+    def __init__(self, *, peer_kind: str, peer_source_id: str) -> None:
+        self.peer_kind = peer_kind
+        self.peer_source_id = peer_source_id
+        super().__init__(f"peer kind {peer_kind}, source ID {peer_source_id} is not admitted yet")
+
+
 class RecordLoadError(Exception):
     """A source record failed to load for a reason the admission step does not record (FR-018).
 
@@ -469,6 +483,10 @@ class _ReadState:
     not_loaded: dict[tuple[str, str], LoadReportEntry] = dataclasses.field(default_factory=dict)
     read_kinds: set[str] = dataclasses.field(default_factory=set)
     retained_ids: dict[str, set[str]] = dataclasses.field(default_factory=dict)
+    # Per kind being admitted by `load_records`: the listed source IDs not admitted yet.
+    pending: dict[str, set[str]] = dataclasses.field(default_factory=dict)
+    # The number of the source admission step in progress (`LoadReportEntry.admission`).
+    admission: int = 0
 
 
 class DiffSyncMixin(WarmSourceReadMixin):
@@ -510,7 +528,7 @@ class DiffSyncMixin(WarmSourceReadMixin):
     def record_source_id(self, record: Any) -> str | None:
         """Return the source record ID of a raw record; an adapter whose records name it differently overrides it."""
         value = record.get("id") if isinstance(record, Mapping) else getattr(record, "id", None)
-        return None if value is None else str(value)
+        return source_record_id(value)
 
     # -- The read loop ---------------------------------------------------------------------
 
@@ -539,6 +557,7 @@ class DiffSyncMixin(WarmSourceReadMixin):
         does not return.
         """
         is_source = self._is_source()
+        listed: list[tuple[SchemaMappingModel, Any]] = []
         for element in self.config.schema_mapping:
             if element.name != model_name:
                 continue
@@ -552,10 +571,59 @@ class DiffSyncMixin(WarmSourceReadMixin):
                 logger.info("%s: Loading %d/%d %s", getattr(self, "type", ""), len(records), total, element.mapping)
             else:
                 logger.info("%s: Loading all %d %s", getattr(self, "type", ""), total, element.mapping)
-            for record in records:
-                self.load_record(model, element, record)
+            listed.extend((element, record) for record in records)
+        self.load_records(model, listed)
         if is_source:
             self._read_state.read_kinds.add(model_name)
+
+    def load_records(self, model: type[Any], listed: Sequence[tuple[SchemaMappingModel, Any]]) -> None:
+        """Admit the listed records of one kind through `load_record`, in order.
+
+        On the source side, a record that refers to a record of its own kind that is listed
+        and not admitted yet (a child before its parent) is admitted again after the other
+        records of the kind, until a pass admits no more of them. The records still waiting
+        then (a cycle of references) are admitted without waiting, so a reference to a peer
+        that is still not stored is reported as usual.
+        """
+        if not self._is_source():
+            for element, record in listed:
+                self.load_record(model, element, record)
+            return
+        if not listed:
+            return
+        state = self._read_state
+        kind = listed[0][0].name
+        pending = state.pending.setdefault(kind, set())
+        for _element, record in listed:
+            record_id = source_record_id(self.record_source_id(record))
+            if record_id is not None:
+                pending.add(record_id)
+        waiting = list(listed)
+        transforms_applied = False
+        try:
+            while waiting:
+                deferred: list[tuple[SchemaMappingModel, Any]] = []
+                for element, record in waiting:
+                    try:
+                        self.load_record(model, element, record, transforms_applied=transforms_applied)
+                    except PeerNotAdmittedYetError:
+                        deferred.append((element, record))
+                        continue
+                    record_id = source_record_id(self.record_source_id(record))
+                    if record_id is not None:
+                        pending.discard(record_id)
+                if len(deferred) == len(waiting):
+                    # No record was admitted in this pass: the references form a cycle.
+                    pending.clear()
+                waiting = deferred
+                # A deferred record ran its transforms before its references were resolved.
+                transforms_applied = True
+        finally:
+            state.pending.pop(kind, None)
+
+    def peer_is_pending(self, peer_kind: str, peer_source_id: str) -> bool:
+        """Tell whether the read lists the record `peer_source_id` of `peer_kind` and has not admitted it yet."""
+        return peer_source_id in self._read_state.pending.get(peer_kind, ())
 
     def filter_source_records(self, model: type[Any], element: SchemaMappingModel, records: list[Any]) -> list[Any]:
         """Return the source records the entry's filters keep, and record the IDs they remove.
@@ -566,12 +634,22 @@ class DiffSyncMixin(WarmSourceReadMixin):
         of the kind keep is not recorded as filtered, whichever entry is read first.
         """
         if not element.filters:
+            # An entry without filters keeps every record, so another entry's filter did not remove any of them.
+            kept_ids: set[str] = set()
+            for record in records:
+                record_id = source_record_id(self.record_source_id(record))
+                if record_id is not None:
+                    kept_ids.add(record_id)
+            self._read_state.retained_ids.setdefault(element.name, set()).update(kept_ids)
+            filtered_ids = self.load_report.filtered_ids.get(element.name, {})
+            for record_id in kept_ids:
+                filtered_ids.pop(record_id, None)
             return records
         removed: dict[str, int] = {}
         retained: set[str] = set()
         kept: list[Any] = []
         for record in records:
-            source_id = self.record_source_id(record)
+            source_id = source_record_id(self.record_source_id(record))
             position = first_failing_filter(model, record, element.filters)
             if position is None:
                 kept.append(record)
@@ -600,12 +678,14 @@ class DiffSyncMixin(WarmSourceReadMixin):
         Records stored by `load_record` are indexed; a record stored another way is found by
         its `local_id` in the store.
         """
+        if source_record_id(peer_source_id) is None:
+            return None
         state = self._read_state
         unique_id = state.peer_index.get((peer_kind, peer_source_id))
         if unique_id is not None:
             return unique_id
         for item in self.store.get_all(model=peer_kind):
-            if str(getattr(item, "local_id", None)) == peer_source_id:
+            if source_record_id(getattr(item, "local_id", None)) == peer_source_id:
                 unique_id = item.get_unique_id()
                 state.peer_index[peer_kind, peer_source_id] = unique_id
                 return unique_id
@@ -627,14 +707,17 @@ class DiffSyncMixin(WarmSourceReadMixin):
         *,
         store_item: Callable[[Any], Any] | None = None,
         after_add: Callable[[Any, Any], None] | None = None,
+        transforms_applied: bool = False,
     ) -> Any:
         """Build one record, store it and return it (the admission step, research R2).
 
-        On the source side, the record's transforms run first. A record that cannot be built is
+        On the source side, the record's transforms run first, unless `transforms_applied` says
+        an earlier admission of the same record ran them. A record that cannot be built is
         recorded in `load_report` and `None` is returned; any other failure is raised again as
-        `RecordLoadError`. On the destination side nothing is caught. `store_item` replaces
-        `self.add` and returns the stored model; `after_add` runs with the stored model and the
-        record. A `record_to_data` that returns `None` skips the record.
+        `RecordLoadError`. `PeerNotAdmittedYetError` is raised again for `load_records`, with
+        the entries of this admission removed. On the destination side nothing is caught.
+        `store_item` replaces `self.add` and returns the stored model; `after_add` runs with the
+        stored model and the record. A `record_to_data` that returns `None` skips the record.
         """
         if not self._is_source():
             data = self.record_to_data(record, element, model)  # pylint: disable=assignment-from-no-return  # adapters implement it
@@ -647,19 +730,20 @@ class DiffSyncMixin(WarmSourceReadMixin):
             return item
 
         kind = element.name
-        source_id = self.record_source_id(record)
+        source_id = source_record_id(self.record_source_id(record))
+        self._read_state.admission += 1
         start = len(self.load_report.entries)
         data: dict[str, Any] | None = None
         item: Any = None
         try:
-            if element.transforms:
+            if element.transforms and not transforms_applied:
                 model.apply_transforms(item=record, transforms=element.transforms)
             data = self.record_to_data(record, element, model)  # pylint: disable=assignment-from-no-return  # adapters implement it
             if data is None:
                 self._settle_pending(start, kind, source_id, loaded=False)
                 return None
-            if data.get("local_id") is not None:
-                source_id = str(data["local_id"])
+            if source_record_id(data.get("local_id")) is not None:
+                source_id = source_record_id(data["local_id"])
             item = model(**data)
             stored = self._store(item, store_item)
         except TransformError as exc:
@@ -685,11 +769,19 @@ class DiffSyncMixin(WarmSourceReadMixin):
             return self._record_duplicate(
                 start, kind, model=model, record=record, item=item, source_id=source_id, data=data, exc=exc
             )
+        except PeerNotAdmittedYetError:
+            del self.load_report.entries[start:]
+            raise
         except RecordLoadError:
             raise
         except Exception as exc:  # research R2: every other failure fails the plan as RecordLoadError
             raise RecordLoadError(kind=kind, source_id=source_id) from exc
-        self._settle_pending(start, kind, source_id, loaded=True, identity=_identity_of(model, data))
+        # A defaulted identifier is absent from the data; the stored record holds its value.
+        identity = _identity_of(model, data)
+        get_identifiers = getattr(stored, "get_identifiers", None)
+        if identity is None and get_identifiers is not None:
+            identity = dict(get_identifiers())
+        self._settle_pending(start, kind, source_id, loaded=True, identity=identity)
         self._index(stored, data)
         if after_add is not None:
             after_add(stored, record)
@@ -702,12 +794,17 @@ class DiffSyncMixin(WarmSourceReadMixin):
         return item
 
     def _index(self, item: Any, data: Mapping[str, Any]) -> None:
-        local_id = data.get("local_id")
+        local_id = source_record_id(data.get("local_id"))
         if local_id is not None:
-            self._read_state.peer_index[item.get_type(), str(local_id)] = item.get_unique_id()
+            self._read_state.peer_index[item.get_type(), local_id] = item.get_unique_id()
 
     def _report(self, entry: LoadReportEntry) -> None:
         state = self._read_state
+        if entry.record.source_id is not None and source_record_id(entry.record.source_id) is None:
+            # An adapter that names a record without an ID by a placeholder (`""`, `"None"`).
+            entry = entry.model_copy(update={"record": entry.record.model_copy(update={"source_id": None})})
+        if entry.admission is None and state.admission:
+            entry = entry.model_copy(update={"admission": state.admission})
         state.report.add(entry)
         if not entry.loaded and entry.record.source_id is not None:
             state.not_loaded.setdefault((entry.record.kind, entry.record.source_id), entry)
@@ -717,8 +814,7 @@ class DiffSyncMixin(WarmSourceReadMixin):
     ) -> None:
         """Settle the entries the reference helper made for the record being admitted.
 
-        When the record loaded, they receive its identity, when it is known; a loaded record
-        whose data leaves out an identifier keeps its entries as they are. When it did not
+        When the record loaded, they receive its identity, when it is known. When it did not
         load, they no longer describe a loaded record, so they are marked `loaded: false`.
         """
         entries = self.load_report.entries
@@ -800,11 +896,11 @@ class DiffSyncMixin(WarmSourceReadMixin):
         if item is None:
             raise RecordLoadError(kind=kind, source_id=source_id) from exc
         existing = self.store.get(model=item.get_type(), identifier=item.get_unique_id())
-        existing_source_id = getattr(existing, "local_id", None)
+        existing_source_id = source_record_id(getattr(existing, "local_id", None))
         if (
-            self.record_source_id(record) is not None
+            source_record_id(self.record_source_id(record)) is not None
             and existing_source_id is not None
-            and str(existing_source_id) == source_id
+            and existing_source_id == source_id
         ):
             del self.load_report.entries[start:]
             logger.warning("%s record %s was read twice; the first read is kept", kind, source_id)
@@ -818,7 +914,7 @@ class DiffSyncMixin(WarmSourceReadMixin):
                 existing=SourceRecordReference(
                     kind=kind,
                     identity=identity,
-                    source_id=None if existing_source_id is None else str(existing_source_id),
+                    source_id=existing_source_id,
                 ),
             )
         )

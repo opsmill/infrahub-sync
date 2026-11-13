@@ -4,8 +4,6 @@ The admission step of `DiffSyncMixin` records here each source record that it ca
 the record, the reason, and the named fields of that reason. No entry holds the text of an
 exception. The plan step reads the report of the source adapter to build the plan problems and
 the left-out records (data-model.md).
-
-Nothing writes a report yet: the per-record loop of the base class comes with a later task.
 """
 
 from __future__ import annotations
@@ -34,6 +32,22 @@ records it as a dependent left-out record, not as a problem.
 LOAD_REPORT_REASONS: tuple[LoadReportReason, ...] = get_args(LoadReportReason)
 
 
+_NO_SOURCE_ID_VALUES = frozenset({"", "None"})
+
+
+def source_record_id(value: object) -> str | None:
+    """Return a source record ID as text, or `None` when the record has none.
+
+    Some adapters write a placeholder when a record has no ID: ACI writes `""` and Slurp'it
+    `str(None)`, which is `"None"`. Every record with such a value would otherwise share one
+    source ID, so the read and the problem pass would take one record for another.
+    """
+    if value is None:
+        return None
+    text = str(value)
+    return None if text.strip() in _NO_SOURCE_ID_VALUES else text
+
+
 def filter_entry(position: int | None) -> str | None:
     """The name of the filter at `position` of a mapping entry's `filters` list."""
     return None if position is None else f"filters[{position}]"
@@ -51,7 +65,9 @@ class LoadReportEntry(pydantic.BaseModel):
     failed transform (`transforms[0]`) of a `transform_failed` entry, or the filter that
     removed the peer (`filters[0]`) of a `required_peer_excluded_by_filter` entry. `existing`
     is the record the store kept for a `duplicate_source_identity` entry. `loaded` is false
-    when the record could not be built.
+    when the record could not be built. `admission` numbers the admission step that recorded
+    the entry: the entries of one number describe one source record, which tells apart the
+    records that have no source ID.
     """
 
     model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
@@ -64,6 +80,7 @@ class LoadReportEntry(pydantic.BaseModel):
     existing: SourceRecordReference | None = None
     config_entry: str | None = None
     loaded: bool = False
+    admission: int | None = None
 
     @pydantic.field_validator("value", mode="before")
     @classmethod

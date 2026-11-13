@@ -165,9 +165,11 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
         if self.target != "source" or peer_kind in state.read_kinds or peer_kind in complete:
             return
         complete.add(peer_kind)
-        for element in self.config.schema_mapping:
-            if element.name != peer_kind or not element.mapping or not element.filters:
-                continue
+        elements = [element for element in self.config.schema_mapping if element.name == peer_kind and element.mapping]
+        if not any(element.filters for element in elements):
+            return
+        # Every entry is read, so a source ID that an unfiltered entry keeps is not taken as filtered.
+        for element in elements:
             model: type[NetboxModel] = getattr(self, peer_kind)
             self.filter_source_records(model, element, self.list_records(peer_kind, element))
 

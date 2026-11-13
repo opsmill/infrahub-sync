@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from infrahub_sync.load_report import source_record_id
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -52,25 +54,33 @@ class WarmSourceReadMixin:
         records that reference it still hold its earlier identity, so the caller reads the
         kinds that reference this kind in full.
         """
-        identities_changed = False
+        # Every entry's changed records are listed before any is admitted, so a source ID is
+        # forgotten once: a later entry that returns it again does not remove the record an
+        # earlier entry admitted, and the first read stands, as in a cold read.
+        changed: list[tuple[SchemaMappingModel, list[Any]]] = []
         for element in self.config.schema_mapping:
-            if element.name != model_name or not element.mapping:
-                continue
-            records = list(self.list_changed_records(model_name, element, cursor))
-            replaced: dict[str, str] = {}
+            if element.name == model_name and element.mapping:
+                changed.append((element, list(self.list_changed_records(model_name, element, cursor))))
+        replaced: dict[str, str] = {}
+        forgotten: set[str] = set()
+        for _element, records in changed:
             for record in records:
-                source_id = self.record_source_id(record)
+                source_id = source_record_id(self.record_source_id(record))
+                if source_id is None or source_id in forgotten:
+                    continue
+                forgotten.add(source_id)
                 unique_id = self.forget_record(model_name, source_id)
-                if source_id is not None and unique_id is not None:
+                if unique_id is not None:
                     replaced[source_id] = unique_id
-            for record in self.filter_source_records(model, element, records):
-                self.load_record(model, element, record)
-            identities_changed = identities_changed or any(
-                self._read_state.peer_index.get((model_name, source_id)) != unique_id
-                for source_id, unique_id in replaced.items()
-            )
+        listed: list[tuple[SchemaMappingModel, Any]] = []
+        for element, records in changed:
+            listed.extend((element, record) for record in self.filter_source_records(model, element, records))
+        self.load_records(model, listed)
         self._read_state.read_kinds.add(model_name)
-        return identities_changed
+        return any(
+            self._read_state.peer_index.get((model_name, source_id)) != unique_id
+            for source_id, unique_id in replaced.items()
+        )
 
     def forget_record(self: DiffSyncMixin, kind: str, source_id: str | None) -> str | None:
         """Remove the stored record `source_id` of `kind`, and return its unique ID, when the read stored one."""

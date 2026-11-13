@@ -36,6 +36,7 @@ from infrahub_sync import (
     RecordLoadError,
     SchemaMappingFilter,
     SchemaMappingModel,
+    SchemaMappingTransform,
     SyncAdapter,
     SyncConfig,
 )
@@ -72,7 +73,7 @@ def _loaded(source: Adapter, kind: str) -> list[str]:
     return sorted(str(getattr(item, "local_id", None)) for item in source.get_all(kind))
 
 
-def _entries(source: FixtureSource) -> list[tuple[Any, ...]]:
+def _entries(source: DiffSyncMixin) -> list[tuple[Any, ...]]:
     """The load report as (reason, kind, source ID, field, peer, config entry, existing, loaded)."""
     report = source.load_report
     return [
@@ -383,7 +384,7 @@ def test_a_record_read_twice_under_one_source_id_is_one_record() -> None:
 
 @pytest.mark.parametrize("local_id", ["None", ""], ids=["none", "empty"])
 def test_two_records_without_a_source_id_are_still_duplicates(local_id: str) -> None:
-    """Two tenants `acme` with no source ID are two records: the second is a `duplicate_source_identity`."""
+    """Two tenants `acme` with no source ID are two records: one `duplicate_source_identity` leaves out both."""
     source = _InlineSource([])
     element = SchemaMappingModel(name="OrgTenant", mapping="tenancy.tenants", fields=[])
 
@@ -392,7 +393,7 @@ def test_two_records_without_a_source_id_are_still_duplicates(local_id: str) -> 
     report = find_problems(source=source, destination=None, config=None)
 
     assert [problem.problem_type for problem in report.problems] == ["duplicate_source_identity"]
-    assert [item.cause for item in report.left_out] == ["has_problem"]
+    assert [item.cause for item in report.left_out] == ["has_problem", "has_problem"]
 
 
 def test_a_loaded_record_without_a_defaulted_identifier_is_kept() -> None:
@@ -411,3 +412,242 @@ def test_a_loaded_record_without_a_defaulted_identifier_is_kept() -> None:
     assert [(item.record.kind, item.record.source_id, item.cause) for item in report.kept] == [
         ("IpamVLAN", "7", "peer_not_found_in_source")
     ]
+
+
+# -- Review fixes: records without a source ID, references within one kind ----------------------
+
+
+@pytest.mark.parametrize("local_id", ["None", ""], ids=["none", "empty"])
+def test_a_dropdown_problem_lands_on_its_own_record_without_a_source_id(local_id: str) -> None:
+    """Tenants `acme` and `bad` have no source ID: the Dropdown problem names `bad` and leaves out `bad` only."""
+    source = _InlineSource([])
+    element = SchemaMappingModel(name="OrgTenant", mapping="tenancy.tenants", fields=[])
+
+    for name in ("acme", "bad"):
+        source.load_record(_Tenant, element, {"name": name, "local_id": local_id})
+    report = find_problems(
+        source=source, destination=None, config=None, dropdown_choices={"OrgTenant": {"name": ["acme"]}}
+    )
+
+    assert [(problem.problem_type, problem.record.source_id, problem.value) for problem in report.problems] == [
+        ("dropdown_value_not_in_choices", None, "bad")
+    ]
+    assert [item.record.identity for item in report.left_out] == [{"name": "bad"}]
+
+
+def test_a_missing_optional_peer_is_kept_on_its_own_record_without_a_source_id() -> None:
+    """VLANs `users` (tenant 99, not in the source) and `guests` have no source ID: `users` is the kept record."""
+    source = _InlineSource([])
+    element = SchemaMappingModel(name="IpamVLAN", mapping="ipam.vlans", fields=[])
+
+    source.load_record(_Vlan, element, {"name": "guests", "local_id": ""})
+    source.load_record(_Vlan, element, {"name": "users", "local_id": "", "tenant": 99})
+    report = find_problems(source=source, destination=None, config=None)
+
+    assert [(problem.problem_type, problem.record.identity) for problem in report.problems] == [
+        ("peer_not_found_in_source", {"name": "users", "vlan_group": "default"})
+    ]
+    assert [item.record.identity for item in report.kept] == [{"name": "users", "vlan_group": "default"}]
+    assert report.left_out == ()
+
+
+class _Location(DiffSyncModelMixin, DiffSyncModel):
+    _modelname = "LocationGeneric"
+    _identifiers = ("name",)
+    _attributes = ("parent",)
+    name: str
+    parent: str | None = None
+    local_id: str | None = None
+
+
+class _Rack(DiffSyncModelMixin, DiffSyncModel):
+    """A kind whose `parent` reference is required (the annotation does not accept `None`)."""
+
+    _modelname = "LocationRack"
+    _identifiers = ("name",)
+    _attributes = ("parent",)
+    name: str
+    parent: str = ""
+    local_id: str | None = None
+
+
+class _TreeSource(DiffSyncMixin, Adapter):
+    """A source whose records refer to a parent of their own kind; `transformed` counts transform runs."""
+
+    LocationGeneric = _Location
+    LocationRack = _Rack
+    top_level = ["LocationGeneric", "LocationRack"]  # noqa: RUF012  # the diffsync class attribute
+    target = "source"
+
+    def __init__(self, records: list[dict[str, Any]], element: SchemaMappingModel) -> None:
+        super().__init__()
+        self.config = SyncConfig(
+            name="tree-source",
+            source=SyncAdapter(name="inline"),
+            destination=SyncAdapter(name="infrahub"),
+            schema_mapping=[element],
+        )
+        self._records = records
+        self.transformed: list[str] = []
+
+    def list_records(self, model_name: str, element: SchemaMappingModel) -> list[dict[str, Any]]:  # noqa: ARG002
+        return [dict(record) for record in self._records]
+
+    def record_to_data(
+        self, record: Mapping[str, Any], element: SchemaMappingModel, model: type[DiffSyncModel]
+    ) -> dict[str, Any]:
+        source_id = str(record["id"])
+        data: dict[str, Any] = {"local_id": source_id, "name": record["name"]}
+        if record.get("parent"):
+            unique_id = peer_unique_id(
+                self,
+                element.name,
+                str(record["parent"]),
+                owner=(element.name, source_id),
+                field="parent",
+                required=reference_is_required(model, "parent"),
+            )
+            if unique_id is not None:
+                data["parent"] = unique_id
+        return data
+
+
+def _tree(kind: str, records: list[dict[str, Any]]) -> _TreeSource:
+    source = _TreeSource(records, SchemaMappingModel(name=kind, mapping="dcim.locations", fields=[]))
+    source.model_loader(model_name=kind, model=getattr(source, kind))
+    return source
+
+
+@pytest.mark.parametrize("kind", ["LocationGeneric", "LocationRack"], ids=["optional", "required"])
+def test_a_child_read_before_its_parent_refers_to_it(kind: str) -> None:
+    """`paris` comes before its parent `france`: both load, `paris` names `france`, nothing is reported."""
+    source = _tree(kind, [{"id": 2, "name": "paris", "parent": 1}, {"id": 1, "name": "france"}])
+
+    assert _loaded(source, kind) == ["1", "2"]
+    assert source.get(kind, "paris").model_dump()["parent"] == "france"
+    assert source.load_report.entries == []
+
+
+def test_a_three_level_chain_read_from_the_leaf_resolves_every_parent() -> None:
+    """Room, building, site, in that order: every parent resolves, nothing is reported."""
+    source = _tree(
+        "LocationGeneric",
+        [
+            {"id": 3, "name": "room", "parent": 2},
+            {"id": 2, "name": "building", "parent": 1},
+            {"id": 1, "name": "site"},
+        ],
+    )
+
+    assert source.get("LocationGeneric", "room").model_dump()["parent"] == "building"
+    assert source.get("LocationGeneric", "building").model_dump()["parent"] == "site"
+    assert source.load_report.entries == []
+
+
+def test_a_parent_the_source_does_not_return_is_still_reported() -> None:
+    """`paris` names parent 9, which the source does not list: `peer_not_found_in_source`, kept."""
+    source = _tree("LocationGeneric", [{"id": 2, "name": "paris", "parent": 9}, {"id": 1, "name": "france"}])
+
+    assert _entries(source) == [
+        ("peer_not_found_in_source", "LocationGeneric", "2", "parent", ("LocationGeneric", "9"), None, None, True)
+    ]
+
+
+def test_records_that_refer_to_each_other_in_a_cycle_still_load() -> None:
+    """`a` names `b` and `b` names `a`: the read ends, both load, and one reference is reported."""
+    source = _tree("LocationGeneric", [{"id": 1, "name": "a", "parent": 2}, {"id": 2, "name": "b", "parent": 1}])
+
+    assert _loaded(source, "LocationGeneric") == ["1", "2"]
+    assert [entry.reason for entry in source.load_report.entries] == ["peer_not_found_in_source"]
+
+
+def test_a_child_admitted_again_runs_its_transforms_once() -> None:
+    """The transform of `paris` runs once, although `paris` is admitted twice."""
+    calls: list[str] = []
+
+    class _Counted(_Location):
+        @classmethod
+        def apply_transforms(cls, item: dict[str, Any], transforms: list[SchemaMappingTransform]) -> dict[str, Any]:  # noqa: ARG003
+            calls.append(item["name"])
+            item["name"] = item["name"].upper()
+            return item
+
+    element = SchemaMappingModel(
+        name="LocationGeneric",
+        mapping="dcim.locations",
+        fields=[],
+        transforms=[SchemaMappingTransform(field="name", expression="{{ name | upper }}")],
+    )
+    source = _TreeSource([{"id": 2, "name": "paris", "parent": 1}, {"id": 1, "name": "france"}], element)
+    source.model_loader(model_name="LocationGeneric", model=_Counted)
+
+    assert sorted(calls) == ["france", "paris"]
+    assert source.get("LocationGeneric", "PARIS").model_dump()["parent"] == "FRANCE"
+
+
+class _Port(DiffSyncModelMixin, DiffSyncModel):
+    _modelname = "DcimInterface"
+    _identifiers = ("name",)
+    _attributes = ("speed", "mtu")
+    name: str
+    speed: int | None = None
+    mtu: int | None = None
+    local_id: str | None = None
+
+
+class _PortSource(_InlineSource):
+    DcimInterface = _Port
+
+    def record_to_data(  # noqa: PLR6301  # the adapter hook
+        self,
+        record: Mapping[str, Any],
+        element: SchemaMappingModel,  # noqa: ARG002
+        model: type[DiffSyncModel],  # noqa: ARG002
+    ) -> dict[str, Any]:
+        return dict(record)
+
+
+def test_two_problems_of_one_record_without_a_source_id_leave_out_one_record() -> None:
+    """Port `eth0` has no source ID and two values of the wrong type: one record is left out, with both problems."""
+    source = _PortSource([])
+    element = SchemaMappingModel(name="DcimInterface", mapping="dcim.interfaces", fields=[])
+
+    source.load_record(_Port, element, {"name": "eth0", "speed": "fast", "mtu": "big"})
+    report = find_problems(source=source, destination=None, config=None)
+
+    assert sorted(problem.field for problem in report.problems) == ["mtu", "speed"]
+    assert [(item.record.identity, item.problem_types) for item in report.left_out] == [
+        ({"name": "eth0"}, ["wrong_value_type"])
+    ]
+
+
+class _ChangedSource(_InlineSource):
+    """A source whose changed records come per mapping entry, keyed by the entry's `mapping`."""
+
+    def __init__(self, changed: dict[str, list[dict[str, Any]]], entries: list[SchemaMappingModel]) -> None:
+        super().__init__([], entries)
+        self._changed = changed
+
+    def list_changed_records(
+        self,
+        model_name: str,  # noqa: ARG002
+        element: SchemaMappingModel,
+        cursor: object,  # noqa: ARG002
+    ) -> list[dict[str, Any]]:
+        return [dict(record) for record in self._changed[element.mapping or ""]]
+
+
+def test_a_warm_read_forgets_a_source_id_once_across_the_entries_of_a_kind() -> None:
+    """Two OrgTenant entries both return changed tenant 5: as in a cold read, both reads of it are admitted."""
+    entries = [
+        SchemaMappingModel(name="OrgTenant", mapping="tenancy.first", fields=[]),
+        SchemaMappingModel(name="OrgTenant", mapping="tenancy.second", fields=[]),
+    ]
+    source = _ChangedSource(
+        {"tenancy.first": [{"id": 5, "name": "first"}], "tenancy.second": [{"id": 5, "name": "second"}]}, entries
+    )
+    source.restore_record(_Tenant, {"name": "old", "local_id": "5"})
+
+    source.load_changed_records("OrgTenant", _Tenant, cursor=None)  # ty: ignore[invalid-argument-type]
+
+    assert sorted(item.model_dump()["name"] for item in source.get_all("OrgTenant")) == ["first", "second"]
