@@ -1,0 +1,20 @@
+dev/specs/022-resume-interrupted-apply/opsmill-implement-report.md
+  s_b91a98d41025f3::t_e6249c2d5729a1 30-34
+  s_b91a98d41025f3::t_551618c17b49c5 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3184a5e8bda3d6e01f03cd1c29c355baa03c9ea2",
+  "prompts": {},
+  "sessions": {
+    "s_b91a98d41025f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c1e68d9-bc95-47b9-bd6b-c5aa572517ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
