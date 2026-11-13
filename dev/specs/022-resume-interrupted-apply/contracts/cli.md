@@ -27,6 +27,12 @@ progress: 6000/10000 operations committed (saved 2026-11-12T10:15:00Z)
 resumable: yes (verify required)
 kind DcimDevice: committed 1200, uncertain 0, not reached 0
 kind DcimInterface: committed 4800, uncertain 1, not reached 3999
+```
+
+After a resume that succeeded, the run is not resumable, every operation is committed, and one line per resume
+follows the kind lines:
+
+```text
 resume 1: ops 2026-11-12T11:02:00Z after 5999 succeeded, wrote 4000 operations
 ```
 

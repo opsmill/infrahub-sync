@@ -20,9 +20,12 @@ pytest.importorskip("prefect")
 from infrahub_sdk.exceptions import ServerNotReachableError
 from prefect.states import State
 
-from infrahub_sync.plan.errors import PlanArtifactError
+from infrahub_sync.plan.destination_check import DestinationReadError
+from infrahub_sync.plan.errors import OperationApplyFailedError, PlanArtifactError
+from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from infrahub_sync.service import flow as service_flow
+from infrahub_sync.service.failure_cause import RESUMABLE_WRITE_NEXT_ACTION
 from infrahub_sync.service.flow import RecordedFailure, final_log_line, result_next_action, service_sync_run
 from tests.service.execution_fixtures import append_execution
 
@@ -749,24 +752,14 @@ _UNREACHABLE = ServerNotReachableError(address="https://infrahub.example.test")
 _VERIFY_AND_RESUME = "then run `infrahub-sync verify` on this run again, then `infrahub-sync runs resume`."
 
 
-def test_a_write_that_stops_part_way_names_verify_and_resume_as_the_next_step(tmp_path: Path) -> None:
-    """The run is interrupted and keeps its saved plan: a new plan is not the next step."""
-    projection, flow_run_id = _claimed_run(tmp_path, "run-write-stopped", "apply")
-
-    recorded = _record(projection, ("run-write-stopped", flow_run_id), "apply", _UNREACHABLE, dispatch_started=True)
-
-    assert recorded is not None
-    assert recorded.outcome == "ambiguous"
-    assert recorded.next_action is not None
-    assert recorded.next_action.endswith(_VERIFY_AND_RESUME)
-    assert "plan again" not in recorded.next_action
-
-
-def test_a_failed_verify_of_an_interrupted_run_names_verify_and_resume_as_the_next_step(tmp_path: Path) -> None:
+def _interrupted_run(
+    tmp_path: Path, run_id: str, purpose: Literal["verify", "resume"]
+) -> tuple[ProductProjection, str]:
+    """An interrupted apply run with one claimed execution of `purpose`."""
     projection = local_product_projection(tmp_path)
     projection.create_run(
         ProductRun(
-            run_id="run-verify-read",
+            run_id=run_id,
             operation="apply",
             configuration_reference="config-001@1",
             config_id="config-001",
@@ -779,26 +772,93 @@ def test_a_failed_verify_of_an_interrupted_run_names_verify_and_resume_as_the_ne
             summary={"sync_name": "inventory"},
         )
     )
-    flow_run_id = str(uuid5(NAMESPACE_URL, "run-verify-read"))
-    append_execution(
-        projection, "run-verify-read", PrefectExecutionLink(flow_run_id=flow_run_id, purpose="verify", attempt=1)
-    )
-    assert projection.claim_execution("run-verify-read", flow_run_id, worker_id=_WORKER_ID)
+    flow_run_id = str(uuid5(NAMESPACE_URL, run_id))
+    append_execution(projection, run_id, PrefectExecutionLink(flow_run_id=flow_run_id, purpose=purpose, attempt=1))
+    assert projection.claim_execution(run_id, flow_run_id, worker_id=_WORKER_ID)
+    return projection, flow_run_id
 
-    recorded = service_flow._record_failure(
-        "run-verify-read",
-        "verify",
-        _UNREACHABLE,
+
+def _record_stage(
+    projection: ProductProjection,
+    claim: tuple[str, str],
+    stage: Literal["apply", "verify", "resume"],
+    exc: Exception,
+    *,
+    dispatch_started: bool,
+) -> RecordedFailure | None:
+    run_id, flow_run_id = claim
+    return service_flow._record_failure(
+        run_id,
+        stage,
+        exc,
         logging.getLogger("test-service"),
         [],
         projection,
         flow_run_id,
         _WORKER_ID,
-        dispatch_started=False,
+        dispatch_started=dispatch_started,
         record=None,
     )
 
+
+def _caused_by(error: Exception, cause: Exception) -> Exception:
+    error.__cause__ = cause
+    return error
+
+
+def test_a_write_that_stops_part_way_names_verify_and_resume_as_the_next_step(tmp_path: Path) -> None:
+    """The engine's error names a new plan for every path; on a resumable run the worker names a resume."""
+    projection, flow_run_id = _claimed_run(tmp_path, "run-write-stopped", "apply")
+    stopped = _caused_by(
+        OperationApplyFailedError("failed", apply_record=ApplyRecord(failed_operation="op_1")), _UNREACHABLE
+    )
+
+    recorded = _record_stage(projection, ("run-write-stopped", flow_run_id), "apply", stopped, dispatch_started=True)
+
     assert recorded is not None
+    assert recorded.outcome == "ambiguous"
+    assert recorded.next_action == RESUMABLE_WRITE_NEXT_ACTION
+
+
+def test_a_write_refused_for_a_conflicting_node_keeps_its_own_next_action(tmp_path: Path) -> None:
+    projection, flow_run_id = _claimed_run(tmp_path, "run-write-conflict", "apply")
+    stopped = OperationApplyFailedError(
+        "failed",
+        apply_record=ApplyRecord(failed_operation="op_1"),
+        next_action=OperationApplyFailedError.UNIQUENESS_NEXT_ACTION,
+    )
+
+    recorded = _record_stage(projection, ("run-write-conflict", flow_run_id), "apply", stopped, dispatch_started=True)
+
+    assert recorded is not None
+    assert recorded.next_action == OperationApplyFailedError.UNIQUENESS_NEXT_ACTION
+
+
+def test_a_failed_verify_read_of_an_interrupted_run_names_verify_and_resume_as_the_next_step(tmp_path: Path) -> None:
+    projection, flow_run_id = _interrupted_run(tmp_path, "run-verify-read", "verify")
+    failed_read = _caused_by(DestinationReadError(), _UNREACHABLE)
+
+    recorded = _record_stage(
+        projection, ("run-verify-read", flow_run_id), "verify", failed_read, dispatch_started=False
+    )
+
+    assert recorded is not None
+    assert recorded.next_action is not None
+    assert recorded.next_action.endswith(_VERIFY_AND_RESUME)
+
+
+def test_a_resume_that_fails_before_its_first_write_names_verify_and_resume_as_the_next_step(tmp_path: Path) -> None:
+    """Not ambiguous, but the run was already interrupted and keeps its saved plan."""
+    # The claimed execution is a `verify` one: appending a resume execution needs a resume
+    # admission, and `_record_failure` reads only the run and the stage it is given.
+    projection, flow_run_id = _interrupted_run(tmp_path, "run-resume-early", "verify")
+
+    recorded = _record_stage(
+        projection, ("run-resume-early", flow_run_id), "resume", _UNREACHABLE, dispatch_started=False
+    )
+
+    assert recorded is not None
+    assert recorded.outcome == "failed"
     assert recorded.next_action is not None
     assert recorded.next_action.endswith(_VERIFY_AND_RESUME)
 

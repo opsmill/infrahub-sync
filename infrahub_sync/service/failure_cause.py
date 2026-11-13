@@ -146,6 +146,21 @@ def operator_cause(exc: BaseException, secrets: Sequence[str]) -> dict[str, Any]
     return recorded
 
 
+def resumable_next_action(exc: BaseException, secrets: Sequence[str]) -> dict[str, Any]:
+    """The next action of a stopped write on a run that keeps its saved plan, or nothing.
+
+    Only the default next action of `OperationApplyFailedError`, the one for an operation whose
+    reach is unknown, names a new plan where a resume applies: the uniqueness refusal and the
+    operation that wrote nothing keep their own advice. The link is the one `operator_cause`
+    takes its next action from.
+    """
+    links = cause_chain(exc, follow_context=False)
+    link = next((link for link in links if isinstance(link, PlanArtifactError) and link.next_action), None)
+    if isinstance(link, OperationApplyFailedError) and link.next_action == OperationApplyFailedError.next_action:
+        return {"next_action": _recordable(RESUMABLE_WRITE_NEXT_ACTION, secrets)}
+    return {}
+
+
 # The classification table for connection, timeout and token failures (spec 019 plan.md, open
 # risk R12). It reads the exception type and the HTTP status code attribute only, never text.
 #
@@ -335,6 +350,15 @@ _PLAN_AGAIN = "then plan again."
 # The closing step on a run whose write stopped part-way (spec 022): it keeps its saved plan,
 # and a resume needs a `verify` that passed after the latest write.
 _VERIFY_AND_RESUME = "then run `infrahub-sync verify` on this run again, then `infrahub-sync runs resume`."
+# The next action of a write that stopped at an operation whose reach is unknown, on a run that
+# keeps its saved plan (spec 022). It replaces `OperationApplyFailedError.next_action`, which
+# names a new plan because the CLI-local and direct Prefect paths have no resume.
+RESUMABLE_WRITE_NEXT_ACTION = (
+    "Nothing was rolled back: the operations applied before this one stay written, and this one may have "
+    "written part of its own change. Resolve the underlying error at the destination, then run "
+    "`infrahub-sync verify` on this run, then `infrahub-sync runs resume`: the resume writes the rest of the "
+    "saved plan, and writing an operation that already succeeded again converges rather than duplicating."
+)
 # The failure types that name a system or a credential, not the source data: once fixed, a
 # resumable run continues with its saved plan. A record or a transform fix needs a new plan.
 _RESUMABLE_TYPES = frozenset(

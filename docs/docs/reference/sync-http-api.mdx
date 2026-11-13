@@ -959,9 +959,7 @@ is interrupted.
     {"kind": "DcimInterface", "committed": 4800, "uncertain": 4000, "not_reached": 0}
   ]
 },
-"resumes": [
-  {"actor": "alice", "requested_at": "2026-11-12T11:02:00Z", "reason": null, "start_after": 5999, "outcome": "succeeded", "operations_written": 4000}
-]
+"resumes": []
 ```
 
 In this example, the worker was killed after it saved position 5999, the 6,000th operation, and
@@ -972,14 +970,25 @@ operations, and as `not_reached` after them. `uncertain` counts the operations a
 that may have reached the destination:
 
 - through the failed operation, when the failure record of the latest write execution names it;
-- every remaining operation, when the worker was killed, or its last save is not known to have
-  succeeded;
-- while the write still runs, the next 500 creates and updates and the recorded deletes between
-  them.
+- through the next 500 creates and updates and the recorded deletes between them, when the last
+  save is known to have succeeded, for example while a resume still runs;
+- through the end of the plan in every other case, for example when the worker was killed.
+
+While the first apply or `sync` of a run still runs, `reconciliation_required` is `false` and no
+operation is counted as `uncertain`.
 
 A failure record stores the `flow_run_id` of the execution that wrote it, and only a record of
 the latest write execution names the failed operation. A record stored before this field existed
 names none, so every remaining operation is uncertain.
+
+After a resume that succeeded, `apply_progress.resumable` is `false`, every operation is
+`committed`, and `resumes` holds one entry:
+
+```json
+"resumes": [
+  {"actor": "alice", "requested_at": "2026-11-12T11:02:00Z", "reason": null, "start_after": 5999, "outcome": "succeeded", "operations_written": 4000}
+]
+```
 
 Each entry of `resumes` holds `operations_written`: the creates and updates that resume wrote,
 after its `start_after`. For a resume that succeeded, the count runs to the end of the plan; for

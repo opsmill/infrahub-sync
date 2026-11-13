@@ -55,6 +55,7 @@ from infrahub_sync.product_store import (
 )
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.deploy import CATALOGUE
+from infrahub_sync.service.failure_cause import RESUMABLE_WRITE_NEXT_ACTION
 from infrahub_sync.service.flow import service_sync_run
 from infrahub_sync.service.orchestration import (
     SERVICE_DEFINITION,
@@ -606,8 +607,10 @@ def test_service_apply_failure_retains_partial_write_evidence(
         "outcome": "ambiguous",
         "error_type": "OperationApplyFailedError",
         "cause_type": None,
-        # The class's own next action, never the destination's message.
-        "next_action": failure.next_action,
+        # A fixed next action, never the destination's message. The run is interrupted and keeps
+        # its saved plan, so the worker names `verify` and `runs resume` instead of the class's
+        # own advice, a new plan (spec 022).
+        "next_action": RESUMABLE_WRITE_NEXT_ACTION,
         **partial.as_summary_keys(),
         # Spec 019 ADR 0021: an apply failure with no known cause is an internal error at the
         # destination, with no cause text.

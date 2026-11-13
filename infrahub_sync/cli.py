@@ -1707,9 +1707,10 @@ def runs_show(
     uncertain and not reached operations, and one `resume` line per resume of the run. The counts are over the
     plan's positions, recorded deletes included. The uncertain operations follow the saved position: through the
     failed operation when the worker recorded it, and every remaining operation when the worker was killed or its
-    last save is not known to have succeeded. While the write runs, they are the next 500 creates and updates
-    and the recorded deletes between them. A `resume` line counts the creates and updates that resume wrote; the
-    `written:` line of a failed write counts those of every execution of the run.
+    last save is not known to have succeeded. While a resume runs, they are the next 500 creates and updates
+    and the recorded deletes between them; while a first apply or `sync` runs, none are uncertain. A `resume`
+    line counts the creates and updates that resume wrote; the `written:` line of a failed write counts those of
+    every execution of the run.
     """
     with _client_errors():
         resource = _client(ctx).get_run(run_id)

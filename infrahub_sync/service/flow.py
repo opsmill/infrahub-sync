@@ -106,7 +106,13 @@ from .checkpoints import (
     rehydrate_plan_checkpoint,
 )
 from .events import run_event, stage_result_type
-from .failure_cause import FAILURE_RECORD_KEYS, apply_progress, failure_record, operator_cause
+from .failure_cause import (
+    FAILURE_RECORD_KEYS,
+    apply_progress,
+    failure_record,
+    operator_cause,
+    resumable_next_action,
+)
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME, run_name
@@ -1138,6 +1144,8 @@ def _failure_evidence(
     if isinstance(exc, UnsupportedSyncStoreError):
         evidence.update(reason=UNSUPPORTED_STORE_REASON, message=UNSUPPORTED_STORE_MESSAGE)
     evidence.update(operator_cause(exc, secrets))
+    if resumable:
+        evidence.update(resumable_next_action(exc, secrets))
     evidence.update(_structured_cause(stage, exc, secrets, evidence, resumable=resumable))
     if stage in ("verify", *_SAVED_PLAN_WRITE_STAGES):
         # The pre-write check a verify or an apply failed on, by name, so an operator reads
@@ -1274,10 +1282,10 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
         else:
             ambiguous = dispatch_started
         terminal_state, terminal_outcome = ("interrupted", "ambiguous") if ambiguous else ("failed", "failed")
-        # The run keeps its saved plan when this failure leaves it interrupted, or when a
-        # `verify` of an interrupted run failed: the next step is `verify`, then `runs resume`
-        # (spec 022), not a new plan.
-        resumable = stored.phase != "cancelled" and (ambiguous if stage != "verify" else stored.reconciliation_required)
+        # The run keeps its saved plan when this failure leaves it interrupted, or when it was
+        # already interrupted, as for a failed `verify` or a resume that failed before its first
+        # write: the next step is `verify`, then `runs resume` (spec 022), not a new plan.
+        resumable = stored.phase != "cancelled" and (ambiguous or stored.reconciliation_required)
         evidence = _failure_evidence(
             stage, exc, outcome=terminal_outcome, record=record, secrets=secrets, resumable=resumable
         )

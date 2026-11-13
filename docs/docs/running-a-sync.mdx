@@ -640,10 +640,12 @@ complete human-friendly ID.
    position:
 
    - When the worker recorded which operation failed, they run through that operation.
-   - When the worker was killed, or its last save is not known to have succeeded, they are
-     every remaining operation.
-   - While the write still runs, they are the next 500 creates and updates and the recorded
-     deletes between them.
+   - When the last save is known to have succeeded, for example while a resume still runs,
+     they are the next 500 creates and updates and the recorded deletes between them.
+   - In every other case, for example when the worker was killed, they are every remaining
+     operation.
+
+   While the first apply or `sync` of a run still runs, no operation is counted as uncertain.
 
    The `written: N of M operations` line of a failed write counts the creates and updates of
    every execution of the run, the earlier ones included.

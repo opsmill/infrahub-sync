@@ -48,11 +48,17 @@ New fields:
     "verify_required": false,
     "by_kind": [{"kind": "DcimDevice", "committed": 1200, "uncertain": 0, "not_reached": 0}]
   },
-  "resumes": [
-    {"actor": "ops", "requested_at": "…", "reason": null, "start_after": 5999, "outcome": "succeeded",
-     "operations_written": 4000}
-  ]
+  "resumes": []
 }
+```
+
+After a resume that succeeded, `resumable` is false, every operation is `committed`, and `resumes` holds:
+
+```json
+[
+  {"actor": "ops", "requested_at": "…", "reason": null, "start_after": 5999, "outcome": "succeeded",
+   "operations_written": 4000}
+]
 ```
 
 Positions count from 0 and include recorded deletes: position 5999 is the 6,000th operation of the plan.
@@ -65,7 +71,8 @@ Positions count from 0 and include recorded deletes: position 5999 is the 6,000t
   record carries the `flow_run_id` of the execution that wrote it; a record without it, or naming another
   execution, is not used;
 - through the 500th create or update, with the recorded deletes between them, when the last save is known to have
-  succeeded: the execution still runs, or its own failure record is not `ApplyProgressLostError` and its last
+  succeeded: the execution still runs (counted only while a resume runs, because the window is computed only when
+  `reconciliation_required` is true), or its own failure record is not `ApplyProgressLostError` and its last
   applied operation is the one the marker names;
 - through the end of the plan in every other case, including a killed worker.
 

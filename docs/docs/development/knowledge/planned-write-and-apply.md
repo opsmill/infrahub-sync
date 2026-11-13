@@ -502,7 +502,8 @@ its executions is unfinished (`infrahub_sync/service/resume_view.py`). On such a
     - every remaining operation otherwise, including a killed worker and an execution that liveness
       ended first: no stored data tells a worker whose saves failed from one whose saves succeeded.
 
-  The progress view's `by_kind` counts are over plan positions, so recorded deletes are counted as
+  The progress view computes the window only when `reconciliation_required` is set, so a first
+  apply or `sync` that still runs has no uncertain operations. Its `by_kind` counts are over plan positions, so recorded deletes are counted as
   committed, uncertain or not reached by their position; the `verify` report lists only creates and
   updates. `verify` reads the nodes through `DestinationNodeReader.read_planned_nodes`
   (one query per kind in the Infrahub adapter) and stores `results.verification.operations`, with
