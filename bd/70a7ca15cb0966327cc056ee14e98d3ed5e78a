@@ -1,0 +1,32 @@
+dev/specs/022-resume-interrupted-apply/tasks.md
+  s_b91a98d41025f3::t_8ddba4707d27e1 92
+dev/adr/0010-a-managed-write-ends-in-a-verdict-not-a-retry.md
+  s_b91a98d41025f3::t_8ddba4707d27e1 4
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_b91a98d41025f3::t_8ddba4707d27e1 448
+dev/adr/README.md
+  s_b91a98d41025f3::t_8ddba4707d27e1 33,74
+dev/adr/0027-an-interrupted-apply-resumes-from-its-saved-position.md
+  s_b91a98d41025f3::t_8ddba4707d27e1 2-113
+  s_b91a98d41025f3::t_457e3d81a86aac 1
+dev/specs/022-resume-interrupted-apply/research.md
+  s_b91a98d41025f3::t_8ddba4707d27e1 98,159
+dev/specs/022-resume-interrupted-apply/plan.md
+  s_b91a98d41025f3::t_8ddba4707d27e1 101,129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bd70a7ca15cb0966327cc056ee14e98d3ed5e78a",
+  "prompts": {},
+  "sessions": {
+    "s_b91a98d41025f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c1e68d9-bc95-47b9-bd6b-c5aa572517ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
