@@ -460,7 +460,7 @@ The engine stays free of the store. `Potenda.apply_plan` takes two optional keyw
   interleave and a change of kind can follow nearly every operation. It calls `stopped(index)` when the apply stops at an operation without recording it as applied. Before
   each dispatch, next to `ownership.before_operation()`, it calls `should_stop()`; when that returns
   true it raises `ApplyProgressLostError` with the partial record. An exception raised by the
-  observer never changes the apply's result: the engine logs its error class and continues, and a
+  observer never changes the result of the apply: the engine logs its error class and continues, and a
   `should_stop()` that raises counts as "do not stop".
 - `start_after: int | None`. Operations at an index up to and including `start_after` are not
   dispatched and are not listed as applied by this execution. Every check that runs before the
