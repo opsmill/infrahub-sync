@@ -19,6 +19,12 @@ export const clockSeconds = (iso: string) =>
     second: "2-digit",
   });
 
+/** ["01:13:36", "042"]: the time of a log line, whose neighbours often share its second. */
+export const clockMillis = (iso: string): [string, string] => [
+  clockSeconds(iso),
+  String(new Date(iso).getMilliseconds()).padStart(3, "0"),
+];
+
 /** How long a review lasted, or has lasted so far, counted every second while it still waits. */
 export function WaitTime({ wait }: { wait: Wait }) {
   const now = useNow(1000);

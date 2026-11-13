@@ -66,6 +66,22 @@ export const XIcon = ({ className = "size-3.5" }) => (
   </Icon>
 );
 
+/** The level of a log line that is neither a warning nor an error. */
+export const InfoIcon = ({ className = "size-3.5" }) => (
+  <Icon className={className}>
+    <circle cx="8" cy="8" r="6" {...stroke} />
+    <path d="M8 7.5v3.25" {...stroke} />
+    <circle cx="8" cy="5.25" r="0.75" fill="currentColor" />
+  </Icon>
+);
+
+/** A link that opens another application in a new tab. */
+export const ExternalLinkIcon = ({ className = "size-3.5" }) => (
+  <Icon className={className}>
+    <path d="M6 3.5H3.5v9h9V10M9 3.5h3.5V7M12.25 3.75 7.5 8.5" {...stroke} />
+  </Icon>
+);
+
 export const DownloadIcon = ({ className = "size-3.5" }) => (
   <Icon className={className}>
     <path d="M8 2.75v7.5M4.75 7 8 10.25 11.25 7M3 13.25h10" {...stroke} />

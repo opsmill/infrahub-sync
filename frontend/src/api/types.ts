@@ -11,6 +11,7 @@ export type RunReference = Schemas["RunReference"];
 export type Plan = Schemas["PlanResource"];
 export type PlanOperation = Schemas["PlanOperationResource"];
 export type PlanLastChange = Schemas["PlanLastChangeResource"];
+export type RunLogLine = Schemas["RunLogLine"];
 
 /** A source or destination as a registered package declares it. */
 export interface DeclaredAdapter {

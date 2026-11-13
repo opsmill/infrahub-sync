@@ -32,6 +32,7 @@ import { formatAbsolute } from "#/lib/time";
 import { PlanReads } from "./PlanReads";
 import { PlanFacts } from "./PlanReview";
 import type { PlanRequest } from "./run-sections";
+import { StepLog } from "./StepLog";
 import { clock, stepNode, WaitTime } from "./step-time";
 
 /* ---------- opening a step from the strip ---------- */
@@ -716,6 +717,7 @@ export function RunTimeline({
             open={focus.open.has(s.index)}
             onToggle={(o) => focus.setOpen(s.index, o)}
           />
+          <StepLog run={run} step={s} />
         </div>
       </Event>
     );

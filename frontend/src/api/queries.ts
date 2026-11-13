@@ -2,7 +2,13 @@ import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 
 import { $api, fetchClient } from "./client";
 import { isEnvelope, isTimeout, SyncApiUnavailable } from "./errors";
-import type { ConfigurationSummary, ConfigurationVersion, Run, RunResource } from "./types";
+import type {
+  ConfigurationSummary,
+  ConfigurationVersion,
+  Run,
+  RunLogLine,
+  RunResource,
+} from "./types";
 
 /** Lists are re-read on this interval, so a run started elsewhere appears without a reload. */
 export const LIST_REFRESH_MS = 10_000;
@@ -162,6 +168,45 @@ export const runQuery = (runId: string) =>
         isInProgress(query.state.data as RunResource | undefined) ? RUN_REFRESH_MS : false,
     }
   );
+
+/** A step in progress asks for the new lines of its log on this interval. */
+export const LOG_REFRESH_MS = 2_000;
+/** The most lines the Sync API returns in one page of a log. */
+const LOG_PAGE_LIMIT = 1000;
+
+export interface RunLog {
+  /** The Sync API no longer holds the lines of this stage (410). */
+  expired: boolean;
+  /** Oldest first. */
+  lines: RunLogLine[];
+}
+
+/**
+ * The lines Sync wrote during one stage of a run. The first read takes every page; a later read
+ * asks only for the lines after those already held, so a step in progress is cheap to follow.
+ * A log is never stale by itself: the caller reads it again while its step runs.
+ */
+export const runLogQuery = (runId: string, stage: string) =>
+  queryOptions({
+    queryKey: ["get", "/runs/{run_id}/logs", { runId, stage }] as const,
+    queryFn: async ({ client, queryKey, signal }): Promise<RunLog> => {
+      const lines = [...(client.getQueryData<RunLog>(queryKey)?.lines ?? [])];
+      for (;;) {
+        const { data, error, response } = await fetchClient.GET("/runs/{run_id}/logs", {
+          params: {
+            path: { run_id: runId },
+            query: { stage, limit: String(LOG_PAGE_LIMIT), offset: String(lines.length) },
+          },
+          signal,
+        });
+        if (response.status === 410) return { expired: true, lines: [] };
+        if (error) throw error;
+        lines.push(...data.items);
+        if (!data.has_more) return { expired: false, lines };
+      }
+    },
+    staleTime: Number.POSITIVE_INFINITY,
+  });
 
 /** The newest run of each configuration, from one page of `GET /runs`. */
 export function latestRunByConfig(runs: Run[]): Map<string, Run> {
