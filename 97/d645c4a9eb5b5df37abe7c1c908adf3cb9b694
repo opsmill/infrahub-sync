@@ -1,0 +1,29 @@
+docs/docs/v2-to-v3.mdx
+  s_efeb25921ce544::t_48975ede167130 94-95
+  s_efeb25921ce544::t_40df42745a62dc 174-176
+  s_efeb25921ce544::t_fdc79b690ab169 91-93,96-100
+  s_efeb25921ce544::t_9cb0bddcb981e3 296-299
+infrahub_sync/configuration/conversion.py
+  s_efeb25921ce544::t_b2f31988f6cd52 10
+  s_efeb25921ce544::t_16d1eb0d717dfc 9
+docs/docs/reference/cli.mdx
+  s_efeb25921ce544::t_519640b2b87c1c 362-363
+infrahub_sync/cli.py
+  s_efeb25921ce544::t_2e5260661b85e1 782-783
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "97d645c4a9eb5b5df37abe7c1c908adf3cb9b694",
+  "prompts": {},
+  "sessions": {
+    "s_efeb25921ce544": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88805765-f610-4acc-a224-7c6f256e1599",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
