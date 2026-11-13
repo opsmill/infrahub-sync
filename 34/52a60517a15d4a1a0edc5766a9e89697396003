@@ -1,0 +1,32 @@
+docs/docs/v2-to-v3.mdx
+  s_efeb25921ce544::t_142dc36cc8de17 139-141
+  s_efeb25921ce544::t_9a3fa5fc894e6a 212
+dev/specs/012-v2-configuration-conversion/spec.md
+  s_efeb25921ce544::t_91ced518a8b488 293-297,380-384
+infrahub_sync/configuration/conversion.py
+  s_efeb25921ce544::t_7c01313aa5e08e 676
+  s_efeb25921ce544::t_557ea66b9dbce3 687-689,693,697,702-703
+  s_efeb25921ce544::t_136c728ccccb33 690-692,694-696,698-701
+dev/specs/012-v2-configuration-conversion/opsmill-implement-report.md
+  s_efeb25921ce544::t_0a570ed40cdc41 90-112
+tests/configuration/test_conversion.py
+  s_efeb25921ce544::t_3532805cf6992f 828,832-848
+dev/specs/012-v2-configuration-conversion/tasks.md
+  s_efeb25921ce544::t_0a570ed40cdc41 121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3452a60517a15d4a1a0edc5766a9e89697396003",
+  "prompts": {},
+  "sessions": {
+    "s_efeb25921ce544": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88805765-f610-4acc-a224-7c6f256e1599",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
