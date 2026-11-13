@@ -1,4 +1,4 @@
-"""Each of the nine problem types, planned from the shared problem fixture (spec 019 T010, FR-002, FR-003).
+"""Each of the nine problem types, planned from the shared problem fixture (spec 020 T010, FR-002, FR-003).
 
 The full fixture (`Variant.ALL`) holds one record or group of records of each problem type. The
 nine types give ten problem entries, because `peer_not_found_in_source` has one record through a
@@ -6,10 +6,10 @@ required relationship and one through an optional relationship (`expected.json`)
 the problems from the saved plan's report (`plan/report.jsonl`, plan format 4), with the fields of
 data-model.md "Plan problem".
 
-The three tests of `test_problem_baseline.py` pin the behavior before spec 019 for three of these
+The three tests of `test_problem_baseline.py` pin the behavior before spec 020 for three of these
 types; the tasks that make this module pass rewrite or remove them.
 
-Spec 019 T017 to T028 implement the behavior.
+Spec 020 T017 to T028 implement the behavior.
 """
 
 from __future__ import annotations

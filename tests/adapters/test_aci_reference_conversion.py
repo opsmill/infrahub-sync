@@ -83,9 +83,9 @@ def test_empty_store_preserves_an_absent_scalar_reference() -> None:
     ],
 )
 def test_missing_optional_list_peer_is_a_placeholder(peers: dict[str, str]) -> None:
-    """An unresolved item of an optional list is a placeholder and a load report entry (spec 019 R5).
+    """An unresolved item of an optional list is a placeholder and a load report entry (spec 020 R5).
 
-    Before spec 019 the adapter raised `ValueError`.
+    Before spec 020 the adapter raised `ValueError`.
     """
     adapter = _adapter(peers)
 

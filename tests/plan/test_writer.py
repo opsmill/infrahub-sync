@@ -63,7 +63,7 @@ FR027_MANIFEST_FIELDS = frozenset(
         "operations_count",
         "delete_operations_computed",
         "plan_checksum",
-        # Plan format 4 (spec 019): the digest, size and counts of `report.jsonl`.
+        # Plan format 4 (spec 020): the digest, size and counts of `report.jsonl`.
         "report",
     }
 )

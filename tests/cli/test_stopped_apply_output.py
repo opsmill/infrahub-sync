@@ -1,4 +1,4 @@
-"""What the CLI prints for a stopped apply and for a second apply of its plan (spec 019 T059).
+"""What the CLI prints for a stopped apply and for a second apply of its plan (spec 020 T059).
 
 FR-021: `runs show` prints how many operations the stopped apply wrote out of the total, and the
 operation that failed with its action, kind and identity (contracts/cli.md "Cause of a failed or

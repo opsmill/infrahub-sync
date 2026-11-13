@@ -1,4 +1,4 @@
-"""The plan problem pass, the dependency walk and the selection step (spec 019 research R3).
+"""The plan problem pass, the dependency walk and the selection step (spec 020 research R3).
 
 `find_problems` reads the source adapter's load report, the source store, the destination
 schema and the derived operations, and returns the plan report: the problems of the nine
@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from diffsync.exceptions import ObjectNotFound
 
+from infrahub_sync.load_report import source_record_id
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.derive import _identity_from_keys, _resolve_references, unique_identity_groups
 from infrahub_sync.plan.destination_only_peer import destination_only_peers
@@ -179,6 +180,12 @@ def _source_key(kind: str, source_id: str) -> _RecordKey:
     return kind, "source_id", source_id
 
 
+def _item_key(kind: str, item: Any) -> _RecordKey:
+    """The key of a stored record: its source ID, or its unique ID when it has no source ID."""
+    local_id = source_record_id(getattr(item, "local_id", None))
+    return _source_key(kind, local_id) if local_id is not None else (kind, "unique_id", item.get_unique_id())
+
+
 def _identity_bytes(identity: Mapping[str, Any]) -> bytes:
     return canonical_json_bytes(dict(identity))
 
@@ -223,12 +230,11 @@ def _build_view(
     view = _SourceView()
     for kind in getattr(source, "top_level", ()) or ():
         for item in source.get_all(kind):
-            local_id = getattr(item, "local_id", None)
             unique_id = item.get_unique_id()
             view.add(
                 _Record(
-                    key=_source_key(kind, str(local_id)) if local_id is not None else (kind, "unique_id", unique_id),
-                    source_id=None if local_id is None else str(local_id),
+                    key=_item_key(kind, item),
+                    source_id=source_record_id(getattr(item, "local_id", None)),
                     unique_id=unique_id,
                     loaded=True,
                     keys=item.get_identifiers(),
@@ -238,11 +244,21 @@ def _build_view(
         kind, source_id = entry.record.kind, entry.record.source_id
         if entry.loaded:
             # An entry about a reference of a record the store holds.
-            record = view.by_source_id(kind, source_id)
+            record = (
+                view.by_source_id(kind, source_id)
+                if source_id is not None
+                else _stored_by_identity(view, source, kind, entry.record.identity)
+            )
             if record is not None:
                 view.by_entry[index] = record.key
             continue
-        key = _source_key(kind, source_id) if source_id is not None else (kind, "load_report_entry", str(index))
+        if source_id is not None:
+            key = _source_key(kind, source_id)
+        elif entry.admission is not None:
+            # The entries of one admission describe one record, which has no source ID.
+            key = (kind, "admission", str(entry.admission))
+        else:
+            key = (kind, "load_report_entry", str(index))
         view.by_entry[index] = view.add(
             _Record(key=key, source_id=source_id, unique_id=None, loaded=False, keys=entry.record.identity)
         ).key
@@ -253,6 +269,21 @@ def _build_view(
             # A record the store holds comes first, so an identity names it before a refused duplicate.
             view.by_identity.setdefault((record.kind, _identity_bytes(record.identity)), record.key)
     return view
+
+
+def _stored_by_identity(
+    view: _SourceView, source: Any, kind: str, identity: Mapping[str, Any] | None
+) -> _Record | None:
+    """The stored record of `kind` with the identifier values `identity`, for a record without a source ID."""
+    model = getattr(source, kind, None)
+    if identity is None or model is None:
+        return None
+    try:
+        unique_id = model.create_unique_id(**identity)
+    except (TypeError, ValueError, KeyError):
+        return None
+    key = view.by_unique_id.get((kind, unique_id))
+    return None if key is None else view.records[key]
 
 
 def _operation_identity(
@@ -409,11 +440,7 @@ def _dropdown_problems(
         if not choices_by_field:
             continue
         for item in source.get_all(kind):
-            local_id = getattr(item, "local_id", None)
-            key = (
-                _source_key(kind, str(local_id)) if local_id is not None else (kind, "unique_id", item.get_unique_id())
-            )
-            record = view.records.get(key)
+            record = view.records.get(_item_key(kind, item))
             if record is None:
                 continue
             for field_name, choices in sorted(choices_by_field.items()):
@@ -504,10 +531,7 @@ def _referrers(
         if not candidates:
             continue
         for item in source.get_all(kind):
-            local_id = getattr(item, "local_id", None)
-            referrer = (
-                _source_key(kind, str(local_id)) if local_id is not None else (kind, "unique_id", item.get_unique_id())
-            )
+            referrer = _item_key(kind, item)
             for field_name, peer_kinds in sorted(candidates.items()):
                 value = getattr(item, field_name, None)
                 for unique_id in value if isinstance(value, (list, tuple)) else [value]:

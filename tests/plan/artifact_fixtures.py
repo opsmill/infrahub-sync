@@ -141,7 +141,7 @@ def write_artifact(  # noqa: PLR0913 — one parameter per manifest field the fi
     body.update(manifest_overrides)
     report_format = isinstance(body.get("format_version"), int) and body["format_version"] >= REPORT_FORMAT_VERSION
     if report_format and "report" not in body:
-        # Plan format 4 (spec 019): an empty report, as the writer records a plan without problems.
+        # Plan format 4 (spec 020): an empty report, as the writer records a plan without problems.
         body["report"] = PlanReport().record().model_dump()
     body["plan_checksum"] = compute_plan_checksum(body, operations_bytes)
 

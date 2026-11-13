@@ -705,7 +705,7 @@ PLAN_MANIFEST_FIELDS = {
     # Additive: the digest and record count of the last-change file. Display data about
     # single fields, not a grouping of operations.
     "last_changes",
-    # Plan format 4 (spec 019): the digest, size and counts of the plan report, and whether
+    # Plan format 4 (spec 020): the digest, size and counts of the plan report, and whether
     # the plan could check Dropdown values. Neither groups operations.
     "report",
     "dropdown_values_checked",
@@ -816,7 +816,7 @@ def test_plan_manifest_still_requires_its_declared_fields() -> None:
         "lineage",
         "last_changes",
         # Optional on the model, because a format 2 or 3 manifest has none; the reader refuses
-        # a format 4 manifest without `report` (spec 019).
+        # a format 4 manifest without `report` (spec 020).
         "report",
         "dropdown_values_checked",
     }

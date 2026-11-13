@@ -216,6 +216,8 @@ See [Deletes in a plan](./reference/cache-layout#deletes-in-a-plan).
   has a problem or because it depends on a left-out record through a required relationship.
 - `problems`: the number of problems. One problem can name several records, for example two
   source records with the same identity.
+- `problems_by_type`: the number of problems of each problem type, printed when the plan has
+  problems.
 - `kept_without_relationship`: the records the plan writes without one optional relationship,
   because that relationship refers to a left-out record or to a record the source does not
   return.
@@ -225,6 +227,14 @@ which the plan computes no delete, because a left-out record of that kind has no
 identity, or because Infrahub holds several nodes with the same identity. `Dropdown values were
 not checked` means the run had no destination schema snapshot, so the plan did not compare
 Dropdown values with their choices.
+
+A left-out record protects only the Infrahub node that has the record's own identity. A node in
+Infrahub with a different identity can still be listed as a delete, for example when the
+record's identity changed in the source, or when version 2 wrote the node under an identity
+that merged several records. The deletes of the nodes that depend on that node, such as the
+devices and interfaces in a rack, can be listed too. The plan records its deletes, and an
+apply never runs them: it lists them in `skipped_delete_operations`
+([ADR 0004](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0004-deletes-are-recorded-but-never-executed.md)).
 
 To list every entry, use one of these options of `runs plan`:
 

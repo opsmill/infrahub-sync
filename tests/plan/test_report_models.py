@@ -1,4 +1,4 @@
-"""The plan report records, the load report and the stage failure record (spec 019 T004, T005, T008)."""
+"""The plan report records, the load report and the stage failure record (spec 020 T004, T005, T008)."""
 
 from __future__ import annotations
 

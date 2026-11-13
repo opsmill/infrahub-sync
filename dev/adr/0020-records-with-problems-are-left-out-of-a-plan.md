@@ -25,10 +25,12 @@ A plan finds every problem in one pass and plans the rest of the data:
   `run_problem_pass`) reads the load report, the source store, the destination schema and the
   derived operations. It returns the problems of nine types, the records it leaves out and the
   records it keeps without one optional relationship.
-- A record with a problem is left out. A record that needs a left-out record through a required
-  relationship is left out too, at any depth, and names the record it depends on. A record that
-  refers to a left-out record, or to a peer the source does not return, through an optional
-  relationship is kept and written without that relationship.
+- A record with a problem is left out, except a record whose only problem is a peer the source
+  does not return (`peer_not_found_in_source`) through an optional relationship. A record that
+  needs a left-out record through a required relationship is left out too, at any depth, and
+  names the record it depends on. A record that refers to a left-out record, or to a peer the
+  source does not return, through an optional relationship is kept and written without that
+  relationship.
 - Every record of an identity that two source records share in Infrahub is left out, with one
   problem for the group (`destination_identity_collision` or `identities_merge_in_destination`).
   The plan no longer refuses these groups.
@@ -53,6 +55,6 @@ A plan finds every problem in one pass and plans the rest of the data:
   ([ADR 0022](0022-saved-plan-format-4.md)).
 - The store rule "a run that admitted its one write never admits another stage" gets one
   exception: a `sync` run that stopped after its plan, before any dispatch, gives back its write
-  admission (research R11). The product owner is asked to confirm this exception.
+  admission (research R11). The product owner accepted this exception with ADR 0020.
 - Deletes are withheld for a whole kind when one of its left-out records has no known identity.
   A source with many such records computes fewer deletes until the records are fixed.

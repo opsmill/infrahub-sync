@@ -15,6 +15,7 @@ outside `PlanArtifactError` so no caller reads it as an error or asks it for a r
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from infrahub_sync.client.models import SCHEMA_CHANGED_NEXT_ACTION
@@ -122,10 +123,14 @@ class PlanFormatApplyUnsupportedError(PlanArtifactError):
     )
 
 
+# The product run ID form (`infrahub_sync.service.flow`), for a run ID copied into guidance.
+_GUIDANCE_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+
+
 class LeftOutConfirmationRequiredError(PlanArtifactError):
     """The plan leaves out records, and the apply did not confirm that they were reviewed.
 
-    Spec 019 FR-010: the Sync API refuses such an apply, and the engine refuses it again so
+    Spec 020 FR-010: the Sync API refuses such an apply, and the engine refuses it again so
     a direct Python caller cannot skip the confirmation. Raised before the first operation
     is dispatched, so the destination was not touched.
     """
@@ -141,7 +146,11 @@ class LeftOutConfirmationRequiredError(PlanArtifactError):
         super().__init__(
             f"The plan of run {run_id!r} leaves out {left_out} records, and the apply did not confirm "
             "that they were reviewed. Nothing was written to the destination.",
-            next_action=type(self).next_action.replace("<run_id>", run_id),
+            # A run ID outside the product run ID form (a newline, a control sequence) is not
+            # copied into the guidance, which is printed as it is.
+            next_action=type(self).next_action.replace(
+                "<run_id>", run_id if _GUIDANCE_RUN_ID.fullmatch(run_id) else "<run_id>"
+            ),
         )
 
 
@@ -293,7 +302,7 @@ class PeerNotFoundError(PlanArtifactError):
 
     def __init__(self, message: str, *, next_action: str | None = None, peer_kind: str | None = None) -> None:
         super().__init__(message, next_action=next_action)
-        # The kind of the peer, which a failure record names (spec 019 FR-018).
+        # The kind of the peer, which a failure record names (spec 020 FR-018).
         self.peer_kind = peer_kind
 
 
@@ -311,7 +320,7 @@ class PeerAmbiguousError(PlanArtifactError):
 
     def __init__(self, message: str, *, next_action: str | None = None, peer_kind: str | None = None) -> None:
         super().__init__(message, next_action=next_action)
-        # The kind of the peer, which a failure record names (spec 019 FR-018).
+        # The kind of the peer, which a failure record names (spec 020 FR-018).
         self.peer_kind = peer_kind
 
 
@@ -424,7 +433,7 @@ class NotInSourcePeerInPlanError(PlanArtifactError):
     """An operation about to be written still names a peer that the source does not return.
 
     Plan derivation names such a peer with a placeholder (`SourcePeerUnresolvedError`'s absent
-    arm, spec 019 research R5), and the selection step of the problem pass removes every
+    arm, spec 020 research R5), and the selection step of the problem pass removes every
     placeholder. One that reaches the writer means the selection step did not run, so the
     plan is refused before any file is written: a placeholder must never be applied as a
     destination identity.
@@ -689,7 +698,7 @@ class SourcePeerUnresolvedError(PlanArtifactError):
     A reference that a source adapter marked as a peer the source does not return
     (`infrahub_sync.not_in_source_placeholder`) does not reach the absent arm: derivation
     names it with a placeholder pair, which the problem pass resolves into the plan problem
-    `peer_not_found_in_source` and removes from the plan (spec 019 research R5).
+    `peer_not_found_in_source` and removes from the plan (spec 020 research R5).
     """
 
     ABSENT_NEXT_ACTION = (

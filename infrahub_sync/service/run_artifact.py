@@ -87,7 +87,7 @@ def run_markdown(run: ProductRun, stage: str, outcome: str, next_action: str | N
 
     `outcome` and `next_action` are the values the stage's last log line used. A plan or
     `sync` stage whose summary records them adds the count of records left out and the count
-    of problems (spec 019 FR-028). The next steps are `runs show`, then `runs plan --detail`
+    of problems (spec 020 FR-028). The next steps are `runs show`, then `runs plan --detail`
     when the run holds a saved plan review, then `runs plan --problems` and `--left-out` when
     the plan leaves out records, then `next_action` when there is one.
     """

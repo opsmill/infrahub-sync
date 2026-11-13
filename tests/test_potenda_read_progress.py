@@ -305,7 +305,7 @@ def test_a_store_that_cannot_be_counted_does_not_fail_the_read(caplog: pytest.Lo
 
 @pytest.mark.parametrize("concurrent_load", [True, False])
 def test_a_failing_side_raises_a_side_load_error_naming_its_role_and_adapter(*, concurrent_load: bool) -> None:
-    """Spec 019 research R12: the read failure names the side; the error stays its cause."""
+    """Spec 020 research R12: the read failure names the side; the error stays its cause."""
     cause = ConnectionError(_SECRET_DETAIL)
     ptd = _engine(
         _FakeAdapter(devices=1),

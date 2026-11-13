@@ -43,6 +43,8 @@ if TYPE_CHECKING:
 _IDENTITY_ERROR = "service worker identity is unavailable"
 _WORKER_NAME_PREFIX = "infrahub-sync-service"
 _WORKER_PAGE_SIZE = 200
+# How long one poll waits for the product store to record the worker's credential variable names.
+_PUBLICATION_TIMEOUT_SECONDS = 10.0
 _NOT_ADMITTED = "flow run was not admitted as the service deployment"
 # What Prefect 3.8.6's process job configuration resolves an unset command to.
 _SERVICE_CHILD_COMMAND = command_to_string([get_sys_executable(), "-m", "prefect.engine"])
@@ -251,6 +253,8 @@ class ServiceProcessWorker(ProcessWorker):  # pylint: disable=abstract-method
         # The store this worker publishes its credential variable names to; built on the
         # first poll that reaches it, and again after a publication fails.
         self._environment_projection: ProductProjection | None = None
+        # Set while a publication runs in its thread, which can outlive the poll that started it.
+        self._publication_in_flight = False
 
     @classmethod
     def __dispatch_key__(cls) -> str | None:
@@ -348,20 +352,36 @@ class ServiceProcessWorker(ProcessWorker):  # pylint: disable=abstract-method
 
     def _publish_credential_names_now(self, names: tuple[str, ...]) -> None:
         """Write this worker's credential variable names to the product store (blocking)."""
-        projection = self._environment_projection
-        if projection is None:
-            projection = self._environment_projection = service_product_projection()
-        projection.publish_worker_environment(str(self.name), names)
+        try:
+            projection = self._environment_projection
+            if projection is None:
+                projection = self._environment_projection = service_product_projection()
+            projection.publish_worker_environment(str(self.name), names)
+        finally:
+            self._publication_in_flight = False
 
     async def _publish_credential_names(self) -> None:
         """Publish the names of the set, non-empty credential variables this worker holds.
 
         Names only, never a value. Best effort: a store that cannot be reached leaves the
         poll running, logs a fixed line with no detail, and is tried again on the next poll.
+        The poll waits at most `_PUBLICATION_TIMEOUT_SECONDS` for the store; a publication
+        that is still blocked then is left to finish on its own, and no other one starts
+        until it does.
         """
+        if self._publication_in_flight:
+            return
         names = held_credential_names()
+        self._publication_in_flight = True
         try:
-            await anyio.to_thread.run_sync(self._publish_credential_names_now, names)
+            with anyio.move_on_after(_PUBLICATION_TIMEOUT_SECONDS) as scope:
+                await anyio.to_thread.run_sync(self._publish_credential_names_now, names, abandon_on_cancel=True)
+            if scope.cancelled_caught:
+                self._environment_projection = None
+                self._logger.debug(
+                    "The product store did not answer in time; the worker's credential variable names are "
+                    "published on a later poll."
+                )
         except (RuntimeError, ValueError, OSError, sqlite3.Error):
             # RuntimeError covers ProductStoreProviderError and ServiceStorageStartupError;
             # ValueError covers missing or invalid store settings. No exception text is
@@ -371,7 +391,7 @@ class ServiceProcessWorker(ProcessWorker):  # pylint: disable=abstract-method
 
     async def get_and_submit_flow_runs(self) -> list[FlowRun]:
         # Before the identity check: a worker publishes its variables even while Prefect
-        # has not resolved its record yet, so `configs validate` can see it (spec 019 FR-035).
+        # has not resolved its record yet, so `configs validate` can see it (spec 020 FR-035).
         await self._publish_credential_names()
         generation = self._submission_generation()
         if generation is None:

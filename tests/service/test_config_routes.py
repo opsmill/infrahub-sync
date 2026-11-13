@@ -1681,7 +1681,7 @@ def _register_with(client: TestClient, headers: dict[str, str], body: Mapping[st
     return str(response.json()["configuration"]["config_id"])
 
 
-# Spec 019 US5 (T061, T065): `configs validate --branch` and the registration responses.
+# Spec 020 US5 (T061, T065): `configs validate --branch` and the registration responses.
 
 _BRANCH_SNAPSHOT: dict[str, object] = {
     "InfraDevice": {

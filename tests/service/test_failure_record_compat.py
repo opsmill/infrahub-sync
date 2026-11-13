@@ -1,10 +1,10 @@
-"""The keys of a failure record keep their values, and an older record prints as today (spec 019 T050).
+"""The keys of a failure record keep their values, and an older record prints as today (spec 020 T050).
 
 FR-014: the `results.<stage>_failure` record of spec 017 gains fields, and the keys it holds
 today keep their meaning. These tests pin the values the worker records today for the keys it
 records today (a key absent today, such as the `cause` of a rejected write, may be added),
-and the lines the CLI prints for a record that has none of the spec 019 fields, as an older Sync
-API writes it. They pass before and after spec 019 User Story 3.
+and the lines the CLI prints for a record that has none of the spec 020 fields, as an older Sync
+API writes it. They pass before and after spec 020 User Story 3.
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ def test_the_existing_keys_keep_their_values(failure_evidence: Callable[..., dic
 
     evidence = failure_evidence(case.stage, case.build(NEUTRAL_TEXT), outcome="failed", record=None, secrets=())
 
-    # Only the keys recorded today: spec 019 may add a `cause` where today's record has none.
+    # Only the keys recorded today: spec 020 may add a `cause` where today's record has none.
     assert {key: evidence.get(key) for key in _TODAY[case_id]} == _TODAY[case_id]
 
 
@@ -115,7 +115,7 @@ def test_a_missing_branch_keeps_its_cause_and_next_action(failure_evidence: Call
     assert {key: evidence.get(key) for key in expected} == expected
 
 
-# A record written by a Sync API before spec 019: none of the new fields.
+# A record written by a Sync API before spec 020: none of the new fields.
 _OLDER_RECORD = {
     "stage": "apply",
     "outcome": "ambiguous",

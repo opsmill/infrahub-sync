@@ -1,4 +1,4 @@
-"""The credential variable names a worker holds and a package references (spec 019 FR-035).
+"""The credential variable names a worker holds and a package references (spec 020 FR-035).
 
 `configs validate` runs in the Sync API, which does not hold the variables a run reads: Compose
 gives the worker and the API different environments. So each worker publishes the NAMES of its

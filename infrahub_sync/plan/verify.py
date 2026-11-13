@@ -242,7 +242,7 @@ def _last_changes_failures(
 
 
 def _report_failures(run_id: str, artifact: RawPlanArtifact, mapping: dict[str, Any]) -> list[VerificationFailure]:
-    """Check `report.jsonl` against a format 4 manifest's `report` record (spec 019).
+    """Check `report.jsonl` against a format 4 manifest's `report` record (spec 020).
 
     No failure for a format 2 or 3 plan, which has no report. The record itself is covered by
     the plan checksum; this check covers the file it describes, by its digest, size and counts.

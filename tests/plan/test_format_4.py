@@ -1,4 +1,4 @@
-"""Saved plan format 4 (spec 019 T013, FR-031, contracts/plan-artifact-format-4.md).
+"""Saved plan format 4 (spec 020 T013, FR-031, contracts/plan-artifact-format-4.md).
 
 Format 4 is format 3 plus `plan/report.jsonl` and a `report` object in the manifest:
 
@@ -11,7 +11,7 @@ Format 4 is format 3 plus `plan/report.jsonl` and a `report` object in the manif
 - a run without a destination schema snapshot records `dropdown_values_checked: false`
 - the format 3 fields stay: `destination_id` on updates, `lineage` and `plan/last_changes.jsonl`
 
-Spec 019 T027 implements the format; T028 runs the problem pass before `Potenda.write_plan`
+Spec 020 T027 implements the format; T028 runs the problem pass before `Potenda.write_plan`
 writes the plan.
 
 The apply gate's left-out count is bound to the checksum the operator confirms (ADR 0022):
@@ -22,16 +22,18 @@ path, not only on the reader.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import TYPE_CHECKING, Any
 
+import pydantic
 import pytest
 
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.errors import PlanVerificationError
-from infrahub_sync.plan.models import LineageAccountRecord, LineageNodeRecord, PlanLineageRecord
-from infrahub_sync.plan.reader import load_plan_artifact
+from infrahub_sync.plan.models import LineageAccountRecord, LineageNodeRecord, PlanLineageRecord, PlanManifest
+from infrahub_sync.plan.reader import load_plan_artifact, report_mismatch
 from infrahub_sync.plan.review import resolve_run_directory
 from infrahub_sync.plan.writer import (
     LAST_CHANGES_FILE_NAME,
@@ -301,3 +303,52 @@ def test_format_3_fields_are_kept(tmp_path: Path) -> None:
     updates = [operation for operation in loaded.operations if operation.action == "update"]
     assert updates
     assert all(operation.destination_id for operation in updates)
+
+
+def _manifest_for(report_bytes: bytes, *, kept: int) -> dict[str, Any]:
+    return {
+        "format_version": 4,
+        "report": {
+            "digest": hashlib.sha256(report_bytes).hexdigest(),
+            "size": len(report_bytes),
+            "problems": 0,
+            "left_out": 0,
+            "left_out_with_problem": 0,
+            "left_out_dependent": 0,
+            "kept": kept,
+        },
+    }
+
+
+def test_a_report_line_its_entry_model_refuses_is_a_mismatch() -> None:
+    """A `kept` line without `record` matches its digest and counts, and is still refused."""
+    report_bytes = b'{"entry":"kept","cause":"peer_not_found_in_source","relationship":"tenant"}\n'
+
+    assert report_mismatch(_manifest_for(report_bytes, kept=1), report_bytes) == (
+        "one JSON object per line, each a problem, left-out or kept entry",
+        "a line that is not",
+    )
+
+
+@pytest.mark.parametrize("field", ["report", "dropdown_values_checked"])
+def test_a_format_3_manifest_cannot_carry_a_report_field(tmp_path: Path, field: str) -> None:
+    """Review would otherwise read a legacy plan as one whose report checks ran."""
+    directory = resolve_run_directory(SYNC_NAME, RUN_ID, base_directory=tmp_path)
+    write_plan_artifact(
+        run_dir=directory,
+        run_id=RUN_ID,
+        config_version=CONFIG_VERSION,
+        source_snapshot=[],
+        deletes_computed=True,
+        operations=[],
+    )
+    manifest = json.loads((directory / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes())
+    manifest["format_version"] = 3
+    manifest.setdefault("dropdown_values_checked", True)
+    if field == "report":
+        manifest.pop("dropdown_values_checked")
+    else:
+        manifest.pop("report")
+
+    with pytest.raises(pydantic.ValidationError):
+        PlanManifest.model_validate(manifest)

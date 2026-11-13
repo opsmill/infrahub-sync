@@ -102,7 +102,7 @@ def selected_last_changes(
 ) -> list[LastChangeRecord]:
     """The records of `records` that still describe a field one of `operations` changes.
 
-    The selection step of spec 019 removes the operations of left-out records and the
+    The selection step of spec 020 removes the operations of left-out records and the
     relationships written without their peer. A record whose update was removed, or whose
     field the update no longer carries, describes no change of the plan, so it is not written.
     """

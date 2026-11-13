@@ -1,4 +1,4 @@
-"""Credential variables the worker holds, checked by `configs validate --branch` (spec 019 FR-035, T063).
+"""Credential variables the worker holds, checked by `configs validate --branch` (spec 020 FR-035, T063).
 
 `configs validate` runs in the Sync API, which does not hold the variables a run reads: Compose
 gives the worker and the API different environments. So each worker publishes, on each poll,
@@ -24,8 +24,9 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
@@ -418,3 +419,47 @@ async def test_a_store_that_fails_the_write_does_not_stop_the_poll_and_is_built_
 
     assert built == ["store", "store"]
     _assert_no_value(caplog.text)
+
+
+def test_a_publication_at_the_liveness_cutoff_is_live(tmp_path: Path) -> None:
+    """A worker that published exactly at the cutoff still counts as live."""
+    projection = local_product_projection(tmp_path)
+    cutoff = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    projection.publish_worker_environment("worker-1", [SHORT_CREDENTIAL_NAME], observed_at=cutoff)
+
+    assert [item.worker_id for item in projection.live_worker_environments(observed_after=cutoff)] == ["worker-1"]
+
+
+def test_a_publication_time_without_a_zone_is_read_as_utc(tmp_path: Path) -> None:
+    """A time without a zone compares with the UTC cutoff instead of failing the validation."""
+    projection = local_product_projection(tmp_path)
+    projection.publish_worker_environment(
+        "worker-1",
+        [SHORT_CREDENTIAL_NAME],
+        observed_at=datetime(2026, 1, 1, 12, 0),  # noqa: DTZ001
+    )
+
+    live = projection.live_worker_environments(observed_after=datetime(2026, 1, 1, tzinfo=timezone.utc))
+
+    assert [item.observed_at.tzinfo for item in live] == [timezone.utc]
+
+
+async def test_a_store_that_does_not_answer_does_not_hold_the_poll(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The store blocks: the poll returns after the publication timeout, and the next poll starts no second one."""
+    release = threading.Event()
+    opened: list[int] = []
+
+    def blocked(*_args: object, **_kwargs: object) -> ProductProjection:
+        opened.append(1)
+        release.wait(5)
+        raise OSError
+
+    monkeypatch.setattr(service_worker, "service_product_projection", blocked, raising=False)
+    monkeypatch.setattr(service_worker, "_PUBLICATION_TIMEOUT_SECONDS", 0.05)
+    worker = _worker()
+
+    await _poll(worker)
+    await _poll(worker)
+    release.set()
+
+    assert opened == [1]

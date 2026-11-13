@@ -1,6 +1,6 @@
 """The engine's own check of the left-out confirmation, for callers that skip the Sync API.
 
-Spec 019 FR-010 and FR-011, research R10 and T042. The Sync API refuses an apply of a plan that
+Spec 020 FR-010 and FR-011, research R10 and T042. The Sync API refuses an apply of a plan that
 leaves out records unless the request confirms it. The engine checks the same thing again from
 the plan manifest, so a direct Python caller of `Potenda.apply_plan` cannot skip it: an apply of
 a plan whose report leaves out records needs `confirm_left_out=True`, and is refused before the
@@ -192,3 +192,17 @@ def test_the_us1_fixture_plan_needs_the_confirmation_and_then_reaches_the_write(
         planned.potenda.apply_plan(ownership=confirmed_ownership, expected_checksum=checksum, confirm_left_out=True)
 
     assert confirmed_ownership.proofs == 1
+
+
+@pytest.mark.parametrize(
+    ("run_id", "shown"),
+    [("run-42", "run-42"), ("run\n42", "<run_id>"), ("\x1b[2Jrun", "<run_id>")],
+    ids=["valid", "newline", "control-sequence"],
+)
+def test_the_refusal_guidance_names_only_a_run_id_of_the_product_form(run_id: str, shown: str) -> None:
+    """A run ID with a newline or a control sequence is not copied into the printed guidance."""
+    error = LeftOutConfirmationRequiredError(3, run_id=run_id)
+
+    assert f"runs plan {shown} --problems" in error.next_action
+    assert "\n" not in error.next_action
+    assert "\x1b" not in error.next_action

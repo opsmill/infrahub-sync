@@ -552,7 +552,7 @@ def test_service_flow_redacts_worker_logs_exception_chain_and_failed_state(
         # the canary assertions above and below cover the whole stored document.
         "cause_type": "ConnectionError",
     }
-    # Spec 019 ADR 0021: the failure type and a fixed template cause, never the error's text.
+    # Spec 020 ADR 0021: the failure type and a fixed template cause, never the error's text.
     assert recorded["failure_type"] == "system_unreachable"
     assert recorded["system"] is None
     assert recorded["cause"] == "A system could not be reached"
@@ -612,7 +612,7 @@ def test_service_apply_failure_retains_partial_write_evidence(
         # own advice, a new plan (spec 022).
         "next_action": RESUMABLE_WRITE_NEXT_ACTION,
         **partial.as_summary_keys(),
-        # Spec 019 ADR 0021: an apply failure with no known cause is an internal error at the
+        # Spec 020 ADR 0021: an apply failure with no known cause is an internal error at the
         # destination, with no cause text.
         "failure_type": "internal_error",
         "system": {"role": "destination", "adapter": "infrahub"},

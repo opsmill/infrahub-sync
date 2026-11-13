@@ -1,4 +1,4 @@
-"""The left-out records, the dependency walk and the kept records (spec 019 T011, FR-005, FR-006, FR-008).
+"""The left-out records, the dependency walk and the kept records (spec 020 T011, FR-005, FR-006, FR-008).
 
 A record with a problem is left out of the plan, and so is every record that depends on it
 through a required relationship, at any depth. A record that refers to a left-out record, or to a
@@ -10,7 +10,7 @@ Also covered, the edge cases of spec.md: both records of a duplicate pair are le
 record that Infrahub already holds gets no update and no delete, and a plan whose every record is
 left out finishes with no operation.
 
-Spec 019 T017 to T028 implement the behavior.
+Spec 020 T017 to T028 implement the behavior.
 """
 
 from __future__ import annotations

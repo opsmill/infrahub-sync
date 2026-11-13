@@ -1,4 +1,4 @@
-"""No credential and no error text reaches the plan files or the report (spec 019 T048, SC-005, SC-007).
+"""No credential and no error text reaches the plan files or the report (spec 020 T048, SC-005, SC-007).
 
 FR-029 and FR-030: a problem reason, a left-out or kept entry and a plan file are never built from
 connection settings or from the text of an error, so their protection does not depend on

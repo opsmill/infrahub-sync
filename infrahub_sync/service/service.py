@@ -97,7 +97,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 PLAN_ARTIFACT_ID = "plan-review"
-# The key of the published review document that holds the plan report's lines (spec 019).
+# The key of the published review document that holds the plan report's lines (spec 020).
 # `GET /runs/{run_id}/plan` does not return it; the paged report routes do.
 PLAN_REPORT_KEY = "report"
 # The `entry` of a plan report line, one per report route.
@@ -482,7 +482,7 @@ class RunService:
                 run_id=run_id,
             )
         # After the checksum, so the count refers to the plan the person reviewed, and before
-        # the reservation, so a refusal takes no write admission (spec 019 FR-010, FR-011).
+        # the reservation, so a refusal takes no write admission (spec 020 FR-010, FR-011).
         left_out = plan.summary.left_out
         if left_out > 0 and not request.confirm_left_out:
             self._audit(
@@ -1369,7 +1369,7 @@ class RunService:
         kind: str | None = None,
         expected_checksum: str | None = None,
     ) -> PlanReportPageResource:
-        """Return one page of the problems, left-out records or kept records of the retained plan (spec 019).
+        """Return one page of the problems, left-out records or kept records of the retained plan (spec 020).
 
         The entries are the lines of the plan's `report.jsonl` whose `entry` is `entry`,
         without that key, in the report's order, filtered by `problem_type` and `kind`. A

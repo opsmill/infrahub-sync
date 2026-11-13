@@ -246,7 +246,7 @@ def test_two_creates_projecting_onto_one_destination_hfid_are_refused() -> None:
 
 
 def test_the_check_returns_the_colliding_creates_instead_of_raising() -> None:
-    """Spec 019 T024: the plan returns the group; the problem pass leaves both records out."""
+    """Spec 020 T024: the plan returns the group; the problem pass leaves both records out."""
     first, second = site_create("site-a", "first"), site_create("site-a", "second")
 
     groups = check(first, second)

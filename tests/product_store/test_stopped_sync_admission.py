@@ -1,6 +1,6 @@
 """A stopped `sync` gives back its write admission, so its confirmed apply can be admitted.
 
-Spec 019 FR-012 and FR-023, research R11, data-model.md "Stage result `failure` for a stopped
+Spec 020 FR-012 and FR-023, research R11, data-model.md "Stage result `failure` for a stopped
 `sync`", and decision 2 of 2026-11-11. A `sync` run reserves its one write admission when it is
 created. When its plan leaves out records, the stage stops before any write. The stop's
 writeback asks the store to give the admission back (`release_write_admission=True`), and the

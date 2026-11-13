@@ -265,7 +265,7 @@ def test_transform_refuses_unsafe_callables(expression: str) -> None:
 
 
 def test_a_failed_transform_names_its_field_and_position() -> None:
-    """Spec 019 research R7: the error holds the field and the transform's position only."""
+    """Spec 020 research R7: the error holds the field and the transform's position only."""
     transforms = [
         SchemaMappingTransform(field="first", expression="{{ name }}"),
         SchemaMappingTransform(field="second", expression="{{ missing.value }}"),

@@ -70,7 +70,7 @@ IdentityProblemType = Literal["destination_identity_collision", "identities_merg
 
 @dataclass(frozen=True)
 class IdentityGroup:
-    """Records that one destination key cannot tell apart (spec 019 research R6).
+    """Records that one destination key cannot tell apart (spec 020 research R6).
 
     The plan cannot tell which record of a group is correct, so the problem pass leaves out
     every record of it. `problem_type` is the plan problem the group becomes. `operations` are
@@ -651,7 +651,7 @@ def refuse_destination_identity_collisions(
 ) -> None:
     """Refuse creates sharing any declared destination uniqueness rule before a write.
 
-    The write surface's own guard: a plan leaves such creates out (spec 019), so an artifact
+    The write surface's own guard: a plan leaves such creates out (spec 020), so an artifact
     that holds them was not written by a plan. Raises `DestinationIdentityCollisionError` for
     the first group of `destination_identity_collision_groups`.
     """
@@ -722,7 +722,7 @@ def merged_identity_groups(
 
 
 def refuse_identity_groups(groups: Sequence[IdentityGroup], *, config: Any = None) -> None:
-    """Raise `DestinationIdentityCollisionError` for the first group a plan refused before spec 019.
+    """Raise `DestinationIdentityCollisionError` for the first group a plan refused before spec 020.
 
     A destination collision and a create that shares its human-friendly ID with a distinct
     loaded source record are refused; a merge on the closest destination key only warns.

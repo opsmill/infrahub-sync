@@ -1,4 +1,4 @@
-"""No credential and no error text reaches the record of a failed run (spec 019 T047, SC-005, SC-007).
+"""No credential and no error text reaches the record of a failed run (spec 020 T047, SC-005, SC-007).
 
 FR-019, FR-029 and FR-030, and decision 3 of the specification: a failure record is built only
 from allowlisted fields, never from the text of an error or from connection settings, so its

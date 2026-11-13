@@ -1,6 +1,6 @@
-"""Three problem types that spec 019 changes, through the real NetBox read (T001, research R1).
+"""Three problem types that spec 020 changes, through the real NetBox read (T001, research R1).
 
-T001 pinned what a source read did before spec 019 with a duplicate source identity, a value of
+T001 pinned what a source read did before spec 020 with a duplicate source identity, a value of
 the wrong type and a Dropdown value outside its choices. T017 rewrote the first two: the read
 records the record in the load report and continues. T023 and T026 rewrote the Dropdown test:
 the problem pass records the value and leaves the record out. Each test drives the NetBox
@@ -62,7 +62,7 @@ def test_duplicate_source_identity_is_recorded_and_the_read_continues(
 ) -> None:
     """The second `LocationSite` named `dup` is `duplicate_source_identity`; the store keeps the first.
 
-    FR-002 (`duplicate_source_identity`), implemented by T017. Before spec 019 the read raised
+    FR-002 (`duplicate_source_identity`), implemented by T017. Before spec 020 the read raised
     `ObjectAlreadyExists` and stopped.
     """
     records = {
@@ -87,7 +87,7 @@ def test_number_given_a_float_is_recorded_and_the_read_continues(
 ) -> None:
     """`position` 2.5 for a `Number` attribute is `wrong_value_type`; the device is not stored.
 
-    FR-002 (`wrong_value_type`), implemented by T017. Before spec 019 the read raised
+    FR-002 (`wrong_value_type`), implemented by T017. Before spec 020 the read raised
     `ValidationError` (`int_from_float`) and stopped.
     """
     source = plan_problems.source_records()
@@ -112,7 +112,7 @@ def test_dropdown_value_outside_its_choices_is_a_problem_and_left_out(
     """A `LocationSite` status outside the Dropdown's choices is a plan problem; its create is left out.
 
     FR-002 (`dropdown_value_not_in_choices`), implemented by T023 (the runtime schema records
-    the choices) and T026 (the problem pass checks each mapped value). Before spec 019 the
+    the choices) and T026 (the problem pass checks each mapped value). Before spec 020 the
     plan accepted `decommissioning`, and Infrahub refused the value only during apply (#371).
     """
     choices = plan_problems.schema_record["LocationSite"]["attributes"]["status"]["choices"]

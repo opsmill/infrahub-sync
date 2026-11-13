@@ -488,7 +488,7 @@ def test_a_failure_after_part_of_a_write_names_the_operation_and_marks_the_parti
 
 
 def test_a_stopped_apply_records_the_plan_size_and_the_failed_operation(tmp_path: Path) -> None:
-    """Spec 019 FR-014: the failure record of a stopped apply names the operation from the plan."""
+    """Spec 020 FR-014: the failure record of a stopped apply names the operation from the plan."""
     directory = _run_dir(tmp_path)
     records = [operation_record(identity={"name": "first"}), operation_record(identity={"name": "second"})]
     write_artifact(directory, records, run_id=RUN_ID, source_snapshot=[])
@@ -583,7 +583,7 @@ class SecondOperationRejectingDestination(RecordingDestination):
 
 
 def test_an_infrahub_rejection_stops_the_apply_before_the_next_operation(tmp_path: Path) -> None:
-    """Old 009 FR-013 (spec 019 T079): a rejected write stops the apply; no later operation is attempted.
+    """Old 009 FR-013 (spec 020 T079): a rejected write stops the apply; no later operation is attempted.
 
     The left-out policy of the plan does not apply during an apply, so the rejected operation is
     not skipped: the third operation, which the destination would accept, is never sent.

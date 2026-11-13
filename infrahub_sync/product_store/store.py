@@ -1747,7 +1747,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         self._record_configuration_baseline(cursor, run_id, writeback.baseline, terminal_at)
                     # A `sync` that stopped after its plan, before any dispatch, gives back
                     # its write admission in this same transaction, so the team can apply
-                    # the reviewed plan once (spec 019 FR-012, ADR 0020).
+                    # the reviewed plan once (spec 020 FR-012, ADR 0020).
                     if _releases_write_admission(writeback, terminal_state, terminal_outcome):
                         cursor.execute(self._sql(_RELEASE_STOPPED_SYNC_ADMISSION), (run_id, run_id))
                 else:
@@ -1837,7 +1837,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         )
 
     def publish_worker_environment(self, environment: WorkerEnvironment) -> None:
-        """Replace one worker's published credential variable names (spec 019 FR-035)."""
+        """Replace one worker's published credential variable names (spec 020 FR-035)."""
         connection = self._connect()
         try:
             cursor = connection.cursor()
@@ -4458,7 +4458,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
     def publish_worker_environment(
         self, worker_id: str, credential_names: Iterable[str], *, observed_at: datetime | None = None
     ) -> None:
-        """Record the credential variable NAMES one worker holds now; never a value (spec 019 FR-035).
+        """Record the credential variable NAMES one worker holds now; never a value (spec 020 FR-035).
 
         Each call replaces that worker's previous names, so the record follows the variables
         the worker holds at its latest poll.
@@ -4472,11 +4472,11 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         )
 
     def live_worker_environments(self, *, observed_after: datetime) -> tuple[WorkerEnvironment, ...]:
-        """Return the publications of the workers that published after `observed_after`, by worker."""
+        """Return the publications of the workers that published at or after `observed_after`, by worker."""
         return tuple(
             environment
             for environment in self._records.worker_environments()
-            if environment.observed_at > observed_after
+            if environment.observed_at >= observed_after
         )
 
     def lookup_artifact(self, run_id: str, artifact_id: str) -> LookupResult[bytes]:

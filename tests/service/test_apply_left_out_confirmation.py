@@ -1,4 +1,4 @@
-"""The Sync API apply gate for a plan that leaves out records (spec 019 T034).
+"""The Sync API apply gate for a plan that leaves out records (spec 020 T034).
 
 FR-010, FR-011 and FR-026, contracts/sync-api.md "Apply request" and research R10:
 

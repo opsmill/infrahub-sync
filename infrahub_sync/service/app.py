@@ -137,7 +137,7 @@ def _report_limit(value: str | None) -> int:
 def plan_router(service: RunService, authenticate: Callable[..., Principal]) -> APIRouter:
     """Return the authenticated routes of a saved plan: its review and its problem, left-out and kept lists.
 
-    The three lists are spec 019's (contracts/sync-api.md).
+    The three lists are spec 020's (contracts/sync-api.md).
     """
     router = APIRouter()
 
@@ -155,7 +155,7 @@ def plan_router(service: RunService, authenticate: Callable[..., Principal]) -> 
         kind: Annotated[str | None, Query()] = None,
         expected_checksum: Annotated[str | None, Query()] = None,
     ) -> PlanReportPageResource:
-        """Return one page of the saved plan's problems (spec 019, contracts/sync-api.md)."""
+        """Return one page of the saved plan's problems (spec 020, contracts/sync-api.md)."""
         if problem_type is not None and problem_type not in PROBLEM_TYPES:
             raise ServiceAPIError(422, "request-invalid", "the request does not match the API schema")
         return service.get_plan_report(
@@ -177,7 +177,7 @@ def plan_router(service: RunService, authenticate: Callable[..., Principal]) -> 
         kind: Annotated[str | None, Query()] = None,
         expected_checksum: Annotated[str | None, Query()] = None,
     ) -> PlanReportPageResource:
-        """Return one page of the records the saved plan leaves out (spec 019)."""
+        """Return one page of the records the saved plan leaves out (spec 020)."""
         return service.get_plan_report(
             run_id,
             entry="left_out",
@@ -196,7 +196,7 @@ def plan_router(service: RunService, authenticate: Callable[..., Principal]) -> 
         kind: Annotated[str | None, Query()] = None,
         expected_checksum: Annotated[str | None, Query()] = None,
     ) -> PlanReportPageResource:
-        """Return one page of the records the saved plan keeps without one optional relationship (spec 019)."""
+        """Return one page of the records the saved plan keeps without one optional relationship (spec 020)."""
         return service.get_plan_report(
             run_id,
             entry="kept",

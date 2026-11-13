@@ -100,7 +100,7 @@ def test_the_checksum_changes_when_the_lineage_changes(tmp_path: Path) -> None:
 
 
 def test_the_lineage_record_is_written_in_the_current_format(tmp_path: Path) -> None:
-    """Plan format 4 (spec 019) keeps the `lineage` record of format 3."""
+    """Plan format 4 (spec 020) keeps the `lineage` record of format 3."""
     written = _written_manifest(tmp_path, LINEAGE)
 
     assert PLAN_FORMAT_VERSION == 4

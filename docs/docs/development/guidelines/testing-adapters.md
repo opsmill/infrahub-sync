@@ -36,8 +36,9 @@ are integration tests (see below).
 - Transforms produce native-typed values.
 - `identifiers` and `local_id` are populated, and `reference` fields resolve to peer
   `unique_id`s — including the list-reference case.
-- On the source side, a record the read cannot build is recorded in `load_report` and the
-  read continues with the next record.
+- On the source side, a record the read cannot build for a reason of the load report is
+  recorded in `load_report`, and the read continues with the next record. Any other error is
+  raised as `RecordLoadError` and ends the read.
 
 ### Cover the incremental contract
 

@@ -432,7 +432,7 @@ class ConfigurationBaseline(BaseModel):
 
 
 class WorkerEnvironment(BaseModel):
-    """The credential variable names one worker held at its last poll (spec 019 FR-035).
+    """The credential variable names one worker held at its last poll (spec 020 FR-035).
 
     Names only, never values: each is a set, non-empty variable of the credential namespace.
     `worker_id` is the worker's name, the identity it has before Prefect resolves its record.
@@ -443,6 +443,12 @@ class WorkerEnvironment(BaseModel):
     worker_id: str = Field(min_length=1, max_length=256)
     credential_names: tuple[str, ...]
     observed_at: datetime
+
+    @field_validator("observed_at")
+    @classmethod
+    def _aware(cls, value: datetime) -> datetime:
+        """Read a time without a zone as UTC, so it compares with the liveness cutoff, which is in UTC."""
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
 
     @field_validator("credential_names")
     @classmethod
@@ -469,7 +475,7 @@ class ExecutionFinishWriteback(BaseModel):
     # become the next run's reference. Absent on every read stage.
     baseline: BaselineWriteback | None = None
     # Set only by a `sync` stage that stopped after its plan because the plan leaves out
-    # records (spec 019 FR-012). The store gives back the run's `sync` write admission in
+    # records (spec 020 FR-012). The store gives back the run's `sync` write admission in
     # the same transaction, and only when the run record shows no dispatched operation.
     release_write_admission: bool = False
 

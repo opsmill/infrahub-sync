@@ -2,12 +2,12 @@
 
 A schema-mapping field that declares `reference` resolves its value against the adapter's
 DiffSync store, through the shared helper `infrahub_sync.adapters.references.peer_unique_id`
-(spec 019 T021). These tests run all three adapters' `record_to_data` against a real
+(spec 020 T021). These tests run all three adapters' `record_to_data` against a real
 `LocalStore` and pin what each one emits or raises for an empty store, a store holding no
 matching peer, a matching peer, a scalar reference, and several references at once. A peer the
 store does not hold is a `peer_not_found_in_source` load report entry: through an optional
 relationship the record keeps a placeholder value, through a required one the conversion raises
-`PeerNotFoundError` (research R5). Before spec 019, NetBox and the generic REST adapter raised
+`PeerNotFoundError` (research R5). Before spec 020, NetBox and the generic REST adapter raised
 `IndexError` and Nautobot warned and dropped the peer.
 
 They also pin the store contract those converters read: `get_all` hands back a list, so an

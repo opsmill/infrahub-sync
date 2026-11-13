@@ -130,14 +130,14 @@ runs the entry's transforms, calls `record_to_data` and stores the model. Implem
 methods it calls:
 
 ```python
-from infrahub_sync.adapters.references import peer_unique_id, reference_is_required
+from infrahub_sync.adapters.references import peer_unique_id, peer_unique_ids, reference_is_required
 from infrahub_sync.adapters.utils import get_value
 
 def list_records(self, model_name, element):
     return self.client.get(element.mapping)
 
 def record_to_data(self, record, element, model):
-    source_id = str(record["id"])
+    source_id = self.record_source_id(record)
     data = {"local_id": source_id}
     for field in element.fields:
         if field.static is not None:
@@ -146,22 +146,27 @@ def record_to_data(self, record, element, model):
             data[field.name] = get_value(record, field.mapping)
         elif field.mapping and field.reference:
             peer = get_value(record, field.mapping)
-            if peer:
-                data[field.name] = peer_unique_id(
-                    self,
-                    field.reference,
-                    peer,
-                    owner=(element.name, source_id),
-                    field=field.name,
-                    required=reference_is_required(model, field.name),
-                )
+            if not peer:
+                continue
+            resolve = peer_unique_ids if model.is_list(field.name) else peer_unique_id
+            data[field.name] = resolve(
+                self,
+                field.reference,
+                peer,
+                owner=(element.name, source_id),
+                field=field.name,
+                required=reference_is_required(model, field.name),
+            )
     return data
 ```
 
 `record_to_data` always sets `local_id` to the source record ID, and resolves each reference with
 `peer_unique_id`, or `peer_unique_ids` for a list of peers. Do not filter, transform or catch
-errors in either method. On the source side, `load_record` records a record it cannot build in
-the adapter's `load_report`, and the plan lists it as a problem and leaves it out; see
+errors in either method. On the source side, `load_record` records a record it cannot build for
+one of the reasons of the load report (a value of the wrong type, a duplicate identity, a peer
+that is filtered, not loaded or not in the source, a failed transform) in the adapter's
+`load_report`, and the plan lists it as a problem and leaves it out. Any other error is raised as
+`RecordLoadError` and fails the plan; see
 [The read loop](../knowledge/adapter-anatomy.md#the-read-loop). Override `record_source_id` when
 your records do not name their ID `id`. `examples/custom_adapter/custom_adapter_src/custom_adapter.py`
 has a complete version, including the single and list reference cases.

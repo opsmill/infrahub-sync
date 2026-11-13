@@ -2,7 +2,7 @@
 
 - Spec 017 FR-001: a destination schema read failure records a cause and a next action the
   reader acts on.
-- Spec 019 T046: each failure type records its `failure_type` and the fields of FR-014.
+- Spec 020 T046: each failure type records its `failure_type` and the fields of FR-014.
 """
 
 from __future__ import annotations
@@ -116,9 +116,9 @@ def test_an_unknown_reason_still_records_a_cause_and_a_next_action() -> None:
     assert recorded["next_action"]
 
 
-# Spec 019 T046 (FR-014 to FR-018, data-model.md "Stage failure record additions"): the record of
+# Spec 020 T046 (FR-014 to FR-018, data-model.md "Stage failure record additions"): the record of
 # each failure type. The record is built by `_failure_evidence`, the function the worker writes
-# `results.<stage>_failure` with; spec 019 T053 and T054 make it call `failure_record`.
+# `results.<stage>_failure` with; spec 020 T053 and T054 make it call `failure_record`.
 
 
 @pytest.fixture

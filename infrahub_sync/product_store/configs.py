@@ -889,7 +889,7 @@ def get_version(
     return stored
 
 
-# Spec 019 FR-035: the credential check of the validation opt-in. It runs here, beside the
+# Spec 020 FR-035: the credential check of the validation opt-in. It runs here, beside the
 # product store the workers publish to, and outside the declared-content warning channel.
 _CODE_CREDENTIAL_NOT_SET_IN_WORKER = "credential-not-set-in-worker"
 _CODE_WORKER_ENVIRONMENT_UNKNOWN = "worker-environment-unknown"
@@ -954,7 +954,7 @@ def validate(
     :class:`ProductProjection` through ``projection``.
 
     The same opt-in compares the package's `$credential` references with the variable names
-    the live workers published to ``projection`` (spec 019 FR-035): a worker is live while its
+    the live workers published to ``projection`` (spec 020 FR-035): a worker is live while its
     last publication is no older than ``worker_liveness_seconds``.
     """
     _require_argument_type(config_id, name="config_id", expected=str)

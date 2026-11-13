@@ -41,8 +41,9 @@ def list_records(self, model_name, element):
     return [r for r in self.client.get(element.mapping) if r["status"] == "active"]
 ```
 
-The base-class `model_loader` applies the filters of `config.yml`, and `load_record` applies its
-transforms and records each source record it cannot build in `load_report`. Filtering,
+On a source read, the base-class `model_loader` applies each mapping entry's filters of
+`config.yml`, and `load_record` applies its transforms and records each source record it cannot
+build in `load_report`. A destination read applies neither. Filtering,
 transforming or catching errors in an adapter means filters and transforms behave differently
 per system, and the plan does not list the records the adapter skipped. For a
 REST source, subclass `GenericrestapiAdapter` instead of writing HTTP handling from scratch —

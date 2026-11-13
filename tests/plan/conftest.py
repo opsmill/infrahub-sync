@@ -1,10 +1,10 @@
-"""Loader for the shared plan problem fixture (spec 019 T002).
+"""Loader for the shared plan problem fixture (spec 020 T002).
 
 The data lives in `tests/data/plan_problems/`:
 
 - `destination_schema.json`: the destination schema record, in the JSON shape that
   `normalize_destination_schema` reads. `LocationSite.status` is a Dropdown and carries its
-  `choices`; today's normalization ignores that key (spec 019 research R4).
+  `choices`; today's normalization ignores that key (spec 020 research R4).
 - `sync_config.json`: the configuration of the seven kinds. `DcimDevice` filters out the role
   `lab`, and `IpamVRF` maps its name through a transform that knows two names only.
 - `source_records.json`: the raw source records by group and kind, as a source adapter lists
@@ -37,7 +37,7 @@ relationship `device`. `IpamIPAddress` 81 refers to `core-1` only through the op
 relationship `device`, so it is kept without that relationship.
 
 The fixture holds data and builders only. It does not hold a source adapter, because the
-base-class read loop that such an adapter needs does not exist before spec 019 T017; a test
+base-class read loop that such an adapter needs does not exist before spec 020 T017; a test
 drives an existing adapter (for example NetBox with a mocked client) or its own.
 """
 

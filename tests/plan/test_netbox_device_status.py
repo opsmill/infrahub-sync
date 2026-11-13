@@ -1,4 +1,4 @@
-"""The device status translation of the NetBox example (spec 019 User Story 6, T071, research R18).
+"""The device status translation of the NetBox example (spec 020 User Story 6, T071, research R18).
 
 NetBox has seven device statuses (`DeviceStatusChoices` in `netbox/dcim/choices.py`, NetBox
 v4.7). The `DcimDevice.status` Dropdown of the pinned schema library has five choices. The two

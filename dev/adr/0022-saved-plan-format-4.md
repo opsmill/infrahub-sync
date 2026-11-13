@@ -21,7 +21,9 @@ has no place for the report.
 - Format 4 is format 3 plus `plan/report.jsonl`: one line per problem, left-out record and kept
   record, in the canonical encoding of [ADR 0001](0001-saved-plan-artifact-format.md), in a
   stable order that does not depend on read order. The writer writes it after the operations
-  and before the manifest, so the manifest stays the commit point.
+  and before the manifest, so the manifest stays the commit point. Format 3's check of
+  `plan/last_changes.jsonl` stays: when the manifest names that file, a file that is missing or
+  whose digest or record count differs refuses review and apply.
 - The manifest gains a `report` object with the report's SHA-256 digest, its size and its
   counts (`problems`, `left_out`, `left_out_with_problem`, `left_out_dependent`, `kept`), and
   `dropdown_values_checked: false` when the run had no destination schema snapshot.

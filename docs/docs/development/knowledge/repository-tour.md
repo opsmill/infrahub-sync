@@ -163,12 +163,15 @@ is kept.
 `infrahub`, `ipfabricsync`, `nautobot`, `netbox`, `peeringmanager`, `prometheus` and
 `slurpitsync`, plus the shared `rest_api_client.py`, `utils.py` and `references.py`.
 `references.py` resolves a source reference to its peer (`peer_unique_id`, `peer_unique_ids`,
-`reference_is_required`) and reports a peer that is not loaded, filtered out or not in the
-source to the adapter's load report.
+`reference_is_required`). Through an optional relationship, it records a peer that is not
+loaded or not in the source in the adapter's load report, and only logs a peer that a filter
+removed. Through a required relationship, it raises an error that `load_record` records.
 
-Every source adapter reads through the loop that `DiffSyncMixin` owns in
+The source adapters read through the loop that `DiffSyncMixin` owns in
 `infrahub_sync/__init__.py`: an adapter lists its records (`list_records`) and converts each
-one (`record_to_data`), and `load_record` admits it or records why it cannot. The entries go
+one (`record_to_data`), and `load_record` admits it or records why it cannot.
+`InfrahubAdapter` keeps its own `model_loader`, because it also fills the SDK store, and admits
+each record through `load_record` too. The entries go
 to the adapter's `load_report`, whose types are in `infrahub_sync/load_report.py`; the problem
 pass of a plan reads them. `infrahub_sync/warm_read.py` holds the methods a warm read of the
 source calls on the adapter (`list_changed_records`, `load_changed_records`), so that the

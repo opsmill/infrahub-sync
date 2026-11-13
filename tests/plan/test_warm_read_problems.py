@@ -1,4 +1,4 @@
-"""A warm source read reports the same problems as a cold read (spec 019 task T081).
+"""A warm source read reports the same problems as a cold read (spec 020 task T081).
 
 A warm read takes the records the previous successful run admitted from its source snapshot
 and reads only the records changed since the saved cursor (`Potenda.load_one_side`). Each

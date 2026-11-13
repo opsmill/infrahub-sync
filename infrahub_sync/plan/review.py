@@ -79,7 +79,7 @@ class SavedPlan:
             manifest's digest or count is refused while reading, not noted. A file that
             matches but holds a bad record is `None` too, with a verification note naming
             the first bad line and the reason.
-        report: The lines of `report.jsonl` (plan format 4, spec 019): problems, left-out
+        report: The lines of `report.jsonl` (plan format 4, spec 020): problems, left-out
             records and kept records, in the report's order. Empty for a format 2 or 3 plan.
             The reader has checked them against the manifest's digest and counts.
     """
@@ -124,7 +124,7 @@ class SavedPlan:
         for operation in self._operations:
             by_action[operation.action] = by_action.get(operation.action, 0) + 1
             by_kind[operation.kind] = by_kind.get(operation.kind, 0) + 1
-        # Spec 019 FR-007: the report's counts. A format 2 or 3 plan has no report and could
+        # Spec 020 FR-007: the report's counts. A format 2 or 3 plan has no report and could
         # not check Dropdown values; a format 4 manifest records `false` only when it could not.
         has_report = self.manifest.report is not None
         counts = PlanReport.from_lines(self.report).summary_counts() if has_report else {}

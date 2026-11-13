@@ -185,7 +185,7 @@ This changes the fingerprint for existing saved plans, so review and save a new 
 upgrading before you apply it.
 
 Several creates sharing a destination human-friendly ID, a unique attribute (including an
-inherited one), or a uniqueness constraint form an identity group. Since spec 019 the plan does
+inherited one), or a uniqueness constraint form an identity group. Since spec 020 the plan does
 not refuse the group: the problem pass records one `destination_identity_collision` problem and
 leaves every record of the group out of the plan (ADR 0020). The write surface still refuses
 such creates as `DestinationIdentityCollisionError`, naming the colliding rule. Applying those creates could converge distinct source

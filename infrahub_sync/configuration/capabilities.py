@@ -72,7 +72,7 @@ class AdapterConfigurationCapabilities:
     supported_destination_write_operations: frozenset[WriteOperation] = frozenset()
     destination_schema_validation: bool = False
     destination_schema_accessor: DestinationSchemaAccessor | None = None
-    # Reads what the import account may do on the destination branch (spec 019 FR-036); only
+    # Reads what the import account may do on the destination branch (spec 020 FR-036); only
     # the explicit validation opt-in calls it, after a successful schema read.
     destination_access_accessor: DestinationAccessAccessor | None = None
     # Whether this adapter implements incremental extraction (the cursor_tier_for /
@@ -254,7 +254,7 @@ def _infrahub_call(package: ConfigurationPackage, branch: str, what: str, call: 
     """Run `call` with a client built from the declared settings, classifying every failure.
 
     The failure arms every read of the validation opt-in shares: the schema read and the
-    access read (spec 019 FR-036). `what` names the read in the message, for example
+    access read (spec 020 FR-036). `what` names the read in the message, for example
     "schema read"; the messages carry exception type names, never third-party content.
     """
     # Imported here, not at module load: this module stays connection-free to import, and
@@ -316,7 +316,7 @@ LineageCheckOutcome = Literal["permission_missing", "kind_missing", "not_found",
 
 @dataclass(frozen=True, slots=True)
 class LineageCheck:
-    """A named `source` or `owner` the import account cannot use on the branch (spec 019 FR-036).
+    """A named `source` or `owner` the import account cannot use on the branch (spec 020 FR-036).
 
     `missing` holds the permissions the lookup needs and the account lacks, for
     `permission_missing` only; the other outcomes say what the lookup found.
@@ -331,7 +331,7 @@ class LineageCheck:
 
 @dataclass(frozen=True, slots=True)
 class DestinationAccess:
-    """What the import account may do on one destination branch (spec 019 FR-036).
+    """What the import account may do on one destination branch (spec 020 FR-036).
 
     `missing_by_kind` maps each mapped kind to the permissions the account lacks to view,
     create and update it, as identifiers without a decision (`object:Infra:Device:create`).
@@ -435,7 +435,7 @@ def _read_infrahub_destination_access(package: ConfigurationPackage, branch: str
 
     One client reads the account's permission identifiers, the default branch, the schema of
     `branch` (for each mapped kind's namespace and name) and, when the account may look them
-    up, the nodes that `source` and `owner` name (spec 019 FR-036, spec 014 decision D-1).
+    up, the nodes that `source` and `owner` name (spec 020 FR-036, spec 014 decision D-1).
     A response of an unexpected shape is a read the destination rejected, with one fixed
     message.
     """
@@ -561,7 +561,7 @@ def _attribute_shape(attribute: Any) -> dict[str, Any]:
     }
     choices = getattr(attribute, "choices", None)
     if shape["kind"] == "Dropdown" and choices is not None:
-        # The choice names of a Dropdown attribute (spec 019 research R4): the plan checks each
+        # The choice names of a Dropdown attribute (spec 020 research R4): the plan checks each
         # mapped value against them. Only the names; a choice's label, color and description
         # cannot change a planned write. Choices the schema does not state are left out, so
         # the plan does not refuse every value of an attribute whose choices are not known.

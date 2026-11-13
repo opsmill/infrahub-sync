@@ -14,11 +14,14 @@ from typing import TYPE_CHECKING
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.cache.parquet_io import SNAPSHOT_INTERNAL_COLUMNS, read_schema, read_table
 from infrahub_sync.cache.sidecars import CursorsFile
+from infrahub_sync.plan.reference_candidates import reference_candidates
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from diffsync import Adapter, DiffSyncModel
+
+    from infrahub_sync import SyncConfig
 
 logger = logging.getLogger(__name__)
 
@@ -194,15 +197,13 @@ def source_snapshot_is_complete(*, run_dir: Path, resource: str) -> bool:
     return metadata.get(SOURCE_READ_METADATA_KEY.encode()) == SOURCE_READ_COMPLETE.encode()
 
 
-def referenced_kinds(config: object, kind: str) -> set[str]:
-    """Return the peer kinds the mapping fields of `kind` reference."""
-    return {
-        field.reference
-        for element in getattr(config, "schema_mapping", None) or []
-        if element.name == kind
-        for field in element.fields
-        if field.reference
-    }
+def referenced_kinds(config: SyncConfig | None, kind: str) -> set[str]:
+    """Return the peer kinds the mapping fields of `kind` reference.
+
+    A reference to a generic counts as a reference to each mapped concrete kind of that
+    generic (`reference_candidates`), since the read stores records under those kinds only.
+    """
+    return {peer_kind for peer_kinds in reference_candidates(config, kind).values() for peer_kind in peer_kinds}
 
 
 def hydrate_from_parquet(

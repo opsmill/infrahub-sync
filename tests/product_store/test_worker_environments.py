@@ -1,4 +1,4 @@
-"""The `worker_environments` table: credential variable names each worker published (spec 019 FR-035).
+"""The `worker_environments` table: credential variable names each worker published (spec 020 FR-035).
 
 SQLite covers every case. The same cases run against a real PostgreSQL server when
 ``PRODUCT_STORE_TEST_POSTGRESQL_DSN`` names one (``-m integration``), confined to a generated

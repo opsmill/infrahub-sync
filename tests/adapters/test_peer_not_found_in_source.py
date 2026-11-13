@@ -1,4 +1,4 @@
-"""A reference to a peer that the source does not return is a plan problem (spec 019 T014, FR-002, SC-010).
+"""A reference to a peer that the source does not return is a plan problem (spec 020 T014, FR-002, SC-010).
 
 Each bundled adapter that resolves references while it reads (NetBox, Nautobot, ACI, generic REST)
 reads recorded API responses: a device refers to a site the source does not return through the
@@ -10,7 +10,7 @@ Each adapter runs through its own `record_to_data` and the base-class read loop;
 `list_records`, the call to the provider, is replaced on the instance and returns the recorded
 responses. The adapter is built without its `__init__`, which connects to the provider.
 
-Spec 019 T017 to T021 implement the read: `test_the_read_records_each_missing_peer` checks the
+Spec 020 T017 to T021 implement the read: `test_the_read_records_each_missing_peer` checks the
 load report each adapter writes. The plan problems, left-out and kept entries come with the problem
 pass and plan format 4 (T025 to T028).
 """
@@ -190,7 +190,7 @@ def _recorded_adapter(name: str, recorded: RecordedSource, config: SyncInstance)
         pytest.importorskip(recorded.requires)
     module = importlib.import_module(recorded.module)
     adapter_class = getattr(module, recorded.adapter)
-    # Spec 019 T018 to T020: the adapter keeps only `list_records` and `record_to_data`, and
+    # Spec 020 T018 to T020: the adapter keeps only `list_records` and `record_to_data`, and
     # reads through the base-class loop.
     assert "model_loader" not in vars(adapter_class), f"{name}: the adapter still has its own read loop"
     assert "record_to_data" in vars(adapter_class), f"{name}: the adapter has no record_to_data"

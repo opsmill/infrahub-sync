@@ -1,4 +1,4 @@
-"""The choices of a Dropdown attribute in the runtime schema and its fingerprint (spec 019 T023, research R4).
+"""The choices of a Dropdown attribute in the runtime schema and its fingerprint (spec 020 T023, research R4).
 
 The plan checks each mapped Dropdown value against the choices the run's destination schema
 snapshot records, so the snapshot keeps them, the consumed-schema fingerprint covers them, and
@@ -104,7 +104,7 @@ def test_an_unmapped_dropdown_leaves_the_fingerprint_unchanged() -> None:
 
 
 def test_a_snapshot_without_choices_keeps_the_fingerprint_of_an_attribute_without_choices() -> None:
-    """An attribute that records no choices projects as before spec 019."""
+    """An attribute that records no choices projects as before spec 020."""
     without = _with_choices("role", None)
 
     assert _fingerprint(without) != _fingerprint(_SNAPSHOT)

@@ -467,7 +467,7 @@ def _echo_config_version(resource: ConfigurationVersionResource) -> None:
 
 
 def _echo_registered_config(resource: RegisteredConfigurationResource) -> None:
-    # The registration response names the version by checksum only (spec 019 FR-038).
+    # The registration response names the version by checksum only (spec 020 FR-038).
     _echo_config_summary(resource.configuration)
     _echo_config_version_reference(resource.version)
 
@@ -625,7 +625,8 @@ def configs_validate(
         "--branch",
         help=(
             "Also check the mapping, the import account's permissions and the workers' credential "
-            "variables against this Infrahub branch. Exits 1 when a finding is an error."
+            "variables against this Infrahub branch. Exits 1 when a finding on the returned page is "
+            "an error; read every page with --offset to check them all."
         ),
     ),
 ) -> None:
@@ -637,7 +638,7 @@ def configs_validate(
             return
         report = _client(ctx).validate_config(config_id, version, offset=offset, limit=limit, branch=branch)
         _echo_validation(report)
-    # contracts/cli.md (spec 019): with a branch, an error finding on the page exits 1.
+    # contracts/cli.md (spec 020): with a branch, an error finding on the page exits 1.
     if any(finding.severity == "error" for finding in report.findings):
         raise typer.Exit(code=1)
 
@@ -916,13 +917,15 @@ def _kept_line(entry: Mapping[str, Any]) -> str:
 
 
 def _echo_report_summary(plan: PlanResource) -> None:
-    """The counts of spec 019 FR-007, the kinds whose deletes are not computed, and the Dropdown check."""
+    """The counts of spec 020 FR-007, the kinds whose deletes are not computed, and the Dropdown check."""
     summary = plan.summary
     typer.echo(
         f"left_out: {summary.left_out} (with a problem: {summary.left_out_with_problem}, "
         f"depending on one: {summary.left_out_dependent})"
     )
     typer.echo(f"problems: {summary.problems}")
+    if summary.problems_by_type:
+        _echo_counts("problems_by_type", summary.problems_by_type)
     typer.echo(f"kept_without_relationship: {summary.kept}")
     for kind, count in summary.deletes_withheld_by_kind.items():
         typer.echo(_display(f"deletes not computed for {kind}: {count} records without identity"))
@@ -1011,7 +1014,7 @@ def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
     """Print what the service recorded about a failed stage, before the run-terminal error.
 
     `<stage> failed: <error type>`, then the failure type and system, `cause:` and the other
-    spec 019 fields when the run recorded them (see `_echo_failure_record`), and `hint:` when it
+    spec 020 fields when the run recorded them (see `_echo_failure_record`), and `hint:` when it
     recorded a next action. A record without a next action, from an older Sync API, gets the fixed hint
     for its error type or recovery signal when it has one. The record is the API's, and the API
     stores only text written for the operator. Each value is still capped and printed through
@@ -1026,7 +1029,7 @@ def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
 
 
 def _failure_lines(failure: Mapping[str, Any], record: StageFailureResource | None) -> Iterator[str]:
-    """The spec 019 lines of a failure record that follow `cause:` (contracts/cli.md), unescaped."""
+    """The spec 020 lines of a failure record that follow `cause:` (contracts/cli.md), unescaped."""
     if record is None:
         return
     if record.infrahub_message:
@@ -1053,9 +1056,9 @@ def _failure_lines(failure: Mapping[str, Any], record: StageFailureResource | No
 
 
 def _echo_failure_record(failure: Mapping[str, Any], *, stage: str, err: bool) -> None:
-    """Print one recorded `<stage>_failure`: the error type, the spec 019 fields, `cause:` and `hint:`.
+    """Print one recorded `<stage>_failure`: the error type, the spec 020 fields, `cause:` and `hint:`.
 
-    The spec 019 fields go between `<stage> failed:` and `hint:` (FR-015, contracts/cli.md): the
+    The spec 020 fields go between `<stage> failed:` and `hint:` (FR-015, contracts/cli.md): the
     failure type and its system, then the cause, Infrahub's message of a rejected write, the
     record and field a failure names, and the progress of a stopped apply. A record from an
     older Sync API has none of them and prints as before.
@@ -1099,7 +1102,7 @@ def _echo_failure_record(failure: Mapping[str, Any], *, stage: str, err: bool) -
 _LEFT_OUT_STOP_FAILURE_TYPE = "left_out_review_required"
 _LEFT_OUT_CONFIRMATION_REQUIRED = "left-out-confirmation-required"
 # The refusal of a stage on a run that already admitted a write, or that has an unresolved
-# submission or a running execution (spec 019 FR-023 keeps the code, decision 4).
+# submission or a running execution (spec 020 FR-023 keeps the code, decision 4).
 _RUN_EXECUTION_CONFLICT = "run-execution-conflict"
 _VERIFY_REQUIRED = "verify-required"
 _CHECKSUM_CONFLICT = "checksum-conflict"
@@ -1124,7 +1127,7 @@ def _echo_left_out_stop(failure: Mapping[str, Any], *, stage: str, err: bool) ->
     """Print a stage result's `failure` for a stop that waits for the left-out review.
 
     `<stage> stopped: left_out_review_required (<n> records left out)`, then the `hint:` the
-    worker recorded (spec 019 FR-012, contracts/cli.md). Returns whether it printed the stop.
+    worker recorded (spec 020 FR-012, contracts/cli.md). Returns whether it printed the stop.
     """
     if failure.get("failure_type") != _LEFT_OUT_STOP_FAILURE_TYPE or failure.get("stage") != stage:
         return False
@@ -1323,10 +1326,10 @@ def sync_cmd(
             _echo_run(completed)
             _echo_completed_destination_branch(client, completed.run.run_id)
             # A `sync` whose plan leaves out records ends completed, without writing, and
-            # waits for the team to review the plan and apply it (spec 019 FR-012).
-            if completed.run.outcome == "left-out-review-required" and _echo_stopped_stage(
-                client, completed.run.run_id, stage="sync"
-            ):
+            # waits for the team to review the plan and apply it (spec 020 FR-012).
+            # The exit status follows the outcome; the stop's details are printed when they can be read.
+            if completed.run.outcome == "left-out-review-required":
+                _echo_stopped_stage(client, completed.run.run_id, stage="sync")
                 raise typer.Exit(1)
 
 
@@ -1379,7 +1382,7 @@ def apply_cmd(
         except APIError as error:
             if error.code == _RUN_EXECUTION_CONFLICT:
                 # The run already admitted a write or is still running: its plan is never
-                # applied again (spec 019 FR-023). Print the refusal as for any API refusal,
+                # applied again (spec 020 FR-023). Print the refusal as for any API refusal,
                 # then the next step.
                 label, fields = _error_fields(error)
                 typer.echo(f"error: {label}", err=True)
@@ -1388,7 +1391,7 @@ def apply_cmd(
                 raise typer.Exit(1) from None
             if error.code != _LEFT_OUT_CONFIRMATION_REQUIRED:
                 raise
-            # Refused before any write: the plan leaves out records (spec 019 FR-010).
+            # Refused before any write: the plan leaves out records (spec 020 FR-010).
             left_out = _left_out_refusal_count(client, run_id, error)
             count = "" if left_out is None else f" {left_out}"
             typer.echo(f"apply refused: this plan leaves out{count} records; confirm with --confirm-left-out", err=True)
@@ -1731,7 +1734,7 @@ def runs_show(
             continue
         _echo_failure_record(failure, stage=stage, err=False)
     # A `sync` that stopped after a plan that leaves out records records no `<stage>_failure`:
-    # its stage result carries `failure` (spec 019 FR-012).
+    # its stage result carries `failure` (spec 020 FR-012).
     stop = resource.run.results.get("failure")
     if isinstance(stop, dict):
         _echo_left_out_stop(stop, stage="sync", err=False)

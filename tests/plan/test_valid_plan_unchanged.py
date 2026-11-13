@@ -1,11 +1,11 @@
-"""A plan of valid data keeps its bytes (spec 019 T003, research R3).
+"""A plan of valid data keeps its bytes (spec 020 T003, research R3).
 
-Recorded before any spec 019 change: the plan that the existing valid fixtures of
+Recorded before any spec 020 change: the plan that the existing valid fixtures of
 `tests/test_potenda_plan_artifact.py` give, through the real plan path (`Potenda.write_plan`).
 The expected bytes are stored in `tests/data/valid_plan_bytes/`, so a change of the derivation,
 the encoding or the plan files fails here.
 
-Spec 019 may change only the format version and add the empty problem report. So the test
+Spec 020 may change only the format version and add the empty problem report. So the test
 keeps out of the comparison:
 
 - `run_id` and `created_at`, which differ per run (SC-006);
@@ -87,7 +87,7 @@ def _compared_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
 
 @pytest.mark.parametrize("scenario", sorted(SCENARIOS))
 def test_valid_plan_keeps_its_bytes(scenario: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The saved plan of each valid fixture equals the bytes recorded before spec 019."""
+    """The saved plan of each valid fixture equals the bytes recorded before spec 020."""
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "cache"))
     pin_extraction_decisions(monkeypatch, [False, False])
     potenda = build_potenda(

@@ -197,7 +197,7 @@ def test_the_plan_checkpoint_carries_the_plan_and_its_declared_source_snapshots(
     assert stored.value is not None
     with zipfile.ZipFile(BytesIO(stored.value)) as archive:
         names = sorted(name for name in archive.namelist() if name != "bundle-manifest.json")
-    # Plan format 4 (spec 019): the plan report travels with the plan.
+    # Plan format 4 (spec 020): the plan report travels with the plan.
     assert names == ["A/resource0.parquet", "plan/manifest.json", "plan/operations.jsonl", "plan/report.jsonl"]
     reference = projection.lookup_internal_reference(run_id, PLAN_CHECKPOINT_ARTIFACT_ID).value
     assert reference is not None

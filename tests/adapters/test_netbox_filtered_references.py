@@ -1,6 +1,6 @@
 """NetBox references distinguish filtered peers from missing source records.
 
-Since spec 019 (T017, T018, T021) a record whose required peer a filter removed, or whose peer
+Since spec 020 (T017, T018, T021) a record whose required peer a filter removed, or whose peer
 the source does not return, is recorded in the load report and the read continues; before, the
 read raised `ValueError` or `IndexError`.
 """
@@ -347,3 +347,30 @@ def test_the_existing_id_sweep_leaves_no_load_report_entry(monkeypatch: pytest.M
 
     assert list(adapter.list_existing_ids("Example")) == ["owner"]
     assert adapter.load_report.entries == []
+
+
+@pytest.mark.parametrize("unfiltered_first", [True, False], ids=["unfiltered-first", "filtered-first"])
+def test_a_peer_an_unfiltered_entry_keeps_is_not_filtered_before_its_kind_is_read(
+    monkeypatch: pytest.MonkeyPatch, *, unfiltered_first: bool
+) -> None:
+    """Tag 20 fails the filter of one BuiltinTag entry and passes the other, unfiltered one: it is not filtered."""
+    monkeypatch.setattr(NetboxAdapter, "_create_netbox_client", lambda _self, _adapter: MagicMock())
+    filtered = SchemaMappingModel(
+        name="BuiltinTag",
+        mapping="extras.tags",
+        filters=[SchemaMappingFilter(field="group", operation="is_not_empty")],
+        fields=[SchemaMappingField(name="name", mapping="name")],
+    )
+    unfiltered = SchemaMappingModel(
+        name="BuiltinTag", mapping="extras.tags", fields=[SchemaMappingField(name="name", mapping="name")]
+    )
+    config = SyncConfig(
+        name="unfiltered-entry",
+        source=SyncAdapter(name="netbox"),
+        destination=SyncAdapter(name="infrahub"),
+        schema_mapping=[unfiltered, filtered] if unfiltered_first else [filtered, unfiltered],
+    )
+    adapter = _TestAdapter(target="source", adapter=SyncAdapter(name="netbox"), config=config)
+    adapter.client.extras.tags.all.return_value = [_Record(row) for row in PEERS]
+
+    assert adapter.filtered_peer_position("BuiltinTag", "20") == (False, None)

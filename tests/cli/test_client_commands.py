@@ -319,7 +319,7 @@ def test_configuration_reads_and_validation_keep_machine_fields_and_finding_orde
 
 
 def test_configs_validate_passes_the_named_branch_to_the_service(client: MagicMock) -> None:
-    """Spec 019 FR-034 (T061): `--branch` is the only new option; the service receives the branch."""
+    """Spec 020 FR-034 (T061): `--branch` is the only new option; the service receives the branch."""
     validated = _invoke(client, "configs", "validate", "edge-sync", "1", "--branch", "review")
 
     # The exit code on an error finding is not pinned here: contracts/cli.md says 1, and the
