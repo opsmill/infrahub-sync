@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import pickle  # noqa: S403 - the tests pickle errors they built themselves
 import sys
 import threading
 from typing import TYPE_CHECKING, Any
@@ -11,7 +12,7 @@ import pytest
 from jinja2.exceptions import SecurityError
 from jinja2.sandbox import unsafe
 
-from infrahub_sync import DiffSyncModelMixin, _materialize_lazy  # noqa: PLC2701
+from infrahub_sync import DiffSyncModelMixin, SchemaMappingTransform, TransformError, _materialize_lazy  # noqa: PLC2701
 
 if TYPE_CHECKING:
     from jinja2 import Environment
@@ -261,3 +262,25 @@ def test_transform_refuses_unsafe_callables(expression: str) -> None:
     assert isinstance(excinfo.value.__cause__, SecurityError)
     assert not value.calls
     assert "result" not in item
+
+
+def test_a_failed_transform_names_its_field_and_position() -> None:
+    """Spec 020 research R7: the error holds the field and the transform's position only."""
+    transforms = [
+        SchemaMappingTransform(field="first", expression="{{ name }}"),
+        SchemaMappingTransform(field="second", expression="{{ missing.value }}"),
+    ]
+
+    with pytest.raises(TransformError) as excinfo:
+        DiffSyncModelMixin.apply_transforms(item={"name": "eth0"}, transforms=transforms)
+
+    assert isinstance(excinfo.value, ValueError)
+    assert (excinfo.value.field, excinfo.value.position) == ("second", 1)
+
+
+def test_a_transform_error_keeps_its_fields_when_pickled() -> None:
+    error = TransformError("Failed to transform 'name'", field="name", position=2)
+
+    copy = pickle.loads(pickle.dumps(error))  # noqa: S301 - the bytes come from this test
+
+    assert (str(copy), copy.field, copy.position) == (str(error), "name", 2)

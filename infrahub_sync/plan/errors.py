@@ -15,6 +15,7 @@ outside `PlanArtifactError` so no caller reads it as an error or asks it for a r
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from infrahub_sync.client.models import SCHEMA_CHANGED_NEXT_ACTION
@@ -120,6 +121,37 @@ class PlanFormatApplyUnsupportedError(PlanArtifactError):
         "Re-run `plan` for this sync to produce a plan in the current format, then review and apply "
         "that plan. The destination was not touched."
     )
+
+
+# The product run ID form (`infrahub_sync.service.flow`), for a run ID copied into guidance.
+_GUIDANCE_RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+
+
+class LeftOutConfirmationRequiredError(PlanArtifactError):
+    """The plan leaves out records, and the apply did not confirm that they were reviewed.
+
+    Spec 020 FR-010: the Sync API refuses such an apply, and the engine refuses it again so
+    a direct Python caller cannot skip the confirmation. Raised before the first operation
+    is dispatched, so the destination was not touched.
+    """
+
+    next_action = (
+        "Review the records the plan leaves out with `infrahub-sync runs plan <run_id> --problems` and "
+        "`--left-out`, then confirm the apply with `--confirm-left-out` (`confirm_left_out=True`)."
+    )
+    wrote = False
+
+    def __init__(self, left_out: int, *, run_id: str) -> None:
+        self.left_out = left_out
+        super().__init__(
+            f"The plan of run {run_id!r} leaves out {left_out} records, and the apply did not confirm "
+            "that they were reviewed. Nothing was written to the destination.",
+            # A run ID outside the product run ID form (a newline, a control sequence) is not
+            # copied into the guidance, which is printed as it is.
+            next_action=type(self).next_action.replace(
+                "<run_id>", run_id if _GUIDANCE_RUN_ID.fullmatch(run_id) else "<run_id>"
+            ),
+        )
 
 
 class MissingDestinationIdError(PlanArtifactError):
@@ -268,6 +300,11 @@ class PeerNotFoundError(PlanArtifactError):
 
     next_action = "Create the peer at the destination, or re-plan so the same plan creates it."
 
+    def __init__(self, message: str, *, next_action: str | None = None, peer_kind: str | None = None) -> None:
+        super().__init__(message, next_action=next_action)
+        # The kind of the peer, which a failure record names (spec 020 FR-018).
+        self.peer_kind = peer_kind
+
 
 class PeerAmbiguousError(PlanArtifactError):
     """A peer identity matches more than one object at the destination."""
@@ -280,6 +317,11 @@ class PeerAmbiguousError(PlanArtifactError):
         "The destination kind's identity is not unique for these values: de-duplicate at the "
         "destination, or narrow the mapping's identifiers."
     )
+
+    def __init__(self, message: str, *, next_action: str | None = None, peer_kind: str | None = None) -> None:
+        super().__init__(message, next_action=next_action)
+        # The kind of the peer, which a failure record names (spec 020 FR-018).
+        self.peer_kind = peer_kind
 
 
 class UnaccountedIdentityComponentError(PlanArtifactError):
@@ -384,6 +426,24 @@ class NullRelationshipValueError(PlanArtifactError):
     next_action = (
         "Correct the mapping so the mandatory relationship resolves to a peer identity, then re-run "
         "`plan` and apply the new plan."
+    )
+
+
+class NotInSourcePeerInPlanError(PlanArtifactError):
+    """An operation about to be written still names a peer that the source does not return.
+
+    Plan derivation names such a peer with a placeholder (`SourcePeerUnresolvedError`'s absent
+    arm, spec 020 research R5), and the selection step of the problem pass removes every
+    placeholder. One that reaches the writer means the selection step did not run, so the
+    plan is refused before any file is written: a placeholder must never be applied as a
+    destination identity.
+    """
+
+    wrote = False
+
+    next_action = (
+        "Re-run `plan`. If the refusal repeats, report it: the plan could not leave out a "
+        "reference to a peer the source does not return."
     )
 
 
@@ -634,6 +694,11 @@ class SourcePeerUnresolvedError(PlanArtifactError):
     **ambiguous** — the bounded kind probe found it in more than one, so its kind cannot
     be established. Use `absent()` / `ambiguous()` rather than the bare constructor, so
     the operator is routed at the condition they actually have.
+
+    A reference that a source adapter marked as a peer the source does not return
+    (`infrahub_sync.not_in_source_placeholder`) does not reach the absent arm: derivation
+    names it with a placeholder pair, which the problem pass resolves into the plan problem
+    `peer_not_found_in_source` and removes from the plan (spec 020 research R5).
     """
 
     ABSENT_NEXT_ACTION = (

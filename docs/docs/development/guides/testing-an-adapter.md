@@ -20,7 +20,7 @@ calling it.
 ### Prerequisites
 
 - A working dev environment (`uv sync`).
-- The adapter under test, with its `model_loader` and any incremental methods.
+- The adapter under test, with its `list_records`, `record_to_data` and any incremental methods.
 - Familiarity with `unittest.mock` and pytest fixtures.
 - The existing tests as templates: `tests/adapters/test_netbox_incremental.py` and
   `tests/test_diffsync_mixin_contract.py`.
@@ -64,19 +64,23 @@ construction for a real adapter — mirror it.
 
 #### Step 4: Test the conversion path
 
-Drive `model_loader` (or `obj_to_diffsync`) with the fake records and assert the resulting
-models. Check that fields map to the right names, that `local_id` and `identifiers` are set,
-and that `reference` fields resolve to peer `unique_id`s:
+Drive the base-class `model_loader` with the fake records, so the test runs the same read loop
+as a plan, and assert the resulting models. Check that fields map to the right names, that
+`local_id` and `identifiers` are set, and that `reference` fields resolve to peer `unique_id`s:
 
 ```python
 def test_loader_maps_fields(adapter, device_model):
-    adapter.client.get.return_value = [{"name": "rtr1", "device_type": "qfx"}]
+    adapter.client.get.return_value = [{"id": 1, "name": "rtr1", "device_type": "qfx"}]
     adapter.model_loader("InfraDevice", device_model)
     obj = adapter.get(device_model, "rtr1")
     assert obj.type == "qfx"
+    assert obj.local_id == "1"
 ```
 
-Add cases for filters (kept vs dropped) and transforms (native-typed output).
+Add cases for filters (kept vs dropped) and transforms (native-typed output). On the source
+side, add a case for a record the read cannot build, such as a reference to a peer the source
+does not return, and assert the entry in `adapter.load_report` and that the read continued
+with the next record.
 
 #### Step 5: Test the incremental contract
 
@@ -93,6 +97,7 @@ def test_list_changed_since_uses_change_filter(adapter):
     cursor = CursorState(tier=CursorTier.TIMESTAMP, value="2024-01-01T00:00:00Z")
     list(adapter.list_changed_since("InfraDevice", cursor))
     # assert the client was queried with the change filter, e.g. last_updated__gte
+    # and that each yielded row is model data, as record_to_data returns it
 ```
 
 Also assert that declaring a non-`NONE` tier without implementing `list_changed_since` raises

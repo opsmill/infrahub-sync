@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 import pynautobot  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
 import pynautobot.core.query  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
 from diffsync import Adapter, DiffSyncModel
-from pydantic import ValidationError
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -19,6 +18,7 @@ from infrahub_sync import (
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.configuration.credentials import select_runtime_credential
 
+from .references import peer_unique_id, peer_unique_ids, reference_is_required
 from .utils import get_value
 
 logger = logging.getLogger(__name__)
@@ -132,30 +132,22 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                 raise ValueError(msg) from exc
         return endpoint
 
-    def _records_to_diffsync(
-        self,
-        *,
-        element: SchemaMappingModel,
-        model: type[NautobotModel],
-        raw_records: list[dict],
-        already_filtered: bool = False,
+    def _convert_records(
+        self, *, element: SchemaMappingModel, model: type[NautobotModel], raw_records: list[dict]
     ) -> Iterator[dict]:
-        """Filter+transform Nautobot records and yield diffsync-ready dicts.
+        """Filter and transform Nautobot records and yield model data, for the incremental reads.
 
-        Same transformation flow as model_loader, factored out for reuse by
-        list_changed_since. Pass `already_filtered=True` when the caller has
-        run `filter_records` itself (e.g. to log a filtered count) so records
-        aren't filtered twice.
+        A full read goes through the base-class read loop instead (`model_loader`).
         """
         if self.target == "source":
-            filtered = (
-                raw_records if already_filtered else model.filter_records(records=raw_records, schema_mapping=element)
-            )
+            filtered = model.filter_records(records=raw_records, schema_mapping=element)
             transformed = model.transform_records(records=filtered, schema_mapping=element)
         else:
             transformed = raw_records
         for obj in transformed:
-            yield self.nautobot_obj_to_diffsync(obj=obj, mapping=element, model=model)
+            data = self.record_to_data(obj, element, model)
+            if data is not None:
+                yield data
 
     def list_changed_since(self, model_name: str, cursor: CursorState) -> Iterator[dict]:
         """Yield Nautobot records changed since `cursor`. Uses `last_updated__gte` filter."""
@@ -184,7 +176,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                 element.mapping,
             )
             raw = [dict(node) for node in endpoint.all(**self._depth_kwargs)]
-        yield from self._records_to_diffsync(element=element, model=model, raw_records=raw)
+        yield from self._convert_records(element=element, model=model, raw_records=raw)
 
     def list_existing_ids(self, model_name: str) -> Iterator[str]:
         """Yield current unique IDs for `model_name` from Nautobot.
@@ -202,70 +194,41 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
         model: type[NautobotModel] = getattr(self, model_name)
         endpoint = self._resolve_endpoint(element.mapping)
         raw_records = [dict(node) for node in endpoint.all(**self._depth_kwargs)]
-        for payload in self._records_to_diffsync(element=element, model=model, raw_records=raw_records):
-            yield model(**payload).get_unique_id()
+        # This sweep only computes IDs: the load report entries its conversion writes describe
+        # no record the read admits, so they are dropped.
+        entries = self.load_report.entries
+        start = len(entries)
+        try:
+            for payload in self._convert_records(element=element, model=model, raw_records=raw_records):
+                yield model(**payload).get_unique_id()
+        finally:
+            del entries[start:]
 
-    def model_loader(self, model_name: str, model: type[NautobotModel]) -> None:
+    def list_records(self, model_name: str, element: SchemaMappingModel) -> list[dict]:  # noqa: ARG002
+        """Return every Nautobot record of the mapping entry's endpoint, as dicts."""
+        if not element.mapping:
+            return []
+        endpoint = self._resolve_endpoint(element.mapping)
+        return [dict(node) for node in endpoint.all(**getattr(self, "_depth_kwargs", {}))]
+
+    def record_to_data(self, record: dict[str, Any], element: SchemaMappingModel, model: type[NautobotModel]) -> dict:
+        """Convert one Nautobot record to model data; references resolve through `peer_unique_id`.
+
+        A peer that is not stored is a `peer_not_found_in_source` problem through a required
+        relationship, and a placeholder with a load report entry through an optional one (spec
+        019 research R5); the adapter no longer drops the reference with a warning.
         """
-        Load and process models using schema mapping filters and transformations.
+        source_id = str(record.get("id"))
+        data: dict[str, Any] = {"local_id": source_id}
+        owner = (element.name, source_id)
 
-        This method retrieves data from Nautobot, applies filters and transformations
-        as specified in the schema mapping, and loads the processed data into the adapter.
-        """
-        for element in self.config.schema_mapping:
-            if element.name != model_name:
-                continue
-
-            if not element.mapping:
-                logger.info("No mapping defined for '%s', skipping", element.name)
-                continue
-
-            endpoint = self._resolve_endpoint(element.mapping)
-            raw_records = [dict(node) for node in endpoint.all(**self._depth_kwargs)]
-            total = len(raw_records)
-            resource_name = element.mapping.split(".")[-1]
-            if self.target == "source":
-                filtered = model.filter_records(records=raw_records, schema_mapping=element)
-                # Mirror the NetBox adapter's filtered/total log so operators see
-                # the same detail regardless of source system.
-                logger.info("%s: Loading %d/%d %s", self.type, len(filtered), total, resource_name)
-            else:
-                filtered = raw_records
-                logger.info("%s: Loading all %d %s", self.type, total, resource_name)
-
-            continue_on_error = getattr(self, "continue_on_error", False)
-            # Records are already filtered above; don't filter again.
-            for data in self._records_to_diffsync(
-                element=element, model=model, raw_records=filtered, already_filtered=True
-            ):
-                try:
-                    item = model(**data)
-                except ValidationError as exc:
-                    if not continue_on_error:
-                        raise
-                    logger.warning(
-                        "Skipping %s[%s]: cannot build DiffSync model "
-                        "(likely a required peer was skipped earlier). Pydantic errors: %s",
-                        model_name,
-                        data.get("local_id"),
-                        exc.errors(include_url=False),
-                    )
-                    continue
-                self.add(item)
-
-    def nautobot_obj_to_diffsync(
-        self, obj: dict[str, Any], mapping: SchemaMappingModel, model: type[NautobotModel]
-    ) -> dict:
-        obj_id = obj.get("id")
-        data: dict[str, Any] = {"local_id": str(obj_id)}
-
-        for field in mapping.fields:  # pylint: disable=too-many-nested-blocks
+        for field in element.fields:
             field_is_list = model.is_list(name=field.name)
 
             if field.static is not None:
                 data[field.name] = field.static
             elif not field_is_list and field.mapping and not field.reference:
-                value = get_value(obj, field.mapping)
+                value = get_value(record, field.mapping)
                 if value is not None:
                     data[field.name] = value
             elif field_is_list and field.mapping and not field.reference:
@@ -273,34 +236,24 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                 raise NotImplementedError(msg)
 
             elif field.mapping and field.reference:
-                all_nodes_for_reference = self.store.get_all(model=field.reference)
-                nodes = [item for item in all_nodes_for_reference]
+                required = reference_is_required(model, field.name)
                 if not field_is_list:
-                    if node := get_value(obj, field.mapping):
-                        matching_nodes = []
-                        node_id = node.get("id", None)
-                        if node_id:
-                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]  # ty: ignore[unresolved-attribute]
-                            if len(matching_nodes) == 0:
-                                # TODO: If the peer is a Node we are filtering, we could end up not finding it
-                                logger.warning("Unable to locate the node %s %s", field.name, node_id)
-                                continue
-                            node = matching_nodes[0]
-                            data[field.name] = node.get_unique_id()
-
+                    node = get_value(record, field.mapping)
+                    if not node:
+                        continue
+                    node_id = node.get("id", None)
+                    if not node_id:
+                        continue
+                    unique_id = peer_unique_id(
+                        self, field.reference, node_id, owner=owner, field=field.name, required=required
+                    )
+                    if unique_id is not None:
+                        data[field.name] = unique_id
                 else:
-                    data[field.name] = []
-                    for node in get_value(obj, field.mapping) or []:
-                        if not node:
-                            continue
-                        node_id = node.get("id", None)
-                        matching_nodes = [item for item in nodes if item.local_id == str(node_id)]  # ty: ignore[unresolved-attribute]
-                        if len(matching_nodes) == 0:
-                            # TODO: If the peer is a Node we are filtering, we could end up not finding it
-                            logger.warning("Unable to locate the node %s %s", field.name, node_id)
-                            continue
-                        data[field.name].append(matching_nodes[0].get_unique_id())
-                    data[field.name] = sorted(data[field.name])
+                    peer_ids = [node.get("id", None) for node in get_value(record, field.mapping) or [] if node]
+                    data[field.name] = peer_unique_ids(
+                        self, field.reference, peer_ids, owner=owner, field=field.name, required=required
+                    )
 
         return data
 

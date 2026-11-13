@@ -51,9 +51,12 @@ from infrahub_sync.client.models import (
     LOG_STAGES,
     MAX_FAILURE_CAUSE_TEXT,
     MAX_LIMIT,
+    MAX_REPORT_LIMIT,
     RECOVERY_NEXT_ACTIONS,
     SCHEMA_CHANGED_NEXT_ACTION,
     ListPage,
+    StageFailureResource,
+    stage_failure_resource,
 )
 from infrahub_sync.configuration.conversion import (
     ConversionInputError,
@@ -70,11 +73,13 @@ if TYPE_CHECKING:
     from infrahub_sync.client.models import (
         ArtifactReferenceResource,
         ConfigurationSummaryResource,
+        ConfigurationVersionReferenceResource,
         ConfigurationVersionResource,
         ConfigurationVersionSummaryResource,
         EventResource,
         PlanLastChangeResource,
         PlanOperationResource,
+        PlanReportPageResource,
         PublicRunResource,
         RecoveryAction,
         RunLogLine,
@@ -96,6 +101,7 @@ NOT_RECORDED = "not recorded"
 _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
 _KIND_ARG = "kind"
+_TYPE_ARG = "type"
 _VERSION_ARG = "version"
 _DIFF_DEPRECATION = "warning: 'diff' is deprecated, use 'plan'"
 _LIMIT_HELP = f"Items per page, 1-{MAX_LIMIT}. The server default applies when omitted."
@@ -449,25 +455,32 @@ def _echo_config_version_summary(resource: ConfigurationVersionSummaryResource) 
     )
 
 
-def _echo_config_version(resource: ConfigurationVersionResource) -> None:
+def _echo_config_version_reference(
+    resource: ConfigurationVersionReferenceResource | ConfigurationVersionResource,
+) -> None:
     _echo_fields(
         (
             ("config_id", resource.config_id),
             ("registry_version", resource.registry_version),
             ("package_checksum", resource.package_checksum),
             ("created_at", resource.created_at.isoformat()),
-            ("declared_content", json.dumps(resource.declared_content, sort_keys=True, separators=(",", ":"))),
         )
     )
 
 
+def _echo_config_version(resource: ConfigurationVersionResource) -> None:
+    _echo_config_version_reference(resource)
+    _echo_fields((("declared_content", json.dumps(resource.declared_content, sort_keys=True, separators=(",", ":"))),))
+
+
 def _echo_registered_config(resource: RegisteredConfigurationResource) -> None:
+    # The registration response names the version by checksum only (spec 020 FR-038).
     _echo_config_summary(resource.configuration)
-    _echo_config_version(resource.version)
+    _echo_config_version_reference(resource.version)
 
 
 def _echo_registered_version(resource: RegisteredVersionResource) -> None:
-    _echo_config_version(resource.version)
+    _echo_config_version_reference(resource.version)
     _echo_fields((("created", resource.created),))
 
 
@@ -611,13 +624,30 @@ def configs_validate(
     ctx: typer.Context,
     config: str = typer.Argument(..., metavar="CONFIG", help=_CONFIG_HELP),
     version: int = typer.Argument(...),
+    *,
     offset: int = typer.Option(0, "--offset", help="Finding offset."),
     limit: int = typer.Option(256, "--limit", help="Maximum findings to return."),
+    branch: str | None = typer.Option(
+        None,
+        "--branch",
+        help=(
+            "Also check the mapping, the import account's permissions and the workers' credential "
+            "variables against this Infrahub branch. Exits 1 when a finding on the returned page is "
+            "an error; read every page with --offset to check them all."
+        ),
+    ),
 ) -> None:
     """Validate a registered configuration version."""
     with _client_errors():
         config_id = _config_id(ctx, config)
-        _echo_validation(_client(ctx).validate_config(config_id, version, offset=offset, limit=limit))
+        if branch is None:
+            _echo_validation(_client(ctx).validate_config(config_id, version, offset=offset, limit=limit))
+            return
+        report = _client(ctx).validate_config(config_id, version, offset=offset, limit=limit, branch=branch)
+        _echo_validation(report)
+    # contracts/cli.md (spec 020): with a branch, an error finding on the page exits 1.
+    if any(finding.severity == "error" for finding in report.findings):
+        raise typer.Exit(code=1)
 
 
 # --- configs convert: a local command that needs no Sync API ------------------------------
@@ -1022,6 +1052,104 @@ def _operation_detail(operation: PlanOperationResource, last_changes: Sequence[P
         typer.echo(_last_change_line(record))
 
 
+def _report_value(value: object) -> str:
+    """One identity value of a report record: a peer reference shows its own identity values."""
+    if isinstance(value, dict):
+        mapping = cast("dict[str, object]", value)
+        identity = mapping.get("identity")
+        inner = cast("dict[str, object]", identity) if isinstance(identity, dict) else mapping
+        return ",".join(_report_value(inner[key]) for key in sorted(inner))
+    if isinstance(value, list | tuple):
+        return ",".join(_report_value(item) for item in value)
+    return str(value)
+
+
+def _report_record(record: Mapping[str, Any] | None) -> str:
+    """A report record by its identity, or by its source ID when its identity is not known."""
+    if not record:
+        return "<none>"
+    identity = record.get("identity")
+    if isinstance(identity, dict) and identity:
+        return " ".join(f"{key}={_report_value(identity[key])}" for key in sorted(identity))
+    return f"source_id={record.get('source_id')}"
+
+
+def _report_line(first: object, record: Mapping[str, Any], text: str) -> str:
+    """One line of a problem, left-out or kept list: four columns separated by two spaces (contracts/cli.md)."""
+    return _display(f"{first}  {record.get('kind')}  {_report_record(record)}  {text}")
+
+
+def _problem_line(entry: Mapping[str, Any]) -> str:
+    return _report_line(entry.get("problem_type"), entry.get("record") or {}, str(entry.get("reason") or ""))
+
+
+def _left_out_line(entry: Mapping[str, Any]) -> str:
+    if entry.get("cause") == "depends_on_left_out":
+        depends_on = entry.get("depends_on") or {}
+        text = f"depends on {depends_on.get('kind')} {_report_record(depends_on)} through {entry.get('relationship')}"
+    else:
+        text = "has " + ", ".join(str(problem_type) for problem_type in entry.get("problem_types") or ())
+    return _report_line(entry.get("cause"), entry.get("record") or {}, text)
+
+
+def _kept_line(entry: Mapping[str, Any]) -> str:
+    peer = entry.get("left_out_peer") or {}
+    if entry.get("cause") == "peer_not_found_in_source":
+        named = f"{peer.get('kind')} source ID {peer.get('source_id')}, which is not in the source"
+    else:
+        named = f"{peer.get('kind')} {_report_record(peer)}, which the plan leaves out"
+    text = f"{entry.get('relationship')} refers to {named}"
+    return _report_line(entry.get("cause"), entry.get("record") or {}, text)
+
+
+def _echo_report_summary(plan: PlanResource) -> None:
+    """The counts of spec 020 FR-007, the kinds whose deletes are not computed, and the Dropdown check."""
+    summary = plan.summary
+    typer.echo(
+        f"left_out: {summary.left_out} (with a problem: {summary.left_out_with_problem}, "
+        f"depending on one: {summary.left_out_dependent})"
+    )
+    typer.echo(f"problems: {summary.problems}")
+    if summary.problems_by_type:
+        _echo_counts("problems_by_type", summary.problems_by_type)
+    typer.echo(f"kept_without_relationship: {summary.kept}")
+    for kind, count in summary.deletes_withheld_by_kind.items():
+        typer.echo(_display(f"deletes not computed for {kind}: {count} records without identity"))
+    if not summary.dropdown_values_checked:
+        typer.echo("Dropdown values were not checked: no destination schema snapshot in this run")
+
+
+def _report_pages(
+    read: Callable[..., PlanReportPageResource], run_id: str, operation: str, **filters: str | None
+) -> Iterator[Mapping[str, Any]]:
+    """Every entry of one report list, page after page, until `next_offset` is null."""
+    given = {name: value for name, value in filters.items() if value is not None}
+    offset = 0
+    while True:
+        page = read(run_id, offset=offset, limit=MAX_REPORT_LIMIT, **given)
+        yield from page.entries
+        if page.next_offset is None:
+            return
+        if page.next_offset <= offset:
+            raise ProtocolError(operation)
+        offset = page.next_offset
+
+
+# How many problems `plan` prints after its summary (contracts/cli.md).
+_FIRST_PROBLEMS = 20
+
+
+def _echo_first_problems(client: SyncClient, plan: PlanResource) -> None:
+    """Print the first problems of a new plan and the command that lists every one."""
+    if plan.summary.problems <= 0:
+        return
+    page = client.get_plan_problems(plan.run_id, offset=0, limit=_FIRST_PROBLEMS)
+    for entry in page.entries:
+        typer.echo(_problem_line(entry))
+    if plan.summary.problems > len(page.entries):
+        typer.echo(f"List every problem with `infrahub-sync runs plan {_display(plan.run_id)} --problems`.")
+
+
 def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = None) -> None:
     operations = list(plan.operations)
     if kind is not None:
@@ -1045,6 +1173,7 @@ def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = N
     for note in plan.verification_notes:
         typer.echo(f"verification_note: {_display(note)}")
     _echo_counts("by_action", plan.summary.by_action)
+    _echo_report_summary(plan)
     _echo_counts("by_kind", plan.summary.by_kind)
     _delete_disclosure(plan)
     _owner_scope_disclosure(plan)
@@ -1070,9 +1199,9 @@ def _echo_completed_destination_branch(client: SyncClient, run_id: str) -> None:
 def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
     """Print what the service recorded about a failed stage, before the run-terminal error.
 
-    `<stage> failed: <error type>`, then `cause:` when the run recorded an operator cause (a
-    missing permission, a refused token or a lineage refusal), and `hint:` when it recorded a
-    next action. A record without a next action, from an older Sync API, gets the fixed hint
+    `<stage> failed: <error type>`, then the failure type and system, `cause:` and the other
+    spec 020 fields when the run recorded them (see `_echo_failure_record`), and `hint:` when it
+    recorded a next action. A record without a next action, from an older Sync API, gets the fixed hint
     for its error type or recovery signal when it has one. The record is the API's, and the API
     stores only text written for the operator. Each value is still capped and printed through
     `_display`, so recorded text cannot reach the terminal as an escape sequence.
@@ -1085,8 +1214,38 @@ def _echo_stage_failure(client: SyncClient, run_id: str, *, stage: str) -> None:
         _echo_failure_record(failure, stage=stage, err=True)
 
 
+def _failure_lines(failure: Mapping[str, Any], record: StageFailureResource | None) -> Iterator[str]:
+    """The spec 020 lines of a failure record that follow `cause:` (contracts/cli.md), unescaped."""
+    if record is None:
+        return
+    if record.infrahub_message:
+        yield f"Infrahub message: {record.infrahub_message}"
+    if record.record is not None:
+        reference = record.record
+        identity = _identity_text(reference.identity or {})
+        source_id = f" source ID {reference.source_id}" if reference.source_id else ""
+        yield f"record: {reference.kind}{' ' + identity if identity else ''}{source_id}"
+    if record.field:
+        yield f"field: {record.field}"
+    applied = failure.get("applied_operations")
+    if record.operations_total is not None and isinstance(applied, list):
+        yield f"written: {len(applied)} of {record.operations_total} operations"
+    detail = record.failed_operation_detail
+    failed_operation = failure.get("failed_operation")
+    if detail is not None and isinstance(failed_operation, str):
+        identity = _identity_text(detail.identity or {})
+        partial = " (may have written part of its change)" if failure.get("may_have_partially_written") is True else ""
+        yield f"failed operation: {failed_operation} {detail.action} {detail.kind}{' ' + identity if identity else ''}{partial}"
+
+
 def _echo_failure_record(failure: Mapping[str, Any], *, stage: str, err: bool) -> None:
-    """Print one recorded `<stage>_failure`: the error type, then `cause:` and `hint:` when recorded."""
+    """Print one recorded `<stage>_failure`: the error type, the spec 020 fields, `cause:` and `hint:`.
+
+    The spec 020 fields go between `<stage> failed:` and `hint:` (FR-015, contracts/cli.md): the
+    failure type and its system, then the cause, Infrahub's message of a rejected write, the
+    record and field a failure names, and the progress of a stopped apply. A record from an
+    older Sync API has none of them and prints as before.
+    """
     if failure.get("stage") != stage:
         return
     error_type = failure.get("error_type")
@@ -1095,10 +1254,16 @@ def _echo_failure_record(failure: Mapping[str, Any], *, stage: str, err: bool) -
     ):
         return
     typer.echo(f"{stage} failed: {error_type}", err=err)
+    record = stage_failure_resource(dict(failure))
+    if record is not None and record.failure_type:
+        system = f" ({record.system.role} {record.system.adapter})" if record.system is not None else ""
+        typer.echo(f"failure type: {_display(f'{record.failure_type}{system}'[:MAX_FAILURE_CAUSE_TEXT])}", err=err)
     _echo_failed_checks(failure.get("failed_checks"), err=err)
     cause = failure.get("cause")
     if isinstance(cause, str) and cause:
         typer.echo(f"cause: {_display(cause[:MAX_FAILURE_CAUSE_TEXT])}", err=err)
+    for line in _failure_lines(failure, record):
+        typer.echo(_display(line[: MAX_FAILURE_CAUSE_TEXT * 2]), err=err)
     next_action = failure.get("next_action")
     if isinstance(next_action, str) and next_action:
         typer.echo(f"hint: {_display(next_action[:MAX_FAILURE_CAUSE_TEXT])}", err=err)
@@ -1114,6 +1279,55 @@ def _echo_failure_record(failure: Mapping[str, Any], *, stage: str, err: bool) -
             hint = RECOVERY_NEXT_ACTIONS.get(cast("RecoveryAction", recovery_action))
     if hint is not None:
         typer.echo(f"hint: {hint}", err=err)
+
+
+# The `failure_type` of a `sync` stage that stopped after a plan that leaves out records.
+_LEFT_OUT_STOP_FAILURE_TYPE = "left_out_review_required"
+_LEFT_OUT_CONFIRMATION_REQUIRED = "left-out-confirmation-required"
+# The refusal of a stage on a run that already admitted a write, or that has an unresolved
+# submission or a running execution (spec 020 FR-023 keeps the code, decision 4).
+_RUN_EXECUTION_CONFLICT = "run-execution-conflict"
+_RUN_EXECUTION_CONFLICT_NEXT_ACTION = (
+    "If this run already admitted a write, its plan is not applied again: review the run with "
+    "`infrahub-sync runs show`, then create and review a new plan with `infrahub-sync plan`. "
+    "If a stage of this run is still running, wait for it to finish."
+)
+
+
+def _echo_left_out_stop(failure: Mapping[str, Any], *, stage: str, err: bool) -> bool:
+    """Print a stage result's `failure` for a stop that waits for the left-out review.
+
+    `<stage> stopped: left_out_review_required (<n> records left out)`, then the `hint:` the
+    worker recorded (spec 020 FR-012, contracts/cli.md). Returns whether it printed the stop.
+    """
+    if failure.get("failure_type") != _LEFT_OUT_STOP_FAILURE_TYPE or failure.get("stage") != stage:
+        return False
+    left_out = failure.get("left_out")
+    count = f" ({left_out} records left out)" if type(left_out) is int else ""  # pylint: disable=unidiomatic-typecheck
+    typer.echo(f"{stage} stopped: {_LEFT_OUT_STOP_FAILURE_TYPE}{count}", err=err)
+    next_action = failure.get("next_action")
+    if isinstance(next_action, str) and next_action:
+        typer.echo(f"hint: {_display(next_action[:MAX_FAILURE_CAUSE_TEXT])}", err=err)
+    return True
+
+
+def _echo_stopped_stage(client: SyncClient, run_id: str, *, stage: str) -> bool:
+    """Print the stop a completed stage recorded in its result's `failure`, if any."""
+    try:
+        failure = client.get_results(run_id).results.get("failure")
+    except SyncClientError:
+        return False
+    return isinstance(failure, dict) and _echo_left_out_stop(failure, stage=stage, err=True)
+
+
+def _left_out_refusal_count(client: SyncClient, run_id: str, error: APIError) -> int | None:
+    """The count of records the refused apply's plan leaves out: the refusal's, else the plan's."""
+    if error.left_out is not None:
+        return error.left_out
+    try:
+        return client.get_plan(run_id).summary.left_out
+    except SyncClientError:
+        return None
 
 
 def _echo_failed_checks(recorded: object, *, err: bool = True) -> None:
@@ -1222,7 +1436,9 @@ def plan_cmd(
             poll_interval=poll_interval,
         )
         if wait:
-            _echo_plan(client.get_plan(completed.run.run_id))
+            plan = client.get_plan(completed.run.run_id)
+            _echo_plan(plan)
+            _echo_first_problems(client, plan)
 
 
 @app.command("diff", hidden=True, help="Deprecated alias of `plan`; it will be removed in a later release.")
@@ -1267,6 +1483,12 @@ def sync_cmd(
         if wait:
             _echo_run(completed)
             _echo_completed_destination_branch(client, completed.run.run_id)
+            # A `sync` whose plan leaves out records ends completed, without writing, and
+            # waits for the team to review the plan and apply it (spec 020 FR-012).
+            # The exit status follows the outcome; the stop's details are printed when they can be read.
+            if completed.run.outcome == "left-out-review-required":
+                _echo_stopped_stage(client, completed.run.run_id, stage="sync")
+                raise typer.Exit(1)
 
 
 @app.command("apply")
@@ -1277,6 +1499,11 @@ def apply_cmd(
     expected_checksum: str = typer.Option(..., "--expected-checksum", help="Checksum printed by `runs plan`."),
     reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the apply."),
     branch: str | None = typer.Option(None, "--branch", help="Destination branch admitted by the Sync API."),
+    confirm_left_out: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--confirm-left-out",
+        help="Confirm that you reviewed the records the plan leaves out; required when it leaves out any.",
+    ),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for this run's apply execution."),  # noqa: FBT003
     wait_timeout: float = typer.Option(DEFAULT_WAIT_TIMEOUT, "--wait-timeout", help="Bounded wait in seconds."),
@@ -1293,6 +1520,7 @@ def apply_cmd(
                     ApplyRunRequest,
                     expected_checksum=expected_checksum,
                     confirm_writes=True,
+                    confirm_left_out=confirm_left_out,
                     branch=branch,
                     reason=reason,
                 ),
@@ -1309,6 +1537,23 @@ def apply_cmd(
                 wait_timeout=wait_timeout,
                 poll_interval=poll_interval,
             )
+        except APIError as error:
+            if error.code == _RUN_EXECUTION_CONFLICT:
+                # The run already admitted a write or is still running: its plan is never
+                # applied again (spec 020 FR-023). Print the refusal as for any API refusal,
+                # then the next step.
+                label, fields = _error_fields(error)
+                typer.echo(f"error: {label}", err=True)
+                _echo_fields(fields, err=True)
+                typer.echo(f"hint: {_RUN_EXECUTION_CONFLICT_NEXT_ACTION}", err=True)
+                raise typer.Exit(1) from None
+            if error.code != _LEFT_OUT_CONFIRMATION_REQUIRED:
+                raise
+            # Refused before any write: the plan leaves out records (spec 020 FR-010).
+            left_out = _left_out_refusal_count(client, run_id, error)
+            count = "" if left_out is None else f" {left_out}"
+            typer.echo(f"apply refused: this plan leaves out{count} records; confirm with --confirm-left-out", err=True)
+            raise typer.Exit(1) from None
         except RunTerminalError as error:
             _echo_stage_failure(client, error.run_id, stage="apply")
             raise
@@ -1516,6 +1761,7 @@ def runs_show(
     execution has no read state: a run recorded before the read state, a stage the worker has not started, or a
     stage whose read state the worker could not store.
     A failed stage adds its error type and, when the run recorded them, a `cause:` and a `hint:` line.
+    A `sync` that stopped after a plan that leaves out records adds a `sync stopped:` and a `hint:` line.
     """
     with _client_errors():
         resource = _client(ctx).get_run(run_id)
@@ -1534,6 +1780,11 @@ def runs_show(
         if latest is not None and latest.terminal_outcome == "succeeded":
             continue
         _echo_failure_record(failure, stage=stage, err=False)
+    # A `sync` that stopped after a plan that leaves out records records no `<stage>_failure`:
+    # its stage result carries `failure` (spec 020 FR-012).
+    stop = resource.run.results.get("failure")
+    if isinstance(stop, dict):
+        _echo_left_out_stop(stop, stage="sync", err=False)
 
 
 @runs_app.command("results")
@@ -1555,16 +1806,45 @@ def runs_results(
 def runs_plan(
     ctx: typer.Context,
     run_id: str = typer.Argument(..., help="Service-issued run ID."),
+    *,
     detail: bool = typer.Option(False, "--detail", help="Render every saved operation."),  # noqa: FBT003
     kind: str | None = typer.Option(
         None,
         "--kind",
-        help="Filter the detailed operation list by destination kind; requires --detail.",
+        help="Filter the detailed operation list, or the problem, left-out or kept list, by destination kind.",
+    ),
+    problems: bool = typer.Option(False, "--problems", help="List every problem the plan found."),  # noqa: FBT003
+    left_out: bool = typer.Option(False, "--left-out", help="List every record the plan leaves out."),  # noqa: FBT003
+    kept: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--kept",
+        help="List every record the plan keeps without one optional relationship.",
+    ),
+    problem_type: str | None = typer.Option(
+        None, "--type", help="List only the problems of this problem type; requires --problems."
     ),
 ) -> None:
-    """Review a saved plan summary, checksum, and operations."""
+    """Review a saved plan summary, checksum, and operations, or list its problems, left-out or kept records."""
     with _client_errors():
-        _echo_plan(_client(ctx).get_plan(run_id), detail=detail, kind=kind)
+        lists = [name for name, chosen in (("problems", problems), ("left_out", left_out), ("kept", kept)) if chosen]
+        if len(lists) > 1 or (lists and detail):
+            raise ClientInputError(lists[1] if len(lists) > 1 else "detail")
+        if problem_type is not None and not problems:
+            raise ClientInputError(_TYPE_ARG)
+        client = _client(ctx)
+        if problems:
+            for entry in _report_pages(
+                client.get_plan_problems, run_id, "get_plan_problems", problem_type=problem_type, kind=kind
+            ):
+                typer.echo(_problem_line(entry))
+        elif left_out:
+            for entry in _report_pages(client.get_plan_left_out, run_id, "get_plan_left_out", kind=kind):
+                typer.echo(_left_out_line(entry))
+        elif kept:
+            for entry in _report_pages(client.get_plan_kept, run_id, "get_plan_kept", kind=kind):
+                typer.echo(_kept_line(entry))
+        else:
+            _echo_plan(client.get_plan(run_id), detail=detail, kind=kind)
 
 
 # A run's phase while its first execution is submitted and has not ended.

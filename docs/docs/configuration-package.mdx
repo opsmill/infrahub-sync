@@ -104,8 +104,9 @@ infrahub-sync configs version <config-id> package.yml --reason "update the devic
 - Each run names one registered version by `config_id` and version number. No run command
   takes a file path.
 
-Both commands print the version's `config_id`, `registry_version`, `package_checksum`,
-`created_at`, and `declared_content`. `configs version` also prints `created`. It is `false`
+Both commands print the version's `config_id`, `registry_version`, `package_checksum` and
+`created_at`. They do not print the package content in the registration response. Read it with
+`configs show CONFIG_ID --version VERSION`. `configs version` also prints `created`. It is `false`
 when the submitted content matches an existing version of that configuration. In that case
 the command prints the existing version and stores nothing.
 

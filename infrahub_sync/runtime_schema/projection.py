@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 def _member_semantics(member: NormalizedAttribute | NormalizedRelationship) -> dict[str, Any]:
     """Project one member's model- and write-affecting properties."""
     if isinstance(member, NormalizedAttribute):
-        return {
+        semantics: dict[str, Any] = {
             "name": member.name,
             "role": "attribute",
             "kind": member.kind,
@@ -47,6 +47,11 @@ def _member_semantics(member: NormalizedAttribute | NormalizedRelationship) -> d
             "unique": member.unique,
             "read_only": member.read_only,
         }
+        if member.choices is not None:
+            # A Dropdown's choices decide which mapped values the plan accepts (spec 020 research
+            # R4). Only present when recorded, so the projection of every other attribute is unchanged.
+            semantics["choices"] = list(member.choices)
+        return semantics
     return {
         "name": member.name,
         "role": "relationship",

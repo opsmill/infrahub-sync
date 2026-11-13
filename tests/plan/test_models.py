@@ -97,9 +97,9 @@ def _reference(
 
 def test_declared_constants() -> None:
     """The constants nine later outcomes read are exactly as the data model fixes them."""
-    assert PLAN_FORMAT_VERSION == 3
-    # Format 2 stays readable and reviewable; only `apply` narrows to the current version.
-    assert frozenset({2, 3}) == SUPPORTED_FORMAT_VERSIONS
+    assert PLAN_FORMAT_VERSION == 4
+    # Formats 2 and 3 stay readable and reviewable; only `apply` narrows to the current version.
+    assert frozenset({2, 3, 4}) == SUPPORTED_FORMAT_VERSIONS
     assert ACTIONS == ("create", "update", "delete")
     assert CHECKSUM_EXCLUDED_FIELDS == ("plan_checksum", "run_id", "created_at")
     assert SC006_MASKED_FIELDS == ("run_id", "created_at")
@@ -705,6 +705,10 @@ PLAN_MANIFEST_FIELDS = {
     # Additive: the digest and record count of the last-change file. Display data about
     # single fields, not a grouping of operations.
     "last_changes",
+    # Plan format 4 (spec 020): the digest, size and counts of the plan report, and whether
+    # the plan could check Dropdown values. Neither groups operations.
+    "report",
+    "dropdown_values_checked",
 }
 
 # Vocabulary a grouping field would plausibly be named with. Belt and braces beside the
@@ -811,6 +815,10 @@ def test_plan_manifest_still_requires_its_declared_fields() -> None:
         "schema_fingerprint",
         "lineage",
         "last_changes",
+        # Optional on the model, because a format 2 or 3 manifest has none; the reader refuses
+        # a format 4 manifest without `report` (spec 020).
+        "report",
+        "dropdown_values_checked",
     }
     for missing in PLAN_MANIFEST_FIELDS - optional:
         record = _manifest()

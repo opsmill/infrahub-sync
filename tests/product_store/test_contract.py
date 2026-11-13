@@ -97,6 +97,7 @@ EXPECTED_PUBLIC_NAMES = {
     "RunPage",
     "RunReference",
     "S3Client",
+    "WorkerEnvironment",
     "WriteAdmissionConflictError",
     "local_product_projection",
     "production_product_projection",
