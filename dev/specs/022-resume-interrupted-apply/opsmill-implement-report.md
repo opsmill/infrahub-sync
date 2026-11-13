@@ -1,6 +1,6 @@
 # Implementation report: Resume an interrupted apply
 
-**Status**: INCOMPLETE. All code tasks and review fixes are done. The PostgreSQL store tests, the preview-stack test
+**Status**: INCOMPLETE. All code tasks and review fixes are done, and the PostgreSQL store tests pass. The stack test
 (T034) and the benchmarks (T035) have not run, because they need infrastructure.
 
 - **Spec directory**: `dev/specs/022-resume-interrupted-apply/`
@@ -27,9 +27,11 @@
 - **T015 (partial)**: the PostgreSQL cases of `tests/product_store/test_resume_admissions.py` skip without
   `PRODUCT_STORE_TEST_POSTGRESQL_DSN`. The same holds for the PostgreSQL cases added by the review fixes. All SQLite
   cases and the emulated PostgreSQL adapter pass.
-- **PostgreSQL variants (not run)**: no PostgreSQL test database was available on this machine, so every case that
-  needs `PRODUCT_STORE_TEST_POSTGRESQL_DSN` was skipped. This includes the test that two concurrent resumes admit only
-  one, and the SQL added by the review fixes. Only SQLite and the emulated PostgreSQL adapter ran.
+- **PostgreSQL variants (run 2026-11-13T16:29:55Z)**: `PRODUCT_STORE_TEST_POSTGRESQL_DSN` pointed at a throwaway
+  `postgres:16-alpine` container. `uv run invoke tests.tests-product-store-postgresql` reported `174 passed, 963
+  deselected`, with no test skipped. It printed
+  `PASSED tests/product_store/test_resume_admissions.py::test_exactly_one_of_two_concurrent_resumes_is_admitted[postgresql]`,
+  and the PostgreSQL cases added by the review fixes also passed. The whole PostgreSQL suite ran at head `e1abfad5`.
 - **T034 (not run)**: `tests/preview/test_resume_interrupted_apply.py` is written but was never run, because no stack
   was running. It targets the preview stack, which PR #412 removes. The steps for the development stack are in
   `tasks.md` under T034, and apply once #412 is merged into this branch. It is also the first run of the `verify`
