@@ -275,18 +275,18 @@ error: config.yml cannot be converted (1 reason)
 ### Check of the first V3 plan against data that V2 wrote
 
 A release check compares the first V3 plan with the data V2 wrote. On a local NetBox loaded with
-the pinned `demo` dataset, V2 `2.0.1` synchronizes the `2.0.2` NetBox example into an empty
-Infrahub.
-The same `config.yml` is then converted with `configs convert --live-schema --yes`, registered, and
-planned on
-the same Infrahub branch, with no NetBox change in between. The check passes only when that plan
-holds no creates, no updates, no records left out, no problems, and only the deletes that the
-test lists as expected.
+the pinned `demo` dataset, V2 `2.0.1` synchronizes the NetBox example of the `2.0.2` tag into an
+empty Infrahub. The same `config.yml` is then converted with `configs convert --live-schema --yes`,
+registered, and planned on the same Infrahub branch, with no NetBox change in between. The check
+passes only when that plan holds no creates and no updates. The records it leaves out, its
+problems and its deletes must be on reviewed lists, or follow from a listed record: they are
+records that Infrahub identifies by fewer fields than NetBox, which V2 merged into one node.
 
-{/* TODO(release): state the v2-gate result on the NetBox example once T033 has run. */}
-
-The result of this check is not published yet. Until it is, read the first V3 plan before you
-apply it: it can hold updates to nodes that V2 wrote.
+On the NetBox example and the `demo` dataset, the first V3 plan holds no creates and no
+updates. It leaves out the racks, VLANs and devices that V2 merged, and the records that depend
+on them, and it records deletes of the nodes V2 wrote for those records. Apply never executes a
+delete. Read the first V3 plan of your own configuration before you apply it: your data can
+differ from the example.
 
 ## Where each action lives now
 
