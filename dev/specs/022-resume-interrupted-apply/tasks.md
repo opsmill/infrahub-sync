@@ -92,8 +92,13 @@ changed and some absent, run `verify`, and compare the report.
 - [X] T031 [P] Write `dev/adr/0026-an-interrupted-apply-resumes-from-its-saved-position.md`, replacing ADR 0010's "an uncertain run is terminal" and its rejected "write-attempt table" alternative for writes proven safe to repeat, and mark ADR 0010 as partly superseded
 - [X] T032 [P] Update `docs/docs/running-a-sync.mdx` (what to do after an interruption: `runs show`, `verify`, `runs resume`, and that a resume overwrites nodes reported as differs), `docs/docs/development/knowledge/planned-write-and-apply.md` (marker and resume), and regenerate the CLI and HTTP reference with `uv run invoke docs.generate`
 - [X] T033 [P] Add the changelog fragment `changelog/+resume-interrupted-apply.added.md`
-- [ ] T034 Opt-in integration test (`-m integration`) against the preview stack following quickstart.md: kill `sync-worker` during an apply, `verify`, `runs resume`, then a new plan shows 0 creates and 0 updates (SC-001, SC-005)
-  - Written; not run — needs the preview stack. `tests/preview/test_resume_interrupted_apply.py`, marked `integration`; it skips unless the stack is reachable and `INFRAHUB_SYNC_RESUME_CHECK_CONFIG` names a registered `CONFIG_ID@VERSION` of the local NetBox `demo` package. Run command under "Phase 6 results".
+- [ ] T034 Opt-in integration test (`-m integration`) against the development stack: kill `sync-worker` during an apply, `verify`, `runs resume`, then a new plan shows 0 creates and 0 updates (SC-001, SC-005)
+  - Written; not run — no stack was running. The test was written for the preview stack, which PR #412 removes. When #412 is merged into this branch, the test moves to `tests/dev_stack/smoke/test_resume_interrupted_apply.py`, uses the `smoke_env` fixture, keeps only the `sync-worker` container path (`docker compose --profile sync kill` and `start`), and skips on the `dev-deps` stack, where the worker runs on the host. It stays marked `integration`, not `smoke`, so `invoke dev.smoke` never kills the worker.
+  - Steps after #412 is merged:
+    1. Start the development stack: `uv run invoke dev.start`.
+    2. Seed NetBox with the pinned `demo` dataset and register the `from-netbox` package, as in "The `from-netbox` example check" in `docs/docs/development/guidelines/testing-tiers.md`. Note its `CONFIG_ID@VERSION`.
+    3. Run `INFRAHUB_SYNC_RESUME_CHECK_CONFIG="<config_id>@<version>" INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="<token>" uv run pytest -m integration -rs tests/dev_stack/smoke/test_resume_interrupted_apply.py`.
+    4. Remove the stack afterwards with `uv run invoke dev.destroy`, because the test writes to Infrahub.
 - [ ] T035 Measure SC-003 and SC-004 with the existing benchmark runner on tiers M and L, first without the marker and then with it on the same machine (critique E5), and record the results in the implementation report
   - Deferred — needs the benchmark stack. Commands under "Phase 6 results".
 - [X] T036 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit` and the CLI sanity commands of AGENTS.md; record the results under "Phase 6 results"

@@ -27,10 +27,13 @@
 - **T015 (partial)**: the PostgreSQL cases of `tests/product_store/test_resume_admissions.py` skip without
   `PRODUCT_STORE_TEST_POSTGRESQL_DSN`. The same holds for the PostgreSQL cases added by the review fixes. All SQLite
   cases and the emulated PostgreSQL adapter pass.
-- **T034**: `tests/preview/test_resume_interrupted_apply.py` is written and skips without the preview stack. Run it
-  with `INFRAHUB_SYNC_RESUME_CHECK_CONFIG="<config_id>@<version>" INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="<token>" uv
-  run pytest -m integration tests/preview/test_resume_interrupted_apply.py` (add `INFRAHUB_SYNC_SMOKE_STACK=dev` for
-  the dev stack). It is also the first run of the `verify` destination filters against a live Infrahub.
+- **PostgreSQL variants (not run)**: no PostgreSQL test database was available on this machine, so every case that
+  needs `PRODUCT_STORE_TEST_POSTGRESQL_DSN` was skipped. This includes the test that two concurrent resumes admit only
+  one, and the SQL added by the review fixes. Only SQLite and the emulated PostgreSQL adapter ran.
+- **T034 (not run)**: `tests/preview/test_resume_interrupted_apply.py` is written but was never run, because no stack
+  was running. It targets the preview stack, which PR #412 removes. The steps for the development stack are in
+  `tasks.md` under T034, and apply once #412 is merged into this branch. It is also the first run of the `verify`
+  destination filters against a live Infrahub.
 - **T035**: the SC-003 and SC-004 benchmarks need the tier M and L datasets. The baseline runs at `5f005776`.
 
 ## Review findings
