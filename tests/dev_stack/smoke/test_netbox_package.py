@@ -14,6 +14,9 @@ that answers anything and records what it was asked, and the recording has to st
 from __future__ import annotations
 
 import json
+import os
+import shlex
+import subprocess  # noqa: S404 -- fixed argv against the development stack's Compose file
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from typing import TYPE_CHECKING, Any
@@ -24,6 +27,7 @@ import yaml
 
 from infrahub_sync.client import SyncClient
 from infrahub_sync.client.models import ConfigMutationRequest
+from tasks import dev
 from tasks.utils import REPO_BASE as REPO_ROOT
 from tests.dev_stack.smoke.evidence import canary_leaks
 from tests.dev_stack.smoke.test_cli_client import ANSI, run_cli, run_cli_command
@@ -64,19 +68,63 @@ class _SinkHandler(BaseHTTPRequestHandler):
         """Stay silent: the recorded request list is this listener's only output."""
 
 
+def _api_on_host() -> bool:
+    """Report whether the Sync API runs on the host (`dev.api`, after `dev.deps`)."""
+    return os.environ.get(dev.SMOKE_STACK_VARIABLE) == dev.DEPS_SMOKE_STACK
+
+
 @pytest.fixture
 def source_sink() -> Iterator[str]:
-    """A live HTTP listener, and the URL a package can name as its source."""
+    """A live HTTP listener, and the URL the Sync API reaches it at.
+
+    On the host, that is loopback. In the `sync-api` container, loopback is the container
+    itself, so the listener binds every interface and the URL names
+    `host.docker.internal`, which the development file routes to the host for `sync-api`.
+    """
     _sink_requests.clear()
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _SinkHandler)
+    on_host = _api_on_host()
+    # The container reaches the host through the Docker gateway, not loopback.
+    bind = "127.0.0.1" if on_host else "0.0.0.0"  # noqa: S104
+    server = ThreadingHTTPServer((bind, 0), _SinkHandler)
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{server.server_port}"
+        yield f"http://{'127.0.0.1' if on_host else 'host.docker.internal'}:{server.server_port}"
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def _probe_from_the_api(url: str) -> None:
+    """Send one GET to `url` from where the Sync API runs; skip when that cannot be done.
+
+    The probe has to start where the API runs. A probe from the host would reach a
+    listener the API's container cannot, and an empty recording would then prove nothing.
+    """
+    if _api_on_host():
+        assert httpx.get(url, timeout=5).status_code == 200
+        return
+    try:
+        project = dev.dev_settings().project
+    except dev.DevStackError as exc:
+        pytest.skip(f"development stack settings unavailable ({exc})")
+    probe = "import sys, httpx; httpx.get(sys.argv[1], timeout=5).raise_for_status()"
+    command = [
+        *shlex.split(dev._compose_command(project, ("sync",))),
+        "exec",
+        "-T",
+        "sync-api",
+        "python",
+        "-c",
+        probe,
+        url,
+    ]
+    completed = subprocess.run(  # noqa: S603 -- fixed argv against the development stack
+        command, cwd=REPO_ROOT, capture_output=True, text=True, timeout=60, check=False
+    )
+    if completed.returncode != 0:
+        pytest.skip(f"the sync-api container cannot reach the host at {url}: {completed.stderr.strip()}")
 
 
 def shipped_package() -> dict[str, Any]:
@@ -270,9 +318,10 @@ def test_validating_the_netbox_package_reads_no_source(
     """Default validation judges declared content, so the source endpoint is never called."""
     package = shipped_package()
     package["configuration"]["source"]["settings"]["url"] = source_sink
-    # Prove the listener records before relying on it recording nothing; an empty log from
-    # a listener nothing could have reached would be evidence of the harness, not the route.
-    assert httpx.get(source_sink, timeout=5).status_code == 200
+    # Prove the Sync API's side can reach the listener, and that it records, before relying
+    # on it recording nothing; an empty log from a listener the API could not have reached
+    # would be evidence of the harness, not the route.
+    _probe_from_the_api(source_sink)
     assert _sink_requests == ["GET /"]
     _sink_requests.clear()
 
