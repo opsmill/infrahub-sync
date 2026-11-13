@@ -1,0 +1,19 @@
+dev/specs/021-compose-store-credentials-ca/opsmill-implement-report.md
+  s_3defe6e8bcd0ab::t_ad6046393c3af1 70-72,97-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "36947b378255cd594619507936a02bc4dddad719",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
