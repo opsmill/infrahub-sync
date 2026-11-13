@@ -200,9 +200,9 @@ own terminal:
 uv run invoke dev.frontend
 ```
 
-The task needs `pnpm` on your `PATH`, for example through Corepack. It fetches the
-`frontend/vendor/infrahub` submodule when it is missing, installs the locked dependencies and
-serves the interface on `http://localhost:3000` until you stop it with Ctrl-C.
+`dev.frontend` needs `pnpm`. If `pnpm` is not on your `PATH`, run `corepack enable pnpm` first.
+The task fetches the `frontend/vendor/infrahub` submodule when it is missing, installs the locked
+dependencies and serves the interface on `http://localhost:3000` until you stop it with Ctrl-C.
 
 The server forwards `/api` to the Sync API of the stack with a bearer token, chosen in this order:
 
