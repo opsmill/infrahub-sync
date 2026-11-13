@@ -163,7 +163,9 @@ _NO_CONFIGURATION_DIRECTORY = ""
 # about, so it keeps its own deliberate handling where the two differ.
 _WRITE_STAGES = ("apply", "sync", "resume")
 # The stages that apply a saved plan the run already holds, without planning: an apply, and a
-# resume of an interrupted one from the run's saved position (spec 022, FR-010).
+# resume of an interrupted one from the run's saved position (spec 022, FR-010). The resume of
+# an interrupted `sync` is the same stage: the `sync` saved its plan and checksum before its
+# apply part, so the resume never plans again or reads the source (FR-017, research R9).
 _SAVED_PLAN_WRITE_STAGES = ("apply", "resume")
 # Every stage the service worker runs. A `resume` applies the rest of an interrupted run's
 # saved plan (spec 022).
@@ -885,8 +887,9 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         }
         writeback = ExecutionMergeWriteback(results={"verification": result})
     elif stage in _SAVED_PLAN_WRITE_STAGES:
-        # An apply, or a resume of an interrupted one: the same saved plan, the same checks in
-        # the same order, and never the plan stage or the source (spec 022 FR-010, FR-011).
+        # An apply, or a resume of an interrupted `apply` or `sync`: the same saved plan, the
+        # same checks in the same order, and never the plan stage or the source (spec 022
+        # FR-010, FR-011, FR-017).
         run_directory = scratch.run_directory(instance.name, run_id)
         # The plan this apply was approved for, resolved and validated whole before any
         # adapter factory exists. A checkpoint that is absent, oversized, corrupt,

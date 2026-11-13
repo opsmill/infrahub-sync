@@ -506,6 +506,123 @@ def test_only_the_runs_actor_or_an_administrator_may_resume_it(service_api: _API
     assert _resume_outcomes(projection, run_id) == ["refused-authorization", "accepted"]
 
 
+# --- an interrupted `sync` run (user story 3, FR-017) ----------------------------------------
+
+
+def _sync_run(api: _API) -> tuple[str, str]:
+    """A confirmed `sync` run whose worker has claimed its one execution, of purpose `sync`."""
+    client, projection, _orchestration = api
+    version = client.app.state.run_binding
+    created = client.post(
+        "/runs",
+        headers=_headers("sync-key"),
+        json={
+            "operation": "sync",
+            "config_id": version.config_id,
+            "registry_version": version.registry_version,
+            "confirm_writes": True,
+            "reason": "unattended sync",
+        },
+    )
+    assert created.status_code == 202, created.json()
+    run_id = created.json()["run"]["run_id"]
+    flow_run_id = _latest_flow_run_id(projection, run_id)
+    assert projection.claim_execution(run_id, flow_run_id, worker_id=_WORKER_ID)
+    return run_id, flow_run_id
+
+
+def _interrupted_sync_run(api: _API) -> str:
+    """A `sync` run that saved its plan, saved a marker in its apply part, and was then interrupted."""
+    _client, projection, _orchestration = api
+    run_id, flow_run_id = _sync_run(api)
+    # The `sync` stage publishes its plan, with its checksum, before its apply part (research R9).
+    _publish_plan(projection, run_id, total=_TOTAL)
+    assert projection.record_apply_progress(
+        run_id,
+        flow_run_id,
+        ApplyProgress(
+            position=_MARKER,
+            operation_id=_operation_id(_MARKER),
+            total=_TOTAL,
+            saved_at=datetime(2026, 11, 12, 10, 15, tzinfo=timezone.utc),
+        ),
+    )
+    assert projection.interrupt_execution(run_id, flow_run_id)
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert stored.reconciliation_required is True
+    return run_id
+
+
+def test_an_interrupted_sync_run_resumes_from_its_marker_with_the_checksum_of_its_saved_plan(
+    service_api: _API,
+) -> None:
+    """Scenario 1 of user story 3: the same resume as an apply, and no new plan stage."""
+    client, projection, orchestration = service_api
+    run_id = _interrupted_sync_run(service_api)
+    _verified(service_api, run_id)
+
+    response = _resume(client, run_id, reason="resume the unattended sync")
+
+    assert response.status_code == 202, response.json()
+    body = response.json()
+    assert [entry["purpose"] for entry in body["orchestration"]] == ["sync", "verify", "resume"]
+    assert body["apply_progress"]["position"] == _MARKER
+    [resume] = body["resumes"]
+    assert (resume["start_after"], resume["reason"]) == (_MARKER, "resume the unattended sync")
+    [parameters] = _resume_submissions(orchestration)
+    assert parameters["expected_checksum"] == _CHECKSUM
+    assert parameters["confirm_writes"] is True
+    # Only the `sync`, its `verify` and the resume were submitted: no plan stage.
+    assert [submitted["stage"] for submitted, _key in orchestration.submissions] == ["sync", "verify", "resume"]
+    assert _resume_outcomes(projection, run_id) == ["accepted"]
+
+
+def test_a_sync_run_resume_with_another_checksum_than_its_saved_plans_is_refused(service_api: _API) -> None:
+    client, projection, orchestration = service_api
+    run_id = _interrupted_sync_run(service_api)
+    _verified(service_api, run_id)
+
+    response = _resume(client, run_id, expected_checksum=_OTHER_CHECKSUM)
+
+    assert response.status_code == 409
+    assert _error_code(response) == "checksum-conflict"
+    assert _resume_submissions(orchestration) == []
+    assert _resume_outcomes(projection, run_id) == ["refused-checksum"]
+
+
+def test_a_sync_run_that_failed_in_its_plan_part_is_refused_with_run_not_resumable(service_api: _API) -> None:
+    """A `sync` that stopped before any write never requires reconciliation, and saved no plan."""
+    client, projection, orchestration = service_api
+    run_id, flow_run_id = _sync_run(service_api)
+    # What the worker records for a failure before any dispatch: `failed`, not `ambiguous`.
+    assert projection.commit_claimed_execution(
+        run_id,
+        flow_run_id,
+        worker_id=_WORKER_ID,
+        terminal_at=datetime.now(timezone.utc),
+        terminal_state="failed",
+        terminal_outcome="failed",
+        writeback=ExecutionFinishWriteback(
+            phase="sync-failed",
+            outcome="failed",
+            finished_at=datetime.now(timezone.utc),
+            summary={"failed_stage": "sync"},
+            results={"sync_failure": {"error_type": "AdapterLoadError"}},
+        ),
+    )
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert stored.reconciliation_required is False
+
+    response = _resume(client, run_id)
+
+    assert response.status_code == 409, response.json()
+    assert _error_code(response) == "run-not-resumable"
+    assert _resume_submissions(orchestration) == []
+    assert _resume_outcomes(projection, run_id) == ["refused-run-not-resumable"]
+
+
 # --- the uncertain window (critique E3) -----------------------------------------------------
 
 
@@ -591,10 +708,11 @@ def _store_run(tmp_path: Path, run_id: str) -> ProductProjection:
     return projection
 
 
-def _admit_apply(projection: ProductProjection, run_id: str) -> str:
-    reserved, _created = projection.reserve_mutation(_receipt(run_id, "apply", "apply"), admit_write=True)
+def _admit_apply(projection: ProductProjection, run_id: str, purpose: str = "apply") -> str:
+    """Admit and claim the run's write execution: an `apply`, or a `sync` (user story 3)."""
+    reserved, _created = projection.reserve_mutation(_receipt(run_id, purpose, purpose), admit_write=True)
     assert reserved.state == "reserved"
-    return _start(projection, run_id, reserved, "apply")
+    return _start(projection, run_id, reserved, purpose)
 
 
 def _pass_verify(projection: ProductProjection, run_id: str) -> None:
@@ -803,12 +921,17 @@ def _instance(configuration: Any, *, directory: str, resolve_source_credentials:
     return SimpleNamespace(name=configuration.configuration.name)
 
 
-@pytest.fixture
-def resume_worker(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[ProductProjection, str, str]:
-    """A verified interrupted run whose admitted resume this worker has claimed."""
+@pytest.fixture(params=["apply", "sync"], ids=["interrupted-apply", "interrupted-sync"])
+def resume_worker(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[ProductProjection, str, str]:
+    """A verified run whose `apply` or `sync` was interrupted, and whose admitted resume this worker has claimed.
+
+    A `sync` run's resume is the same stage with the plan the `sync` saved (FR-017, research R9).
+    """
     run_id = "20261112T1200-ee55ff66"
     projection = _store_run(tmp_path, run_id)
-    apply_flow_run_id = _admit_apply(projection, run_id)
+    apply_flow_run_id = _admit_apply(projection, run_id, request.param)
     assert projection.record_apply_progress(
         run_id,
         apply_flow_run_id,

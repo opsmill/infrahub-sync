@@ -84,8 +84,8 @@ changed and some absent, run `verify`, and compare the report.
 
 ## Phase 5: User Story 3 - Resume an interrupted `sync` run (Priority: P3)
 
-- [ ] T029 [US3] Make `resume_run` and the `resume` flow accept a run whose interrupted write execution has purpose `sync`, using the checksum of the plan the `sync` run saved and never reading the source, in `infrahub_sync/service/service.py` and `infrahub_sync/service/flow.py` (FR-017, research R9)
-- [ ] T030 [P] [US3] Test in `tests/service/test_resume_run.py`: an interrupted `sync` run resumes from its marker, no plan stage runs, and the source adapter is never constructed
+- [X] T029 [US3] Make `resume_run` and the `resume` flow accept a run whose interrupted write execution has purpose `sync`, using the checksum of the plan the `sync` run saved and never reading the source, in `infrahub_sync/service/service.py` and `infrahub_sync/service/flow.py` (FR-017, research R9)
+- [X] T030 [P] [US3] Test in `tests/service/test_resume_run.py`: an interrupted `sync` run resumes from its marker, no plan stage runs, and the source adapter is never constructed
 
 ## Phase 6: Polish and cross-cutting
 

@@ -522,6 +522,9 @@ class RunService:
         interruption and whether another resume is unfinished (FR-012, FR-013). Every request,
         accepted or refused, is recorded in the run's audit history and event list with
         operation `resume` and the optional reason (FR-014).
+
+        The interrupted write may be an `apply` or a `sync`: a `sync` run is resumed with the
+        checksum of the plan it saved before its apply part (FR-017).
         """
         operation = "resume"
         run = self._owned_run(run_id, principal, operation, request.reason)
@@ -553,9 +556,16 @@ class RunService:
                 outcome="refused-confirmation",
             )
             raise self._error(409, "confirmation-required", "confirm_writes=true is required for resume", run_id=run_id)
+        # A resume refuses every run it cannot resume with `run-not-resumable`, and the message
+        # says why (FR-013). Both checks come before the saved plan is read: a `sync` run that
+        # stopped in its plan part wrote nothing and may have saved no plan (FR-017). The store
+        # checks both again on the run's locked row.
+        not_resumable: str | None = None
         if run.phase == "cancelled":
-            # The contract's code for a cancelled run: a resume refuses every run it cannot resume
-            # with `run-not-resumable`, and the message says why (FR-013).
+            not_resumable = "this Sync run is cancelled"
+        elif not run.reconciliation_required:
+            not_resumable = "this Sync run has no interrupted write to resume"
+        if not_resumable is not None:
             self._audit(
                 run_id,
                 actor=principal.actor,
@@ -563,7 +573,7 @@ class RunService:
                 reason=request.reason,
                 outcome="refused-run-not-resumable",
             )
-            raise self._error(409, "run-not-resumable", "this Sync run is cancelled", run_id=run_id)
+            raise self._error(409, "run-not-resumable", not_resumable, run_id=run_id)
         if approval_required():
             self._require_matching_approval(run, request, principal, operation=operation)
         self._require_supported_run_configuration(run)
