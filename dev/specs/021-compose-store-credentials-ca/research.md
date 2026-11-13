@@ -194,8 +194,9 @@ beside it. No second file.
 
 - `requests` 2.34.2 (NetBox, Nautobot, ACI, Prometheus, the generic REST API adapter and Peering
   Manager): `REQUESTS_CA_BUNDLE` when `verify` is true or unset (`Session.merge_environment_settings`).
-- `httpx` 0.28.1 (the Infrahub SDK, and the IP Fabric and Slurp'it SDK packages): `SSL_CERT_FILE` when
-  `trust_env` is true. Corrected on 2026-11-13: this line first listed Prometheus and the generic
+- `httpx` 0.28.1 (the Infrahub SDK): `SSL_CERT_FILE` when `trust_env` is true. The Slurp'it
+  adapter handles an `httpx.AsyncClient` from its SDK; which client the IP Fabric SDK uses was
+  not checked. Corrected on 2026-11-13: this line first listed Prometheus and the generic
   REST API adapter under `httpx`; both call `requests`.
 - Infrahub SDK 1.23.2: `INFRAHUB_TLS_CA_FILE`, otherwise `ssl.create_default_context()`, which reads
   `SSL_CERT_FILE`. `docs/docs/custom-certificates.mdx:25-26` documents both.
@@ -221,8 +222,8 @@ A declared `verify_ssl: false` turns certificate checks off, as before.
 | `prometheus` | `requests.get(verify=verify_ssl)` in both the scrape and the API client | trusted | certificate refused |
 | `genericrestapi` | `RestApiClient`, `requests.request(verify=verify_ssl)` | trusted | certificate refused |
 | `peeringmanager` | the generic REST API adapter's `RestApiClient` | trusted | certificate refused |
-| `ipfabricsync` | `IPFClient(verify=verify_ssl)`, true when unset | not checked: the `ipfabric` extra is not in the image | not checked |
-| `slurpitsync` | `slurpit.api(verify=verify_ssl)`, an `httpx.AsyncClient` | not checked: the `slurpit` extra conflicts with the `service` extra and is not in the image | not checked |
+| `ipfabricsync` | `IPFClient(verify=verify_ssl)`; for a registered package, true when unset; for direct use, `None` when unset, which leaves the choice to the SDK and its `IPF_*` variables | not checked: the `ipfabric` extra is not in the image | not checked |
+| `slurpitsync` | `slurpit.api(verify=verify_ssl)`; the adapter handles the SDK's `httpx.AsyncClient` | not checked: the `slurpit` extra conflicts with the `service` extra and is not in the image | not checked |
 
 How the IP Fabric and Slurp'it SDK packages treat `verify=True`, and whether they read `SSL_CERT_FILE`,
 is not known: neither SDK is installed in the image or in the local development environment.
