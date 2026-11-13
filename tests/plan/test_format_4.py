@@ -1,4 +1,4 @@
-"""Saved plan format 4 (spec 019 T013, FR-031, contracts/plan-artifact-format-4.md).
+"""Saved plan format 4 (spec 020 T013, FR-031, contracts/plan-artifact-format-4.md).
 
 Format 4 is format 3 plus `plan/report.jsonl` and a `report` object in the manifest:
 
@@ -11,7 +11,7 @@ Format 4 is format 3 plus `plan/report.jsonl` and a `report` object in the manif
 - a run without a destination schema snapshot records `dropdown_values_checked: false`
 - the format 3 fields stay: `destination_id` on updates, `lineage` and `plan/last_changes.jsonl`
 
-Spec 019 T027 implements the format; T028 runs the problem pass before `Potenda.write_plan`
+Spec 020 T027 implements the format; T028 runs the problem pass before `Potenda.write_plan`
 writes the plan.
 
 The apply gate's left-out count is bound to the checksum the operator confirms (ADR 0022):

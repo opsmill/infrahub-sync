@@ -7,7 +7,7 @@ configured adapter *name* against the adapter *type* breaks as soon as both
 sides of a sync use the same adapter type (NetBox-to-NetBox, and so on),
 because the predicate is then true for both instances.
 
-Since spec 019 (T017 to T020) every bundled adapter reads through the base-class read loop:
+Since spec 020 (T017 to T020) every bundled adapter reads through the base-class read loop:
 `DiffSyncMixin.model_loader` filters through `filter_source_records`, and `load_record` runs
 the transforms, both on the source side only (`tests/test_load_record.py` covers the
 transforms). These tests check that the role reaches that loop for each adapter.

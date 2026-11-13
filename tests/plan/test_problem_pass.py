@@ -1,4 +1,4 @@
-"""The problem pass, the selection step and the format 4 writer, driven without `Potenda.write_plan` (spec 019 T024 to T027).
+"""The problem pass, the selection step and the format 4 writer, driven without `Potenda.write_plan` (spec 020 T024 to T027).
 
 `tests/plan/test_problems.py`, `test_left_out_walk.py`, `test_format_4.py` and
 `test_stores_unchanged.py` read the result from a plan that `Potenda.write_plan` saves, which

@@ -1,4 +1,4 @@
-"""Planning again after an apply that stopped partway (spec 019 T058, FR-022, SC-004).
+"""Planning again after an apply that stopped partway (spec 020 T058, FR-022, SC-004).
 
 The testing release cannot resume a stopped apply: the team plans again. The new plan compares
 the source with the destination, so it must hold only the operations that the destination does

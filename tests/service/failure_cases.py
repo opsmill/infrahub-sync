@@ -1,4 +1,4 @@
-"""One exception per failure type of a failed run (spec 019 User Story 3, T046 and T047).
+"""One exception per failure type of a failed run (spec 020 User Story 3, T046 and T047).
 
 Not a test module: it holds the exceptions that the failure record tests share. No assertion
 lives here.
@@ -116,7 +116,7 @@ def forbidden_values() -> list[str]:
 class FailureCase:
     """One failure: the stage it fails, the error it raises and what its record holds.
 
-    `fields` are the record's spec 019 fields that this failure sets (data-model.md "Stage
+    `fields` are the record's spec 020 fields that this failure sets (data-model.md "Stage
     failure record additions"); `record` is compared key by key, so an added `identity` does
     not fail it.
     """

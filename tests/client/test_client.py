@@ -1174,7 +1174,7 @@ def _report_page(entries: list[dict[str, object]], *, next_offset: int | None) -
 def test_the_plan_report_reads_send_paging_and_filters_and_parse_the_page(
     read: Callable[[SyncClient], object], route: str, query: str
 ) -> None:
-    """Spec 019 T030: one page of a saved plan's problems, left-out or kept records."""
+    """Spec 020 T030: one page of a saved plan's problems, left-out or kept records."""
     requests: list[httpx.Request] = []
     entry: dict[str, object] = {"record": {"kind": "DcimDevice", "identity": {"name": "rtr1"}, "source_id": "1"}}
 

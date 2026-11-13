@@ -1,4 +1,4 @@
-"""The CLI lines for problems, left-out and kept records (spec 019 T016, FR-007, contracts/cli.md).
+"""The CLI lines for problems, left-out and kept records (spec 020 T016, FR-007, contracts/cli.md).
 
 - `infrahub-sync plan` and `infrahub-sync runs plan <run_id>` print, after the counts by action,
   `left_out`, `problems` and `kept_without_relationship`, then one line per kind whose deletes
@@ -10,7 +10,7 @@
 
 The client is a `SyncClient` mock, as in `test_client_commands.py`.
 
-Names this module assumes, for spec 019 T029 to T031 to confirm or change:
+Names this module assumes, for spec 020 T029 to T031 to confirm or change:
 
 - the client's paged reads `get_plan_problems`, `get_plan_left_out` and `get_plan_kept`, each
   called with the run ID and the keywords `offset`, `limit` and the filters `problem_type`
@@ -18,7 +18,7 @@ Names this module assumes, for spec 019 T029 to T031 to confirm or change:
   (contracts/sync-api.md); the pages here are plain namespaces with those fields
 - the summary counts of data-model.md "Plan summary additions" on `PlanSummaryResource`
 
-Spec 019 T029 to T031 confirmed these names.
+Spec 020 T029 to T031 confirmed these names.
 """
 
 from __future__ import annotations

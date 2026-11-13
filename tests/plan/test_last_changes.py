@@ -212,7 +212,7 @@ def test_derivation_without_a_collector_is_unchanged() -> None:
 
 
 def test_the_selection_keeps_only_records_of_fields_the_plan_still_changes() -> None:
-    """Spec 019 T028: a removed update, or a relationship the update no longer carries, keeps no record."""
+    """Spec 020 T028: a removed update, or a relationship the update no longer carries, keeps no record."""
     operations, records = _update_operations()
     device = next(operation for operation in operations if operation.kind == "DcimDevice")
     tag = next(operation for operation in operations if operation.kind == "BuiltinTag")

@@ -151,7 +151,7 @@ def test_failure_cause_never_appears_in_the_markdown() -> None:
     assert "10.0.0.1" not in markdown
 
 
-# --- left-out and problem counts (spec 019 FR-028, T038) --------------------------------------
+# --- left-out and problem counts (spec 020 FR-028, T038) --------------------------------------
 #
 # FR-028 asks for the two counts and for next steps that name the `runs plan` options of FR-027
 # when the plan leaves out records. It does not fix the wording of the count lines, so the

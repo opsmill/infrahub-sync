@@ -57,7 +57,7 @@ DEFAULT_LOG_LIMIT = 200
 MAX_LOG_LIMIT = 1000
 LOG_STAGES: tuple[str, ...] = ("plan", "verify", "apply", "sync")
 
-# The largest page of a saved plan's problem, left-out or kept list, and the default (spec 019,
+# The largest page of a saved plan's problem, left-out or kept list, and the default (spec 020,
 # contracts/sync-api.md).
 MAX_REPORT_LIMIT = 500
 
@@ -140,7 +140,7 @@ class ApplyRunRequest(_RequestModel):
     """Request application of a reviewed plan checksum.
 
     `confirm_left_out` confirms that the person reviewed the records the plan leaves out
-    (spec 019 FR-010). It is a strict JSON boolean, and it is serialized only when true, so a
+    (spec 020 FR-010). It is a strict JSON boolean, and it is serialized only when true, so a
     request that does not confirm keeps today's body and today's idempotency fingerprint.
     """
 
@@ -584,7 +584,7 @@ class PlanSummaryResource(_ResourceModel):
     total: int = Field(ge=0)
     delete_operations_computed: bool
     deletes_not_executed: int = Field(ge=0)
-    # Spec 019 FR-007 and FR-008: the counts of the plan report. Defaults, so a review
+    # Spec 020 FR-007 and FR-008: the counts of the plan report. Defaults, so a review
     # published before these fields existed still validates; a format 2 or 3 plan has zeros
     # and `dropdown_values_checked` false.
     left_out: int = Field(default=0, ge=0)
@@ -600,7 +600,7 @@ class PlanSummaryResource(_ResourceModel):
 
 
 class PlanReportPageResource(_ResourceModel):
-    """One page of the problems, left-out records or kept records of a saved plan (spec 019).
+    """One page of the problems, left-out records or kept records of a saved plan (spec 020).
 
     `entries` are the lines of the plan's `report.jsonl` without their `entry` key, in the
     report's stable order. `next_offset` is `None` on the last page.
@@ -718,7 +718,7 @@ FailureType = Literal[
     "destination_schema_unavailable",
     "internal_error",
 ]
-"""The failure type names a stage failure record holds (spec 019 data-model.md, FR-014)."""
+"""The failure type names a stage failure record holds (spec 020 data-model.md, FR-014)."""
 
 FAILURE_TYPES: tuple[FailureType, ...] = get_args(FailureType)
 
@@ -752,8 +752,8 @@ class FailedOperationDetailResource(_ResourceModel):
 class StageFailureResource(_ResourceModel):
     """One `<stage>_failure` record of a run's results.
 
-    The keys a record held before spec 019 keep their meaning and stay optional, so a record
-    written by an older Sync API validates. The worker of this version sets every spec 019 field
+    The keys a record held before spec 020 keep their meaning and stay optional, so a record
+    written by an older Sync API validates. The worker of this version sets every spec 020 field
     on every record it writes, `failure_type` always and the others `None` when the failure does
     not name them (ADR 0021). The reader keeps them optional, because a record written by an
     older Sync API has none of them (FR-014), and `failure_type` is a string rather than
@@ -917,7 +917,7 @@ class ConfigurationVersionResource(_ResourceModel):
 
 
 class ConfigurationVersionReferenceResource(_ResourceModel):
-    """Name one registered version by its checksum, without its package (spec 019 FR-038).
+    """Name one registered version by its checksum, without its package (spec 020 FR-038).
 
     The registration responses return this reference: the stored package is redacted, so
     showing it next to the checksum of the original content would show two things that do not
@@ -986,7 +986,7 @@ class ErrorDetail(_ResourceModel):
     # Absent from most errors.
     details: dict[str, Any] | None = None
     # The count of records the plan leaves out, on a `left-out-confirmation-required` refusal
-    # only (spec 019 FR-010). Absent from every other error body.
+    # only (spec 020 FR-010). Absent from every other error body.
     left_out: int | None = Field(default=None, ge=0)
 
     # No return annotation on purpose: with one, Pydantic replaces the model's serialization

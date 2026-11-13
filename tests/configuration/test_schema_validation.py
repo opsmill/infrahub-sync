@@ -529,9 +529,9 @@ FROZEN_SCHEMA_CODES = frozenset(
         "destination-schema-read-failed",
         # The closed-domain family: a snapshot the shared runtime domain refuses.
         "destination-schema-unsupported-semantics",
-        # Spec 019 FR-034: a literal Dropdown value outside the attribute's choices.
+        # Spec 020 FR-034: a literal Dropdown value outside the attribute's choices.
         "destination-dropdown-value-not-in-choices",
-        # Spec 019 FR-036: the destination-access family.
+        # Spec 020 FR-036: the destination-access family.
         "destination-permission-missing",
         "destination-lineage-node-not-found",
         "destination-lineage-node-ambiguous",
@@ -610,7 +610,7 @@ def test_every_frozen_schema_code_is_reachable_and_nothing_else_is_emitted(
     for finding in collect_destination_schema_findings(package(package_data())).findings:
         reached.add(finding.code)
         severities.add(finding.severity)
-    # Spec 019: a Dropdown literal outside its choices, and an access read that finds gaps.
+    # Spec 020: a Dropdown literal outside its choices, and an access read that finds gaps.
     table = _table_with_accessor(_SpiedAccessor(_dropdown_snapshot(["active"])))
     table["infrahub"] = replace(table["infrahub"], destination_access_accessor=_access_accessor)
     _inject(monkeypatch, table)
@@ -1031,7 +1031,7 @@ def test_a_snapshot_outside_the_closed_domain_reports_a_finding(monkeypatch: pyt
     assert all(finding.severity == "error" for finding in result.findings)
 
 
-# --- Spec 019 FR-034 (T061): a literal Dropdown value outside the attribute's choices ----
+# --- Spec 020 FR-034 (T061): a literal Dropdown value outside the attribute's choices ----
 
 
 def _dropdown_snapshot(choices: list[str] | None) -> dict[str, Any]:

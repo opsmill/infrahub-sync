@@ -82,10 +82,10 @@ MANIFEST_KEYS = frozenset(
         "operations_count",
         "delete_operations_computed",
         "plan_checksum",
-        # Plan format 4 (spec 019): the digest, size and counts of `report.jsonl`.
+        # Plan format 4 (spec 020): the digest, size and counts of `report.jsonl`.
         "report",
         # Plan format 4: these runs have no destination schema snapshot, so the plan could not
-        # check Dropdown values (spec 019 research R4).
+        # check Dropdown values (spec 020 research R4).
         "dropdown_values_checked",
     }
 )

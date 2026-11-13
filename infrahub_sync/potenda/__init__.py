@@ -84,7 +84,7 @@ OPERATIONAL_APPLY_FAILURES: tuple[type[Exception], ...] = (
 
 
 class SideLoadError(ValueError):
-    """Reading one side of the sync failed (spec 019 research R12).
+    """Reading one side of the sync failed (spec 020 research R12).
 
     `role` is `source` or `destination`, and `adapter` the adapter name the sync configuration
     declares, else the adapter's type. The error that stopped the read is kept as `__cause__`.
@@ -225,7 +225,7 @@ def _require_applyable_format(manifest: PlanManifest, *, run_id: str) -> None:
     rendered for review, and refused at the write.
 
     A format-3 plan was never checked for problems and carries no count of left-out records,
-    so the person cannot confirm what it leaves out (spec 019 SC-006, research R9).
+    so the person cannot confirm what it leaves out (spec 020 SC-006, research R9).
     """
     if manifest.format_version >= REPORT_FORMAT_VERSION:
         return
@@ -243,7 +243,7 @@ def _require_applyable_format(manifest: PlanManifest, *, run_id: str) -> None:
 
 
 def _require_left_out_confirmation(manifest: PlanManifest, *, run_id: str, confirm_left_out: bool) -> None:
-    """Refuse a plan that leaves out records unless the apply confirms it (spec 019 FR-010).
+    """Refuse a plan that leaves out records unless the apply confirms it (spec 020 FR-010).
 
     The count is the manifest's, which the plan checksum binds, so it is the count of the plan
     this call applies. A plan that leaves out nothing accepts and ignores a confirmation.
@@ -950,7 +950,7 @@ class Potenda:
         identity_groups = warn_missing_convergence_key(
             destination=self.destination, operations=operations, source_adapter=self.source, config=self.config
         )
-        # Spec 019 research R3: find every problem, then leave out the records that have one and
+        # Spec 020 research R3: find every problem, then leave out the records that have one and
         # the records that depend on them, before anything is written. The report and the
         # selected operations are the plan; no store and no derived operation is changed.
         result = run_problem_pass(
@@ -1067,7 +1067,7 @@ class Potenda:
                 substitute. `None` asks for no approval comparison at all.
             confirm_left_out: The person confirmed that they reviewed the records the plan
                 leaves out. Required when the plan's report leaves out any record, and
-                ignored otherwise (spec 019 FR-010, FR-011).
+                ignored otherwise (spec 020 FR-010, FR-011).
 
         Returns:
             The `ApplyRecord`: the ordered applied identifiers (whose final element is
@@ -1138,7 +1138,7 @@ class Potenda:
 
         applied: list[str] = []
         skipped_deletes: list[str] = []
-        # Read from the plan for the failure record of a stopped apply (spec 019 FR-014).
+        # Read from the plan for the failure record of a stopped apply (spec 020 FR-014).
         operations_total = len(loaded.operations)
         for operation in loaded.operations:
             if operation.action == "delete":

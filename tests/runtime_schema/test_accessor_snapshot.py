@@ -70,7 +70,7 @@ def test_node_and_generic_entries_carry_the_key_sets_the_live_test_expects() -> 
     assert set(snapshot[generic.kind]) == base_keys | {"used_by"}
     assert snapshot[generic.kind]["used_by"] == ["LocationFloor", "LocationRackUnit"]
     for attribute in snapshot[node.kind]["attributes"].values():
-        # A Dropdown attribute also carries its choice names (spec 019 research R4).
+        # A Dropdown attribute also carries its choice names (spec 020 research R4).
         extra = {"choices"} if attribute["kind"] == "Dropdown" else set()
         assert set(attribute) == {"kind", "optional", "default_value", "unique", "read_only"} | extra
     for relationship in snapshot[node.kind]["relationships"].values():

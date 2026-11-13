@@ -41,7 +41,7 @@ class NormalizedAttribute:
     unique: bool
     read_only: bool = False
     # The choice names of a `Dropdown` attribute, sorted; `None` for any other attribute, or for
-    # a snapshot that does not record them (spec 019 research R4).
+    # a snapshot that does not record them (spec 020 research R4).
     choices: tuple[str, ...] | None = None
 
     def mutable_default(self) -> Any:

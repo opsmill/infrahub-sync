@@ -1,6 +1,6 @@
 """The engine's own check of the left-out confirmation, for callers that skip the Sync API.
 
-Spec 019 FR-010 and FR-011, research R10 and T042. The Sync API refuses an apply of a plan that
+Spec 020 FR-010 and FR-011, research R10 and T042. The Sync API refuses an apply of a plan that
 leaves out records unless the request confirms it. The engine checks the same thing again from
 the plan manifest, so a direct Python caller of `Potenda.apply_plan` cannot skip it: an apply of
 a plan whose report leaves out records needs `confirm_left_out=True`, and is refused before the

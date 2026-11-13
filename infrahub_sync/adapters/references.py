@@ -1,4 +1,4 @@
-"""Resolve the references of a source record while an adapter reads it (spec 019 research R5).
+"""Resolve the references of a source record while an adapter reads it (spec 020 research R5).
 
 Every adapter that resolves references while it reads (NetBox, Nautobot, ACI, generic REST and
 the adapters built on it) calls `peer_unique_id` or `peer_unique_ids` from its `record_to_data`.

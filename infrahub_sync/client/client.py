@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # one method per Sync API operation
 """Synchronous client for the Sync HTTP API."""
 
 from __future__ import annotations
@@ -310,7 +311,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         """Validate a configuration version and return one findings page.
 
         With ``branch``, the service also checks the mapping, the import account's permissions
-        and the workers' credential variables against that Infrahub branch (spec 019 FR-034).
+        and the workers' credential variables against that Infrahub branch (spec 020 FR-034).
         """
 
         config_id = self._identifier(config_id, "config_id")

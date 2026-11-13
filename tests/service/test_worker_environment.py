@@ -1,4 +1,4 @@
-"""Credential variables the worker holds, checked by `configs validate --branch` (spec 019 FR-035, T063).
+"""Credential variables the worker holds, checked by `configs validate --branch` (spec 020 FR-035, T063).
 
 `configs validate` runs in the Sync API, which does not hold the variables a run reads: Compose
 gives the worker and the API different environments. So each worker publishes, on each poll,

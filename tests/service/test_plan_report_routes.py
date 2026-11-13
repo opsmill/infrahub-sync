@@ -1,4 +1,4 @@
-"""The problem, left-out and kept lists of the Sync API (spec 019 T015, FR-007, contracts/sync-api.md).
+"""The problem, left-out and kept lists of the Sync API (spec 020 T015, FR-007, contracts/sync-api.md).
 
 `GET /runs/{run_id}/plan/problems`, `/plan/left-out` and `/plan/kept` page the report of one saved
 plan in its stable order, with the same response shape for the three routes:
@@ -11,7 +11,7 @@ plan in its stable order, with the same response shape for the three routes:
 The plan of the shared problem fixture (`tests/plan/problem_plan.py`) is read back with
 `read_saved_plan` and published with the worker's `_publish_plan`, as the plan stage does.
 
-Spec 019 T027 to T030 implement the routes. The worker publishes the report's lines in the plan
+Spec 020 T027 to T030 implement the routes. The worker publishes the report's lines in the plan
 review document; `GET /runs/{run_id}/plan` does not return them.
 """
 

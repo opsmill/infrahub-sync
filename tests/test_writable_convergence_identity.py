@@ -183,7 +183,7 @@ def test_read_only_relationship_cannot_supply_a_key(component: str) -> None:
     assert component in reason
 
 
-# Spec 019 FR-037 (SYNC-147, T064): validation and the plan give the same answer on whether a
+# Spec 020 FR-037 (SYNC-147, T064): validation and the plan give the same answer on whether a
 # kind without a writable human-friendly ID can be created. Each case is one destination kind,
 # the fields the mapping selects as its identity (`identifiers`, which the plan keys each create
 # on) and the fields it maps. Validation judges the selected identifiers, as the plan does

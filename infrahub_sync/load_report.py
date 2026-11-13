@@ -1,4 +1,4 @@
-"""The load report of one adapter (spec 019 research R2).
+"""The load report of one adapter (spec 020 research R2).
 
 The admission step of `DiffSyncMixin` records here each source record that it cannot build:
 the record, the reason, and the named fields of that reason. No entry holds the text of an

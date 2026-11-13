@@ -1,4 +1,4 @@
-"""A `sync` run whose plan leaves out records stops after the plan (spec 019 T036 and T078).
+"""A `sync` run whose plan leaves out records stops after the plan (spec 020 T036 and T078).
 
 FR-012, data-model.md "Stage result `failure` for a stopped `sync`", research R11 and decision 2
 of 2026-11-11. The stage saves its plan, writes nothing, and ends with phase `planned`, outcome

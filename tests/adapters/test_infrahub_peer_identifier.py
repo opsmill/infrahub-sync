@@ -4,7 +4,7 @@ The full adapter touches an Infrahub server, so these tests build a minimal
 stand-in adapter that reuses the real helper. The focused cases cover:
 
 - Rich errors for missing peer identifier keys.
-- A peer without identifier values raises again, without a second hydration (spec 019
+- A peer without identifier values raises again, without a second hydration (spec 020
   removed `continue_on_error`, which skipped it without a count).
 - Bounded hydration of missing relationship identifiers.
 - Cache preservation and reuse for repeated peer references.

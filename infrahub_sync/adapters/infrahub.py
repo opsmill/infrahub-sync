@@ -1339,7 +1339,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """Each mapped identity that two or more destination nodes hold, in the order they were read.
 
         Only the full read of a kind by `model_loader` records them; an incremental read
-        through the cache does not (spec 019, `destination_identity_ambiguous`).
+        through the cache does not (spec 020, `destination_identity_ambiguous`).
         """
         return [
             DestinationIdentityAmbiguity(kind=kind, unique_id=unique_id, identity=identity, node_ids=tuple(node_ids))

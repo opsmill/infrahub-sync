@@ -20,9 +20,9 @@ own exact-set and reachability tests:
 * the closed-domain family — a snapshot the accessor delivered but the shared runtime
   schema domain refuses. Registered execution refuses the same snapshot, so validation
   reports the same defect rather than silently withholding the fingerprint;
-* the Dropdown literal family (spec 019 FR-034) — a literal ``static`` value of a mapped
+* the Dropdown literal family (spec 020 FR-034) — a literal ``static`` value of a mapped
   Dropdown attribute that is not one of the attribute's choices;
-* the destination-access family (spec 019 FR-036) — a permission the import account lacks on
+* the destination-access family (spec 020 FR-036) — a permission the import account lacks on
   the branch to view, create or update a mapped kind, or to look up a named ``source`` or
   ``owner``, and a named ``source`` or ``owner`` that matches no node or more than one node;
 * the schema-read-failure family — a schema read the accessor reports as failed becomes a
@@ -70,9 +70,9 @@ _CODE_DESTINATION_SCHEMA_READ_FAILED = "destination-schema-read-failed"
 _CODE_DESTINATION_SCHEMA_UNSUPPORTED_SEMANTICS = "destination-schema-unsupported-semantics"
 _CODE_DESTINATION_SCHEMA_VALIDATION_UNSUPPORTED = "destination-schema-validation-unsupported"
 _CODE_UNSUPPORTED_DESTINATION_WRITE = "unsupported-destination-write"
-# Spec 019 FR-034: a literal Dropdown value outside the attribute's choices.
+# Spec 020 FR-034: a literal Dropdown value outside the attribute's choices.
 _CODE_DESTINATION_DROPDOWN_VALUE_NOT_IN_CHOICES = "destination-dropdown-value-not-in-choices"
-# Spec 019 FR-036: what the import account may do on the branch, and the source or owner it names.
+# Spec 020 FR-036: what the import account may do on the branch, and the source or owner it names.
 _CODE_DESTINATION_PERMISSION_MISSING = "destination-permission-missing"
 _CODE_DESTINATION_LINEAGE_NODE_NOT_FOUND = "destination-lineage-node-not-found"
 _CODE_DESTINATION_LINEAGE_NODE_AMBIGUOUS = "destination-lineage-node-ambiguous"
@@ -87,7 +87,7 @@ class DestinationSchemaOptions:
 
     Presence is the opt-in: ``None`` on the operation keeps today's declared-content-only
     behavior byte-identical, with zero schema reads. ``branch`` is the Infrahub branch the
-    team names (`configs validate --branch`, spec 019 FR-034); ``None`` reads the package's
+    team names (`configs validate --branch`, spec 020 FR-034); ``None`` reads the package's
     declared destination branch.
     """
 
@@ -200,7 +200,7 @@ def _schema_content_findings(
 
 
 def _identity_findings(package: ConfigurationPackage, normalized: DestinationSchemaSnapshot) -> list[ValidationFinding]:
-    """Report each mapped kind whose selected identity cannot key a create (spec 019 FR-037).
+    """Report each mapped kind whose selected identity cannot key a create (spec 020 FR-037).
 
     The plan keys each create on the fields the generator selects as identifiers
     (`get_identifiers`: the mapping's `identifiers`, or else its mapped unique attributes),
@@ -239,7 +239,7 @@ def _identity_findings(package: ConfigurationPackage, normalized: DestinationSch
 def _dropdown_findings(package: ConfigurationPackage, normalized: DestinationSchemaSnapshot) -> list[ValidationFinding]:
     """Report each literal ``static`` value of a mapped Dropdown attribute that is not a choice.
 
-    A value mapped from the source is checked by the plan, record by record (spec 019
+    A value mapped from the source is checked by the plan, record by record (spec 020
     research R4). A Dropdown whose choices the snapshot does not record is not judged. A kind
     or field the snapshot does not declare is reported by the mismatch checks instead.
     """
@@ -271,7 +271,7 @@ def _access_findings(
 ) -> list[ValidationFinding]:
     """Report the permissions the import account lacks on `branch` and the lineage names it cannot use.
 
-    Spec 019 FR-036: one finding per mapped kind the account cannot view, create or update,
+    Spec 020 FR-036: one finding per mapped kind the account cannot view, create or update,
     and one per named `source` or `owner` that the account cannot look up, that matches no
     node, or that matches more than one node.
     """
@@ -332,7 +332,7 @@ def collect_destination_schema_findings(
     that defect and its subtree is unevaluable — and checks independent of a failed read
     still report. Findings return in the stable ``sort_findings`` order.
 
-    The branch read is ``options.branch`` when given (spec 019 FR-034), else the package's
+    The branch read is ``options.branch`` when given (spec 020 FR-034), else the package's
     declared destination branch.
     """
     destination = package.configuration.destination

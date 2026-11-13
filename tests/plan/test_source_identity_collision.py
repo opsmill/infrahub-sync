@@ -189,9 +189,9 @@ def assert_group_left_out(run_dir: Path, kind: str, problem_type: str) -> None:
 def test_full_source_population_leaves_lossy_creates_out(
     *, nested: bool, existing: str, artifact: bool, tmp_path: Path
 ) -> None:
-    """A real diff may omit a colliding source record entirely; the plan still leaves both out (spec 019 R6).
+    """A real diff may omit a colliding source record entirely; the plan still leaves both out (spec 020 R6).
 
-    Before spec 019 the plan refused the group with `DestinationIdentityCollisionError`. The
+    Before spec 020 the plan refused the group with `DestinationIdentityCollisionError`. The
     problem pass now records one identity problem and leaves every record of the group out:
     two creates on one Infrahub identity are `destination_identity_collision`; a record that
     Infrahub already holds on the identity they merge on is `identities_merge_in_destination`.

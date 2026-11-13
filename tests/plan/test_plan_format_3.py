@@ -90,7 +90,7 @@ def parse(directory: Path) -> LoadedPlan:
 
 
 def test_the_current_plan_format_is_4_and_2_and_3_stay_readable() -> None:
-    """Format 4 is what `plan` writes (spec 019); formats 2 and 3 stay readable for review (ADR 0001)."""
+    """Format 4 is what `plan` writes (spec 020); formats 2 and 3 stay readable for review (ADR 0001)."""
     assert PLAN_FORMAT_VERSION == 4, "Format 4 adds the plan report to format 3."
     assert frozenset({2, 3, 4}) == SUPPORTED_FORMAT_VERSIONS, "Format 2 and 3 plans stay readable and reviewable."
 

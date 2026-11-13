@@ -1,10 +1,10 @@
-"""A plan writes nothing to the destination, whether or not it finds problems (spec 019 T079).
+"""A plan writes nothing to the destination, whether or not it finds problems (spec 020 T079).
 
 Old specification 009 stated this as FR-004. `feature/v3-develop` proves it for deletes
 (`tests/test_effective_diffsync_flags.py::test_plan_records_delete_without_dispatching_model_delete`)
 and for a review (`tests/plan/test_review.py`), but no test planned creates, updates and
 problems together and checked that the destination received no write. This test plans the
-fixture of spec 019 with and without its problem records, through the real `InfrahubAdapter`,
+fixture of spec 020 with and without its problem records, through the real `InfrahubAdapter`,
 and records every write path the apply uses: the SDK client's write methods, the adapter's
 `apply_planned_operation`, and the DiffSync model hooks.
 """

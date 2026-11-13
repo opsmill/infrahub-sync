@@ -107,7 +107,7 @@ _REGISTERED_VERSION_INVALID = "registered configuration version is invalid"
 _REGISTERED_CHECKSUM_MISMATCH = "registered configuration checksum does not match run binding"
 _REGISTERED_PLAN_BINDING_MISMATCH = "registered saved plan binding does not match run binding"
 _REGISTERED_PLAN_VERIFICATION_FAILED = "registered saved plan verification failed"
-# The outcome of a `sync` that stopped after a plan that leaves out records (spec 019 FR-012).
+# The outcome of a `sync` that stopped after a plan that leaves out records (spec 020 FR-012).
 LEFT_OUT_STOP_OUTCOME = "left-out-review-required"
 _REGISTERED_PLAN_CHECKSUM_MISMATCH = "registered saved plan checksum does not match the approved expected_checksum"
 _WORKER_BINDING_PARAMETERS_INVALID = "service worker configuration binding parameters must be all absent or all present"
@@ -291,7 +291,7 @@ def _publish_plan(projection: ProductProjection, run_id: str, saved: SavedPlan, 
     data = document.model_dump_json().encode()
     if saved.report:
         # The plan report's lines travel in the same document, under a key `GET /runs/{run_id}/plan`
-        # does not return; the paged report routes read them (spec 019 contracts/sync-api.md). The
+        # does not return; the paged report routes read them (spec 020 contracts/sync-api.md). The
         # same serializer as `model_dump_json`, so secret redaction sees the same value text.
         data = to_json({**document.model_dump(mode="json"), PLAN_REPORT_KEY: list(saved.report)})
     projection.publish_artifact(
@@ -690,7 +690,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     observer that stores each side's read on the execution `flow_run_id`.
 
     A `sync` whose plan leaves out records stops after the plan is saved, before any write,
-    and gives back its write admission (spec 019 FR-012, research R11): see `_left_out_stop`.
+    and gives back its write admission (spec 020 FR-012, research R11): see `_left_out_stop`.
     """
     if stage in ("plan", "sync"):
         record_waiting(projection, run_id, flow_run_id)
@@ -939,7 +939,7 @@ def _left_out_stop(
 
     The stage ends with phase `planned` and outcome `left-out-review-required`, and its
     result carries `failure`, whose next action the last log line, the run artifact and the
-    CLI show (spec 019 FR-012, data-model.md "Stage result `failure` for a stopped `sync`").
+    CLI show (spec 020 FR-012, data-model.md "Stage result `failure` for a stopped `sync`").
     The writeback asks the store to give back the run's write admission in the same commit,
     so the team can apply the reviewed plan once with the confirmation. It carries no
     baseline: nothing was written.
@@ -983,7 +983,7 @@ def _failure_evidence(
     """Describe one failure, with whatever is known about what it wrote.
 
     The failure's operator cause is recorded too, when it has one: see `operator_cause`. Every
-    record carries the spec 019 fields of `failure_record` (ADR 0021): the failure type, the
+    record carries the spec 020 fields of `failure_record` (ADR 0021): the failure type, the
     system involved and the allowlisted values the failure names. Where `operator_cause`
     records no cause or next action, the fixed template of the failure type supplies it.
 
@@ -1319,7 +1319,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     `configuration_name` is the configuration's readable name, used only for the run's
     title; the configuration is identified by `config_id`. `confirm_left_out` is the apply
     request's confirmation that the records the plan leaves out were reviewed; the engine
-    checks it again (spec 019 research R10).
+    checks it again (spec 020 research R10).
 
     A refused execution claim, and a failure whose recorded evidence has a cause, end the flow
     run with a returned `Failed` state, so no traceback passes through Prefect's engine; any

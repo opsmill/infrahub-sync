@@ -79,7 +79,7 @@ def test_the_live_accessor_returns_a_judgeable_snapshot() -> None:
         for constraint in entry["uniqueness_constraints"]:
             assert all(isinstance(component, str) for component in constraint)
         for attribute in entry["attributes"].values():
-            # A Dropdown attribute also carries its choice names when the schema states them (spec 019).
+            # A Dropdown attribute also carries its choice names when the schema states them (spec 020).
             extra = {"choices"} if attribute["kind"] == "Dropdown" else set()
             assert set(attribute) - extra == {"kind", "optional", "default_value", "unique", "read_only"}
             assert isinstance(attribute["kind"], str)

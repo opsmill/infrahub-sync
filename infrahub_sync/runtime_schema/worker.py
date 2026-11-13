@@ -81,7 +81,7 @@ class RuntimeModelPlan:
     source: RuntimeSideModels | None
     generic_peers: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     # The choices of each mapped Dropdown attribute, by kind and attribute name, from the same
-    # snapshot (spec 019 research R4). The plan checks each mapped value against them.
+    # snapshot (spec 020 research R4). The plan checks each mapped value against them.
     dropdown_choices: Mapping[str, Mapping[str, tuple[str, ...]]] = field(default_factory=dict)
 
 
@@ -105,7 +105,7 @@ def planned_dropdown_choices(configuration: Any) -> Mapping[str, Mapping[str, tu
     """The Dropdown choices of a run's runtime model plan, or `None` when the run has none.
 
     A run without a runtime model plan (a direct Prefect flow run) has no destination schema
-    snapshot, so its plan cannot check Dropdown values (spec 019 research R4).
+    snapshot, so its plan cannot check Dropdown values (spec 020 research R4).
     """
     plan = getattr(configuration, "_runtime_models", None)
     if not isinstance(plan, RuntimeModelPlan):

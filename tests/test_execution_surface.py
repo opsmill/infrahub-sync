@@ -1520,7 +1520,7 @@ def test_the_read_observer_seam_reaches_the_engine_without_changing_the_factory_
     assert getattr(factory.engine, "read_observer", None) is observer
     recorded = factory.calls[0]
     assert set(recorded) == set(inspect.signature(get_potenda_from_instance).parameters)
-    assert len(recorded) == 7  # spec 019 removed `continue_on_error`
+    assert len(recorded) == 7  # spec 020 removed `continue_on_error`
 
 
 def test_successful_plan_writes_the_diff_lifecycle(
@@ -1900,7 +1900,7 @@ class _RecordingApplier:
 
 
 def test_an_apply_is_accepted_on_the_run_a_sync_planned(config_dir: str, cache_root: Path) -> None:
-    """Spec 019 FR-012: the team applies a stopped `sync` run as it applies a `plan` run.
+    """Spec 020 FR-012: the team applies a stopped `sync` run as it applies a `plan` run.
 
     The run file a composed `sync` wrote has mode `sync`; nothing in the apply path refuses
     it, and the confirmation reaches the engine.

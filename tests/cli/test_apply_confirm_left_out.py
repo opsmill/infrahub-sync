@@ -1,4 +1,4 @@
-"""The CLI side of the left-out confirmation and of a stopped `sync` (spec 019 T037).
+"""The CLI side of the left-out confirmation and of a stopped `sync` (spec 020 T037).
 
 contracts/cli.md "Apply a plan that leaves out records" and "Cause of a failed or stopped run":
 

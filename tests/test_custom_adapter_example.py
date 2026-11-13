@@ -1,7 +1,7 @@
 """The custom adapter example reads its mock database through the base-class read loop.
 
 `examples/custom_adapter/custom_adapter_src/custom_adapter.py` implements `list_records` and
-`record_to_data` only (spec 019 task T082). These tests load it from its file, as the
+`record_to_data` only (spec 020 task T082). These tests load it from its file, as the
 development plugin loader does, and read the five devices of `mock_db.json`.
 """
 

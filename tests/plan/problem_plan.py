@@ -1,4 +1,4 @@
-"""Plan the shared problem fixture end to end (spec 019 User Story 1, T009 to T013).
+"""Plan the shared problem fixture end to end (spec 020 User Story 1, T009 to T013).
 
 Not a test module: it holds the adapters and the plan driver that the User Story 1 tests share.
 No assertion lives here.
@@ -6,7 +6,7 @@ No assertion lives here.
 The two sides:
 
 - `FixtureSource` is a source adapter that implements only `list_records` and `record_to_data`
-  (spec 019 research R2). The base class's read loop (`DiffSyncMixin.model_loader`, T017) lists,
+  (spec 020 research R2). The base class's read loop (`DiffSyncMixin.model_loader`, T017) lists,
   filters, transforms and admits each record through `load_record`. References resolve through
   the shared helper `peer_unique_id` of `infrahub_sync/adapters/references.py` (T021).
 - `FixtureDestination` is the Infrahub adapter itself, with a stand-in SDK client that returns

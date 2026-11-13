@@ -48,7 +48,7 @@ def _member_semantics(member: NormalizedAttribute | NormalizedRelationship) -> d
             "read_only": member.read_only,
         }
         if member.choices is not None:
-            # A Dropdown's choices decide which mapped values the plan accepts (spec 019 research
+            # A Dropdown's choices decide which mapped values the plan accepts (spec 020 research
             # R4). Only present when recorded, so the projection of every other attribute is unchanged.
             semantics["choices"] = list(member.choices)
         return semantics

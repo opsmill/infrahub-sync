@@ -20,7 +20,7 @@ with the artifact before any of its contents are interpreted:
    checks is not refused: the file is display-only, so the reader reports the first bad line
    in `LoadedPlan.last_changes_problem` and review shows it as a note;
 5b. a format 4 manifest whose `report` record is missing, or whose `report.jsonl` is absent or
-   does not match its digest, size or counts → `PlanVerificationError` (spec 019);
+   does not match its digest, size or counts → `PlanVerificationError` (spec 020);
 6. an operation whose `action` is outside `ACTIONS` → `UnsupportedOperationActionError`
    listing `ACTIONS`. This is what puts FR-017's genuinely-unsupported class **before any
    destination write**, and because the review path reads through this same function, an
@@ -108,7 +108,7 @@ class LoadedPlan:
     operations_bytes: bytes
     last_changes: list[LastChangeRecord] | None = None
     last_changes_problem: str | None = None
-    # The lines of `plan/report.jsonl` (plan format 4, spec 019), in the file's order; empty
+    # The lines of `plan/report.jsonl` (plan format 4, spec 020), in the file's order; empty
     # for a format 2 or 3 plan, which has no report.
     report: tuple[dict[str, Any], ...] = ()
 
@@ -157,7 +157,7 @@ _REPORT_ENTRIES = ("problem", "left_out", "kept")
 
 
 def report_mismatch(mapping: Mapping[str, Any], report_bytes: bytes | None) -> tuple[str, str] | None:
-    """Compare `report.jsonl`'s bytes with a format 4 manifest's `report` record (spec 019).
+    """Compare `report.jsonl`'s bytes with a format 4 manifest's `report` record (spec 020).
 
     Returns `(expected, found)` when the record is missing or malformed, the file is absent,
     or its digest, size or counts differ from the record; `None` when they match, and for a
@@ -233,7 +233,7 @@ def _report_lines(report_bytes: bytes) -> list[dict[str, Any]] | None:
 
 
 def _parse_report(raw: RawPlanArtifact, mapping: Mapping[str, Any], run_id: str) -> tuple[dict[str, Any], ...]:
-    """Check `report.jsonl` against a format 4 manifest and return its lines (spec 019).
+    """Check `report.jsonl` against a format 4 manifest and return its lines (spec 020).
 
     Raises:
         PlanVerificationError: the report is missing or does not match the manifest's record.
@@ -740,7 +740,7 @@ def parse_plan_artifact(raw: RawPlanArtifact, *, run_id: str, parse_last_changes
             or does not match the manifest's digest or record count (FR-007). A record that
             fails the content checks is not refused: see `LoadedPlan.last_changes_problem`.
         PlanVerificationError: a format 4 plan whose `report.jsonl` is missing or does not
-            match the manifest's `report` record (spec 019).
+            match the manifest's `report` record (spec 020).
         PlanFormatVersionError: `format_version` is outside `SUPPORTED_FORMAT_VERSIONS`
             (FR-027).
         UnsupportedOperationActionError: an operation's `action` is outside `ACTIONS`,

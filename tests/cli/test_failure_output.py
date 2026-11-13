@@ -1,4 +1,4 @@
-"""The cause of a failed run, as the CLI prints it (spec 019 T049, FR-015, contracts/cli.md).
+"""The cause of a failed run, as the CLI prints it (spec 020 T049, FR-015, contracts/cli.md).
 
 `plan`, `verify`, `apply`, `sync` and `runs show` keep the lines they print today and add the
 fields of the failure record between `<stage> failed:` and `hint:`. Each value goes through the

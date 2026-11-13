@@ -1,4 +1,4 @@
-"""The warm read of a source with the read loop (spec 019 research R22).
+"""The warm read of a source with the read loop (spec 020 research R22).
 
 A warm read rebuilds a kind from the previous run's source snapshot and admits only the records
 changed since the saved cursor. `WarmSourceReadMixin` holds the adapter side of it; the engine

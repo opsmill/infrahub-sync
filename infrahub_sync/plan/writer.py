@@ -1,7 +1,7 @@
 """The plan artifact writer (FR-004, FR-010, FR-019, FR-021, FR-022, FR-026, FR-027).
 
 `operations.jsonl` is written **first**, then `last_changes.jsonl` when the plan has one, then
-`report.jsonl` (plan format 4, spec 019), and `manifest.json` **last**; that order is the commit point (AD014): the manifest's presence is
+`report.jsonl` (plan format 4, spec 020), and `manifest.json` **last**; that order is the commit point (AD014): the manifest's presence is
 what makes the artifact complete, so a failure part-way through the operations write leaves a
 run directory with a `plan/` directory and no manifest — which the reader classifies as **torn** — while a run that
 never reached this writer has no `plan/` directory at all and is classified as the
@@ -160,7 +160,7 @@ def _refuse_duplicate_identifiers(operations: Sequence[PlannedOperation]) -> Non
 def _refuse_not_in_source_peers(operations: Sequence[PlannedOperation]) -> None:
     """Refuse an operation whose identity, payload or relationships still name a peer not in the source.
 
-    The selection step of the problem pass removes every such placeholder (spec 019 research
+    The selection step of the problem pass removes every such placeholder (spec 020 research
     R5); one that reaches this point would be written, and applied, as a destination identity.
     The check runs before the first write, so a refusal leaves no artifact.
     """
@@ -272,7 +272,7 @@ def write_plan_artifact(
     record count, and `metadata_read`. `None` (a destination that keeps no last changes)
     writes neither the file nor the field.
 
-    `report` is the plan report of the problem pass (spec 019), written to `report.jsonl`
+    `report` is the plan report of the problem pass (spec 020), written to `report.jsonl`
     after the operations and before the manifest; the manifest's `report` field records its
     digest, size and counts. `None` writes an empty report, so every format 4 plan has one
     shape. `dropdown_values_checked=False` records that the run had no destination schema

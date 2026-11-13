@@ -1166,7 +1166,7 @@ def execute_run(
 
     `confirm_left_out` is the person's confirmation that they reviewed the records the plan
     leaves out. An apply of a plan that leaves out records is refused without it, before any
-    write (spec 019 FR-010).
+    write (spec 020 FR-010).
 
     `base_directory` names the cache root this run works in. A caller that owns a
     private directory for the run — the Sync service, whose stages share no filesystem

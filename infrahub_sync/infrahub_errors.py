@@ -215,7 +215,7 @@ def _permissions_named(text: str) -> tuple[str, ...]:
 
 
 # The longest Infrahub error code, node kind and field name, and the longest Infrahub message, a
-# rejected write records (spec 019 data-model.md, "Stage failure record additions").
+# rejected write records (spec 020 data-model.md, "Stage failure record additions").
 MAX_REJECTED_WRITE_NAME = 128
 MAX_REJECTED_WRITE_MESSAGE = 1000
 

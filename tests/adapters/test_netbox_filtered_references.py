@@ -1,6 +1,6 @@
 """NetBox references distinguish filtered peers from missing source records.
 
-Since spec 019 (T017, T018, T021) a record whose required peer a filter removed, or whose peer
+Since spec 020 (T017, T018, T021) a record whose required peer a filter removed, or whose peer
 the source does not return, is recorded in the load report and the read continues; before, the
 read raised `ValueError` or `IndexError`.
 """

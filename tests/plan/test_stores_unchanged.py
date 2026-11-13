@@ -1,11 +1,11 @@
-"""The problem pass and the selection step change neither store nor the DiffSync diff (spec 019 T012, research R3).
+"""The problem pass and the selection step change neither store nor the DiffSync diff (spec 020 T012, research R3).
 
 DiffSync compares the stores as read. The problem pass reads the load reports, the stores, the
 destination schema and the derived operations; the selection step removes operations and
 relationship values from the plan only. So after `Potenda.write_plan` both stores and the diff
 hold what they held before it, and a plan of valid data keeps its bytes.
 
-Spec 019 T017 to T028 implement the behavior.
+Spec 020 T017 to T028 implement the behavior.
 """
 
 from __future__ import annotations

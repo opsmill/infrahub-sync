@@ -240,7 +240,7 @@ def _duplicates(adapter: NetboxAdapter) -> list[tuple[str, str | None, str | Non
 def test_same_name_vrfs_are_refused_while_the_namespace_records_load() -> None:
     """Two VRFs sharing a name collide at `IpamNamespace`, before any plan exists.
 
-    Since spec 019 (T017) the second VRF is a `duplicate_source_identity` entry of the load
+    Since spec 020 (T017) the second VRF is a `duplicate_source_identity` entry of the load
     report and the read continues; before, the read raised `ObjectAlreadyExists` and stopped.
     """
     adapter = _adapter(_example_entries("IpamNamespace"), {"ipam.vrfs": SAME_NAME_VRFS})

@@ -1,4 +1,4 @@
-"""The plan problem pass, the dependency walk and the selection step (spec 019 research R3).
+"""The plan problem pass, the dependency walk and the selection step (spec 020 research R3).
 
 `find_problems` reads the source adapter's load report, the source store, the destination
 schema and the derived operations, and returns the plan report: the problems of the nine

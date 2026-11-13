@@ -78,7 +78,7 @@ def _registered(tmp_path: Path, data: dict[str, Any] | None = None) -> tuple[str
         projection=projection,
     )
     # A live worker holds every credential variable the package references, so the
-    # opt-in's worker credential check (spec 019 FR-035) adds no finding to these cases.
+    # opt-in's worker credential check (spec 020 FR-035) adds no finding to these cases.
     projection.publish_worker_environment(
         "worker",
         [

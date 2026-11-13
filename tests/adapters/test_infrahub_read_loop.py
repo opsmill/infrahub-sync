@@ -1,4 +1,4 @@
-"""The Infrahub adapter's read loop admits each node through `load_record` (spec 019 T022).
+"""The Infrahub adapter's read loop admits each node through `load_record` (spec 020 T022).
 
 The adapter reads the fixture's nodes through a stand-in SDK client (`tests/plan/problem_plan.py`).
 On the destination side, two nodes with one mapped identity are recorded as a destination identity

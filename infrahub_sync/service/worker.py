@@ -391,7 +391,7 @@ class ServiceProcessWorker(ProcessWorker):  # pylint: disable=abstract-method
 
     async def get_and_submit_flow_runs(self) -> list[FlowRun]:
         # Before the identity check: a worker publishes its variables even while Prefect
-        # has not resolved its record yet, so `configs validate` can see it (spec 019 FR-035).
+        # has not resolved its record yet, so `configs validate` can see it (spec 020 FR-035).
         await self._publish_credential_names()
         generation = self._submission_generation()
         if generation is None:

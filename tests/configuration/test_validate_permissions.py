@@ -1,9 +1,9 @@
-"""Permission and lineage findings of destination validation (spec 019 FR-036, SC-011, T062).
+"""Permission and lineage findings of destination validation (spec 020 FR-036, SC-011, T062).
 
 `configs validate` with a branch reads, for the import account on that branch, whether the
 account can view, create and update each mapped kind, and whether each `source` or `owner`
 lineage setting names exactly one node the account can look up (spec 014 decision D-1 left
-this check to spec 019). The lineage settings are `{kind, name}` references (spec 014); there
+this check to spec 020). The lineage settings are `{kind, name}` references (spec 014); there
 is no default owner, so a package that names neither `source` nor `owner` looks nothing up.
 
 Every test goes through `collect_destination_schema_findings` with the bundled Infrahub

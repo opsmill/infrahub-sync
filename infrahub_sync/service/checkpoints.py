@@ -70,7 +70,7 @@ def _declared_members(manifest: PlanManifest) -> list[str]:
     """The run-relative paths of the files the manifest declares beside itself and the operations.
 
     The last-change file first, when the manifest records one, then the plan report of a
-    format 4 plan (spec 019), then each source snapshot. Every path but the report's is the
+    format 4 plan (spec 020), then each source snapshot. Every path but the report's is the
     one the manifest records, so the checkpoint carries the files the plan checksum covers;
     the report's name is fixed by the format, and the manifest's `report` record covers it.
     """

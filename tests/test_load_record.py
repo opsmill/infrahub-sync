@@ -1,4 +1,4 @@
-"""The base-class read loop and its admission step `load_record` (spec 019 T009, research R2).
+"""The base-class read loop and its admission step `load_record` (spec 020 T009, research R2).
 
 `DiffSyncMixin.model_loader` lists the raw records of a kind, applies the configured filters
 and admits each record through `load_record`. On the source side, `load_record` records each
@@ -19,7 +19,7 @@ side nothing is caught.
 The source adapter is the fixture adapter of `tests/plan/problem_plan.py`, which implements only
 `list_records` and `record_to_data`; the records come from the shared problem fixture.
 
-Spec 019 T017 (and T021 for the peer errors) implements the behavior.
+Spec 020 T017 (and T021 for the peer errors) implements the behavior.
 """
 
 from __future__ import annotations
