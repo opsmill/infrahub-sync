@@ -455,21 +455,30 @@ The engine stays free of the store. `Potenda.apply_plan` takes two optional keyw
 - `progress: ApplyProgressObserver | None` (`infrahub_sync/potenda/apply_progress.py`). The engine
   calls `committed(index, operation)` only after the destination call for that operation returned and
   the identifier was appended to `applied`, so a reported position is never ahead of a commit. It
-  calls `kind_finished(index)` when the next operation's kind differs and after the last operation,
-  and `stopped(index)` when the apply stops at an operation without recording it as applied. Before
+  calls `kind_finished(index)` when the next operation's kind differs and after the last operation.
+  The stored order sorts by tier and then by operation ID, a hash, so the kinds of one tier
+  interleave and a change of kind can follow nearly every operation. It calls `stopped(index)` when the apply stops at an operation without recording it as applied. Before
   each dispatch, next to `ownership.before_operation()`, it calls `should_stop()`; when that returns
   true it raises `ApplyProgressLostError` with the partial record. An exception raised by the
   observer never changes the apply's result: the engine logs its error class and continues, and a
   `should_stop()` that raises counts as "do not stop".
 - `start_after: int | None`. Operations at an index up to and including `start_after` are not
-  dispatched and are not counted as applied by this execution. Every check that runs before the
-  first write still runs on the whole plan.
+  dispatched and are not listed as applied by this execution. Every check that runs before the
+  first write still runs on the whole plan. The engine's action counts, which become the run's
+  summary when the write succeeds, are the whole plan's. `ApplyRecord.operations_written` counts
+  the creates and updates at or before `start_after`, plus the ones this execution applied, so the
+  "written N of M" line describes the whole run. Each entry of `RunResource.resumes` keeps its own
+  `operations_written`: through the end of the plan for a resume that succeeded, through its own
+  last marker otherwise.
 
 The CLI-local path and the direct Prefect path pass neither and behave as before.
 
 The service worker passes `StoreApplyProgressObserver` (`infrahub_sync/service/apply_progress.py`)
 from its apply, `sync` and resume stages. It saves through `record_apply_progress` after 500
-committed operations, after 30 seconds, at each kind boundary, and when the apply stops or ends. The
+commits, at the first commit after 30 seconds, when the apply stops (`stopped`), and after the
+plan's last operation (`kind_finished` with the last index). It ignores every other
+`kind_finished`: because kinds interleave, saving there would update the execution's row about
+once per commit. The
 document is stored in `prefect_executions.apply_progress` (`position`, `operation_id`, `total`,
 `start_after`, `saved_at`), and the update applies only `WHERE terminal_at IS NULL`, so a worker
 that keeps running after the liveness monitor ended its execution changes nothing. A failed save is
@@ -482,13 +491,31 @@ its executions is unfinished (`infrahub_sync/service/resume_view.py`). On such a
 
 - `_reserve_existing` admits a `verify`, the one exception to the refusal of every stage on a run
   that holds a `write_admissions` row. After the pre-write checks pass, the `verify` stage computes
-  the uncertain window (`uncertain_positions`): the operations after the position through the
-  failing operation when it is known, otherwise the next 500, or every remaining operation when the
-  last save attempt failed. It reads their nodes through `DestinationNodeReader.read_planned_nodes`
+  the uncertain window (`uncertain_positions`), which starts after the position:
+    - through the failing operation, when the failure record of the latest write execution names it.
+      The worker stores the execution's `flow_run_id` in its failure record; results are merged
+      across executions, so a record without it, or naming another execution, is not used.
+    - through the 500th create or update, with the recorded deletes between them, when the last save
+      attempt is known to have succeeded: the execution still runs, or it ended with a failure record
+      of its own that is not `ApplyProgressLostError` and whose last applied operation is the one the
+      marker names. A recorded delete is never dispatched, so it is not a commit.
+    - every remaining operation otherwise, including a killed worker and an execution that liveness
+      ended first: no stored data tells a worker whose saves failed from one whose saves succeeded.
+
+  The progress view's `by_kind` counts are over plan positions, so recorded deletes are counted as
+  committed, uncertain or not reached by their position; the `verify` report lists only creates and
+  updates. `verify` reads the nodes through `DestinationNodeReader.read_planned_nodes`
   (one query per kind in the Infrahub adapter) and stores `results.verification.operations`, with
-  `matches`, `differs` or `missing` for each operation and never a value. Above 2,000 operations it
+  `matches`, `differs` or `missing` for each operation and never a value. A create is matched on
+  its human-friendly ID components, or, for a kind with none, on the identity's direct values that
+  are not null. When more than one destination node has the key, the create is reported as
+  `differs`, never `matches`. Above 2,000 operations it
   stores `operations_truncated`. A failed read fails the `verify` with a fixed message, and the
   original error stays the cause, so the failure record classifies it by its class.
+- `approve` accepts the run as it accepts a run in phase `planned`, so a site that requires approval
+  can resume a run that was never approved, such as a `sync` run. The service checks the run before
+  it reads the plan, and the store checks it again in the conditional update that stores the
+  approval, under the run's row lock. An approval recorded before the interruption stays valid.
 - `reserve_resume` admits a resume in one transaction on the run's locked row, when the latest
   `verify` execution comes after the latest write execution and succeeded and no earlier resume is
   unfinished. It writes a `resume_admissions` row (`run_id`, `resume_number`, `receipt_id`); the

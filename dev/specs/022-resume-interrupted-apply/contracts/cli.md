@@ -27,8 +27,15 @@ progress: 6000/10000 operations committed (saved 2026-11-12T10:15:00Z)
 resumable: yes (verify required)
 kind DcimDevice: committed 1200, uncertain 0, not reached 0
 kind DcimInterface: committed 4800, uncertain 1, not reached 3999
-resume 1: ops 2026-11-12T11:02:00Z after 6000 succeeded, wrote 3999 operations
+resume 1: ops 2026-11-12T11:02:00Z after 5999 succeeded, wrote 4000 operations
 ```
+
+In this example, the marker names position 5999, the 6,000th operation, the worker recorded the failed operation
+at position 6000, and the plan holds no recorded delete. The counts are over plan positions, recorded deletes
+included. The uncertain operations follow the marker: through the failed operation when the failure record of the
+latest write execution names it; the next 500 creates and updates, with the recorded deletes between them, when the
+last save is known to have succeeded; every remaining operation otherwise, for example after a killed worker
+(research R11).
 
 `, wrote N operations` is left out when the saved plan cannot be read. For a stopped apply or resume, the
 `written: N of M operations` line counts the creates and updates of the whole run, every execution included

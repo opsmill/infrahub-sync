@@ -828,11 +828,14 @@ A verification is also accepted on an interrupted run whose write may have reach
 destination; see [Resume an interrupted run](#resume-an-interrupted-run). After every check
 passes, it reads the node of each uncertain operation from the destination and stores
 `results.verification.operations`, one `{operation_id, kind, action, state}` entry for each,
-with `state` one of `matches`, `differs` and `missing`. It never stores a value. When more than
+with `state` one of `matches`, `differs` and `missing`. A create whose key more than one node
+at the destination holds is reported as `differs`. Recorded deletes are never listed, because
+they are never written. It never stores a value. When more than
 2,000 operations are uncertain, it reports the first 2,000 and stores the count of the others
 in `results.verification.operations_truncated`. The states never make the verification fail. A
 failed read of those nodes does: the failure record names its cause by the error's class, such
-as an unreachable destination or a refused token.
+as an unreachable destination or a refused token. For a failure that names a system or a
+credential, the record's `next_action` ends with running `verify` again, then `runs resume`.
 
 ### Approve the reviewed plan
 
@@ -855,9 +858,12 @@ curl --request POST \
 The service evaluates the request in this order:
 
 1. Authorization (`403 forbidden`), then a replay of the same idempotency key.
-2. A run in phase `cancelled` is refused with `409 run-cancelled`. A run that is not in phase
-   `planned`, or that has an execution in progress, is refused with `409 run-not-approvable`;
-   the message names the phase or the stage that is running.
+2. A run in phase `cancelled` is refused with `409 run-cancelled`. A run that is neither in
+   phase `planned` nor resumable, or that has an execution in progress, is refused with
+   `409 run-not-approvable`; the message names the phase or the stage that is running. A run
+   is resumable when its write stopped part-way; see
+   [Resume an interrupted run](#resume-an-interrupted-run). The store checks this again when it
+   stores the approval, so no approval is stored while a verification or a resume runs.
 3. The saved plan is read as for `GET /runs/{run_id}/plan` (`404 run-not-found`,
    `410 artifact-expired`, `503 plan-unavailable`).
 4. A plan whose checksum could not be confirmed is refused with `409 plan-checksum-unverified`.
@@ -881,7 +887,7 @@ mutation receipt, so a retry with the same key returns it unchanged. The run's `
 }
 ```
 
-Approval is not a phase: an approved run stays in phase `planned`. Approval does not run the
+Approval is not a phase: an approved run stays in the phase it was in. Approval does not run the
 destination checks; `apply` runs them, and `verify` reports their result beforehand.
 
 ### Apply the reviewed plan
@@ -932,33 +938,58 @@ cancelled run, including a run whose `verify` stage was cancelled while it ran.
 ### Resume an interrupted run
 
 An apply, a `sync` and a resume save a progress marker while they write: the position, in the
-saved plan's order, of the last operation committed. They save it after every 500 committed
-operations, every 30 seconds, at the end of each kind, and when the write stops. When the marker
-cannot be saved for 5 minutes, the write stops and the run is interrupted.
+saved plan's order, of the last operation committed. Positions count from 0 and include
+recorded deletes. They save it after every 500 committed creates and updates, at the first
+commit after 30 seconds, when the write stops, and after the plan's last operation. They do not
+save when the kind changes: the plan is sorted by tier and then by operation ID, so the kinds of
+one tier are mixed. When the marker cannot be saved for 5 minutes, the write stops and the run
+is interrupted.
 
 `GET /runs/{run_id}` returns how far the write got under `apply_progress`, and each resume under
 `resumes`. `apply_progress` is `null` for a run that never started a write:
 
 ```json
 "apply_progress": {
-  "position": 6000,
+  "position": 5999,
   "saved_at": "2026-11-12T10:15:00Z",
   "resumable": true,
   "verify_required": true,
   "by_kind": [
     {"kind": "DcimDevice", "committed": 1200, "uncertain": 0, "not_reached": 0},
-    {"kind": "DcimInterface", "committed": 4800, "uncertain": 500, "not_reached": 3500}
+    {"kind": "DcimInterface", "committed": 4800, "uncertain": 4000, "not_reached": 0}
   ]
 },
 "resumes": [
-  {"actor": "alice", "requested_at": "2026-11-12T11:02:00Z", "reason": null, "start_after": 6000, "outcome": "succeeded"}
+  {"actor": "alice", "requested_at": "2026-11-12T11:02:00Z", "reason": null, "start_after": 5999, "outcome": "succeeded", "operations_written": 4000}
 ]
 ```
 
-`position` is the highest saved position over all the run's write executions. `uncertain`
-counts the operations after it that may have reached the destination: through the failed
-operation when it is known; otherwise the next 500, or every remaining operation when the last
-save failed. A run is `resumable` when `reconciliation_required` is `true`, the run is not
+In this example, the worker was killed after it saved position 5999, the 6,000th operation, and
+the plan holds no recorded delete. `position` is the highest saved position over all the run's
+write executions. The counts of `by_kind` are over the plan's positions, so a recorded delete
+is counted as `committed` at or before `position`, as `uncertain` inside the uncertain
+operations, and as `not_reached` after them. `uncertain` counts the operations after `position`
+that may have reached the destination:
+
+- through the failed operation, when the failure record of the latest write execution names it;
+- every remaining operation, when the worker was killed, or its last save is not known to have
+  succeeded;
+- while the write still runs, the next 500 creates and updates and the recorded deletes between
+  them.
+
+A failure record stores the `flow_run_id` of the execution that wrote it, and only a record of
+the latest write execution names the failed operation. A record stored before this field existed
+names none, so every remaining operation is uncertain.
+
+Each entry of `resumes` holds `operations_written`: the creates and updates that resume wrote,
+after its `start_after`. For a resume that succeeded, the count runs to the end of the plan; for
+a resume that was stopped, it runs to its own last saved position. When a resume or an apply
+succeeds, the run's summary counts the whole plan. The `operations_written` of a failure record
+counts the creates and updates at or before the position the execution started after, plus the
+ones the execution wrote. After a kill, operations an earlier execution wrote past its last
+saved position are counted only once a later execution writes them again.
+
+A run is `resumable` when `reconciliation_required` is `true`, the run is not
 cancelled, and no execution of it is unfinished. `verify_required` is `true` until a
 verification passes after the latest interruption.
 
@@ -990,7 +1021,7 @@ run. It refuses a resume before any write:
 | 409 | `run-not-resumable` | The run is not interrupted, is cancelled, or has an unfinished execution. This includes an applied run, a run whose apply failed before its first write, a run that was never applied, and a `sync` run that stopped after its plan. The message says which. |
 | 409 | `checksum-conflict` | `expected_checksum` differs from the saved plan's checksum. |
 | 409 | `left-out-confirmation-required` | The plan leaves out records and `confirm_left_out` is not `true`. |
-| 409 | `approval-required` / `approval-checksum-mismatch` | The service requires approval and the run has none for this checksum. |
+| 409 | `approval-required` / `approval-checksum-mismatch` | The service requires approval and the run has none for this checksum. The `approval-required` message names `infrahub-sync approve RUN_ID --expected-checksum CHECKSUM`; an interrupted run can be approved. |
 | 409 | `verify-required` | No verification passed on the run after its latest interruption. |
 | 409 | `run-execution-conflict` | Another resume of the run is unfinished. |
 

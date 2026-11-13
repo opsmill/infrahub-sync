@@ -326,16 +326,21 @@ infrahub-sync approve RUN_ID --expected-checksum CHECKSUM \
 It writes nothing to the destination and starts no execution. `--reason` is optional. The
 command prints the run, its approval, and the counts of the plan approved:
 `approved_creates`, `approved_updates` and `approved_deletes_recorded`. `runs show RUN_ID`
-then prints `approved_by`, `approved_at` and `approved_checksum`. The run stays in phase
-`planned`.
+then prints `approved_by`, `approved_at` and `approved_checksum`. The run stays in the phase
+it was in.
+
+You can approve a run in phase `planned`, or a run whose write stopped part-way and that can be
+resumed. The second case lets a site that requires approval resume a run that was never
+approved, such as a `sync` run; see
+[Resume an interrupted apply](#resume-an-interrupted-apply).
 
 The service refuses an approval in these cases. It stores no approval on the run, and records
 the refusal in the audit history:
 
 - The checksum differs from the saved plan's checksum (`checksum-mismatch`).
 - The saved plan's checksum could not be confirmed (`plan-checksum-unverified`).
-- The run is not in phase `planned`, or a stage of the run is still running
-  (`run-not-approvable`).
+- The run is neither in phase `planned` nor resumable, or a stage of the run is still
+  running (`run-not-approvable`).
 - The run was cancelled (`run-cancelled`).
 - The run already has an approval (`already-approved`). The error shows the existing approval.
 
@@ -604,11 +609,13 @@ without reading the source or creating a new plan. See
 ### Resume an interrupted apply
 
 During an apply, the worker saves the position of the last operation that it committed, in the
-order of the saved plan. It saves this progress marker after every 500 operations, every 30
-seconds, at the end of each kind, and when the apply stops. A resume starts after the saved
-position, so it repeats at most the operations written since the last save. Repeating them
-does not change the nodes they wrote, because each create and update is keyed by the node's
-recorded ID or its complete human-friendly ID.
+order of the saved plan. It saves this progress marker after every 500 committed creates and
+updates, at the first commit after 30 seconds, when the apply stops, and after the plan's last
+operation. It does not save when the kind changes: the plan is sorted by tier and then by
+operation ID, so the kinds of one tier are mixed. A resume starts after the saved position, so
+it repeats at most the operations written since the last save. Repeating them does not change
+the nodes they wrote, because each create and update is keyed by the node's recorded ID or its
+complete human-friendly ID.
 
 1. View how far the write got:
 
@@ -618,18 +625,28 @@ recorded ID or its complete human-friendly ID.
 
    For a run that started a write, `runs show` prints the progress, whether the run can be
    resumed, and, for each kind, how many operations were committed, are uncertain, and were
-   not reached:
+   not reached. In this example, the worker was killed after it saved the position of the
+   6,000th operation:
 
    ```text
    progress: 6000/10000 operations committed (saved 2026-11-12T10:15:00+00:00)
    resumable: yes (verify required)
    kind DcimDevice: committed 1200, uncertain 0, not reached 0
-   kind DcimInterface: committed 4800, uncertain 500, not reached 3500
+   kind DcimInterface: committed 4800, uncertain 4000, not reached 0
    ```
 
-   The uncertain operations are the ones that may have reached the destination after the saved
-   position. When the failed operation is known, they run up to it. When the worker stopped,
-   they are the next 500 operations, or every remaining operation when the last save failed.
+   The counts are over the positions of the plan, so recorded deletes are counted too. The
+   uncertain operations are the ones that may have reached the destination after the saved
+   position:
+
+   - When the worker recorded which operation failed, they run through that operation.
+   - When the worker was killed, or its last save is not known to have succeeded, they are
+     every remaining operation.
+   - While the write still runs, they are the next 500 creates and updates and the recorded
+     deletes between them.
+
+   The `written: N of M operations` line of a failed write counts the creates and updates of
+   every execution of the run, the earlier ones included.
 
 2. Check the destination:
 
@@ -650,17 +667,25 @@ recorded ID or its complete human-friendly ID.
    ```
 
    `matches` means the node already holds the planned values, `differs` means the node exists
-   with other values, and `missing` means the node does not exist. These states never make
+   with other values, and `missing` means the node does not exist. When more than one node at
+   the destination has the key of a create, `verify` reports the create as `differs`. The
+   report lists only creates and updates: a recorded delete is never written. These states never make
    `verify` fail. `verify` fails when a check fails, or when it cannot read the nodes from the
    destination; the failure record then names the cause, such as an unreachable destination
-   or a refused token. When more than 2,000 operations are uncertain,
+   or a refused token, and the next step: remove the cause, run `verify` again, then
+   `runs resume`. When more than 2,000 operations are uncertain,
    `verify` reports the first 2,000 and prints `operations not reported: COUNT`.
 
    A resume writes the plan's values over every node reported as `differs`, including a change
    that someone made at the destination after the plan. When that change must stay, do not
    resume: create a new plan instead.
 
-3. Resume the run with the checksum of its saved plan:
+3. When the Sync API requires approval and the run has none, approve its saved plan, as in
+   [Approve the plan](#approve-the-plan). This is the case for a `sync` run, or for an
+   apply that was interrupted before the site required approval. An approval recorded before
+   the interruption stays valid.
+
+4. Resume the run with the checksum of its saved plan:
 
    ```bash
    infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM \
@@ -674,8 +699,11 @@ recorded ID or its complete human-friendly ID.
    branch that the plan recorded; it has no `--branch` option.
 
 When the resume ends, `runs show` reports `phase: applied` and
-`reconciliation_required: false`, and lists each resume with its actor, time, start position
-and outcome. The run keeps the interrupted execution and every resume in its history.
+`reconciliation_required: false`, and lists each resume with its actor, time, start position,
+outcome and the number of creates and updates it wrote. For a resume that was stopped, that
+number counts only the operations through its last saved position. The run's summary then counts the whole
+plan, as for an apply that was never interrupted. The run keeps the interrupted execution and
+every resume in its history.
 
 The service refuses a resume before any write, and prints `error: CODE` with the reason, in
 these cases:
@@ -690,7 +718,8 @@ these cases:
 - The plan leaves out records and `--confirm-left-out` is missing. The command prints
   `resume refused: this plan leaves out COUNT records; confirm with --confirm-left-out`.
 - The Sync API requires approval and the run has no approval for this checksum
-  (`approval-required` or `approval-checksum-mismatch`).
+  (`approval-required` or `approval-checksum-mismatch`). For `approval-required`, the command
+  prints `hint: run infrahub-sync approve RUN_ID --expected-checksum CHECKSUM first`.
 - Another resume of the run is running (`run-execution-conflict`).
 
 Only the actor who started the run, or an administrator, can resume it. Every resume request,

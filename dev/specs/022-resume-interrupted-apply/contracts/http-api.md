@@ -42,21 +42,36 @@ New fields:
 ```json
 {
   "apply_progress": {
-    "position": 6000,
+    "position": 5999,
     "saved_at": "2026-11-12T10:15:00Z",
     "resumable": true,
     "verify_required": false,
     "by_kind": [{"kind": "DcimDevice", "committed": 1200, "uncertain": 0, "not_reached": 0}]
   },
   "resumes": [
-    {"actor": "ops", "requested_at": "…", "reason": null, "start_after": 6000, "outcome": "succeeded",
-     "operations_written": 3999}
+    {"actor": "ops", "requested_at": "…", "reason": null, "start_after": 5999, "outcome": "succeeded",
+     "operations_written": 4000}
   ]
 }
 ```
 
-`resumes[].operations_written` counts the creates and updates that resume wrote, from its own last marker; it is
-`null` when the saved plan cannot be read (research R6).
+Positions count from 0 and include recorded deletes: position 5999 is the 6,000th operation of the plan.
+
+`by_kind` counts are over plan positions, so a recorded delete is `committed` at or before `position`,
+`uncertain` inside the uncertain window, and `not_reached` after it. The uncertain window starts after
+`position` and runs (research R11):
+
+- through the failed operation, when the failure record of the latest write execution names it. Every failure
+  record carries the `flow_run_id` of the execution that wrote it; a record without it, or naming another
+  execution, is not used;
+- through the 500th create or update, with the recorded deletes between them, when the last save is known to have
+  succeeded: the execution still runs, or its own failure record is not `ApplyProgressLostError` and its last
+  applied operation is the one the marker names;
+- through the end of the plan in every other case, including a killed worker.
+
+`resumes[].operations_written` counts the creates and updates that resume wrote after its `start_after`: through
+the end of the plan for a resume that succeeded, through its own last marker otherwise. It is `null` when the saved
+plan cannot be read (research R6).
 
 The run's `summary` after a resume that finishes holds the whole plan's counts, as after an apply that was never
 interrupted. A stopped write's failure record (`results.<purpose>_failure`) carries `operations_written`, the creates
@@ -67,5 +82,8 @@ and updates of the whole run, beside `applied_operations`, the list of the execu
 ## `POST /runs/{run_id}/verify` (extended result)
 
 For a resumable run, `results.verification.operations` lists `{operation_id, kind, action, state}` for each
-operation after the marker, with `state` one of `matches`, `differs`, `missing`, and
-`results.verification.operations_truncated` when more than 2,000 operations were not reported.
+create and update of the uncertain window (recorded deletes are never listed), with `state` one of `matches`,
+`differs`, `missing`, and `results.verification.operations_truncated` when more than 2,000 operations were not
+reported. A create whose key more than one destination node holds is `differs` (research R13). When the read of
+those nodes fails on a system or a credential, the record's `next_action` ends with running `verify` again, then
+`runs resume`.
