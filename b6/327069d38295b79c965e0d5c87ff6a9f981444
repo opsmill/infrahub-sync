@@ -1,0 +1,26 @@
+tests/product_store/test_contract.py
+  s_3defe6e8bcd0ab::t_8e15d1e3349c49 4608-4610
+  s_3defe6e8bcd0ab::t_69d25e822858b4 5045-5088
+  s_3defe6e8bcd0ab::t_cbdfa8f69f04ca 157-160
+infrahub_sync/product_store/store.py
+  s_3defe6e8bcd0ab::t_fb60dceedc416d 821-822
+  s_3defe6e8bcd0ab::t_63d8ba1548c7b1 342-349
+changelog/+concurrent-schema-initialization-deadlock.fixed.md
+  s_3defe6e8bcd0ab::t_dda8040ac21a0f 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b6327069d38295b79c965e0d5c87ff6a9f981444",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
