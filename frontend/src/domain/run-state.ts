@@ -202,6 +202,8 @@ const ERROR_WORDS: Record<string, string> = {
 const errorWords = (type: string | undefined) =>
   type && Object.hasOwn(ERROR_WORDS, type) ? ERROR_WORDS[type] : undefined;
 
+export type RecoveryAction = "rebuild" | "compatible_version";
+
 export interface FailureDetail {
   stage: string;
   sentence: string;
@@ -209,6 +211,11 @@ export interface FailureDetail {
   causeType?: string;
   cause?: string;
   nextAction?: string;
+  /**
+   * How to recover from an apply that refused the saved plan for its format version, when the Sync
+   * service recorded it. `nextAction` then holds the same recovery in command-line words.
+   */
+  recoveryAction?: RecoveryAction;
   ambiguous: boolean;
   appliedCount?: number;
   failedOperation?: string;
@@ -239,6 +246,10 @@ export function failureDetail(run: Run): FailureDetail | undefined {
     sentence: words ?? errorLabel ?? "No error recorded",
     cause: typeof f?.cause === "string" ? f.cause : undefined,
     nextAction: typeof f?.next_action === "string" ? f.next_action : undefined,
+    recoveryAction:
+      f?.recovery_action === "rebuild" || f?.recovery_action === "compatible_version"
+        ? f.recovery_action
+        : undefined,
     // An interrupted plan or verify does not write, so only an interrupted apply or sync is ambiguous.
     ambiguous: run.reconciliation_required,
     appliedCount: Array.isArray(s.applied_operations) ? s.applied_operations.length : undefined,

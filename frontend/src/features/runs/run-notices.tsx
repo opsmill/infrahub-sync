@@ -120,14 +120,25 @@ export function FailureNotice({
             <InlineCode text={f.cause} />
           </p>
         )}
-        {f.nextAction && (
-          <>
-            <p>To continue here, create a new plan, review it, then apply that plan.</p>
-            <p>
-              <span className={LABEL}>Command-line instruction recorded by the Sync service</span>
-              <InlineCode text={f.nextAction} />
-            </p>
-          </>
+        {f.recoveryAction ? (
+          // The recorded instruction says the same in command-line words, so it is left out.
+          <p>
+            {f.recoveryAction === "compatible_version" &&
+              "This version of the Sync service does not apply the format of the saved plan. "}
+            To continue here, create a new plan, review it, then apply that plan.
+            {f.recoveryAction === "compatible_version" &&
+              " The saved plan can still be applied with the version of the Sync service that saved it."}
+          </p>
+        ) : (
+          f.nextAction && (
+            <>
+              <p>
+                <span className={LABEL}>Command-line instruction recorded by the Sync service</span>
+                <InlineCode text={f.nextAction} />
+              </p>
+              <p>To continue here, create a new plan, review it, then apply that plan.</p>
+            </>
+          )
         )}
         {cut && !cut.mayHaveWritten && (
           <p>
