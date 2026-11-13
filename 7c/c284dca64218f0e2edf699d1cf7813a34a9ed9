@@ -1,0 +1,29 @@
+README.md
+  s_3d2aa62b06667a::t_9738877ee02af0 107-108
+changelog/+concurrent-schema-initialization-deadlock.fixed.md
+  s_3d2aa62b06667a::t_e00515f77e629a 1
+docs/docs/contributing.mdx
+  s_3d2aa62b06667a::t_013a5951681b20 159-161
+docs/docs/development/guidelines/testing-tiers.md
+  s_3d2aa62b06667a::t_fa9495e2558e91 104
+docs/docs/development/knowledge/repository-tour.md
+  s_3d2aa62b06667a::t_3e3d83a71bf88b 254-255
+tasks/dev.py
+  s_3d2aa62b06667a::t_7732d98e7d34a6 67-69,71,376
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7cc284dca64218f0e2edf699d1cf7813a34a9ed9",
+  "prompts": {},
+  "sessions": {
+    "s_3d2aa62b06667a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a5ca7a3d0e6c657bf",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
