@@ -73,7 +73,7 @@ def peer_unique_id(
 
     owner_kind, owner_source_id = owner
     in_cycle = adapter.peer_is_pending(peer_kind, source_id)
-    if in_cycle and not adapter.wait_is_released(owner_kind, owner_source_id):
+    if in_cycle and not adapter.wait_is_released(owner_kind, owner_source_id, peer_kind, source_id):
         # A record of the kind being read that is listed and not admitted yet (a parent after
         # its child): `load_records` admits the referring record again later.
         raise PeerNotAdmittedYetError(peer_kind=peer_kind, peer_source_id=source_id)
