@@ -1,0 +1,29 @@
+tests/test_nightly_v2_gate.py
+  s_efeb25921ce544::t_4469c253ab8e56 144,150-151,155-157,162-164,179-196,203-207
+  s_efeb25921ce544::t_a5b83ed4781b17 165-178,197-202,358,360-361,382-383,453-457,462,472,477,483,485-486,490-503
+  s_efeb25921ce544::t_8e58f9600dd770 208-209,504-505
+tests/test_workflow_contracts.py
+  s_efeb25921ce544::t_4469c253ab8e56 681-682,686-695,697
+.github/workflows/workflow-nightly-e2e.yml
+  s_efeb25921ce544::t_9b09e11430f026 202,205
+.github/scripts/nightly_e2e.py
+  s_efeb25921ce544::t_8d2c79c1a3460c 37,335,344-346,382-386,388-403,409,442-470,537-538,582-585,593,607-609
+tests/data/v2_gate/expected_left_out.yml
+  s_efeb25921ce544::t_8d2c79c1a3460c 1-8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f41054001d17b6b1959f44f7c74587508c82dd32",
+  "prompts": {},
+  "sessions": {
+    "s_efeb25921ce544": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88805765-f610-4acc-a224-7c6f256e1599",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
