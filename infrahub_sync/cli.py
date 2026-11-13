@@ -776,7 +776,7 @@ def configs_convert(
     - a custom adapter (INFP-654, planned for 3.0)
     - a destination other than Infrahub
     - a setting the bundled adapter does not accept
-    - an auth_method value v2 did not accept
+    - an `auth_method` value v2 did not accept
     - a placeholder v2 did not read
     - an address with a user name or password
     - an address with no value in config.yml, a v2 variable or a flag
