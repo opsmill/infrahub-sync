@@ -154,11 +154,14 @@ Recorded on 2026-11-13, on Python 3.11.8 with the `dev`, `prefect` and `service`
 
    ```bash
    INFRAHUB_SYNC_RESUME_CHECK_CONFIG="<config_id>@<registry_version>" \
+   INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="<token printed by netbox.seed>" \
      uv run pytest -m integration tests/preview/test_resume_interrupted_apply.py
    ```
 
    On the development stack instead of the preview stack, add `INFRAHUB_SYNC_SMOKE_STACK=dev`; the test then
-   kills and starts the `sync-worker` container. The test creates its own branch, kills the worker once a
+   kills and starts the `sync-worker` container. On the preview stack the test restarts the worker with
+   `invoke preview.up`, which passes the pytest environment to the worker, so the NetBox token must be set
+   there. The test creates its own branch, kills the worker once a
    progress marker is saved, and restarts the worker afterwards.
 
 ### T035: benchmark commands (deferred — needs the benchmark stack)
@@ -166,19 +169,23 @@ Recorded on 2026-11-13, on Python 3.11.8 with the `dev`, `prefect` and `service`
 `bench.run` has no switch that turns the progress marker off, so the baseline runs on commit `5f005776`, the
 last commit before the marker, in a separate worktree on the same Linux host. Follow
 `docs/docs/development/guides/netbox-benchmark-runner.md` (seed and dump each tier, `dev.destroy` before each
-cell, `INFRAHUB_SYNC_API_TOKEN` set):
+cell, `INFRAHUB_SYNC_API_TOKEN` set). The runner reads the dumps from the checkout's `.netbox/dumps/`, so copy
+them into the baseline worktree:
 
 ```bash
 uv run invoke netbox.seed --tier M && uv run invoke netbox.dump --tier M
 uv run invoke netbox.seed --tier L && uv run invoke netbox.dump --tier L
 
 # Without the progress marker, in a worktree at 5f005776:
+git worktree add ../infrahub-sync-baseline 5f005776
+mkdir -p ../infrahub-sync-baseline/.netbox && cp -R .netbox/dumps ../infrahub-sync-baseline/.netbox/
+cd ../infrahub-sync-baseline && uv sync --extra dev --extra prefect --extra service
 uv run invoke dev.destroy
 uv run invoke bench.run --line v3 --tier M --scenario cold --repetitions 3
 uv run invoke dev.destroy
 uv run invoke bench.run --line v3 --tier L --scenario cold --repetitions 1
 
-# With the progress marker, in this worktree:
+# With the progress marker, back in this worktree:
 uv run invoke dev.destroy
 uv run invoke bench.run --line v3 --tier M --scenario cold --repetitions 3
 uv run invoke dev.destroy
@@ -187,8 +194,9 @@ uv run invoke bench.run --line v3 --tier L --scenario cold --repetitions 1
 uv run invoke bench.report
 ```
 
-SC-003 passes when the median apply stage time with the marker is at most 2% above the baseline. The runner
+SC-003 passes when the median time after the plan (the second value of `stage_seconds`, which holds the apply
+and its stage overhead) with the marker is at most 2% above the baseline. The runner
 does not time `verify` on an interrupted run, so SC-004 is a manual step on tier L: start the cold sync
-cell's apply, kill the worker (`docker compose -f development/docker-compose.yml kill sync-worker`), wait for
+cell's apply, kill the worker (`docker compose --profile sync -f development/docker-compose.yml kill sync-worker`), wait for
 `phase: sync-interrupted` in `runs show`, then time `uv run infrahub-sync verify RUN_ID`; it passes under 1
 minute.

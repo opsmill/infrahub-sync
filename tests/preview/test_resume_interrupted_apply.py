@@ -14,7 +14,9 @@ The smoke package is too small: its apply ends before a progress marker is saved
 
 The stack is the preview environment (`invoke preview.up`, a host worker process) or, with
 `INFRAHUB_SYNC_SMOKE_STACK=dev`, the development stack (the `sync-worker` container). It skips,
-never fails, when that stack is not reachable.
+never fails, when that stack is not reachable. On the preview stack the test restarts the worker
+with `invoke preview.up`, which passes this process's environment to the worker, so set
+`INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` as for `preview.up`: the last plan reads NetBox.
 """
 
 from __future__ import annotations
@@ -73,7 +75,7 @@ def _kill_worker() -> None:
     """Stop the worker without letting it clean up, as a crash or an out-of-memory kill would."""
     if _on_dev_stack():
         subprocess.run(  # noqa: S603
-            ["docker", "compose", "-f", dev.DEV_COMPOSE_FILE, "kill", DEV_WORKER],  # noqa: S607
+            ["docker", "compose", "--profile", "sync", "-f", dev.DEV_COMPOSE_FILE, "kill", DEV_WORKER],  # noqa: S607
             cwd=REPO_ROOT,
             check=True,
         )
@@ -87,7 +89,7 @@ def _kill_worker() -> None:
 def _start_worker() -> None:
     """Start the worker again; `preview.up` starts only the processes that are not running."""
     command = (
-        ["docker", "compose", "-f", dev.DEV_COMPOSE_FILE, "start", DEV_WORKER]
+        ["docker", "compose", "--profile", "sync", "-f", dev.DEV_COMPOSE_FILE, "start", DEV_WORKER]
         if _on_dev_stack()
         else ["uv", "run", "invoke", "preview.up"]
     )

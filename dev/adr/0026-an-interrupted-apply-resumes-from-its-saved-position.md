@@ -63,8 +63,8 @@ Three facts of the current code make a cheaper recovery possible:
   of writes when every save succeeded.
 - A resume writes the plan's values over every node reported as `differs`, including a change
   made at the destination after the plan. The `verify` output says so.
-- A failed resume leaves the run resumable, and a new `verify` is required before the next
-  resume.
+- A resume that ends interrupted leaves the run resumable, and a new `verify` is required
+  before the next resume.
 - Each apply adds one row update per save to the store.
 - A destination adapter whose writes are not safe to repeat cannot use this mechanism. Today the
   Infrahub adapter is the only one that applies a saved plan.
