@@ -1,0 +1,26 @@
+development/docker-compose.yml
+  s_11782fc4bc9a91::t_29ec417cefa38e 262-265
+  s_11782fc4bc9a91::t_90057e837a666c 282
+tests/dev_stack/smoke/test_netbox_package.py
+  s_11782fc4bc9a91::t_1f5d87a27ae650 30
+  s_11782fc4bc9a91::t_acf7c9c8bad5a6 71-75,78-83,85-88,92,99-127
+  s_11782fc4bc9a91::t_1121aa5dd36e92 17-19
+  s_11782fc4bc9a91::t_2bf8dc92b3c394 321-324
+  s_11782fc4bc9a91::t_0788eea5f5c219 128-129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b48814267a947a68f69d52b8fff889789ce6cd70",
+  "prompts": {},
+  "sessions": {
+    "s_11782fc4bc9a91": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d1b81fa-9ee2-4fcb-b7c2-e14783f62cad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
