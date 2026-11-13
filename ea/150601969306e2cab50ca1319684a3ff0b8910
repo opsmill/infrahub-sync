@@ -1,0 +1,31 @@
+dev/adr/README.md
+  s_3defe6e8bcd0ab::t_88c280f3870493 59-61
+changelog/+compose-store-credentials-ca.added.md
+  s_3defe6e8bcd0ab::t_88c280f3870493 1
+dev/adr/0026-the-compose-deployment-takes-an-external-store-credentials-and-ca-from-env.md
+  s_3defe6e8bcd0ab::t_88c280f3870493 1-59
+tests/service/test_trust_store.py
+  s_3defe6e8bcd0ab::t_a54957d52bbebe 118
+tests/image/test_prefect_server_image.py
+  s_3defe6e8bcd0ab::t_a54957d52bbebe 60-62
+dev/specs/021-compose-store-credentials-ca/quickstart.md
+  s_3defe6e8bcd0ab::t_c613202394b41e 77-92
+dev/specs/021-compose-store-credentials-ca/tasks.md
+  s_3defe6e8bcd0ab::t_0b1774e988de68 155-162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ea150601969306e2cab50ca1319684a3ff0b8910",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
