@@ -945,9 +945,11 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         result = _result_data(applied)
         outcome = applied.status
         if stage == "resume":
-            # The resume's counts cover the operations it dispatched; a resume that succeeds
-            # leaves the whole saved plan applied, so the run's outcome is `applied` even when
-            # nothing was left to write after the saved position (spec 022 FR-016).
+            # A resume that succeeds leaves the whole saved plan applied, so the run's outcome is
+            # `applied` even when nothing was left to write after the saved position, and the
+            # engine's counts, which become the run's summary, are the whole plan's, as for an
+            # apply that was never interrupted. Each resume's own count is derived from its
+            # marker in the run's `resumes` (spec 022 FR-016, research R6).
             outcome = "applied"
             result = {**result, "operation": "resume", "outcome": outcome, "start_after": start_after}
         writeback = ExecutionFinishWriteback(

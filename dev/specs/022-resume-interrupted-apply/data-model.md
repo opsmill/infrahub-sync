@@ -18,6 +18,10 @@ operation (FR-003).
 
 ## Stage failure record (`results.<purpose>_failure`)
 
+Each failure record of a stopped write carries `operations_written`: the creates and updates the whole run wrote,
+every one at or before the position a resume started after plus those this execution wrote (research R6). A record
+stored before this field existed has only `applied_operations`, this execution's list.
+
 Each failure record the worker writes carries `flow_run_id`, the identifier of the execution that wrote it. Results
 are merged across executions, so a record can belong to an earlier execution of the same purpose. The progress view
 and `verify` use a record only when its `flow_run_id` names the run's latest write execution; a record stored before
@@ -54,7 +58,10 @@ Primary key `(run_id, resume_number)`. The original `write_admissions` row is ke
 
 ## Resumes (`RunResource.resumes`, derived from executions and receipts)
 
-List of `{actor, requested_at, reason, start_after, outcome}` in order.
+List of `{actor, requested_at, reason, start_after, outcome, operations_written}` in order. `operations_written` is
+the number of creates and updates the resume wrote: those after `start_after` through the position of the resume's
+own last marker, 0 when it saved none, and `null` when the saved plan cannot be read. It is a lower bound for a
+resume that was stopped (research R6).
 
 ## Verify report (`results.verification.operations`)
 

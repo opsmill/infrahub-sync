@@ -214,14 +214,38 @@ def apply_progress_view(
     )
 
 
+def _resume_written(
+    link: PrefectExecutionLink, start_after: int | None, operations: Sequence[tuple[str, str, str]] | None
+) -> int | None:
+    """The creates and updates one resume committed: those after `start_after`, through its own marker.
+
+    Exact when the resume's last save succeeded; a resume that was stopped may have written more
+    after its marker, so the count is then a lower bound. A resume that saved no marker counts 0.
+    `None` when the plan cannot be read, or the marker does not point into it.
+    """
+    if operations is None:
+        return None
+    marker = link.apply_progress
+    if marker is None:
+        return 0
+    if marker.position >= len(operations) or operations[marker.position][0] != marker.operation_id:
+        return None
+    first = 0 if start_after is None else start_after + 1
+    return sum(action != "delete" for _operation_id, _kind, action in operations[first : marker.position + 1])
+
+
 def run_resumes(
-    run: ProductRun, receipt_of: Callable[[PrefectExecutionLink], MutationReceipt | None]
+    run: ProductRun,
+    receipt_of: Callable[[PrefectExecutionLink], MutationReceipt | None],
+    operations: Sequence[tuple[str, str, str]] | None = None,
 ) -> tuple[ResumeResource, ...]:
     """One entry per resume execution of the run, in order (FR-014).
 
     The actor, time and reason come from the request that started the resume. `start_after` is
     the highest position saved by the run's write executions before the resume, the position
-    the worker started after; it is `None` when none was saved.
+    the worker started after; it is `None` when none was saved. `operations` are the saved
+    plan's `(operation_id, kind, action)` triples in stored order, or `None` when the plan cannot
+    be read; each entry's `operations_written` is then `None` (see `_resume_written`).
     """
     resumes: list[ResumeResource] = []
     highest: int | None = None
@@ -237,6 +261,7 @@ def run_resumes(
                         reason=None if receipt is None else receipt.reason,
                         start_after=highest,
                         outcome=link.terminal_outcome,
+                        operations_written=_resume_written(link, highest, operations),
                     )
                 )
         if link.purpose in WRITE_PURPOSES and link.apply_progress is not None:

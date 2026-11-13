@@ -52,7 +52,7 @@ from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.apply_progress import StoreApplyProgressObserver
 from infrahub_sync.service.flow import resume_start_after, service_sync_run
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
-from infrahub_sync.service.resume_view import apply_progress_view, uncertain_window
+from infrahub_sync.service.resume_view import apply_progress_view, run_resumes, uncertain_window
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
 from tests.configuration.validation_packages import package
@@ -999,8 +999,10 @@ def test_an_interrupted_apply_resumes_after_its_marker_and_the_run_ends_applied(
     # The resume wrote operations 6,001 to 10,000 (positions 6,000 to 9,999) and nothing before.
     assert second.written == plan_ids[_MARKER + 1 :]
     assert record.applied_operations == tuple(plan_ids[_MARKER + 1 :])
-    # Its counts cover only the operations it dispatched (research R6).
-    assert engine.last_applied_plan_action_counts == {"create": _TOTAL - _MARKER - 1, "update": 0, "delete": 0}
+    # The run's counts cover the whole plan: the operations before the marker were written by the
+    # interrupted apply (research R6).
+    assert engine.last_applied_plan_action_counts == {"create": _TOTAL, "update": 0, "delete": 0}
+    assert record.operations_written == _TOTAL
     # Every operation of the plan reached the destination; 6,000 to 6,199 were written twice.
     assert set(first.written) | set(second.written) == set(plan_ids)
     applied = projection.lookup_run(run_id).value
@@ -1010,6 +1012,10 @@ def test_an_interrupted_apply_resumes_after_its_marker_and_the_run_ends_applied(
     resume_marker = applied.prefect_executions[-1].apply_progress
     assert resume_marker is not None
     assert (resume_marker.start_after, resume_marker.position) == (_MARKER, _TOTAL - 1)
+    # The resume's own entry keeps its own count: positions 6,000 to 9,999, from its last marker.
+    [resume_entry] = run_resumes(applied, lambda _link: None, operations)
+    assert (resume_entry.start_after, resume_entry.operations_written) == (_MARKER, _TOTAL - _MARKER - 1)
+    assert run_resumes(applied, lambda _link: None)[0].operations_written is None
     final_view = apply_progress_view(applied, operations)
     assert final_view is not None
     assert final_view.resumable is False
@@ -1017,6 +1023,93 @@ def test_an_interrupted_apply_resumes_after_its_marker_and_the_run_ends_applied(
         (6500, 0, 0),
         (3500, 0, 0),
     ]
+
+
+class _StopAtOperation:
+    """A destination that writes every operation up to `stop_at`, and is stopped at that operation."""
+
+    def __init__(self, stop_at: str | None = None) -> None:
+        self.written: list[str] = []
+        self._stop_at = stop_at
+
+    def new_peer_resolver(self) -> object:  # noqa: PLR6301
+        return object()
+
+    def apply_planned_operation(self, *, operation: PlannedOperation, peers: object) -> str:
+        del peers
+        if operation.operation_id == self._stop_at:
+            raise KeyboardInterrupt
+        self.written.append(operation.operation_id)
+        return "node"
+
+
+def _plan_with_deletes(run_directory: Path, run_id: str) -> list[tuple[str, str]]:
+    """Ten operations; positions 1 and 7 are recorded deletes, so a resume after 4 starts past one of them."""
+    records = [
+        operation_record(action="delete" if index in {1, 7} else "create", identity={"name": f"node-{index}"})
+        for index in range(10)
+    ]
+    write_artifact(run_directory, records, run_id=run_id, source_snapshot=[])
+    return [(str(record["operation_id"]), str(record["action"])) for record in records]
+
+
+def test_a_resume_counts_every_operation_the_run_wrote_not_only_its_own(tmp_path: Path) -> None:
+    """The record and the counts of a resume describe the whole run (spec 022 FR-016, research R6).
+
+    The resume starts after position 4. Positions 0, 2, 3 and 4 are creates an earlier execution
+    committed; position 1 is a recorded delete, which is never written, so it is not counted.
+    """
+    run_id = "20261113T0900-cc33dd44"
+    run_directory = tmp_path / "plan" / run_id
+    run_directory.mkdir(parents=True)
+    plan = _plan_with_deletes(run_directory, run_id)
+    ids = [operation_id for operation_id, _action in plan]
+
+    engine = _engine(run_directory, run_id, _StopAtOperation())
+    record = engine.apply_plan(config_version=CONFIG_VERSION, ownership=_Ownership(), start_after=4)
+
+    # This execution's own record still lists only what it dispatched or recorded.
+    assert record.applied_operations == (ids[5], ids[6], ids[8], ids[9])
+    assert record.skipped_delete_operations == (ids[7],)
+    # Four creates committed before the resume, four by it: the run wrote 8 of its 10 operations.
+    assert record.operations_written == 8
+    # The run's summary is the whole plan's, as for an apply that was never interrupted.
+    assert engine.last_applied_plan_action_counts == {"create": 8, "update": 0, "delete": 2}
+
+
+def test_a_stopped_resume_counts_the_operations_written_before_it(tmp_path: Path) -> None:
+    run_id = "20261113T0930-ee55ff66"
+    run_directory = tmp_path / "plan" / run_id
+    run_directory.mkdir(parents=True)
+    ids = [operation_id for operation_id, _action in _plan_with_deletes(run_directory, run_id)]
+
+    with pytest.raises(KeyboardInterrupt) as stopped:
+        _engine(run_directory, run_id, _StopAtOperation(stop_at=ids[6])).apply_plan(
+            config_version=CONFIG_VERSION, ownership=_Ownership(), start_after=4
+        )
+
+    record = stopped.value.apply_record  # ty: ignore[unresolved-attribute]
+    assert isinstance(record, ApplyRecord)
+    assert record.applied_operations == (ids[5],)
+    assert record.failed_operation == ids[6]
+    # Positions 0, 2, 3 and 4 before the resume, and position 5 by it; the delete at 1 is not a write.
+    assert (record.operations_written, record.operations_total) == (5, 10)
+
+
+def test_a_first_apply_counts_only_what_it_wrote(tmp_path: Path) -> None:
+    run_id = "20261113T1000-aa66bb77"
+    run_directory = tmp_path / "plan" / run_id
+    run_directory.mkdir(parents=True)
+    ids = [operation_id for operation_id, _action in _plan_with_deletes(run_directory, run_id)]
+
+    with pytest.raises(KeyboardInterrupt) as stopped:
+        _engine(run_directory, run_id, _StopAtOperation(stop_at=ids[3])).apply_plan(
+            config_version=CONFIG_VERSION, ownership=_Ownership()
+        )
+
+    record = stopped.value.apply_record  # ty: ignore[unresolved-attribute]
+    assert record.applied_operations == (ids[0], ids[2])
+    assert record.operations_written == 2
 
 
 def test_a_destination_not_found_on_an_id_keyed_update_stops_the_resume_and_names_the_operation(
@@ -1136,7 +1229,8 @@ def test_the_resume_stage_applies_from_the_runs_position_and_settles_the_run(
             run_id=run_id,
             status="applied",
             changed=True,
-            summary={"create": _TOTAL - _MARKER - 1, "update": 0, "delete": 0},
+            # The engine reports the whole plan's counts for a resume (research R6).
+            summary={"create": _TOTAL, "update": 0, "delete": 0},
             artifact_path=str(Path(__file__).parent / run_id),
         )
 
@@ -1163,7 +1257,7 @@ def test_the_resume_stage_applies_from_the_runs_position_and_settles_the_run(
         "completed",
         "succeeded",
     )
-    assert stored.summary["create"] == _TOTAL - _MARKER - 1
+    assert stored.summary["create"] == _TOTAL
     assert [event.event_type for event in projection.audit_events(run_id) if event.operation == "resume"] == [
         "infrahub_sync.run.resumed"
     ]
@@ -1217,6 +1311,8 @@ def test_a_failed_resume_names_the_operation_and_the_window_ends_with_it(
         # What the engine records for a destination "not found": this operation wrote nothing.
         failed_operation_wrote=False,
         operations_total=_TOTAL,
+        # The 6,000 creates before the marker and the 100 this resume wrote (research R6).
+        operations_written=6_100,
         failed_operation_detail={"action": "update", "kind": "BuiltinTag", "identity": {"name": "node-6100"}},
     )
 
@@ -1233,6 +1329,7 @@ def test_a_failed_resume_names_the_operation_and_the_window_ends_with_it(
     stored = projection.lookup_run(run_id).value
     assert stored is not None
     assert stored.results["resume_failure"]["failed_operation"] == failed
+    assert stored.results["resume_failure"]["operations_written"] == 6_100
     # The failing operation wrote nothing, so the resume failed rather than ended ambiguous; the
     # run's earlier write is still uncertain, so it still requires reconciliation and a new
     # `verify` before the next resume.

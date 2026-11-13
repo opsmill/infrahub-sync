@@ -730,7 +730,10 @@ def _echo_apply_progress(resource: RunResource) -> None:
     for number, resume in enumerate(resource.resumes, start=1):
         start = "from the first operation" if resume.start_after is None else f"after {resume.start_after}"
         outcome = resume.outcome or "unfinished"
-        typer.echo(_display(f"resume {number}: {resume.actor} {resume.requested_at.isoformat()} {start} {outcome}"))
+        wrote = "" if resume.operations_written is None else f", wrote {resume.operations_written} operations"
+        typer.echo(
+            _display(f"resume {number}: {resume.actor} {resume.requested_at.isoformat()} {start} {outcome}{wrote}")
+        )
 
 
 def _side_read_text(side: SideRead | None) -> str | None:
@@ -1037,7 +1040,10 @@ def _failure_lines(failure: Mapping[str, Any], record: StageFailureResource | No
         yield f"field: {record.field}"
     applied = failure.get("applied_operations")
     if record.operations_total is not None and isinstance(applied, list):
-        yield f"written: {len(applied)} of {record.operations_total} operations"
+        # The whole run's count, so a stopped resume includes what earlier executions wrote. A
+        # record from an older Sync API has only this execution's list (spec 022 research R6).
+        written = record.operations_written if record.operations_written is not None else len(applied)
+        yield f"written: {written} of {record.operations_total} operations"
     detail = record.failed_operation_detail
     failed_operation = failure.get("failed_operation")
     if detail is not None and isinstance(failed_operation, str):

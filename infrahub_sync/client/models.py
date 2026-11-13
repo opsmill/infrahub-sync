@@ -510,6 +510,9 @@ class ResumeResource(_ResourceModel):
     """One resume request of a run: who asked, when, why, where it started, and how it ended.
 
     `outcome` is the resume execution's terminal outcome, or `None` while it has not ended.
+    `operations_written` is the number of creates and updates this resume committed, from its own
+    last saved position: exact when that save succeeded, and a lower bound for a resume that was
+    stopped, which may have written more after it. `None` when the saved plan cannot be read.
     """
 
     actor: str
@@ -517,6 +520,7 @@ class ResumeResource(_ResourceModel):
     reason: str | None = None
     start_after: int | None = Field(default=None, ge=0)
     outcome: str | None = None
+    operations_written: int | None = Field(default=None, ge=0)
 
     @field_validator("requested_at")
     @classmethod
@@ -848,6 +852,9 @@ class StageFailureResource(_ResourceModel):
     record: FailureRecordReferenceResource | None = None
     field: str | None = None
     operations_total: int | None = Field(default=None, ge=0)
+    # The creates and updates the whole run wrote, across every execution (spec 022 research R6).
+    # `None` in a record written before this field existed; `applied_operations` then counts.
+    operations_written: int | None = Field(default=None, ge=0)
     failed_operation_detail: FailedOperationDetailResource | None = None
 
 

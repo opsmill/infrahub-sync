@@ -95,10 +95,38 @@ so a new ADR (0026) records the change.
 ## R6. Where a resume starts and what it skips
 
 **Decision**: `apply_plan` gains `start_after: int | None`. Operations at index `<= start_after` are not
-dispatched and are not counted as applied by this execution; skipped deletes keep being counted only once, by the
+dispatched and are not listed as applied by this execution; skipped deletes keep being listed only once, by the
 execution that reached them. Every pre-write check still runs on the whole plan before the first dispatch. The
-resume's `ApplyRecord` lists only the operations it dispatched; the run's progress view (FR-004) combines all
-executions through the latest marker.
+resume's `ApplyRecord` lists only the operations it dispatched, because the uncertain window (R11) compares the
+last of them with the marker; the run's progress view (FR-004) combines all executions through the latest marker.
+
+**Counts of the whole run** (amended): the counts a run reports describe every execution of the run, not the latest
+one.
+
+- The engine's action counts, which become the run's summary when an apply or a resume succeeds, are the whole
+  plan's. A resume that succeeds leaves every operation of the plan applied or recorded, so its summary is the one an
+  apply that was never interrupted writes.
+- `ApplyRecord.operations_written`, and the failure record's `operations_written`, count the creates and updates the
+  run wrote: every create and update at or before `start_after`, plus this execution's applied operations. The
+  "written N of M" line uses this count, and falls back to the length of `applied_operations` for a record written
+  before the field existed.
+- Each entry of `RunResource.resumes` keeps that resume's own count, `operations_written`: the creates and updates
+  after its `start_after`, through the position of its own last marker.
+
+**Rule chosen**: the count before a resume is derived from the saved position and the plan, not stored by the
+earlier executions. Positions are not used directly (`position + 1`), because a recorded delete has a position and
+is never written. The rule is exact for every operation at or before the marker, because a saved position never
+points past an operation that was not committed (FR-002), and the resume writes every operation after it again, so
+none is counted twice.
+
+**Limit after a kill**: an execution that was stopped may have written operations after its last marker. Those
+operations are counted only once a later execution writes them again. So, after a kill:
+
+- the run's "written" count of a resume that stopped is a lower bound when the earlier execution wrote past the
+  position at which the resume stopped;
+- a resume entry's count, taken from its own last marker, is a lower bound for a resume that was stopped.
+
+No stored data gives the exact count in that case (R11), and `verify` reports those operations as uncertain.
 
 ## R7. The stronger `verify`
 

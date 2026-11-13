@@ -27,8 +27,12 @@ progress: 6000/10000 operations committed (saved 2026-11-12T10:15:00Z)
 resumable: yes (verify required)
 kind DcimDevice: committed 1200, uncertain 0, not reached 0
 kind DcimInterface: committed 4800, uncertain 1, not reached 3999
-resume 1: ops 2026-11-12T11:02:00Z after 6000 succeeded
+resume 1: ops 2026-11-12T11:02:00Z after 6000 succeeded, wrote 3999 operations
 ```
+
+`, wrote N operations` is left out when the saved plan cannot be read. For a stopped apply or resume, the
+`written: N of M operations` line counts the creates and updates of the whole run, every execution included
+(research R6).
 
 ## `infrahub-sync verify RUN_ID` (extended)
 

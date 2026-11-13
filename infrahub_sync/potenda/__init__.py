@@ -1180,11 +1180,18 @@ class Potenda:
         # A resume starts after the last operation an earlier execution committed; the
         # operations before it belong to that execution's record, not to this one (R6).
         first = 0 if start_after is None else start_after + 1
-        # The counts this execution reports: a resume reports only the operations it reaches,
-        # and the run's progress view combines every execution (R6).
+        # The run's counts, not this execution's: an apply that returns has accounted for the
+        # whole plan, the operations before `start_after` through the executions that committed
+        # them, so a resume reports the counts an apply that was never interrupted reports (R6).
         self._last_applied_plan_action_counts = {
-            action: sum(operation.action == action for operation in operations[first:]) for action in ACTIONS
+            action: sum(operation.action == action for operation in operations) for action in ACTIONS
         }
+        # The creates and updates the run committed before this execution: every one at or
+        # before `start_after`, because a saved position never points past an operation that was
+        # not committed (FR-002). A recorded delete is never written, so it is not counted. An
+        # earlier execution that stopped may have written more after its marker; this execution
+        # writes those again and counts them once, as its own.
+        written_before = sum(operation.action != "delete" for operation in operations[:first])
 
         applied: list[str] = []
         skipped_deletes: list[str] = []
@@ -1209,6 +1216,7 @@ class Potenda:
                             applied_operations=tuple(applied),
                             skipped_delete_operations=tuple(skipped_deletes),
                             operations_total=operations_total,
+                            operations_written=written_before + len(applied),
                         ),
                     )
                 try:
@@ -1222,6 +1230,7 @@ class Potenda:
                         applied_operations=tuple(applied),
                         skipped_delete_operations=tuple(skipped_deletes),
                         operations_total=operations_total,
+                        operations_written=written_before + len(applied),
                     )
                     _report_progress(progress, methodcaller("stopped", index))
                     raise
@@ -1242,6 +1251,7 @@ class Potenda:
                         # say, which is the unchanged "may have written" reading (S6).
                         failed_operation_wrote=getattr(exc, "wrote", None),
                         operations_total=operations_total,
+                        operations_written=written_before + len(applied),
                         failed_operation_detail={
                             "action": operation.action,
                             "kind": operation.kind,
@@ -1275,6 +1285,7 @@ class Potenda:
         completed = ApplyRecord(
             applied_operations=tuple(applied),
             skipped_delete_operations=tuple(skipped_deletes),
+            operations_written=written_before + len(applied),
         )
 
         # The closing proof, before anything may record this apply as complete: a hold

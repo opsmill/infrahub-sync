@@ -266,6 +266,56 @@ def test_runs_show_prints_the_progress_resumable_kind_and_resume_lines(client: M
     assert "resume 1: ops 2026-11-12T11:02:00+00:00 after 5999 ambiguous" in lines
 
 
+def test_runs_show_prints_the_operations_each_resume_wrote(client: MagicMock) -> None:  # noqa: F811
+    resumes = (
+        ResumeResource(
+            actor="ops", requested_at=_REQUESTED_AT, start_after=5999, outcome="succeeded", operations_written=4000
+        ),
+    )
+    client.get_run.return_value = _interrupted(verify_required=False, resumes=resumes)
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    assert "resume 1: ops 2026-11-12T11:02:00+00:00 after 5999 succeeded, wrote 4000 operations" in (
+        result.output.splitlines()
+    )
+
+
+@pytest.mark.parametrize(
+    ("operations_written", "expected"),
+    [(6100, "written: 6100 of 10000 operations"), (None, "written: 100 of 10000 operations")],
+    ids=["whole-run-count", "record-of-an-older-sync-api"],
+)
+def test_a_stopped_resume_prints_what_the_whole_run_wrote(
+    client: MagicMock,  # noqa: F811
+    operations_written: int | None,
+    expected: str,
+) -> None:
+    """The `written` line counts every execution of the run; a record without the count falls back to its own."""
+    failure: dict[str, object] = {
+        "stage": "resume",
+        "outcome": "ambiguous",
+        "error_type": "OperationApplyFailedError",
+        "failure_type": "destination_rejected_write",
+        "applied_operations": [f"op_{index:016x}" for index in range(100)],
+        "failed_operation": "op_518aada155d790ad",
+        "operations_total": 10000,
+        "failed_operation_detail": {"action": "update", "kind": "DcimDevice", "identity": {"name": "rtr1"}},
+    }
+    if operations_written is not None:
+        failure["operations_written"] = operations_written
+    resource = _interrupted(verify_required=True)
+    client.get_run.return_value = resource.model_copy(
+        update={"run": resource.run.model_copy(update={"results": {"resume_failure": failure}})}
+    )
+
+    result = _invoke(client, "runs", "show", _RUN_ID)
+
+    assert result.exit_code == 0, result.output
+    assert expected in result.stdout.splitlines()
+
+
 def test_runs_show_prints_no_progress_lines_for_a_run_without_a_write(client: MagicMock) -> None:  # noqa: F811
     client.get_run.return_value = _run()
 

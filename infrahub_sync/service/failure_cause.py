@@ -479,10 +479,12 @@ _MAX_IDENTITY_DEPTH = 3
 
 
 def apply_progress(record: ApplyRecord | None) -> dict[str, Any]:
-    """The plan's operation count and the failed operation's action, kind and identity, when known.
+    """The plan's operation count, the run's written count and the failed operation, when known.
 
-    The engine reads them from the plan (`Potenda.apply_plan`). The identity is the source record
-    identity the plan holds, which FR-019 allows; each string is capped.
+    The engine reads them from the plan (`Potenda.apply_plan`). `operations_written` counts the
+    creates and updates of every execution of the run, through the position a resume started
+    after (spec 022 research R6). The identity is the source record identity the plan holds,
+    which FR-019 allows; each string is capped.
     """
     if record is None:
         return {}
@@ -490,6 +492,9 @@ def apply_progress(record: ApplyRecord | None) -> dict[str, Any]:
     total = record.operations_total
     if isinstance(total, int) and not isinstance(total, bool) and total >= 0:
         progress["operations_total"] = total
+    written = record.operations_written
+    if isinstance(written, int) and not isinstance(written, bool) and written >= 0:
+        progress["operations_written"] = written
     detail = record.failed_operation_detail
     if record.failed_operation is not None and detail is not None:
         action, kind = _name(detail.get("action")), _name(detail.get("kind"))

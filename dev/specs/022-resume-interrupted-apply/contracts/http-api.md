@@ -48,9 +48,19 @@ New fields:
     "verify_required": false,
     "by_kind": [{"kind": "DcimDevice", "committed": 1200, "uncertain": 0, "not_reached": 0}]
   },
-  "resumes": [{"actor": "ops", "requested_at": "…", "reason": null, "start_after": 6000, "outcome": "succeeded"}]
+  "resumes": [
+    {"actor": "ops", "requested_at": "…", "reason": null, "start_after": 6000, "outcome": "succeeded",
+     "operations_written": 3999}
+  ]
 }
 ```
+
+`resumes[].operations_written` counts the creates and updates that resume wrote, from its own last marker; it is
+`null` when the saved plan cannot be read (research R6).
+
+The run's `summary` after a resume that finishes holds the whole plan's counts, as after an apply that was never
+interrupted. A stopped write's failure record (`results.<purpose>_failure`) carries `operations_written`, the creates
+and updates of the whole run, beside `applied_operations`, the list of the execution that wrote the record.
 
 `apply_progress` is null for a run that never started a write.
 

@@ -216,6 +216,25 @@ def test_a_stopped_apply_records_the_plan_size_and_the_failed_operation(
     assert len(detail["identity"]["name"]) <= MAX_FAILURE_NAME_TEXT
 
 
+def test_a_stopped_resume_records_the_operations_the_whole_run_wrote(
+    failure_evidence: Callable[..., dict[str, Any]],
+) -> None:
+    """Spec 022 research R6: the written count covers every execution of the run, not only this one."""
+    record = ApplyRecord(
+        applied_operations=(APPLIED_OPERATION,),
+        failed_operation=FAILED_OPERATION,
+        operations_total=10_000,
+        operations_written=6_101,
+    )
+
+    evidence = failure_evidence(
+        "resume", OperationApplyFailedError("failed", apply_record=record), outcome="ambiguous", record=None, secrets=()
+    )
+
+    assert (evidence["operations_written"], evidence["operations_total"]) == (6_101, 10_000)
+    assert StageFailureResource.model_validate(evidence).operations_written == 6_101
+
+
 def test_a_failure_record_that_cannot_be_built_is_an_internal_error(
     failure_evidence: Callable[..., dict[str, Any]], monkeypatch: pytest.MonkeyPatch
 ) -> None:

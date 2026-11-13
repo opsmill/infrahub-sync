@@ -205,7 +205,11 @@ check that no new plan was created.
 - **FR-015**: A resume MUST save its own progress marker under FR-001 to FR-003. When it is interrupted, the run is
   interrupted again and FR-012 applies to the next resume.
 - **FR-016**: When a resume finishes, the run MUST end applied, and `reconciliation_required` MUST be cleared for
-  that run. Its history MUST keep the interrupted execution and every resume.
+  that run. Its history MUST keep the interrupted execution and every resume. The run's counts MUST describe the
+  whole run, not the latest execution: the run's summary after a resume that finishes is the whole plan's, as for an
+  apply that was never interrupted, and the number of operations written that a stopped write reports ("written N
+  of M") counts the creates and updates committed through the position the resume started after, plus those the
+  resume wrote. Each resume entry MUST keep its own count of the creates and updates it wrote (research R6).
 - **FR-017**: Users MUST be able to resume an interrupted `sync` run in the same way, with the checksum of the plan
   the `sync` run saved.
 - **FR-018**: Only the actor who started the run, or an administrator, MAY resume it, as for the other stages of a

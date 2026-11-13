@@ -1849,11 +1849,12 @@ class RunService:
                     ),
                 )
             )
+        operations = self._plan_operations(run)
         return RunResource(
             run=public_run_resource(run),
             orchestration=tuple(orchestration),
-            apply_progress=apply_progress_view(run, self._plan_operations(run)),
-            resumes=run_resumes(run, lambda link: self._resume_receipt(run, link, pending)),
+            apply_progress=apply_progress_view(run, operations),
+            resumes=run_resumes(run, lambda link: self._resume_receipt(run, link, pending), operations),
         )
 
     def _event(
