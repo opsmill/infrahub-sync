@@ -1,0 +1,30 @@
+infrahub_sync/service/service.py
+  s_b91a98d41025f3::t_ba68181e24c205 559-562,568,576
+  s_b91a98d41025f3::t_c83eb99cc73dee 563,565-567
+  s_b91a98d41025f3::t_58d7222bb79ec9 525-527
+infrahub_sync/service/flow.py
+  s_b91a98d41025f3::t_a6964a1caf5379 166-168
+  s_b91a98d41025f3::t_9fa0c8e5b08c15 890-892
+dev/specs/022-resume-interrupted-apply/tasks.md
+  s_b91a98d41025f3::t_af8e8fa2d5cb68 87-88
+tests/service/test_resume_run.py
+  s_b91a98d41025f3::t_67b9bd64cb806c 509-625
+  s_b91a98d41025f3::t_73f5c1cfb14739 924-931,934
+  s_b91a98d41025f3::t_c25593e816649b 711-713,715
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5b71770979dfa28173cb064b6a564ac2d924ef41",
+  "prompts": {},
+  "sessions": {
+    "s_b91a98d41025f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c1e68d9-bc95-47b9-bd6b-c5aa572517ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
