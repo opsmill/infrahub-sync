@@ -11,6 +11,7 @@ import {
   CRUMB,
   EmptyPanel,
   ErrorPanel,
+  FOCUS,
   Notice,
   SectionHeading,
   StaleNotice,
@@ -109,6 +110,54 @@ function versionState(detail: ConfigurationDetail): VersionState | undefined {
     at: e.at,
     action: e.action && { ...e.action, primary: e.action.primary && isLatest },
   };
+}
+
+/**
+ * Which version of the configuration was applied last, whatever version the page shows. Nothing
+ * when the state line above already reads that the selected version's latest run applied it.
+ */
+function AppliedLine({ detail }: { detail: ConfigurationDetail }) {
+  const { configId, selected, latest, summary, lastApplied, versionsComplete } = detail;
+  if (selected === undefined) return null;
+  if (!lastApplied) {
+    return versionsComplete ? (
+      <p className="text-[13px] text-foreground-muted">No version has been applied yet.</p>
+    ) : null;
+  }
+  const { version, run } = lastApplied;
+  const shown = version === selected;
+  if (shown && summary?.latest_run?.run_id === run.run_id) return null;
+  return (
+    <p className="flex flex-wrap items-center gap-x-2 text-[13px] text-foreground-muted">
+      <span>
+        {shown
+          ? `Version ${version} was last applied `
+          : `Version ${version} is the last version applied, `}
+        <Link
+          to="/runs/$runId"
+          params={{ runId: run.run_id }}
+          className={cn(
+            "relative rounded-sm text-foreground underline-offset-2 before:absolute before:-inset-x-1 before:-inset-y-1.5 hover:underline pointer-coarse:before:-inset-y-3.5",
+            FOCUS
+          )}
+        >
+          <When iso={run.finished_at ?? run.started_at} />
+        </Link>
+      </span>
+      {!shown && (
+        <Link
+          to="/configs/$configId"
+          params={{ configId }}
+          search={{ version: version === latest ? undefined : version }}
+          resetScroll={false}
+          className={textAction()}
+        >
+          View version {version}
+          <ChevronRightIcon />
+        </Link>
+      )}
+    </p>
+  );
 }
 
 /** The page of one version of a configuration: what it does, its mapping, then its latest runs. */
@@ -244,6 +293,7 @@ export function ConfigurationPage({
                   ))}
               </p>
             )}
+            {state && <AppliedLine detail={detail} />}
           </div>
           {selected !== undefined ? (
             <Button
