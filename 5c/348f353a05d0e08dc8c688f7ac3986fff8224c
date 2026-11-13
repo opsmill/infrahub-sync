@@ -1,0 +1,19 @@
+docs/docs/development/guidelines/testing-tiers.md
+  s_11782fc4bc9a91::t_40da4339ba42b3 104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c348f353a05d0e08dc8c688f7ac3986fff8224c",
+  "prompts": {},
+  "sessions": {
+    "s_11782fc4bc9a91": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d1b81fa-9ee2-4fcb-b7c2-e14783f62cad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
