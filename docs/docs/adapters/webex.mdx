@@ -30,7 +30,7 @@ The inventory example needs administrator access with `spark-admin:locations_rea
 
 ## Sync locations, workspaces and devices
 
-The [inventory example](https://github.com/opsmill/infrahub-sync/blob/main/examples/webex_workspaces_to_infrahub/config.yml) maps three Webex resources to dedicated Infrahub kinds. Prepare the destination using the accompanying [example schema](https://github.com/opsmill/infrahub-sync/blob/main/examples/webex_workspaces_to_infrahub/schema.yml) before generating the project. The schema defines Text attributes for the inventory fields and optional relationships for workspaces without a location and devices assigned to a person.
+The [inventory example](https://github.com/opsmill/infrahub-sync/blob/main/examples/webex_workspaces_to_infrahub/config.yml) maps three Webex resources to dedicated Infrahub kinds. Prepare the destination using the accompanying [example schema](https://github.com/opsmill/infrahub-sync/blob/main/examples/webex_workspaces_to_infrahub/schema.yml) before generating the project. The schema defines Text attributes for the inventory fields and optional relationships for workspaces without a location and devices without a workspace.
 
 | Infrahub kind | Webex endpoint | Identifier | Peer |
 | --- | --- | --- | --- |
