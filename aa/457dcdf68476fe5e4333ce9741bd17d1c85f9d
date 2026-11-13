@@ -1,0 +1,31 @@
+tests/compose/lifecycle.py
+  s_3defe6e8bcd0ab::t_22f54411ec5588 366
+  s_3defe6e8bcd0ab::t_7ee4b869c7b2dd 342,351-353
+tests/compose/test_credential_leaks.py
+  s_3defe6e8bcd0ab::t_f2b69953fed842 3-10,30-31,33,35-36,38,40,42-43,63,84-105,108-111,118-119,121-122,130-135,142-146
+  s_b91a98d41025f3::t_4f83ae4fe9fe6c 153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aa457dcdf68476fe5e4333ce9741bd17d1c85f9d",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_b91a98d41025f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c1e68d9-bc95-47b9-bd6b-c5aa572517ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
