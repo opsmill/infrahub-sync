@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from infrahub_sync.configuration.capabilities import DestinationSchemaReadError, get_adapter_capabilities
 from infrahub_sync.configuration.conversion import ConversionResult, NoteEntry, RefusalEntry
 from infrahub_sync.configuration.models import ConfigurationPackageParseError, parse_configuration_package
+from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.validation import collect_findings
 from infrahub_sync.runtime_schema.domain import normalize_destination_schema
 from infrahub_sync.runtime_schema.errors import RuntimeSchemaError
@@ -35,7 +36,6 @@ DEFAULT_IP_NAMESPACE = "default"
 # The generic every IP namespace kind inherits, and the core kind Infrahub ships.
 _IP_NAMESPACE_GENERIC = "BuiltinIPNamespace"
 _IP_NAMESPACE_KINDS = frozenset({_IP_NAMESPACE_GENERIC, "IpamNamespace"})
-_DEFAULT_BRANCH = "main"
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +72,7 @@ def read_live_destination_schema(package: Mapping[str, Any]) -> DestinationSchem
     if accessor is None:  # pragma: no cover - the conversion refuses any destination but infrahub
         msg = "the destination declares no schema read"
         raise DestinationSchemaReadError(msg, reason="unconfigured")
-    branch = settings.get("branch") or _DEFAULT_BRANCH
+    branch = effective_destination_branch(parsed.configuration.destination.settings, None)
     raw = accessor(parsed, branch)
     try:
         return normalize_destination_schema(raw)

@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from infrahub_sync.configuration import conversion_live_schema
 from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
 from infrahub_sync.configuration.conversion import ConversionResult
@@ -16,8 +18,6 @@ from infrahub_sync.configuration.conversion_live_schema import (
 from infrahub_sync.runtime_schema.domain import normalize_destination_schema
 
 if TYPE_CHECKING:
-    import pytest
-
     from infrahub_sync.configuration.models import ConfigurationPackage
 
 _TEXT = {"kind": "Text", "optional": False, "default_value": None, "unique": False}
@@ -188,6 +188,26 @@ def test_schema_read_sends_no_token(monkeypatch: pytest.MonkeyPatch) -> None:
     assert seen["branch"] == "main"
     assert original.package is not None
     assert "token" in original.package["configuration"]["destination"]["settings"]
+
+
+@pytest.mark.parametrize(("declared", "expected"), [("feature-x", "feature-x"), (5, "main"), ("", "main")])
+def test_schema_read_resolves_the_branch_like_the_runtime(
+    monkeypatch: pytest.MonkeyPatch, declared: object, expected: str
+) -> None:
+    seen: dict[str, str] = {}
+
+    def accessor(_package: ConfigurationPackage, branch: str) -> dict[str, Any]:
+        seen["branch"] = branch
+        return _SNAPSHOT
+
+    class _Capabilities:
+        destination_schema_accessor = staticmethod(accessor)
+
+    monkeypatch.setattr(conversion_live_schema, "get_adapter_capabilities", lambda _name: _Capabilities())
+    package = _result().package or {}
+    package["configuration"]["destination"]["settings"]["branch"] = declared
+    read_live_destination_schema(package)
+    assert seen["branch"] == expected
 
 
 def test_filled_package_that_fails_a_registration_check_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
