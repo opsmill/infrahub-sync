@@ -1,0 +1,34 @@
+infrahub_sync/adapters/nautobot.py
+  s_3defe6e8bcd0ab::t_13d951605b7422 22
+  s_3defe6e8bcd0ab::t_8826d34f9f7fe3 107
+infrahub_sync/adapters/utils.py
+  s_3defe6e8bcd0ab::t_4ca94427ad9edd 23
+  s_3defe6e8bcd0ab::t_8826d34f9f7fe3 6-7,11-22,24-30
+  s_3defe6e8bcd0ab::t_43deb545dd1c95 31-32
+infrahub_sync/adapters/netbox.py
+  s_3defe6e8bcd0ab::t_13d951605b7422 21
+  s_3defe6e8bcd0ab::t_8826d34f9f7fe3 93
+tests/adapters/test_certificate_checks_off.py
+  s_3defe6e8bcd0ab::t_4ca94427ad9edd 10-11,13,16,24,29,34,38,43,45
+  s_3defe6e8bcd0ab::t_13d951605b7422 1-9,12,14-15,17-23,25-28,30-33,35-37,39-42,44
+dev/specs/021-compose-store-credentials-ca/plan.md
+  s_3defe6e8bcd0ab::t_5f022691b37458 105
+docs/docs/custom-certificates.mdx
+  s_3defe6e8bcd0ab::t_0f6f9b60fd8374 43-44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d8cd140bc0c7da9d3ee6c845ea98593a13e0ef1f",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
