@@ -1,0 +1,1 @@
+Service workers that start flow runs at the same time no longer fail with `ServiceStorageStartupError`. Schema initialization on PostgreSQL now takes a transaction-level advisory lock, so two processes initializing the same schema no longer deadlock on `audit_events`.
