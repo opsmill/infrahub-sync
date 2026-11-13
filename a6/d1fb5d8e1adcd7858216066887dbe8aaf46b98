@@ -1,0 +1,25 @@
+changelog/+resume-interrupted-apply.added.md
+  s_b91a98d41025f3::t_9e92c5e76a4dd2 1
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_b91a98d41025f3::t_d4e03c1c530547 489-493
+docs/docs/operations/day-2-operations.mdx
+  s_b91a98d41025f3::t_6f96a3517f173e 138-140
+docs/docs/reference/sync-http-api.mdx
+  s_b91a98d41025f3::t_450654c3a15225 23-25,649,956-958
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a6d1fb5d8e1adcd7858216066887dbe8aaf46b98",
+  "prompts": {},
+  "sessions": {
+    "s_b91a98d41025f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c1e68d9-bc95-47b9-bd6b-c5aa572517ea",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
