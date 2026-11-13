@@ -169,3 +169,17 @@ Rerun on 2026-11-13 with v2 `2.0.1` from PyPI (product owner decision, because `
 published), still with the `2.0.2` NetBox example: v2 `generate` and `sync` processed all 1,119
 models, `configs convert` and `configs register` succeeded, and the plan stopped at the same
 `ip_namespace` identity check. The gate is blocked only by that check.
+
+Proposed by the product owner on 2026-11-13: read the Infrahub schema, and when `ip_namespace`
+is mandatory and not mapped, set it to the `default` namespace and say so in the report. Tried on
+the v2 gate data with `ip_namespace` as `static: default` and in the identifiers:
+
+- The identity check passes, and the NetBox side loads the static value.
+- The Infrahub side drops the value: it turns a relationship into the peer's DiffSync key, which
+  needs the peer kind to be mapped (`_resolve_peer_unique_id` in `adapters/infrahub.py`).
+  `IpamNamespace` is not mapped, so the plan fails with `IpamIPAddress identifier field
+  'ip_namespace' cannot be None`.
+
+So the conversion can write the value, but V3 must first accept a static relationship value whose
+peer kind is not mapped: read it as the peer's name on the Infrahub side, and resolve it by name
+when it writes.
