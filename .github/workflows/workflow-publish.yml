@@ -225,6 +225,9 @@ jobs:
           identity="^https://github\.com/opsmill/infrahub-sync/${workflow}"
           issuer="https://token.actions.githubusercontent.com"
           flags="--certificate-identity-regexp '${identity}' --certificate-oidc-issuer ${issuer}"
+          # The backticks are Markdown code fences, single-quoted so the shell
+          # leaves them alone.
+          # shellcheck disable=SC2016
           {
             printf '\n## Container image\n\n'
             printf 'Pull this release by digest:\n\n'
