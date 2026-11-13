@@ -87,9 +87,6 @@ def test_the_development_stack_page_runs_no_top_level_stack_task() -> None:
     assert commands == [], f"{PAGE.name} still runs {commands}"
 
 
-def test_the_preview_stack_page_points_to_the_development_stack() -> None:
-    """The preview stack stays until it is removed; its page sends readers to the replacement."""
-    head = PREVIEW_PAGE.read_text(encoding="utf-8").split("### Commands", 1)[0]
-
-    assert "(../../development-stack.mdx)" in head
-    assert "will be removed" in head
+def test_the_preview_stack_page_is_removed() -> None:
+    """The development stack replaced the preview stack, and its guide went with it."""
+    assert not PREVIEW_PAGE.exists()

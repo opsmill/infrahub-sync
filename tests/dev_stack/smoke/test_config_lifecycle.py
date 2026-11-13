@@ -21,16 +21,21 @@ import pytest
 
 from infrahub_sync.client import SyncClient
 from infrahub_sync.client.models import ConfigMutationRequest
-from tests.preview.evidence import canary_leaks
-from tests.preview.test_cli_client import ANSI, package_file, run_cli, run_cli_command
-from tests.preview.test_service_api import authenticated_client, idempotency_headers, register_request, smoke_package
+from tests.dev_stack.smoke.evidence import canary_leaks
+from tests.dev_stack.smoke.test_cli_client import ANSI, package_file, run_cli, run_cli_command
+from tests.dev_stack.smoke.test_service_api import (
+    authenticated_client,
+    idempotency_headers,
+    register_request,
+    smoke_package,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = pytest.mark.preview
+pytestmark = pytest.mark.smoke
 
-REASON = "preview qualification: exercise the configuration registry"
+REASON = "smoke qualification: exercise the configuration registry"
 
 
 def revised_package(infrahub_url: str) -> dict[str, Any]:
@@ -39,25 +44,23 @@ def revised_package(infrahub_url: str) -> dict[str, Any]:
     `create_version` answers 200 with the stored version for a package the configuration
     already holds and 201 for a new one, so proving both needs two packages that differ in
     declared content and nothing else. `verify_ssl` is a declared `infrahub` setting and is
-    inert against the preview's plain-HTTP endpoint.
+    inert against the stack's plain-HTTP endpoint.
     """
     package = smoke_package(infrahub_url)
     package["configuration"]["destination"]["settings"]["verify_ssl"] = True
     return package
 
 
-def test_the_cli_drives_the_registry_and_checks_compatibility_first(
-    preview_env: dict[str, Any], tmp_path: Path
-) -> None:
+def test_the_cli_drives_the_registry_and_checks_compatibility_first(smoke_env: dict[str, Any], tmp_path: Path) -> None:
     """register, replay, version 200/201, list, show, versions, get-version, validate."""
-    first = package_file(preview_env, tmp_path)
+    first = package_file(smoke_env, tmp_path)
     second = tmp_path / "revised-package.json"
-    second.write_text(json.dumps(revised_package(preview_env["urls"]["infrahub"])), encoding="utf-8")
+    second.write_text(json.dumps(revised_package(smoke_env["urls"]["infrahub"])), encoding="utf-8")
     artifacts: dict[str, object] = {}
-    key = idempotency_headers("preview-config")["Idempotency-Key"]
+    key = idempotency_headers("smoke-config")["Idempotency-Key"]
 
     registered = run_cli(
-        preview_env,
+        smoke_env,
         "configs",
         "register",
         str(first),
@@ -70,7 +73,7 @@ def test_the_cli_drives_the_registry_and_checks_compatibility_first(
     )
     config_id = registered["config_id"]
     replayed = run_cli(
-        preview_env,
+        smoke_env,
         "configs",
         "register",
         str(first),
@@ -86,7 +89,7 @@ def test_the_cli_drives_the_registry_and_checks_compatibility_first(
     assert replayed == registered
 
     identical = run_cli(
-        preview_env,
+        smoke_env,
         "configs",
         "version",
         config_id,
@@ -100,7 +103,7 @@ def test_the_cli_drives_the_registry_and_checks_compatibility_first(
     assert identical["registry_version"] == "1"
     assert identical["package_checksum"] == registered["package_checksum"]
     revised = run_cli(
-        preview_env,
+        smoke_env,
         "configs",
         "version",
         config_id,
@@ -114,7 +117,7 @@ def test_the_cli_drives_the_registry_and_checks_compatibility_first(
     assert revised["registry_version"] == "2"
 
     listed = run_cli_command(
-        preview_env,
+        smoke_env,
         "configs",
         "list",
         artifacts=artifacts,
@@ -124,7 +127,7 @@ def test_the_cli_drives_the_registry_and_checks_compatibility_first(
     assert f"config_id: {config_id}" in ANSI.sub("", listed.stdout)
 
     shown = run_cli(
-        preview_env,
+        smoke_env,
         "configs",
         "show",
         config_id,
@@ -133,7 +136,7 @@ def test_the_cli_drives_the_registry_and_checks_compatibility_first(
     )
     assert shown["config_id"] == config_id
     shown_version = run_cli(
-        preview_env,
+        smoke_env,
         "configs",
         "show",
         config_id,
@@ -145,7 +148,7 @@ def test_the_cli_drives_the_registry_and_checks_compatibility_first(
     assert shown_version["package_checksum"] == registered["package_checksum"]
 
     versions = run_cli_command(
-        preview_env,
+        smoke_env,
         "configs",
         "versions",
         config_id,
@@ -157,7 +160,7 @@ def test_the_cli_drives_the_registry_and_checks_compatibility_first(
     assert ANSI.sub("", versions.stdout).count("registry_version: ") == 2
 
     validated = run_cli(
-        preview_env,
+        smoke_env,
         "configs",
         "validate",
         config_id,
@@ -171,9 +174,9 @@ def test_the_cli_drives_the_registry_and_checks_compatibility_first(
     # The client checks `/version` before any operation, so a base URL that is not the
     # Sync API is refused as an incompatible service rather than as a missing resource.
     misdirected = run_cli_command(
-        preview_env,
+        smoke_env,
         "--api-url",
-        f"{preview_env['urls']['sync_api']}/not-the-sync-api",
+        f"{smoke_env['urls']['sync_api']}/not-the-sync-api",
         "configs",
         "list",
         artifacts=artifacts,
@@ -182,24 +185,24 @@ def test_the_cli_drives_the_registry_and_checks_compatibility_first(
     assert misdirected.returncode == 1
     assert "error: compatibility" in ANSI.sub("", misdirected.stderr)
 
-    assert canary_leaks(preview_env["infrahub_token"], artifacts) == []
+    assert canary_leaks(smoke_env["infrahub_token"], artifacts) == []
 
 
 def test_the_python_client_drives_the_registry_and_both_public_resources(  # noqa: PLR0914
-    preview_env: dict[str, Any],
+    smoke_env: dict[str, Any],
 ) -> None:
     """`/version`, `/status`, and all seven registry methods through the typed client."""
-    package = smoke_package(preview_env["urls"]["infrahub"])
-    revised = revised_package(preview_env["urls"]["infrahub"])
-    key = idempotency_headers("preview-config")["Idempotency-Key"]
+    package = smoke_package(smoke_env["urls"]["infrahub"])
+    revised = revised_package(smoke_env["urls"]["infrahub"])
+    key = idempotency_headers("smoke-config")["Idempotency-Key"]
 
-    with SyncClient(preview_env["urls"]["sync_api"], preview_env["bearer_token"], timeout=30.0) as client:
+    with SyncClient(smoke_env["urls"]["sync_api"], smoke_env["bearer_token"], timeout=30.0) as client:
         version = client.get_version()
         assert "v3-unstable" in version.api_versions
 
         status = client.get_status()
         assert status.service == "ready"
-        # The preview starts a worker, so an absent one is a broken environment, not a
+        # The development stack starts a worker, so an absent one is a broken environment, not a
         # tolerable state: only the two live states are admitted here.
         assert status.worker.state in {"ready", "busy"}, status.worker
 
@@ -212,14 +215,14 @@ def test_the_python_client_drives_the_registry_and_both_public_resources(  # noq
         identical = client.create_config_version(
             config_id,
             ConfigMutationRequest(package=package, reason=REASON),
-            idempotency_headers("preview-config")["Idempotency-Key"],
+            idempotency_headers("smoke-config")["Idempotency-Key"],
         )
         assert identical.created is False
         assert identical.version.registry_version == 1
         created = client.create_config_version(
             config_id,
             ConfigMutationRequest(package=revised, reason=REASON),
-            idempotency_headers("preview-config")["Idempotency-Key"],
+            idempotency_headers("smoke-config")["Idempotency-Key"],
         )
         assert created.created is True
         assert created.version.registry_version == 2
@@ -244,7 +247,7 @@ def test_the_python_client_drives_the_registry_and_both_public_resources(  # noq
 
     assert (
         canary_leaks(
-            preview_env["infrahub_token"],
+            smoke_env["infrahub_token"],
             {
                 "get_version resource": version,
                 "get_status resource": status,
@@ -263,16 +266,14 @@ def test_the_python_client_drives_the_registry_and_both_public_resources(  # noq
     )
 
 
-def test_raw_http_drives_the_registry_and_records_the_transcript(
-    preview_env: dict[str, Any], evidence_dir: Path
-) -> None:
+def test_raw_http_drives_the_registry_and_records_the_transcript(smoke_env: dict[str, Any], evidence_dir: Path) -> None:
     """Every registry and public route over the wire, with the exchange captured."""
     transcript = evidence_dir / "config-lifecycle-http.jsonl"
-    package = smoke_package(preview_env["urls"]["infrahub"])
-    body = register_request(preview_env["urls"]["infrahub"])
-    key = idempotency_headers("preview-config")
+    package = smoke_package(smoke_env["urls"]["infrahub"])
+    body = register_request(smoke_env["urls"]["infrahub"])
+    key = idempotency_headers("smoke-config")
 
-    with authenticated_client(preview_env, transcript=transcript) as client:
+    with authenticated_client(smoke_env, transcript=transcript) as client:
         assert client.get("/version").status_code == 200
         status = client.get("/status")
         assert status.status_code == 200, status.text
@@ -287,15 +288,15 @@ def test_raw_http_drives_the_registry_and_records_the_transcript(
 
         identical = client.post(
             f"/configs/{config_id}/versions",
-            headers=idempotency_headers("preview-config"),
+            headers=idempotency_headers("smoke-config"),
             json={"package": package, "reason": REASON},
         )
         assert identical.status_code == 200, identical.text
         assert identical.json()["created"] is False
         revised = client.post(
             f"/configs/{config_id}/versions",
-            headers=idempotency_headers("preview-config"),
-            json={"package": revised_package(preview_env["urls"]["infrahub"]), "reason": REASON},
+            headers=idempotency_headers("smoke-config"),
+            json={"package": revised_package(smoke_env["urls"]["infrahub"]), "reason": REASON},
         )
         assert revised.status_code == 201, revised.text
         assert revised.json()["version"]["registry_version"] == 2
@@ -326,4 +327,4 @@ def test_raw_http_drives_the_registry_and_records_the_transcript(
         ("POST", f"/configs/{config_id}/versions/1/validate", 200),
     ]
     assert {record["request_headers"]["authorization"] for record in records} == {"<redacted>"}
-    assert canary_leaks(preview_env["infrahub_token"], {str(transcript): transcript.read_text(encoding="utf-8")}) == []
+    assert canary_leaks(smoke_env["infrahub_token"], {str(transcript): transcript.read_text(encoding="utf-8")}) == []

@@ -357,7 +357,7 @@ class CellStack:
                         self.compose("down --volumes --remove-orphans")
                 finally:
                     if self.started_netbox:
-                        netbox.down(self.context)
+                        netbox.destroy(self.context)
 
 
 def v2_environment(ref: str) -> tuple[Path, str, str]:

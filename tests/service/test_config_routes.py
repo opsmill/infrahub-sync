@@ -1149,7 +1149,7 @@ def test_build_app_composes_one_service_projection_for_runs_and_configurations(
 def test_build_app_uses_the_prefect_worker_query_setting_for_liveness_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The server and Preview can use one Prefect query cadence for liveness."""
+    """The server and the development stack can use one Prefect query cadence for liveness."""
     monkeypatch.setenv("PREFECT_WORKER_QUERY_SECONDS", "20")
     captured: list[RunLivenessReconciler] = []
 

@@ -2,7 +2,7 @@
 
 Infrahub's own Compose file, started with `docker compose -p infrahub`, creates the
 `infrahub_default` network, where Infrahub answers at `http://infrahub-server:8000`.
-`invoke start` connects the worker (`development/docker-compose.yml`, service
+`invoke dev.start --infrahub-network` connects the worker (`development/docker-compose.yml`, service
 `sync-worker`) to that network, so the same address works on every platform. This is
 the path for an Infrahub outside the development stack, which is started without the
 `infrahub` profile; with the profile the worker already shares Infrahub's network. These cases
@@ -89,7 +89,7 @@ def test_attach_connects_a_worker_that_is_not_on_the_network(monkeypatch: pytest
 
 
 def test_attach_leaves_a_connected_worker_alone(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Repeating `invoke start` must not fail on an existing connection."""
+    """Repeating `invoke dev.start` must not fail on an existing connection."""
     monkeypatch.delenv(dev.INFRAHUB_NETWORK_VARIABLE, raising=False)
     fake = FakeDocker(network=DEFAULT_NETWORK, network_exists=True, workers=["abc"], attached={"abc"})
 

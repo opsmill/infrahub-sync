@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pytest
 
-from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
+from tasks.smoke_dataset import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
 from tests.compose.conftest import FIXTURE_INFRAHUB_PORT, PROJECT_LABEL, PROJECT_PREFIX
 from tests.compose.lifecycle import (
     DURABLE_STATE,

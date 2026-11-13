@@ -32,12 +32,9 @@ matches the checkout: the image carries the hash of the files that shape it as a
 and a code change alone never changes that hash, because the stack mounts the source
 over the installed copy.
 
-The top-level `build`, `start` and `destroy` tasks are the earlier entry points. `start`
-runs the Sync services only and connects the worker to the Compose networks of a local
-NetBox and a local Infrahub, when they run, so a package can name them by service name.
-Infrahub's network is `infrahub_default`, the network of Infrahub's own Compose file
-started with `docker compose -p infrahub`; `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` names
-another one.
+To use an Infrahub started from Infrahub's own Compose file (`docker compose -p infrahub`),
+run `dev.start --infrahub-network infrahub_default`: the stack runs the Sync services only and
+the worker joins that network, and NetBox's when the local NetBox runs.
 """
 
 from __future__ import annotations
@@ -70,10 +67,11 @@ PREFECT_URL = "http://127.0.0.1:4230"
 DEV_COMPOSE_FILE = "development/docker-compose.yml"
 # The Infrahub services' own file, which the development file includes.
 INFRAHUB_COMPOSE_FILE = REPO_BASE / "development" / "docker-compose.infrahub.yml"
-# The profiles the top-level `start` and `build` select: the Sync services. The core
-# services (PostgreSQL, the object store, the Prefect server) have no profile and always start.
+# The default profile of the Compose commands, which the benchmark runner's start and build
+# use: the Sync services. The core services (PostgreSQL, the object store, the Prefect
+# server) have no profile and always start.
 START_PROFILES = ("sync",)
-# Every profile of the development file, so `destroy` removes every service it started.
+# Every profile of the development file, so `dev.destroy` removes every service it started.
 ALL_PROFILES = ("sync", "infrahub")
 # The services `dev.restart` recreates so they import the mounted source again.
 SYNC_SERVICES = ("sync-bootstrap", "sync-api", "sync-worker")
@@ -107,7 +105,7 @@ PUBLIC_INFRAHUB_ADMIN_TOKEN = "06438eb2-8019-4776-878c-0941b1f1d1ec"  # noqa: S1
 
 # What `dev.smoke` sets so the smoke suite reads the development stack's settings.
 SMOKE_STACK_VARIABLE = "INFRAHUB_SYNC_SMOKE_STACK"
-SMOKE_COMMAND = "uv run pytest -m preview tests/preview -q"
+SMOKE_COMMAND = "uv run pytest -m smoke tests/dev_stack/smoke -q"
 # The value `dev.smoke` sets in dependencies mode, where the worker runs on the host and a
 # package therefore names Infrahub by its host publication.
 DEPS_SMOKE_STACK = "dev-deps"
@@ -386,7 +384,7 @@ def rebuild_decision(context: Context, image: str = DEV_IMAGE, root: Path = REPO
 
 
 def infrahub_network() -> str:
-    """The Compose network of the local Infrahub the top-level `start` connects the worker to."""
+    """The Compose network of the local Infrahub that `_start` connects the worker to."""
     return os.environ.get(INFRAHUB_NETWORK_VARIABLE) or DEFAULT_INFRAHUB_NETWORK
 
 
@@ -903,42 +901,3 @@ ns = Collection(
     dev_worker,
     dev_frontend,
 )
-
-
-# ----- The earlier top-level tasks, kept until the `dev` namespace replaces them ------------
-
-
-@task(name="build")
-def build(context: Context, no_cache: bool = False) -> None:  # noqa: FBT001, FBT002 -- Invoke boolean flag idiom
-    """Build the local development image from the current working tree."""
-    _build(context, no_cache=no_cache)
-    print(f" - [{NAMESPACE}] Built infrahub-sync:dev; start it with `uv run invoke start`")
-
-
-@task(name="start")
-def start(context: Context) -> None:
-    """Start the local development stack, building the image first if it is absent.
-
-    When the local NetBox (`invoke netbox.up` or `netbox.seed`) is running, the worker also
-    joins NetBox's network, so a package can read NetBox at `http://netbox:8080`. When a
-    local Infrahub started from Infrahub's own Compose file is running, the worker joins its
-    network too, so a package can write to Infrahub at `http://infrahub-server:8000`.
-    """
-    _start(context)
-    print(f" - [{NAMESPACE}] Sync API    {API_URL}  (bearer {API_TOKEN})")
-    print(f" - [{NAMESPACE}] Prefect UI  {PREFECT_URL}")
-    print(f" - [{NAMESPACE}] After a code change: `uv run invoke build && uv run invoke start`")
-    print(f" - [{NAMESPACE}] Stop and reset:      `uv run invoke destroy`")
-
-
-@task(name="destroy")
-def destroy(context: Context) -> None:
-    """Remove the local development stack, along with its data volumes.
-
-    Destructive by design: the Postgres databases and the object store's buckets go with
-    it, which is what makes the next `invoke start` a first start again. The image the
-    working tree built is kept, so that start does not rebuild.
-    """
-    _destroy(context)
-    print(f" - [{NAMESPACE}] Removed the stack and its data; infrahub-sync:dev is kept")
-    print(f" - [{NAMESPACE}] Start again with `uv run invoke start`")

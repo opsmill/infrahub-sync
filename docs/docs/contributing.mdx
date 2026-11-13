@@ -116,14 +116,14 @@ recorded baseline and fails only on a new diagnostic code or a count above the r
 See [Quality gates](development/knowledge/quality-gates.md) for the complete lint and formatter
 workflow.
 
-Also run `uv run invoke check-310` before you push. It runs the three CI checks that a
+Also run `uv run invoke tests.check-310` before you push. It runs the three CI checks that a
 Python 3.11–3.13 environment does not cover:
 
 - `ty` with the Python 3.10 exclusions
 - the unit tests on Python 3.10 with the `prefect` extra
 - the unit tests on Python 3.10 with the base install, which has no service dependencies
 
-The task builds its environments under `.preview/check-310-venv` and does not change your
+The task builds its environments under `.dev/check-310-venv` and does not change your
 `.venv`. If Python 3.10 is not installed, the task prints that it checked nothing and exits 0.
 Install it with `uv python install 3.10`, then run the task again. See
 [Testing tiers](development/guidelines/testing-tiers.md).
@@ -155,26 +155,23 @@ it writes, and why a skipped test does not count as a pass. See
 
 ### Run the Sync service locally
 
-The repository has two local stacks. Both use development credentials and are disposable.
-[Local development stack](./development-stack.mdx) and
-[Run the preview stack](development/guides/preview-stack.md) describe them in detail.
-
-| Stack | Commands | Sync API | Use it to |
-| --- | --- | --- | --- |
-| Source-built containers | `uv run invoke start`, `build`, `destroy` | `http://127.0.0.1:8001` | Run the API and worker as containers built from your working tree |
-| Preview | `uv run invoke preview.up`, `preview.down` | `http://localhost:8010` | Run the preview smoke suite and the `from-netbox` check against a disposable Infrahub on port 8080 |
-
-Neither stack reloads code automatically. After a code change, run `uv run invoke build` for the
-source-built containers, or `preview.down` and then `preview.up` for the preview stack.
-
-The preview smoke suite uses the `preview` marker. Each test skips when the stack is not
-running:
+The development stack runs the Sync API, the worker, PostgreSQL, object storage, Prefect and a
+disposable Infrahub in containers. The Sync API, the worker and Prefect run an image built from
+your working tree; PostgreSQL, object storage and Infrahub run published images. It uses
+development credentials.
+[Local development stack](./development-stack.mdx) describes it in detail.
 
 ```bash
-uv run invoke preview.up      # start the stack
-uv run invoke preview.smoke   # seed, then run the preview smoke suite
-uv run invoke preview.down --volumes
+uv run invoke dev.start     # build when needed, then start the stack
+uv run invoke dev.smoke     # seed Infrahub, then run the smoke suite
+uv run invoke dev.destroy   # remove the containers and their data
 ```
+
+The Sync API answers at `http://127.0.0.1:8001`. The stack mounts your checkout's code, so after
+a code change run `uv run invoke dev.restart`.
+
+The smoke suite is `tests/dev_stack/smoke/` and uses the `smoke` marker. Each test skips when the
+stack is not running.
 
 ### CI checks
 

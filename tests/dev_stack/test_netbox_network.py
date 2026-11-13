@@ -105,7 +105,7 @@ def test_attach_connects_a_worker_that_is_not_on_the_network(monkeypatch: pytest
 
 
 def test_attach_leaves_a_connected_worker_alone(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Repeating `invoke start` or `netbox.up` must not fail on an existing connection."""
+    """Repeating `invoke dev.start` or `netbox.start` must not fail on an existing connection."""
     fake = FakeDocker(network_exists=True, workers=["abc"], attached={"abc"})
 
     assert netbox.attach_dev_worker(_context(fake, monkeypatch), VALUES) is True
@@ -170,18 +170,18 @@ def test_detach_does_nothing_when_no_workers_are_attached(monkeypatch: pytest.Mo
     assert fake.changes() == []
 
 
-def test_netbox_down_disconnects_the_worker_before_removing_the_network(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_netbox_destroy_disconnects_the_worker_before_removing_the_network(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
     monkeypatch.setattr(netbox, "load_netbox_env", lambda: VALUES)
     monkeypatch.setattr(netbox, "detach_dev_worker", lambda _context, _values: events.append("detach"))
     monkeypatch.setattr(netbox, "_compose", lambda _context, arguments, _values: events.append(arguments))
 
-    cast("Task", netbox.down).body(Context())
+    cast("Task", netbox.destroy).body(Context())
 
     assert events == ["detach", "down --volumes"]
 
 
-def test_netbox_up_connects_the_worker_once_netbox_is_ready(
+def test_netbox_start_connects_the_worker_once_netbox_is_ready(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     events: list[str] = []
@@ -190,7 +190,7 @@ def test_netbox_up_connects_the_worker_once_netbox_is_ready(
     monkeypatch.setattr(netbox, "_wait_for_http", lambda *_args: events.append("wait"))
     monkeypatch.setattr(netbox, "attach_dev_worker", lambda _context, _values: events.append("attach") or True)
 
-    cast("Task", netbox.up).body(Context())
+    cast("Task", netbox.start).body(Context())
 
     assert events == ["compose", "wait", "attach"]
     assert "URL from the dev stack's worker: http://netbox:8080" in capsys.readouterr().out
@@ -215,7 +215,7 @@ def test_netbox_seed_disconnects_before_the_reset(monkeypatch: pytest.MonkeyPatc
     assert events[:2] == ["detach", "down --volumes"]
 
 
-def test_invoke_start_reconnects_a_recreated_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_start_reconnects_a_recreated_worker(monkeypatch: pytest.MonkeyPatch) -> None:
     """`compose up` recreates the worker when its settings change, which drops the connection."""
     events: list[str] = []
     context = Context()
@@ -227,7 +227,7 @@ def test_invoke_start_reconnects_a_recreated_worker(monkeypatch: pytest.MonkeyPa
         dev, "attach_dev_worker_to_infrahub", lambda _context, **_kwargs: events.append("infrahub") or False
     )
 
-    cast("Task", dev.start).body(context)
+    dev._start(context)
 
     assert events == ["compose", "attach", "infrahub"]
 
@@ -278,10 +278,9 @@ def test_pinned_start_attaches_only_the_selected_project_worker(monkeypatch: pyt
 def test_demo_package_for_the_dev_stack_writes_the_worker_addresses(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, infrahub_url: str, expected: str
 ) -> None:
-    """The worker reads NetBox and writes to Infrahub over the networks it joins at `invoke start`."""
+    """The worker reads NetBox and writes to Infrahub over the networks it joins at `invoke dev.start`."""
     destination = tmp_path / "from-netbox.local.yml"
     monkeypatch.setattr(netbox, "load_netbox_env", lambda: VALUES)
-    monkeypatch.setattr(netbox, "load_preview_env", lambda: pytest.fail("the dev stack does not read the preview"))
     monkeypatch.setattr(netbox, "STATE_DIR", destination.parent)
     monkeypatch.setattr(netbox, "LOCAL_PACKAGE", destination)
 

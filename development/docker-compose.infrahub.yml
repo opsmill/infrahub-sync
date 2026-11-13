@@ -5,15 +5,14 @@
 # https://docs.infrahub.app/reference/configuration
 # To refresh an image pin, inspect its current tag with `docker buildx imagetools
 # inspect name:tag`, copy the top-level index Digest, and confirm its Manifests
-# include linux/amd64 and linux/arm64. In the preview, set a matching
-# INFRAHUB_DOCKER_IMAGE_DIGEST when changing VERSION. Direct Compose use with
+# include linux/amd64 and linux/arm64. Set a matching INFRAHUB_DOCKER_IMAGE_DIGEST
+# when changing VERSION; `.github/scripts/update_infrahub.py` moves both. Direct Compose use with
 # either an image-name or VERSION override drops the shipped digest unless a
 # digest is supplied. A digest-only override replaces the shipped digest.
 # With an image-name override, an empty digest keeps that image unpinned.
 # Every service carries the `infrahub` profile, which upstream does not: the
 # development stack includes this file and starts Infrahub only with that
-# profile. Every caller passes it (the preview stack through COMPOSE_PROFILES in
-# `preview.env`), and a refresh from upstream must restore it.
+# profile. Every caller passes it, and a refresh from upstream must restore it.
 x-infrahub-config: &infrahub_config
   AWS_ACCESS_KEY_ID:
   AWS_CA_BUNDLE:

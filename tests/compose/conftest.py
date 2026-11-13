@@ -316,7 +316,7 @@ def mount_sources(definition: Mapping[str, Any]) -> set[str]:
 # share one session-scoped stack, so they run single-process.
 
 FIXTURE_PROJECT = f"{PROJECT_PREFIX}-suite-fixture"
-# Deliberately not the development stack's own port: a developer's preview keeps
+# Deliberately not the development stack's own port: a developer's stack keeps
 # working while this suite runs its own copy of the same pinned release.
 FIXTURE_INFRAHUB_PORT = "8081"
 # The declared readiness bound, and it is Compose that is given it: `--wait-timeout`
@@ -373,23 +373,31 @@ def sync_image(docker_daemon: None) -> str:
     return reference
 
 
+# The development stack's own Infrahub files: the pinned services, and the override that
+# publishes `infrahub-server` at INFRAHUB_BIND_ADDRESS:INFRAHUB_PORT.
+INFRAHUB_FIXTURE_FILES = (
+    REPO_ROOT / "development" / "docker-compose.infrahub.yml",
+    REPO_ROOT / "development" / "docker-compose.infrahub-ports.yml",
+)
+# The settings that choose the Infrahub image of `docker-compose.infrahub.yml`.
+INFRAHUB_IMAGE_SETTINGS = frozenset({"VERSION", "INFRAHUB_DOCKER_IMAGE", "INFRAHUB_DOCKER_IMAGE_DIGEST"})
+# The public development default of `docker-compose.infrahub.yml`; this fixture is
+# disposable and removed with its volumes afterwards.
+FIXTURE_INFRAHUB_ADMIN_TOKEN = "06438eb2-8019-4776-878c-0941b1f1d1ec"  # noqa: S105 - public development default
+
+
 def _infrahub_environment() -> dict[str, str]:
     """The settings the pinned fixture stack and its seed both read."""
-    from tasks.preview import (
-        ENV_FILE,
-        load_preview_env,
-    )
-
-    del ENV_FILE
-    values = load_preview_env()
     return {
-        **values,
         "COMPOSE_PROJECT_NAME": FIXTURE_PROJECT,
-        "PREVIEW_INFRAHUB_PORT": FIXTURE_INFRAHUB_PORT,
+        # Every service of the Infrahub file carries the `infrahub` profile.
+        "COMPOSE_PROFILES": "infrahub",
+        "INFRAHUB_INITIAL_ADMIN_TOKEN": FIXTURE_INFRAHUB_ADMIN_TOKEN,
+        "INFRAHUB_PORT": FIXTURE_INFRAHUB_PORT,
         # The development stack publishes on loopback, which the bundle's worker
         # cannot reach: on Linux its host route is the Docker bridge gateway. This
         # session-scoped fixture is removed afterwards, so it is widened here alone.
-        "PREVIEW_INFRAHUB_BIND_ADDRESS": "0.0.0.0",  # noqa: S104 - test fixture, see above.
+        "INFRAHUB_BIND_ADDRESS": "0.0.0.0",  # noqa: S104 - test fixture, see above.
     }
 
 
@@ -407,16 +415,19 @@ def infrahub_fixture(sync_image: str) -> Iterator[dict[str, str]]:
     image prerequisite has to pass before anything here is started.
     """
     del sync_image
-    from tasks.preview import COMPOSE_FILES, ENV_FILE, SCHEMA_FILE, ensure_smoke_branch
+    from tasks.smoke_dataset import SCHEMA_FILE, ensure_smoke_branch
 
     values = _infrahub_environment()
     # The fixture's administrator token is the destination credential the deployment
     # resolves, so it is a secret of this session like any generated canary.
     SECRETS.register(values["INFRAHUB_INITIAL_ADMIN_TOKEN"])
     address = f"http://127.0.0.1:{FIXTURE_INFRAHUB_PORT}"
-    environment = {**os.environ, **values}
-    base = ["docker", "compose", "--project-name", FIXTURE_PROJECT, "--env-file", str(ENV_FILE)]
-    for path in COMPOSE_FILES:
+    # The suite exports VERSION and INFRAHUB_SYNC_DOCKER_IMAGE for the Sync image under test;
+    # the Infrahub file reads VERSION for its own image too. Dropping the Infrahub image
+    # settings leaves the file's pinned release and digest in force.
+    environment = {key: value for key, value in os.environ.items() if key not in INFRAHUB_IMAGE_SETTINGS} | values
+    base = ["docker", "compose", "--project-name", FIXTURE_PROJECT]
+    for path in INFRAHUB_FIXTURE_FILES:
         base += ["--file", str(path)]
 
     def run(argv: Sequence[str], *, timeout: int) -> Captured:
@@ -449,7 +460,7 @@ def infrahub_fixture(sync_image: str) -> Iterator[dict[str, str]]:
             env={**os.environ, **seed_environment},
         )
         assert loaded.returncode == 0, f"the fixture schema did not load: {loaded.output}"
-        ensure_smoke_branch(seed_environment)
+        ensure_smoke_branch(seed_environment["INFRAHUB_ADDRESS"], seed_environment["INFRAHUB_API_TOKEN"])
         yield {"address": address, "token": values["INFRAHUB_INITIAL_ADMIN_TOKEN"]}
     finally:
         run(["down", "--volumes", "--remove-orphans"], timeout=FIXTURE_READY_SECONDS)

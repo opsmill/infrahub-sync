@@ -20,9 +20,9 @@ import pytest
 
 from infrahub_sync.client import SyncClient
 from infrahub_sync.client.models import ApplyRunRequest, ConfigMutationRequest, CreateRunRequest
-from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH
-from tests.preview.evidence import canary_leaks
-from tests.preview.test_service_api import (
+from tasks.smoke_dataset import SHARED_DEVICE_NAME, SMOKE_BRANCH
+from tests.dev_stack.smoke.evidence import canary_leaks
+from tests.dev_stack.smoke.test_service_api import (
     device_types,
     infrahub_client,
     seed_source_branch,
@@ -30,7 +30,7 @@ from tests.preview.test_service_api import (
     unwritten_plan_reasons,
 )
 
-pytestmark = pytest.mark.preview
+pytestmark = pytest.mark.smoke
 
 WAIT_TIMEOUT_SECONDS = 240.0
 POLL_INTERVAL_SECONDS = 3.0
@@ -38,19 +38,19 @@ POLL_INTERVAL_SECONDS = 3.0
 
 def _key() -> str:
     """A fresh key per mutation, so a re-run never replays an earlier smoke's response."""
-    return f"preview-python-{uuid.uuid4()}"
+    return f"smoke-python-{uuid.uuid4()}"
 
 
-def test_sync_client_registers_plans_and_applies_against_the_service(preview_env: dict[str, Any]) -> None:
+def test_sync_client_registers_plans_and_applies_against_the_service(smoke_env: dict[str, Any]) -> None:
     """The typed client completes register → validate → plan → apply → results live."""
-    mutated_type = seed_source_branch(preview_env)
-    assert device_types(infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] != mutated_type
+    mutated_type = seed_source_branch(smoke_env)
+    assert device_types(infrahub_client(smoke_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] != mutated_type
 
-    with SyncClient(preview_env["urls"]["sync_api"], preview_env["bearer_token"], timeout=30.0) as client:
+    with SyncClient(smoke_env["urls"]["sync_api"], smoke_env["bearer_token"], timeout=30.0) as client:
         registered = client.register_config(
             ConfigMutationRequest(
-                package=smoke_package(preview_env["urls"]["infrahub"]),
-                reason="preview Python client smoke: register the smoke configuration",
+                package=smoke_package(smoke_env["urls"]["infrahub"]),
+                reason="Python client smoke: register the smoke configuration",
             ),
             _key(),
         )
@@ -66,7 +66,7 @@ def test_sync_client_registers_plans_and_applies_against_the_service(preview_env
                 config_id=config_id,
                 registry_version=registry_version,
                 branch=SMOKE_BRANCH,
-                reason="preview Python client smoke: create a service plan",
+                reason="Python client smoke: create a service plan",
             ),
             _key(),
         )
@@ -87,7 +87,7 @@ def test_sync_client_registers_plans_and_applies_against_the_service(preview_env
                 expected_checksum=plan.checksum,
                 confirm_writes=True,
                 branch=SMOKE_BRANCH,
-                reason="preview Python client smoke: apply the reviewed plan",
+                reason="Python client smoke: apply the reviewed plan",
             ),
             _key(),
         )
@@ -102,7 +102,7 @@ def test_sync_client_registers_plans_and_applies_against_the_service(preview_env
 
     assert (
         canary_leaks(
-            preview_env["infrahub_token"],
+            smoke_env["infrahub_token"],
             {
                 "Python lifecycle register resource": registered,
                 "Python lifecycle validation resource": report,
@@ -117,4 +117,4 @@ def test_sync_client_registers_plans_and_applies_against_the_service(preview_env
         == []
     )
 
-    assert device_types(infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] == mutated_type
+    assert device_types(infrahub_client(smoke_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] == mutated_type

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH
+from tasks.smoke_dataset import SHARED_DEVICE_NAME, SMOKE_BRANCH
 from tests.compose.lifecycle import (
     api_client,
     await_phase,

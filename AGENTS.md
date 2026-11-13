@@ -61,7 +61,7 @@ uv run infrahub-sync runs --help
 ```
 
 The `from-netbox` example check is integration-backed. It needs a local NetBox with
-the pinned `demo` dataset, the preview stack, and the schema library. Follow
+the pinned `demo` dataset, the development stack, and the schema library. Follow
 [The `from-netbox` example check](docs/docs/development/guidelines/testing-tiers.md#the-from-netbox-example-check).
 
 **Docs** (only if user-facing changes — see [Documentation](#documentation)):
@@ -200,12 +200,14 @@ The container image is published to `registry.opsmill.io/opsmill/infrahub-sync` 
 
 ## Invoke Tasks (reference)
 
-`uv run invoke --list` for the full set. Key tasks:
+`uv run invoke --list` for the full set. `format` and `lint` are the only top-level tasks. Key tasks:
 
 - `format` / `lint` — run all formatters / linters.
 - `linter.format-ruff`, `linter.lint-ruff`, `linter.lint-pylint`, `linter.lint-yaml`, `linter.lint-ty`.
 - `docs.generate`, `docs.docusaurus`, `docs.rumdl`, `docs.format-rumdl`, `docs.format`, `docs.lint`.
-- `tests.tests-unit`, `tests.tests-integration`.
+- `tests.tests-unit`, `tests.tests-integration`, `tests.all`, `tests.check-310` (the Python 3.10 legs).
+- `dev.start`, `dev.restart`, `dev.smoke`, `dev.destroy` and the rest of the `dev` namespace — the local development stack (`development/docker-compose.yml`).
+- `netbox.start`, `netbox.seed`, `netbox.destroy` — the disposable local NetBox.
 
 ## Known Issues and Limitations
 

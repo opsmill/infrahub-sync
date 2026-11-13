@@ -95,7 +95,7 @@ The `credentials` block declares each `$credential` reference. `identifier` is t
 the environment variable that the Sync worker reads when a run starts. In this example, the
 worker needs `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`. On a Compose deployment, set them in
 the deployment's `.env`, then run `docker compose up -d --wait`. On the local development
-stack, export them in your shell, then run `uv run invoke start`. See
+stack, export them in your shell, then run `uv run invoke dev.start`. See
 [Credentials](./configuration-package.mdx#credentials).
 
 ## Schema mapping

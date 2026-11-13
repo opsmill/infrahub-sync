@@ -21,10 +21,10 @@ import pytest
 
 from infrahub_sync.client import SyncClient
 from infrahub_sync.client.models import ConfigMutationRequest, CreateRunRequest, VerifyRunRequest
-from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
-from tests.preview.evidence import canary_leaks
-from tests.preview.test_cli_client import ANSI, fields, package_file, run_cli, run_cli_command
-from tests.preview.test_service_api import (
+from tasks.smoke_dataset import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
+from tests.dev_stack.smoke.evidence import canary_leaks
+from tests.dev_stack.smoke.test_cli_client import ANSI, fields, package_file, run_cli, run_cli_command
+from tests.dev_stack.smoke.test_service_api import (
     authenticated_client,
     create_run_request,
     idempotency_headers,
@@ -38,12 +38,12 @@ from tests.preview.test_service_api import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = pytest.mark.preview
+pytestmark = pytest.mark.smoke
 
 WAIT_TIMEOUT_SECONDS = 240.0
 POLL_INTERVAL_SECONDS = 3.0
 PLAN_ARTIFACT_ID = "plan-review"
-REASON = "preview qualification: review a saved plan"
+REASON = "smoke qualification: review a saved plan"
 # A kind the destination schema does not define, so `--kind` filters the plan to nothing.
 ABSENT_KIND = "InfraNotAKind"
 
@@ -71,16 +71,16 @@ def _await_verification(client: Any, run_id: str) -> dict[str, Any]:  # noqa: AN
 
 
 def test_the_cli_admits_a_run_without_waiting_then_reviews_its_saved_plan(
-    preview_env: dict[str, Any], tmp_path: Path, evidence_dir: Path
+    smoke_env: dict[str, Any], tmp_path: Path, evidence_dir: Path
 ) -> None:
     """`--no-wait`, then `runs plan` in summary, in detail, filtered, and refused."""
-    seed_source_branch(preview_env)
+    seed_source_branch(smoke_env)
     artifacts: dict[str, object] = {}
     registered = run_cli(
-        preview_env,
+        smoke_env,
         "configs",
         "register",
-        str(package_file(preview_env, tmp_path)),
+        str(package_file(smoke_env, tmp_path)),
         "--reason",
         REASON,
         artifacts=artifacts,
@@ -88,7 +88,7 @@ def test_the_cli_admits_a_run_without_waiting_then_reviews_its_saved_plan(
     )
 
     accepted = run_cli(
-        preview_env,
+        smoke_env,
         "plan",
         "--config-id",
         registered["config_id"],
@@ -109,14 +109,14 @@ def test_the_cli_admits_a_run_without_waiting_then_reviews_its_saved_plan(
     assert accepted["operation"] == "plan"
 
     oracle_transcript = evidence_dir / "run-review-cli-oracle-http.jsonl"
-    with authenticated_client(preview_env, transcript=oracle_transcript) as client:
+    with authenticated_client(smoke_env, transcript=oracle_transcript) as client:
         planned = wait_for_phase(client, run_id, "planned")
         assert planned["run"]["outcome"] is not None, planned["run"]
         summary = client.get(f"/runs/{run_id}/plan").json()["summary"]
         assert unwritten_plan_reasons(summary) == [], summary
 
     reviewed = run_cli(
-        preview_env,
+        smoke_env,
         "runs",
         "plan",
         run_id,
@@ -127,7 +127,7 @@ def test_the_cli_admits_a_run_without_waiting_then_reviews_its_saved_plan(
     assert reviewed["operations"] == str(summary["total"])
 
     detailed = run_cli_command(
-        preview_env,
+        smoke_env,
         "runs",
         "plan",
         run_id,
@@ -140,7 +140,7 @@ def test_the_cli_admits_a_run_without_waiting_then_reviews_its_saved_plan(
     assert any(f"update {SMOKE_KIND} name={SHARED_DEVICE_NAME}" in line for line in _operation_lines(detailed.stdout))
 
     filtered = run_cli_command(
-        preview_env,
+        smoke_env,
         "runs",
         "plan",
         run_id,
@@ -157,7 +157,7 @@ def test_the_cli_admits_a_run_without_waiting_then_reviews_its_saved_plan(
     # silently ignored; a kind that matches nothing is refused the same way.
     for index, arguments in enumerate((("--kind", SMOKE_KIND), ("--detail", "--kind", ABSENT_KIND)), start=1):
         refused = run_cli_command(
-            preview_env,
+            smoke_env,
             "runs",
             "plan",
             run_id,
@@ -170,20 +170,20 @@ def test_the_cli_admits_a_run_without_waiting_then_reviews_its_saved_plan(
         assert "argument: kind" in ANSI.sub("", refused.stderr)
 
     artifacts[str(oracle_transcript)] = oracle_transcript.read_text(encoding="utf-8")
-    assert canary_leaks(preview_env["infrahub_token"], artifacts) == []
+    assert canary_leaks(smoke_env["infrahub_token"], artifacts) == []
 
 
 def test_the_cli_bounded_wait_expires_without_cancelling_the_run(
-    preview_env: dict[str, Any], tmp_path: Path, evidence_dir: Path
+    smoke_env: dict[str, Any], tmp_path: Path, evidence_dir: Path
 ) -> None:
     """An expired local wait is a non-zero exit; the remote run keeps going and completes."""
-    seed_source_branch(preview_env)
+    seed_source_branch(smoke_env)
     artifacts: dict[str, object] = {}
     registered = run_cli(
-        preview_env,
+        smoke_env,
         "configs",
         "register",
-        str(package_file(preview_env, tmp_path)),
+        str(package_file(smoke_env, tmp_path)),
         "--reason",
         REASON,
         artifacts=artifacts,
@@ -193,7 +193,7 @@ def test_the_cli_bounded_wait_expires_without_cancelling_the_run(
     # Shorter than the worker's query interval, so the run cannot have finished: what the
     # command reports is the wait expiring, never the run failing.
     expired = run_cli_command(
-        preview_env,
+        smoke_env,
         "plan",
         "--config-id",
         registered["config_id"],
@@ -215,25 +215,25 @@ def test_the_cli_bounded_wait_expires_without_cancelling_the_run(
     run_id = fields(expired.stdout)["run_id"]
 
     oracle_transcript = evidence_dir / "wait-timeout-cli-oracle-http.jsonl"
-    with authenticated_client(preview_env, transcript=oracle_transcript) as client:
+    with authenticated_client(smoke_env, transcript=oracle_transcript) as client:
         # The bound is local. Nothing was cancelled, so the service still completes it.
         planned = wait_for_phase(client, run_id, "planned")
 
     assert planned["run"]["outcome"] is not None, planned["run"]
     artifacts[str(oracle_transcript)] = oracle_transcript.read_text(encoding="utf-8")
-    assert canary_leaks(preview_env["infrahub_token"], artifacts) == []
+    assert canary_leaks(smoke_env["infrahub_token"], artifacts) == []
 
 
 def test_the_python_client_verifies_a_plan_and_reads_its_artifact_and_results(
-    preview_env: dict[str, Any],
+    smoke_env: dict[str, Any],
 ) -> None:
     """`verify`, `list_artifacts`, `get_artifact` with its digest, and `get_results`."""
-    seed_source_branch(preview_env)
+    seed_source_branch(smoke_env)
 
-    with SyncClient(preview_env["urls"]["sync_api"], preview_env["bearer_token"], timeout=30.0) as client:
+    with SyncClient(smoke_env["urls"]["sync_api"], smoke_env["bearer_token"], timeout=30.0) as client:
         registered = client.register_config(
-            ConfigMutationRequest(package=smoke_package(preview_env["urls"]["infrahub"]), reason=REASON),
-            idempotency_headers("preview-review")["Idempotency-Key"],
+            ConfigMutationRequest(package=smoke_package(smoke_env["urls"]["infrahub"]), reason=REASON),
+            idempotency_headers("smoke-review")["Idempotency-Key"],
         )
         accepted = client.plan(
             CreateRunRequest(
@@ -243,7 +243,7 @@ def test_the_python_client_verifies_a_plan_and_reads_its_artifact_and_results(
                 branch=SMOKE_BRANCH,
                 reason=REASON,
             ),
-            idempotency_headers("preview-review")["Idempotency-Key"],
+            idempotency_headers("smoke-review")["Idempotency-Key"],
         )
         run_id = accepted.run.run_id
         planned = client.wait_for_run(accepted, timeout=WAIT_TIMEOUT_SECONDS, poll_interval=POLL_INTERVAL_SECONDS)
@@ -253,7 +253,7 @@ def test_the_python_client_verifies_a_plan_and_reads_its_artifact_and_results(
         verified = client.verify_run(
             run_id,
             VerifyRunRequest(reason=REASON),
-            idempotency_headers("preview-review")["Idempotency-Key"],
+            idempotency_headers("smoke-review")["Idempotency-Key"],
         )
         verification_completed = client.wait_for_run(
             verified, timeout=WAIT_TIMEOUT_SECONDS, poll_interval=POLL_INTERVAL_SECONDS
@@ -277,7 +277,7 @@ def test_the_python_client_verifies_a_plan_and_reads_its_artifact_and_results(
 
     assert (
         canary_leaks(
-            preview_env["infrahub_token"],
+            smoke_env["infrahub_token"],
             {
                 "get_plan resource": plan,
                 "register_config resource": registered,
@@ -295,24 +295,24 @@ def test_the_python_client_verifies_a_plan_and_reads_its_artifact_and_results(
 
 
 def test_raw_http_verifies_a_plan_and_reads_its_artifact_and_results(
-    preview_env: dict[str, Any], evidence_dir: Path
+    smoke_env: dict[str, Any], evidence_dir: Path
 ) -> None:
     """The same three review resources over the wire, with the exchange captured."""
-    seed_source_branch(preview_env)
+    seed_source_branch(smoke_env)
     transcript = evidence_dir / "run-review-http.jsonl"
 
-    with authenticated_client(preview_env, transcript=transcript) as client:
+    with authenticated_client(smoke_env, transcript=transcript) as client:
         registered = client.post(
             "/configs",
-            headers=idempotency_headers("preview-review"),
-            json=register_request(preview_env["urls"]["infrahub"]),
+            headers=idempotency_headers("smoke-review"),
+            json=register_request(smoke_env["urls"]["infrahub"]),
         )
         assert registered.status_code == 201, registered.text
         version = registered.json()["version"]
 
         created = client.post(
             "/runs",
-            headers=idempotency_headers("preview-review"),
+            headers=idempotency_headers("smoke-review"),
             json=create_run_request(version["config_id"], version["registry_version"]),
         )
         assert created.status_code == 202, created.text
@@ -322,7 +322,7 @@ def test_raw_http_verifies_a_plan_and_reads_its_artifact_and_results(
 
         verify = client.post(
             f"/runs/{run_id}/verify",
-            headers=idempotency_headers("preview-review"),
+            headers=idempotency_headers("smoke-review"),
             json={"reason": REASON},
         )
         assert verify.status_code == 202, verify.text
@@ -353,7 +353,7 @@ def test_raw_http_verifies_a_plan_and_reads_its_artifact_and_results(
     }
     assert (
         canary_leaks(
-            preview_env["infrahub_token"],
+            smoke_env["infrahub_token"],
             {str(transcript): captured, "raw plan-review artifact bytes": artifact.content},
         )
         == []

@@ -1,7 +1,7 @@
 """Resolve any Compose file of the repository the way the contract tests read it.
 
-The contract tests for the operator deployment, the development stack and the
-preview stack read the model `docker compose config --format json` resolves a
+The contract tests for the operator deployment and the development stack read the
+model `docker compose config --format json` resolves a
 file to, with chosen profiles named, rather than the file's YAML. This helper
 returns that model and the image references its services run.
 

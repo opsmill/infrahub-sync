@@ -43,11 +43,11 @@ jobs:
         with:
           python-version: '3.12'
 
-      # The development and preview stacks pin Infrahub by tag and by index
-      # digest, and a few tests assert the pinned tag. The script reads the
-      # current pin from development/preview.env, resolves the new tag's digest
-      # (refusing an index without linux/amd64 and linux/arm64), and rewrites
-      # every pinned file, or none of them.
+      # The development stack pins Infrahub by tag and by index digest, and a
+      # few tests assert the pinned tag. The script reads the current pin from
+      # the default image reference of development/docker-compose.infrahub.yml,
+      # resolves the new tag's digest (refusing an index without linux/amd64 and
+      # linux/arm64), and rewrites every pinned file, or none of them.
       - name: Update Infrahub to version ${{ env.INFRAHUB_VERSION }}
         run: python .github/scripts/update_infrahub.py "${INFRAHUB_VERSION}"
 
@@ -67,12 +67,9 @@ jobs:
           commit-message: "chore: update Infrahub to version ${{ env.INFRAHUB_VERSION }}"
           files: |
             development/docker-compose.infrahub.yml
-            development/preview.env
-            development/docker-compose.preview.yml
             tests/compose/conftest.py
             tests/compose/fixture-override.yaml
             tests/compose/test_compose_contract.py
-            tests/preview/test_preview_configuration.py
           name: opsmill-bot
           email: github-bot@opsmill.com
           rebase: ${{ env.BRANCH_EXISTS == 1 }}

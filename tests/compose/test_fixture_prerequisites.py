@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from tasks import preview
+from tasks import smoke_dataset
 from tests.compose import conftest
 from tests.compose.conftest import FIXTURE_INFRAHUB_PORT, FIXTURE_PROJECT
 from tests.compose.redaction import Captured
@@ -142,14 +142,15 @@ def test_a_named_image_runs_the_fixture_through_start_seed_and_teardown(monkeypa
     monkeypatch.setenv(IMAGE_VERSION_ENV, "compose-test")
 
     calls: list[str] = []
+    environments: list[object] = []
 
     def record(argv: list[str], **kwargs: object) -> Captured:
-        del kwargs
         calls.append(" ".join(str(part) for part in argv))
+        environments.append(kwargs.get("env"))
         return Captured(subprocess.CompletedProcess(argv, 0, "", ""))
 
     monkeypatch.setattr(conftest, "capture", record)
-    monkeypatch.setattr(preview, "ensure_smoke_branch", lambda env: calls.append(f"seed {sorted(env)}"))
+    monkeypatch.setattr(smoke_dataset, "ensure_smoke_branch", lambda address, _token: calls.append(f"seed {address}"))
 
     reference = inspect.unwrap(conftest.sync_image)(None)
     assert reference == "infrahub-sync:compose-test"
@@ -162,6 +163,10 @@ def test_a_named_image_runs_the_fixture_through_start_seed_and_teardown(monkeypa
     assert provided["address"] == f"http://127.0.0.1:{FIXTURE_INFRAHUB_PORT}"
     assert provided["token"]
     started, loaded, seeded = calls
+    # The suite's VERSION names the Sync image; the Infrahub fixture keeps its own pin.
+    start_environment = environments[1]
+    assert isinstance(start_environment, dict)
+    assert "VERSION" not in start_environment
     assert f"--project-name {FIXTURE_PROJECT}" in started
     assert "up --detach --wait" in started
     assert "infrahubctl schema load --wait" in loaded

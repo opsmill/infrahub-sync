@@ -1,7 +1,7 @@
-"""The preview smoke's request bodies are the ones the shipped API accepts.
+"""The smoke suite's request bodies are the ones the shipped API accepts.
 
 These tests run offline. The smoke itself only runs against a live stack, so a request
-body that drifted from the API model used to surface as a live 422 during `preview.up`
+body that drifted from the API model used to surface as a live 422 during `dev.smoke`
 — on a perfectly healthy environment — and never in branch CI. Validating each body
 against the model the route declares closes that gap where it is cheap to close.
 """
@@ -14,8 +14,8 @@ from typing import Any
 import pytest
 
 from infrahub_sync.client.models import ApplyRunRequest, ConfigMutationRequest, CreateRunRequest
-from tasks.preview import SHARED_DEVICE_NAME
-from tests.preview import test_service_api as smoke
+from tasks.smoke_dataset import SHARED_DEVICE_NAME
+from tests.dev_stack.smoke import test_service_api as smoke
 
 INFRAHUB_URL = "http://localhost:8080"
 CHECKSUM = "a" * 64
@@ -203,12 +203,12 @@ def test_every_run_mutates_to_a_value_no_earlier_run_used() -> None:
 
 def test_the_mutation_covers_exactly_the_fields_the_package_maps() -> None:
     """A mapped field the mutation omits is one the destination sees cleared."""
-    assert set(smoke.mutation_payload("preview-smoke-abc123")) == set(smoke.SMOKE_FIELDS)
+    assert set(smoke.mutation_payload("smoke-smoke-abc123")) == set(smoke.SMOKE_FIELDS)
 
 
 def test_the_mutation_targets_the_device_seeded_before_the_fork() -> None:
     """Any other name is absent from the destination, which makes the plan a create."""
-    assert smoke.mutation_payload("preview-smoke-abc123")["name"] == SHARED_DEVICE_NAME
+    assert smoke.mutation_payload("smoke-smoke-abc123")["name"] == SHARED_DEVICE_NAME
 
 
 def test_mirroring_then_mutating_differs_from_the_destination_in_one_device() -> None:

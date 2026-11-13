@@ -1200,7 +1200,7 @@ def test_real_invoke_enforces_deadline_through_stack_lifecycle(monkeypatch, phas
                 context.deadline = time.monotonic() + 0.2
                 context.run(command)
 
-            monkeypatch.setattr(bench.netbox, "down", down)
+            monkeypatch.setattr(bench.netbox, "destroy", down)
             stack.close()
         else:
             stack.compose("up")
@@ -1329,7 +1329,7 @@ def test_runner_rejects_existing_development_container_before_mutation(monkeypat
         pytest.fail("rejected cell must not mutate or remove existing stacks")
 
     monkeypatch.setattr(bench.netbox, "restore", destructive)
-    monkeypatch.setattr(bench.netbox, "down", destructive)
+    monkeypatch.setattr(bench.netbox, "destroy", destructive)
     monkeypatch.setattr(bench.dev, "compose", destructive)
     monkeypatch.setattr(bench.dev, "_build", destructive)
     monkeypatch.setattr(bench.dev, "_destroy", destructive)
@@ -1361,7 +1361,7 @@ def test_partial_setup_cleans_only_acquired_stacks(monkeypatch, failure) -> None
 
     monkeypatch.setattr(bench.netbox, "restore", restore)
     monkeypatch.setattr(bench.dev, "compose", compose)
-    monkeypatch.setattr(bench.netbox, "down", lambda _context: events.append("source"))
+    monkeypatch.setattr(bench.netbox, "destroy", lambda _context: events.append("source"))
     monkeypatch.setattr(bench.dev, "_destroy", lambda _context: pytest.fail("unacquired Sync stack"))
     with pytest.raises(BenchmarkError):
         stack.reset("S")

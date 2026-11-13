@@ -1,6 +1,6 @@
 """Offline cover for the two helpers the live qualification rows capture evidence with.
 
-These run in the offline gate, not against the preview: both helpers are pure enough to
+These run in the offline gate, not against the development stack: both helpers are pure enough to
 drive with a mock transport and plain values, and the properties they carry — an
 authorization value never reaching a transcript, a token never reaching any captured
 artifact — are exactly the ones a live run cannot be relied on to exercise. The live rows
@@ -16,10 +16,10 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pytest
 
-from tasks.preview import REPO_ROOT
-from tests.preview.evidence import canary_leaks, transcript_hooks
-from tests.preview.test_cli_client import run_cli, run_cli_command
-from tests.preview.test_service_api import authenticated_client
+from tasks.utils import REPO_BASE as REPO_ROOT
+from tests.dev_stack.smoke.evidence import canary_leaks, transcript_hooks
+from tests.dev_stack.smoke.test_cli_client import run_cli, run_cli_command
+from tests.dev_stack.smoke.test_service_api import authenticated_client
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -115,12 +115,12 @@ def test_cli_helpers_capture_stdout_and_stderr_before_parsing(
     def completed_run(*_args: object, **_kwargs: object) -> object:
         return completed
 
-    monkeypatch.setattr("tests.preview.test_cli_client.subprocess.run", completed_run)
+    monkeypatch.setattr("tests.dev_stack.smoke.test_cli_client.subprocess.run", completed_run)
     artifacts: dict[str, object] = {}
-    preview_env = {"urls": {"sync_api": "http://sync.invalid"}, "bearer_token": "test-bearer"}
+    smoke_env = {"urls": {"sync_api": "http://sync.invalid"}, "bearer_token": "test-bearer"}
 
     parsed = run_cli(
-        preview_env,
+        smoke_env,
         "configs",
         "list",
         artifacts=artifacts,
@@ -135,7 +135,7 @@ def test_cli_helpers_capture_stdout_and_stderr_before_parsing(
 
     direct_artifacts: dict[str, object] = {}
     run_cli_command(
-        preview_env,
+        smoke_env,
         "configs",
         "list",
         artifacts=direct_artifacts,
@@ -150,7 +150,7 @@ def test_cli_helpers_capture_stdout_and_stderr_before_parsing(
 @pytest.mark.parametrize(("original", "counterpart"), [("Text", "TextArea"), ("TextArea", "Text")])
 def test_schema_drift_selects_the_reversible_counterpart(original: str, counterpart: str) -> None:
     """The live kind, not a seeded-schema assumption, selects the temporary mutation."""
-    from tests.preview.test_schema_drift import _reversible_kind
+    from tests.dev_stack.smoke.test_schema_drift import _reversible_kind
 
     assert _reversible_kind(original) == counterpart
 

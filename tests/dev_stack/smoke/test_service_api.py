@@ -4,11 +4,11 @@ The shipped API is registered-only: a run names a registered configuration versi
 a directory on the worker's disk. So the smoke registers its own package first, through
 `POST /configs`, and drives plan → review → apply against that exact version.
 
-The package is Infrahub-to-Infrahub against the preview's own instance — `main` as the
+The package is Infrahub-to-Infrahub against the development stack's own instance — `main` as the
 source, the disposable smoke branch as the destination — because the registered path
 resolves adapters through the installed loader and admits no filesystem adapter.
 
-What this smoke proves is an **update**. `preview.seed` puts one device on `main` before
+What this smoke proves is an **update**. `dev.seed` puts one device on `main` before
 the smoke branch forks, so both branches hold it; the smoke then mutates that device on
 `main` alone, and the registered workflow has one real cross-branch update to plan and
 apply. The mutation carries a fresh value on every run, because a fixed one would
@@ -39,20 +39,20 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import pytest
 
-from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
-from tests.preview.conftest import infrahub_host_url
-from tests.preview.evidence import canary_leaks, transcript_hooks
+from tasks.smoke_dataset import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
+from tests.dev_stack.smoke.conftest import infrahub_host_url
+from tests.dev_stack.smoke.evidence import canary_leaks, transcript_hooks
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = pytest.mark.preview
+pytestmark = pytest.mark.smoke
 
 POLL_TIMEOUT_SECONDS = 240
 
 # The fields the package maps. A mirror has to carry all of them, or the mirrored device
 # becomes an update rather than a match. The kind and the shared device's name come from
-# `tasks.preview`, whose `seed` task puts that device on `main` before the branch forks.
+# `tasks.smoke_dataset`, whose loader (`invoke dev.seed`) puts that device on `main` before the branch forks.
 SMOKE_FIELDS = ("name", "type")
 
 
@@ -68,7 +68,7 @@ def smoke_package(infrahub_url: str) -> dict[str, Any]:
     return {
         "format_version": 1,
         "configuration": {
-            "name": "preview-smoke-registered",
+            "name": "smoke-registered",
             "source": {
                 "name": "infrahub",
                 "settings": {"url": infrahub_url, "branch": "main", "token": {"$credential": "infrahub-token"}},
@@ -100,7 +100,7 @@ def smoke_package(infrahub_url: str) -> dict[str, Any]:
 
 def register_request(infrahub_url: str) -> dict[str, Any]:
     """The `POST /configs` body: a declared package plus its audit reason."""
-    return {"package": smoke_package(infrahub_url), "reason": "preview smoke: register the smoke configuration"}
+    return {"package": smoke_package(infrahub_url), "reason": "smoke: register the smoke configuration"}
 
 
 def create_run_request(config_id: str, registry_version: int) -> dict[str, Any]:
@@ -110,7 +110,7 @@ def create_run_request(config_id: str, registry_version: int) -> dict[str, Any]:
         "config_id": config_id,
         "registry_version": registry_version,
         "branch": SMOKE_BRANCH,
-        "reason": "preview smoke: create a service plan",
+        "reason": "smoke: create a service plan",
     }
 
 
@@ -120,7 +120,7 @@ def apply_run_request(checksum: str) -> dict[str, Any]:
         "expected_checksum": checksum,
         "confirm_writes": True,
         "branch": SMOKE_BRANCH,
-        "reason": "preview smoke: apply the reviewed plan",
+        "reason": "smoke: apply the reviewed plan",
     }
 
 
@@ -142,21 +142,21 @@ def unwritten_plan_reasons(summary: Mapping[str, Any]) -> list[str]:
     return reasons
 
 
-def _client(preview_env: dict[str, Any], token: str | None) -> httpx.Client:
+def _client(smoke_env: dict[str, Any], token: str | None) -> httpx.Client:
     headers = {}
     if token is not None:
         headers["Authorization"] = f"Bearer {token}"
-    return httpx.Client(base_url=preview_env["urls"]["sync_api"], headers=headers, timeout=30)
+    return httpx.Client(base_url=smoke_env["urls"]["sync_api"], headers=headers, timeout=30)
 
 
-def authenticated_client(preview_env: dict[str, Any], *, transcript: Path) -> httpx.Client:
+def authenticated_client(smoke_env: dict[str, Any], *, transcript: Path) -> httpx.Client:
     """The bearer-authenticated raw client, recording every exchange."""
-    client = _client(preview_env, preview_env["bearer_token"])
+    client = _client(smoke_env, smoke_env["bearer_token"])
     client.event_hooks = transcript_hooks(transcript)
     return client
 
 
-def idempotency_headers(prefix: str = "preview-smoke") -> dict[str, str]:
+def idempotency_headers(prefix: str = "smoke") -> dict[str, str]:
     """A fresh key per mutation, so a re-run never replays an earlier smoke's response."""
     return {"Idempotency-Key": f"{prefix}-{uuid.uuid4()}"}
 
@@ -183,10 +183,10 @@ def wait_for_phase(client: httpx.Client, run_id: str, target_phase: str) -> dict
     pytest.fail(f"run {run_id} did not reach {target_phase!r} within {POLL_TIMEOUT_SECONDS}s: {payload}")
 
 
-def _registered_version(client: httpx.Client, preview_env: dict[str, Any]) -> tuple[str, int]:
+def _registered_version(client: httpx.Client, smoke_env: dict[str, Any]) -> tuple[str, int]:
     """Register the smoke package and prove the returned version validates cleanly."""
     registered = client.post(
-        "/configs", headers=idempotency_headers(), json=register_request(preview_env["urls"]["infrahub"])
+        "/configs", headers=idempotency_headers(), json=register_request(smoke_env["urls"]["infrahub"])
     )
     assert registered.status_code == 201, registered.text
     version = registered.json()["version"]
@@ -198,13 +198,11 @@ def _registered_version(client: httpx.Client, preview_env: dict[str, Any]) -> tu
     return config_id, registry_version
 
 
-def infrahub_client(preview_env: dict[str, Any]) -> Any:  # noqa: ANN401 — the SDK's sync client
-    """An Infrahub SDK client for the preview instance, used as the smokes' own oracle."""
+def infrahub_client(smoke_env: dict[str, Any]) -> Any:  # noqa: ANN401 — the SDK's sync client
+    """An Infrahub SDK client for the stack's Infrahub, used as the smokes' own oracle."""
     from infrahub_sdk import InfrahubClientSync
 
-    return InfrahubClientSync(
-        address=infrahub_host_url(preview_env), config={"api_token": preview_env["infrahub_token"]}
-    )
+    return InfrahubClientSync(address=infrahub_host_url(smoke_env), config={"api_token": smoke_env["infrahub_token"]})
 
 
 def mirrored_device_payloads(nodes: Iterable[Any]) -> list[dict[str, Any]]:
@@ -227,13 +225,13 @@ def mutated_device_type() -> str:
     first apply writes it to the destination, the next run's mirror copies it back into
     `main`, the shared device then compares equal, and the plan holds no update at all.
     """
-    return f"preview-smoke-{uuid.uuid4().hex[:12]}"
+    return f"smoke-{uuid.uuid4().hex[:12]}"
 
 
 def mutation_payload(mutated_type: str) -> dict[str, Any]:
     """The single post-fork write on `main`: the shared device's new mapped values.
 
-    It names the device `preview.up` seeded before the smoke branch forked, so the write
+    It names the device `dev.seed` seeded before the smoke branch forked, so the write
     lands on one the destination already holds — an update, never a create.
     """
     return {"name": SHARED_DEVICE_NAME, "type": mutated_type}
@@ -244,7 +242,7 @@ def device_types(client: Any, branch: str) -> dict[str, Any]:  # noqa: ANN401 �
     return {node.name.value: node.type.value for node in client.all(kind=SMOKE_KIND, branch=branch)}
 
 
-def seed_source_branch(preview_env: dict[str, Any]) -> str:
+def seed_source_branch(smoke_env: dict[str, Any]) -> str:
     """Leave `main` differing from the destination in one device, and return its new type.
 
     Mirroring first is what removes everything else from the plan: `main` ends up holding
@@ -256,12 +254,12 @@ def seed_source_branch(preview_env: dict[str, Any]) -> str:
     Both writes upsert on the device's unique name, so a re-run converges rather than
     duplicating.
     """
-    client = infrahub_client(preview_env)
+    client = infrahub_client(smoke_env)
     payloads = mirrored_device_payloads(client.all(kind=SMOKE_KIND, branch=SMOKE_BRANCH))
     assert SHARED_DEVICE_NAME in {payload["name"] for payload in payloads}, (
-        f"{SHARED_DEVICE_NAME!r} is not on {SMOKE_BRANCH}; `tasks.preview.ensure_smoke_branch` seeds it on "
+        f"{SHARED_DEVICE_NAME!r} is not on {SMOKE_BRANCH}; `tasks.smoke_dataset.load_smoke_dataset` seeds it on "
         f"main before the branch forks, and without it this smoke has no update to plan; "
-        f"run `uv run invoke preview.seed`"
+        f"run `uv run invoke dev.seed`"
     )
     for payload in payloads:
         client.create(kind=SMOKE_KIND, branch="main", data=payload).save(allow_upsert=True)
@@ -270,19 +268,19 @@ def seed_source_branch(preview_env: dict[str, Any]) -> str:
     return mutated_type
 
 
-def test_requests_without_a_bearer_token_are_refused(preview_env: dict[str, Any]) -> None:
-    with _client(preview_env, token=None) as client:
+def test_requests_without_a_bearer_token_are_refused(smoke_env: dict[str, Any]) -> None:
+    with _client(smoke_env, token=None) as client:
         response = client.get("/runs/does-not-exist")
     assert response.status_code == 401
 
 
-def test_service_plan_and_apply_lifecycle(preview_env: dict[str, Any], evidence_dir: Path) -> None:  # noqa: PLR0914 — the row scans every direct-HTTP artifact
-    mutated_type = seed_source_branch(preview_env)
-    assert device_types(infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] != mutated_type
+def test_service_plan_and_apply_lifecycle(smoke_env: dict[str, Any], evidence_dir: Path) -> None:  # noqa: PLR0914 — the row scans every direct-HTTP artifact
+    mutated_type = seed_source_branch(smoke_env)
+    assert device_types(infrahub_client(smoke_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] != mutated_type
 
     transcript = evidence_dir / "service-lifecycle-http.jsonl"
-    with authenticated_client(preview_env, transcript=transcript) as client:
-        config_id, registry_version = _registered_version(client, preview_env)
+    with authenticated_client(smoke_env, transcript=transcript) as client:
+        config_id, registry_version = _registered_version(client, smoke_env)
 
         created = client.post(
             "/runs", headers=idempotency_headers(), json=create_run_request(config_id, registry_version)
@@ -344,11 +342,11 @@ def test_service_plan_and_apply_lifecycle(preview_env: dict[str, Any], evidence_
     }
     assert (
         canary_leaks(
-            preview_env["infrahub_token"],
+            smoke_env["infrahub_token"],
             {str(transcript): captured, "service lifecycle results body": results.content},
         )
         == []
     )
 
     # The destination now carries the value the source was mutated to.
-    assert device_types(infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] == mutated_type
+    assert device_types(infrahub_client(smoke_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] == mutated_type

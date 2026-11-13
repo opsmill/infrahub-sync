@@ -27,9 +27,10 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from tasks.preview import REPO_ROOT, SHARED_DEVICE_NAME, SMOKE_BRANCH
-from tests.preview.evidence import canary_leaks
-from tests.preview.test_service_api import (
+from tasks.smoke_dataset import SHARED_DEVICE_NAME, SMOKE_BRANCH
+from tasks.utils import REPO_BASE as REPO_ROOT
+from tests.dev_stack.smoke.evidence import canary_leaks
+from tests.dev_stack.smoke.test_service_api import (
     authenticated_client,
     device_types,
     infrahub_client,
@@ -42,7 +43,7 @@ if TYPE_CHECKING:
     from collections.abc import MutableMapping
     from pathlib import Path
 
-pytestmark = pytest.mark.preview
+pytestmark = pytest.mark.smoke
 
 # The CLI waits for its own run; bound it to the same budget the Sync API smoke polls
 # against, and give the subprocess room to exit after that wait expires.
@@ -53,7 +54,7 @@ PROCESS_TIMEOUT_SECONDS = WAIT_TIMEOUT_SECONDS + 60
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
-def cli_environment(preview_env: dict[str, Any]) -> dict[str, str]:
+def cli_environment(smoke_env: dict[str, Any]) -> dict[str, str]:
     """The settings one CLI invocation needs, with the renderer pinned.
 
     `NO_COLOR` and a fixed `COLUMNS` remove the only two things that make the shipped
@@ -62,8 +63,8 @@ def cli_environment(preview_env: dict[str, Any]) -> dict[str, str]:
     """
     return {
         **os.environ,
-        "INFRAHUB_SYNC_API_URL": preview_env["urls"]["sync_api"],
-        "INFRAHUB_SYNC_API_TOKEN": preview_env["bearer_token"],
+        "INFRAHUB_SYNC_API_URL": smoke_env["urls"]["sync_api"],
+        "INFRAHUB_SYNC_API_TOKEN": smoke_env["bearer_token"],
         "NO_COLOR": "1",
         "COLUMNS": "200",
     }
@@ -80,7 +81,7 @@ def fields(output: str) -> dict[str, str]:
 
 
 def run_cli_command(
-    preview_env: dict[str, Any],
+    smoke_env: dict[str, Any],
     *arguments: str,
     artifacts: MutableMapping[str, object],
     artifact_name: str,
@@ -93,7 +94,7 @@ def run_cli_command(
     completed = subprocess.run(  # noqa: S603
         ["uv", "run", "infrahub-sync", *arguments],  # noqa: S607 — resolved from PATH by design
         cwd=REPO_ROOT,
-        env=cli_environment(preview_env),
+        env=cli_environment(smoke_env),
         capture_output=True,
         text=True,
         timeout=PROCESS_TIMEOUT_SECONDS,
@@ -105,14 +106,14 @@ def run_cli_command(
 
 
 def run_cli(
-    preview_env: dict[str, Any],
+    smoke_env: dict[str, Any],
     *arguments: str,
     artifacts: MutableMapping[str, object],
     artifact_name: str,
 ) -> dict[str, str]:
     """Run the installed console script to success and return its parsed fields."""
     completed = run_cli_command(
-        preview_env,
+        smoke_env,
         *arguments,
         artifacts=artifacts,
         artifact_name=artifact_name,
@@ -124,37 +125,37 @@ def run_cli(
     return fields(completed.stdout)
 
 
-def package_file(preview_env: dict[str, Any], directory: Path) -> Path:
+def package_file(smoke_env: dict[str, Any], directory: Path) -> Path:
     """Write the smoke package where `configs register` can read it as an argument."""
-    path = directory / "preview-smoke-package.json"
-    path.write_text(json.dumps(smoke_package(preview_env["urls"]["infrahub"])), encoding="utf-8")
+    path = directory / "smoke-package.json"
+    path.write_text(json.dumps(smoke_package(smoke_env["urls"]["infrahub"])), encoding="utf-8")
     return path
 
 
 def test_cli_registers_plans_reviews_and_applies_against_the_service(  # noqa: PLR0914
-    preview_env: dict[str, Any], tmp_path: Path, evidence_dir: Path
+    smoke_env: dict[str, Any], tmp_path: Path, evidence_dir: Path
 ) -> None:
     """`configs register` → `diff` → `runs plan` → `apply`, proved through the API."""
-    mutated_type = seed_source_branch(preview_env)
-    assert device_types(infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] != mutated_type
+    mutated_type = seed_source_branch(smoke_env)
+    assert device_types(infrahub_client(smoke_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] != mutated_type
     artifacts: dict[str, object] = {}
 
     registered = run_cli(
-        preview_env,
+        smoke_env,
         "configs",
         "register",
-        str(package_file(preview_env, tmp_path)),
+        str(package_file(smoke_env, tmp_path)),
         "--reason",
-        "preview CLI smoke: register the smoke configuration",
+        "CLI smoke: register the smoke configuration",
         "--idempotency-key",
-        f"preview-cli-{uuid.uuid4()}",
+        f"smoke-cli-{uuid.uuid4()}",
         artifacts=artifacts,
         artifact_name="CLI lifecycle configs register",
     )
     config_id, registry_version = registered["config_id"], registered["registry_version"]
 
     planned = run_cli(
-        preview_env,
+        smoke_env,
         "plan",
         "--config-id",
         config_id,
@@ -163,9 +164,9 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(  # noqa: P
         "--branch",
         SMOKE_BRANCH,
         "--reason",
-        "preview CLI smoke: create a service plan",
+        "CLI smoke: create a service plan",
         "--idempotency-key",
-        f"preview-cli-{uuid.uuid4()}",
+        f"smoke-cli-{uuid.uuid4()}",
         "--wait-timeout",
         str(WAIT_TIMEOUT_SECONDS),
         "--poll-interval",
@@ -176,7 +177,7 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(  # noqa: P
     run_id, checksum = planned["run_id"], planned["plan_checksum"]
 
     oracle_transcript = evidence_dir / "cli-lifecycle-oracle-http.jsonl"
-    with authenticated_client(preview_env, transcript=oracle_transcript) as client:
+    with authenticated_client(smoke_env, transcript=oracle_transcript) as client:
         plan = client.get(f"/runs/{run_id}/plan")
         assert plan.status_code == 200, plan.text
         summary = plan.json()["summary"]
@@ -186,7 +187,7 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(  # noqa: P
         assert summary["by_action"].get("update", 0) == 1, summary
 
     reviewed = run_cli(
-        preview_env,
+        smoke_env,
         "runs",
         "plan",
         run_id,
@@ -198,7 +199,7 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(  # noqa: P
     assert reviewed["checksum_ok"] == "true"
 
     run_cli(
-        preview_env,
+        smoke_env,
         "apply",
         run_id,
         "--expected-checksum",
@@ -206,9 +207,9 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(  # noqa: P
         "--branch",
         SMOKE_BRANCH,
         "--reason",
-        "preview CLI smoke: apply the reviewed plan",
+        "CLI smoke: apply the reviewed plan",
         "--idempotency-key",
-        f"preview-cli-{uuid.uuid4()}",
+        f"smoke-cli-{uuid.uuid4()}",
         "--wait-timeout",
         str(WAIT_TIMEOUT_SECONDS),
         "--poll-interval",
@@ -218,7 +219,7 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(  # noqa: P
     )
 
     results_transcript = evidence_dir / "cli-lifecycle-results-oracle-http.jsonl"
-    with authenticated_client(preview_env, transcript=results_transcript) as client:
+    with authenticated_client(smoke_env, transcript=results_transcript) as client:
         recorded = client.get(f"/runs/{run_id}")
         assert recorded.status_code == 200, recorded.text
         assert recorded.json()["run"]["phase"] == "applied", recorded.text
@@ -235,6 +236,6 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(  # noqa: P
         }
     )
     artifacts[str(results_transcript)] = results_transcript.read_text(encoding="utf-8")
-    assert canary_leaks(preview_env["infrahub_token"], artifacts) == []
+    assert canary_leaks(smoke_env["infrahub_token"], artifacts) == []
 
-    assert device_types(infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] == mutated_type
+    assert device_types(infrahub_client(smoke_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] == mutated_type
