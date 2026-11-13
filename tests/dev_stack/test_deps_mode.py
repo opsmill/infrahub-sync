@@ -313,6 +313,42 @@ def test_an_external_object_store_needs_no_bundled_store_publication() -> None:
     assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == EXTERNAL_ENDPOINT
 
 
+def _without_bundled_store(resolved: dict[str, Any]) -> dict[str, Any]:
+    """The model Compose resolves with INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0: `object-store` keeps its port."""
+    resolved["services"]["object-store"]["scale"] = 0
+    return resolved
+
+
+@pytest.mark.parametrize("service", HOST_SERVICES)
+def test_host_processes_keep_the_external_store_that_replaces_the_bundled_one(service: str) -> None:
+    settings = dev.parse_dev_settings(_without_bundled_store(_with_external_store(_resolved(infrahub=True))))
+
+    environment = dev.host_environment(settings, cast("Any", service))
+
+    assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == EXTERNAL_ENDPOINT
+
+
+def test_host_processes_refuse_the_bundled_endpoint_without_the_bundled_store() -> None:
+    # The published port of a store with `scale: 0` names no container.
+    settings = dev.parse_dev_settings(_without_bundled_store(_resolved(infrahub=True)))
+
+    with pytest.raises(dev.DevStackError) as raised:
+        dev.host_environment(settings, "sync-worker")
+
+    assert "INFRAHUB_SYNC_S3_ENDPOINT_URL" in str(raised.value)
+    assert "INFRAHUB_SYNC_BUNDLED_OBJECT_STORE" in str(raised.value)
+
+
+def test_dev_deps_refuses_the_bundled_endpoint_without_the_bundled_store(context: Context, fake: FakeDocker) -> None:
+    fake.resolve = _without_bundled_store
+
+    with pytest.raises(dev.DevStackError, match="INFRAHUB_SYNC_BUNDLED_OBJECT_STORE"):
+        _body(dev.dev_deps)(context)
+
+    # Refused before anything starts.
+    assert fake.compose_commands() == []
+
+
 def test_dev_deps_prints_the_external_object_store(
     context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

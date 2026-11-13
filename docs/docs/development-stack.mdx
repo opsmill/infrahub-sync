@@ -179,6 +179,17 @@ PostgreSQL, the object store and the Prefect server moved to their loopback port
 starts a background process or writes a process ID file. After a code change, stop the process
 with Ctrl-C and run the task again.
 
+The two processes also take the object store and CA settings of the
+[Compose deployment](./compose-deployment.mdx):
+
+- With `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0` and `INFRAHUB_SYNC_S3_ENDPOINT_URL` set to a store
+  you run, both processes use that endpoint, and `dev.deps` prints it as the object store. If
+  `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0` is set without an endpoint, `dev.deps`, `dev.api` and
+  `dev.worker` refuse to start and name both settings.
+- With `INFRAHUB_SYNC_CA_CERTIFICATES` set, both processes trust the certificates in that host
+  directory. A relative path is relative to the `development/` directory, as it is for the
+  containers. Unset, the processes trust no extra certificate.
+
 In the first terminal, run the smoke suite:
 
 ```bash
