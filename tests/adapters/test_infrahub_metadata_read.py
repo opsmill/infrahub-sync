@@ -266,7 +266,6 @@ class Destination(InfrahubAdapter):
         self.config = _config()
         self.client = client
         self.schema = dict(SCHEMAS)
-        self.continue_on_error = False
         self._peer_unique_ids = {}
         self.metadata_read = False
         self.last_changes = {}

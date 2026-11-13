@@ -13,20 +13,28 @@ from infrahub_sdk.exceptions import Error as InfrahubSDKError
 from infrahub_sdk.exceptions import GraphQLError, ServerNotResponsiveError
 from tqdm import tqdm
 
-from infrahub_sync import resolve_effective_diffsync_flags
+from infrahub_sync import DiffSyncMixin, resolve_effective_diffsync_flags
 from infrahub_sync.infrahub_errors import classify_infrahub_error
+from infrahub_sync.load_report import source_record_id
 
 # These plan imports are cheap; imports that reach pyarrow stay deferred below.
 from infrahub_sync.plan.config_version import resolve_config_version, validate_config_version
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
+    LeftOutConfirmationRequiredError,
     OperationApplyFailedError,
     PlanArtifactError,
     PlanFormatApplyUnsupportedError,
     PlanVerificationError,
     SkippedDeleteOperation,
 )
-from infrahub_sync.plan.models import ACTIONS, DESTINATION_ID_FORMAT_VERSION, ApplyRecord, ordered_checks
+from infrahub_sync.plan.models import (
+    ACTIONS,
+    DESTINATION_ID_FORMAT_VERSION,
+    REPORT_FORMAT_VERSION,
+    ApplyRecord,
+    ordered_checks,
+)
 from infrahub_sync.plan.write_surface import (
     LineageResolvingDestination,
     PlannedWriteDestination,
@@ -74,11 +82,49 @@ OPERATIONAL_APPLY_FAILURES: tuple[type[Exception], ...] = (
     InfrahubSDKError,
 )
 
+
+class SideLoadError(ValueError):
+    """Reading one side of the sync failed (spec 020 research R12).
+
+    `role` is `source` or `destination`, and `adapter` the adapter name the sync configuration
+    declares, else the adapter's type. The error that stopped the read is kept as `__cause__`.
+    A subclass of `ValueError`, so every handler that matches `ValueError` still matches it.
+    """
+
+    def __init__(self, message: str, *, role: Side, adapter: str) -> None:
+        super().__init__(message)
+        self.role: Side = role
+        self.adapter = adapter
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Keep the named attributes when the error is pickled, as it is across a process boundary.
+        return (_rebuild_side_load_error, (str(self), self.role, self.adapter))
+
+
+def _rebuild_side_load_error(message: str, role: Side, adapter: str) -> SideLoadError:
+    return SideLoadError(message, role=role, adapter=adapter)
+
+
+def _admits_records(adapter: Adapter) -> bool:
+    """Tell whether an adapter reads through the read loop of `DiffSyncMixin` (`load_record`)."""
+    return isinstance(adapter, DiffSyncMixin)
+
+
+def _side_adapter_name(config: SyncInstance | None, role: Side, adapter: Adapter) -> str:
+    """The adapter name of one side: the configured name, else the adapter's type or class name."""
+    declared = getattr(config, role, None) if config is not None else None
+    name = getattr(declared, "name", None)
+    if isinstance(name, str) and name:
+        return name
+    adapter_type = getattr(type(adapter), "type", None)
+    return adapter_type if isinstance(adapter_type, str) and adapter_type else type(adapter).__name__
+
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from diffsync import Adapter
+    from diffsync import Adapter, DiffSyncModel
     from diffsync.diff import Diff
     from diffsync.enum import DiffSyncFlags
 
@@ -177,15 +223,34 @@ def _require_applyable_format(manifest: PlanManifest, *, run_id: str) -> None:
     id alone. Applying one would fall back to the create-shaped convergent upsert, whose
     failure mode on an incomplete payload is a silent duplicate — so the plan is read,
     rendered for review, and refused at the write.
+
+    A format-3 plan was never checked for problems and carries no count of left-out records,
+    so the person cannot confirm what it leaves out (spec 020 SC-006, research R9).
     """
-    if manifest.format_version >= DESTINATION_ID_FORMAT_VERSION:
+    if manifest.format_version >= REPORT_FORMAT_VERSION:
         return
+    reason = (
+        "its updates carry no recorded destination id, so they cannot be keyed"
+        if manifest.format_version < DESTINATION_ID_FORMAT_VERSION
+        else "it was never checked for problems and records no count of the records it leaves out"
+    )
     msg = (
         f"The plan artifact of run {run_id!r} declares format version {manifest.format_version}, which "
-        f"this version of infrahub-sync can read and review but cannot apply: its updates carry no "
-        f"recorded destination id, so they cannot be keyed. Nothing was written to the destination."
+        f"this version of infrahub-sync can read and review but cannot apply: {reason}. "
+        "Nothing was written to the destination."
     )
     raise PlanFormatApplyUnsupportedError(msg)
+
+
+def _require_left_out_confirmation(manifest: PlanManifest, *, run_id: str, confirm_left_out: bool) -> None:
+    """Refuse a plan that leaves out records unless the apply confirms it (spec 020 FR-010).
+
+    The count is the manifest's, which the plan checksum binds, so it is the count of the plan
+    this call applies. A plan that leaves out nothing accepts and ignores a confirmation.
+    """
+    left_out = 0 if manifest.report is None else manifest.report.left_out
+    if left_out > 0 and not confirm_left_out:
+        raise LeftOutConfirmationRequiredError(left_out, run_id=run_id)
 
 
 def _validate_infrahub_plan_payload(
@@ -308,13 +373,11 @@ class Potenda:
         run_id: str | None = None,
         cache_root: Path | None = None,
         schema_subhash: str = "",
-        continue_on_error: bool = False,
         concurrent_load: bool = True,
     ):
         """Initialize adapters, execution options, and per-run cache state."""
         self.top_level = top_level
         self.tiers: list[set[str]] | None = tiers
-        self.continue_on_error = continue_on_error
         self.concurrent_load = concurrent_load
         # Cache/run identity — passed at construction so the object is fully
         # valid on return rather than mutated into shape by the caller.
@@ -360,11 +423,6 @@ class Potenda:
         # diffsync's `Adapter.top_level` is a ClassVar but the library supports per-instance overrides.
         self.source.top_level = top_level  # ty: ignore[invalid-attribute-access]
         self.destination.top_level = top_level  # ty: ignore[invalid-attribute-access]
-
-        # Propagate continue_on_error so adapters can skip bad peers in-loop.
-        # Adapters that don't read the attribute just ignore it.
-        self.source.continue_on_error = continue_on_error  # ty: ignore[unresolved-attribute]
-        self.destination.continue_on_error = continue_on_error  # ty: ignore[unresolved-attribute]
 
         self.partition = partition
         self.progress_bar = None
@@ -421,8 +479,14 @@ class Potenda:
             return
         from datetime import datetime, timezone
 
+        from infrahub_sync.cache.incremental import (
+            SOURCE_READ_COMPLETE,
+            SOURCE_READ_INCOMPLETE,
+            SOURCE_READ_METADATA_KEY,
+        )
         from infrahub_sync.cache.parquet_io import write_resource_side
 
+        admits = side == "A" and _admits_records(adapter)
         extract_ts = datetime.now(timezone.utc)
         # Snapshot timestamps are diagnostic metadata, never incremental bounds.
         for kind in adapter.top_level:
@@ -432,16 +496,25 @@ class Potenda:
             # keyed by. Without it a warm run rebuilds destination models with no id and
             # every derived update is refused. It is written as its own column and never
             # conflated with the engine-controlled `_source_id`, which is DiffSync's
-            # unique-id string and keys nothing at the destination.
+            # unique-id string and keys nothing at the destination. Side A carries `local_id`,
+            # the source record ID, when the source admits records through `load_record`, so a
+            # warm read resolves references to unchanged records (research R22).
+            carries_local_id = side == "B" or admits
             rows = [
                 {
                     **(r.get_identifiers() if hasattr(r, "get_identifiers") else {}),
                     **r.get_attrs(),
-                    **({"local_id": getattr(r, "local_id", None)} if side == "B" else {}),
+                    **({"local_id": getattr(r, "local_id", None)} if carries_local_id else {}),
                 }
                 for r in records
             ]
             source_ids = [r.get_unique_id() for r in records]
+            metadata = None
+            if admits:
+                complete = adapter.kind_read_is_clean(kind) and all(  # ty: ignore[unresolved-attribute]
+                    source_record_id(getattr(r, "local_id", None)) is not None for r in records
+                )
+                metadata = {SOURCE_READ_METADATA_KEY: SOURCE_READ_COMPLETE if complete else SOURCE_READ_INCOMPLETE}
             if side == "A":
                 self._counts[kind] = len(records)
             write_resource_side(
@@ -451,6 +524,7 @@ class Potenda:
                 rows=rows,
                 source_ids=source_ids,
                 extract_ts=extract_ts,
+                metadata=metadata,
             )
 
     def load_one_side(self, *, side: str, adapter: Adapter) -> None:
@@ -500,6 +574,20 @@ class Potenda:
 
         cursors = load_cursors(prev_run / "cursors.json", side=side)
         full_resources: set[str] = set()
+        if side == "A" and _admits_records(adapter):
+            # A source with the read loop admits its changed records through `load_record`.
+            self._load_source_kinds(
+                adapter=cast("DiffSyncMixin", adapter),
+                prev_run=prev_run,
+                models=models,
+                cursors=cursors,
+                next_cursors=next_cursors,
+                full_resources=full_resources,
+            )
+            self._side_full_extract[side] = full_resources == set(adapter.top_level)
+            self._did_full_extract = self._did_full_extract or self._side_full_extract[side]
+            self._side_cursors[side] = next_cursors
+            return
         for resource in adapter.top_level:
             tier_supported = adapter.cursor_tier_for(resource)  # ty: ignore[unresolved-attribute]
             cursor = cursors.get(resource)
@@ -540,6 +628,77 @@ class Potenda:
         self._did_full_extract = self._did_full_extract or self._side_full_extract[side]
         self._side_cursors[side] = next_cursors
 
+    def _load_source_kinds(  # pylint: disable=too-many-arguments
+        self,
+        *,
+        adapter: DiffSyncMixin,
+        prev_run: Path,
+        models: Mapping[str, type[DiffSyncModel]],
+        cursors: Mapping[str, CursorState],
+        next_cursors: Mapping[str, CursorState],
+        full_resources: set[str],
+    ) -> None:
+        """Read each kind of a source with the read loop, warm where that gives a cold read's result.
+
+        A kind reads warm only when the adapter implements `list_changed_records`, the previous
+        snapshot of the kind is marked complete, and no peer kind it references was unclean
+        earlier in this read. A warm read that records a load report entry is discarded and the
+        kind is read cold. A kind whose read records an entry, or whose warm read stored a
+        changed record under another unique ID, is unclean (research R22).
+        """
+        from infrahub_sync.cache.incremental import (
+            hydrate_from_parquet,
+            referenced_kinds,
+            source_snapshot_is_complete,
+        )
+
+        unclean: set[str] = set()
+        for resource in adapter.top_level:
+            model_cls = models[resource]
+            cursor = cursors.get(resource)
+            reason = None
+            if (
+                cursor is None
+                or not cursor.safe
+                or cursor.tier is not adapter.cursor_tier_for(resource)
+                or resource not in next_cursors
+            ):
+                reason = "no safe cursor"
+            elif not adapter.implements_list_changed_records():
+                reason = "the source adapter does not implement list_changed_records"
+            elif not source_snapshot_is_complete(run_dir=prev_run, resource=resource):
+                reason = "the previous snapshot is missing, older, or holds records the read left out"
+            elif referenced_kinds(self.config, resource) & unclean:
+                reason = "a peer kind it references was read with problems or renamed records"
+            if reason is None:
+                start = len(adapter.load_report.entries)
+                hydrate_from_parquet(
+                    run_dir=prev_run,
+                    side="A",
+                    resource=resource,
+                    add_row=lambda _name, payload, _model=model_cls: adapter.restore_record(_model, payload),
+                )
+                identities_changed = adapter.load_changed_records(resource, model_cls, cast("CursorState", cursor))
+                if not adapter.kind_read_is_clean(resource):
+                    reason = "the changed records hold problems"
+                elif not identities_changed:
+                    continue
+                elif resource not in referenced_kinds(self.config, resource):
+                    # Unchanged records that reference a renamed record hold its old identity.
+                    unclean.add(resource)
+                    continue
+                else:
+                    # The kind references itself: its own unchanged records hold the old identity
+                    # of a renamed record, so the kind is read in full, and so are its referrers.
+                    unclean.add(resource)
+                    reason = "a record that other records of its kind reference was renamed"
+                adapter.discard_kind(resource, entries_from=start)
+            logger.info("Incremental: reading source kind %s in full (%s)", resource, reason)
+            adapter.model_loader(model_name=resource, model=model_cls)
+            full_resources.add(resource)
+            if not adapter.kind_read_is_clean(resource):
+                unclean.add(resource)
+
     def _load_side(self, *, side: str, adapter: Adapter) -> None:
         """Keep cursors publishable only when loading and snapshotting both succeed.
 
@@ -559,7 +718,9 @@ class Potenda:
             # The class name only: the message can hold an address or a secret (FR-013).
             self._end_read(side_name, SideReadReport(succeeded=False, error_class=type(exc).__name__))
             msg = f"An error occurred while loading {adapter}: {exc!s}"
-            raise ValueError(msg) from exc
+            raise SideLoadError(
+                msg, role=side_name, adapter=_side_adapter_name(self.config, side_name, adapter)
+            ) from exc
         finally:
             if not completed:
                 self._side_cursors.pop(side, None)
@@ -757,8 +918,11 @@ class Potenda:
             tier_of,
             warn_missing_convergence_key,
         )
+        from infrahub_sync.plan.last_changes import selected_last_changes
         from infrahub_sync.plan.models import SourceSnapshotRecord
+        from infrahub_sync.plan.problems import run_problem_pass
         from infrahub_sync.plan.writer import write_plan_artifact as write_artifact
+        from infrahub_sync.runtime_schema.worker import planned_dropdown_choices
 
         resolve_tier = partial(tier_of, tiers=self.tiers, top_level=self.top_level)
         last_changes = destination_last_changes(self.destination)  # FR-007; `None` writes no last-change file
@@ -790,16 +954,27 @@ class Potenda:
                 destination_full_extract=deletes_computed,
             )
         )
+        identity_groups = warn_missing_convergence_key(
+            destination=self.destination, operations=operations, source_adapter=self.source, config=self.config
+        )
+        # Spec 020 research R3: find every problem, then leave out the records that have one and
+        # the records that depend on them, before anything is written. The report and the
+        # selected operations are the plan; no store and no derived operation is changed.
+        result = run_problem_pass(
+            source=self.source,
+            destination=self.destination,
+            operations=operations,
+            config=self.config,
+            identity_groups=identity_groups,
+            dropdown_choices=planned_dropdown_choices(self.config),
+        )
+        operations = result.operations
         action_counts: dict[str, int] = dict.fromkeys(ACTIONS, 0)
         for operation in operations:
             action_counts[operation.action] += 1
 
-        warn_missing_convergence_key(
-            destination=self.destination, operations=operations, source_adapter=self.source, config=self.config
-        )
-
         if not self.run_dir or not self.run_id:
-            logger.debug("Plan artifact: skipped after identity checks, this run has no run_dir/run_id")
+            logger.debug("Plan artifact: skipped after the problem pass, this run has no run_dir/run_id")
             return None
 
         manifest = write_artifact(
@@ -815,8 +990,10 @@ class Potenda:
             configuration_binding=self.configuration_binding,
             schema_fingerprint=self.schema_fingerprint,
             lineage=destination_lineage_record(self.destination),
-            last_changes=None if last_changes is None else last_changes.records,
+            last_changes=None if last_changes is None else selected_last_changes(last_changes.records, operations),
             metadata_read=last_changes is not None and last_changes.metadata_read,
+            report=result.report,
+            dropdown_values_checked=result.dropdown_values_checked,
         )
         logger.info(
             "Plan artifact: wrote %d operation(s) to %s (deletes computed: %s)",
@@ -852,6 +1029,7 @@ class Potenda:
         config_version: str | None = None,
         artifact: RawPlanArtifact | None = None,
         expected_checksum: str | None = None,
+        confirm_left_out: bool = False,
     ) -> ApplyRecord:
         """Apply this run's saved plan artifact to the destination, and return what it did.
 
@@ -894,6 +1072,9 @@ class Potenda:
                 **authoritative** answer to `--expected-checksum`, because it is given about
                 the bytes this call applies; a caller's earlier check is a fast path, not a
                 substitute. `None` asks for no approval comparison at all.
+            confirm_left_out: The person confirmed that they reviewed the records the plan
+                leaves out. Required when the plan's report leaves out any record, and
+                ignored otherwise (spec 020 FR-010, FR-011).
 
         Returns:
             The `ApplyRecord`: the ordered applied identifiers (whose final element is
@@ -908,6 +1089,9 @@ class Potenda:
             PlanArtifactTornError: an operations record fails validation for a reason the
                 line count cannot see (FR-010).
             UnsupportedOperationActionError: an operation's `action` is outside `ACTIONS`.
+            PlanFormatApplyUnsupportedError: the plan's format is 2 or 3; nothing was written.
+            LeftOutConfirmationRequiredError: the plan leaves out records and
+                `confirm_left_out` is false; nothing was written.
             OperationApplyFailedError: an operation failed inside the operational boundary
                 (`OPERATIONAL_APPLY_FAILURES`), carrying the partial record.
             ApplyRecordInvariantError: a completed apply's record does not account for every
@@ -944,6 +1128,12 @@ class Potenda:
         # The gate evaluated the write-surface check, so passing it proves the surface is
         # present — the cast narrows for the type checker; it is not a second gate.
         destination = cast("PlannedWriteDestination", self.destination)
+
+        # The person's confirmation of the records the plan leaves out. Checked after
+        # `check_plan`, not inside it: `verify` takes no confirmation, so it does not run this
+        # check. The Sync API checks this too, and a direct caller of this method cannot skip
+        # it; refused before the first dispatch, so nothing is written.
+        _require_left_out_confirmation(loaded.manifest, run_id=run_id, confirm_left_out=confirm_left_out)
         self._last_applied_plan_action_counts = {
             action: sum(operation.action == action for operation in loaded.operations) for action in ACTIONS
         }
@@ -955,6 +1145,8 @@ class Potenda:
 
         applied: list[str] = []
         skipped_deletes: list[str] = []
+        # Read from the plan for the failure record of a stopped apply (spec 020 FR-014).
+        operations_total = len(loaded.operations)
         for operation in loaded.operations:
             if operation.action == "delete":
                 skipped_deletes.append(operation.operation_id)
@@ -969,6 +1161,7 @@ class Potenda:
                 exc.apply_record = ApplyRecord(  # ty: ignore[unresolved-attribute]
                     applied_operations=tuple(applied),
                     skipped_delete_operations=tuple(skipped_deletes),
+                    operations_total=operations_total,
                 )
                 raise
             try:
@@ -987,6 +1180,12 @@ class Potenda:
                     # whether it got as far as a mutation. `None` for anything that does not
                     # say, which is the unchanged "may have written" reading (S6).
                     failed_operation_wrote=getattr(exc, "wrote", None),
+                    operations_total=operations_total,
+                    failed_operation_detail={
+                        "action": operation.action,
+                        "kind": operation.kind,
+                        "identity": dict(operation.identity),
+                    },
                 )
                 if not isinstance(exc, OPERATIONAL_APPLY_FAILURES):
                     # An interrupt or a defect: it propagates as itself, with its own

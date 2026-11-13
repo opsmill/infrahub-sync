@@ -105,6 +105,7 @@ $ infrahub-sync apply [OPTIONS] {run_id}
 * `--expected-checksum <str>`: Checksum printed by `runs plan`.  [required]
 * `--reason <str>`: Optional audit reason for the apply.
 * `--branch <str>`: Destination branch admitted by the Sync API.
+* `--confirm-left-out`: Confirm that you reviewed the records the plan leaves out; required when it leaves out any.
 * `--idempotency-key <str>`: Retry key.
 * `--wait / --no-wait`: Wait for this run&#x27;s apply execution.  [default: wait]
 * `--wait-timeout <float>`: Bounded wait in seconds.  [default: 1800.0]
@@ -326,6 +327,7 @@ $ infrahub-sync configs validate [OPTIONS] {CONFIG} {version}
 
 * `--offset <int>`: Finding offset.  [default: 0]
 * `--limit <int>`: Maximum findings to return.  [default: 256]
+* `--branch <str>`: Also check the mapping, the import account&#x27;s permissions and the workers&#x27; credential variables against this Infrahub branch. Exits 1 when a finding on the returned page is an error; read every page with --offset to check them all.
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync runs`
@@ -421,6 +423,7 @@ keys that have no value. A side with no read state to return reads &lt;none&gt;.
 execution has no read state: a run recorded before the read state, a stage the worker has not started, or a
 stage whose read state the worker could not store.
 A failed stage adds its error type and, when the run recorded them, a `cause:` and a `hint:` line.
+A `sync` that stopped after a plan that leaves out records adds a `sync stopped:` and a `hint:` line.
 
 **Usage**:
 
@@ -456,7 +459,7 @@ $ infrahub-sync runs results [OPTIONS] {run_id}
 
 ### `infrahub-sync runs plan`
 
-Review a saved plan summary, checksum, and operations.
+Review a saved plan summary, checksum, and operations, or list its problems, left-out or kept records.
 
 **Usage**:
 
@@ -471,7 +474,11 @@ $ infrahub-sync runs plan [OPTIONS] {run_id}
 **Options**:
 
 * `--detail`: Render every saved operation.
-* `--kind <str>`: Filter the detailed operation list by destination kind; requires --detail.
+* `--kind <str>`: Filter the detailed operation list, or the problem, left-out or kept list, by destination kind.
+* `--problems`: List every problem the plan found.
+* `--left-out`: List every record the plan leaves out.
+* `--kept`: List every record the plan keeps without one optional relationship.
+* `--type <str>`: List only the problems of this problem type; requires --problems.
 * `--help`: Show this message and exit.
 
 ### `infrahub-sync runs logs`

@@ -61,8 +61,24 @@ def service_sync_run(
     expected_checksum: str | None = None,
     confirm_writes: bool = False,
     configuration_name: str | None = None,
+    confirm_left_out: bool = False,
 ) -> dict[str, Any]: ...
 ```
+
+`confirm_left_out` is the person's confirmation that they reviewed the records a plan leaves
+out (spec 020). The API adds it to the flow parameters only when it is true, so an apply that
+confirms nothing keeps the parameters of earlier releases. The worker passes it to
+`Potenda.apply_plan`, which checks it again against the plan manifest's left-out count and
+raises `LeftOutConfirmationRequiredError` before any write when it is missing. Because the
+deployment's parameter schema must list the parameter, the deployment is applied again
+(`python -m infrahub_sync.service.deploy`, or the Compose `sync-bootstrap` job) before or
+together with the Sync API of the release that sends it.
+
+A `sync` stage whose plan leaves out records does not write. After the plan checkpoint,
+`service_sync_run` commits the stage as phase `planned`, outcome `left-out-review-required`,
+with a `failure` in the stage result (`failure_type: left_out_review_required`, `left_out`,
+`next_action`), and the store releases the run's write admission in the same commit, so a
+confirmed `apply` can follow once. The stage event is recorded as `succeeded`.
 
 `configuration_name` is the configuration's readable name and serves only the run's
 title. The API sets the title when Prefect accepts the run, and `flow_run_name` sets it
@@ -117,8 +133,11 @@ stored that outcome in the run record
   `prefect_context` flag of `_run_logger`). The artifact always holds the run ID, the stage
   and the outcome. It also holds `config_id@registry_version`, the destination branch, and
   the operation counts by action and by kind, each only when the run record has that value.
+  A `plan` or `sync` stage whose summary records them adds `Records left out: <n> (with a
+  problem: <n>, depending on one: <n>)` and `Problems: <n>`.
   It ends with the next steps: `runs show`, `runs plan <id> --detail` when the run
-  holds a saved plan review, then the next action. The key is `sync-run-<run_id>-<stage>`,
+  holds a saved plan review, `runs plan <id> --problems` and `runs plan <id> --left-out` when
+  the plan leaves out records, then the next action. The key is `sync-run-<run_id>-<stage>`,
   lowercased, with every character other than `a-z`, `0-9` and `-` replaced by a dash,
   because Prefect artifact keys accept only those characters. A later flow run of the same
   stage adds a version to the same key. The markdown passes through `redact` before it is

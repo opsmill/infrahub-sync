@@ -1,0 +1,76 @@
+{
+  "name": "problem-fixture",
+  "source": {"name": "problem_fixture", "settings": {"url": "https://source.invalid"}},
+  "destination": {"name": "infrahub", "settings": {"url": "https://destination.invalid"}},
+  "order": [
+    "LocationSite",
+    "IpamVRF",
+    "LocationRack",
+    "DcimDevice",
+    "InterfacePhysical",
+    "InterfaceVirtual",
+    "IpamIPAddress"
+  ],
+  "schema_mapping": [
+    {
+      "name": "LocationSite",
+      "mapping": "dcim.sites",
+      "identifiers": ["name"],
+      "fields": [{"name": "name", "mapping": "name"}, {"name": "status", "mapping": "status"}]
+    },
+    {
+      "name": "IpamVRF",
+      "mapping": "ipam.vrfs",
+      "identifiers": ["name"],
+      "transforms": [{"field": "name", "expression": "{{ {'default': 'default', 'mgmt': 'mgmt'}[name] }}"}],
+      "fields": [{"name": "name", "mapping": "name"}]
+    },
+    {
+      "name": "LocationRack",
+      "mapping": "dcim.racks",
+      "identifiers": ["name", "facility_id"],
+      "fields": [
+        {"name": "name", "mapping": "name"},
+        {"name": "facility_id", "mapping": "facility_id"},
+        {"name": "description", "mapping": "description"}
+      ]
+    },
+    {
+      "name": "DcimDevice",
+      "mapping": "dcim.devices",
+      "identifiers": ["name", "serial"],
+      "filters": [{"field": "role", "operation": "!=", "value": "lab"}],
+      "fields": [
+        {"name": "name", "mapping": "name"},
+        {"name": "serial", "mapping": "serial"},
+        {"name": "position", "mapping": "position"},
+        {"name": "site", "mapping": "site", "reference": "LocationSite"}
+      ]
+    },
+    {
+      "name": "InterfacePhysical",
+      "mapping": "dcim.interfaces",
+      "identifiers": ["name", "device"],
+      "fields": [{"name": "name", "mapping": "name"}, {"name": "device", "mapping": "device", "reference": "DcimDevice"}]
+    },
+    {
+      "name": "InterfaceVirtual",
+      "mapping": "dcim.virtual_interfaces",
+      "identifiers": ["name", "parent"],
+      "fields": [
+        {"name": "name", "mapping": "name"},
+        {"name": "parent", "mapping": "parent", "reference": "InterfacePhysical"}
+      ]
+    },
+    {
+      "name": "IpamIPAddress",
+      "mapping": "ipam.ip_addresses",
+      "identifiers": ["address"],
+      "fields": [
+        {"name": "address", "mapping": "address"},
+        {"name": "device", "mapping": "device", "reference": "DcimDevice"},
+        {"name": "vrf", "mapping": "vrf", "reference": "IpamVRF"}
+      ]
+    }
+  ]
+}

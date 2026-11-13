@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # one method per Sync API operation
 """Synchronous client for the Sync HTTP API."""
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from .models import (
     LOG_STAGES,
     MAX_LIMIT,
     MAX_LOG_LIMIT,
+    MAX_REPORT_LIMIT,
     MIN_LIMIT,
     ApplyRunRequest,
     ApprovedRunResource,
@@ -49,6 +51,7 @@ from .models import (
     EventResource,
     ListPage,
     OrchestrationSummary,
+    PlanReportPageResource,
     PlanResource,
     PrincipalResource,
     PublicRunResource,
@@ -81,6 +84,10 @@ _TOKEN_ARG = "token"
 _TIMEOUT_ARG = "timeout"
 _OFFSET_ARG = "offset"
 _LIMIT_ARG = "limit"
+_BRANCH_ARG = "branch"
+_EXPECTED_CHECKSUM_ARG = "expected_checksum"
+# A saved plan's checksum: 64 lowercase hexadecimal characters.
+_PLAN_CHECKSUM = re.compile(r"[0-9a-f]{64}")
 _CURSOR_ARG = "cursor"
 _NAME_ARG = "name"
 _CONFIG_ID_ARG = "config_id"
@@ -299,9 +306,13 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         )
 
     def validate_config(
-        self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = 256
+        self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = 256, branch: str | None = None
     ) -> ValidationReportResource:
-        """Validate a configuration version and return one findings page."""
+        """Validate a configuration version and return one findings page.
+
+        With ``branch``, the service also checks the mapping, the import account's permissions
+        and the workers' credential variables against that Infrahub branch (spec 020 FR-034).
+        """
 
         config_id = self._identifier(config_id, "config_id")
         version = self._positive_integer(registry_version, "registry_version")
@@ -309,13 +320,18 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             raise ClientInputError(_OFFSET_ARG)
         if type(limit) is not int or not 1 <= limit <= 256:  # pylint: disable=unidiomatic-typecheck
             raise ClientInputError(_LIMIT_ARG)
+        # The service refuses an empty name and one with surrounding whitespace (`parse_branch`).
+        if branch is not None and (type(branch) is not str or not branch.strip() or branch != branch.strip()):  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_BRANCH_ARG)
         return self._request_model(
             "validate_config",
             "POST",
             f"/configs/{config_id}/versions/{version}/validate",
             model=ValidationReportResource,
             success={200},
-            params={"offset": offset, "limit": limit},
+            params={"offset": offset, "limit": limit}
+            if branch is None
+            else {"offset": offset, "limit": limit, "branch": branch},
             config_route=True,
         )
 
@@ -498,6 +514,112 @@ class SyncClient:  # pylint: disable=too-many-public-methods
 
         run_id = self._identifier(run_id, "run_id")
         return self._request_model("get_plan", "GET", f"/runs/{run_id}/plan", model=PlanResource, success={200})
+
+    def get_plan_problems(
+        self,
+        run_id: str,
+        *,
+        offset: int = 0,
+        limit: int = MAX_REPORT_LIMIT,
+        problem_type: str | None = None,
+        kind: str | None = None,
+        expected_checksum: str | None = None,
+    ) -> PlanReportPageResource:
+        """Return one page of a saved plan's problems, optionally of one problem type or kind (spec 020).
+
+        With `expected_checksum`, the Sync API refuses the read (409 `plan-changed`) when the
+        saved plan has another checksum; the same holds for the left-out and kept lists.
+        """
+
+        return self._plan_report_page(
+            "get_plan_problems",
+            run_id,
+            "problems",
+            offset=offset,
+            limit=limit,
+            problem_type=problem_type,
+            kind=kind,
+            expected_checksum=expected_checksum,
+        )
+
+    def get_plan_left_out(
+        self,
+        run_id: str,
+        *,
+        offset: int = 0,
+        limit: int = MAX_REPORT_LIMIT,
+        kind: str | None = None,
+        expected_checksum: str | None = None,
+    ) -> PlanReportPageResource:
+        """Return one page of the records a saved plan leaves out, optionally of one kind (spec 020)."""
+
+        return self._plan_report_page(
+            "get_plan_left_out",
+            run_id,
+            "left-out",
+            offset=offset,
+            limit=limit,
+            kind=kind,
+            expected_checksum=expected_checksum,
+        )
+
+    def get_plan_kept(
+        self,
+        run_id: str,
+        *,
+        offset: int = 0,
+        limit: int = MAX_REPORT_LIMIT,
+        kind: str | None = None,
+        expected_checksum: str | None = None,
+    ) -> PlanReportPageResource:
+        """Return one page of the records a saved plan keeps without one optional relationship (spec 020)."""
+
+        return self._plan_report_page(
+            "get_plan_kept",
+            run_id,
+            "kept",
+            offset=offset,
+            limit=limit,
+            kind=kind,
+            expected_checksum=expected_checksum,
+        )
+
+    def _plan_report_page(
+        self,
+        operation: str,
+        run_id: str,
+        route: str,
+        *,
+        offset: int,
+        limit: int,
+        problem_type: str | None = None,
+        kind: str | None = None,
+        expected_checksum: str | None = None,
+    ) -> PlanReportPageResource:
+        run_id = self._identifier(run_id, "run_id")
+        if expected_checksum is not None and (
+            type(expected_checksum) is not str or not _PLAN_CHECKSUM.fullmatch(expected_checksum)  # pylint: disable=unidiomatic-typecheck
+        ):
+            raise ClientInputError(_EXPECTED_CHECKSUM_ARG)
+        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_OFFSET_ARG)
+        if type(limit) is not int or not MIN_LIMIT <= limit <= MAX_REPORT_LIMIT:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_LIMIT_ARG)
+        params: dict[str, str | int] = {"offset": offset, "limit": limit}
+        if problem_type is not None:
+            params["problem_type"] = problem_type
+        if kind is not None:
+            params["kind"] = kind
+        if expected_checksum is not None:
+            params["expected_checksum"] = expected_checksum
+        return self._request_model(
+            operation,
+            "GET",
+            f"/runs/{run_id}/plan/{route}",
+            model=PlanReportPageResource,
+            success={200},
+            params=params,
+        )
 
     def get_results(self, run_id: str) -> ResultsResource:
         """Return the recorded results for one run."""
@@ -860,7 +982,9 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         detail = ErrorEnvelope.model_validate(payload).error
         if detail.status != status:
             raise ValueError
-        return APIError(detail.status, detail.code, run_id=detail.run_id, mutation_id=detail.mutation_id)
+        return APIError(
+            detail.status, detail.code, run_id=detail.run_id, mutation_id=detail.mutation_id, left_out=detail.left_out
+        )
 
     @staticmethod
     def _identifier(value: object, argument: str) -> str:

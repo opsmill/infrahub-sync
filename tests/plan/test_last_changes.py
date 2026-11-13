@@ -21,7 +21,7 @@ from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.derive import operations_from_diff
 from infrahub_sync.plan.errors import PlanArtifactTornError
-from infrahub_sync.plan.last_changes import LastChange, LastChangeCollector
+from infrahub_sync.plan.last_changes import LastChange, LastChangeCollector, selected_last_changes
 from infrahub_sync.plan.models import LastChangeRecord, PlanManifest, RecordedAccountRecord
 from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import read_saved_plan, resolve_run_directory
@@ -211,6 +211,28 @@ def test_derivation_without_a_collector_is_unchanged() -> None:
     assert without == with_collector
 
 
+def test_the_selection_keeps_only_records_of_fields_the_plan_still_changes() -> None:
+    """Spec 020 T028: a removed update, or a relationship the update no longer carries, keeps no record."""
+    operations, records = _update_operations()
+    device = next(operation for operation in operations if operation.kind == "DcimDevice")
+    tag = next(operation for operation in operations if operation.kind == "BuiltinTag")
+    assert {(record.operation_id, record.field) for record in records} >= {
+        (device.operation_id, "tags"),
+        (tag.operation_id, "description"),
+    }
+    # The selection step left the tag out and wrote the device without its `tags` relationship.
+    without_tags = device.model_copy(update={"relationships": None})
+
+    kept = selected_last_changes(records, [without_tags])
+
+    assert kept
+    assert {record.operation_id for record in kept} == {device.operation_id}
+    assert "tags" not in {record.field for record in kept}
+    assert kept == [
+        record for record in records if record.operation_id == device.operation_id and record.field != "tags"
+    ]
+
+
 # --- Which destinations record last changes ------------------------------------------------------
 
 
@@ -281,7 +303,7 @@ def test_the_manifest_records_the_digest_and_the_count(tmp_path: Path) -> None:
         "count": 3,
         "metadata_read": True,
     }
-    assert manifest["format_version"] == 3
+    assert manifest["format_version"] == 4
     assert PlanManifest.model_validate(manifest).last_changes is not None
 
 

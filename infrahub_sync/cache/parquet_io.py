@@ -10,7 +10,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Iterator
+    from collections.abc import Collection, Iterator, Mapping
     from datetime import datetime
     from pathlib import Path
 
@@ -136,12 +136,14 @@ def write_resource_side(
     source_ids: list[str],
     extract_ts: datetime,
     tombstones: list[bool] | None = None,
+    metadata: Mapping[str, str] | None = None,
 ) -> None:
     """Write one side's snapshot of one resource to
     `<run_dir>/<side>/<resource>.parquet`.
 
     Injects three engine-controlled columns: `_extract_ts`, `_source_id`,
-    `_tombstone`. `side` is "A" (source) or "B" (destination).
+    `_tombstone`. `side` is "A" (source) or "B" (destination). `metadata` is
+    stored as the file's schema metadata, also on an empty snapshot.
     """
     if side not in {"A", "B"}:
         msg = f"side must be 'A' or 'B', got {side!r}"
@@ -176,5 +178,7 @@ def write_resource_side(
                 "_tombstone": pa.array([], type=pa.bool_()),
             }
         )
+    if metadata:
+        table = table.replace_schema_metadata(dict(metadata))
 
     write_table(str(run_dir / side / f"{resource}.parquet"), table)

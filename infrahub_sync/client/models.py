@@ -1,12 +1,24 @@
+# pylint: disable=too-many-lines  # one module holds every request and resource model of the Sync HTTP API
 """Standalone request and resource models for the Sync HTTP API."""
 
 from __future__ import annotations
 
 from datetime import datetime  # noqa: TC003 - Pydantic resolves resource annotations at runtime.
 from math import isfinite
-from typing import Annotated, Any, Literal, Protocol, TypeVar, cast
+from typing import Annotated, Any, Literal, Protocol, TypeVar, cast, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    StrictBool,
+    StringConstraints,
+    ValidationError,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 Operation = Literal["plan", "verify", "apply", "sync"]
 TerminalState = Literal["completed", "failed", "cancelled", "abandoned", "interrupted"]
@@ -44,6 +56,10 @@ MAX_LIMIT = 200
 DEFAULT_LOG_LIMIT = 200
 MAX_LOG_LIMIT = 1000
 LOG_STAGES: tuple[str, ...] = ("plan", "verify", "apply", "sync")
+
+# The largest page of a saved plan's problem, left-out or kept list, and the default (spec 020,
+# contracts/sync-api.md).
+MAX_REPORT_LIMIT = 500
 
 _Item_co = TypeVar("_Item_co", covariant=True)
 
@@ -121,12 +137,27 @@ class VerifyRunRequest(_RequestModel):
 
 
 class ApplyRunRequest(_RequestModel):
-    """Request application of a reviewed plan checksum."""
+    """Request application of a reviewed plan checksum.
+
+    `confirm_left_out` confirms that the person reviewed the records the plan leaves out
+    (spec 020 FR-010). It is a strict JSON boolean, and it is serialized only when true, so a
+    request that does not confirm keeps today's body and today's idempotency fingerprint.
+    """
 
     expected_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     confirm_writes: bool = False
+    confirm_left_out: StrictBool = False
     branch: str | None = None
     reason: str | None = Field(default=None, min_length=1)
+
+    # No return annotation on purpose: with one, Pydantic replaces the model's serialization
+    # JSON schema (and so the OpenAPI document) with a bare object.
+    @model_serializer(mode="wrap")
+    def _omit_unconfirmed_left_out(self, handler: SerializerFunctionWrapHandler):
+        data = handler(self)
+        if not self.confirm_left_out:
+            data.pop("confirm_left_out", None)
+        return data
 
 
 class ApproveRunRequest(_RequestModel):
@@ -553,6 +584,35 @@ class PlanSummaryResource(_ResourceModel):
     total: int = Field(ge=0)
     delete_operations_computed: bool
     deletes_not_executed: int = Field(ge=0)
+    # Spec 020 FR-007 and FR-008: the counts of the plan report. Defaults, so a review
+    # published before these fields existed still validates; a format 2 or 3 plan has zeros
+    # and `dropdown_values_checked` false.
+    left_out: int = Field(default=0, ge=0)
+    left_out_with_problem: int = Field(default=0, ge=0)
+    left_out_dependent: int = Field(default=0, ge=0)
+    left_out_by_kind: dict[str, int] = Field(default_factory=dict)
+    problems: int = Field(default=0, ge=0)
+    problems_by_type: dict[str, int] = Field(default_factory=dict)
+    kept: int = Field(default=0, ge=0)
+    # Per kind, the records whose deletes the plan does not compute (research R21).
+    deletes_withheld_by_kind: dict[str, int] = Field(default_factory=dict)
+    dropdown_values_checked: bool = False
+
+
+class PlanReportPageResource(_ResourceModel):
+    """One page of the problems, left-out records or kept records of a saved plan (spec 020).
+
+    `entries` are the lines of the plan's `report.jsonl` without their `entry` key, in the
+    report's stable order. `next_offset` is `None` on the last page.
+    """
+
+    run_id: str
+    plan_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    entries: tuple[dict[str, Any], ...]
+    offset: int = Field(ge=0)
+    limit: int = Field(ge=MIN_LIMIT, le=MAX_REPORT_LIMIT)
+    total: int = Field(ge=0)
+    next_offset: int | None = Field(default=None, ge=0)
 
 
 class PlanOperationResource(_ResourceModel):
@@ -639,11 +699,109 @@ class PlanResource(_ResourceModel):
     last_changes: tuple[PlanLastChangeResource, ...] | None = None
 
 
+FailureType = Literal[
+    "destination_rejected_write",
+    "system_unreachable",
+    "system_timeout",
+    "token_rejected",
+    "permission_missing",
+    "tls_certificate_rejected",
+    "record_load_failed",
+    "transform_failed",
+    "credential_missing",
+    "verification_failed",
+    "apply_refused",
+    "left_out_review_required",
+    "destination_peer_missing",
+    "destination_peer_ambiguous",
+    "lineage_refused",
+    "destination_schema_unavailable",
+    "internal_error",
+]
+"""The failure type names a stage failure record holds (spec 020 data-model.md, FR-014)."""
+
+FAILURE_TYPES: tuple[FailureType, ...] = get_args(FailureType)
+
+# The longest Infrahub error code, node kind and attribute name a stage failure record holds.
+MAX_FAILURE_NAME_TEXT = 128
+
+
+class FailureSystemResource(_ResourceModel):
+    """The system a stage failure came from: its role in the sync and its adapter name."""
+
+    role: Literal["source", "destination"]
+    adapter: str = Field(min_length=1)
+
+
+class FailureRecordReferenceResource(_ResourceModel):
+    """Name one source record by destination kind, source identity and source record ID."""
+
+    kind: str = Field(min_length=1)
+    identity: dict[str, Any] | None = None
+    source_id: str | None = None
+
+
+class FailedOperationDetailResource(_ResourceModel):
+    """The action, kind and identity of the plan operation a stopped apply was writing."""
+
+    action: str = Field(min_length=1)
+    kind: str = Field(min_length=1)
+    identity: dict[str, Any] | None = None
+
+
+class StageFailureResource(_ResourceModel):
+    """One `<stage>_failure` record of a run's results.
+
+    The keys a record held before spec 020 keep their meaning and stay optional, so a record
+    written by an older Sync API validates. The worker of this version sets every spec 020 field
+    on every record it writes, `failure_type` always and the others `None` when the failure does
+    not name them (ADR 0021). The reader keeps them optional, because a record written by an
+    older Sync API has none of them (FR-014), and `failure_type` is a string rather than
+    `FailureType`: a later server may add a name. No field holds the text of an exception,
+    apart from Infrahub's own message of a rejected write.
+    """
+
+    stage: str | None = None
+    outcome: str | None = None
+    error_type: str | None = None
+    cause_type: str | None = None
+    cause: str | None = None
+    next_action: str | None = None
+    infrahub_error: Any = None
+    recovery_action: str | None = None
+    reason: str | None = None
+    message: str | None = None
+    failure_type: str | None = None
+    system: FailureSystemResource | None = None
+    error_code: str | None = Field(default=None, max_length=MAX_FAILURE_NAME_TEXT)
+    node_kind: str | None = Field(default=None, max_length=MAX_FAILURE_NAME_TEXT)
+    attribute: str | None = Field(default=None, max_length=MAX_FAILURE_NAME_TEXT)
+    infrahub_message: str | None = Field(default=None, max_length=MAX_FAILURE_CAUSE_TEXT)
+    record: FailureRecordReferenceResource | None = None
+    field: str | None = None
+    operations_total: int | None = Field(default=None, ge=0)
+    failed_operation_detail: FailedOperationDetailResource | None = None
+
+
 class ResultsResource(_ResourceModel):
     """Return the recorded results for one run."""
 
     run_id: str
     results: dict[str, Any]
+
+    def stage_failure(self, stage: str) -> StageFailureResource | None:
+        """The run's `<stage>_failure` record, or `None` when the run has none or it does not validate."""
+        return stage_failure_resource(self.results.get(f"{stage}_failure"))
+
+
+def stage_failure_resource(value: object) -> StageFailureResource | None:
+    """Validate one recorded `<stage>_failure` value, or return `None` for any other value."""
+    if not isinstance(value, dict):
+        return None
+    try:
+        return StageFailureResource.model_validate(value)
+    except ValidationError:
+        return None
 
 
 class ArtifactListResource(_ResourceModel):
@@ -758,17 +916,38 @@ class ConfigurationVersionResource(_ResourceModel):
         return checked
 
 
+class ConfigurationVersionReferenceResource(_ResourceModel):
+    """Name one registered version by its checksum, without its package (spec 020 FR-038).
+
+    The registration responses return this reference: the stored package is redacted, so
+    showing it next to the checksum of the original content would show two things that do not
+    match. ``GET /configs/{config_id}/versions/{registry_version}`` returns the content.
+    """
+
+    config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    registry_version: int = Field(ge=1)
+    package_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    created_at: datetime
+
+    @field_validator("created_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, "configuration-version timestamps must include a timezone")
+        assert checked is not None
+        return checked
+
+
 class RegisteredConfigurationResource(_ResourceModel):
-    """Return a newly registered configuration and its first version."""
+    """Return a newly registered configuration and a reference to its first version."""
 
     configuration: ConfigurationSummaryResource
-    version: ConfigurationVersionResource
+    version: ConfigurationVersionReferenceResource
 
 
 class RegisteredVersionResource(_ResourceModel):
-    """Return a configuration version and whether it was newly created."""
+    """Return a reference to a configuration version and whether it was newly created."""
 
-    version: ConfigurationVersionResource
+    version: ConfigurationVersionReferenceResource
     created: bool
 
 
@@ -806,6 +985,18 @@ class ErrorDetail(_ResourceModel):
     # Structured context of a refusal, such as the existing approval of ``already-approved``.
     # Absent from most errors.
     details: dict[str, Any] | None = None
+    # The count of records the plan leaves out, on a `left-out-confirmation-required` refusal
+    # only (spec 020 FR-010). Absent from every other error body.
+    left_out: int | None = Field(default=None, ge=0)
+
+    # No return annotation on purpose: with one, Pydantic replaces the model's serialization
+    # JSON schema (and so the OpenAPI document) with a bare object.
+    @model_serializer(mode="wrap")
+    def _omit_absent_left_out(self, handler: SerializerFunctionWrapHandler):
+        data = handler(self)
+        if self.left_out is None:
+            data.pop("left_out", None)
+        return data
 
 
 class ErrorEnvelope(_ResourceModel):

@@ -59,10 +59,8 @@ def test_ip_updates_project_description_with_netbox_47_interface_response(monkey
     # NetBox 4.7 returns a scalar count, not the ip_addresses list the mapping asks for.
     # Changing that count after an IP deletion still projects the same empty list.
     interface = {"id": 1, "name": "eth0", "device": {"id": 1, "name": "dev-01"}, "count_ipaddresses": 3}
-    before_interface = adapter.netbox_obj_to_diffsync(interface, interface_mapping, _Interface)
-    after_interface = adapter.netbox_obj_to_diffsync(
-        interface | {"count_ipaddresses": 2}, interface_mapping, _Interface
-    )
+    before_interface = adapter.record_to_data(interface, interface_mapping, _Interface)
+    after_interface = adapter.record_to_data(interface | {"count_ipaddresses": 2}, interface_mapping, _Interface)
     assert before_interface == after_interface == {"local_id": "1", "name": "eth0", "ip_addresses": []}
 
     data = build_dataset("M")
@@ -76,8 +74,8 @@ def test_ip_updates_project_description_with_netbox_47_interface_response(monkey
         # IP responses keep assigned_object_id scalar and status nested.
         record = baseline.fields | {"id": baseline.id, "status": {"value": baseline.fields["status"]}}
         assert set(update["fields"]) == {"description"}
-        before = adapter.netbox_obj_to_diffsync(record, address_mapping, _IPAddress)
-        after = adapter.netbox_obj_to_diffsync(record | update["fields"], address_mapping, _IPAddress)
+        before = adapter.record_to_data(record, address_mapping, _IPAddress)
+        after = adapter.record_to_data(record | update["fields"], address_mapping, _IPAddress)
         assert after == before | {"description": update["fields"]["description"]}
         assert after["description"] != before["description"]
     assert any("assigned_object_id" in baselines[update["identifier"]].fields for update in updates)

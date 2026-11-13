@@ -17,6 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from .models import ConfigurationPackage, ValidationFinding
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from .capabilities import AdapterRole
 
 # The node kinds an Infrahub destination's `source` and `owner` settings may name. They are
@@ -142,6 +144,124 @@ def parse_infrahub_lineage_settings(settings: Mapping[str, object] | None) -> Li
         settings=InfrahubLineageSettings(source=named.get("source"), owner=named.get("owner"), protect=protect),
         findings=(),
     )
+
+
+# The actions an import needs on each kind its mapping writes (spec 020 FR-036).
+WRITE_ACTIONS: tuple[str, ...] = ("view", "create", "update")
+_SUPER_ADMIN = "super_admin"
+# Infrahub's global permission to change data on the default branch (`GlobalPermissions`), which
+# every mutation on the default branch needs besides its object permission.
+EDIT_DEFAULT_BRANCH = "edit_default_branch"
+_GLOBAL = "global"
+_DENY = "deny"
+_OBJECT_PERMISSION_PARTS = 5
+_GLOBAL_PERMISSION_PARTS = 3
+
+
+@dataclass(frozen=True, slots=True)
+class PermissionNeed:
+    """One permission an import needs: an action on a kind, given by its namespace and name."""
+
+    namespace: str
+    name: str
+    action: str
+
+    @property
+    def identifier(self) -> str:
+        """The need written as Infrahub writes a permission, without its decision."""
+        if self.namespace == _GLOBAL:
+            return f"global:{self.name}"
+        return f"object:{self.namespace}:{self.name}:{self.action}"
+
+
+@dataclass(frozen=True, slots=True)
+class _Grant:
+    namespace: str
+    name: str
+    action: str
+    decision: str
+
+
+def _parse_permission(identifier: object) -> _Grant | None:
+    """Read one permission identifier, or `None` when it is not of Infrahub's grammar.
+
+    `object:<namespace>:<name>:<action>:<decision>` and `global:<permission>:<decision>`. A
+    global permission becomes a grant whose namespace is `global`; only `super_admin` grants
+    object actions.
+    """
+    if not isinstance(identifier, str):
+        return None
+    parts = identifier.split(":")
+    if len(parts) == _OBJECT_PERMISSION_PARTS and parts[0] == "object":
+        return _Grant(namespace=parts[1], name=parts[2], action=parts[3], decision=parts[4])
+    if len(parts) == _GLOBAL_PERMISSION_PARTS and parts[0] == "global":
+        return _Grant(namespace="global", name=parts[1], action="any", decision=parts[2])
+    return None
+
+
+def _allows_branch(decision: str, *, branch: str, default_branch: str) -> bool:
+    """Whether a decision allows the action on `branch`; `allow_default` holds on the default branch only."""
+    if decision == "allow_all":
+        return True
+    if decision == "allow_default":
+        return branch == default_branch
+    if decision == "allow_other":
+        return branch != default_branch
+    return False
+
+
+def _grants(grant: _Grant, need: PermissionNeed, *, branch: str, default_branch: str) -> bool:
+    if not _allows_branch(grant.decision, branch=branch, default_branch=default_branch):
+        return False
+    if grant.namespace == "global":
+        return grant.name == _SUPER_ADMIN
+    return (
+        grant.namespace in {"*", need.namespace}
+        and grant.name in {"*", need.name}
+        and grant.action in {"any", need.action}
+    )
+
+
+def _grants_global(grants: list[_Grant], name: str) -> bool:
+    """Whether the grants hold the global permission `name`, as Infrahub resolves it.
+
+    Infrahub reads a global permission's decision only for `deny`, which takes precedence over
+    every allow of that permission; `super_admin` grants every global permission.
+    """
+    if any(grant.namespace == _GLOBAL and grant.name == _SUPER_ADMIN and grant.decision != _DENY for grant in grants):
+        return True
+    held = [grant for grant in grants if grant.namespace == _GLOBAL and grant.name == name]
+    return bool(held) and all(grant.decision != _DENY for grant in held)
+
+
+def missing_permissions(
+    identifiers: Iterable[object], *, needs: Iterable[PermissionNeed], branch: str, default_branch: str
+) -> tuple[PermissionNeed, ...]:
+    """The needs that no permission identifier grants on `branch`, sorted, each once."""
+    grants = [grant for grant in (_parse_permission(item) for item in identifiers) if grant is not None]
+    missing = {
+        need
+        for need in needs
+        if not (
+            _grants_global(grants, need.name)
+            if need.namespace == _GLOBAL
+            else any(_grants(grant, need, branch=branch, default_branch=default_branch) for grant in grants)
+        )
+    }
+    return tuple(sorted(missing, key=lambda need: (need.namespace, need.name, need.action)))
+
+
+def write_needs(
+    namespace: str, name: str, *, branch: str | None = None, default_branch: str | None = None
+) -> tuple[PermissionNeed, ...]:
+    """The permissions an import needs on one kind it writes: view, create and update.
+
+    On the default branch, a write also needs the global `edit_default_branch` permission.
+    """
+    needs = tuple(PermissionNeed(namespace, name, action) for action in WRITE_ACTIONS)
+    if branch is not None and branch == default_branch:
+        needs = (*needs, PermissionNeed(_GLOBAL, EDIT_DEFAULT_BRANCH, "any"))
+    return needs
 
 
 def validate_infrahub_lineage_settings(

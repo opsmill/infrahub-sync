@@ -24,6 +24,7 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, ParamSpec, TypeVar
@@ -51,7 +52,8 @@ from infrahub_sync.configuration.schema_validation import (
     collect_destination_schema_findings,
 )
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
-from infrahub_sync.configuration.validation import _CODE_UNSUPPORTED_SYNC_STORE, _location_digest
+from infrahub_sync.configuration.validation import _CODE_UNSUPPORTED_SYNC_STORE, _finding_message, _location_digest
+from infrahub_sync.configuration.worker_credentials import referenced_credential_variables
 from infrahub_sync.execution import REDACTED, json_string_forms, redact, redaction_order
 from infrahub_sync.product_store.models import DEFAULT_LIMIT, MAX_REGISTRY_VERSION
 from infrahub_sync.product_store.store import (
@@ -64,7 +66,6 @@ from infrahub_sync.product_store.store import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
-    from datetime import datetime
 
     from infrahub_sync.product_store.models import (
         ConfigurationPage,
@@ -144,6 +145,9 @@ class ConfigsInternalError(ConfigsError):
     family: ClassVar[str] = "internal"
 
 
+# The floor of the service liveness rule (`service/liveness.py`): a worker that published within this
+# many seconds counts as live. The Sync API passes its own policy value.
+DEFAULT_WORKER_LIVENESS_SECONDS = 30.0
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 
@@ -885,6 +889,43 @@ def get_version(
     return stored
 
 
+# Spec 020 FR-035: the credential check of the validation opt-in. It runs here, beside the
+# product store the workers publish to, and outside the declared-content warning channel.
+_CODE_CREDENTIAL_NOT_SET_IN_WORKER = "credential-not-set-in-worker"
+_CODE_WORKER_ENVIRONMENT_UNKNOWN = "worker-environment-unknown"
+_CREDENTIALS_LOCATION = "/credentials"
+
+
+def _worker_credential_findings(
+    package: ConfigurationPackage, held: frozenset[str] | None
+) -> tuple[ValidationFinding, ...]:
+    """Report each `$credential` variable the package references that no live worker holds.
+
+    `held` is the union of the variable names the live workers published, or `None` when no
+    live worker has published: the check cannot run then, and one warning says so. A finding
+    names the variable, never a value.
+    """
+    if held is None:
+        return (
+            ValidationFinding(
+                code=_CODE_WORKER_ENVIRONMENT_UNKNOWN,
+                severity="warning",
+                location=_CREDENTIALS_LOCATION,
+                message="no live worker has published which credential variables it holds",
+            ),
+        )
+    return tuple(
+        ValidationFinding(
+            code=_CODE_CREDENTIAL_NOT_SET_IN_WORKER,
+            severity="error",
+            location=f"{_CREDENTIALS_LOCATION}/{safe_pointer_component(reference_name)}",
+            message=_finding_message(f"no live worker holds the credential variable {variable}"),
+        )
+        for reference_name, variable in referenced_credential_variables(package)
+        if variable not in held
+    )
+
+
 @_service_boundary
 def validate(
     *,
@@ -893,6 +934,7 @@ def validate(
     projection: ProductProjection,
     destination_schema: DestinationSchemaOptions | None = None,
     secrets: Sequence[str] = (),
+    worker_liveness_seconds: float = DEFAULT_WORKER_LIVENESS_SECONDS,
 ) -> ValidationReport:
     """Report every declared defect in one registered version, in contract order.
 
@@ -910,6 +952,10 @@ def validate(
     schema checks, merges their findings under the same ``sort_findings`` contract, and
     records the judged snapshot's fingerprint. The caller supplies the durable-store
     :class:`ProductProjection` through ``projection``.
+
+    The same opt-in compares the package's `$credential` references with the variable names
+    the live workers published to ``projection`` (spec 020 FR-035): a worker is live while its
+    last publication is no older than ``worker_liveness_seconds``.
     """
     _require_argument_type(config_id, name="config_id", expected=str)
     _require_registry_version(registry_version)
@@ -924,8 +970,11 @@ def validate(
     findings = collect_findings(parsed, secrets)
     fingerprint: str | None = None
     if destination_schema is not None:
-        schema_validation = collect_destination_schema_findings(parsed)
-        findings = sort_findings((*findings, *schema_validation.findings))
+        schema_validation = collect_destination_schema_findings(parsed, destination_schema)
+        observed_after = datetime.now(timezone.utc) - timedelta(seconds=worker_liveness_seconds)
+        live = projection.live_worker_environments(observed_after=observed_after)
+        held = frozenset(name for environment in live for name in environment.credential_names) if live else None
+        findings = sort_findings((*findings, *schema_validation.findings, *_worker_credential_findings(parsed, held)))
         fingerprint = schema_validation.schema_fingerprint
     return ValidationReport(
         config_id=stored.config_id,

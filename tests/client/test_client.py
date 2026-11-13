@@ -8,6 +8,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, cast
 
 import httpx
+import pydantic
 import pytest
 from typing_extensions import override
 
@@ -27,6 +28,7 @@ from infrahub_sync.client import (
     CreateRunRequest,
     EventPage,
     EventResource,
+    PlanReportPageResource,
     PrincipalResource,
     ProtocolError,
     RunLogLine,
@@ -1131,4 +1133,95 @@ def test_read_run_logs_arguments_are_refused_before_any_request(
     with pytest.raises(ClientInputError) as raised:
         call(client)
     assert raised.value.argument == argument
+    assert requests == []
+
+
+def _report_page(entries: list[dict[str, object]], *, next_offset: int | None) -> dict[str, object]:
+    return {
+        "run_id": "run-1",
+        "plan_checksum": "a" * 64,
+        "entries": entries,
+        "offset": 0,
+        "limit": 2,
+        "total": 3,
+        "next_offset": next_offset,
+    }
+
+
+@pytest.mark.parametrize(
+    ("read", "route", "query"),
+    [
+        (
+            lambda client: client.get_plan_problems(
+                "run-1", offset=0, limit=2, problem_type="transform_failed", kind="DcimDevice"
+            ),
+            "problems",
+            "offset=0&limit=2&problem_type=transform_failed&kind=DcimDevice",
+        ),
+        (lambda client: client.get_plan_left_out("run-1", limit=2), "left-out", "offset=0&limit=2"),
+        (
+            lambda client: client.get_plan_kept("run-1", limit=2, kind="IpamIPAddress"),
+            "kept",
+            "offset=0&limit=2&kind=IpamIPAddress",
+        ),
+        (
+            lambda client: client.get_plan_left_out("run-1", limit=2, expected_checksum="a" * 64),
+            "left-out",
+            f"offset=0&limit=2&expected_checksum={'a' * 64}",
+        ),
+    ],
+)
+def test_the_plan_report_reads_send_paging_and_filters_and_parse_the_page(
+    read: Callable[[SyncClient], object], route: str, query: str
+) -> None:
+    """Spec 020 T030: one page of a saved plan's problems, left-out or kept records."""
+    requests: list[httpx.Request] = []
+    entry: dict[str, object] = {"record": {"kind": "DcimDevice", "identity": {"name": "rtr1"}, "source_id": "1"}}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(200, json=_report_page([entry], next_offset=2))
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+    page = cast("PlanReportPageResource", read(client))
+
+    assert requests[-1].url.raw_path.decode() == f"/runs/run-1/plan/{route}?{query}"
+    assert page.entries == (entry,)
+    assert (page.total, page.next_offset) == (3, 2)
+
+
+@pytest.mark.parametrize(("offset", "limit"), [(-1, 10), (0, 0), (0, 501), (0, True)])
+def test_the_plan_report_reads_refuse_paging_outside_the_contract(offset: int, limit: int) -> None:
+    requests: list[httpx.Request] = []
+    client = _list_client({}, requests)
+
+    with pytest.raises(ClientInputError):
+        client.get_plan_problems("run-1", offset=offset, limit=limit)
+    assert requests == []
+
+
+@pytest.mark.parametrize("checksum", ["A" * 64, "a" * 63, "g" * 64, 7])
+def test_the_plan_report_reads_refuse_a_malformed_expected_checksum(checksum: object) -> None:
+    requests: list[httpx.Request] = []
+    client = _list_client({}, requests)
+
+    with pytest.raises(ClientInputError):
+        client.get_plan_kept("run-1", expected_checksum=checksum)  # ty: ignore[invalid-argument-type]
+    assert requests == []
+
+
+def test_a_report_page_with_a_malformed_checksum_is_refused() -> None:
+    with pytest.raises(pydantic.ValidationError):
+        PlanReportPageResource.model_validate(_report_page([], next_offset=None) | {"plan_checksum": "not-a-checksum"})
+
+
+@pytest.mark.parametrize("branch", [" main", "main ", "\tmain"])
+def test_validate_config_refuses_a_branch_with_surrounding_whitespace(branch: str) -> None:
+    requests: list[httpx.Request] = []
+    client = _list_client({}, requests)
+
+    with pytest.raises(ClientInputError):
+        client.validate_config("cfg", 1, branch=branch)
     assert requests == []

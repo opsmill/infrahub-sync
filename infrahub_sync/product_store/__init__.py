@@ -24,6 +24,7 @@ from infrahub_sync.product_store.models import (
     RunFilters,
     RunPage,
     RunReference,
+    WorkerEnvironment,
 )
 from infrahub_sync.product_store.store import (
     ArtifactUnavailableError,
@@ -79,6 +80,7 @@ __all__ = (
     "RunPage",
     "RunReference",
     "S3Client",
+    "WorkerEnvironment",
     "WriteAdmissionConflictError",
     "local_product_projection",
     "production_product_projection",

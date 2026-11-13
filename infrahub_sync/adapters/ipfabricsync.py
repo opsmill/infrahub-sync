@@ -73,39 +73,21 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
             sdk_defaults = {"snapshot_id": "$last"}
         return IPFClient(verify=verify_ssl, **sdk_defaults, **settings)
 
-    def model_loader(self, model_name: str, model: type[IpfabricsyncModel]) -> None:
+    def list_records(self, model_name: str, element: SchemaMappingModel) -> list[dict[str, Any]]:  # noqa: ARG002
+        """Fetch the rows of the mapping entry's IP Fabric table.
+
+        The base-class read loop stores each record with `add`, so two rows with one identity
+        are a `duplicate_source_identity` problem; the adapter no longer overwrites the first
+        one silently.
         """
-        Load and process models using schema mapping filters and transformations.
+        if not element.mapping:
+            return []
+        return self.client.fetch_all(element.mapping, filters=ipf_filters.get(element.mapping))
 
-        This method retrieves data from IP Fabric, and loads the processed data into the adapter.
-        """
-        for element in self.config.schema_mapping:
-            if element.name != model_name:
-                continue
-
-            if not element.mapping:
-                logger.info("No mapping defined for '%s', skipping", element.name)
-                continue
-            table = self.client.fetch_all(element.mapping, filters=ipf_filters.get(element.mapping))
-
-            total = len(table)
-            if self.target == "source":
-                # Filter records
-                filtered_objs = model.filter_records(records=table, schema_mapping=element)
-                logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, element.mapping)
-                # Transform records
-                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
-            else:
-                logger.info("%s: Loading all %d %s", self.type, total, element.mapping)
-                transformed_objs = table
-
-            for obj in transformed_objs:
-                data = self.ipfabric_dict_to_diffsync(obj=obj, mapping=element, model=model)
-                item = model(**data)
-                self.update_or_add_model_instance(item)
-
-    def ipfabric_dict_to_diffsync(self, obj: dict, mapping: SchemaMappingModel, model: type[IpfabricsyncModel]) -> dict:  # pylint: disable=too-many-branches
-        """Convert an IP Fabric dict to a DiffSync-ready payload."""
+    def record_to_data(self, record: dict, element: SchemaMappingModel, model: type[IpfabricsyncModel]) -> dict:  # pylint: disable=too-many-branches
+        """Convert an IP Fabric row to model data; a reference resolves by the peer's identity values."""
+        obj = record
+        mapping = element
         data: dict[str, Any] = {"local_id": str(obj["id"])}
 
         for field in mapping.fields:  # pylint: disable=too-many-nested-blocks

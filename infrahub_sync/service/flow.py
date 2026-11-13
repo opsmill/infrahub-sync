@@ -10,7 +10,7 @@
 import logging
 import os
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -26,6 +26,7 @@ from prefect.client.schemas.objects import WorkerStatus
 from prefect.exceptions import MissingContextError, ObjectNotFound
 from prefect.runtime import flow_run as current_flow_run
 from prefect.states import Failed, State
+from pydantic_core import to_json
 
 from infrahub_sync.client.models import RECOVERY_NEXT_ACTIONS, RecoveryAction
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
@@ -88,14 +89,14 @@ from .checkpoints import (
     rehydrate_plan_checkpoint,
 )
 from .events import run_event, stage_result_type
-from .failure_cause import operator_cause
+from .failure_cause import FAILURE_RECORD_KEYS, apply_progress, failure_record, operator_cause
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME, run_name
 from .read_progress import StoreSideReadObserver, record_waiting
 from .run_artifact import publish_run_artifact
 from .scratch import StageScratch, stage_scratch
-from .service import PLAN_ARTIFACT_ID
+from .service import PLAN_ARTIFACT_ID, PLAN_REPORT_KEY
 from .storage import service_guard_secrets, service_guard_session, service_product_projection
 
 CONFIG_DIR_ENV = "INFRAHUB_SYNC_CONFIG_DIRECTORY"
@@ -105,6 +106,8 @@ _REGISTERED_VERSION_INVALID = "registered configuration version is invalid"
 _REGISTERED_CHECKSUM_MISMATCH = "registered configuration checksum does not match run binding"
 _REGISTERED_PLAN_BINDING_MISMATCH = "registered saved plan binding does not match run binding"
 _REGISTERED_PLAN_VERIFICATION_FAILED = "registered saved plan verification failed"
+# The outcome of a `sync` that stopped after a plan that leaves out records (spec 020 FR-012).
+LEFT_OUT_STOP_OUTCOME = "left-out-review-required"
 _REGISTERED_PLAN_CHECKSUM_MISMATCH = "registered saved plan checksum does not match the approved expected_checksum"
 _WORKER_BINDING_PARAMETERS_INVALID = "service worker configuration binding parameters must be all absent or all present"
 _LEGACY_RUN_IDENTITY_UNAVAILABLE = "legacy service run identity is unavailable"
@@ -284,12 +287,18 @@ def _review_document(run_id: str, saved: SavedPlan) -> PlanResource:
 
 def _publish_plan(projection: ProductProjection, run_id: str, saved: SavedPlan, secrets: Sequence[str]) -> None:
     document = _review_document(run_id, saved)
+    data = document.model_dump_json().encode()
+    if saved.report:
+        # The plan report's lines travel in the same document, under a key `GET /runs/{run_id}/plan`
+        # does not return; the paged report routes read them (spec 020 contracts/sync-api.md). The
+        # same serializer as `model_dump_json`, so secret redaction sees the same value text.
+        data = to_json({**document.model_dump(mode="json"), PLAN_REPORT_KEY: list(saved.report)})
     projection.publish_artifact(
         run_id,
         artifact_id=PLAN_ARTIFACT_ID,
         kind="saved-plan-review",
         media_type="application/json",
-        data=document.model_dump_json().encode(),
+        data=data,
         secrets=secrets,
     )
 
@@ -670,6 +679,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     tracker: WriteDispatchTracker,
     scratch: StageScratch,
     flow_run_id: str,
+    confirm_left_out: bool = False,
 ) -> tuple[dict[str, Any], ExecutionWriteback]:
     """Resolve and execute one service stage within the sanitized worker boundary.
 
@@ -677,6 +687,9 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     live schema read and before a `sync` waits for its write guard, so a stage that fails
     before either read returns both sides as `not_started`. It then gives the engine an
     observer that stores each side's read on the execution `flow_run_id`.
+
+    A `sync` whose plan leaves out records stops after the plan is saved, before any write,
+    and gives back its write admission (spec 020 FR-012, research R11): see `_left_out_stop`.
     """
     if stage in ("plan", "sync"):
         record_waiting(projection, run_id, flow_run_id)
@@ -809,6 +822,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 branch=branch,
                 expected_checksum=expected_checksum,
                 confirm_writes=True,
+                confirm_left_out=confirm_left_out,
                 ownership=ownership,
                 record_applied=tracker.record_applied,
                 base_directory=scratch.root,
@@ -859,6 +873,11 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 secrets=secrets,
             )
             _publish_plan(projection, run_id, saved, secrets)
+            # After the plan is durable and reviewable, before the verification and the
+            # write: the team reviews the records left out and applies this run itself.
+            stop = _left_out_stop(run_id, saved, sync_name)
+            if stop is not None:
+                return stop
             verified = execute_run(
                 instance,
                 operation="verify",
@@ -904,6 +923,54 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     return result, writeback
 
 
+def left_out_stop_next_action(run_id: str, checksum: str) -> str:
+    """The next action of a `sync` that stopped after a plan that leaves out records."""
+    return (
+        f"Review the plan with `infrahub-sync runs plan {run_id} --problems` and `--left-out`, then apply it "
+        f"with `infrahub-sync apply {run_id} --expected-checksum {checksum} --confirm-left-out`."
+    )
+
+
+def _left_out_stop(
+    run_id: str, saved: SavedPlan, sync_name: str
+) -> tuple[dict[str, Any], ExecutionFinishWriteback] | None:
+    """The result and writeback of a `sync` whose plan leaves out records, else `None`.
+
+    The stage ends with phase `planned` and outcome `left-out-review-required`, and its
+    result carries `failure`, whose next action the last log line, the run artifact and the
+    CLI show (spec 020 FR-012, data-model.md "Stage result `failure` for a stopped `sync`").
+    The writeback asks the store to give back the run's write admission in the same commit,
+    so the team can apply the reviewed plan once with the confirmation. It carries no
+    baseline: nothing was written.
+    """
+    summary = saved.summary()
+    if summary.left_out == 0:
+        return None
+    failure = {
+        "stage": "sync",
+        "failure_type": "left_out_review_required",
+        "left_out": summary.left_out,
+        "next_action": left_out_stop_next_action(run_id, saved.manifest.plan_checksum),
+    }
+    summary_data = summary.model_dump(mode="json")
+    result = {
+        "run_id": run_id,
+        "stage": "sync",
+        "outcome": LEFT_OUT_STOP_OUTCOME,
+        "summary": summary_data,
+        "failure": failure,
+    }
+    writeback = ExecutionFinishWriteback(
+        phase="planned",
+        outcome=LEFT_OUT_STOP_OUTCOME,
+        finished_at=datetime.now(timezone.utc),
+        summary={"sync_name": sync_name, **summary_data},
+        results=result,
+        release_write_admission=True,
+    )
+    return result, writeback
+
+
 def _failure_evidence(
     stage: Literal["plan", "verify", "apply", "sync"],
     exc: Exception,
@@ -914,33 +981,38 @@ def _failure_evidence(
 ) -> dict[str, Any]:
     """Describe one failure, with whatever is known about what it wrote.
 
-    The failure's operator cause is recorded too, when it has one: see `operator_cause`.
+    The failure's operator cause is recorded too, when it has one: see `operator_cause`. Every
+    record carries the spec 020 fields of `failure_record` (ADR 0021): the failure type, the
+    system involved and the allowlisted values the failure names. Where `operator_cause`
+    records no cause or next action, the fixed template of the failure type supplies it.
 
     A failure raised by the engine carries its own partial record; a failure raised after
     the engine returned — a sidecar write, the guard's release, the product commit — carries
-    none, and the scope's record is what that one wrote.
+    none, and the scope's record is what that one wrote. The engine's record also holds the
+    plan's operation count and the failed operation's action, kind and identity.
     """
     evidence: dict[str, Any] = {
         "stage": stage,
         "outcome": outcome,
         "error_type": type(exc).__name__,
-        # The class the wrapper was raised from, and nothing else about it. Every
-        # designed refusal the apply path recognises is reported as one
-        # `OperationApplyFailedError`, so the wrapper alone cannot tell an unkeyed
-        # render from a peer that matched nothing or from a destination's own
-        # rejection -- and a gate whose whole subject is one of those refusals has
-        # nothing in the record to read. The immediate cause only: the apply path
-        # wraps exactly once, and walking a chain would record whichever link was
-        # deepest rather than the one that decided this failure.
+        # The class the wrapper was raised from. Every designed refusal the apply path
+        # recognises is reported as one `OperationApplyFailedError`, so the wrapper alone
+        # cannot tell an unkeyed render from a peer that matched nothing or from a
+        # destination's own rejection; the immediate cause only, because the apply path wraps
+        # exactly once.
         #
-        # A class name, never a message. That is the whole reason this is safe to
-        # record: a destination's text can carry anything, and a class name from
-        # this process's own taxonomy carries one identifier.
+        # ADR 0021: the record holds the class name of the immediate cause and the allowlisted
+        # fields of `failure_record` (the failure type, the system, Infrahub's error code, node
+        # kind, attribute and own message of a rejected write, the kind, record and field a
+        # typed Sync error names, the apply progress) and fixed template text filled with them.
+        # It never holds the text of any other error: an adapter's, an HTTP library's or a
+        # parser's text can carry an address, a header or a credential.
         "cause_type": None if exc.__cause__ is None else type(exc.__cause__).__name__,
     }
     if isinstance(exc, UnsupportedSyncStoreError):
         evidence.update(reason=UNSUPPORTED_STORE_REASON, message=UNSUPPORTED_STORE_MESSAGE)
     evidence.update(operator_cause(exc, secrets))
+    evidence.update(_structured_cause(stage, exc, secrets, evidence))
     if stage in ("verify", "apply"):
         # The pre-write check a verify or an apply failed on, by name, so an operator reads
         # which check refuses the apply, and both stages name the same one (SC-004). Both
@@ -954,7 +1026,29 @@ def _failure_evidence(
     written = effective_apply_record(exc, record)
     if written is not None:
         evidence.update(written.as_summary_keys())
+        evidence.update(apply_progress(written))
     return evidence
+
+
+def _structured_cause(
+    stage: str, exc: Exception, secrets: Sequence[str], recorded: Mapping[str, Any]
+) -> dict[str, Any]:
+    """The `failure_record` fields, keeping the cause and next action `operator_cause` recorded.
+
+    `failure_record` reads typed values only, but an unexpected shape must not cost the run its
+    whole failure record (`_record_failure` stores nothing when building it raises), so any
+    error here records `internal_error`.
+    """
+    try:
+        fields = failure_record(stage, exc, secrets=secrets)
+    except Exception as unexpected:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        logger.warning("failure record fields could not be built (%s)", type(unexpected).__name__)
+        fields = dict.fromkeys(FAILURE_RECORD_KEYS)
+        fields["failure_type"] = "internal_error"
+    for key in ("cause", "next_action"):
+        if recorded.get(key):
+            fields.pop(key, None)
+    return fields
 
 
 def effective_apply_record(exc: Exception, record: ApplyRecord | None) -> ApplyRecord | None:
@@ -974,7 +1068,8 @@ def effective_apply_record(exc: Exception, record: ApplyRecord | None) -> ApplyR
 class RecordedFailure:
     """What `_record_failure` stored: the run's terminal outcome and the failure's next action.
 
-    `cause` is the operator cause the evidence holds, for a known error class only.
+    `cause` is the cause `operator_cause` recorded, for a known error class only; a cause from
+    a `failure_record` template is not repeated here.
     """
 
     outcome: Literal["failed", "ambiguous"]
@@ -1102,7 +1197,10 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
         )
         return None
     next_action = evidence.get("next_action")
-    cause = evidence.get("cause")
+    # The worker's ERROR line and its returned `Failed` state repeat only a cause that
+    # `operator_cause` recorded (spec 017); a cause from a `failure_record` template stays in
+    # the record, and the failure keeps the sanitized raise.
+    cause = operator_cause(exc, secrets).get("cause")
     return RecordedFailure(
         outcome=terminal_outcome,
         next_action=next_action if isinstance(next_action, str) and next_action else None,
@@ -1213,11 +1311,14 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     expected_checksum: str | None = None,
     confirm_writes: bool = False,
     configuration_name: str | None = None,
+    confirm_left_out: bool = False,
 ) -> dict[str, Any] | State[Any]:
     """Execute one API-reserved stage and publish its durable product data.
 
     `configuration_name` is the configuration's readable name, used only for the run's
-    title; the configuration is identified by `config_id`.
+    title; the configuration is identified by `config_id`. `confirm_left_out` is the apply
+    request's confirmation that the records the plan leaves out were reviewed; the engine
+    checks it again (spec 020 research R10).
 
     A refused execution claim, and a failure whose recorded evidence has a cause, end the flow
     run with a returned `Failed` state, so no traceback passes through Prefect's engine; any
@@ -1266,6 +1367,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 tracker=tracker,
                 scratch=scratch,
                 flow_run_id=flow_run_id,
+                confirm_left_out=confirm_left_out,
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         failure = exc

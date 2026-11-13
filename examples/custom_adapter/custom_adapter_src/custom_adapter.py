@@ -14,6 +14,7 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
+from infrahub_sync.adapters.references import peer_unique_id, peer_unique_ids, reference_is_required
 
 """Example custom adapter for demonstration purposes.
 
@@ -106,96 +107,82 @@ class MockdbAdapter(DiffSyncMixin, Adapter):
         # setting NAMES, never their values.
         logger.debug("Settings provided: %s", sorted(self.settings))
 
-    def model_loader(self, model_name: str, model: MockdbModel) -> None:
-        """
-        Load data for a specific model.
+    def list_records(self, model_name: str, element: SchemaMappingModel) -> list[dict[str, Any]]:
+        """Return the raw records of one schema mapping entry, before any filter.
 
-        This method is called by the DiffSync framework when loading
-        data for a specific model.
-
-        Args:
-            model_name: The name of the model to load data for.
-            model: The model class to instantiate.
-        """
-        logger.debug("Loading %s data via model_loader...", model_name)
-
-        # Find the corresponding schema mapping for this model
-        for element in self.config.schema_mapping:
-            if element.name == model_name:
-                # Get the resource name from the mapping
-                resource_name = element.mapping
-                logger.debug("Found mapping for %s: %s", model_name, resource_name)
-
-                # Get all nodes of this type from the mock database
-                nodes = self.client.get_all_nodes(resource_name)
-                total = len(nodes)
-
-                # Apply filters if this is the source adapter
-                if self.config.source.name.title() == self.type.title():
-                    # Filter and transform the records
-                    filtered_objs = model.filter_records(records=nodes, schema_mapping=element)
-                    logger.info("%s: Loading %s/%s %s", self.type, len(filtered_objs), total, model_name)
-                    transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
-                else:
-                    # No filtering needed
-                    logger.info("%s: Loading all %s %s", self.type, total, model_name)
-                    transformed_objs = nodes
-
-                # Add each object to the adapter
-                for obj in transformed_objs:
-                    data = self.obj_to_diffsync(obj=obj, mapping=element, model=model)
-                    logger.debug("Adding %s to adapter", data.get("name", data.get("local_id")))
-                    self.add(model(**data))
-
-                # We found and processed the mapping, so we're done
-                break
-
-    def obj_to_diffsync(self, obj: dict[str, Any], mapping: SchemaMappingModel, model: MockdbModel) -> dict[str, Any]:
-        """Transform an object from the mock database to a format compatible with DiffSync.
+        The base class's `model_loader` calls this method for each mapping entry of
+        `model_name`. On the source side it then applies the entry's filters, and
+        `load_record` applies its transforms and converts each record with
+        `record_to_data`. A record that cannot be built is recorded in `load_report`
+        and the read continues with the next record.
 
         Args:
-            obj: The object from the mock database.
-            mapping: The schema mapping to use.
+            model_name: The name of the model to read.
+            element: The schema mapping entry; `element.mapping` names the resource.
+
+        Returns:
+            The raw records of the resource.
+        """
+        logger.debug("Listing %s records from resource %s", model_name, element.mapping)
+        return self.client.get_all_nodes(element.mapping)
+
+    def record_source_id(self, record: dict[str, Any]) -> str | None:  # noqa: PLR6301
+        """Return the source record ID of a raw record.
+
+        The mock records have no `id` field, so the name serves as the source record ID.
+        """
+        value = record.get("name") or record.get("id")
+        return None if value is None else str(value)
+
+    def record_to_data(
+        self, record: dict[str, Any], element: SchemaMappingModel, model: type[MockdbModel]
+    ) -> dict[str, Any]:
+        """Convert one raw record to model data, with `local_id` set to its source record ID.
+
+        References resolve through `peer_unique_id` and `peer_unique_ids`, which look up the
+        peer by its kind and source record ID among the stored records.
+
+        Args:
+            record: The raw record from the mock database.
+            element: The schema mapping entry.
             model: The model class.
 
         Returns:
-            A dictionary containing the transformed data.
+            The model data.
         """
-        # Use name or id as the local ID
-        obj_id = obj.get("name") or obj.get("id")
-        data: dict[str, Any] = {"local_id": str(obj_id)}
+        source_id = self.record_source_id(record)
+        data: dict[str, Any] = {"local_id": source_id}
+        owner = (element.name, source_id)
 
-        # Process each field in the mapping
-        if mapping.fields:
-            for field in mapping.fields:
-                if field.static:
-                    # Use the static value if provided
-                    data[field.name] = field.static
-                elif field.mapping and not field.reference:
-                    # Map directly from the source object
-                    value = obj.get(field.mapping)
-                    if value is not None:
-                        data[field.name] = value
-                elif field.mapping and field.reference:
-                    # Handle references to other objects
-                    ref_model = field.reference
-                    all_refs = self.store.get_all(model=ref_model)
-
-                    if model.is_list(field.name):
-                        # Handle list references
-                        peers = []
-                        for ref_id in obj.get(field.mapping, []):
-                            matched = [ref for ref in all_refs if ref.local_id == str(ref_id)]
-                            if matched:
-                                peers.append(matched[0].get_unique_id())
-                        data[field.name] = peers
-                    else:
-                        # Handle single references
-                        ref_id = obj.get(field.mapping)
-                        if ref_id is not None:
-                            matched = [ref for ref in all_refs if ref.local_id == str(ref_id)]
-                            if matched:
-                                data[field.name] = matched[0].get_unique_id()
+        for field in element.fields:
+            if field.static is not None:
+                # Use the static value if provided
+                data[field.name] = field.static
+            elif field.mapping and not field.reference:
+                # Map directly from the source record
+                value = record.get(field.mapping)
+                if value is not None:
+                    data[field.name] = value
+            elif field.mapping and field.reference:
+                # Resolve references to other records by their source record ID
+                required = reference_is_required(model, field.name)
+                if model.is_list(field.name):
+                    data[field.name] = peer_unique_ids(
+                        self,
+                        field.reference,
+                        record.get(field.mapping) or [],
+                        owner=owner,
+                        field=field.name,
+                        required=required,
+                    )
+                else:
+                    peer_id = record.get(field.mapping)
+                    if peer_id is not None:
+                        unique_id = peer_unique_id(
+                            self, field.reference, peer_id, owner=owner, field=field.name, required=required
+                        )
+                        if unique_id is not None:
+                            data[field.name] = unique_id
 
         return data
 

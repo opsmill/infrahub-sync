@@ -463,54 +463,36 @@ class PrometheusAdapter(DiffSyncMixin, Adapter):
 
     # ---- DiffSync hooks ----
 
-    def model_loader(self, model_name: str, model) -> None:
+    def list_records(self, model_name: str, element: SchemaMappingModel) -> list[dict[str, Any]]:  # noqa: ARG002
+        """Return the samples of the mapping entry's metric or resource, each with a `lookup` callable.
+
+        The `lookup` callable lets Jinja transforms read other metrics; it is injected here,
+        before the read loop runs the transforms.
+        """
         samples_by_metric = self._ensure_samples()
+        if not element.mapping:
+            return []
+        objs = samples_by_metric.get(element.mapping, [])
+        lookup = self._lookup
+        if lookup is not None:
+            for obj in objs:
+                # bind current obj into the callable
+                def _mk_lookup(current: dict[str, Any], _lookup: LookupResolver = lookup):
+                    return lambda metric, key_or_path, value_path, default=None: _lookup.resolve_fn(
+                        current, metric, key_or_path, value_path, default
+                    )
 
-        for element in self.config.schema_mapping:
-            if element.name != model_name:
-                continue
+                obj["lookup"] = _mk_lookup(obj)
+        return objs
 
-            if not element.mapping:
-                logger.info("No mapping defined for '%s', skipping", element.name)
-                continue
+    def record_source_id(self, record: Any) -> str | None:
+        """Return the sample's ID: its metric name and sorted labels."""
+        return str(_derive_identifier_key(record)) if isinstance(record, dict) else None
 
-            metric_or_resource = element.mapping
-            objs = samples_by_metric.get(metric_or_resource, [])
-            total = len(objs)
-
-            # Inject a callable 'lookup' into each record so Jinja transforms can use it.
-            # NOTE: must be done BEFORE transforms.
-            lookup = self._lookup
-            if lookup is not None:
-                for obj in objs:
-                    # bind current obj into the callable
-                    def _mk_lookup(current: dict[str, Any], _lookup: LookupResolver = lookup):
-                        return lambda metric, key_or_path, value_path, default=None: _lookup.resolve_fn(
-                            current, metric, key_or_path, value_path, default
-                        )
-
-                    obj["lookup"] = _mk_lookup(obj)
-
-            if self.target == "source":
-                filtered_objs = model.filter_records(records=objs, schema_mapping=element)
-                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
-                logger.info(
-                    "%s: Loading %d/%d from '%s' (with transforms)",
-                    self.type,
-                    len(transformed_objs),
-                    total,
-                    metric_or_resource,
-                )
-            else:
-                transformed_objs = objs
-                logger.info("%s: Loading all %d from '%s'", self.type, total, metric_or_resource)
-
-            for obj in transformed_objs:
-                data = self.obj_to_diffsync(obj=obj, mapping=element, model=model)
-                item = model(**data)
-                self.add(item)
-
-    def obj_to_diffsync(self, obj: dict[str, Any], mapping: SchemaMappingModel, model: PrometheusModel) -> dict:
+    def record_to_data(self, record: dict[str, Any], element: SchemaMappingModel, model: type[PrometheusModel]) -> dict:
+        """Convert one sample to model data; a reference holds the mapped value unchanged."""
+        obj = record
+        mapping = element
         local_id = _derive_identifier_key(obj)
         data: dict[str, Any] = {"local_id": str(local_id)}
 

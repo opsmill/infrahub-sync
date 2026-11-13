@@ -214,6 +214,64 @@ def _permissions_named(text: str) -> tuple[str, ...]:
     return tuple(candidates)
 
 
+# The longest Infrahub error code, node kind and field name, and the longest Infrahub message, a
+# rejected write records (spec 020 data-model.md, "Stage failure record additions").
+MAX_REJECTED_WRITE_NAME = 128
+MAX_REJECTED_WRITE_MESSAGE = 1000
+
+
+@dataclass(frozen=True, slots=True)
+class RejectedWrite:
+    """What Infrahub said about a write it rejected: four values of its first GraphQL error.
+
+    Each value is `None` when Infrahub did not return it, or did not return it as a string.
+    """
+
+    error_code: str | None = None
+    node_kind: str | None = None
+    attribute: str | None = None
+    message: str | None = None
+
+
+def rejected_write(exc: BaseException) -> RejectedWrite | None:
+    """Read Infrahub's own description of a rejected write from the first `GraphQLError` in the chain.
+
+    Reads exactly `extensions.code`, `extensions.data.node_kind`, `extensions.data.field_name`
+    and `message` of the first error that has a message, each only when it is a string. The
+    three names have control characters removed and are capped; the message is returned as
+    Infrahub sent it, and the caller must mask secrets in it and then cap it with
+    `quotable_text(..., limit=MAX_REJECTED_WRITE_MESSAGE)`. Nothing else of the error is read: not the query,
+    not its variables and no other key of `extensions.data`, because those can hold the values
+    sent, including a credential. Returns `None` when the chain holds no `GraphQLError`.
+    """
+    graphql = next((link for link in cause_chain(exc) if isinstance(link, GraphQLError)), None)
+    if graphql is None:
+        return None
+    errors = list(graphql.errors) if isinstance(graphql.errors, (list, tuple)) else []
+    first = next((error for error in errors if isinstance(error, dict) and isinstance(error.get("message"), str)), None)
+    if first is None:
+        return RejectedWrite()
+    extensions = first.get("extensions")
+    extensions = extensions if isinstance(extensions, dict) else {}
+    data = extensions.get("data")
+    data = data if isinstance(data, dict) else {}
+    return RejectedWrite(
+        error_code=_name(extensions.get("code")),
+        node_kind=_name(data.get("node_kind")),
+        attribute=_name(data.get("field_name")),
+        # The message is kept whole: the caller masks secrets in it before it shortens it, so a
+        # secret that crosses the length limit is not left half visible.
+        message=first["message"] or None,
+    )
+
+
+def _name(value: object) -> str | None:
+    """A string value cleaned and capped as a name, else `None`."""
+    if not isinstance(value, str):
+        return None
+    return quotable_text(value, limit=MAX_REJECTED_WRITE_NAME) or None
+
+
 def quotable_text(text: str, *, limit: int = _MAX_QUOTED_MESSAGE) -> str:
     """Return text fit to quote: printable characters only, single spaces, at most `limit` characters.
 

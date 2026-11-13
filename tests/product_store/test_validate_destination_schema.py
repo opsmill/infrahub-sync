@@ -23,6 +23,7 @@ from infrahub_sync.configuration import validation as validation_module
 from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES
 from infrahub_sync.configuration.schema_validation import DestinationSchemaOptions
 from infrahub_sync.configuration.validation import collect_findings
+from infrahub_sync.configuration.worker_credentials import referenced_credential_variables
 from infrahub_sync.product_store import configs as configs_service
 from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.runtime_schema import compute_consumed_schema_fingerprint, normalize_destination_schema
@@ -61,7 +62,9 @@ class _SpiedAccessor:
 def _inject_accessor(monkeypatch: pytest.MonkeyPatch) -> _SpiedAccessor:
     accessor = _SpiedAccessor()
     table = dict(BUILTIN_ADAPTER_CAPABILITIES)
-    table["infrahub"] = replace(table["infrahub"], destination_schema_accessor=accessor)
+    table["infrahub"] = replace(
+        table["infrahub"], destination_schema_accessor=accessor, destination_access_accessor=None
+    )
     monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
     return accessor
 
@@ -73,6 +76,15 @@ def _registered(tmp_path: Path, data: dict[str, Any] | None = None) -> tuple[str
     registered = configs_service.register(
         package=package_data() if data is None else data,
         projection=projection,
+    )
+    # A live worker holds every credential variable the package references, so the
+    # opt-in's worker credential check (spec 020 FR-035) adds no finding to these cases.
+    projection.publish_worker_environment(
+        "worker",
+        [
+            identifier
+            for _name, identifier in referenced_credential_variables(package(package_data() if data is None else data))
+        ],
     )
     return registered.version.config_id, projection
 
@@ -203,7 +215,9 @@ def test_core_and_schema_findings_merge_in_the_stable_sort_order(
     # so the core reports missing-adapter while the schema checks judge the snapshot.
     accessor = _SpiedAccessor()
     table = dict(BUILTIN_ADAPTER_CAPABILITIES)
-    table["infrahub"] = replace(table["infrahub"], destination_schema_accessor=accessor)
+    table["infrahub"] = replace(
+        table["infrahub"], destination_schema_accessor=accessor, destination_access_accessor=None
+    )
     del table["netbox"]
     data = _mapping_package_data("NopeKind")
     config_id, projection = _registered(tmp_path, data)
@@ -235,7 +249,9 @@ def test_a_failed_schema_read_returns_a_report_rather_than_a_refusal(
         raise DestinationSchemaReadError(msg, reason="unreachable")
 
     table = dict(BUILTIN_ADAPTER_CAPABILITIES)
-    table["infrahub"] = replace(table["infrahub"], destination_schema_accessor=_raising)
+    table["infrahub"] = replace(
+        table["infrahub"], destination_schema_accessor=_raising, destination_access_accessor=None
+    )
     monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
     config_id, projection = _registered(tmp_path)
 

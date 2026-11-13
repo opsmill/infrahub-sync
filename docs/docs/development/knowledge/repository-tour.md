@@ -65,6 +65,7 @@ destination-schema checks.
 | `infrahub_lineage.py` | The parser and validator for an Infrahub destination's `source`, `owner` and `protect` settings |
 | `validation.py` | The finding-producing checks and their fixed execution order |
 | `credentials.py` | What a credential reference is, and how a provider resolves one |
+| `worker_credentials.py` | The names of the credential variables a worker holds, and the `$credential` variables a package references, for `configs validate --branch` |
 | `schema_validation.py` | The opt-in destination-schema checks |
 | `warnings.py` | Intentional omissions and unqualified optional features |
 | `runtime.py` | Runtime resolution, including the effective destination branch |
@@ -93,6 +94,23 @@ Two facts about it are often missed:
 
 [The configuration write guard](apply-guard.md) covers the advisory lock that serializes one
 configuration's writes.
+
+Three service modules carry what a run tells the operator:
+
+- `failure_cause.py` builds the stage failure record: it classifies the error into a
+  `failure_type` and copies a fixed set of fields of typed errors (system, Infrahub error code,
+  node kind, attribute, record, field). It never copies `str(exc)`; an error class missing from
+  its classification table becomes `internal_error`. ADR 0021 records why.
+- `run_artifact.py` builds the markdown artifact the worker publishes on each Prefect flow run,
+  including the left-out and problem counts and the review commands of a plan that leaves out
+  records.
+- `flow.py` also stops a `sync` whose plan leaves out records, after the plan checkpoint and
+  before any write. The stage result carries a `failure` with `failure_type:
+  left_out_review_required`, and the store releases the run's write admission in the same
+  commit (`release_write_admission` in `product_store/models.py`).
+
+Each worker publishes the names of its set credential variables to the `worker_environments`
+table on each poll, through `service.storage.service_product_projection`.
 
 ### Runtime schema
 
@@ -124,6 +142,7 @@ return types.
 | `verify.py`, `errors.py` | Pre-write verification and the error taxonomy |
 | `write_surface.py` | `PlannedWriteDestination`, the destination write surface an apply goes through |
 | `config_version.py`, `destination_only_peer.py` | Version binding and destination-only peers |
+| `problems.py` | The problem pass of a plan: `run_problem_pass` finds the problems, walks the required relationships to the records that depend on a left-out record, keeps records with an optional link to one, and selects the operations the plan writes. The writer saves the result as `plan/report.jsonl` (plan format 4) |
 
 [The saved plan artifact](plan-artifact.md) and [Planned writes and apply](planned-write-and-apply.md)
 are the deep documents.
@@ -140,7 +159,21 @@ is kept.
 
 [`infrahub_sync/adapters/`][src-infrahub-sync-adapters] holds the nine bundled connectors: `aci`, `genericrestapi`,
 `infrahub`, `ipfabricsync`, `nautobot`, `netbox`, `peeringmanager`, `prometheus` and
-`slurpitsync`, plus the shared `rest_api_client.py` and `utils.py`.
+`slurpitsync`, plus the shared `rest_api_client.py`, `utils.py` and `references.py`.
+`references.py` resolves a source reference to its peer (`peer_unique_id`, `peer_unique_ids`,
+`reference_is_required`). Through an optional relationship, it records a peer that is not
+loaded or not in the source in the adapter's load report, and only logs a peer that a filter
+removed. Through a required relationship, it raises an error that `load_record` records.
+
+The source adapters read through the loop that `DiffSyncMixin` owns in
+`infrahub_sync/__init__.py`: an adapter lists its records (`list_records`) and converts each
+one (`record_to_data`), and `load_record` admits it or records why it cannot.
+`InfrahubAdapter` keeps its own `model_loader`, because it also fills the SDK store, and admits
+each record through `load_record` too. The entries go
+to the adapter's `load_report`, whose types are in `infrahub_sync/load_report.py`; the problem
+pass of a plan reads them. `infrahub_sync/warm_read.py` holds the methods a warm read of the
+source calls on the adapter (`list_changed_records`, `load_changed_records`), so that the
+changed records go through `load_record` too.
 
 Every bundled adapter has a matching entry in `BUILTIN_ADAPTER_CAPABILITIES`; the pair is what
 makes a package using that adapter admissible. [Adapter anatomy](adapter-anatomy.md) explains
@@ -153,6 +186,8 @@ permission denial). It quotes the permission Infrahub names. When a 403 names no
 quotes the server message instead, with control characters removed and its length capped at
 300 characters. `classify_infrahub_error_chain`
 walks the cause chain, because a plan wraps every load failure in a `ValueError`.
+`rejected_write()` reads the error code, node kind, attribute and message of a write that
+Infrahub rejected, for the `destination_rejected_write` failure record.
 
 ### Cache and incremental extraction
 

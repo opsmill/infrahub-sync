@@ -134,8 +134,8 @@ def test_ipfabric_peer_found_resolves_to_unique_id(ipfabricsync_module) -> None:
     holder = _holder(peer_model=peer_model, peers={"peer-1": "zulu"}, identifier_mapping="peer_id")
     mapping = SchemaMappingModel(name=record_model._modelname, fields=[IPF_SCALAR_FIELD])
 
-    data = ipfabricsync_module.IpfabricsyncAdapter.ipfabric_dict_to_diffsync(
-        holder, obj={"id": "record-1", "peer_id": "zulu"}, mapping=mapping, model=record_model
+    data = ipfabricsync_module.IpfabricsyncAdapter.record_to_data(
+        holder, record={"id": "record-1", "peer_id": "zulu"}, element=mapping, model=record_model
     )
 
     assert data["peer"] == "zulu"
@@ -148,8 +148,8 @@ def test_ipfabric_peer_missing_resolves_to_none(ipfabricsync_module) -> None:
     holder = _holder(peer_model=peer_model, peers={}, identifier_mapping="peer_id")
     mapping = SchemaMappingModel(name=record_model._modelname, fields=[IPF_SCALAR_FIELD])
 
-    data = ipfabricsync_module.IpfabricsyncAdapter.ipfabric_dict_to_diffsync(
-        holder, obj={"id": "record-1", "peer_id": "missing"}, mapping=mapping, model=record_model
+    data = ipfabricsync_module.IpfabricsyncAdapter.record_to_data(
+        holder, record={"id": "record-1", "peer_id": "missing"}, element=mapping, model=record_model
     )
 
     assert data["peer"] is None
@@ -162,8 +162,8 @@ def test_ipfabric_list_valued_reference_field_is_left_unset(ipfabricsync_module)
     holder = _holder(peer_model=peer_model, peers={"peer-1": "zulu", "peer-2": "alpha"}, identifier_mapping="peer_ids")
     mapping = SchemaMappingModel(name=record_model._modelname, fields=[IPF_LIST_FIELD])
 
-    data = ipfabricsync_module.IpfabricsyncAdapter.ipfabric_dict_to_diffsync(
-        holder, obj={"id": "record-1", "peer_ids": ["zulu", "alpha"]}, mapping=mapping, model=record_model
+    data = ipfabricsync_module.IpfabricsyncAdapter.record_to_data(
+        holder, record={"id": "record-1", "peer_ids": ["zulu", "alpha"]}, element=mapping, model=record_model
     )
 
     assert "peers" not in data

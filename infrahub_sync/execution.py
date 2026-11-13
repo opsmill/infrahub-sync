@@ -107,7 +107,6 @@ class PotendaFactory(Protocol):
         show_progress: bool | None = ...,
         verbosity: int = ...,
         run_id: str | None = ...,
-        continue_on_error: bool = ...,
         concurrent_load: bool = ...,
         base_directory: Path | None = ...,
     ) -> Potenda: ...
@@ -901,6 +900,7 @@ def _run_apply_lifecycle(  # pylint: disable=too-many-arguments
     run_directory: Path,
     sidecar_mode: Literal["sync", "apply"],
     base_directory: Path | None = None,
+    confirm_left_out: bool = False,
 ) -> RunResult:
     """Apply one saved plan while the shared core owns its sidecar transitions."""
     factory = _plan_applier_factory if _plan_applier_factory is not None else PlanApplier.open_existing
@@ -920,6 +920,7 @@ def _run_apply_lifecycle(  # pylint: disable=too-many-arguments
             ownership=ownership,
             allow_destination_change=allow_destination_change,
             expected_checksum=expected_checksum,
+            confirm_left_out=confirm_left_out,
         )
     except (OperationApplyFailedError, ApplyRecordInvariantError) as exc:
         _save_failed_run(run_directory, mode=sidecar_mode, record=exc.apply_record, run_file=run_file)
@@ -1022,6 +1023,7 @@ def _execute_apply_operation(
     lock_already_held: bool,
     run_file_mode: Literal["diff", "sync"] | None,
     base_directory: Path | None,
+    confirm_left_out: bool = False,
 ) -> RunResult:
     """Apply one reviewed plan with core-owned lock and sidecar transitions."""
     run_directory = _require_applicable_plan(sync_name=sync_instance.name, run_id=run_id, base_directory=base_directory)
@@ -1051,6 +1053,7 @@ def _execute_apply_operation(
             run_directory=run_directory,
             sidecar_mode=sidecar_mode,
             base_directory=base_directory,
+            confirm_left_out=confirm_left_out,
         )
 
 
@@ -1133,7 +1136,6 @@ def execute_run(
     run_id: str | None = None,
     concurrent_load: bool = True,
     full_extract: bool = True,
-    continue_on_error: bool = False,
     print_diff: bool = True,
     potenda_factory: PotendaFactory | None = None,
     allow_destination_change: bool = False,
@@ -1141,6 +1143,7 @@ def execute_run(
     ownership: WriteOwnership | None = None,
     record_applied: Callable[[ApplyRecord], None] | None = None,
     base_directory: Path | None = None,
+    confirm_left_out: bool = False,
     # Private seams — not part of the remote contract; run_remote_request never sets them.
     _plan_applier_factory: Callable[..., PlanApplier] | None = None,
     _lock_timeout: float = 60.0,
@@ -1160,6 +1163,10 @@ def execute_run(
     proves this process still holds the right to write this configuration. The
     parameter is optional in the signature only because plan and verify do not write;
     an apply without one is refused before anything is constructed.
+
+    `confirm_left_out` is the person's confirmation that they reviewed the records the plan
+    leaves out. An apply of a plan that leaves out records is refused without it, before any
+    write (spec 020 FR-010).
 
     `base_directory` names the cache root this run works in. A caller that owns a
     private directory for the run — the Sync service, whose stages share no filesystem
@@ -1212,6 +1219,7 @@ def execute_run(
             lock_already_held=_lock_already_held,
             run_file_mode=_run_file_mode,
             base_directory=base_directory,
+            confirm_left_out=confirm_left_out,
         )
 
     _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id, base_directory=base_directory)
@@ -1233,7 +1241,6 @@ def execute_run(
             show_progress=show_progress,
             verbosity=verbosity,
             run_id=run_id,
-            continue_on_error=continue_on_error,
             concurrent_load=concurrent_load,
             base_directory=base_directory,
         )

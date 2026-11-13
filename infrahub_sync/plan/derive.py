@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # derivation and the identity checks that read the same operations
 """Plan derivation: a diffsync comparison result becomes planned operations.
 
 Delivers FR-001's population, FR-002, FR-015, FR-024, FR-028's obligation levels and
@@ -68,14 +69,17 @@ from infrahub_sync.plan.errors import (
 )
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.keying import (
+    IdentityGroup,
     _component_field,
-    refuse_destination_identity_collisions,
-    refuse_source_identity_collisions,
+    destination_identity_collision_groups,
+    destination_keys,
+    merged_identity_groups,
     refuse_unkeyed_create,
     require_infrahub_create_schema,
+    source_identity_collision_groups,
 )
 from infrahub_sync.plan.last_changes import changed_fields
-from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
+from infrahub_sync.plan.models import PlannedOperation, RelationshipReference, not_in_source_peer_pair
 from infrahub_sync.plan.reference_candidates import literal_peer_kind_is_unambiguous, reference_candidates
 
 if TYPE_CHECKING:
@@ -200,6 +204,10 @@ def _peer_pair(
     `(kind, unique_id)` pairs already open, so a configuration whose identifiers reference
     each other in a cycle fails with a message rather than a `RecursionError`.
 
+    A reference value marked not in the source (`infrahub_sync.not_in_source_placeholder`)
+    returns the placeholder pair of `not_in_source_peer_pair`; the selection step of the
+    problem pass removes it, and the writer refuses an operation that still holds one.
+
     Raises:
         SourcePeerUnresolvedError: the peer is in none of the candidate kinds' buckets and
             `destination_only_identity` does not admit it (the **absent** arm).
@@ -211,6 +219,13 @@ def _peer_pair(
         owning_kind=owning_kind,
         field=field,
     )
+    placeholder = not_in_source_peer_pair(unique_id) if probed is None else None
+    if placeholder is not None:
+        # A peer the source does not return (spec 020 research R5): named by a placeholder the
+        # problem pass removes, instead of the absent refusal or a literal destination identity.
+        # The store is probed first, so a stored peer whose unique ID starts like a
+        # placeholder is still that peer.
+        return placeholder
     if probed is None:
         if len(candidates) == 1 and literal_peer_kind_is_unambiguous(config, owning_kind, field, candidates[0]):
             literal = destination_only_identity(
@@ -770,15 +785,6 @@ def _identity_attributes_by_kind(operations: Sequence[PlannedOperation]) -> dict
     return by_kind
 
 
-def _destination_keys(node: Any) -> list[tuple[str, ...]]:
-    """Sorted declared keys reduced to mapping field names for the advisory warning."""
-    constraints = getattr(node, "uniqueness_constraints", None) or []
-    human_friendly_id = getattr(node, "human_friendly_id", None)
-    declared = [*constraints, *([human_friendly_id] if human_friendly_id else [])]
-    keys = {tuple(sorted({_component_field(component) for component in key})) for key in declared if key}
-    return sorted(keys)
-
-
 def _merged_identity_counts(operations: Sequence[PlannedOperation], *, key: tuple[str, ...]) -> tuple[int, int]:
     """Count collided source operations and destination identities after projection onto `key`.
 
@@ -801,8 +807,8 @@ def _warn_identity_finer_than_destination_key(
     node: Any,
     supplied: set[str],
     operations: Sequence[PlannedOperation],
-) -> None:
-    """Warn where the destination cannot tell the plan's identities apart.
+) -> list[IdentityGroup]:
+    """Warn where the destination cannot tell the plan's identities apart, and return the merge groups.
 
     A finer source identity alone is allowed; proven create collisions are refused
     separately. FR-024's two arms test opposite subset relations: a missing destination
@@ -811,10 +817,15 @@ def _warn_identity_finer_than_destination_key(
     `Comms closet`, one per site, previously became one without a signal. Report surplus
     fields and projected operation counts. Kinds without a destination key receive the
     separate unkeyed-write warning; the destination has nothing to distinguish there.
+
+    Returns the groups of operations that the closest key merges and that hold a create
+    (`identities_merge_in_destination`, spec 020 research R6): an update already has its own
+    node, so only a group with a create merges anything. Only a key made of identity fields
+    groups records Infrahub stores as one node.
     """
-    keys = _destination_keys(node)
+    keys = destination_keys(node)
     if not keys or any(supplied <= set(key) for key in keys):
-        return
+        return []
 
     # Select the closest declared key, breaking ties deterministically.
     closest = min(keys, key=lambda key: (-len(supplied & set(key)), key))
@@ -841,6 +852,13 @@ def _warn_identity_finer_than_destination_key(
         ", ".join(uncovered),
         observed,
     )
+    if not set(closest) < supplied:
+        return []
+    return [
+        group
+        for group in merged_identity_groups(operations, kind=kind, key=closest)
+        if any(operation.action == "create" for operation in group.operations)
+    ]
 
 
 def _source_identities(
@@ -898,21 +916,31 @@ def warn_missing_convergence_key(
     operations: Sequence[PlannedOperation],
     source_adapter: Any = None,
     config: SyncConfig | None = None,
-) -> None:
-    """Prove create keys and compare loaded source identities (FR-024, AD044).
+) -> list[IdentityGroup]:
+    """Prove create keys, compare loaded source identities and return the identity groups (FR-024, AD044).
 
-    Infrahub creates require cached schemas. Refusals precede writes and artifacts.
-    Updates use recorded destination ids; their key warnings stay off the manifest.
+    Infrahub creates require cached schemas; an unkeyed create is still refused before any
+    write. Records the destination cannot tell apart are no longer refused: each group of
+    them is returned, once, for the problem pass to leave out (spec 020 research R6):
+
+    - creates that share a destination uniqueness rule (`destination_identity_collision`)
+    - creates that share their human-friendly ID with a distinct loaded source record, and
+      operations with a create that the closest destination key merges
+      (`identities_merge_in_destination`)
+
+    Groups with the same records are returned once, the first found kept. Updates use
+    recorded destination ids; their key warnings stay off the manifest.
     """
     require_infrahub_create_schema(destination=destination, operations=operations)
     schema = getattr(destination, "schema", None)
     if not schema:
         logger.debug("Plan: the destination exposes no schema, so the convergence-key warning is skipped (AD052)")
-        return
+        return []
 
+    found: list[IdentityGroup] = []
     by_kind = _identity_attributes_by_kind(operations)
     if hasattr(schema, "get"):
-        refuse_destination_identity_collisions(schema=schema, operations=operations)
+        found.extend(destination_identity_collision_groups(schema=schema, operations=operations))
     peers = destination_only_peers(destination)
     for kind in sorted(by_kind):
         node = schema.get(kind) if hasattr(schema, "get") else None
@@ -930,22 +958,13 @@ def warn_missing_convergence_key(
                 if source_adapter is not None
                 else [(op.operation_id, op.identity) for op in of_kind if op.action != "delete"]
             )
-            declared = (
-                {field for entry in config.schema_mapping if entry.name == kind for field in (entry.identifiers or [])}
-                if config is not None
-                else by_kind[kind]
-            )
-            refuse_source_identity_collisions(
-                kind=kind,
-                node=node,
-                creates=creates,
-                identities=identities,
-                declared_identity=declared or by_kind[kind],
-            )
+            found.extend(source_identity_collision_groups(kind=kind, node=node, creates=creates, identities=identities))
 
         # A finer identity alone is not a collision: a lone source record can safely
         # create, and updates still use their recorded destination ids.
-        _warn_identity_finer_than_destination_key(kind=kind, node=node, supplied=by_kind[kind], operations=of_kind)
+        found.extend(
+            _warn_identity_finer_than_destination_key(kind=kind, node=node, supplied=by_kind[kind], operations=of_kind)
+        )
 
         # Only updates receive the remaining key warnings. Creates were proven
         # above, and deletes are recorded but never executed (ADR 0004).
@@ -986,3 +1005,17 @@ def warn_missing_convergence_key(
                 kind,
                 readable,
             )
+    return unique_identity_groups(found)
+
+
+def unique_identity_groups(groups: Sequence[IdentityGroup]) -> list[IdentityGroup]:
+    """Return `groups` without a group whose records an earlier group already holds."""
+    unique: list[IdentityGroup] = []
+    seen: set[frozenset[tuple[str, bytes]]] = set()
+    for group in groups:
+        member_key = group.member_key()
+        if member_key in seen:
+            continue
+        seen.add(member_key)
+        unique.append(group)
+    return unique

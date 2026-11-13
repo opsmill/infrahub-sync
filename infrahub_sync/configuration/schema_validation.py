@@ -20,6 +20,11 @@ own exact-set and reachability tests:
 * the closed-domain family — a snapshot the accessor delivered but the shared runtime
   schema domain refuses. Registered execution refuses the same snapshot, so validation
   reports the same defect rather than silently withholding the fingerprint;
+* the Dropdown literal family (spec 020 FR-034) — a literal ``static`` value of a mapped
+  Dropdown attribute that is not one of the attribute's choices;
+* the destination-access family (spec 020 FR-036) — a permission the import account lacks on
+  the branch to view, create or update a mapped kind, or to look up a named ``source`` or
+  ``owner``, and a named ``source`` or ``owner`` that matches no node or more than one node;
 * the schema-read-failure family — a schema read the accessor reports as failed becomes a
   typed error finding rather than a generic service-boundary refusal. The bundled accessor
   classifies SDK-raised errors, HTTP transport and status failures, an unresolvable declared
@@ -37,9 +42,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from infrahub_sync import requested_destination_write_operations
+from infrahub_sync.generator import get_identifiers
 from infrahub_sync.plan.keying import writable_convergence_reason
 from infrahub_sync.runtime_schema import (
     UnsupportedSchemaSemanticsError,
@@ -47,12 +53,16 @@ from infrahub_sync.runtime_schema import (
     normalize_destination_schema,
 )
 
-from .capabilities import BUILTIN_ADAPTER_CAPABILITIES, DestinationSchemaReadError
+from .capabilities import BUILTIN_ADAPTER_CAPABILITIES, DestinationAccessAccessor, DestinationSchemaReadError
 from .models import ValidationFinding, sort_findings
 from .runtime import effective_destination_branch
 from .validation import _finding_message
 
 if TYPE_CHECKING:
+    from infrahub_sdk.schema import NodeSchema
+
+    from infrahub_sync.runtime_schema import DestinationSchemaSnapshot
+
     from .models import ConfigurationPackage
 
 _CODE_DESTINATION_SCHEMA_MISMATCH = "destination-schema-mismatch"
@@ -60,6 +70,12 @@ _CODE_DESTINATION_SCHEMA_READ_FAILED = "destination-schema-read-failed"
 _CODE_DESTINATION_SCHEMA_UNSUPPORTED_SEMANTICS = "destination-schema-unsupported-semantics"
 _CODE_DESTINATION_SCHEMA_VALIDATION_UNSUPPORTED = "destination-schema-validation-unsupported"
 _CODE_UNSUPPORTED_DESTINATION_WRITE = "unsupported-destination-write"
+# Spec 020 FR-034: a literal Dropdown value outside the attribute's choices.
+_CODE_DESTINATION_DROPDOWN_VALUE_NOT_IN_CHOICES = "destination-dropdown-value-not-in-choices"
+# Spec 020 FR-036: what the import account may do on the branch, and the source or owner it names.
+_CODE_DESTINATION_PERMISSION_MISSING = "destination-permission-missing"
+_CODE_DESTINATION_LINEAGE_NODE_NOT_FOUND = "destination-lineage-node-not-found"
+_CODE_DESTINATION_LINEAGE_NODE_AMBIGUOUS = "destination-lineage-node-ambiguous"
 
 _DESTINATION_LOCATION = "/configuration/destination"
 _CARDINALITIES = frozenset({"one", "many"})
@@ -70,9 +86,12 @@ class DestinationSchemaOptions:
     """Explicit request for destination schema validation on ``validate``.
 
     Presence is the opt-in: ``None`` on the operation keeps today's declared-content-only
-    behavior byte-identical, with zero schema reads. No options exist yet; the type is the
-    extension point later units add to.
+    behavior byte-identical, with zero schema reads. ``branch`` is the Infrahub branch the
+    team names (`configs validate --branch`, spec 020 FR-034); ``None`` reads the package's
+    declared destination branch.
     """
+
+    branch: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,7 +199,131 @@ def _schema_content_findings(
     return findings
 
 
-def collect_destination_schema_findings(package: ConfigurationPackage) -> DestinationSchemaValidation:
+def _identity_findings(package: ConfigurationPackage, normalized: DestinationSchemaSnapshot) -> list[ValidationFinding]:
+    """Report each mapped kind whose selected identity cannot key a create (spec 020 FR-037).
+
+    The plan keys each create on the fields the generator selects as identifiers
+    (`get_identifiers`: the mapping's `identifiers`, or else its mapped unique attributes),
+    and refuses a create that has no complete writable destination key. Validation judges
+    the same fields through the same rule, so the two give one answer (research R16).
+    """
+    references = {
+        mapping.name: {field.name: field.reference for field in mapping.fields or () if field.reference is not None}
+        for mapping in package.configuration.schema_mapping
+    }
+    findings: list[ValidationFinding] = []
+    for index, mapping in enumerate(package.configuration.schema_mapping):
+        node = normalized.kinds.get(mapping.name)
+        if node is None:
+            continue
+        mapped_fields = {field.name for field in mapping.fields or ()}
+        identifiers = get_identifiers(node=cast("NodeSchema", node), config=package.configuration) or ()
+        reason = writable_convergence_reason(
+            node=node,
+            identity_fields={field for field in identifiers if field in mapped_fields},
+            mapped_fields=mapped_fields,
+            schemas=normalized.kinds,
+            references=references,
+        )
+        if reason:
+            findings.append(
+                _finding(
+                    code=_CODE_DESTINATION_SCHEMA_MISMATCH,
+                    location=f"/configuration/schema_mapping/{index}/identifiers",
+                    message=f"destination kind {mapping.name!r}: {reason}",
+                )
+            )
+    return findings
+
+
+def _dropdown_findings(package: ConfigurationPackage, normalized: DestinationSchemaSnapshot) -> list[ValidationFinding]:
+    """Report each literal ``static`` value of a mapped Dropdown attribute that is not a choice.
+
+    A value mapped from the source is checked by the plan, record by record (spec 020
+    research R4). A Dropdown whose choices the snapshot does not record is not judged. A kind
+    or field the snapshot does not declare is reported by the mismatch checks instead.
+    """
+    findings: list[ValidationFinding] = []
+    for index, mapping in enumerate(package.configuration.schema_mapping):
+        node = normalized.kinds.get(mapping.name)
+        if node is None:
+            continue
+        choices_by_name = {attribute.name: attribute.choices for attribute in node.attributes}
+        for field_index, field in enumerate(mapping.fields or ()):
+            choices = choices_by_name.get(field.name)
+            if choices is None or not isinstance(field.static, str) or field.static in choices:
+                continue
+            findings.append(
+                _finding(
+                    code=_CODE_DESTINATION_DROPDOWN_VALUE_NOT_IN_CHOICES,
+                    location=f"/configuration/schema_mapping/{index}/fields/{field_index}/static",
+                    message=(
+                        f"destination kind {mapping.name!r}: {field.static!r} is not one of the choices of the "
+                        f"Dropdown attribute {field.name!r}: {', '.join(choices)}"
+                    ),
+                )
+            )
+    return findings
+
+
+def _access_findings(
+    package: ConfigurationPackage, accessor: DestinationAccessAccessor | None, branch: str
+) -> list[ValidationFinding]:
+    """Report the permissions the import account lacks on `branch` and the lineage names it cannot use.
+
+    Spec 020 FR-036: one finding per mapped kind the account cannot view, create or update,
+    and one per named `source` or `owner` that the account cannot look up, that matches no
+    node, or that matches more than one node.
+    """
+    if accessor is None:
+        return []
+    try:
+        access = accessor(package, branch)
+    except DestinationSchemaReadError as exc:
+        return [
+            _finding(
+                code=_CODE_DESTINATION_SCHEMA_READ_FAILED,
+                location=_DESTINATION_LOCATION,
+                message=f"destination access for branch {branch!r} could not be read: {exc.describe()}",
+            )
+        ]
+    findings = [
+        _finding(
+            code=_CODE_DESTINATION_PERMISSION_MISSING,
+            location=f"/configuration/schema_mapping/{index}/name",
+            message=(
+                f"the import account lacks {', '.join(access.missing_by_kind[mapping.name])} on branch "
+                f"{branch!r}, which writing kind {mapping.name!r} needs"
+            ),
+        )
+        for index, mapping in enumerate(package.configuration.schema_mapping)
+        if mapping.name in access.missing_by_kind
+    ]
+    for check in access.lineage:
+        location = f"{_DESTINATION_LOCATION}/settings/{check.setting}"
+        named = f"the destination setting {check.setting} names {check.kind} {check.name!r}"
+        if check.outcome == "permission_missing":
+            code = _CODE_DESTINATION_PERMISSION_MISSING
+            message = (
+                f"the import account lacks {', '.join(check.missing)} on branch {branch!r}, which looking up "
+                f"the {check.setting} {check.kind} {check.name!r} needs"
+            )
+        elif check.outcome == "ambiguous":
+            code = _CODE_DESTINATION_LINEAGE_NODE_AMBIGUOUS
+            message = f"{named}, which matches more than one node on branch {branch!r}"
+        elif check.outcome == "kind_missing":
+            code = _CODE_DESTINATION_LINEAGE_NODE_NOT_FOUND
+            message = f"{named}, and the schema of branch {branch!r} has no kind {check.kind}"
+        else:
+            code = _CODE_DESTINATION_LINEAGE_NODE_NOT_FOUND
+            message = f"{named}, which branch {branch!r} does not hold"
+        findings.append(_finding(code=code, location=location, message=message))
+    return findings
+
+
+def collect_destination_schema_findings(
+    package: ConfigurationPackage, options: DestinationSchemaOptions | None = None
+) -> DestinationSchemaValidation:
     """Run every destination schema check for one explicit opt-in request.
 
     Accumulating and total over declared defects: a non-declaring destination, a failed
@@ -188,6 +331,9 @@ def collect_destination_schema_findings(package: ConfigurationPackage) -> Destin
     unknown destination adapter adds nothing here — the core's own finding already names
     that defect and its subtree is unevaluable — and checks independent of a failed read
     still report. Findings return in the stable ``sort_findings`` order.
+
+    The branch read is ``options.branch`` when given (spec 020 FR-034), else the package's
+    declared destination branch.
     """
     destination = package.configuration.destination
     capabilities = BUILTIN_ADAPTER_CAPABILITIES.get(destination.name)
@@ -220,7 +366,9 @@ def collect_destination_schema_findings(package: ConfigurationPackage) -> Destin
             )
         )
     else:
-        branch = resolve_declared_destination_branch(package)
+        branch = (
+            options.branch if options is not None and options.branch else resolve_declared_destination_branch(package)
+        )
         try:
             snapshot = accessor(package, branch)
         except DestinationSchemaReadError as exc:
@@ -237,32 +385,8 @@ def collect_destination_schema_findings(package: ConfigurationPackage) -> Destin
                 fingerprint = compute_consumed_schema_fingerprint(
                     configuration=package.configuration, snapshot=normalized
                 )
-                references = {
-                    mapping.name: {
-                        field.name: field.reference for field in mapping.fields or () if field.reference is not None
-                    }
-                    for mapping in package.configuration.schema_mapping
-                }
-                for index, mapping in enumerate(package.configuration.schema_mapping):
-                    node = normalized.kinds.get(mapping.name)
-                    if node is None:
-                        continue
-                    mapped_fields = {field.name for field in mapping.fields or ()}
-                    reason = writable_convergence_reason(
-                        node=node,
-                        identity_fields=mapped_fields,
-                        mapped_fields=mapped_fields,
-                        schemas=normalized.kinds,
-                        references=references,
-                    )
-                    if reason:
-                        findings.append(
-                            _finding(
-                                code=_CODE_DESTINATION_SCHEMA_MISMATCH,
-                                location=f"/configuration/schema_mapping/{index}/identifiers",
-                                message=f"destination kind {mapping.name!r}: {reason}",
-                            )
-                        )
+                findings.extend(_identity_findings(package, normalized))
+                findings.extend(_dropdown_findings(package, normalized))
             except UnsupportedSchemaSemanticsError:
                 # The worker refuses this snapshot too, so validation names the same
                 # defect rather than reporting only a missing fingerprint.
@@ -277,4 +401,5 @@ def collect_destination_schema_findings(package: ConfigurationPackage) -> Destin
                     )
                 )
             findings.extend(_schema_content_findings(package, snapshot))
+            findings.extend(_access_findings(package, capabilities.destination_access_accessor, branch))
     return DestinationSchemaValidation(findings=sort_findings(findings), schema_fingerprint=fingerprint)

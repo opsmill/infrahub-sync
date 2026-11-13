@@ -40,10 +40,16 @@ class MyCustomAdapter(DiffSyncMixin, Adapter):
         self.settings = adapter.settings or {}
         self.config = config
 
-    def model_loader(self, model_name, model):
-        # Your implementation to load data into the model
-        pass
+    def list_records(self, model_name, element):
+        # Return the raw records of one schema mapping entry
+        return []
+
+    def record_to_data(self, record, element, model):
+        # Convert one raw record to model data, with `local_id` set to its source record ID
+        return {"local_id": str(record["id"])}
 ```
+
+The base class reads each model: it calls `list_records`, applies the filters and transforms of the schema mapping on the source side, and builds each record with `record_to_data`. On the destination side, it builds every record it lists, without filters or transforms.
 
 For a more complete example, see the repository's [custom adapter example](https://github.com/opsmill/infrahub-sync/tree/feature/v3-develop/examples/custom_adapter). It is development material: its package names the `mockdb` adapter, which is not bundled, so registration refuses it.
 

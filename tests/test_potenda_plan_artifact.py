@@ -82,6 +82,11 @@ MANIFEST_KEYS = frozenset(
         "operations_count",
         "delete_operations_computed",
         "plan_checksum",
+        # Plan format 4 (spec 020): the digest, size and counts of `report.jsonl`.
+        "report",
+        # Plan format 4: these runs have no destination schema snapshot, so the plan could not
+        # check Dropdown values (spec 020 research R4).
+        "dropdown_values_checked",
     }
 )
 
@@ -1369,7 +1374,7 @@ ADAPTERS_DIR = Path(__file__).resolve().parent.parent / "infrahub_sync" / "adapt
 
 # `rest_api_client.py` is a shared HTTP helper and `utils.py` a shared value helper;
 # neither is an adapter.
-NON_ADAPTER_MODULES = frozenset({"__init__", "rest_api_client", "utils"})
+NON_ADAPTER_MODULES = frozenset({"__init__", "references", "rest_api_client", "utils"})
 
 
 def manifest_path(potenda: Potenda) -> Path:
@@ -2470,4 +2475,10 @@ def test_a_registered_plan_run_records_the_runtime_snapshot_fingerprint(monkeypa
 
     manifest = read_manifest(plan_run_dir(potenda))
     assert manifest["schema_fingerprint"] == fingerprint
-    assert set(manifest) == MANIFEST_KEYS | {"config_id", "registry_version", "package_checksum", "schema_fingerprint"}
+    # A registered run has a destination schema snapshot, so the plan checked Dropdown values.
+    assert set(manifest) == (MANIFEST_KEYS - {"dropdown_values_checked"}) | {
+        "config_id",
+        "registry_version",
+        "package_checksum",
+        "schema_fingerprint",
+    }

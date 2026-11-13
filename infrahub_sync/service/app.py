@@ -13,8 +13,16 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from infrahub_sync.client.models import DEFAULT_LOG_LIMIT, LOG_STAGES, MAX_LOG_LIMIT, MIN_LIMIT
+from infrahub_sync.client.models import (
+    DEFAULT_LOG_LIMIT,
+    LOG_STAGES,
+    MAX_LOG_LIMIT,
+    MAX_REPORT_LIMIT,
+    MIN_LIMIT,
+    PlanReportPageResource,
+)
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
+from infrahub_sync.plan.models import PROBLEM_TYPES
 
 from .auth import Principal, PrincipalResolver
 from .compatibility import API_STABILITY, API_VERSIONS, installed_server_version
@@ -71,6 +79,7 @@ async def _service_error(_request: Request, exc: ServiceAPIError) -> JSONRespons
             run_id=exc.run_id,
             mutation_id=exc.mutation_id,
             details=exc.details,
+            left_out=exc.left_out,
         )
     )
     headers = {"WWW-Authenticate": "Bearer"} if exc.status == 401 else None
@@ -115,6 +124,88 @@ def _log_limit(value: str | None) -> int:
     if value is None:
         return DEFAULT_LOG_LIMIT
     return parse_bounded_integer(value, minimum=MIN_LIMIT, maximum=MAX_LOG_LIMIT)
+
+
+def _report_limit(value: str | None) -> int:
+    """Parse a plan report route's ``limit`` without FastAPI's coercions; the maximum when absent."""
+    if value is None:
+        return MAX_REPORT_LIMIT
+    return parse_bounded_integer(value, minimum=MIN_LIMIT, maximum=MAX_REPORT_LIMIT)
+
+
+def plan_router(service: RunService, authenticate: Callable[..., Principal]) -> APIRouter:
+    """Return the authenticated routes of a saved plan: its review and its problem, left-out and kept lists.
+
+    The three lists are spec 020's (contracts/sync-api.md).
+    """
+    router = APIRouter()
+
+    @router.get("/runs/{run_id}/plan", responses=ERROR_RESPONSES)
+    def get_plan(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> PlanResource:
+        return service.get_plan(run_id)
+
+    @router.get("/runs/{run_id}/plan/problems", responses=ERROR_RESPONSES)
+    def get_plan_problems(  # pylint: disable=too-many-arguments,too-many-positional-arguments  # the route's filters and paging
+        run_id: str,
+        _principal: Annotated[Principal, Depends(authenticate)],
+        offset: Annotated[str | None, Query()] = None,
+        limit: Annotated[str | None, Query()] = None,
+        problem_type: Annotated[str | None, Query()] = None,
+        kind: Annotated[str | None, Query()] = None,
+        expected_checksum: Annotated[str | None, Query()] = None,
+    ) -> PlanReportPageResource:
+        """Return one page of the saved plan's problems (spec 020, contracts/sync-api.md)."""
+        if problem_type is not None and problem_type not in PROBLEM_TYPES:
+            raise ServiceAPIError(422, "request-invalid", "the request does not match the API schema")
+        return service.get_plan_report(
+            run_id,
+            entry="problem",
+            offset=_page_offset(offset),
+            limit=_report_limit(limit),
+            problem_type=problem_type,
+            kind=kind,
+            expected_checksum=expected_checksum,
+        )
+
+    @router.get("/runs/{run_id}/plan/left-out", responses=ERROR_RESPONSES)
+    def get_plan_left_out(
+        run_id: str,
+        _principal: Annotated[Principal, Depends(authenticate)],
+        offset: Annotated[str | None, Query()] = None,
+        limit: Annotated[str | None, Query()] = None,
+        kind: Annotated[str | None, Query()] = None,
+        expected_checksum: Annotated[str | None, Query()] = None,
+    ) -> PlanReportPageResource:
+        """Return one page of the records the saved plan leaves out (spec 020)."""
+        return service.get_plan_report(
+            run_id,
+            entry="left_out",
+            offset=_page_offset(offset),
+            limit=_report_limit(limit),
+            kind=kind,
+            expected_checksum=expected_checksum,
+        )
+
+    @router.get("/runs/{run_id}/plan/kept", responses=ERROR_RESPONSES)
+    def get_plan_kept(
+        run_id: str,
+        _principal: Annotated[Principal, Depends(authenticate)],
+        offset: Annotated[str | None, Query()] = None,
+        limit: Annotated[str | None, Query()] = None,
+        kind: Annotated[str | None, Query()] = None,
+        expected_checksum: Annotated[str | None, Query()] = None,
+    ) -> PlanReportPageResource:
+        """Return one page of the records the saved plan keeps without one optional relationship (spec 020)."""
+        return service.get_plan_report(
+            run_id,
+            entry="kept",
+            offset=_page_offset(offset),
+            limit=_report_limit(limit),
+            kind=kind,
+            expected_checksum=expected_checksum,
+        )
+
+    return router
 
 
 def approve_router(
@@ -197,12 +288,13 @@ def _include_routers(
     idempotency_key: Callable[..., str],
     configuration_routes: ConfigurationRoutes | None,
 ) -> None:
-    """Add the routes built outside ``create_app``: configurations, approval, events and run logs."""
+    """Add the routes built outside ``create_app``: configurations, approval, events, run logs and the saved plan."""
     if configuration_routes is not None:
         application.include_router(configuration_router(configuration_routes, authenticate, idempotency_key))
     application.include_router(approve_router(service, authenticate, idempotency_key))
     application.include_router(events_router(service, authenticate))
     application.include_router(run_logs_router(service, authenticate))
+    application.include_router(plan_router(service, authenticate))
 
 
 def create_app(
@@ -370,10 +462,6 @@ def create_app(
     async def get_run(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> RunResource:
         observations = await reconciler.reconcile_run(run_id) if reconciler is not None else {}
         return await service.get_run(run_id, observations)
-
-    @application.get("/runs/{run_id}/plan", responses=ERROR_RESPONSES)
-    def get_plan(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> PlanResource:
-        return service.get_plan(run_id)
 
     @application.get("/runs/{run_id}/results", responses=ERROR_RESPONSES)
     def get_results(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> ResultsResource:

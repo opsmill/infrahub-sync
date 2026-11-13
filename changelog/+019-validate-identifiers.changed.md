@@ -1,0 +1,1 @@
+`configs validate` with a branch judges whether a kind can be created from the fields the mapping selects as `identifiers`, as the plan does, instead of from every mapped field. A mapping that maps a key component of the destination kind but does not select it is now reported before a run, instead of having its creates refused by the plan.

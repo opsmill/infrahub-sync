@@ -95,3 +95,22 @@ def changed_fields(
         elif name in payload:
             fields.append((name, "attribute"))
     return fields
+
+
+def selected_last_changes(
+    records: Iterable[LastChangeRecord], operations: Iterable[PlannedOperation]
+) -> list[LastChangeRecord]:
+    """The records of `records` that still describe a field one of `operations` changes.
+
+    The selection step of spec 020 removes the operations of left-out records and the
+    relationships written without their peer. A record whose update was removed, or whose
+    field the update no longer carries, describes no change of the plan, so it is not written.
+    """
+    fields: dict[str, set[str]] = {}
+    for operation in operations:
+        if operation.action != "update":
+            continue
+        carried = set(operation.payload or {})
+        carried.update(reference.field for reference in operation.relationships or ())
+        fields[operation.operation_id] = carried
+    return [record for record in records if record.field in fields.get(record.operation_id, ())]

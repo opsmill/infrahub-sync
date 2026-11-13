@@ -1,0 +1,58 @@
+{
+  "valid": {
+    "LocationSite": [
+      {"id": 1, "name": "paris", "status": "active"},
+      {"id": 2, "name": "lyon", "status": "planned"}
+    ],
+    "IpamVRF": [{"id": 10, "name": "default"}],
+    "LocationRack": [{"id": 20, "name": "r1", "facility_id": "F1", "description": "row 1"}],
+    "DcimDevice": [
+      {"id": 31, "name": "leaf-1", "serial": "L1", "position": 3, "role": "leaf", "site": {"id": 1}},
+      {"id": 32, "name": "leaf-2", "serial": "L2", "position": null, "role": "leaf", "site": {"id": 1}}
+    ],
+    "InterfacePhysical": [
+      {"id": 50, "name": "eth0", "device": {"id": 31}},
+      {"id": 51, "name": "eth1", "device": {"id": 31}}
+    ],
+    "InterfaceVirtual": [{"id": 70, "name": "eth0.10", "parent": {"id": 50}}],
+    "IpamIPAddress": [{"id": 80, "address": "10.0.0.1/32", "device": {"id": 31}, "vrf": {"id": 10}}]
+  },
+  "problems": {
+    "LocationSite": [
+      {"id": 3, "name": "berlin", "status": "decommissioning"},
+      {"id": 4, "name": "dup", "status": "active"},
+      {"id": 5, "name": "dup", "status": "planned"},
+      {"id": 6, "name": "twin", "status": "active"}
+    ],
+    "IpamVRF": [{"id": 11, "name": "q-in-q"}],
+    "LocationRack": [
+      {"id": 21, "name": "comms-closet", "facility_id": "F1", "description": "first floor"},
+      {"id": 22, "name": "comms-closet", "facility_id": "F2", "description": "second floor"}
+    ],
+    "DcimDevice": [
+      {"id": 30, "name": "core-1", "serial": "C1", "position": 2.5, "role": "core", "site": {"id": 1}},
+      {"id": 33, "name": "edge", "serial": "E1", "position": 1, "role": "edge", "site": {"id": 1}},
+      {"id": 34, "name": "edge", "serial": "E2", "position": 2, "role": "edge", "site": {"id": 1}},
+      {"id": 35, "name": "lab-1", "serial": "B1", "position": 1, "role": "lab", "site": {"id": 1}},
+      {"id": 36, "name": "spine-1", "serial": "S1", "position": 4, "role": "spine", "site": {"id": 997}}
+    ],
+    "InterfacePhysical": [{"id": 60, "name": "mgmt0", "device": {"id": 35}}],
+    "IpamIPAddress": [{"id": 82, "address": "10.0.0.9/32", "device": null, "vrf": {"id": 998}}]
+  },
+  "dependents": {
+    "InterfacePhysical": [
+      {"id": 40, "name": "eth0", "device": {"id": 30}},
+      {"id": 41, "name": "eth1", "device": {"id": 30}},
+      {"id": 42, "name": "eth2", "device": {"id": 30}},
+      {"id": 43, "name": "eth3", "device": {"id": 30}},
+      {"id": 44, "name": "eth4", "device": {"id": 30}}
+    ],
+    "IpamIPAddress": [{"id": 81, "address": "10.0.0.5/32", "device": {"id": 30}, "vrf": null}]
+  },
+  "dependency_chain": {
+    "LocationSite": [{"id": 1, "name": "paris", "status": "active"}],
+    "DcimDevice": [{"id": 30, "name": "core-1", "serial": "C1", "position": 2.5, "role": "core", "site": {"id": 1}}],
+    "InterfacePhysical": [{"id": 40, "name": "eth0", "device": {"id": 30}}],
+    "InterfaceVirtual": [{"id": 71, "name": "eth0.100", "parent": {"id": 40}}]
+  }
+}

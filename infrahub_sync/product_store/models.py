@@ -9,6 +9,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from infrahub_sync.configuration.worker_credentials import is_credential_name
 from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves this annotation at runtime.
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
@@ -379,6 +380,35 @@ class ConfigurationBaseline(BaseModel):
     updated_at: datetime
 
 
+class WorkerEnvironment(BaseModel):
+    """The credential variable names one worker held at its last poll (spec 020 FR-035).
+
+    Names only, never values: each is a set, non-empty variable of the credential namespace.
+    `worker_id` is the worker's name, the identity it has before Prefect resolves its record.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    worker_id: str = Field(min_length=1, max_length=256)
+    credential_names: tuple[str, ...]
+    observed_at: datetime
+
+    @field_validator("observed_at")
+    @classmethod
+    def _aware(cls, value: datetime) -> datetime:
+        """Read a time without a zone as UTC, so it compares with the liveness cutoff, which is in UTC."""
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+    @field_validator("credential_names")
+    @classmethod
+    def _names_only(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Refuse anything that is not a credential variable name, so no value can be stored here."""
+        if not all(is_credential_name(name) for name in value):
+            msg = "credential_names holds only variable names of the credential namespace"
+            raise ValueError(msg)
+        return tuple(sorted(set(value)))
+
+
 class ExecutionFinishWriteback(BaseModel):
     """Complete business writeback committed with one claimed execution verdict."""
 
@@ -393,6 +423,10 @@ class ExecutionFinishWriteback(BaseModel):
     # Present only when this execution completed a write whose source counts are safe to
     # become the next run's reference. Absent on every read stage.
     baseline: BaselineWriteback | None = None
+    # Set only by a `sync` stage that stopped after its plan because the plan leaves out
+    # records (spec 020 FR-012). The store gives back the run's `sync` write admission in
+    # the same transaction, and only when the run record shows no dispatched operation.
+    release_write_admission: bool = False
 
     @field_validator("finished_at", mode="before")
     @classmethod

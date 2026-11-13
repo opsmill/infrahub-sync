@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from diffsync.store.local import LocalStore
 
-from infrahub_sync import SchemaMappingField, SchemaMappingModel
+from infrahub_sync import SchemaMappingField, SchemaMappingModel, not_in_source_placeholder
 from infrahub_sync.adapters.aci import AciAdapter, AciModel
 
 
@@ -62,7 +62,7 @@ def _convert(
     """Run the real ACI converter against its ordinary nested source shape."""
     mapping = SchemaMappingModel(name=AciRecord._modelname, fields=fields)
     source = {"id": "record-1", "attributes": attributes}
-    return adapter.obj_to_diffsync(obj=source, mapping=mapping, model=AciRecord)
+    return adapter.record_to_data(source, mapping, AciRecord)
 
 
 def test_empty_store_preserves_an_absent_scalar_reference() -> None:
@@ -82,18 +82,23 @@ def test_empty_store_preserves_an_absent_scalar_reference() -> None:
         pytest.param({"other": "unrelated"}, id="peer-absent"),
     ],
 )
-def test_missing_list_peer_raises_the_existing_error(peers: dict[str, str]) -> None:
-    """An unresolved list item raises the exact existing `ValueError`."""
+def test_missing_optional_list_peer_is_a_placeholder(peers: dict[str, str]) -> None:
+    """An unresolved item of an optional list is a placeholder and a load report entry (spec 020 R5).
+
+    Before spec 020 the adapter raised `ValueError`.
+    """
     adapter = _adapter(peers)
 
-    with pytest.raises(ValueError) as error:
-        _convert(
-            adapter=adapter,
-            fields=[LIST_FIELD],
-            attributes={"peers": ["missing"]},
-        )
+    data = _convert(
+        adapter=adapter,
+        fields=[LIST_FIELD],
+        attributes={"peers": ["missing"]},
+    )
 
-    assert str(error.value) == "Unable to locate the node AciPeer missing"
+    assert data["peers"] == [not_in_source_placeholder("AciPeer", "missing")]
+    assert [(entry.reason, entry.field, entry.loaded) for entry in adapter.load_report.entries] == [
+        ("peer_not_found_in_source", "peers", True)
+    ]
 
 
 def test_scalar_reference_resolves_to_the_matching_peer_unique_id() -> None:

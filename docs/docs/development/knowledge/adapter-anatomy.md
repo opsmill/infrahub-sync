@@ -31,7 +31,9 @@ class MyAdapter(DiffSyncMixin, Adapter):
         self.config = config          # the SyncConfig for this run
         self.client = self._make_client(adapter.settings or {})
 
-    def model_loader(self, model_name, model): ...
+    def list_records(self, model_name, element): ...
+
+    def record_to_data(self, record, element, model): ...
 
 class MyModel(DiffSyncModelMixin, DiffSyncModel):
     pass
@@ -49,15 +51,46 @@ The mixin defines the surface Potenda calls. Each method is one of three kinds �
 | Method | Kind | Purpose |
 |--------|------|---------|
 | `load()` | Provided | Iterates `top_level`; calls `load_<name>()` if defined, otherwise `model_loader(name, model)`. Do not override. |
-| `model_loader(model_name, model)` | Must implement | Fetch records from the system, filter and transform them, build each into the DiffSync shape, and `self.add(model(**data))`. |
+| `list_records(model_name, element)` | Must implement | Returns the raw records of one mapping entry (`element`), before any filter. |
+| `record_to_data(record, element, model)` | Must implement | Converts one raw record to model data, with `local_id` set to its source record ID. Returning `None` skips the record. |
+| `record_source_id(record)` | Optional | Returns the source record ID of a raw record. The default reads `id` from a mapping or an attribute; override it when your records name the ID differently. |
+| `model_loader(model_name, model)` | Provided | The read loop: lists the records of each mapping entry, applies the entry's filters on the source side and passes each record to `load_record`. |
+| `load_record(model, element, record)` | Provided | The admission step: runs the entry's transforms on the source side, calls `record_to_data`, builds the model and stores it. See [The read loop](#the-read-loop). |
+| `load_report` | Provided | The source records the read could not build, and the source IDs that filters removed. Potenda reads it to find the plan's problems. |
 | `cursor_tier_for(model_name)` | Optional | Strongest incremental tier the source supports for this model. Defaults to `CursorTier.NONE` (always full extract). |
-| `list_changed_since(model_name, cursor)` | Conditional | Required only if `cursor_tier_for` returns a non-`NONE` tier. Yields records changed since the cursor, in the same shape `model_loader` produces. |
+| `list_changed_since(model_name, cursor)` | Conditional | Required only if `cursor_tier_for` returns a non-`NONE` tier. Yields the model data of the records changed since the cursor: filtered, transformed and converted with `record_to_data`. The warm read of the destination uses it. |
+| `list_changed_records(model_name, element, cursor)` | Conditional | Required for a warm read of the source. Returns the raw records changed since the cursor, before any filter, as `list_records` does; the engine filters them and admits each one through `load_record`. Without it, the source reads every record. |
 | `list_existing_ids(model_name)` | Optional | Yields current `unique_id` strings for delete detection between incremental runs. |
 | `apply_planned_operation(*, operation, peers)` | Optional | Executes one operation from a **saved plan** and returns the destination node id. The apply stage of `sync` or `apply` calls it. Without it, both commands refuse before writing — see [The planned-write surface](#the-planned-write-surface). |
 | `new_peer_resolver()` | Conditional | Required only alongside `apply_planned_operation` — the engine builds the per-apply peer resolver through it. The two together are the planned-write surface; an adapter with only one of them is refused like an adapter with neither. |
 
-A read-only-capable adapter that only ever does full extracts needs only `model_loader`.
-Incremental support is additive — see [Incremental sync and cache](incremental-and-cache.md).
+A read-only-capable adapter that only ever does full extracts needs only `list_records` and
+`record_to_data`. Incremental support is additive — see
+[Incremental sync and cache](incremental-and-cache.md).
+
+Earlier releases asked each adapter to implement `model_loader` itself, with a conversion helper
+named `<name>_obj_to_diffsync` or `obj_to_diffsync`. The read loop now belongs to the base class:
+`list_records` and `record_to_data` replace both. The adapter factory no longer takes
+`continue_on_error`, and Potenda no longer sets a `continue_on_error` attribute on the adapters.
+
+### The read loop
+
+`model_loader` and `load_record` record a source record that cannot be built and continue with
+the next record. The plan then lists the record as a problem and leaves it out. On the source
+side, `load_record` records these failures in `load_report`:
+
+- a transform that fails (`TransformError`);
+- a value of the wrong type for its attribute (a Pydantic type error);
+- a second record with the identity of a record already stored (`ObjectAlreadyExists`);
+- a required reference whose peer a filter removed, the read could not build, or the source
+  does not return (`ExcludedRequiredPeerError`, `PeerNotLoadedError`, `PeerNotFoundError`).
+
+Any other error is raised again as `RecordLoadError`, which names the kind, the source record ID
+and, when known, the field, and fails the plan. On the destination side, `load_record` catches
+nothing.
+
+An adapter with its own read loop can still call `load_record` for each record. The Infrahub
+adapter does: it passes `store_item` to replace `self.add` and `after_add` to fill the SDK store.
 
 ### The planned-write surface
 
@@ -113,27 +146,37 @@ The full contract lives in
 
 The model mixin gives every model helpers used during loading.
 
-Provided for you (used inside `model_loader`):
+Provided for you:
 
-- `filter_records(records, schema_mapping)` — drop records that fail the mapping's filters.
-- `transform_records(records, schema_mapping)` — apply the mapping's Jinja2 transforms.
-- `apply_filters` / `apply_transforms` / `is_list` — lower-level loading helpers.
+- `apply_filter` and `apply_transforms` — the base-class read loop calls them for each source
+  record: `apply_filter` once for each configured filter in `model_loader`, `apply_transforms`
+  in `load_record`. `apply_filters` applies every filter to one record.
+- `filter_records(records, schema_mapping)` and `transform_records(records, schema_mapping)` —
+  the same steps over a list of records. They record nothing in `load_report`, so the read loop
+  does not use them.
+- `is_list` — tells whether a model field holds a list.
 
 Models inherit `create`, `update` and `delete` from DiffSync. V3 does not call them.
 Destinations write through the adapter's `apply_planned_operation` method.
 
 ### From upstream object to DiffSync model
 
-Inside `model_loader`, each raw record is converted to the field shape the generated model
-expects. By convention this is a helper named `<name>_obj_to_diffsync` (or `obj_to_diffsync`
-on the REST base). It walks the mapping's `fields` and, for each:
+`record_to_data` converts one raw record to the field shape the generated model expects. It
+walks the mapping entry's `fields` and, for each:
 
 - copies a `static` literal, or
 - reads `field.mapping` from the record (dot notation, via `get_value`), or
-- resolves a `reference` to another model's `unique_id` (single or list) using the store.
+- resolves a `reference` to the peer's `unique_id` with `peer_unique_id` (one peer) or
+  `peer_unique_ids` (a list of peers), from `infrahub_sync/adapters/references.py`.
 
-Every record also carries a `local_id` — the source-side primary key — so references can be
-resolved across models. See [Schema mapping](schema-mapping.md) for the field semantics.
+The reference helpers look up the peer by its kind and source record ID among the stored
+records. `reference_is_required(model, field_name)` tells them whether the relationship needs a
+peer. When a required peer is not stored, they raise one of the errors that `load_record`
+records. When an optional peer is not stored, the record keeps no value for that relationship,
+or a placeholder when the source does not return the peer; see the module docstring.
+
+Every record also carries a `local_id`, the source record ID, so that references resolve
+across models. See [Schema mapping](schema-mapping.md) for the field semantics.
 
 ### How the class is found
 

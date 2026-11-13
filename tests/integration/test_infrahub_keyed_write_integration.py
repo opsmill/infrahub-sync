@@ -518,8 +518,11 @@ def test_rack_name_unique_outside_hfid_is_refused_before_apply(keyed_write_scope
     assert [node.id for node in matching] == [first.id]
 
     operations = [_rack_operation(rack_name, site) for site in (scope.site_name, second_site_name)]
-    with pytest.raises(DestinationIdentityCollisionError, match="unique attribute"):
-        warn_missing_convergence_key(destination=scope.adapter, operations=operations)
+    # Spec 020: the plan returns the group and leaves both records out; the write surface still refuses.
+    groups = warn_missing_convergence_key(destination=scope.adapter, operations=operations)
+    assert ("destination_identity_collision", "unique attribute") in {
+        (group.problem_type, group.rule) for group in groups
+    }
     with pytest.raises(DestinationIdentityCollisionError, match="unique attribute"):
         scope.adapter.validate_planned_payload_fields(operations)
 

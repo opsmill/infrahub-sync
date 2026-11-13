@@ -327,7 +327,6 @@ class _Harness(InfrahubAdapter):
         self.config = config
         self.client = client
         self.schema = client.schemas  # ty: ignore[invalid-assignment]
-        self.continue_on_error = False
         # Normally set by `InfrahubAdapter.__init__`, which this harness bypasses.
         self._peer_unique_ids = {}
 

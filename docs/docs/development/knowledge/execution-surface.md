@@ -154,9 +154,8 @@ so registered writes acquire the [PostgreSQL configuration guard](apply-guard.md
 The service sets `_lock_already_held=True` on its apply calls while holding that guard.
 The direct remote wrapper never sets it. Verification takes no pipeline lock.
 
-Planning calls `PotendaFactory` with eight explicit keyword arguments: `sync_instance`,
-`branch`, `show_progress`, `verbosity`, `run_id`, `continue_on_error`, `concurrent_load` and
-`base_directory`. The protocol preserves those parameter names for type checking of
+Planning calls `PotendaFactory` with seven explicit keyword arguments: `sync_instance`,
+`branch`, `show_progress`, `verbosity`, `run_id`, `concurrent_load` and `base_directory`. The protocol preserves those parameter names for type checking of
 injected factories. Apply uses `PlanApplier.open_existing` to construct only the
 destination adapter; it does not call the planning factory or reload the source.
 

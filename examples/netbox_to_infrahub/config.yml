@@ -244,7 +244,7 @@ schema_mapping:
       - name: rack_face
         mapping: face.value
       - name: status
-        mapping: status.value
+        mapping: device_status
       # NOTE: schema changes are required to support role sync (see related note)
       # - name: role
       #   mapping: role.slug
@@ -263,6 +263,16 @@ schema_mapping:
       - name: primary_address
         mapping: primary_ip
         reference: IpamIPAddress
+    transforms:
+      # NetBox has seven device statuses; the schema library's DcimDevice.status
+      # has five choices. README.md lists each pair. A status this table does not
+      # know is kept as it is, and the plan lists the device as a problem.
+      - &netbox_device_status_transform
+        field: device_status
+        expression: >-
+          {{ {'planned': 'provisioning', 'staged': 'provisioning',
+          'offline': 'maintenance', 'failed': 'maintenance',
+          'inventory': 'reserved', 'decommissioning': 'deprecated'}.get(status.value, status.value) }}
     filters:
       - field: parent_device # For sub-devices (e.g. stacks), you'd most likely have a dedicated node in Infrahub
         operation: "is_empty"
@@ -288,7 +298,7 @@ schema_mapping:
       - name: rack_face
         mapping: face.value
       - name: status
-        mapping: status.value
+        mapping: device_status
       # NOTE: schema changes are required to support role sync (see related note)
       # - name: role
       #   mapping: role.slug
@@ -307,6 +317,8 @@ schema_mapping:
       - name: primary_address
         mapping: primary_ip
         reference: IpamIPAddress
+    transforms:
+      - *netbox_device_status_transform
     filters:
       - field: parent_device
         operation: "is_empty"

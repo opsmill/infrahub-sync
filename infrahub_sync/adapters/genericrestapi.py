@@ -14,6 +14,7 @@ from infrahub_sync import (
 )
 from infrahub_sync.configuration.credentials import select_runtime_credential
 
+from .references import peer_unique_id, peer_unique_ids, reference_is_required
 from .rest_api_client import RestApiClient
 from .utils import derive_identifier_key, get_value
 
@@ -97,52 +98,27 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
             verify=verify_ssl,
         )
 
-    def model_loader(self, model_name: str, model: type[GenericrestapiModel]) -> None:
-        """
-        Load and process models using schema mapping filters and transformations.
+    def list_records(self, model_name: str, element: SchemaMappingModel) -> list[dict[str, Any]]:  # noqa: ARG002
+        """Fetch the objects of the mapping entry's resource endpoint."""
+        if not element.mapping:
+            return []
+        resource_name = element.mapping
+        try:
+            response_data = self.client.get(endpoint=resource_name, params=self.params)
+            return self._extract_objects_from_response(
+                response_data=response_data, resource_name=resource_name, element=element
+            )
+        except Exception as exc:
+            msg = f"Error fetching data from REST API: {exc!s}"
+            raise ValueError(msg) from exc
 
-        This method retrieves data from REST API, applies filters and transformations
-        as specified in the schema mapping, and loads the processed data into the adapter.
-        """
-        for element in self.config.schema_mapping:
-            if element.name != model_name:
-                continue
-
-            if not element.mapping:
-                logger.info("No mapping defined for '%s', skipping", element.name)
-                continue
-
-            # Use the resource endpoint from the schema mapping
-            resource_name = element.mapping
-
-            try:
-                # Fetch data from the specified resource endpoint
-                response_data = self.client.get(endpoint=resource_name, params=self.params)
-
-                # Extract objects from response using configurable response extraction
-                objs = self._extract_objects_from_response(
-                    response_data=response_data, resource_name=resource_name, element=element
-                )
-            except Exception as exc:
-                msg = f"Error fetching data from REST API: {exc!s}"
-                raise ValueError(msg) from exc
-
-            total = len(objs)
-            if self.target == "source":
-                # Filter records
-                filtered_objs = model.filter_records(records=objs, schema_mapping=element)
-                logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, resource_name)
-                # Transform records
-                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
-            else:
-                logger.info("%s: Loading all %d %s", self.type, total, resource_name)
-                transformed_objs = objs
-
-            # Create model instances after filtering and transforming
-            for obj in transformed_objs:
-                data = self.obj_to_diffsync(obj=obj, mapping=element, model=model)
-                item = model(**data)
-                self.add(item)
+    def record_source_id(self, record: Any) -> str | None:
+        """Return the object's `id`, or the first key ending with `_id`; `None` when it has neither."""
+        try:
+            obj_id = derive_identifier_key(obj=record)
+        except ValueError:
+            return None
+        return None if obj_id is None else str(obj_id)
 
     def _extract_objects_from_response(
         self,
@@ -169,36 +145,36 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
         # Try to get data using the response key
         objs = response_data.get(response_key, response_data.get(resource_name, {}))
 
-        # Filter each branch to dicts so `obj_to_diffsync` (which calls `.get(...)`) never sees non-dict items.
+        # Filter each branch to dicts so `record_to_data` (which calls `.get(...)`) never sees non-dict items.
         if isinstance(objs, dict):
             return [v for v in objs.values() if isinstance(v, dict)]
         if isinstance(objs, list):
             return [v for v in objs if isinstance(v, dict)]
         return []
 
-    def obj_to_diffsync(
-        self, obj: dict[str, Any], mapping: SchemaMappingModel, model: type[GenericrestapiModel]
+    def record_to_data(
+        self, record: dict[str, Any], element: SchemaMappingModel, model: type[GenericrestapiModel]
     ) -> dict:
-        """
-        Convert an object to DiffSync format.
+        """Convert one API object to model data; references resolve through `peer_unique_id`.
 
-        This method handles the common pattern of converting API objects to DiffSync models
-        with support for field mapping, static values, and references.
+        A reference that holds a value instead of a nested object (for example a location
+        named by its identifier) passes through unchanged.
         """
-        obj_id = derive_identifier_key(obj=obj)
-        data: dict[str, Any] = {"local_id": str(obj_id)}
+        source_id = str(derive_identifier_key(obj=record))
+        data: dict[str, Any] = {"local_id": source_id}
+        owner = (element.name, source_id)
 
-        if not mapping.fields:
+        if not element.fields:
             msg = f"No fields defined in schema mapping for model {model.__name__}"
             raise ValueError(msg)
 
-        for field in mapping.fields:  # pylint: disable=too-many-nested-blocks
+        for field in element.fields:
             field_is_list = model.is_list(name=field.name)
 
             if field.static:
                 data[field.name] = field.static
             elif not field_is_list and field.mapping and not field.reference:
-                value = get_value(obj, field.mapping)
+                value = get_value(record, field.mapping)
                 if value is not None:
                     data[field.name] = value
             elif field_is_list and field.mapping and not field.reference:
@@ -206,34 +182,24 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
                 raise NotImplementedError(msg)
 
             elif field.mapping and field.reference:
-                all_nodes_for_reference = self.store.get_all(model=field.reference)
-                nodes = [item for item in all_nodes_for_reference]
+                required = reference_is_required(model, field.name)
                 if not field_is_list:
-                    if node := get_value(obj, field.mapping):
-                        if isinstance(node, dict):
-                            node_id = node.get("id", None)
-                            matching_nodes = [item for item in nodes if item.local_id == str(node_id)]  # ty: ignore[unresolved-attribute]
-                            if len(matching_nodes) == 0:
-                                msg = f"Unable to locate the node {model} {node_id}"
-                                raise IndexError(msg)
-                            node = matching_nodes[0]
-                            data[field.name] = node.get_unique_id()
-                        else:
-                            # Some link are referencing the node identifier directly without the id (i.e location in device)
-                            data[field.name] = node
-
+                    node = get_value(record, field.mapping)
+                    if not node:
+                        continue
+                    if not isinstance(node, dict):
+                        data[field.name] = node
+                        continue
+                    unique_id = peer_unique_id(
+                        self, field.reference, node.get("id", None), owner=owner, field=field.name, required=required
+                    )
+                    if unique_id is not None:
+                        data[field.name] = unique_id
                 else:
-                    data[field.name] = []
-                    for node in get_value(obj, field.mapping) or []:
-                        if not node:
-                            continue
-                        node_id = node.get("id", None)
-                        matching_nodes = [item for item in nodes if item.local_id == str(node_id)]  # ty: ignore[unresolved-attribute]
-                        if len(matching_nodes) == 0:
-                            msg = f"Unable to locate the node {field.reference} {node_id}"
-                            raise IndexError(msg)
-                        data[field.name].append(matching_nodes[0].get_unique_id())
-                    data[field.name] = sorted(data[field.name])
+                    peer_ids = [node.get("id", None) for node in get_value(record, field.mapping) or [] if node]
+                    data[field.name] = peer_unique_ids(
+                        self, field.reference, peer_ids, owner=owner, field=field.name, required=required
+                    )
 
         return data
 

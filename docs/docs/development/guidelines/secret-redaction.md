@@ -32,6 +32,36 @@ See the [CLI][cli-source], [HTTP client][client-source], [API handlers][api-sour
 implementations. See the [shared execution surface](../knowledge/execution-surface.md)
 for the operations each route supports.
 
+### Build a run's failure record from a fixed set of fields
+
+A failed run's `results.<stage>_failure` record follows
+[ADR 0021](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0021-a-failure-record-holds-a-structured-cause.md).
+The keys the record held before that decision (such as `outcome`, `error_type`, `cause`,
+`next_action` and the apply record keys) keep their values. Beyond them, the record holds the class name of the error
+and of its immediate cause, and only these fields:
+
+- the stage and a failure type from a fixed list
+- the system involved: `source` or `destination`, and the adapter name
+- Infrahub's error code, node kind, field name and own message, for a write that Infrahub
+  rejected
+- the permission or message Infrahub returns with a 403, as before
+- the kind, the source record and the field that a typed Sync error names
+- the operations written, the operation count of the plan and the operation that failed
+- text from a fixed template filled with the fields above, setting names, kind names, node
+  names, account names, branch names and IDs
+
+`failure_record` and `operator_cause` in `infrahub_sync/service/failure_cause.py` build these
+fields. They read exception classes, HTTP status codes and typed attributes, never the text of
+an exception. When you add a failure, add a typed attribute to the error and a template to
+`failure_record`; never record `str(exc)`, an address, a request header or a traceback. A
+`TransformError` message holds the transform expression and its error, so read its `field`
+attribute only. An error class without a template records `internal_error` and no cause.
+
+This protection does not depend on replacing values in text, so it also holds for a
+credential shorter than the six characters the masking pass needs. The masking pass itself is
+unchanged: the cause, the next action and Infrahub's message still go through `redact`. The
+worker log and the Prefect logs keep the masked error text until version 3.0.
+
 The registered CLI is a remote API caller; having credentials in the local shell does
 not make a returned failure safe to display. The adapter rule still applies:
 [never include credentials in logs or exceptions](writing-an-adapter.md#log-with-structlog-never-secrets).

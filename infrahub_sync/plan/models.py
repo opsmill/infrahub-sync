@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines  # the plan artifact's records, the manifest and the plan report
 """The plan artifact's record types (FR-002, FR-006, FR-017, FR-026, FR-027, FR-028).
 
 Pydantic v2 models in the existing `SyncConfig` style. These are the records nine later
@@ -14,8 +15,10 @@ operations into write units (FR-026).
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from hashlib import sha256
 from pathlib import PurePath
 from typing import Any, Literal, TypeAlias, get_args
@@ -23,18 +26,23 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_serializer, model_validator
 
-from infrahub_sync.plan.canonical import canonical_value
+from infrahub_sync.plan.canonical import canonical_json_bytes, canonical_value
 from infrahub_sync.plan.config_version import CONFIG_VERSION_PATTERN
 from infrahub_sync.plan.errors import UnsupportedOperationActionError
 from infrahub_sync.plan.identity import OPERATION_ID_PATTERN, canonical_identity, operation_id
 
 # `1` is reserved for the pre-existing row format the reader refuses (FR-019); no manifest
 # ever carries it.
-PLAN_FORMAT_VERSION = 3
-# Read and review accept both; `apply` accepts only the current one. A format-2 plan's
-# updates carry no recorded destination id, so they cannot be keyed — reviewing such a plan
-# is still useful, applying it is not safe (see `PlanFormatApplyUnsupportedError`).
-SUPPORTED_FORMAT_VERSIONS = frozenset({2, 3})
+PLAN_FORMAT_VERSION = 4
+# Read and review accept all three. A format-2 plan's updates carry no recorded destination
+# id, so they cannot be keyed — reviewing such a plan is still useful, applying it is not safe
+# (see `PlanFormatApplyUnsupportedError`). Format 3 has no plan report (spec 020 research R9).
+SUPPORTED_FORMAT_VERSIONS = frozenset({2, 3, 4})
+
+# The format that introduced `plan/report.jsonl` and the manifest's `report` record (spec 020,
+# contracts/plan-artifact-format-4.md). A manifest of this format or later must carry it.
+REPORT_FORMAT_VERSION = 4
+REPORT_FILE_NAME = "report.jsonl"
 
 # The format that introduced `PlannedOperation.destination_id`. `PlannedOperation` is
 # `extra="forbid"`, so the field's presence is itself a format discriminator: it must be
@@ -460,6 +468,25 @@ class PlanLastChangesRecord(BaseModel):
     metadata_read: bool
 
 
+class PlanReportRecord(BaseModel):
+    """The manifest's record of `plan/report.jsonl` (spec 020, contracts/plan-artifact-format-4.md).
+
+    The plan checksum covers this record, and through `digest` the file's bytes. The counts
+    are the report's: problem entries, left-out records (each once, split into those with a
+    problem and those that depend on one) and kept records.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    size: int = Field(ge=0)
+    problems: int = Field(ge=0)
+    left_out: int = Field(ge=0)
+    left_out_with_problem: int = Field(ge=0)
+    left_out_dependent: int = Field(ge=0)
+    kept: int = Field(ge=0)
+
+
 class PlanManifest(BaseModel):
     """The artifact's header, and the format contract (FR-027).
 
@@ -499,6 +526,12 @@ class PlanManifest(BaseModel):
     # whose destination keeps no last changes, and on plans made before the field existed;
     # review then shows no last-change data.
     last_changes: PlanLastChangesRecord | None = None
+    # Format 4: the digest, size and counts of `plan/report.jsonl` (spec 020). Absent on a
+    # format 2 or 3 plan; the reader refuses a format 4 manifest without it.
+    report: PlanReportRecord | None = None
+    # Format 4: `False` when the run had no destination schema snapshot, so the plan could not
+    # check Dropdown values; absent otherwise (spec 020 research R4).
+    dropdown_values_checked: bool | None = None
 
     @field_validator("registry_version", mode="before")
     @classmethod
@@ -515,6 +548,16 @@ class PlanManifest(BaseModel):
         binding = (self.config_id, self.registry_version, self.package_checksum)
         if any(value is None for value in binding) and any(value is not None for value in binding):
             msg = "configuration binding must be all absent or all present"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _report_only_from_format_4(self) -> PlanManifest:
+        """A format 2 or 3 manifest has no plan report, so it cannot claim the report's checks."""
+        if self.format_version < REPORT_FORMAT_VERSION and (
+            self.report is not None or self.dropdown_values_checked is not None
+        ):
+            msg = f"'report' and 'dropdown_values_checked' need format_version {REPORT_FORMAT_VERSION} or later"
             raise ValueError(msg)
         return self
 
@@ -566,6 +609,10 @@ class PlanManifest(BaseModel):
             data.pop("lineage", None)
         if self.last_changes is None:
             data.pop("last_changes", None)
+        if self.report is None:
+            data.pop("report", None)
+        if self.dropdown_values_checked is None:
+            data.pop("dropdown_values_checked", None)
         if self.configuration_binding is None:
             data.pop("config_id", None)
             data.pop("registry_version", None)
@@ -580,6 +627,10 @@ class PlanSummary(BaseModel):
     read — from the manifest and from the operation set — so the artifact format and
     `plan_checksum` are untouched. Without the first, a plan whose whole delete class was
     never computed is indistinguishable from one that has no deletes.
+
+    The counts of spec 020 FR-007 and FR-008 come from the plan report (data-model.md "Plan
+    summary additions"). A format 2 or 3 plan has no report: its counts are zeros and
+    `dropdown_values_checked` is false.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -589,6 +640,15 @@ class PlanSummary(BaseModel):
     total: int = Field(ge=0)
     delete_operations_computed: bool
     deletes_not_executed: int = Field(ge=0)
+    left_out: int = Field(default=0, ge=0)
+    left_out_with_problem: int = Field(default=0, ge=0)
+    left_out_dependent: int = Field(default=0, ge=0)
+    left_out_by_kind: dict[str, int] = Field(default_factory=dict)
+    problems: int = Field(default=0, ge=0)
+    problems_by_type: dict[str, int] = Field(default_factory=dict)
+    kept: int = Field(default=0, ge=0)
+    deletes_withheld_by_kind: dict[str, int] = Field(default_factory=dict)
+    dropdown_values_checked: bool = False
 
 
 @dataclass(frozen=True)
@@ -616,6 +676,12 @@ class ApplyRecord:
     # nothing. `True` is never set — an operation that failed after dispatching is exactly
     # the case that cannot be known.
     failed_operation_wrote: bool | None = None
+    # The plan's operation count, and the failed operation's action, kind and identity, read
+    # from the plan by the engine (spec 020 FR-014). The failure record of a stopped apply
+    # holds them. Not summary keys, and not part of the record's equality: two records of
+    # one apply compare equal whether or not they carry them.
+    operations_total: int | None = dataclass_field(default=None, compare=False)
+    failed_operation_detail: Mapping[str, Any] | None = dataclass_field(default=None, compare=False)
 
     @property
     def skipped_delete_count(self) -> int:
@@ -677,6 +743,7 @@ VerificationCheck: TypeAlias = Literal[
     "config_version",
     "torn_operations",
     "last_changes",
+    "report",
     "write_surface",
     "destination_binding",
 ]
@@ -720,3 +787,323 @@ class VerificationFailure(BaseModel):
     expected: str | None = None
     found: str | None = None
     next_action: str = Field(min_length=1)
+
+
+# --- The plan report (spec 020 data-model.md) ----------------------------------------------
+#
+# The records the plan writes for source data it cannot plan. The problem pass
+# (`infrahub_sync/plan/problems.py`) builds them, and the plan writer writes them to the format 4
+# report file, `plan/report.jsonl`.
+
+ProblemType: TypeAlias = Literal[
+    "dropdown_value_not_in_choices",
+    "duplicate_source_identity",
+    "destination_identity_collision",
+    "wrong_value_type",
+    "required_peer_excluded_by_filter",
+    "identities_merge_in_destination",
+    "peer_not_found_in_source",
+    "destination_identity_ambiguous",
+    "transform_failed",
+]
+"""The stable problem type names (FR-002, FR-025). A later release may add a name; an
+existing name is never renamed or removed."""
+
+PROBLEM_TYPES: tuple[ProblemType, ...] = get_args(ProblemType)
+
+# The longest reason a problem holds, and the longest string the report keeps of a source value.
+REPORT_REASON_LIMIT = 512
+REPORT_VALUE_LIMIT = 256
+
+
+def limited_report_value(value: Any) -> Any:  # a source value can be any JSON value
+    """Return `value` with every string limited to `REPORT_VALUE_LIMIT` characters.
+
+    A value outside JSON's types is kept as its limited text, so the report stays encodable
+    whatever the source returned.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        # JSON has no encoding for NaN or Infinity; the report keeps their text.
+        return str(value)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:REPORT_VALUE_LIMIT]
+    if isinstance(value, Mapping):
+        return {str(key)[:REPORT_VALUE_LIMIT]: limited_report_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [limited_report_value(item) for item in value]
+    return str(value)[:REPORT_VALUE_LIMIT]
+
+
+class SourceRecordReference(BaseModel):
+    """Names a source record by destination kind, source identity and source record ID.
+
+    `identity` is the source identity as plan operations show it, or `None` when the record
+    could not be converted far enough to compute it. `source_id` is the adapter's record ID
+    (`local_id`).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: str = Field(min_length=1)
+    identity: dict[str, Any] | None = None
+    source_id: str | None = None
+
+
+class PlanProblem(BaseModel):
+    """One problem the plan found in one source record (FR-003).
+
+    A record with several problems has one entry per problem.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    problem_type: ProblemType
+    record: SourceRecordReference
+    # The attribute or relationship involved.
+    field: str | None = None
+    # The source value; `None` for `transform_failed`.
+    value: Any = None
+    # The Dropdown choices (`dropdown_value_not_in_choices`).
+    allowed: list[str] | None = None
+    # The excluded or missing peer.
+    peer: SourceRecordReference | None = None
+    # The other records of an identity problem.
+    other_records: list[SourceRecordReference] = Field(default_factory=list)
+    # The Infrahub node IDs that hold one identity (`destination_identity_ambiguous` only).
+    destination_ids: list[str] | None = None
+    # The position of the transform (`transforms[0]`) or filter (`filters[0]`), never its expression.
+    config_entry: str | None = None
+    reason: str = Field(min_length=1, max_length=REPORT_REASON_LIMIT)
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _limit_value(cls, value: Any) -> Any:
+        return limited_report_value(value)
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_optional_fields(self, handler: Any) -> Any:
+        # `destination_ids` and `config_entry` are absent, not null, when they do not apply.
+        data = handler(self)
+        if isinstance(data, dict):
+            for name in ("destination_ids", "config_entry"):
+                if data.get(name) is None:
+                    data.pop(name, None)
+        return data
+
+
+class LeftOutRecord(BaseModel):
+    """One source record the plan leaves out, counted once (FR-005, FR-006)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    record: SourceRecordReference
+    cause: Literal["has_problem", "depends_on_left_out"]
+    problem_types: list[ProblemType] = Field(default_factory=list)
+    depends_on: SourceRecordReference | None = None
+    # The required relationship the record depends through.
+    relationship: str | None = None
+    # False when the record could not be built.
+    loaded: bool
+
+    @model_validator(mode="after")
+    def _require_cause_fields(self) -> LeftOutRecord:
+        if self.cause == "has_problem" and not self.problem_types:
+            msg = "a record left out because of a problem names its problem types"
+            raise ValueError(msg)
+        if self.cause == "depends_on_left_out" and self.depends_on is None:
+            msg = "a record left out as a dependent names the record it depends on"
+            raise ValueError(msg)
+        return self
+
+
+class KeptRecord(BaseModel):
+    """A source record the plan keeps without one optional relationship (FR-005, FR-024)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    record: SourceRecordReference
+    cause: Literal["peer_left_out", "peer_not_found_in_source"]
+    # The optional relationship written without the peer.
+    relationship: str = Field(min_length=1)
+    # The left-out record, or the missing peer with `identity` null.
+    left_out_peer: SourceRecordReference
+
+
+def _identity_order(reference: SourceRecordReference) -> bytes:
+    """A record's identity as canonical bytes; empty when it is not known."""
+    return b"" if reference.identity is None else canonical_json_bytes(reference.identity)
+
+
+def _report_line(entry: str, record: BaseModel) -> dict[str, Any]:
+    return {"entry": entry, **record.model_dump()}
+
+
+@dataclass(frozen=True)
+class PlanReport:
+    """The problems, left-out records and kept records of one plan (spec 020 data-model.md "Plan report").
+
+    `encode` returns the bytes of `plan/report.jsonl`: problems, then left-out records, then
+    kept records, each group in the stable order of data-model.md, ties broken by the line's
+    canonical bytes, so the bytes do not depend on the order the records were read in.
+    """
+
+    problems: tuple[PlanProblem, ...] = ()
+    left_out: tuple[LeftOutRecord, ...] = ()
+    kept: tuple[KeptRecord, ...] = ()
+    # Not written to the report: the (kind, identity) of each kept record whose source and
+    # Infrahub values differ only in the relationships it is written without. The selection
+    # step plans no update for it, since that update would change nothing (spec 020 research R3).
+    unchanged_without_kept_relationships: frozenset[tuple[str, bytes]] = frozenset()
+
+    def lines(self) -> list[dict[str, Any]]:
+        """Every report line as a mapping, in the report's order."""
+        problems = sorted(
+            (_report_line("problem", problem) for problem in self.problems),
+            key=lambda line: (
+                line["problem_type"],
+                line["record"]["kind"],
+                _identity_order(SourceRecordReference(**line["record"])),
+                line["record"]["source_id"] or "",
+                canonical_json_bytes(line),
+            ),
+        )
+        left_out = sorted(
+            (_report_line("left_out", item) for item in self.left_out),
+            key=lambda line: (
+                line["record"]["kind"],
+                _identity_order(SourceRecordReference(**line["record"])),
+                line["record"]["source_id"] or "",
+                canonical_json_bytes(line),
+            ),
+        )
+        kept = sorted(
+            (_report_line("kept", item) for item in self.kept),
+            key=lambda line: (
+                line["record"]["kind"],
+                _identity_order(SourceRecordReference(**line["record"])),
+                line["relationship"],
+                canonical_json_bytes(line),
+            ),
+        )
+        return [*problems, *left_out, *kept]
+
+    def encode(self) -> bytes:
+        """The bytes of `plan/report.jsonl`: one canonical JSON object per line, LF-terminated."""
+        return b"".join(canonical_json_bytes(line) + b"\n" for line in self.lines())
+
+    def record(self, encoded: bytes | None = None) -> PlanReportRecord:
+        """The manifest's `report` record for this report, whose bytes are `encoded` (by default `encode()`)."""
+        payload = self.encode() if encoded is None else encoded
+        with_problem = sum(1 for item in self.left_out if item.cause == "has_problem")
+        return PlanReportRecord(
+            digest=sha256(payload).hexdigest(),
+            size=len(payload),
+            problems=len(self.problems),
+            left_out=len(self.left_out),
+            left_out_with_problem=with_problem,
+            left_out_dependent=len(self.left_out) - with_problem,
+            kept=len(self.kept),
+        )
+
+    def deletes_withheld_by_kind(self) -> dict[str, int]:
+        """Per kind, the left-out records without a known identity plus the ambiguous destination identities.
+
+        The plan computes no delete of these kinds (FR-008, spec 020 research R21).
+        """
+        withheld: dict[str, int] = {}
+        for item in self.left_out:
+            if item.record.identity is None:
+                withheld[item.record.kind] = withheld.get(item.record.kind, 0) + 1
+        for problem in self.problems:
+            if problem.problem_type == "destination_identity_ambiguous":
+                withheld[problem.record.kind] = withheld.get(problem.record.kind, 0) + 1
+        return dict(sorted(withheld.items()))
+
+    @classmethod
+    def from_lines(cls, lines: Iterable[Mapping[str, Any]]) -> PlanReport:
+        """The report whose `lines()` are `lines`, as the plan reader returns them."""
+        problems: list[PlanProblem] = []
+        left_out: list[LeftOutRecord] = []
+        kept: list[KeptRecord] = []
+        for line in lines:
+            fields = {key: value for key, value in line.items() if key != "entry"}
+            if line.get("entry") == "problem":
+                problems.append(PlanProblem.model_validate(fields))
+            elif line.get("entry") == "left_out":
+                left_out.append(LeftOutRecord.model_validate(fields))
+            else:
+                kept.append(KeptRecord.model_validate(fields))
+        return cls(problems=tuple(problems), left_out=tuple(left_out), kept=tuple(kept))
+
+    def summary_counts(self) -> dict[str, Any]:
+        """The plan summary counts of this report (FR-007, FR-008; data-model.md "Plan summary additions").
+
+        Counted from the records, as `record` counts them, without encoding and hashing the report.
+        """
+        with_problem = sum(1 for item in self.left_out if item.cause == "has_problem")
+        left_out_by_kind: dict[str, int] = {}
+        for item in self.left_out:
+            left_out_by_kind[item.record.kind] = left_out_by_kind.get(item.record.kind, 0) + 1
+        problems_by_type: dict[str, int] = {}
+        for problem in self.problems:
+            problems_by_type[problem.problem_type] = problems_by_type.get(problem.problem_type, 0) + 1
+        return {
+            "left_out": len(self.left_out),
+            "left_out_with_problem": with_problem,
+            "left_out_dependent": len(self.left_out) - with_problem,
+            "left_out_by_kind": dict(sorted(left_out_by_kind.items())),
+            "problems": len(self.problems),
+            "problems_by_type": dict(sorted(problems_by_type.items())),
+            "kept": len(self.kept),
+            "deletes_withheld_by_kind": self.deletes_withheld_by_kind(),
+        }
+
+
+# --- A peer the source does not return (spec 020 research R5) ------------------------------
+#
+# Plan derivation names a reference to a peer that the source does not return with this
+# placeholder identity instead of refusing the plan. The selection step of the problem pass
+# removes every placeholder, and the plan writer refuses an operation that still holds one.
+
+NOT_IN_SOURCE_VALUE_PREFIX = "infrahub-sync:not-in-source:"
+"""Prefix of the reference value a source adapter stores for a peer the source does not return
+(`infrahub_sync.not_in_source_placeholder`): the prefix, the peer kind, `:` and the source ID."""
+
+NOT_IN_SOURCE_PEER_KEY = "infrahub-sync:not-in-source-peer"
+"""The only key of a placeholder peer identity. No mapping field can have this name."""
+
+
+def not_in_source_peer_identity(source_id: str | None) -> dict[str, Any]:
+    """The placeholder identity of a peer the source does not return, with its source record ID."""
+    return {NOT_IN_SOURCE_PEER_KEY: {"source_id": source_id}}
+
+
+def is_not_in_source_peer(identity: object) -> bool:
+    """Tell whether a peer identity is the placeholder of `not_in_source_peer_identity`."""
+    return isinstance(identity, Mapping) and NOT_IN_SOURCE_PEER_KEY in identity
+
+
+def not_in_source_peer_pair(value: object) -> dict[str, Any] | None:
+    """The `{"peer_kind", "identity"}` placeholder pair of a reference value marked not in the source.
+
+    `None` when `value` is not such a reference value.
+    """
+    if not isinstance(value, str) or not value.startswith(NOT_IN_SOURCE_VALUE_PREFIX):
+        return None
+    peer_kind, _, source_id = value.removeprefix(NOT_IN_SOURCE_VALUE_PREFIX).partition(":")
+    return {"peer_kind": peer_kind, "identity": not_in_source_peer_identity(source_id or None)}
+
+
+def holds_not_in_source_peer(value: object) -> bool:
+    """Tell whether `value`, at any depth, holds a placeholder identity or a not-in-source reference value."""
+    if isinstance(value, str):
+        return value.startswith(NOT_IN_SOURCE_VALUE_PREFIX)
+    if isinstance(value, Mapping):
+        return NOT_IN_SOURCE_PEER_KEY in value or any(
+            holds_not_in_source_peer(key) or holds_not_in_source_peer(item) for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(holds_not_in_source_peer(item) for item in value)
+    return False

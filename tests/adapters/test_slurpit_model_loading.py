@@ -25,7 +25,13 @@ from packaging.requirements import Requirement
 from packaging.version import Version
 
 import infrahub_sync.adapters as adapters_package
-from infrahub_sync import SyncAdapter
+from infrahub_sync import (
+    DiffSyncModelMixin,
+    SchemaMappingFilter,
+    SchemaMappingModel,
+    SchemaMappingTransform,
+    SyncAdapter,
+)
 
 
 class Device:
@@ -148,17 +154,17 @@ class ClientOwner(Protocol):
 
 
 class MappedRecord(UserDict[str, object]):
-    @staticmethod
-    def filter_records(records: list[dict[str, object]], schema_mapping: object) -> list[dict[str, object]]:
-        """Return the stub records without filtering."""
-        _ = schema_mapping
-        return records
+    """A stub model: the base-class read loop applies filters and transforms through these."""
 
-    @staticmethod
-    def transform_records(records: list[dict[str, object]], schema_mapping: object) -> list[dict[str, object]]:
-        """Return the stub records without transformation."""
-        _ = schema_mapping
-        return records
+    @classmethod
+    def apply_filter(cls, field_value: Any, operation: str, value: Any) -> bool:  # noqa: ANN401
+        """Apply one configured filter as the real model does."""
+        return DiffSyncModelMixin.apply_filter(field_value=field_value, operation=operation, value=value)
+
+    @classmethod
+    def apply_transforms(cls, item: dict[str, Any], transforms: list[SchemaMappingTransform]) -> dict[str, Any]:
+        """Apply the configured transforms as the real model does."""
+        return DiffSyncModelMixin.apply_transforms(item=item, transforms=transforms)
 
 
 @pytest.fixture
@@ -190,7 +196,9 @@ def adapter_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[types.ModuleType
             cleanup.delattr(adapters_package, "slurpitsync", raising=False)
 
 
-def _adapter(module: types.ModuleType, mapping: str, target: str = "source") -> tuple[Any, list[dict[str, object]]]:
+def _adapter(
+    module: types.ModuleType, mapping: str, target: str = "source", element: SchemaMappingModel | None = None
+) -> tuple[Any, list[dict[str, object]]]:
     """Build an isolated adapter for a schema mapping."""
     instance = module.SlurpitsyncAdapter.__new__(module.SlurpitsyncAdapter)
     instance._loop = asyncio.new_event_loop()
@@ -203,7 +211,7 @@ def _adapter(module: types.ModuleType, mapping: str, target: str = "source") -> 
     loaded: list[dict[str, object]] = []
     instance.add = loaded.append
     instance.config = types.SimpleNamespace(
-        schema_mapping=[types.SimpleNamespace(name="Thing", mapping=mapping)],
+        schema_mapping=[element or SchemaMappingModel(name="Thing", mapping=mapping)],
         source=types.SimpleNamespace(name="other"),
     )
     instance.slurpit_obj_to_diffsync = lambda obj, mapping, model: obj  # noqa: ARG005
@@ -403,16 +411,22 @@ def test_dotted_sdk_mapping_rejects_unsupported_methods(adapter_module: types.Mo
 @pytest.mark.parametrize("target", ["source", "destination"])
 def test_model_loading_applies_mapping_rules_only_for_source(adapter_module: types.ModuleType, target: str) -> None:
     """Verify model loading applies mapping rules only for source."""
-    instance, loaded = _adapter(adapter_module, "site.get_sites", target=target)
+    element = SchemaMappingModel(
+        name="Thing",
+        mapping="site.get_sites",
+        filters=[SchemaMappingFilter(field="sitename", operation="==", value="HQ")],
+        transforms=[SchemaMappingTransform(field="sitename", expression="{{ sitename | lower }}")],
+    )
+    instance, loaded = _adapter(adapter_module, "site.get_sites", target=target, element=element)
     with (
         mock.patch.object(SiteAPI, "get_sites", autospec=True, return_value=[Site()]),
-        mock.patch.object(MappedRecord, "filter_records", wraps=MappedRecord.filter_records) as filter_records,
-        mock.patch.object(MappedRecord, "transform_records", wraps=MappedRecord.transform_records) as transform_records,
+        mock.patch.object(MappedRecord, "apply_filter", wraps=MappedRecord.apply_filter) as apply_filter,
+        mock.patch.object(MappedRecord, "apply_transforms", wraps=MappedRecord.apply_transforms) as apply_transforms,
     ):
         adapter_module.SlurpitsyncAdapter.model_loader(instance, "Thing", MappedRecord)
-    assert loaded == [{"id": 7, "sitename": "HQ"}]
-    assert filter_records.call_count == (1 if target == "source" else 0)
-    assert transform_records.call_count == (1 if target == "source" else 0)
+    assert loaded == [{"id": 7, "sitename": "hq" if target == "source" else "HQ"}]
+    assert apply_filter.call_count == (1 if target == "source" else 0)
+    assert apply_transforms.call_count == (1 if target == "source" else 0)
 
 
 def test_missing_planning_slug_raises_index_error(adapter_module: types.ModuleType) -> None:

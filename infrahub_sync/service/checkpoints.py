@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME
+from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME, REPORT_FILE_NAME
 from infrahub_sync.product_store.bundle import (
     BUNDLE_MEDIA_TYPE,
     FINAL_CHECKPOINT_ARTIFACT_ID,
@@ -69,11 +69,14 @@ class CheckpointUnavailableError(RuntimeError):
 def _declared_members(manifest: PlanManifest) -> list[str]:
     """The run-relative paths of the files the manifest declares beside itself and the operations.
 
-    The last-change file first, when the manifest records one, then each source snapshot.
-    Every path is the one the manifest records, so the checkpoint carries the files the
-    plan checksum covers and no path rebuilt from a constant.
+    The last-change file first, when the manifest records one, then the plan report of a
+    format 4 plan (spec 020), then each source snapshot. Every path but the report's is the
+    one the manifest records, so the checkpoint carries the files the plan checksum covers;
+    the report's name is fixed by the format, and the manifest's `report` record covers it.
     """
     members = [] if manifest.last_changes is None else [f"{PLAN_DIR_NAME}/{manifest.last_changes.path}"]
+    if manifest.report is not None:
+        members.append(f"{PLAN_DIR_NAME}/{REPORT_FILE_NAME}")
     members.extend(record.path for record in manifest.source_snapshot)
     return members
 

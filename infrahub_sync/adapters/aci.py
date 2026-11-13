@@ -18,12 +18,14 @@ from urllib3.util.retry import Retry
 from infrahub_sync import (
     DiffSyncMixin,
     DiffSyncModelMixin,
+    SchemaMappingField,
     SchemaMappingModel,
     SyncAdapter,
     SyncConfig,
 )
 from infrahub_sync.configuration.credentials import is_registered_context, select_runtime_credential
 
+from .references import peer_unique_id, peer_unique_ids, reference_is_required
 from .utils import get_value
 
 if TYPE_CHECKING:
@@ -240,136 +242,80 @@ class AciAdapter(DiffSyncMixin, Adapter):
             verify=verify,
         )
 
-    def model_loader(self, model_name: str, model: type[AciModel]) -> None:
-        """
-        Load and process models using schema mapping filters and transformations.
+    def list_records(self, model_name: str, element: SchemaMappingModel) -> list[dict[str, Any]]:  # noqa: ARG002
+        """Fetch the objects of the mapping entry's resource; an entry without `fields` reads nothing."""
+        if not element.fields:
+            logger.debug("No fields defined for schema mapping %s, skipping", element.name)
+            return []
+        if not element.mapping:
+            return []
+        try:
+            response_data = self.client.get(element.mapping)
+            objs = response_data.json().get("imdata", [])
+        except Exception as exc:
+            msg = f"Error fetching data from REST API: {exc!s}"
+            raise ValueError(msg) from exc
+        logger.debug(json.dumps(objs, indent=2))
+        return objs
 
-        This method retrieves data from ACI, applies filters and transformations
-        as specified in the schema mapping, and loads the processed data into the adapter.
-        """
-        # Retrieve schema mapping for this model
-        for element in self.config.schema_mapping:
-            if element.name != model_name:
-                continue
-            if not element.fields:
-                logger.debug("No fields defined for schema mapping %s, skipping", element.name)
-                continue
+    def record_source_id(self, record: Any) -> str | None:
+        """Return the ID of an APIC object, read from its nested attributes when it has them."""
+        return self._extract_aci_id(record) if isinstance(record, dict) else None
 
-            if not element.mapping:
-                logger.info("No mapping defined for '%s', skipping", element.name)
-                continue
-
-            # Use the resource endpoint from the schema mapping
-            resource_name = element.mapping
-
-            try:
-                # Retrieve all objects
-                response_data = self.client.get(resource_name)
-                objs = response_data.json().get("imdata", [])
-            except Exception as exc:
-                msg = f"Error fetching data from REST API: {exc!s}"
-                raise ValueError(msg) from exc
-
-            logger.debug(json.dumps(objs, indent=2))
-            total = len(objs)
-            # Always apply filters and transforms for the source adapter
-            if self.target == "source":
-                # Filter records
-                filtered_objs = model.filter_records(records=objs, schema_mapping=element)
-                logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, resource_name)
-                # Transform records
-                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
-            else:
-                logger.info("%s: Loading all %d %s", self.type, total, resource_name)
-                transformed_objs = objs
-
-            # Create model instances after filtering and transforming
-            for obj in transformed_objs:
-                data = self.obj_to_diffsync(obj=obj, mapping=element, model=model)
-                item = model(**data)
-                self.add(item)
-
-    def obj_to_diffsync(
-        self,
-        obj: dict[str, Any],
-        mapping: SchemaMappingModel,
-        model: type[AciModel],
+    def record_to_data(
+        self, record: dict[str, Any], element: SchemaMappingModel, model: type[AciModel]
     ) -> dict[str, Any]:
-        """Convert an object to DiffSync format based on the provided mapping schema."""
-        obj_id = self._extract_aci_id(obj)
+        """Convert an APIC object to model data; references resolve through `peer_unique_id`."""
+        obj_id = self._extract_aci_id(record)
+        source_id = str(obj_id) if obj_id else ""
 
-        data: dict[str, Any] = {"local_id": str(obj_id) if obj_id else ""}
+        data: dict[str, Any] = {"local_id": source_id}
 
-        if not mapping.fields:
+        if not element.fields:
             return data
-        for field in mapping.fields:
+        for field in element.fields:
             field_is_list = model.is_list(name=field.name)
 
             if field.static:
                 data[field.name] = field.static
             elif field.mapping and not field.reference:
-                value = get_value(obj, field.mapping)
+                value = get_value(record, field.mapping)
                 if value is not None:
                     data[field.name] = value
             elif field.mapping and field.reference:
-                all_nodes_for_reference = self.store.get_all(model=field.reference)
-                nodes = list(all_nodes_for_reference)
-
+                owner = (element.name, source_id or None)
+                required = reference_is_required(model, field.name)
                 if field_is_list:
-                    data[field.name] = self._process_list_field(obj, field, nodes)
+                    peer_ids = [str(node) for node in get_value(record, field.mapping) or [] if node]
+                    data[field.name] = peer_unique_ids(
+                        self, field.reference, peer_ids, owner=owner, field=field.name, required=required
+                    )
                 else:
-                    data[field.name] = self._process_single_field(obj, field, nodes)
+                    data[field.name] = self._single_reference(record, field, owner=owner, required=required)
         logger.debug("Converted object to diffsync data: %s", data)
         return data
 
-    def _process_list_field(self, obj: dict[str, Any], field: Any, nodes: list[Any]) -> list[str]:
-        """Process a list field and return a list of unique IDs."""
-        unique_ids = []
-        nodes_in_obj = get_value(obj, field.mapping) or []
-        for node in nodes_in_obj:
-            if not node:
-                continue
-            node_id = str(node)
-            matching_nodes = [item for item in nodes if item.local_id == node_id]
-            if not matching_nodes:
-                msg = f"Unable to locate the node {field.reference} {node_id}"
-                raise ValueError(msg)
-            unique_ids.append(matching_nodes[0].get_unique_id())
-        return sorted(unique_ids)
-
-    def _process_single_field(self, obj: dict[str, Any], field: Any, nodes: list[Any]) -> str | None:
-        """Process a single field and return its unique ID."""
-        # Check if this field has already been transformed (e.g., by Jinja filters)
-        if field.name in obj:
-            # Use the already transformed value from the object
-            node_value = str(obj[field.name])
+    def _single_reference(
+        self, record: dict[str, Any], field: SchemaMappingField, *, owner: tuple[str, str | None], required: bool
+    ) -> str | None:
+        """Resolve a cardinality-one reference, by the peer's source ID and then by its name."""
+        # A field that a transform already wrote (e.g. with a Jinja filter) holds the value to match.
+        if field.name in record:
+            node_value = str(record[field.name])
         else:
-            # Fall back to extracting from the original mapping
-            node = get_value(obj, field.mapping)
+            node = get_value(record, field.mapping or "")
             if not node:
                 return None
             node_value = str(node)
-
-        # For device references, try matching against both local_id and name
-        # since devices might be referenced by name (due to identifier configuration)
-        matching_nodes = [item for item in nodes if item.local_id == node_value]
-
-        if not matching_nodes:
-            # Try matching against the name field for device references
-            matching_nodes = [item for item in nodes if getattr(item, "name", None) == node_value]
-
-        if not matching_nodes:
-            available_ids = [getattr(item, "local_id", "N/A") for item in nodes[:5]]
-            available_names = [getattr(item, "name", "N/A") for item in nodes[:5]]
-            msg = (
-                f"Unable to locate the node {field.reference} {node_value} for field '{field.name}'. "
-                f"Available node IDs (first 5): {available_ids}, "
-                f"Available names (first 5): {available_names}"
-            )
-            logger.error(msg)
-            raise ValueError(msg)
-
-        return matching_nodes[0].get_unique_id()
+        reference = field.reference or ""
+        unique_id = self.stored_peer_unique_id(reference, node_value)
+        if unique_id is not None:
+            return unique_id
+        # A device can be referenced by its name, because of its identifier configuration.
+        by_name = [item for item in self.store.get_all(model=reference) if getattr(item, "name", None) == node_value]
+        if by_name:
+            return by_name[0].get_unique_id()
+        return peer_unique_id(self, reference, node_value, owner=owner, field=field.name, required=required)
 
     def _build_device_mapping(self) -> dict[str, str]:
         """Build device mapping from ACI fabricNode data during initialization."""

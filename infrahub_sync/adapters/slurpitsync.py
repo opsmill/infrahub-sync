@@ -107,6 +107,8 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             super().load()
         finally:
             self.close()
+        if self.skipped:
+            logger.info("%s: skipped syncing %d models", self.type, len(self.skipped))
 
     def close(self) -> None:
         """Close SDK clients and the loop once, even for an unloaded adapter."""
@@ -228,62 +230,34 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         results = self.run_async(self.client.planning.search_plannings(search_data, limit=30000))
         return results or []
 
-    def model_loader(self, model_name: str, model: type[SlurpitsyncModel]) -> None:
-        """Fetch `model_name` from Slurpit, apply schema-mapping filters/transforms, and add each row to the store."""
-        for element in self.config.schema_mapping:
-            if element.name != model_name:
-                continue
+    def list_records(self, model_name: str, element: SchemaMappingModel) -> list[dict[str, Any]]:  # noqa: ARG002
+        """Fetch the mapping entry's rows from Slurp'it, as dicts."""
+        if not element.mapping:
+            return []
+        if element.mapping.startswith("planning_results"):
+            planning_name = element.mapping.split(".")[1]
+            nodes = self.planning_results(planning_name)
+        elif "." in element.mapping:
+            if element.mapping not in READ_ONLY_SDK_MAPPINGS:
+                msg = f"Unsupported Slurp'it SDK mapping: {element.mapping}"
+                raise ValueError(msg)
+            app_name, resource_name = element.mapping.split(".")
+            slurpit_app = getattr(self.client, app_name)
+            slurpit_model = getattr(slurpit_app, resource_name)
+            nodes = self.run_async(slurpit_model())
+        elif element.mapping == "filter_interfaces":
+            interfaces = self.planning_results("interfaces")
+            nodes = self.run_async(self.filter_interfaces(interfaces))
+        else:
+            slurpit_model = getattr(self, element.mapping)
+            nodes = slurpit_model()
+        return [node.to_dict() if hasattr(node, "to_dict") else node for node in nodes]
 
-            if not element.mapping:
-                logger.info("No mapping defined for '%s', skipping", element.name)
-                continue
-
-            if element.mapping.startswith("planning_results"):
-                planning_name = element.mapping.split(".")[1]
-                nodes = self.planning_results(planning_name)
-            elif "." in element.mapping:
-                if element.mapping not in READ_ONLY_SDK_MAPPINGS:
-                    msg = f"Unsupported Slurp'it SDK mapping: {element.mapping}"
-                    raise ValueError(msg)
-                app_name, resource_name = element.mapping.split(".")
-                slurpit_app = getattr(self.client, app_name)
-                slurpit_model = getattr(slurpit_app, resource_name)
-                nodes = self.run_async(slurpit_model())
-            elif element.mapping == "filter_interfaces":
-                interfaces = self.planning_results("interfaces")
-                nodes = self.run_async(self.filter_interfaces(interfaces))
-            else:
-                slurpit_model = getattr(self, element.mapping)
-                nodes = slurpit_model()
-
-            list_obj = []
-            for node in nodes:
-                if hasattr(node, "to_dict"):
-                    list_obj.append(node.to_dict())
-                else:
-                    list_obj.append(node)
-            total = len(list_obj)
-
-            if self.target == "source":
-                # Filter records
-                filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
-                logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, element.mapping)
-                # Transform records
-                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
-            else:
-                logger.info("%s: Loading all %d %s", self.type, total, element.mapping)
-                transformed_objs = list_obj
-
-            for obj in transformed_objs:
-                if data := self.slurpit_obj_to_diffsync(obj=obj, mapping=element, model=model):
-                    item = model(**data)
-                    try:  # noqa: SIM105
-                        self.add(item)
-                    except Exception:  # noqa: BLE001, S110
-                        pass
-
-        if self.skipped:
-            logger.info("%s: skipped syncing %d models", self.type, len(self.skipped))
+    def record_to_data(
+        self, record: dict[str, Any], element: SchemaMappingModel, model: type[SlurpitsyncModel]
+    ) -> dict | None:
+        """Convert one Slurp'it row to model data, or `None` to skip a row whose reference is missing."""
+        return self.slurpit_obj_to_diffsync(obj=record, mapping=element, model=model)
 
     def slurpit_obj_to_diffsync(
         self, obj: dict[str, Any], mapping: SchemaMappingModel, model: type[SlurpitsyncModel]

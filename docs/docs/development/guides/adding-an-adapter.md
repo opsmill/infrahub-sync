@@ -74,7 +74,7 @@ it is the shortest way to see the shape:
 
 | File | What it shows |
 |---|---|
-| `custom_adapter_src/custom_adapter.py` | `MockdbAdapter` and `MockdbModel` — the two classes, a client, `model_loader` and a full `obj_to_diffsync` |
+| `custom_adapter_src/custom_adapter.py` | `MockdbAdapter` and `MockdbModel` — the two classes, a client, `list_records` and a full `record_to_data` |
 | `custom_adapter_src/mock_db.json` | The five-device fixture the adapter reads |
 | `config.yml` | The declared configuration |
 | `package.yml` | The registry envelope that wraps it |
@@ -110,7 +110,9 @@ class MysystemAdapter(DiffSyncMixin, Adapter):
         self.settings = adapter.settings or {}
         self.client = self._create_client(self.settings)
 
-    def model_loader(self, model_name, model): ...
+    def list_records(self, model_name, element): ...
+
+    def record_to_data(self, record, element, model): ...
 
 class MysystemModel(DiffSyncModelMixin, DiffSyncModel):
     pass
@@ -120,26 +122,63 @@ Follow [Writing an adapter](../guidelines/writing-an-adapter.md): mixin first, `
 optional-dependency import with `# ty: ignore[unresolved-import]`, credentials from the
 environment and never from an inline setting value.
 
-#### Step 3: implement `model_loader`
+#### Step 3: implement `list_records` and `record_to_data`
 
-For each model, find its schema-mapping entry, fetch the source records, filter and transform
-them through the model mixin, convert each to the DiffSync shape, and add it:
+The base class owns the read loop. For each mapping entry, `model_loader` calls `list_records`,
+applies the entry's filters on the source side, and passes each record to `load_record`, which
+runs the entry's transforms, calls `record_to_data` and stores the model. Implement the two
+methods it calls:
 
 ```python
-def model_loader(self, model_name, model):
-    element = next(e for e in self.config.schema_mapping if e.name == model_name)
-    records = self.client.get(element.mapping)
-    if self.config.source.name.title() == self.type.title():
-        records = model.filter_records(records=records, schema_mapping=element)
-        records = model.transform_records(records=records, schema_mapping=element)
-    for obj in records:
-        self.add(model(**self.obj_to_diffsync(obj=obj, mapping=element, model=model)))
+from infrahub_sync.adapters.references import peer_unique_id, peer_unique_ids, reference_is_required
+from infrahub_sync.adapters.utils import get_value
+
+def list_records(self, model_name, element):
+    return self.client.get(element.mapping)
+
+def record_to_data(self, record, element, model):
+    source_id = self.record_source_id(record)
+    data = {"local_id": source_id}
+    for field in element.fields:
+        if field.static is not None:
+            data[field.name] = field.static
+        elif field.mapping and not field.reference:
+            data[field.name] = get_value(record, field.mapping)
+        elif field.mapping and field.reference:
+            peer = get_value(record, field.mapping)
+            if not peer:
+                continue
+            resolve = peer_unique_ids if model.is_list(field.name) else peer_unique_id
+            data[field.name] = resolve(
+                self,
+                field.reference,
+                peer,
+                owner=(element.name, source_id),
+                field=field.name,
+                required=reference_is_required(model, field.name),
+            )
+    return data
 ```
 
-Write the `obj_to_diffsync` helper to walk `element.fields` — `static`, plain `mapping`, and
-`reference` resolved to a peer `unique_id` — and always set `local_id`.
-`examples/custom_adapter/custom_adapter_src/custom_adapter.py` has a complete version,
-including the single and list reference cases.
+`record_to_data` always sets `local_id` to the source record ID, and resolves each reference with
+`peer_unique_id`, or `peer_unique_ids` for a list of peers. Do not filter, transform or catch
+errors in either method. On the source side, `load_record` records in the adapter's
+`load_report` what it finds while it builds a record, and the plan reads each entry in one of
+three ways:
+
+- A value of the wrong type, a duplicate identity, a required peer that a filter removed, a
+  peer the source does not return and a failed transform are problems of the record: the plan
+  lists the problem and leaves the record out. A peer the source does not return through an
+  optional relationship is listed too, and the record is kept without that relationship.
+- A required peer that the read could not build makes the record a dependent: the plan lists
+  it as left out, naming the record it depends on, with no problem of its own.
+- An optional peer that the read could not build keeps the record without that relationship,
+  in the kept records, with no problem of its own.
+
+Any other error is raised as `RecordLoadError` and fails the plan; see
+[The read loop](../knowledge/adapter-anatomy.md#the-read-loop). Override `record_source_id` when
+your records do not name their ID `id`. `examples/custom_adapter/custom_adapter_src/custom_adapter.py`
+has a complete version, including the single and list reference cases.
 
 #### Step 4: Keep model writes inherited
 
@@ -353,10 +392,13 @@ The two files must agree: a product test parses every `examples/*/package.yml` a
 #### Step 10: Add incremental support (optional)
 
 If the source can filter by change, override `cursor_tier_for` to return the right `CursorTier`
-and implement `list_changed_since`, and optionally `list_existing_ids`. Set
-`incremental_extraction=True` in the capability entry at the same time. See
-[incremental sync and cache](../knowledge/incremental-and-cache.md). Skip this and the adapter
-performs full extracts.
+and implement `list_changed_since`, and optionally `list_existing_ids`. `list_changed_since`
+yields model data, so it filters, transforms and calls `record_to_data` itself. For a warm read
+of the source, also implement `list_changed_records`, which returns the raw changed records; the
+engine admits them through `load_record`, so the read reports the problems of a full read. See
+[incremental sync and cache](../knowledge/incremental-and-cache.md#what-an-adapter-implements). Set
+`incremental_extraction=True` in the capability entry at the same time. Skip this and the
+adapter performs full extracts.
 
 #### Step 11: Add an example and document the environment variables
 
@@ -552,7 +594,7 @@ For the development-time plugin loader and what it is and is not, see
 ### Quality checklist
 
 - [ ] Adapter inherits `DiffSyncMixin` / `DiffSyncModelMixin`, mixin first, with a `type`.
-- [ ] `model_loader` filters and transforms through the model mixin; `obj_to_diffsync` sets `local_id`.
+- [ ] The adapter implements `list_records` and `record_to_data`, and keeps the base-class `model_loader`; `record_to_data` sets `local_id` and resolves references with `peer_unique_id` or `peer_unique_ids`.
 - [ ] Decided whether the adapter implements the planned-write surface — **both** `new_peer_resolver` and `apply_planned_operation`. A destination without both cannot write through registered `sync` or through saved-plan `apply`; if that is the intended position, confirmed the write gate refuses cleanly and that `plan` and plan review still work.
 - [ ] An `AdapterConfigurationCapabilities` entry added to `BUILTIN_ADAPTER_CAPABILITIES`, with roles, allowed settings and credential paths that match the module.
 - [ ] `tests/configuration/test_contracts.py` expected set updated, and `tests/configuration/test_adapter_setting_conformance.py` satisfied.

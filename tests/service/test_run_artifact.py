@@ -8,6 +8,7 @@ named fields only, and redacted with the stage's secrets before it is published.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, cast
 
@@ -148,6 +149,58 @@ def test_failure_cause_never_appears_in_the_markdown() -> None:
 
     assert "connection refused" not in markdown
     assert "10.0.0.1" not in markdown
+
+
+# --- left-out and problem counts (spec 020 FR-028, T038) --------------------------------------
+#
+# FR-028 asks for the two counts and for next steps that name the `runs plan` options of FR-027
+# when the plan leaves out records. It does not fix the wording of the count lines, so the
+# tests look for one list line that names each count.
+
+_LEFT_OUT_SUMMARY = {
+    "by_action": {"create": 2},
+    "by_kind": {"A": 2},
+    "left_out": 6,
+    "left_out_with_problem": 1,
+    "left_out_dependent": 5,
+    # Not the count of records with a problem, so a line of left-out counts cannot stand in for it.
+    "problems": 3,
+}
+
+
+def _count_line(markdown: str, words: str, count: int) -> bool:
+    pattern = rf"^- [^\n]*{words}[^\n]*\b{count}\b"
+    return re.search(pattern, markdown, flags=re.IGNORECASE | re.MULTILINE) is not None
+
+
+@pytest.mark.parametrize(("stage", "outcome"), [("plan", "planned"), ("sync", "left-out-review-required")])
+def test_a_plan_that_leaves_out_records_shows_both_counts(stage: str, outcome: str) -> None:
+    run = _run(operation=stage, summary=_LEFT_OUT_SUMMARY, artifact_refs=(_review_reference(),))
+
+    markdown = run_markdown(run, stage, outcome, None)
+
+    assert _count_line(markdown, "left out", 6), markdown
+    assert _count_line(markdown, "problem", 3), markdown
+
+
+@pytest.mark.parametrize(("stage", "outcome"), [("plan", "planned"), ("sync", "left-out-review-required")])
+def test_a_plan_that_leaves_out_records_names_the_runs_plan_options_in_its_next_steps(stage: str, outcome: str) -> None:
+    run = _run(operation=stage, summary=_LEFT_OUT_SUMMARY, artifact_refs=(_review_reference(),))
+
+    markdown = run_markdown(run, stage, outcome, None)
+
+    steps = markdown.partition("## Next steps")[2]
+    assert f"`infrahub-sync runs plan {_RUN_ID} --problems`" in steps
+    assert f"`infrahub-sync runs plan {_RUN_ID} --left-out`" in steps
+
+
+def test_a_plan_that_leaves_out_nothing_adds_no_left_out_step() -> None:
+    summary = {**_LEFT_OUT_SUMMARY, "left_out": 0, "left_out_with_problem": 0, "left_out_dependent": 0, "problems": 0}
+    run = _run(summary=summary, artifact_refs=(_review_reference(),))
+
+    markdown = run_markdown(run, "plan", "planned", None)
+
+    assert "--left-out" not in markdown
 
 
 # --- publish_run_artifact (T017) --------------------------------------------------------------
