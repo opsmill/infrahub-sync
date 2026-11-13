@@ -153,6 +153,42 @@ def test_a_private_key_under_any_file_name_is_refused(tmp_path: Path, name: str)
     assert not any(variable in os.environ for variable in TRUST_VARIABLES)
 
 
+def test_a_private_key_across_two_scanned_blocks_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A file the bundle never reads is scanned block by block; a marker split between two blocks is still found."""
+    monkeypatch.setattr(trust_store, "_SCAN_BLOCK_BYTES", 64)
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    (directory / "ca.pem").write_bytes(_ca_certificate("Spec 021 Test CA"))
+    # The marker starts 5 bytes before the end of the first block.
+    (directory / "notes.txt").write_bytes(b"x" * 59 + _private_key())
+
+    with pytest.raises(TrustStoreError) as refusal:
+        install_custom_ca_bundle(directory)
+
+    assert str(refusal.value) == "notes.txt holds a private key; the CA directory takes public certificates only"
+
+
+def test_a_file_the_bundle_does_not_trust_is_never_read_whole(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only certificate files are kept in memory, so a large file next to them does not fill the memory at start."""
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    (directory / "ca.pem").write_bytes(_ca_certificate("Spec 021 Test CA"))
+    (directory / "archive.tar").write_bytes(b"\0" * (3 * 1024 * 1024))
+    read_whole: list[str] = []
+    read_bytes = Path.read_bytes
+
+    def recording_read_bytes(path: Path) -> bytes:
+        read_whole.append(path.name)
+        return read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", recording_read_bytes)
+
+    assert install_custom_ca_bundle(directory) is not None
+
+    assert "archive.tar" not in read_whole
+    assert "ca.pem" in read_whole
+
+
 def test_a_private_key_alone_is_refused(tmp_path: Path) -> None:
     directory = tmp_path / "ca"
     directory.mkdir()

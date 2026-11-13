@@ -26,6 +26,7 @@ import os
 import ssl
 import tempfile
 from pathlib import Path
+from typing import NoReturn
 
 import certifi
 
@@ -44,6 +45,9 @@ CERTIFICATE_SUFFIXES = frozenset({".pem", ".crt"})
 BUNDLE_PREFIX = "infrahub-sync-ca-bundle-"
 _PRIVATE_KEY_MARKER = b"PRIVATE KEY-----"
 _CERTIFICATE_MARKER = b"-----BEGIN CERTIFICATE-----"
+# A file the bundle does not trust is searched for a private key this many bytes at a time,
+# so a large file in the directory never sits in memory whole.
+_SCAN_BLOCK_BYTES = 1024 * 1024
 
 
 class TrustStoreError(RuntimeError):
@@ -62,9 +66,46 @@ def _read_without_private_key(path: Path) -> bytes:
         msg = f"cannot read {path.name} in the CA directory ({type(error).__name__})"
         raise TrustStoreError(msg) from None
     if _PRIVATE_KEY_MARKER in content:
-        msg = f"{path.name} holds a private key; the CA directory takes public certificates only"
-        raise TrustStoreError(msg)
+        _refuse_private_key(path)
     return content
+
+
+def _read_certificate_files(regular: list[Path], files: list[Path]) -> dict[Path, bytes]:
+    """Return the content of the certificate files, after searching every file for a private key.
+
+    Every file is searched, whatever its name: a key next to the certificates reaches the
+    services through the mount even when it is never trusted. Only certificate files are
+    kept; the others are scanned and dropped.
+    """
+    read: dict[Path, bytes] = {}
+    for path in regular:
+        if path in files:
+            read[path] = _read_without_private_key(path)
+        else:
+            _scan_for_private_key(path)
+    return read
+
+
+def _refuse_private_key(path: Path) -> NoReturn:
+    msg = f"{path.name} holds a private key; the CA directory takes public certificates only"
+    raise TrustStoreError(msg)
+
+
+def _scan_for_private_key(path: Path) -> None:
+    """Refuse an unreadable file and a private key, reading the file in blocks and keeping none of it."""
+    # Each block is searched together with the end of the one before, so a marker split
+    # between two blocks is found.
+    overlap = len(_PRIVATE_KEY_MARKER) - 1
+    tail = b""
+    try:
+        with path.open("rb") as stream:
+            while block := stream.read(_SCAN_BLOCK_BYTES):
+                if _PRIVATE_KEY_MARKER in tail + block:
+                    _refuse_private_key(path)
+                tail = (tail + block)[-overlap:]
+    except OSError as error:
+        msg = f"cannot read {path.name} in the CA directory ({type(error).__name__})"
+        raise TrustStoreError(msg) from None
 
 
 def _checked(path: Path, content: bytes) -> bytes:
@@ -108,10 +149,8 @@ def install_custom_ca_bundle(directory: Path | None = None) -> Path | None:
             f"cannot read the CA directory {directory} ({type(error).__name__}); user ID 10001 must be able to list it"
         )
         raise TrustStoreError(msg) from None
-    # Every file is searched for a private key, whatever its name: a key next to the
-    # certificates reaches the services through the mount even when it is never trusted.
-    read = {path: _read_without_private_key(path) for path in regular}
     files = [path for path in regular if path.suffix.lower() in CERTIFICATE_SUFFIXES]
+    read = _read_certificate_files(regular, files)
     if not files:
         logger.info("no CA certificate file in %s", directory)
         return None
