@@ -67,7 +67,9 @@ class LoadReportEntry(pydantic.BaseModel):
     is the record the store kept for a `duplicate_source_identity` entry. `loaded` is false
     when the record could not be built. `admission` numbers the admission step that recorded
     the entry: the entries of one number describe one source record, which tells apart the
-    records that have no source ID.
+    records that have no source ID. `in_cycle` marks a `peer_not_found_in_source` entry whose
+    peer the source does return: a record of the same kind that refers back to this record in
+    a cycle, so the read admitted this record without that reference.
     """
 
     model_config = pydantic.ConfigDict(extra="forbid", frozen=True)
@@ -81,6 +83,7 @@ class LoadReportEntry(pydantic.BaseModel):
     config_entry: str | None = None
     loaded: bool = False
     admission: int | None = None
+    in_cycle: bool = False
 
     @pydantic.field_validator("value", mode="before")
     @classmethod

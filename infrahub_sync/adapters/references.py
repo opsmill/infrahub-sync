@@ -71,17 +71,19 @@ def peer_unique_id(
     if unique_id is not None:
         return unique_id
 
-    if adapter.peer_is_pending(peer_kind, source_id):
+    owner_kind, owner_source_id = owner
+    in_cycle = adapter.peer_is_pending(peer_kind, source_id)
+    if in_cycle and not adapter.wait_is_released(owner_kind, owner_source_id):
         # A record of the kind being read that is listed and not admitted yet (a parent after
         # its child): `load_records` admits the referring record again later.
         raise PeerNotAdmittedYetError(peer_kind=peer_kind, peer_source_id=source_id)
-    owner_kind, owner_source_id = owner
-    details = {
+    details: dict[str, Any] = {
         "kind": owner_kind,
         "source_id": owner_source_id,
         "field": field,
         "peer_kind": peer_kind,
         "peer_source_id": source_id,
+        "in_cycle": in_cycle,
     }
     not_loaded = adapter.not_loaded_entry(peer_kind, source_id)
     if not_loaded is not None:
@@ -109,7 +111,13 @@ def peer_unique_id(
     if required:
         raise PeerNotFoundError(**details)
     _report(
-        adapter, owner, field=field, reason="peer_not_found_in_source", peer_kind=peer_kind, peer_source_id=source_id
+        adapter,
+        owner,
+        field=field,
+        reason="peer_not_found_in_source",
+        peer_kind=peer_kind,
+        peer_source_id=source_id,
+        in_cycle=in_cycle,
     )
     return not_in_source_placeholder(peer_kind, source_id)
 
@@ -158,11 +166,20 @@ def peer_unique_ids(
         elif excluded:
             error, first = ExcludedRequiredPeerError, excluded[0]
         if error is not None:
+            in_cycle = any(
+                entry.in_cycle and entry.peer is not None and entry.peer.source_id == first
+                for entry in adapter.load_report.entries[start:]
+            )
             # The entries written for the optional lookups above describe a record that is left out.
             del adapter.load_report.entries[start:]
             owner_kind, owner_source_id = owner
             raise error(
-                kind=owner_kind, source_id=owner_source_id, field=field, peer_kind=peer_kind, peer_source_id=first
+                kind=owner_kind,
+                source_id=owner_source_id,
+                field=field,
+                peer_kind=peer_kind,
+                peer_source_id=first,
+                in_cycle=in_cycle,
             )
     return sorted(resolved)
 
@@ -175,6 +192,7 @@ def _report(
     reason: str,
     peer_kind: str,
     peer_source_id: str,
+    in_cycle: bool = False,
 ) -> None:
     owner_kind, owner_source_id = owner
     adapter.report_reference(
@@ -184,6 +202,7 @@ def _report(
             field=field,
             peer=SourceRecordReference(kind=peer_kind, source_id=peer_source_id),
             loaded=True,
+            in_cycle=in_cycle,
         )
     )
 

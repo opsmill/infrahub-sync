@@ -356,12 +356,23 @@ class PeerReferenceError(Exception):
 
     problem: ClassVar[str] = "cannot resolve its peer"
 
-    def __init__(self, *, kind: str, source_id: str | None, field: str, peer_kind: str, peer_source_id: str) -> None:
+    def __init__(  # pylint: disable=too-many-arguments  # the named attributes, keyword-only
+        self,
+        *,
+        kind: str,
+        source_id: str | None,
+        field: str,
+        peer_kind: str,
+        peer_source_id: str,
+        in_cycle: bool = False,
+    ) -> None:
         self.kind = kind
         self.source_id = source_id
         self.field = field
         self.peer_kind = peer_kind
         self.peer_source_id = peer_source_id
+        # The peer is a record of the same kind that refers back to this record in a cycle.
+        self.in_cycle = in_cycle
         super().__init__(
             f"{kind} record {source_id} field {field} {self.problem} (peer kind {peer_kind}, source ID {peer_source_id})"
         )
@@ -374,6 +385,7 @@ class PeerReferenceError(Exception):
             "field": self.field,
             "peer_kind": self.peer_kind,
             "peer_source_id": self.peer_source_id,
+            "in_cycle": self.in_cycle,
         }
         return (_rebuild_peer_reference_error, (type(self), details))
 
@@ -486,6 +498,8 @@ class _ReadState:
     retained_ids: dict[str, set[str]] = dataclasses.field(default_factory=dict)
     # Per kind being admitted by `load_records`: the listed source IDs not admitted yet.
     pending: dict[str, set[str]] = dataclasses.field(default_factory=dict)
+    # The (kind, source ID) of a record of a cycle that `load_records` admits without waiting.
+    released: set[tuple[str, str]] = dataclasses.field(default_factory=set)
     # The number of the source admission step in progress (`LoadReportEntry.admission`).
     admission: int = 0
 
@@ -582,9 +596,11 @@ class DiffSyncMixin(WarmSourceReadMixin):
 
         On the source side, a record that refers to a record of its own kind that is listed
         and not admitted yet (a child before its parent) is admitted again after the other
-        records of the kind, until a pass admits no more of them. The records still waiting
-        then (a cycle of references) are admitted without waiting, so a reference to a peer
-        that is still not stored is reported as usual.
+        records of the kind, until a pass admits no more of them. Then the waiting records
+        refer to each other in a cycle: one record of the cycle, the first listed, is admitted
+        without its reference to the cycle, which is recorded as a reference in a cycle
+        (`LoadReportEntry.in_cycle`), and the passes go on. A record that only waits for a
+        record of the cycle keeps waiting until that record is admitted.
         """
         if not self._is_source():
             for element, record in listed:
@@ -603,24 +619,68 @@ class DiffSyncMixin(WarmSourceReadMixin):
         transforms_applied = False
         try:
             while waiting:
-                deferred: list[tuple[SchemaMappingModel, Any]] = []
-                for element, record in waiting:
-                    try:
-                        self.load_record(model, element, record, transforms_applied=transforms_applied)
-                    except PeerNotAdmittedYetError:
-                        deferred.append((element, record))
-                        continue
-                    record_id = source_record_id(self.record_source_id(record))
-                    if record_id is not None:
-                        pending.discard(record_id)
-                if len(deferred) == len(waiting):
-                    # No record was admitted in this pass: the references form a cycle.
-                    pending.clear()
+                deferred, waits_for = self._admission_pass(
+                    model, waiting, pending, transforms_applied=transforms_applied
+                )
+                if deferred and len(deferred) == len(waiting):
+                    # No record was admitted in this pass: the waiting records form a cycle.
+                    member = self._cycle_member([record for _e, record in deferred], waits_for)
+                    if member is None:
+                        pending.clear()  # not reached: a waited-for record always has a source ID
+                    else:
+                        state.released.add((kind, member))
                 waiting = deferred
                 # A deferred record ran its transforms before its references were resolved.
                 transforms_applied = True
         finally:
             state.pending.pop(kind, None)
+            state.released = {item for item in state.released if item[0] != kind}
+
+    def _admission_pass(
+        self,
+        model: type[Any],
+        waiting: list[tuple[SchemaMappingModel, Any]],
+        pending: set[str],
+        *,
+        transforms_applied: bool,
+    ) -> tuple[list[tuple[SchemaMappingModel, Any]], list[str]]:
+        """Admit each waiting record once; return the deferred ones and the source ID each waits for."""
+        deferred: list[tuple[SchemaMappingModel, Any]] = []
+        waits_for: list[str] = []
+        for element, record in waiting:
+            try:
+                self.load_record(model, element, record, transforms_applied=transforms_applied)
+            except PeerNotAdmittedYetError as exc:
+                deferred.append((element, record))
+                waits_for.append(exc.peer_source_id)
+                continue
+            record_id = source_record_id(self.record_source_id(record))
+            if record_id is not None:
+                pending.discard(record_id)
+        return deferred, waits_for
+
+    def _cycle_member(self, records: list[Any], waits_for: list[str]) -> str | None:
+        """The source ID of the first listed record of a cycle among `records`.
+
+        `waits_for[i]` is the source ID of the record `records[i]` waits for. Following the
+        waits from the first record reaches a cycle, since every waited-for record waits too.
+        """
+        position_of: dict[str, int] = {}
+        for position, record in enumerate(records):
+            record_id = source_record_id(self.record_source_id(record))
+            if record_id is not None:
+                position_of.setdefault(record_id, position)
+        visited: list[int] = []
+        position = 0
+        while position not in visited:
+            visited.append(position)
+            position = position_of.get(waits_for[position], position)
+        cycle = visited[visited.index(position) :]
+        return source_record_id(self.record_source_id(records[min(cycle)]))
+
+    def wait_is_released(self, owner_kind: str, owner_source_id: str | None) -> bool:
+        """Tell whether the record `owner_source_id` of `owner_kind` is admitted without waiting (a cycle)."""
+        return owner_source_id is not None and (owner_kind, owner_source_id) in self._read_state.released
 
     def peer_is_pending(self, peer_kind: str, peer_source_id: str) -> bool:
         """Tell whether the read lists the record `peer_source_id` of `peer_kind` and has not admitted it yet."""
@@ -849,6 +909,7 @@ class DiffSyncMixin(WarmSourceReadMixin):
                 field=exc.field,
                 peer=SourceRecordReference(kind=exc.peer_kind, source_id=exc.peer_source_id),
                 config_entry=config_entry,
+                in_cycle=exc.in_cycle,
             )
         )
 
