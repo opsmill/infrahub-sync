@@ -709,9 +709,11 @@ def _destination_report(
     reported, truncated = reported_operations(operations, window)
     try:
         reads = destination.read_planned_nodes(reported)
-    except (InfrahubSdkError, httpx.HTTPError, OSError):
-        # The original's text can carry a destination address, a header or a credential.
-        raise DestinationReadError from None
+    except (InfrahubSdkError, httpx.HTTPError, OSError) as exc:
+        # The message is fixed: the original's text can carry a destination address, a header
+        # or a credential. The original stays the cause, so the failure record classifies it
+        # (an unreachable destination, a refused token) by its class, never by its text.
+        raise DestinationReadError from exc
     result: dict[str, Any] = {"operations": verification_report(reported, reads)}
     if truncated:
         result["operations_truncated"] = truncated

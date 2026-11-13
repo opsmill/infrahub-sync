@@ -391,3 +391,57 @@ def test_a_relationship_reference_shape_is_kept_by_the_read() -> None:
 
     # `peers: []` plans an emptied set, which an empty destination set matches.
     assert compare_planned_operation(operation, reads[operation.operation_id]) == "matches"
+
+
+def test_a_peer_identity_missing_a_key_component_is_unresolved_and_never_queried() -> None:
+    """The apply's partial-key guard runs first, so a loose peer filter cannot bind one wrong node."""
+    client = DestinationClient(
+        {
+            TAG_KIND: [_tag("tag-a-id", "tag-a")],
+            TEAM_KIND: [
+                {
+                    "id": DEFAULT_DESTINATION_ID,
+                    "name": {"value": "team-a"},
+                    "members": [{"id": "tag-a-id", "__typename": TAG_KIND}],
+                }
+            ],
+        }
+    )
+    operation = make_operation(
+        kind=TEAM_KIND,
+        action="update",
+        identity={"name": "team-a"},
+        payload={"name": "team-a"},
+        relationships=[
+            RelationshipReference(field="members", peer_kind=TAG_KIND, cardinality="many", peers=[{"label": "a"}])
+        ],
+    )
+
+    reads = make_adapter(client).read_planned_nodes([operation])
+
+    assert reads[operation.operation_id].planned_peers == {"members": None}
+    assert compare_planned_operation(operation, reads[operation.operation_id]) == "differs"
+    assert [payload for _, payload in client.events if payload["kind"] == TAG_KIND] == []
+
+
+def test_an_update_of_a_plan_without_recorded_ids_is_matched_on_its_key() -> None:
+    """A format 2 update carries no destination id; the apply keys it on its human-friendly ID."""
+    identity = canonical_identity({"name": "site-a"}, kind=SITE_KIND)
+    update = PlannedOperation.model_validate(
+        {
+            "operation_id": operation_id("update", SITE_KIND, identity),
+            "action": "update",
+            "kind": SITE_KIND,
+            "identity": identity,
+            "tier": 0,
+            "payload": {"name": "site-a", "description": "planned"},
+        },
+        context={"format_version": 2},
+    )
+    client = DestinationClient({SITE_KIND: [_site("site-a-id", "site-a")]})
+
+    reads = make_adapter(client).read_planned_nodes([update])
+
+    assert compare_planned_operation(update, reads[update.operation_id]) == "matches"
+    [query] = client.node_reads(SITE_KIND)
+    assert query["name__values"] == ["site-a"]

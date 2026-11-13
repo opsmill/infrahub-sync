@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
+from contextlib import suppress
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -37,7 +39,7 @@ from infrahub_sync.product_store import ApplyProgress, PrefectExecutionLink, Pro
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.resume_view import UNCERTAIN_AFTER_SUCCESSFUL_SAVE
 from tests.plan.artifact_fixtures import TAMPERABLE_VALUE
-from tests.service.test_verify_destination import ALL_CHECKS, _break_lineage, _execute, _harness
+from tests.service.test_verify_destination import ALL_CHECKS, _break_lineage, _execute, _harness, _stored, _verify
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -252,7 +254,7 @@ def test_each_state_is_reported_with_the_operation_and_never_a_value(node: Desti
     assert CANARY not in json.dumps(report)
 
 
-def test_a_failed_read_fails_with_a_fixed_message_and_no_attached_cause() -> None:
+def test_a_failed_read_fails_with_a_fixed_message_and_keeps_its_cause_for_classification() -> None:
     operations = _operations(1)
     run = _interrupted_run(operations, marker=None)
 
@@ -265,8 +267,8 @@ def test_a_failed_read_fails_with_a_fixed_message_and_no_attached_cause() -> Non
         _report(run, operations, _Failing())
 
     assert LEAKED_ADDRESS not in str(raised.value)
-    assert raised.value.__cause__ is None
-    assert raised.value.__suppress_context__ is True
+    # The failure record names the cause's class only; the worker sanitizes the chain it shows.
+    assert isinstance(raised.value.__cause__, httpx.ConnectError)
 
 
 # ======================================================================================
@@ -365,4 +367,53 @@ def test_a_failed_destination_read_fails_verify_without_its_text(
         _execute(harness, "verify", approved=harness.recorded_checksum)
 
     assert LEAKED_ADDRESS not in str(raised.value)
+    assert harness.writes == []
+
+
+# ======================================================================================
+# Through the worker flow: what the run stores
+# ======================================================================================
+
+
+@pytest.mark.parametrize("entries", [1, VERIFY_REPORT_LIMIT])
+def test_the_report_is_stored_with_the_runs_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entries: int
+) -> None:
+    harness = _harness(tmp_path, monkeypatch)
+    _requiring_reconciliation(harness, monkeypatch)
+    _reading_destination(harness, node=None)
+    if entries > 1:
+        # A full report, as a window above the limit stores it.
+        entry = {"operation_id": "op_0000000000000001", "kind": KIND, "action": "update", "state": "differs"}
+        monkeypatch.setattr(service_flow, "verification_report", lambda *_args: [entry] * entries)
+
+    _verify(harness)
+
+    stored = _stored(harness)
+    assert stored.results["verification"]["checks"] == ALL_CHECKS
+    operations = stored.results["verification"]["operations"]
+    assert len(operations) == entries
+    assert {entry["state"] for entry in operations} == {"missing" if entries == 1 else "differs"}
+    assert "verify_failure" not in stored.results
+    assert TAMPERABLE_VALUE not in json.dumps(stored.results)
+    assert harness.writes == []
+
+
+def test_a_failed_destination_read_records_its_class_and_never_its_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = _harness(tmp_path, monkeypatch)
+    _requiring_reconciliation(harness, monkeypatch)
+    _reading_destination(harness, error=httpx.ConnectError(UNREACHABLE))
+
+    with caplog.at_level(logging.DEBUG), suppress(RuntimeError):
+        _verify(harness)
+
+    stored = _stored(harness)
+    failure = stored.results["verify_failure"]
+    assert failure["error_type"] == "DestinationReadError"
+    assert failure["failure_type"] == "system_unreachable"
+    assert "verification" not in stored.results
+    assert LEAKED_ADDRESS not in json.dumps(stored.results)
+    assert LEAKED_ADDRESS not in caplog.text
     assert harness.writes == []

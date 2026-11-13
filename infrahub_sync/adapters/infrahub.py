@@ -1992,7 +1992,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """Read the destination node of each planned create and update, and write nothing (spec 022).
 
         Grouped by kind: the updates of one kind in one query by their recorded ids, and the
-        creates of one kind in one query by their human-friendly-ID values, each create then
+        creates of one kind in one query by their human-friendly-ID values (with any update of
+        a plan that recorded no destination id), each create then
         matched exactly on every component, the way the destination matches the create's
         upsert. A relationship component is matched on the peer id the plan's peer resolves
         to. A kind that declares no human-friendly ID is matched on the identity's direct
@@ -2016,7 +2017,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 # The pre-write checks refuse a plan whose kind the destination does not declare.
                 reads.update({operation.operation_id: PlannedNodeRead(None) for operation in kind_operations})
                 continue
-            planned = {operation.operation_id: _planned_peer_ids(operation, peers) for operation in kind_operations}
+            planned = {
+                operation.operation_id: _planned_peer_ids(operation, peers, self.schema)
+                for operation in kind_operations
+            }
             nodes = self._read_kind_nodes(node_schema, kind_operations, planned)
             for operation in kind_operations:
                 node = nodes.get(operation.operation_id)
@@ -2037,7 +2041,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         components = _create_key_components(node_schema, operations)
         include, exclude = _planned_read_selection(node_schema, operations, components)
         found: dict[str, InfrahubNodeSync] = {}
-        updates = [operation for operation in operations if operation.action == "update" and operation.destination_id]
+        updates = [operation for operation in operations if not _keyed_by_identity(operation)]
         if updates:
             ids = sorted({str(operation.destination_id) for operation in updates})
             by_id = {
@@ -2053,7 +2057,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         keys = {
             operation.operation_id: _planned_create_key(operation, components, planned[operation.operation_id])
             for operation in operations
-            if operation.action == "create"
+            if _keyed_by_identity(operation)
         }
         if any(key is not None for key in keys.values()):
             filters = _create_filters(components, operations, keys)
@@ -2140,8 +2144,26 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         raise UnaccountedIdentityComponentError(msg)
 
 
-def _planned_peer_ids(operation: PlannedOperation, peers: PeerResolver) -> dict[str, frozenset[str] | None]:
-    """The destination node ids of each relationship's planned peers, `None` when one does not resolve."""
+def _keyed_by_identity(operation: PlannedOperation) -> bool:
+    """Whether the destination matches the operation's write on its key rather than a recorded id.
+
+    A create, and an update of a plan made before updates recorded their destination id.
+    """
+    return operation.action == "create" or not operation.destination_id
+
+
+def _planned_peer_ids(
+    operation: PlannedOperation, peers: PeerResolver, schemas: Mapping[str, MainSchemaTypesAPI]
+) -> dict[str, frozenset[str] | None]:
+    """The destination node ids of each relationship's planned peers, `None` when one does not resolve.
+
+    The apply's guard runs first: a peer identity that lacks a component of its kind's key
+    could match one wrong node, so every peer of such an operation counts as unresolved.
+    """
+    try:
+        _refuse_partial_key_peer_filter(operation, schemas)
+    except UnaccountedIdentityComponentError:
+        return dict.fromkeys((reference.field for reference in operation.relationships or ()), None)
     resolved: dict[str, frozenset[str] | None] = {}
     for reference in operation.relationships or ():
         try:
@@ -2179,7 +2201,7 @@ def _create_key_components(node_schema: NodeSchemaAPI, operations: Sequence[Plan
             {
                 name
                 for operation in operations
-                if operation.action == "create"
+                if _keyed_by_identity(operation)
                 for name, value in operation.identity.items()
                 if name in attributes and not isinstance(value, (Mapping, list, tuple))
             }

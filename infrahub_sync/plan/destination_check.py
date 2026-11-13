@@ -34,8 +34,9 @@ _IP_TYPES = (ipaddress.IPv4Interface, ipaddress.IPv6Interface, ipaddress.IPv4Net
 class DestinationReadError(Exception):
     """Reading the uncertain operations' nodes from the destination failed.
 
-    Raised with a fixed message and without the original error attached, because the
-    original's text can carry a destination address, a header or a credential.
+    Raised with a fixed message, because the original's text can carry a destination
+    address, a header or a credential. The original is kept as the cause, so the run's
+    failure record can name the failure type by the cause's class.
     """
 
     def __init__(self) -> None:
