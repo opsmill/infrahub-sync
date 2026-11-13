@@ -12,11 +12,27 @@ install:
 git submodule update --init frontend/vendor/infrahub   # from the repository root
 ```
 
-To run this application:
+To run this application against the local development stack, from the repository root:
+
+```bash
+uv run invoke dev.frontend
+```
+
+The task fetches the submodule when it is missing, installs the dependencies and sets the
+variables described in [Calling the Sync API](#calling-the-sync-api). To run it against another
+Sync API, export those variables and run:
 
 ```bash
 pnpm install
 pnpm dev
+```
+
+Before you push, run the checks the CI job runs:
+
+```bash
+pnpm check
+pnpm typecheck
+pnpm build
 ```
 
 Import components from the package name:

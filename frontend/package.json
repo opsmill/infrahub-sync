@@ -2,6 +2,7 @@
   "name": "frontend",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.34.5",
   "imports": {
     "#/*": "./src/*"
   },
@@ -13,7 +14,8 @@
     "preview": "vite preview",
     "format": "biome format",
     "lint": "biome lint",
-    "check": "biome check"
+    "check": "biome check",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@infrahub/ui": "workspace:*",
