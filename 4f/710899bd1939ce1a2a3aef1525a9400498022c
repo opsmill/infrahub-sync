@@ -1,0 +1,413 @@
+changelog/+019-apply-conflict-hint.changed.md
+  s_efeb25921ce544::t_482d2fa7db413c 1
+changelog/+019-continue-on-error.removed.md
+  s_efeb25921ce544::t_2348c4286b3d41 1
+changelog/+019-failure-cause.added.md
+  s_efeb25921ce544::t_f75df3243378de 1
+changelog/+019-left-out-confirmation.added.md
+  s_efeb25921ce544::t_c6279fc8789f5f 1
+changelog/+019-netbox-device-status.changed.md
+  s_efeb25921ce544::t_5812e11a5c9eb9 1
+changelog/+019-plan-leaves-out-records.changed.md
+  s_efeb25921ce544::t_dac7fa9337ddc4 1
+changelog/+019-plan-report-lists.added.md
+  s_efeb25921ce544::t_5b8a10188b292c 1
+changelog/+019-register-response.changed.md
+  s_efeb25921ce544::t_8f6cf816a47b77 1
+changelog/+019-sync-left-out-stop.changed.md
+  s_efeb25921ce544::t_ecfab3100b884d 1-3
+changelog/+019-upgrade-steps.changed.md
+  s_efeb25921ce544::t_21cd9e0da8301d 1
+changelog/+019-validate-branch.added.md
+  s_efeb25921ce544::t_3f6c6c3321c6d2 1
+changelog/+019-validate-identifiers.changed.md
+  s_efeb25921ce544::t_34a379e01cbdcc 1
+changelog/+continue-on-error-source-references.changed.md
+  s_efeb25921ce544::t_97a69b1157dabf 1
+dev/adr/0020-records-with-problems-are-left-out-of-a-plan.md
+  s_efeb25921ce544::t_670ad8f15f32bf 1-62
+dev/adr/0021-a-failure-record-holds-a-structured-cause.md
+  s_efeb25921ce544::t_3e051e8109d12f 1-89
+dev/adr/0022-saved-plan-format-4.md
+  s_efeb25921ce544::t_a22eabc01bbea8 1-67
+dev/adr/0025-a-warm-source-read-admits-changed-records.md
+  s_efeb25921ce544::t_911974dae34d73 1-54
+dev/adr/README.md
+  s_efeb25921ce544::t_9d00f3147d1dcc 55-64,69-72
+dev/specs/020-plan-problem-reporting/alignment-check.md
+  s_efeb25921ce544::t_90ee36d35a3758 1-39
+dev/specs/020-plan-problem-reporting/checklists/requirements.md
+  s_efeb25921ce544::t_db6a06c1f269d5 1-42
+dev/specs/020-plan-problem-reporting/contracts/cli.md
+  s_efeb25921ce544::t_fb7a7a991fe771 1-93
+dev/specs/020-plan-problem-reporting/contracts/plan-artifact-format-4.md
+  s_efeb25921ce544::t_20b8147dcad1b1 1-45
+dev/specs/020-plan-problem-reporting/contracts/sync-api.md
+  s_efeb25921ce544::t_122b85da40c891 1-147
+dev/specs/020-plan-problem-reporting/critiques/critique-20261111.md
+  s_efeb25921ce544::t_da8a94a1ee8851 1-128
+dev/specs/020-plan-problem-reporting/data-model.md
+  s_efeb25921ce544::t_ecaf1ced8ba1ef 1-177
+dev/specs/020-plan-problem-reporting/opsmill-implement-report.md
+  s_efeb25921ce544::t_b8055b93b01a5e 1-488
+dev/specs/020-plan-problem-reporting/plan.md
+  s_efeb25921ce544::t_0e948738732fd1 1-202
+dev/specs/020-plan-problem-reporting/quickstart.md
+  s_efeb25921ce544::t_38a3bca9de3406 1-61
+dev/specs/020-plan-problem-reporting/research.md
+  s_efeb25921ce544::t_08123e9a891b1c 1-490
+dev/specs/020-plan-problem-reporting/review-findings.md
+  s_efeb25921ce544::t_2ee903a116913e 1-104
+dev/specs/020-plan-problem-reporting/spec.md
+  s_efeb25921ce544::t_209268240226ee 1-798
+dev/specs/020-plan-problem-reporting/tasks.md
+  s_efeb25921ce544::t_ab731d48a5978e 1-224
+docs/docs/adapters/local-adapters.mdx
+  s_efeb25921ce544::t_363dab457a9ec1 43-49,52-53
+docs/docs/compose-deployment.mdx
+  s_efeb25921ce544::t_a8a02d6907130c 905-907
+docs/docs/configuration-package.mdx
+  s_efeb25921ce544::t_826d18ecb09d4c 107-109
+docs/docs/creating-a-sync-project.mdx
+  s_efeb25921ce544::t_17d42b21a92bd0 123-131
+docs/docs/development/guidelines/secret-redaction.md
+  s_efeb25921ce544::t_17c3191b0843cd 35-64
+docs/docs/development/guidelines/testing-adapters.md
+  s_efeb25921ce544::t_56fa8866b4c0e1 33-34,39-41,50
+docs/docs/development/guidelines/writing-an-adapter.md
+  s_efeb25921ce544::t_bc23fab7d03aa4 30,32,35-37,40-41,44-48,162
+docs/docs/development/guides/adding-an-adapter.md
+  s_efeb25921ce544::t_c40e6323bd3be3 77,113-115,125,127-130,133-160,163-181,395-401,597
+docs/docs/development/guides/testing-an-adapter.md
+  s_efeb25921ce544::t_5e709cdd618027 23,67-69,73,77,80-83,100
+docs/docs/development/knowledge/adapter-anatomy.md
+  s_efeb25921ce544::t_9987a79a3cb56b 34-36,54-59,61-62,67-93,149,151-157,164-165,169-176,178-179
+docs/docs/development/knowledge/execution-surface.md
+  s_efeb25921ce544::t_09d3870240975c 157-158
+docs/docs/development/knowledge/incremental-and-cache.md
+  s_efeb25921ce544::t_a2f3ef8a074e46 36-37,41-48,53-84
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_efeb25921ce544::t_00b0a6e2af9bb0 64,68-82,136-137,139-140
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_efeb25921ce544::t_7530fc169f2979 188-191,199-203
+docs/docs/development/knowledge/repository-tour.md
+  s_efeb25921ce544::t_0153092628cc24 68,98-114,145,162-176,189-190
+docs/docs/operations/day-2-operations.mdx
+  s_efeb25921ce544::t_ad18804321af45 66-100
+docs/docs/orchestration.mdx
+  s_efeb25921ce544::t_1860c1b11b64b5 105-106,108-113
+docs/docs/reference/cli.mdx
+  s_efeb25921ce544::t_0498a0b3f310c5 108,330,426,462,477-481
+docs/docs/reference/durable-product-records.mdx
+  s_efeb25921ce544::t_4f2e40f6d0c6e4 50-53,82-87,91-96,109-122,125-128
+docs/docs/reference/sync-http-api.mdx
+  s_efeb25921ce544::t_fd39b69ea69897 98-102,390-391,397,402-404,410,431,440-442,678-708,754-781,788-790,901-914,983-987,1063
+docs/docs/running-a-sync.mdx
+  s_efeb25921ce544::t_46279138a29f8e 84-100,126-141,211-276,370-392,399-406,540-565,635-650
+examples/custom_adapter/README.md
+  s_efeb25921ce544::t_f28605eb084e0c 39
+examples/custom_adapter/custom_adapter_src/custom_adapter.py
+  s_efeb25921ce544::t_ca055b073a407d 17,110-111,113-117,120-124,126-127,129-130,132-140,142-143,146-147,151,153-185
+examples/netbox_to_infrahub/README.md
+  s_efeb25921ce544::t_cda5769a4badbe 37-113
+examples/netbox_to_infrahub/config.yml
+  s_efeb25921ce544::t_19ea2de2fe3157 247,266-275,301,320-321
+examples/netbox_to_infrahub/package.yml
+  s_efeb25921ce544::t_1570fe1f952117 247,266-275,301,320-321
+infrahub_sync/__init__.py
+  s_efeb25921ce544::t_71894432e56be3 1,4,8,13,23-25,28,33,113-136,333-517,532-992,1065,1105,1108,1112-1116,1119-1123
+infrahub_sync/adapters/aci.py
+  s_efeb25921ce544::t_a7f58164e6dcc7 21,28,245-266,268-270,272,274,276,282,286-287,289-292,294,298-304,306,310-318
+infrahub_sync/adapters/genericrestapi.py
+  s_efeb25921ce544::t_9514a6e774f10d 17,101-121,148,155-156,158,160-161,163-165,167,171,177,185,187-197,199-202
+infrahub_sync/adapters/infrahub.py
+  s_efeb25921ce544::t_bd0e3c23602be0 13,25,578,594,600,914-927,1242-1250,1252-1286,1288-1312,1314-1330,1332-1347,1358
+infrahub_sync/adapters/ipfabricsync.py
+  s_efeb25921ce544::t_4831f175a7fb3e 76-77,79-81,83-90
+infrahub_sync/adapters/nautobot.py
+  s_efeb25921ce544::t_8473c6e1d8595a 21,136-137,139,141,144,149-151,180,198-213,215-216,218-220,222-224,226,232,240,242-252,254-257
+infrahub_sync/adapters/netbox.py
+  s_efeb25921ce544::t_dd117f6c50028f 5,21,81-82,84,86,89,94-96,111,117,132-146,148-150,152-157,159-183,189,196,198-208,210-213
+infrahub_sync/adapters/prometheus.py
+  s_efeb25921ce544::t_42a5f06a5f47e7 466-467,469-495
+infrahub_sync/adapters/references.py
+  s_efeb25921ce544::t_afec27d370e2a8 1-210
+infrahub_sync/adapters/slurpitsync.py
+  s_efeb25921ce544::t_d5c50b6c035e89 110-111,233-260
+infrahub_sync/cache/incremental.py
+  s_efeb25921ce544::t_b82819d6881ebd 17,24-25,177-207
+infrahub_sync/cache/parquet_io.py
+  s_efeb25921ce544::t_28ffa198038fd8 13,139,145-146,181-182
+infrahub_sync/cli.py
+  s_efeb25921ce544::t_bc4f747867fe59 53,57-58,68,74,96,450-452,463-467,469,471,475,619,622-630,635-642,827-924,948,974-976,989-1012,1014-1020,1029-1032,1037-1038,1056-1104,1211-1213,1258-1263,1274-1278,1295,1312-1328,1536,1555-1559,1581,1586-1596,1599,1601-1619
+infrahub_sync/client/__init__.py
+  s_efeb25921ce544::t_c6eebfa883baa9 29,44,87,102
+infrahub_sync/client/client.py
+  s_efeb25921ce544::t_d16075852f0c5c 1,33,54,87-90,309,311-315,323-325,332-334,518-623,985-987
+infrahub_sync/client/errors.py
+  s_efeb25921ce544::t_d8a93bd88dc555 61,67-68
+infrahub_sync/client/models.py
+  s_efeb25921ce544::t_2b51bb2f30dfc1 1,8-21,60-63,140-145,149,153-161,587-615,702-785,792-805,919-939,941,944,948,950,988-999
+infrahub_sync/configuration/capabilities.py
+  s_efeb25921ce544::t_22a26361069bb3 75-77,249-259,281,283,288,305,312-490,557,565-583,759
+infrahub_sync/configuration/infrahub_lineage.py
+  s_efeb25921ce544::t_d62e81f17a99da 20-21,149-266
+infrahub_sync/configuration/schema_validation.py
+  s_efeb25921ce544::t_659d6971a7acb3 23-27,45,48,56,62-65,73-78,89-91,94-95,202-326,334-336,369-371,388-389,404
+infrahub_sync/configuration/worker_credentials.py
+  s_efeb25921ce544::t_b70796ea1ebe8d 1-70
+infrahub_sync/execution.py
+  s_efeb25921ce544::t_4c582569df7cbb 903,923,1026,1056,1146,1167-1170,1222
+infrahub_sync/infrahub_errors.py
+  s_efeb25921ce544::t_19b90ce9cb0f93 217-274
+infrahub_sync/load_report.py
+  s_efeb25921ce544::t_6aaef790fa33b8 1-119
+infrahub_sync/plan/derive.py
+  s_efeb25921ce544::t_787d35be02e237 1,72,74-76,79,82,207-210,222-228,810-811,820-824,826,828,855-861,919-924,926-932,938,940,943,961,965-967,1008-1021
+infrahub_sync/plan/errors.py
+  s_efeb25921ce544::t_75ed0e394ddfac 18,126-156,303-307,321-325,432-449,697-701
+infrahub_sync/plan/keying.py
+  s_efeb25921ce544::t_5816affda4f45a 20,24,68-109,115-122,126,144,149,151-160,162-204,571,573-574,582,592-599,601-604,607,609-616,621,634-643,645-740
+infrahub_sync/plan/last_changes.py
+  s_efeb25921ce544::t_5f13ecc74fa5aa 98-116
+infrahub_sync/plan/models.py
+  s_efeb25921ce544::t_b12e9751a1375c 1,18,21,29,36-45,471-489,529-534,554-563,612-615,630-633,643-651,679-684,746,790-1109
+infrahub_sync/plan/problems.py
+  s_efeb25921ce544::t_b7b2c5ba0f3dab 1-865
+infrahub_sync/plan/reader.py
+  s_efeb25921ce544::t_df56d7f908ae3d 22-23,57,61-62,67-68,74,111-113,134-135,152,156-252,742-743,752,763
+infrahub_sync/plan/review.py
+  s_efeb25921ce544::t_7e8c5d07884cef 23,28,40,82-84,96,99,127-130,137-138,453
+infrahub_sync/plan/verify.py
+  s_efeb25921ce544::t_8d1cf47b81757d 50,244-255,576
+infrahub_sync/plan/writer.py
+  s_efeb25921ce544::t_cf81190bb251cd 3-4,33-42,66,160-175,247-248,275-280,285,292-293,313-315,343-346
+infrahub_sync/potenda/__init__.py
+  s_efeb25921ce544::t_7337b5083dd8fd 16,18,24,31-37,85-122,127,226-228,230,232-236,239-240,245-255,482-486,489,499-502,507,512-517,527,577-590,631-701,721-723,921,923,925,957-971,977,993,995-996,1032,1075-1077,1092-1094,1131-1136,1148-1149,1164,1183-1188
+infrahub_sync/product_store/__init__.py
+  s_efeb25921ce544::t_dee9dc0dfdd539 27,83
+infrahub_sync/product_store/configs.py
+  s_efeb25921ce544::t_66f5cc30977a2c 27,55-56,148-150,892-928,937,955-958,973-977
+infrahub_sync/product_store/models.py
+  s_efeb25921ce544::t_d0e3df1628ae18 12,383-411,426-429
+infrahub_sync/product_store/store.py
+  s_efeb25921ce544::t_f9cf7df7d667b2 11,59,142-144,349-354,380,473-478,640-643,1649-1653,1737-1782,3708,4137-4160,4514-4530
+infrahub_sync/runtime_schema/domain.py
+  s_efeb25921ce544::t_556b0e7ae47c62 43-45,176,180-188
+infrahub_sync/runtime_schema/projection.py
+  s_efeb25921ce544::t_07a10d4609e03f 41,50-54
+infrahub_sync/runtime_schema/worker.py
+  s_efeb25921ce544::t_af4858e3da228c 50-51,83-113,235
+infrahub_sync/service/app.py
+  s_efeb25921ce544::t_a79f507a8645bd 16-23,25,82,129-210,291,297
+infrahub_sync/service/checkpoints.py
+  s_efeb25921ce544::t_6c6bec4fa236a1 23,72-75,78-79
+infrahub_sync/service/config_routes.py
+  s_efeb25921ce544::t_67fe11caf02531 3,26,45,107-120,135,140-148,254-260,267-270,273-278,280-284,456,542,549
+infrahub_sync/service/failure_cause.py
+  s_efeb25921ce544::t_b95875a0046db4 3-15,20-21,24-31,33-53,57-76,84-92,96-98,147-503
+infrahub_sync/service/flow.py
+  s_efeb25921ce544::t_10aee9df60e273 13,29,92,99,109-110,290-295,301,682,690-692,825,876-880,926-973,984-987,991-992,998-1002,1004-1009,1015,1029,1033-1053,1071-1072,1200-1203,1314,1319-1321,1370
+infrahub_sync/service/run_artifact.py
+  s_efeb25921ce544::t_726fcda4d47281 76-84,88-92,106-111,115-121
+infrahub_sync/service/service.py
+  s_efeb25921ce544::t_7685807850e536 9,13,19,97-101,157,166-167,423-426,476-494,1227-1270,1531,1539-1551,1553-1554,1557-1559
+infrahub_sync/service/worker.py
+  s_efeb25921ce544::t_a62af096c62efb 8,10,29-30,32,44-45,49-73,279-283,379-425,427-429
+infrahub_sync/utils.py
+  s_efeb25921ce544::t_ed4d0af8d1c732 321,440,474
+infrahub_sync/warm_read.py
+  s_efeb25921ce544::t_07e80508612ca7 1-120
+tests/adapters/test_aci_reference_conversion.py
+  s_efeb25921ce544::t_3b1a6acf51fdc9 10,65,85-89,92-96,98-101
+tests/adapters/test_infrahub_incremental.py
+  s_efeb25921ce544::t_f5cf8895ea4478 6,36-37,156-157
+tests/adapters/test_infrahub_peer_identifier.py
+  s_efeb25921ce544::t_5ad111fb9d12fe 7-8,325,713,717,918,930-931
+tests/adapters/test_infrahub_read_loop.py
+  s_efeb25921ce544::t_a755562bef2ad7 1-96
+tests/adapters/test_netbox_benchmark_changes.py
+  s_efeb25921ce544::t_e75aabf84f7a3a 62-63,77-78
+tests/adapters/test_netbox_filtered_references.py
+  s_efeb25921ce544::t_37a1b8b9e2986a 1-6,16-23,94-95,179-197,201,204,208,210-211,223-237,240-245,248,250-251,257-259,262,265,342-376
+tests/adapters/test_netbox_namespace_identity.py
+  s_efeb25921ce544::t_4e8b7eea8bae24 231-239,241,243-245,248,250-252,261-263,286,288
+tests/adapters/test_peer_not_found_in_source.py
+  s_efeb25921ce544::t_704f79533a176f 1-311
+tests/adapters/test_reference_conversion.py
+  s_efeb25921ce544::t_a9c0d251f7823e 4-11,23,26,29,48-49,103-135,189-205,211-222,225-230,316,318-321,324,326,328-332,335,337-339,342,344,347,349-352,354-355,357-363,368-369,373,379,438,440,444,446,459-461,464,466,476
+tests/adapters/test_reference_conversion_optional_sdk.py
+  s_efeb25921ce544::t_bb142911ef0a2d 137-138,151-152,165-166
+tests/adapters/test_same_type_sync_filter_role.py
+  s_efeb25921ce544::t_9892d4151fac8a 9-13,121,265-266,268,283,292,307,316
+tests/adapters/test_slurpit_model_loading.py
+  s_efeb25921ce544::t_765aaea9e25b18 28-34,157-162,164-167,199-201,214,414-420,423-424,427-429
+tests/adapters/test_static_values.py
+  s_efeb25921ce544::t_3ba99cee47844f 13,16,160,162-169
+tests/cache/test_apply_plan.py
+  s_efeb25921ce544::t_a5e4b6a46f2250 490-510,571-609
+tests/cache/test_referenced_kinds.py
+  s_efeb25921ce544::t_29dc45d0d59b94 1-36
+tests/cli/test_apply_confirm_left_out.py
+  s_efeb25921ce544::t_635cc54bd90918 1-178
+tests/cli/test_client_commands.py
+  s_efeb25921ce544::t_9679fe456d1a97 35,91-96,209,211,321-363
+tests/cli/test_failure_output.py
+  s_efeb25921ce544::t_18d03506ccf748 1-164
+tests/cli/test_plan_problem_output.py
+  s_efeb25921ce544::t_178572a82b150e 1-353
+tests/cli/test_stopped_apply_output.py
+  s_efeb25921ce544::t_0098fd538c44c4 1-91
+tests/client/test_client.py
+  s_efeb25921ce544::t_18a5fee4f403b3 11,31,1137-1227
+tests/configuration/test_schema_validation.py
+  s_efeb25921ce544::t_2884bfd21b8b8a 32,35,122-124,532-537,542-561,613-620,1032-1071
+tests/configuration/test_validate_permissions.py
+  s_efeb25921ce544::t_753ba225c3cc64 1-355
+tests/data/plan_problems/destination_records.json
+  s_efeb25921ce544::t_7525a0d9330f15 1-14
+tests/data/plan_problems/destination_schema.json
+  s_efeb25921ce544::t_c7f0f8f8099a66 1-85
+tests/data/plan_problems/expected.json
+  s_efeb25921ce544::t_91e14199af666e 1-47
+tests/data/plan_problems/source_records.json
+  s_efeb25921ce544::t_e205f122def03d 1-58
+tests/data/plan_problems/sync_config.json
+  s_efeb25921ce544::t_3758eee9f5cc87 1-76
+tests/data/valid_plan_bytes/creates_and_delete.manifest.json
+  s_efeb25921ce544::t_85775f9a4c3f8c 1-33
+tests/data/valid_plan_bytes/creates_and_delete.operations.jsonl
+  s_efeb25921ce544::t_b30933fe9daec4 1-7
+tests/data/valid_plan_bytes/updates.manifest.json
+  s_efeb25921ce544::t_021ef248627792 1-33
+tests/data/valid_plan_bytes/updates.operations.jsonl
+  s_efeb25921ce544::t_d14d8fbd0cb863 1-4
+tests/integration/test_destination_schema_live_read.py
+  s_efeb25921ce544::t_276c2b401d4bdf 82-84
+tests/integration/test_infrahub_keyed_write_integration.py
+  s_efeb25921ce544::t_d1294fa6f3bedc 521-525
+tests/plan/artifact_fixtures.py
+  s_efeb25921ce544::t_691e40f20e5877 29,142-145,151-152
+tests/plan/conftest.py
+  s_efeb25921ce544::t_b218b8fea6188d 1-180
+tests/plan/problem_plan.py
+  s_efeb25921ce544::t_858a1b32a24c6a 1-419
+tests/plan/test_apply_gate.py
+  s_efeb25921ce544::t_bf9b74449d2339 1-208
+tests/plan/test_destination_binding.py
+  s_efeb25921ce544::t_662de3587bd5ea 265,267
+tests/plan/test_format_4.py
+  s_efeb25921ce544::t_e47ff22d1e925b 1-354
+tests/plan/test_keyed_create_refusal.py
+  s_efeb25921ce544::t_dcb0447379f8a8 32,75-77,243,248-259,269-272,288,290,312-314,333,351-353,366
+tests/plan/test_last_changes.py
+  s_efeb25921ce544::t_8b93ea5198175b 24,214-235,306
+tests/plan/test_left_out_walk.py
+  s_efeb25921ce544::t_249546e25b927e 1-246
+tests/plan/test_lineage_manifest.py
+  s_efeb25921ce544::t_10f73cde175c0a 102-103,106-107
+tests/plan/test_models.py
+  s_efeb25921ce544::t_67610a9bf8f4c2 100-102,708-711,818-821
+tests/plan/test_netbox_device_status.py
+  s_efeb25921ce544::t_daf57f5bc4f2dd 1-135
+tests/plan/test_placeholder_peer.py
+  s_efeb25921ce544::t_f5fa2b0b337085 1-50
+tests/plan/test_plan_format_3.py
+  s_efeb25921ce544::t_2bc032c8b89f3c 92-95
+tests/plan/test_plan_writes_nothing.py
+  s_efeb25921ce544::t_9d749cc8027395 1-75
+tests/plan/test_problem_baseline.py
+  s_efeb25921ce544::t_26afad34b543d4 1-155
+tests/plan/test_problem_pass.py
+  s_efeb25921ce544::t_addf154a841660 1-461
+tests/plan/test_problems.py
+  s_efeb25921ce544::t_36754ceaa801d8 1-152
+tests/plan/test_replan_after_stopped_apply.py
+  s_efeb25921ce544::t_45d6dd3f25f965 1-166
+tests/plan/test_report_credentials_absent.py
+  s_efeb25921ce544::t_f048203992f7eb 1-142
+tests/plan/test_report_models.py
+  s_efeb25921ce544::t_da031515862314 1-165
+tests/plan/test_source_identity_collision.py
+  s_efeb25921ce544::t_9a3d49265f5451 165-185,189,192-198,212-218,230,253-256,375-376,380-383
+tests/plan/test_stores_unchanged.py
+  s_efeb25921ce544::t_b454257fb58705 1-56
+tests/plan/test_valid_plan_unchanged.py
+  s_efeb25921ce544::t_dadfb077ffb5aa 1-105
+tests/plan/test_warm_read_problems.py
+  s_efeb25921ce544::t_2a912356f1cb0a 1-400
+tests/plan/test_writer.py
+  s_efeb25921ce544::t_99d08737e01853 42,66-67,259
+tests/product_store/test_contract.py
+  s_efeb25921ce544::t_9b3226416fc38f 100
+tests/product_store/test_stopped_sync_admission.py
+  s_efeb25921ce544::t_7bfda2d30b30fd 1-480
+tests/product_store/test_validate_destination_schema.py
+  s_efeb25921ce544::t_24bc941eecd9d1 26,65-67,80-88,218-220,252-254
+tests/product_store/test_worker_environments.py
+  s_efeb25921ce544::t_e346db93aaf0a7 1-102
+tests/runtime_schema/test_accessor_snapshot.py
+  s_efeb25921ce544::t_b56df7e1383c26 22-28,73-75,87
+tests/runtime_schema/test_dropdown_choices.py
+  s_efeb25921ce544::t_bbdbb95a55123b 1-151
+tests/runtime_schema/test_projection.py
+  s_efeb25921ce544::t_a13fcb98927b18 142,165
+tests/service/failure_cases.py
+  s_efeb25921ce544::t_3d0c8c7a013f4e 1-398
+tests/service/test_apply_left_out_confirmation.py
+  s_efeb25921ce544::t_ac1ee79fb40fea 1-326
+tests/service/test_config_routes.py
+  s_efeb25921ce544::t_6169994f26a40e 7,20-22,24,1682-1867
+tests/service/test_failure_cause.py
+  s_efeb25921ce544::t_6d568130d4c76e 1-6,10-13,15-16,18-28,31-35,117-360
+tests/service/test_failure_cause_credentials.py
+  s_efeb25921ce544::t_412362d391c8a9 1-190
+tests/service/test_failure_record_compat.py
+  s_efeb25921ce544::t_9bb06e7662ce36 1-215
+tests/service/test_flow_and_prefect.py
+  s_efeb25921ce544::t_5744ff7943f0bd 264,541-542,550-553,608-617,979-980,1238,1242,1244-1246,1250,1261-1266,1283-1286
+tests/service/test_http_api.py
+  s_efeb25921ce544::t_afad9219571727 1833-1835
+tests/service/test_plan_checkpoint.py
+  s_efeb25921ce544::t_31261b863434a0 200-201,305-311
+tests/service/test_plan_report_routes.py
+  s_efeb25921ce544::t_48e13e3ec94e4c 1-261
+tests/service/test_registered_schema_guard.py
+  s_efeb25921ce544::t_d0bfe76772b4fa 604
+tests/service/test_run_artifact.py
+  s_efeb25921ce544::t_c4268a35c256a4 11,154-205
+tests/service/test_sync_left_out_stop.py
+  s_efeb25921ce544::t_ca71bfc47fdb51 1-375
+tests/service/test_worker_environment.py
+  s_efeb25921ce544::t_7d236ee96c9163 1-486
+tests/test_custom_adapter_example.py
+  s_efeb25921ce544::t_a5a8842f0e4a71 1-79
+tests/test_execution_surface.py
+  s_efeb25921ce544::t_488bec436a6419 42,1480,1523,1889-1933
+tests/test_load_record.py
+  s_efeb25921ce544::t_eba8451ffbacf1 1-721
+tests/test_potenda_plan_artifact.py
+  s_efeb25921ce544::t_352327469be2d1 85-89,1377,2478-2484
+tests/test_potenda_read_progress.py
+  s_efeb25921ce544::t_7b43c28f4b4b1f 10,17,304-330
+tests/test_schema_mapping_transforms.py
+  s_efeb25921ce544::t_7d4d248d56c2a8 6,15,265-286
+tests/test_writable_convergence_identity.py
+  s_efeb25921ce544::t_e724a0798fa2b3 5,11-13,19-20,184-317
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4f710899bd1939ce1a2a3aef1525a9400498022c",
+  "prompts": {},
+  "sessions": {
+    "s_efeb25921ce544": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88805765-f610-4acc-a224-7c6f256e1599",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
