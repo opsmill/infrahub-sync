@@ -222,3 +222,65 @@ the destination schema identifies a device by name alone. Spec 020 turns this re
 records left out with the problem type `destination_identity_collision`. FR-023 now accepts
 records left out and problems that are on a reviewed list, as it does for deletes. T031 adds that
 list once spec 020 is merged.
+
+## 10. First complete gate run, with spec 020 merged locally (2026-11-13)
+
+This run used a local branch, `scratch/012-on-020`. That branch is this branch with
+`020-plan-problem-reporting` merged in (`602cabab`), plus T031 (`f4105400`), which counts records
+left out and problems and compares them with a reviewed list. It ran on the preview stack, with
+v2 `2.0.1` and `--live-schema`. v2 synced 1,119 models, and the V3 plan completed.
+
+| Count | Value |
+| --- | --- |
+| Creates | 0 |
+| Updates | 0 |
+| Deletes recorded (never executed) | 829 |
+| Records left out | 867 |
+| Problems | 11 |
+
+The plan detail listed all 829 operations, and the plan computed deletes. The gate fails only on
+the deletes, the records left out and the problems.
+
+### Cause: the destination identifies three kinds by fewer fields than NetBox
+
+In each case the NetBox records are distinct, but Infrahub identifies the kind by fewer fields
+than NetBox does, so several NetBox records map to one Infrahub node. v2 wrote them all, and the
+later writes replaced the earlier ones. This is a difference between the schemas, which the
+product owner decided is not a defect (section 9).
+
+- `LocationRack`: 12 racks named `Comms closet`, one at each of 12 sites. Infrahub identifies a
+  rack by its name, so v2 kept one rack, at `dm-yonkers`. Problem: `destination_identity_collision`.
+- `IpamVLAN`: the VLANs Admin (204), Data (201), Voice (202) and Wireless (203) each exist in 6
+  VLAN groups (JBB104, JBB109, JBB115, JBB120, JBB127, JBB133). That is 24 records. Problems:
+  `destination_identity_collision` and `identities_merge_in_destination`.
+- `DcimDevice`: 3 devices named `PP:MDF`, in IDF117, IDF118 and IDF128. Problems: as for VLANs.
+
+That gives 39 records left out because of a problem. The other 828 records left out depend on
+them (`depends_on_left_out`): 36 devices in the 12 racks, their 768 physical interfaces and 24
+LAG interfaces.
+
+### Deletes
+
+- 828 deletes (36 `DcimDevice`, 768 `InterfacePhysical`, 24 `InterfaceLag`): the Infrahub nodes
+  that v2 wrote for those devices all point at the merged `Comms closet` rack at `dm-yonkers`.
+  The records left out name their own site, so no source record matches these nodes, and the
+  plan records a delete for each. None of the delete identities equals the identity of a record
+  left out. Spec 020 says that a problem in a record that already exists in Infrahub leaves the
+  node unchanged and plans no delete for it. Here the plan cannot match the record to the node,
+  because v2 changed the node's identity when it merged the records.
+- 1 delete of `IpamNamespace name=default`: `--live-schema` adds a namespace mapping with no
+  source endpoint, so the `default` namespace has no source record. This delete comes from the
+  conversion.
+
+### Not decided
+
+- Whether `expected_left_out.yml` lists the 39 records left out because of a problem, and
+  whether the gate then accepts the records that depend on a listed record without listing all
+  828 of them.
+- How the gate treats the 828 deletes of nodes that v2 merged: list them, accept the deletes
+  that follow from a listed record, or have spec 020 withhold deletes of a kind that has records
+  left out.
+- Whether the `default` namespace delete goes on the expected-delete list, or the conversion
+  avoids it.
+
+The full result is `gate-result.json` from the run. It was not committed.
