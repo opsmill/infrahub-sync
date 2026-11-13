@@ -89,7 +89,7 @@ changed and some absent, run `verify`, and compare the report.
 
 ## Phase 6: Polish and cross-cutting
 
-- [X] T031 [P] Write `dev/adr/0026-an-interrupted-apply-resumes-from-its-saved-position.md`, replacing ADR 0010's "an uncertain run is terminal" and its rejected "write-attempt table" alternative for writes proven safe to repeat, and mark ADR 0010 as partly superseded
+- [X] T031 [P] Write `dev/adr/0027-an-interrupted-apply-resumes-from-its-saved-position.md`, replacing ADR 0010's "an uncertain run is terminal" and its rejected "write-attempt table" alternative for writes proven safe to repeat, and mark ADR 0010 as partly superseded
 - [X] T032 [P] Update `docs/docs/running-a-sync.mdx` (what to do after an interruption: `runs show`, `verify`, `runs resume`, and that a resume overwrites nodes reported as differs), `docs/docs/development/knowledge/planned-write-and-apply.md` (marker and resume), and regenerate the CLI and HTTP reference with `uv run invoke docs.generate`
 - [X] T033 [P] Add the changelog fragment `changelog/+resume-interrupted-apply.added.md`
 - [X] T034 Opt-in integration test (`-m integration`) against the development stack: kill `sync-worker` during an apply, `verify`, `runs resume`, then a new plan shows 0 creates and 0 updates (SC-001, SC-005)

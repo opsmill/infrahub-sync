@@ -98,7 +98,7 @@ infrahub_sync/
 │   └── models.py                # ResumeRunRequest, ApplyProgress, VerifyOperationReport
 └── cli.py                       # runs resume; runs show progress and resumes; verify report lines
 
-dev/adr/0026-an-interrupted-apply-resumes-from-its-saved-position.md   # NEW
+dev/adr/0027-an-interrupted-apply-resumes-from-its-saved-position.md   # NEW
 
 docs/docs/
 ├── running-a-sync.mdx           # resume after an interruption
@@ -126,7 +126,7 @@ tests/
    non-secret parameters, `confirm_writes`, cancelled, approval, configuration, checksum, left-out), then the
    resumable-run check and the verify-after-interruption check, then the reservation.
 4. **Verify report** (R7): runs only for a resumable run and only after every pre-write check passed.
-5. **Surface**: client, CLI, docs, changelog fragment (`+resume-interrupted-apply.added.md`), ADR 0026.
+5. **Surface**: client, CLI, docs, changelog fragment (`+resume-interrupted-apply.added.md`), ADR 0027.
 6. **Benchmark** (SC-003, SC-004): run the existing benchmark runner on tiers M and L with the marker on; record
    the result in the implementation report.
 

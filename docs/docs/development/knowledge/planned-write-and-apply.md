@@ -445,7 +445,7 @@ destination refusal is the more expensive mistake — the run records what was w
 
 An apply that the service runs saves a **progress marker**: the position, in the plan's stored order,
 of the last operation it committed. A resume applies the rest of the same saved plan on the same run,
-starting after that position. [ADR 0026](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0026-an-interrupted-apply-resumes-from-its-saved-position.md)
+starting after that position. [ADR 0027](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0027-an-interrupted-apply-resumes-from-its-saved-position.md)
 records why; it partly supersedes ADR 0010's "an uncertain run is terminal". The progress marker is
 not the `may_have_partially_written` flag above: that flag describes the failing operation, and the
 progress marker describes every operation before it.

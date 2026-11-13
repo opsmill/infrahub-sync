@@ -30,7 +30,7 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0009 — Optional integrations live in their own package and are proven absent in CI](0009-optional-integrations-live-in-their-own-package.md)
   — the import boundary for an optional integration and the three mechanisms that enforce it.
 - [0010 — A managed write holds one configuration guard and ends in a verdict, not a retry](0010-a-managed-write-ends-in-a-verdict-not-a-retry.md)
-  — **partly superseded by 0026** — how a configuration's writes are serialized, why the
+  — **partly superseded by 0027** — how a configuration's writes are serialized, why the
   ownership boundary is required rather than optional, and why an uncertain write is terminal
   evidence instead of a retry.
 - [0011 — Internal run bundles are private, uncompressed, and never redacted](0011-internal-run-bundles-are-private-and-byte-stable.md)
@@ -71,7 +71,7 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why the source snapshot stores the source record ID and a completeness
   marker, and why a kind with a problem is read in full, so a warm read reports the problems
   of a full read.
-- [0026 — An interrupted apply resumes from its saved position](0026-an-interrupted-apply-resumes-from-its-saved-position.md)
+- [0027 — An interrupted apply resumes from its saved position](0027-an-interrupted-apply-resumes-from-its-saved-position.md)
   — why an apply saves a progress marker, why `verify` is admitted on an interrupted run and
   reports each uncertain operation, and why a resume on the same run clears
   `reconciliation_required`. Partly supersedes 0010.

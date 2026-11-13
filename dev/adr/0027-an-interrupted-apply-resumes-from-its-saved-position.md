@@ -1,4 +1,4 @@
-# 26. An interrupted apply resumes from its saved position
+# 27. An interrupted apply resumes from its saved position
 
 **Status**: Accepted
 **Date**: 2026-11-13

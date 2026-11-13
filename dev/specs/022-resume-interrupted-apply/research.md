@@ -95,7 +95,7 @@ the meaning of a table that six code paths read.
 
 **ADR 0010's rejected alternative**: ADR 0010 rejected "a write-attempt table with generations" because the
 attempts would not say what reached the destination. The progress marker and the stronger `verify` now say that,
-so a new ADR (0026) records the change.
+so a new ADR (0027) records the change.
 
 ## R6. Where a resume starts and what it skips
 
@@ -156,7 +156,7 @@ possible when marker saves failed for a long time). The read is grouped by kind,
 
 **Decision**: when a resume execution ends `succeeded` and the whole plan is applied, `_terminalize_execution`
 clears `reconciliation_required` for the run in the same transaction and sets the run's phase to `applied`. ADR
-0026 records this exception to ADR 0010's "nothing clears it".
+0027 records this exception to ADR 0010's "nothing clears it".
 
 ## R9. `sync` runs
 
