@@ -44,13 +44,6 @@ DOCKERFILE = REPO_ROOT / "Dockerfile"
 DEVELOPMENT = REPO_ROOT / "development"
 DEVELOPMENT_STACK = DEVELOPMENT / "docker-compose.yml"
 PACKAGED_COPY = REPO_ROOT / "infrahub_sync" / "testcontainers" / "docker-compose.yml"
-# The preview stack is deleted with the task renames that follow this change;
-# until then it still runs MinIO and `prefecthq/prefect`.
-PREVIEW_STACK = DEVELOPMENT / "docker-compose.preview.yml"
-
-UNTIL_THE_PREVIEW_STACK_IS_DELETED = pytest.mark.xfail(
-    strict=True, reason="T039 deletes the preview stack, which still runs MinIO and prefecthq/prefect"
-)
 
 
 def development_stack() -> Path | None:
@@ -73,14 +66,7 @@ def compose_files() -> list[Any]:
     paths = {COMPOSE_FILE, *DEVELOPMENT.rglob("docker-compose*.yml"), *DEVELOPMENT.rglob("compose*.y*ml")}
     if PACKAGED_COPY.exists():
         paths.add(PACKAGED_COPY)
-    return [
-        pytest.param(
-            path,
-            id=str(path.relative_to(REPO_ROOT)),
-            marks=UNTIL_THE_PREVIEW_STACK_IS_DELETED if path == PREVIEW_STACK else (),
-        )
-        for path in sorted(paths)
-    ]
+    return [pytest.param(path, id=str(path.relative_to(REPO_ROOT))) for path in sorted(paths)]
 
 
 def resolved_services(path: Path, environment: Mapping[str, str] | None) -> dict[str, dict[str, Any]]:

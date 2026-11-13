@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 import httpx
 import pytest
 
-from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
+from tasks.smoke_dataset import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
 from tests.compose.conftest import COMPOSE_FILE, PROJECT_PREFIX, compose, start_command
 from tests.compose.redaction import SECRETS, Captured, capture
 

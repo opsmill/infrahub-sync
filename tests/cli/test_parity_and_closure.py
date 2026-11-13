@@ -341,8 +341,7 @@ def test_netbox_tutorial_starts_and_authenticates_the_service_boundary() -> None
 
     required = (
         "uv sync --extra dev --extra prefect --extra service",
-        "uv run invoke build",
-        "uv run invoke start",
+        "uv run invoke dev.start --infrahub-network infrahub_default",
         "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
         "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN",
         "INFRAHUB_SYNC_API_URL",

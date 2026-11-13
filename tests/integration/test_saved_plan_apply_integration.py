@@ -75,7 +75,7 @@ then asserts the derived plan carries the create, update and delete those pertur
 A second run against the same instance sees the first run's canary still present, so its plan
 carries a *delete* of the old canary instead of the expected create, and every test here fails
 in setup naming the operation it wanted. That is destination state, not a defect: reset the
-instance (`invoke preview.down --volumes`, `preview.up`, reload the pinned schema library)
+instance (`invoke dev.destroy`, `dev.start`, reload the pinned schema library)
 between runs. Cleaning up inside the fixture is not equivalent — the plan is derived from the
 destination's state, so what must be fresh is the whole instance, not the objects this module
 happens to know it created.

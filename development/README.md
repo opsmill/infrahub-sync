@@ -1,87 +1,51 @@
-# Preview environment
+# Development stack
 
-One command from a fresh clone to a complete, testable Infrahub Sync v3 stack:
-a disposable Infrahub instance, a dedicated Prefect server, the Sync HTTP API,
-and a Prefect worker running the service deployment.
-
-`preview.up` starts that stack and stops there. It writes nothing to Infrahub
-and admits no Sync run, so repeating it against an environment somebody is
-already using changes none of their data.
-
-Two commands write, and each says what it will write before writing:
-
-- `preview.seed` loads the example schema, creates the `InfraDevice` named
-  `core01` on `main`, then forks the `preview-smoke` branch from it. Running it
-  again on an environment that already holds the branch changes nothing.
-- `preview.smoke` seeds, then runs the smoke suite. That suite mutates `core01`
-  on `main` and creates and applies real Sync runs against `preview-smoke`.
-
-The published page for this stack is
-[Local development stack](../docs/docs/development-stack.mdx). It covers the same
-commands plus the service development loop, the addresses, the development-only credentials,
-the startup refusal on retired state, and how to run the tests.
+`development/docker-compose.yml` runs the whole Sync service, built from this checkout, and a
+disposable Infrahub to sync into: PostgreSQL, the object store, the Prefect server, the Sync
+API, the worker and Infrahub. The published page is
+[Local development stack](../docs/docs/development-stack.mdx). It covers every `dev.*` task,
+the addresses, the development-only credentials, both modes (everything in containers, or the
+Sync API and the worker on the host with `dev.deps`), and how to run the tests.
 
 ## Start
 
 ```bash
 uv sync --extra dev --extra prefect --extra service
-uv run invoke preview.up
+uv run invoke dev.start
 ```
 
-The final summary prints the Infrahub UI, Prefect UI, and Sync API
-addresses, the bearer principals, and where runtime state lives. Requires
-Docker and Python 3.11+.
+`dev.start` builds `infrahub-sync:dev` when the image is missing or its build inputs changed,
+starts every service and waits until each is healthy, then prints the addresses. The stack
+mounts the checkout's code into its containers, so after a code change run
+`uv run invoke dev.restart`. Requires Docker and Python 3.11 to 3.13.
 
-Other commands: `preview.status`, `preview.seed`, `preview.smoke`, `preview.logs`
-(`-n sync-api|prefect-worker`), `preview.down` (add `--volumes` to reset
-all data).
+Two tasks write to Infrahub, and each says what it will write before writing:
 
-Changed service code does not reach a running stack. The Sync API has no auto-reload, and
-`preview.up` leaves an already-running process alone, so run `preview.down` and then
-`preview.up`. The plain `preview.down` keeps every data volume; only `--volumes` deletes them.
-The published page has the full loop.
+- `dev.seed` loads the example schema, creates the `InfraDevice` named `core01` on `main`,
+  then forks the `preview-smoke` branch from it. Running it again on a stack that already holds
+  the branch changes nothing.
+- `dev.smoke` seeds, then runs the smoke suite (`tests/dev_stack/smoke/`, `pytest -m smoke`).
+  That suite mutates `core01` on `main` and creates and applies real Sync runs against
+  `preview-smoke`.
 
-## What to test
-
-The preview exists to gather feedback on the two new v3 interfaces:
-
-- **Sync HTTP API** — the primary focus. Consume the native endpoints
-  ([reference](../docs/docs/reference/sync-http-api.mdx)) and drive
-  executions through Prefect directly (deployment `infrahub-sync-service/run`,
-  Prefect UI address in the summary).
-- **Python API** — the documented plan → verify → apply cycle
-  ([reference](../docs/docs/reference/python-api.mdx)).
-- **CLI** — plan, offline review, checksum-gated apply
-  ([guide](../examples/custom_adapter/README.md)).
+Other tasks: `dev.status`, `dev.logs`, `dev.stop` (keeps the data), `dev.destroy` (deletes
+it). See [Testing tiers](../docs/docs/development/guidelines/testing-tiers.md) for what each
+suite needs.
 
 ## Files
 
 | File | Role |
 | --- | --- |
-| `docker-compose.infrahub.yml` | Based on the official Infrahub compose file at `https://infrahub.opsmill.io/<VERSION>`, with image digests added. When refreshing from upstream, restore and verify every image pin before using the file. |
-| `docker-compose.preview.yml` | Preview overrides: collision-free host ports and the dedicated `sync-prefect` service pinned to the repository's Prefect version. |
-| `preview.env` | Shipped defaults — ports, paired image tags and digests, and local-only tokens. Change a tag and its digest together; a tag-only change still pulls the prior image. Nothing here is a secret; never point these values at a shared or internet-facing instance. |
-| `preview.local.env` | Your personal overrides (gitignored). Tokens you mint while testing belong here, not in `preview.env`. |
+| `docker-compose.yml` | The development stack. Every credential in it is a development default. |
+| `docker-compose.infrahub.yml` | Based on the official Infrahub compose file at `https://infrahub.opsmill.io/<VERSION>`, with image digests added and every service under the `infrahub` profile. When refreshing from upstream, restore and verify every image pin and the profile before using the file. `.github/scripts/update_infrahub.py` moves the pinned version and digest together. |
+| `docker-compose.infrahub-ports.yml` | Publishes `infrahub-server` at `${INFRAHUB_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_PORT:-8000}` and nothing else of Infrahub. |
 
-The preview tasks also read image overrides exported in the shell, except for
-the generic `VERSION` variable; use `preview.local.env` to change the Infrahub
-version. Changing an Infrahub or Prefect tag requires a matching digest;
-changing only the Infrahub image name drops the shipped digest so a local build
-can run. For a registry mirror, set its digest explicitly, even if it matches
-the shipped digest. With direct Docker Compose, a digest-only override keeps
-the shipped Infrahub tag and replaces its digest.
-
-Runtime state (process pids, logs, sync and product caches) lives under
-`.preview/` at the repository root, also gitignored. The worker runs from its own empty
-`.preview/worker-cwd` so it imports the installed distribution rather than this checkout. The
-smoke suite is `tests/preview/`, opt-in via `pytest -m preview` and driven by
-`preview.smoke`; see
-[Testing tiers](../docs/docs/development/guidelines/testing-tiers.md) for what each suite needs.
+Runtime state that the tasks and tests write (the Python 3.10 check environments, smoke
+evidence, nightly reports) lives under `.dev/` at the repository root, which is gitignored.
 
 ## Local NetBox
 
-`development/netbox/` provisions a disposable, local NetBox, following the same pattern as
-the preview environment above. It loads one of two datasets. Each dataset replaces the whole
+`development/netbox/` provisions a disposable, local NetBox. It loads one of two datasets. Each dataset replaces the whole
 NetBox database, so only one is loaded at a time.
 
 | Dataset | Contents | Used by |
@@ -98,13 +62,13 @@ uv run invoke netbox.seed --dataset demo   # the `demo` dataset
 `--tier S|M|L` (default S) and reports the loaded tier. Both datasets print the URL and
 development-token banner. See [the tier guide](../docs/docs/development/guides/netbox-benchmark-tiers.md)
 for dumps, restores, and fixed changes. The task starts NetBox itself, so you do not need
-to run `netbox.up` first.
+to run `netbox.start` first.
 Doing so anyway makes NetBox run its first migration twice; on a small host that first
 migration can take 15 minutes or more. The `demo` dataset skips most of that wait, because
-NetBox starts against the restored data. Run `netbox.up` on its own only
+NetBox starts against the restored data. Run `netbox.start` on its own only
 when you want an empty NetBox with nothing loaded, or to reprint the banner later without
 touching the already-running containers. Every load resets the database first, so you can
-run `netbox.seed` again at any time. `uv run invoke netbox.down` removes the containers and
+run `netbox.seed` again at any time. `uv run invoke netbox.destroy` removes the containers and
 their data volumes.
 
 For the `demo` dataset, `netbox.seed` does the following:
@@ -134,7 +98,7 @@ sequence.
 ### The `from-netbox` example check
 
 The check runs the shipped `examples/netbox_to_infrahub` package against the `demo` dataset
-and a fresh preview stack. The shipped package names the public NetBox demo, so
+and a fresh development stack. The shipped package names the public NetBox demo, so
 `netbox.demo-package` writes a copy to `.netbox/from-netbox.local.yml` that differs only in
 its two `url` settings. [Testing tiers](../docs/docs/development/guidelines/testing-tiers.md#the-from-netbox-example-check)
 lists every command, from a fresh Infrahub to `diff` and `sync`.

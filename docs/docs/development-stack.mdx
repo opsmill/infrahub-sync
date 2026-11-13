@@ -112,7 +112,7 @@ uv run invoke dev.smoke
 ```
 
 `dev.smoke` loads the smoke dataset into the stack's Infrahub (a schema, one device on `main`
-and the `preview-smoke` branch), then runs `pytest -m preview tests/preview` against the
+and the `preview-smoke` branch), then runs `pytest -m smoke tests/dev_stack/smoke` against the
 running stack. The suite checks the Sync API, the CLI, the Python client and the Prefect server
 against that data. A test whose service does not answer skips instead of failing, so when the
 summary line reports skipped tests, run `uv run invoke dev.status` to find the service that is
@@ -437,7 +437,7 @@ network and reports `Resource is still in use`.
 
 ```bash
 uv run invoke dev.destroy
-uv run invoke netbox.down
+uv run invoke netbox.destroy
 cd ~/infrahub-local && docker compose -p infrahub down --volumes
 ```
 
@@ -463,7 +463,3 @@ Use the addresses the worker container can reach, as in step 6.
 | `dev.logs [-n SERVICE] [-l LINES]` | Shows the last lines of one service's logs, `sync-api` and 50 lines by default. |
 | `dev.stop` | Stops the containers and keeps the data volumes. |
 | `dev.destroy` | Removes the containers and the data volumes and keeps the image. |
-
-The top-level `build`, `start` and `destroy` tasks still exist and will be removed. `start` runs
-only the Sync containers and connects the worker to `infrahub_default` when that network
-exists. Use the `dev` tasks instead.
