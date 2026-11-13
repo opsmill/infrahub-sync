@@ -271,10 +271,10 @@ def _converge() -> None:
     try:
         client = boto3.client("s3", **arguments)
     except BotoCoreError:
-        logger.error("the S3 client refused %s", S3_REGION_ENV)
+        logger.error("the S3 client refused %s", S3_REGION_ENV)  # noqa: TRY400 - botocore's text quotes the value.
         raise BootstrapError(OBJECT_STORE_SETTING_INVALID) from None
     except ValueError:
-        logger.error("the S3 client refused %s", S3_ENDPOINT_ENV)
+        logger.error("the S3 client refused %s", S3_ENDPOINT_ENV)  # noqa: TRY400 - botocore's text quotes the value.
         raise BootstrapError(OBJECT_STORE_ENDPOINT_INVALID) from None
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
