@@ -62,6 +62,11 @@ from tests.product_store.postgresql_isolation import IsolatedSchema, dsn_or_skip
 # This intentionally mirrors infrahub_sync/product_store/__init__.py's __all__, hand-maintained
 # so a change to the module's exports has to touch this list too.
 EXPECTED_PUBLIC_NAMES = {
+    "NO_SAVED_PLAN_MESSAGE",
+    "PLAN_ARTIFACT_ID",
+    "WRITE_PURPOSES",
+    "ApplyProgress",
+    "ApplyProgressSave",
     "ArtifactReference",
     "ArtifactUnavailableError",
     "AuditEvent",
@@ -101,6 +106,7 @@ EXPECTED_PUBLIC_NAMES = {
     "WriteAdmissionConflictError",
     "local_product_projection",
     "production_product_projection",
+    "run_apply_progress",
 }
 
 

@@ -1,6 +1,8 @@
 """Durable Sync product records and immutable artifacts."""
 
 from infrahub_sync.product_store.models import (
+    ApplyProgress,
+    ApplyProgressSave,
     ArtifactReference,
     AuditEvent,
     BaselineWriteback,
@@ -27,6 +29,9 @@ from infrahub_sync.product_store.models import (
     WorkerEnvironment,
 )
 from infrahub_sync.product_store.store import (
+    NO_SAVED_PLAN_MESSAGE,
+    PLAN_ARTIFACT_ID,
+    WRITE_PURPOSES,
     ArtifactUnavailableError,
     ConfigurationNotFoundError,
     ConfigurationVersionAllocationError,
@@ -42,9 +47,15 @@ from infrahub_sync.product_store.store import (
     WriteAdmissionConflictError,
     local_product_projection,
     production_product_projection,
+    run_apply_progress,
 )
 
 __all__ = (
+    "NO_SAVED_PLAN_MESSAGE",
+    "PLAN_ARTIFACT_ID",
+    "WRITE_PURPOSES",
+    "ApplyProgress",
+    "ApplyProgressSave",
     "ArtifactReference",
     "ArtifactUnavailableError",
     "AuditEvent",
@@ -84,4 +95,5 @@ __all__ = (
     "WriteAdmissionConflictError",
     "local_product_projection",
     "production_product_projection",
+    "run_apply_progress",
 )
