@@ -1,0 +1,66 @@
+infrahub_sync/plan/models.py
+  s_11782fc4bc9a91::t_f533c407632391 794-796
+  s_3defe6e8bcd0ab::t_040f33a4a926f1 39,42,472,529,533,631,680,792,945,957,1013,1064
+changelog/+019-netbox-device-status.changed.md
+  s_3defe6e8bcd0ab::t_1208d439ef7502 1
+changelog/+continue-on-error-source-references.changed.md
+  s_3defe6e8bcd0ab::t_9706f77e09efa5 1
+dev/adr/0020-records-with-problems-are-left-out-of-a-plan.md
+  s_3defe6e8bcd0ab::t_96393a500cc13f 28-33
+dev/adr/0021-a-failure-record-holds-a-structured-cause.md
+  s_3defe6e8bcd0ab::t_01397f5b684162 63-69
+dev/adr/0022-saved-plan-format-4.md
+  s_3defe6e8bcd0ab::t_47767831a79f2d 24-26
+dev/adr/README.md
+  s_3defe6e8bcd0ab::t_cfe33fc8633200 56,60,63,70
+docs/docs/adapters/local-adapters.mdx
+  s_3defe6e8bcd0ab::t_1104642bcac7e1 52
+docs/docs/configuration-package.mdx
+  s_3defe6e8bcd0ab::t_03eae5ed2298cb 108
+docs/docs/development/guidelines/secret-redaction.md
+  s_3defe6e8bcd0ab::t_3a7a44b9b785ae 39-41
+docs/docs/development/guidelines/testing-adapters.md
+  s_3defe6e8bcd0ab::t_dd3a042941c4e5 39-41
+docs/docs/development/guidelines/writing-an-adapter.md
+  s_3defe6e8bcd0ab::t_d9da2f735da2f6 44-46
+docs/docs/development/guides/adding-an-adapter.md
+  s_3defe6e8bcd0ab::t_9bd0e10bfac668 133,140,149-159,165-169
+docs/docs/development/knowledge/incremental-and-cache.md
+  s_3defe6e8bcd0ab::t_876f8a0b3b3aaa 43-44,56
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_3defe6e8bcd0ab::t_fceeb500ff0479 69
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_3defe6e8bcd0ab::t_e37ca406b1b160 188
+docs/docs/development/knowledge/repository-tour.md
+  s_3defe6e8bcd0ab::t_7d7b396145e86e 166-168,170,172-174
+docs/docs/reference/cli.mdx
+  s_3defe6e8bcd0ab::t_547dafa024eb5d 330
+docs/docs/reference/sync-http-api.mdx
+  s_3defe6e8bcd0ab::t_e5a778e4ed6af6 395,408,687-688,786-788,902-903
+docs/docs/running-a-sync.mdx
+  s_3defe6e8bcd0ab::t_201ad05b8c1c86 219-220
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "804102fc59e367d1b87d466fcb683edae4a55a74",
+  "prompts": {},
+  "sessions": {
+    "s_11782fc4bc9a91": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d1b81fa-9ee2-4fcb-b7c2-e14783f62cad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
