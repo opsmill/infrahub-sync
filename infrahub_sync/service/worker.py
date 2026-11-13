@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import os
 import sqlite3
+import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -45,6 +46,29 @@ _WORKER_NAME_PREFIX = "infrahub-sync-service"
 _WORKER_PAGE_SIZE = 200
 # How long one poll waits for the product store to record the worker's credential variable names.
 _PUBLICATION_TIMEOUT_SECONDS = 10.0
+
+
+class _Publication:
+    """One publication of the worker's credential variable names: started by its thread, or abandoned first."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._started = False
+        self._abandoned = False
+
+    def start(self) -> bool:
+        """Start the publication in its thread; `False` when the poll abandoned it before."""
+        with self._lock:
+            self._started = not self._abandoned
+            return self._started
+
+    def abandon(self) -> bool:
+        """Abandon the publication; `True` when its thread had not started, so it never will."""
+        with self._lock:
+            self._abandoned = not self._started
+            return self._abandoned
+
+
 _NOT_ADMITTED = "flow run was not admitted as the service deployment"
 # What Prefect 3.8.6's process job configuration resolves an unset command to.
 _SERVICE_CHILD_COMMAND = command_to_string([get_sys_executable(), "-m", "prefect.engine"])
@@ -350,8 +374,10 @@ class ServiceProcessWorker(ProcessWorker):  # pylint: disable=abstract-method
             return None
         return self._identity_generation
 
-    def _publish_credential_names_now(self, names: tuple[str, ...]) -> None:
+    def _publish_credential_names_now(self, names: tuple[str, ...], publication: _Publication) -> None:
         """Write this worker's credential variable names to the product store (blocking)."""
+        if not publication.start():
+            return  # the poll gave up before this thread started, and released the publication
         try:
             projection = self._environment_projection
             if projection is None:
@@ -367,16 +393,22 @@ class ServiceProcessWorker(ProcessWorker):  # pylint: disable=abstract-method
         poll running, logs a fixed line with no detail, and is tried again on the next poll.
         The poll waits at most `_PUBLICATION_TIMEOUT_SECONDS` for the store; a publication
         that is still blocked then is left to finish on its own, and no other one starts
-        until it does.
+        until it does. A publication whose thread had not started by then never starts, so
+        the next poll publishes.
         """
         if self._publication_in_flight:
             return
         names = held_credential_names()
+        publication = _Publication()
         self._publication_in_flight = True
         try:
             with anyio.move_on_after(_PUBLICATION_TIMEOUT_SECONDS) as scope:
-                await anyio.to_thread.run_sync(self._publish_credential_names_now, names, abandon_on_cancel=True)
+                await anyio.to_thread.run_sync(
+                    self._publish_credential_names_now, names, publication, abandon_on_cancel=True
+                )
             if scope.cancelled_caught:
+                if publication.abandon():
+                    self._publication_in_flight = False
                 self._environment_projection = None
                 self._logger.debug(
                     "The product store did not answer in time; the worker's credential variable names are "
