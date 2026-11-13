@@ -1,0 +1,21 @@
+dev/adr/0020-records-with-problems-are-left-out-of-a-plan.md
+  s_11782fc4bc9a91::t_9f4ecc9e367bb8 51-54
+dev/adr/0021-a-failure-record-holds-a-structured-cause.md
+  s_11782fc4bc9a91::t_687caddac89b16 17-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "48e6cde3b7e965878d17eee596492c0331dccfff",
+  "prompts": {},
+  "sessions": {
+    "s_11782fc4bc9a91": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d1b81fa-9ee2-4fcb-b7c2-e14783f62cad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
