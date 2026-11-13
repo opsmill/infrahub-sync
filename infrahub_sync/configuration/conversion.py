@@ -838,19 +838,19 @@ def _resolve(  # pylint: disable=too-many-arguments,too-many-positional-argument
     flag: _Flag,
     report: _Report,
 ) -> object:
-    """Return the value v2 used for one setting, recording its origin, or ``None``."""
+    """Return the value v2 used for one setting, recording its origin, or ``None``.
+
+    A mapping or list is refused with its value withheld: it is never printed as an origin.
+    """
+    if isinstance(value, (dict, list)):
+        report.refusals.append(RefusalEntry(location, "must be a single value, not a mapping or list"))
+        return None
     candidates = _candidates(location, row, value, visible, flag, report)
-    if row.kind == "address":
-        holders = _user_information_holders(candidates)
-        if holders:
-            report.refusals.append(
-                RefusalEntry(
-                    location,
-                    f"the address from {', '.join(holders)} holds a user name or password; "
-                    "remove it from the address and pass it as a credential",
-                )
-            )
-            return None
+    holders = _user_information_holders(candidates) if row.kind == "address" else []
+    if holders:
+        reason = f"the address from {', '.join(holders)} holds a user name or password; remove it from the address"
+        report.refusals.append(RefusalEntry(location, f"{reason} and pass it as a credential"))
+        return None
     chosen = _choose(location, row, candidates)
     if chosen is None:
         _refuse_missing(location, row, candidates, report)

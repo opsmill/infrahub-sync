@@ -536,6 +536,17 @@ def test_neither_file_nor_variable_is_refused_naming_flag_and_variables() -> Non
     assert "NETBOX_URL" in refusal.reason
 
 
+@pytest.mark.parametrize("value", [{"host": _CANARY}, [_CANARY]], ids=["mapping", "list"])
+def test_mapping_or_list_address_is_refused_without_printing_it(value: object) -> None:
+    result = _convert(_config({"url": value}), {"NETBOX_ADDRESS": "https://netbox.example.com"})
+    assert result.package is None
+    refusal = next(item for item in result.refusals if item.location == "source.settings.url")
+    assert refusal.value is None
+    assert "mapping or list" in refusal.reason
+    assert all(entry.location != "source.settings.url" for entry in result.setting_origins)
+    assert _CANARY not in repr((result.refusals, result.setting_origins, result.notes, result.credentials))
+
+
 def test_destination_without_address_names_the_destination_flag() -> None:
     result = _convert(_config(destination_settings={}))
     refusal = next(item for item in result.refusals if item.location == "destination.settings.url")
