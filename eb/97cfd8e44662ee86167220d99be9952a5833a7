@@ -1,0 +1,23 @@
+infrahub_sync/cli.py
+  s_11782fc4bc9a91::t_4a691067d279fe 627-628,885-886,1260-1262
+tests/cli/test_apply_confirm_left_out.py
+  s_11782fc4bc9a91::t_7377c979947ecc 25,117-129
+tests/cli/test_plan_problem_output.py
+  s_11782fc4bc9a91::t_d7edb17e87d0bc 222
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eb97cfd8e44662ee86167220d99be9952a5833a7",
+  "prompts": {},
+  "sessions": {
+    "s_11782fc4bc9a91": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d1b81fa-9ee2-4fcb-b7c2-e14783f62cad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
