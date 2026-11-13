@@ -19,6 +19,7 @@ from invoke import Context
 from tasks import dev
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from invoke.tasks import Task
@@ -28,12 +29,17 @@ SYNC_ENV = {
     "INFRAHUB_SYNC_DATABASE_URL": "postgresql://postgres:devpassword@postgres:5432/infrahub_sync",
     "INFRAHUB_SYNC_S3_BUCKET": "infrahub-sync",
     "INFRAHUB_SYNC_S3_ENDPOINT_URL": "http://object-store:9000",
+    "INFRAHUB_SYNC_CA_DIRECTORY": "/etc/infrahub-sync/ca",
     "AWS_ACCESS_KEY_ID": "devaccesskey",
     "INFRAHUB_SYNC_SERVICE_WORK_POOL": "infrahub-sync",
     "PREFECT_API_URL": "http://prefect-server:4200/api",
     "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": "",
 }
 CORE_RUNNING = "postgres\nobject-store\nprefect-server\ninfrahub-server\n"
+CA_TARGET = "/etc/infrahub-sync/ca"
+# A CA mount that is a named volume: no host directory to trust.
+CA_VOLUME = {"type": "volume", "source": "sync-ca-certificates", "target": CA_TARGET, "read_only": True}
+SOURCE_MOUNT = {"type": "bind", "source": "/checkout/infrahub_sync", "target": "/opt/site-packages/infrahub_sync"}
 
 
 def _port(target: int, published: str, host_ip: str = "127.0.0.1") -> list[dict[str, Any]]:
@@ -53,8 +59,12 @@ def _resolved(*, infrahub: bool) -> dict[str, Any]:
                 "INFRAHUB_SYNC_SERVICE_HOST": "0.0.0.0",  # noqa: S104 -- the container's value
                 "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": '{"dev": {"token": "infrahub-sync-dev-token"}}',
             },
+            "volumes": [SOURCE_MOUNT, CA_VOLUME],
         },
-        "sync-worker": {"environment": {**SYNC_ENV, "PREFECT_WORKER_HEARTBEAT_SECONDS": "10"}},
+        "sync-worker": {
+            "environment": {**SYNC_ENV, "PREFECT_WORKER_HEARTBEAT_SECONDS": "10"},
+            "volumes": [SOURCE_MOUNT, CA_VOLUME],
+        },
     }
     if infrahub:
         services["infrahub-server"] = {
@@ -78,11 +88,13 @@ class FakeDocker:
         self.label: str | None = dev.build_inputs_hash()
         self.running = ""
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        # Changes the model `config` prints, as a shell variable would.
+        self.resolve: Callable[[dict[str, Any]], dict[str, Any]] = lambda resolved: resolved
 
     def run(self, command: str, **kwargs: Any) -> _Result:  # noqa: ANN401 -- Invoke's keyword arguments
         self.calls.append((command, kwargs))
         if command.endswith("config --format json"):
-            return _Result(json.dumps(_resolved(infrahub="--profile infrahub" in command)))
+            return _Result(json.dumps(self.resolve(_resolved(infrahub="--profile infrahub" in command))))
         if command.startswith("docker image inspect"):
             return _Result(self.label or "", ok=self.label is not None)
         if command.endswith("ps --services --status running"):
@@ -256,6 +268,80 @@ def test_host_processes_need_the_loopback_publications() -> None:
 
     with pytest.raises(dev.DevStackError, match="object-store"):
         dev.host_environment(settings, "sync-worker")
+
+
+# ----- An external object store and the CA directory in dependencies mode (#414) ------------
+
+EXTERNAL_ENDPOINT = "https://s3.example.test"
+HOST_CA_DIRECTORY = "/home/dev/infrahub-sync/development/ca"
+HOST_SERVICES = ("sync-api", "sync-worker")
+
+
+def _with_external_store(resolved: dict[str, Any]) -> dict[str, Any]:
+    """A model whose containers reach an object store outside the stack."""
+    for name in HOST_SERVICES:
+        resolved["services"][name]["environment"]["INFRAHUB_SYNC_S3_ENDPOINT_URL"] = EXTERNAL_ENDPOINT
+    return resolved
+
+
+def _with_ca_certificates(resolved: dict[str, Any]) -> dict[str, Any]:
+    """A model whose CA mount binds a host directory; Compose makes the source absolute."""
+    for name in HOST_SERVICES:
+        resolved["services"][name]["volumes"] = [
+            SOURCE_MOUNT,
+            {"type": "bind", "source": HOST_CA_DIRECTORY, "target": CA_TARGET, "read_only": True},
+        ]
+    return resolved
+
+
+@pytest.mark.parametrize("service", HOST_SERVICES)
+def test_host_processes_keep_an_external_object_store(service: str) -> None:
+    settings = dev.parse_dev_settings(_with_external_store(_resolved(infrahub=True)))
+
+    environment = dev.host_environment(settings, cast("Any", service))
+
+    assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == EXTERNAL_ENDPOINT
+
+
+def test_an_external_object_store_needs_no_bundled_store_publication() -> None:
+    resolved = _with_external_store(_resolved(infrahub=True))
+    del resolved["services"]["object-store"]
+    settings = dev.parse_dev_settings(resolved)
+
+    environment = dev.host_environment(settings, "sync-worker")
+
+    assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == EXTERNAL_ENDPOINT
+
+
+def test_dev_deps_prints_the_external_object_store(
+    context: Context, fake: FakeDocker, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(fake, "resolve", _with_external_store)
+
+    _body(dev.dev_deps)(context)
+
+    output = capsys.readouterr().out
+    assert f"Object store {EXTERNAL_ENDPOINT}" in output
+    assert "127.0.0.1:9010" not in output
+
+
+@pytest.mark.parametrize("service", HOST_SERVICES)
+def test_host_processes_trust_the_host_ca_directory(service: str) -> None:
+    settings = dev.parse_dev_settings(_with_ca_certificates(_resolved(infrahub=True)))
+
+    environment = dev.host_environment(settings, cast("Any", service))
+
+    assert environment["INFRAHUB_SYNC_CA_DIRECTORY"] == HOST_CA_DIRECTORY
+
+
+@pytest.mark.parametrize("service", HOST_SERVICES)
+def test_host_processes_get_no_ca_directory_without_ca_certificates(service: str) -> None:
+    settings = dev.parse_dev_settings(_resolved(infrahub=True))
+
+    environment = dev.host_environment(settings, cast("Any", service))
+
+    # The container path names nothing on the host, and the empty named volume holds nothing.
+    assert "INFRAHUB_SYNC_CA_DIRECTORY" not in environment
 
 
 # ----- dev.smoke in dependencies mode -------------------------------------------------------
