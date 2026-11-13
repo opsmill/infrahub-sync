@@ -748,7 +748,7 @@ export function RunTimeline({
     <section aria-labelledby="timeline" className="flex flex-col gap-4">
       <SectionHeading id="timeline" title="Timeline" />
       {notice && noticeIndex < 0 && notice}
-      <div className="rounded-2xl border p-4">
+      <div className="rounded-2xl border border-border-strong p-4">
         <ol aria-labelledby="timeline">{items}</ol>
       </div>
     </section>
