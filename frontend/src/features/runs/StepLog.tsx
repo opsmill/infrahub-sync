@@ -324,6 +324,12 @@ function LogCard({
   const ready = status === "ready";
   const filtered = shown.length !== lines.length;
   const attempts = logAttempts(lines).length;
+  // Prefect holds the flow run's own lines, so the link stays when Sync has none to show.
+  const withoutLines = (
+    <span className="ml-auto">
+      <PrefectLink o={step.execs.at(-1)} />
+    </span>
+  );
   const show = (level: string, on: boolean) => {
     const next = new Set(hidden);
     if (on) next.delete(level);
@@ -417,9 +423,12 @@ function LogCard({
         </output>
       )}
       {status === "expired" && (
-        <p className={cn(MESSAGE, "text-pretty")}>
-          The log of this step has expired: the Sync service no longer holds its lines.
-        </p>
+        <div className={MESSAGE}>
+          <p className="text-pretty">
+            The log of this step has expired: the Sync service no longer holds its lines.
+          </p>
+          {withoutLines}
+        </div>
       )}
       {status === "unavailable" && (
         <div className={MESSAGE}>
@@ -427,14 +436,18 @@ function LogCard({
           <Button variant="outline" size="xxs" onPress={onRetry} className="pointer-coarse:h-11">
             Try again
           </Button>
+          {withoutLines}
         </div>
       )}
       {ready && lines.length === 0 && (
-        <p className={MESSAGE}>
-          {live
-            ? "No lines yet. They appear here as Sync writes them."
-            : "Sync wrote no line during this step."}
-        </p>
+        <div className={MESSAGE}>
+          <p>
+            {live
+              ? "No lines yet. They appear here as Sync writes them."
+              : "Sync wrote no line during this step."}
+          </p>
+          {withoutLines}
+        </div>
       )}
       {ready && lines.length > 0 && shown.length === 0 && (
         <div className={MESSAGE}>

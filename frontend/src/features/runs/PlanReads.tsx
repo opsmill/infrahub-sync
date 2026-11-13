@@ -4,12 +4,22 @@ import { cn } from "tailwind-variants";
 
 import type { Run } from "#/api/types";
 import { CODE_CHIP, FOCUS_RAC } from "#/components/classes";
-import { StateIcon, WarningIcon } from "#/components/icons";
 import type { ReadState, PlanReads as Reads, SideRead } from "#/domain/plan-reads";
 import { fmt, plural, type RunState, runCounts } from "#/domain/run-state";
-import { queuedFor, type RunStep } from "#/domain/run-steps";
-import { formatSpan, useNow } from "#/lib/time";
+import type { RunStep } from "#/domain/run-steps";
+import { formatSpan } from "#/lib/time";
 
+import {
+  attemptRows,
+  cancelRow,
+  DONE,
+  queueRow,
+  Row,
+  range,
+  Since,
+  STEP_GRID,
+  StateWord,
+} from "./StepRows";
 import { clockSeconds } from "./step-time";
 
 /* ---------- a read's state ---------- */
@@ -39,28 +49,6 @@ const READ_ICON: Partial<Record<ReadState, RunState>> = {
   succeeded: "insync",
   failed: "failed",
 };
-
-/** An icon and a word in one colour, as the step's own state on its title line. */
-function StateWord({
-  icon,
-  tone,
-  children,
-}: {
-  icon: RunState | "warning";
-  tone: string;
-  children: ReactNode;
-}) {
-  return (
-    <span className={cn("inline-flex items-center gap-1 whitespace-nowrap", tone)}>
-      {icon === "warning" ? (
-        <WarningIcon className="size-3.5 shrink-0" />
-      ) : (
-        <StateIcon state={icon} className="size-3.5 shrink-0" />
-      )}
-      {children}
-    </span>
-  );
-}
 
 const ReadStateWord = ({ v }: { v: SideRead }) => (
   <StateWord
@@ -177,45 +165,6 @@ function ReadCount({ v, reads }: { v: SideRead; reads: Reads }) {
 
 /* ---------- rows ---------- */
 
-/** Label, state, result, duration, clock times; the label column is as wide as the Started step's. */
-const GRID =
-  "grid w-fit min-w-[min(100%,32rem)] max-w-full grid-cols-[5.5rem_max-content_minmax(0,max-content)_max-content_minmax(0,1fr)] gap-x-4 text-[13px] text-foreground-muted max-lg:grid-cols-[5.5rem_minmax(0,1fr)]";
-const CELL = "min-w-0 leading-6 max-lg:col-start-2 empty:max-lg:hidden";
-
-function Row({
-  label,
-  state,
-  result,
-  duration,
-  clock,
-}: {
-  label: string;
-  state: ReactNode;
-  result?: ReactNode;
-  duration?: ReactNode;
-  clock?: ReactNode;
-}) {
-  return (
-    <div className="col-span-full grid grid-cols-subgrid items-baseline gap-y-0.5 border-b py-1.5 last:border-b-0">
-      <dt className="text-subtle text-xs leading-6">{label}</dt>
-      <dd className="contents">
-        <span className={CELL}>{state}</span>
-        <span className={CELL}>{result}</span>
-        <span className={cn(CELL, "tabular-nums")}>{duration}</span>
-        <span className={cn(CELL, "text-subtle tabular-nums lg:whitespace-nowrap")}>{clock}</span>
-      </dd>
-    </div>
-  );
-}
-
-const range = (from: string, to: string) => `${clockSeconds(from)} to ${clockSeconds(to)}`;
-
-/** Time since `from`, counted every second. */
-function Since({ from }: { from: string }) {
-  const now = useNow(1000);
-  return formatSpan(from, Math.max(now, Date.parse(from)));
-}
-
 function readDuration(v: SideRead): ReactNode {
   if (!v.startedAt) return null;
   if (v.endedAt) return formatSpan(v.startedAt, v.endedAt);
@@ -256,26 +205,27 @@ function differences(run: Run): ReactNode {
   );
 }
 
-const DONE = { icon: "insync", tone: "text-success" } as const;
-
 /**
- * What the Plan step did, one row each with its duration and clock times: the wait for a worker,
- * the read of each system, then the comparison.
+ * What the Plan step did, one row each with its duration and clock times: its earlier attempts,
+ * the wait for a worker, the read of each system, then the comparison.
  */
-export function PlanReads({ reads, step, run }: { reads: Reads; step: RunStep; run: Run }) {
+export function PlanReads({
+  reads,
+  step,
+  run,
+  className,
+}: {
+  reads: Reads;
+  step: RunStep;
+  run: Run;
+  className?: string;
+}) {
   const o = step.exec;
   const c = reads.compare;
   return (
-    <dl className={GRID}>
-      {o?.submitted_at && o.claimed_at && (
-        <Row
-          label="Queue"
-          state={<StateWord {...DONE}>Picked up</StateWord>}
-          result="By a worker"
-          duration={queuedFor(o)}
-          clock={range(o.submitted_at, o.claimed_at)}
-        />
-      )}
+    <dl className={cn(STEP_GRID, className)}>
+      {attemptRows(step)}
+      {o?.claimed_at && queueRow(o)}
       {reads.sides.map((v) => (
         <Row
           key={v.side}
@@ -316,6 +266,7 @@ export function PlanReads({ reads, step, run }: { reads: Reads; step: RunStep; r
           clock={clockSeconds(reads.savedAt)}
         />
       )}
+      {o && cancelRow(o)}
     </dl>
   );
 }

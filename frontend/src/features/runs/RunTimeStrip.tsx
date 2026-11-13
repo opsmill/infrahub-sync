@@ -541,7 +541,7 @@ function StepTip({
   m: RunView;
   s: RunStep;
   startDay: string;
-  /** Scroll to the step in the timeline and open its details. */
+  /** Scroll to the step in the timeline. */
   onOpen: () => void;
 }) {
   const wait = reviewWait(s);
@@ -1041,7 +1041,7 @@ function axisLabels(marks: Mark[], width: number, startDay: string) {
 
 /**
  * The steps of a run on one time axis: a row per step, its bar placed where it ran, its duration
- * on the right. Hovering a row shows what happened; clicking it opens the step in the timeline.
+ * on the right. Hovering a row shows what happened; clicking it scrolls to the step in the timeline.
  */
 
 export function RunTimeStrip({

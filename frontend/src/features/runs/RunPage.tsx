@@ -609,8 +609,6 @@ export function RunPage({ runId }: { runId: string }) {
           onOpenChanges={() => sheet.open()}
           source={source}
           destination={destination}
-          state={headerState}
-          label={label}
           focus={focus}
           notice={outcome}
         />

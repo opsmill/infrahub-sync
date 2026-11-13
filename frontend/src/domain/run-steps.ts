@@ -368,3 +368,13 @@ export function verificationNotes(run: Run): string[] {
     ? v.verification_notes.filter((n): n is string => typeof n === "string")
     : [];
 }
+
+/** The last plan check that passed: `results.verification` describes that one. */
+export const lastPassedCheck = (execs: Orchestration[]) =>
+  [...execs].reverse().find((o) => o.terminal_outcome === "succeeded");
+
+/** Whether the plan's checksum matched in the last check that passed; undefined when none passed. */
+export function planCheckMatches(run: Run): boolean | undefined {
+  const v = run.results?.verification as { checksum_ok?: unknown } | undefined;
+  return v ? v.checksum_ok !== false : undefined;
+}

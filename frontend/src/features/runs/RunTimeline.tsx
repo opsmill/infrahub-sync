@@ -1,26 +1,17 @@
-import { Card, LinkButton } from "@infrahub/ui";
+import { Card } from "@infrahub/ui";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import { cn } from "tailwind-variants";
 
-import type { Orchestration, Run } from "#/api/types";
-import { ArrowRightIcon, ChevronRightIcon, DownloadIcon, StateIcon } from "#/components/icons";
-import { CopyButton, expandChevron, FOCUS, SectionHeading } from "#/components/page";
-import {
-  BranchBadge,
-  CHANGE_TONE,
-  STEP_TONE,
-  STEP_WORD,
-  StateLabel,
-  When,
-} from "#/components/run-status";
+import type { Plan, Run } from "#/api/types";
+import { ArrowRightIcon, ChevronRightIcon, InfoIcon, StateIcon } from "#/components/icons";
+import { expandChevron, FOCUS, SectionHeading } from "#/components/page";
+import { BranchBadge, CHANGE_TONE, STEP_TONE, STEP_WORD } from "#/components/run-status";
 import { planReads } from "#/domain/plan-reads";
 import { fmt, type RunState, runCounts, type StepState } from "#/domain/run-state";
 import {
-  type Artifact,
   executionResult,
   inTimeline,
-  queuedFor,
   type RunStep,
   ranFor,
   reviewWait,
@@ -33,61 +24,39 @@ import { PlanReads } from "./PlanReads";
 import { PlanFacts } from "./PlanReview";
 import type { PlanRequest } from "./run-sections";
 import { StepLog } from "./StepLog";
+import { STEP_WIDTH, StepRows } from "./StepRows";
 import { clock, stepNode, WaitTime } from "./step-time";
 
-/* ---------- opening a step from the strip ---------- */
+/* ---------- reaching a step from the strip ---------- */
 
 export interface StepFocus {
-  /** Steps whose details are open. */
-  open: Set<number>;
-  setOpen: (index: number, open: boolean) => void;
-  /** The step that flashes after it was opened from the strip. */
+  /** The step that flashes after it was chosen in the strip. */
   flash: number | null;
-  /** The step last opened from the strip. */
+  /** The step last chosen in the strip. */
   selected?: number;
   headings: RefObject<(HTMLHeadingElement | null)[]>;
-  /** Open the step's details, scroll it into view and move focus to its heading. */
+  /** Scroll the step into view and move focus to its heading. */
   select: (index: number) => void;
 }
 
 const FLASH_MS = 900;
 
 export function useStepFocus(): StepFocus {
-  const [open, setOpenSteps] = useState<Set<number>>(new Set());
   const [flash, setFlash] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | undefined>();
   const headings = useRef<(HTMLHeadingElement | null)[]>([]);
-  const pending = useRef<number | null>(null);
-
-  const setOpen = (index: number, isOpen: boolean) =>
-    setOpenSteps((prev) => {
-      if (prev.has(index) === isOpen) return prev;
-      const next = new Set(prev);
-      if (isOpen) next.add(index);
-      else next.delete(index);
-      return next;
-    });
 
   const select = (index: number) => {
-    setOpen(index, true);
-    pending.current = index;
-    // Cleared first, so opening the same step again flashes it again.
+    // Cleared first, so choosing the same step again flashes it again.
     setFlash(null);
     requestAnimationFrame(() => setFlash(index));
     setSelected(index);
-  };
-
-  // After the details have rendered open.
-  useEffect(() => {
-    const index = pending.current;
-    if (index === null) return;
-    pending.current = null;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     document
       .getElementById(`step-${index}`)
       ?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
     headings.current[index]?.focus({ preventScroll: true });
-  });
+  };
 
   useEffect(() => {
     if (flash === null) return;
@@ -95,7 +64,7 @@ export function useStepFocus(): StepFocus {
     return () => window.clearTimeout(id);
   }, [flash]);
 
-  return { open, setOpen, flash, selected, headings, select };
+  return { flash, selected, headings, select };
 }
 
 /* ---------- events ---------- */
@@ -201,9 +170,6 @@ const stateLabel = (s: RunStep) =>
       ? executionResult(s.exec).label
       : STEP_WORD[s.state];
 
-/** A queue time shorter than this is left to the step's details. */
-const QUEUE_SHOWN_FROM_MS = 5000;
-
 const PREPOSITION: Record<StepState, string> = {
   done: "in",
   failed: "after",
@@ -214,22 +180,16 @@ const PREPOSITION: Record<StepState, string> = {
 };
 
 /**
- * "in 44 s, after 7 s in the queue", "after 27 s", "for 2 h 16 min" while the step still runs or waits.
- * `hideQueue` leaves the queue time to the step's own Queue row.
+ * "in 44 s", "after 27 s", "for 2 h 16 min" while the step still runs or waits. The time in the
+ * queue is in the step's Queue row.
  */
-function StepTime({ s, hideQueue }: { s: RunStep; hideQueue?: boolean }) {
+function StepTime({ s }: { s: RunStep }) {
   const wait = reviewWait(s);
   const o = s.exec;
   let time: ReactNode;
-  let queued: string | undefined;
   if (wait) {
     time = <WaitTime wait={wait} />;
   } else if (o) {
-    const queuedMs =
-      o.submitted_at && o.claimed_at
-        ? new Date(o.claimed_at).getTime() - new Date(o.submitted_at).getTime()
-        : 0;
-    if (o.claimed_at && queuedMs >= QUEUE_SHOWN_FROM_MS && !hideQueue) queued = queuedFor(o);
     const from = o.claimed_at ?? o.submitted_at;
     if (o.terminal_at) time = ranFor(o);
     else if (from) time = <WaitTime wait={{ from }} />;
@@ -238,7 +198,6 @@ function StepTime({ s, hideQueue }: { s: RunStep; hideQueue?: boolean }) {
   return (
     <span className="font-normal text-[13px] text-subtle tabular-nums leading-5">
       {applyRequested(s) ? "after" : PREPOSITION[s.state]} {time}
-      {queued && <>, after {queued} in the queue</>}
     </span>
   );
 }
@@ -250,154 +209,26 @@ function stepSentence(s: RunStep) {
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : undefined;
 }
 
-/* ---------- step details ---------- */
+/* ---------- under a step's rows ---------- */
 
-function formatBytes(n: number) {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-
-const kindTitle = (kind: string) => {
-  const words = kind.replaceAll("-", " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
-};
-
-/** One file the step saved, drawn as in "Files kept for this run". */
-function FileRow({ run, a }: { run: Run; a: Artifact }) {
-  const title = kindTitle(a.kind);
-  const json = a.media_type === "application/json";
+/** What the Sync service noted when it checked the saved plan. */
+function CheckNotes({ notes }: { notes: string[] }) {
   return (
-    <li className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 text-[13px]">
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="font-medium">{title}</span>
-        <span className="text-subtle text-xs">
-          {json ? "JSON" : a.media_type} ·{" "}
-          <span className="tabular-nums">{formatBytes(a.size)}</span> ·{" "}
-          <When prefix="Saved " iso={a.created_at} />
-          {a.expires_at && (
-            <>
-              {" "}
-              · <When prefix="Expires " iso={a.expires_at} />
-            </>
-          )}
-        </span>
-        <span
-          className="flex min-w-0 items-center gap-1 font-mono text-subtle text-xs"
-          title={a.digest}
-        >
-          SHA-256 {a.digest.slice(0, 12)}…
-          <CopyButton value={a.digest} label="Copy SHA-256 digest" />
-        </span>
-      </div>
-      <LinkButton
-        variant="ghost"
-        size="sm"
-        href={`/api/runs/${encodeURIComponent(run.run_id)}/artifacts/${encodeURIComponent(a.artifact_id)}`}
-        download={`${run.run_id}-${a.artifact_id}${json ? ".json" : ""}`}
-        aria-label={`Download ${title}`}
-        className="text-foreground-muted pointer-coarse:h-11"
-      >
-        <DownloadIcon />
-        Download
-      </LinkButton>
-    </li>
-  );
-}
-
-function ExecutionFacts({ o }: { o: Orchestration }) {
-  const e = executionResult(o);
-  const queued = queuedFor(o);
-  const ran = ranFor(o);
-  const rows: [string, ReactNode][] = [
-    ["Result", <StateLabel key="r" state={e.state} label={e.label} />],
-    ["Submitted", o.submitted_at ? formatAbsolute(o.submitted_at) : "Not recorded"],
-    [
-      "Picked up by a worker",
-      o.claimed_at ? (
-        <>
-          {formatAbsolute(o.claimed_at)}
-          {queued && <span className="text-subtle"> · after {queued}</span>}
-        </>
-      ) : (
-        "Not picked up"
-      ),
-    ],
-    [
-      "Ended",
-      o.terminal_at ? (
-        <>
-          {formatAbsolute(o.terminal_at)}
-          {ran && <span className="text-subtle"> · ran {ran}</span>}
-        </>
-      ) : (
-        "Not ended"
-      ),
-    ],
-    [
-      "Prefect flow run",
-      <span key="f" className="inline-flex min-w-0 items-center gap-1">
-        <span className="font-mono text-xs [overflow-wrap:anywhere]">{o.flow_run_id}</span>
-        <CopyButton value={o.flow_run_id} label="Copy flow run ID" />
-      </span>,
-    ],
-  ];
-  // A succeeded execution's result is the step's state, already in its title.
-  if (o.terminal_outcome === "succeeded") rows.shift();
-  return (
-    <dl className="grid grid-cols-1 gap-x-8 gap-y-3 p-4 text-[13px] sm:grid-cols-2 lg:grid-cols-3">
-      {rows.map(([k, v]) => (
-        <div key={k} className="flex min-w-0 flex-col gap-0.5">
-          <dt className="text-subtle text-xs">{k}</dt>
-          <dd className="flex min-h-6 min-w-0 flex-wrap items-center gap-1">{v}</dd>
-        </div>
+    <ul className="flex flex-col gap-1 text-[13px] text-foreground-muted">
+      {notes.map((n) => (
+        <li key={n} className="flex items-start gap-1.5">
+          <InfoIcon className="mt-[3px] size-3.5 shrink-0 text-subtle" />
+          <span className="text-pretty">{n}</span>
+        </li>
       ))}
-    </dl>
+    </ul>
   );
 }
 
-/** The step's executions, saved files and plan record, behind one disclosure. */
-function StepDetails({
-  run,
-  plan,
-  s,
-  open,
-  onToggle,
-}: {
-  run: Run;
-  plan: PlanRequest;
-  s: RunStep;
-  open: boolean;
-  onToggle: (open: boolean) => void;
-}) {
-  const review = s.kind === "review";
-  const withRecord = s.kind === "plan" && Boolean(plan.data?.operations.length);
-  const notes = review ? verificationNotes(run) : [];
-  if (s.execs.length === 0 && s.files.length === 0 && !withRecord && notes.length === 0) {
-    return null;
-  }
-  const parts = [
-    s.execs.length > 0 &&
-      (review
-        ? s.execs.length > 1
-          ? `${s.execs.length} plan checks`
-          : "Plan check"
-        : s.execs.length > 1
-          ? `${s.execs.length} executions`
-          : "Execution"),
-    s.files.length > 0 && (s.files.length === 1 ? "1 saved file" : `${s.files.length} saved files`),
-    withRecord && "plan record",
-  ].filter(Boolean) as string[];
-  const label =
-    parts.length > 1
-      ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`
-      : (parts[0] ?? "Checks");
+/** The plan record (checksum, schema fingerprint, lineage), behind one line of the Plan step. */
+function PlanRecord({ run, plan }: { run: Run; plan: Plan }) {
   return (
-    <details
-      open={open}
-      onToggle={(e) => onToggle((e.currentTarget as HTMLDetailsElement).open)}
-      className="group"
-    >
+    <details className="group">
       <summary
         className={cn(
           "relative -ml-1 inline-flex min-h-5 cursor-pointer list-none items-center gap-1.5 rounded-md px-1 before:absolute before:inset-x-0 before:-inset-y-2 text-foreground-muted text-xs transition-colors duration-150 ease-out hover:text-foreground pointer-coarse:min-h-11 motion-reduce:transition-none [&::-webkit-details-marker]:hidden",
@@ -405,44 +236,11 @@ function StepDetails({
         )}
       >
         <ChevronRightIcon className={cn(expandChevron(), "group-open:rotate-90")} />
-        {label.charAt(0).toUpperCase() + label.slice(1)}
+        Plan record
       </summary>
-      <div className="mt-2 flex flex-col gap-3">
-        {s.execs.map((o) => (
-          <Card key={o.flow_run_id} className="overflow-hidden">
-            {(review || s.execs.length > 1) && (
-              <p className="border-b px-4 py-2 font-medium text-xs">
-                {review ? "Plan check" : "Attempt"}
-                {s.execs.length > 1 && <> {o.attempt}</>}
-              </p>
-            )}
-            <ExecutionFacts o={o} />
-          </Card>
-        ))}
-        {notes.length > 0 && (
-          <Card className="p-4">
-            <ul className="flex list-disc flex-col gap-1 pl-4 text-[13px]">
-              {notes.map((n) => (
-                <li key={n}>{n}</li>
-              ))}
-            </ul>
-          </Card>
-        )}
-        {s.files.length > 0 && (
-          <Card className="overflow-hidden">
-            <ul className="divide-y">
-              {s.files.map((a) => (
-                <FileRow key={a.artifact_id} run={run} a={a} />
-              ))}
-            </ul>
-          </Card>
-        )}
-        {withRecord && plan.data && (
-          <Card className="p-4">
-            <PlanFacts plan={plan.data} runBranch={run.destination_branch ?? null} />
-          </Card>
-        )}
-      </div>
+      <Card className="mt-2 p-4">
+        <PlanFacts plan={plan} runBranch={run.destination_branch ?? null} />
+      </Card>
     </details>
   );
 }
@@ -518,7 +316,8 @@ const FACT_VALUE = "flex min-h-6 min-w-0 flex-wrap items-center gap-x-2";
 
 /**
  * What the run was started with, one line each: the source, the destination and the branch it
- * writes to, and the configuration version. A system is left out until its version is read.
+ * writes to, and the configuration version. A system is left out until its version is read. The
+ * rows are as wide as the rows of the steps, so every rule of the timeline has one length.
  */
 function StartFacts({
   run,
@@ -534,7 +333,9 @@ function StartFacts({
   const versioned = run.registry_version != null && run.config_id;
   if (!source && !destination && !branch && !versioned) return null;
   return (
-    <dl className="grid w-fit min-w-[min(100%,32rem)] max-w-full grid-cols-[5.5rem_minmax(0,1fr)] gap-x-4 pt-0.5 text-[13px]">
+    <dl
+      className={cn(STEP_WIDTH, "grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-4 pt-0.5 text-[13px]")}
+    >
       {source && (
         <div className={FACT_ROW}>
           <dt className={FACT_LABEL}>Source</dt>
@@ -579,9 +380,10 @@ function StartFacts({
 /* ---------- timeline ---------- */
 
 /**
- * What happened in the run, in order: when it started, each step with what it found or wrote and
- * its details, then how it ended. The notice on the run's outcome replaces the sentence of the step it
- * explains.
+ * What happened in the run, in order: when it started, then each step with what its executions
+ * did, one row each, and what it found or wrote. The notice on the run's outcome replaces the
+ * sentence of the step it explains. The last step ends the timeline: its state says how the run
+ * ended.
  * The events sit in a border without a fill: a card's white surface was too heavy for this much text.
  */
 export function RunTimeline({
@@ -591,8 +393,6 @@ export function RunTimeline({
   hasPlan,
   source,
   destination,
-  state,
-  label,
   notice,
   focus,
   onOpenChanges,
@@ -604,8 +404,6 @@ export function RunTimeline({
   hasPlan: boolean;
   source?: System;
   destination?: System;
-  state: RunState;
-  label: string;
   /** Why the run failed, ended without running a step, or waits: shown under that step. */
   notice?: ReactNode;
   focus: StepFocus;
@@ -621,12 +419,6 @@ export function RunTimeline({
         s.exec.terminal_at == null &&
         (s.exec.stalled_at != null || s.exec.cancellation_requested_at != null))
   );
-  const finished = run.finished_at;
-  // A waiting plan finishes when its plan is saved, but its review can end later (a newer plan).
-  const endedAt = [finished, ...steps.map((s) => s.end)]
-    .filter((t): t is string => Boolean(t))
-    .sort()
-    .at(-1);
   // A done plan with changes shows their counts and a link that opens them, not a sentence.
   const changeTotal = runCounts(run)?.total ?? 0;
   const glance = (s: RunStep) =>
@@ -651,17 +443,22 @@ export function RunTimeline({
     </Event>,
   ];
 
-  for (const s of steps.filter(inTimeline)) {
+  const shown = steps.filter(inTimeline);
+  for (const s of shown) {
     const wait = reviewWait(s);
     const sentence = stepSentence(s);
-    // The notice on the run's outcome takes the place of the step's sentence; its details follow.
+    // The notice on the run's outcome takes the place of the step's sentence; its rows follow.
     const stepNotice = s.index === noticeIndex ? notice : null;
     const reads = planReads(s, source, destination);
+    // Rows directly under the title sit as close to it as the Started step's rows.
+    const rowsClass = stepNotice ? undefined : "-mt-1.5";
+    const notes = s.kind === "review" ? verificationNotes(run) : [];
     items.push(
       <Event
         key={s.id}
         id={s.id}
         flash={focus.flash === s.index}
+        last={s === shown.at(-1)}
         time={s.end ?? s.exec?.claimed_at ?? (s.kind === "review" ? undefined : s.start)}
         dashed={Boolean(wait)}
         headingRef={(el) => {
@@ -681,68 +478,38 @@ export function RunTimeline({
                 <StateIcon state={ICON_STATE[s.state]} className="size-3.5 shrink-0" />
                 <span className="first-letter:uppercase">{stateLabel(s)}</span>
               </span>
-              <StepTime s={s} hideQueue={Boolean(reads)} />
+              <StepTime s={s} />
             </span>
           </span>
         }
       >
         {stepNotice}
-        {reads && <PlanReads reads={reads} step={s} run={run} />}
+        {reads ? (
+          <PlanReads reads={reads} step={s} run={run} className={rowsClass} />
+        ) : (
+          <StepRows run={run} step={s} className={rowsClass} />
+        )}
         <div className="flex flex-col gap-1 empty:hidden">
           {glance(s) ? (
             <ChangesGlance run={run} onOpenChanges={onOpenChanges} />
           ) : (
             sentence &&
             !stepNotice &&
-            // The rows of a running plan already say what it is doing.
-            !(reads && s.state === "active") && (
+            // The rows of a running plan, and the Write row of an apply, already say it.
+            !(reads && s.state === "active") &&
+            !(s.kind === "apply" && s.exec) && (
               <p className="text-pretty text-[13px] text-foreground-muted">{sentence}</p>
             )
           )}
-          {s.kind === "review" &&
-            s.execs.map((o) => (
-              <p key={o.flow_run_id} className="text-subtle text-xs">
-                {o.terminal_outcome === "succeeded"
-                  ? "Plan check passed"
-                  : o.terminal_at
-                    ? "Plan check failed"
-                    : "Checking the plan"}
-                {o.terminal_at && <> · {clock(o.terminal_at)}</>}
-              </p>
-            ))}
-          <StepDetails
-            run={run}
-            plan={plan}
-            s={s}
-            open={focus.open.has(s.index)}
-            onToggle={(o) => focus.setOpen(s.index, o)}
-          />
+          {notes.length > 0 && <CheckNotes notes={notes} />}
+          {s.kind === "plan" && plan.data && plan.data.operations.length > 0 && (
+            <PlanRecord run={run} plan={plan.data} />
+          )}
           <StepLog run={run} step={s} />
         </div>
       </Event>
     );
   }
-
-  items.push(
-    finished ? (
-      <Event
-        key="end"
-        last
-        time={endedAt}
-        node={<Dot className="size-2 bg-subtle-muted" />}
-        title={<StateLabel state={state} label={label} />}
-      />
-    ) : (
-      <Event
-        key="end"
-        last
-        node={
-          <Dot className="size-2 border-[1.5px] border-subtle-muted border-dashed bg-content" />
-        }
-        title={<span className="font-normal text-foreground-muted">Not finished</span>}
-      />
-    )
-  );
 
   return (
     <section aria-labelledby="timeline" className="flex flex-col gap-4">
