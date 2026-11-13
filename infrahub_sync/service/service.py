@@ -282,6 +282,9 @@ class RunService:
                 operation="sync",
                 reason=request.reason,
                 outcome="refused-approval-required",
+                config_id=request.config_id,
+                registry_version=request.registry_version,
+                branch=destination_branch,
             )
             raise self._error(
                 409,
