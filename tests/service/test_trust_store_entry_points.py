@@ -16,7 +16,13 @@ if TYPE_CHECKING:
     from types import ModuleType
 
 # Each entry point, and the first step that would build a client after the bundle is in place.
-_ENTRY_POINTS = [(serve, "build_app"), (worker, "ServiceProcessWorker"), (bootstrap, "_converge")]
+# For the Sync API, `build_app` installs the bundle itself, so the first step after it is the
+# Prefect UI address check that precedes the first provider.
+_ENTRY_POINTS = [
+    (serve, "prefect_ui_url_from_environment"),
+    (worker, "ServiceProcessWorker"),
+    (bootstrap, "_converge"),
+]
 _IDS = ["serve", "worker", "bootstrap"]
 
 
@@ -72,3 +78,16 @@ def test_a_refused_ca_directory_stops_the_entry_point_with_a_non_zero_status(
     monkeypatch.setattr(module, first_client_step, never)
 
     assert _run(module) != 0
+
+
+def test_the_api_factory_installs_the_ca_bundle_without_main(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`uvicorn --factory infrahub_sync.service.serve:build_app` never runs `main()`."""
+    refused = "ca.pem holds a private key; the CA directory takes public certificates only"
+
+    def refuse() -> None:
+        raise TrustStoreError(refused)
+
+    monkeypatch.setattr(serve, "install_custom_ca_bundle", refuse)
+
+    with pytest.raises(TrustStoreError, match=refused):
+        serve.build_app(projection_factory=lambda: pytest.fail("a provider was built before the CA bundle"))

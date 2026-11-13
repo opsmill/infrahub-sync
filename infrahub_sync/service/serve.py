@@ -65,7 +65,15 @@ def build_app(
     configuration_routes_factory: Any = ConfigurationRoutes,
     app_factory: Any = create_app,
 ) -> FastAPI:
-    """Construct the service app from its environment-owned durable storage profile."""
+    """Construct the service app from its environment-owned durable storage profile.
+
+    The CA bundle is installed here, before any client exists, so `main()` and an ASGI server
+    that calls this factory (`uvicorn --factory`, as `dev.api` does) trust the same certificates.
+
+    Raises:
+        TrustStoreError: when the CA directory holds a private key or an unreadable certificate.
+    """
+    install_custom_ca_bundle()
     policy = LivenessPolicy.from_environment(worker_query_seconds=os.environ.get("PREFECT_WORKER_QUERY_SECONDS", "10"))
     # Validated before any dependency is built, so a bad address stops start-up with no side effect.
     prefect_ui_url = prefect_ui_url_from_environment()
@@ -95,10 +103,10 @@ def build_app(
 def main() -> None:
     """Serve the Sync API; Prefect workers and deployments are separate."""
     try:
-        install_custom_ca_bundle()
+        app = build_app()
     except TrustStoreError as error:
         raise SystemExit(str(error)) from None
-    uvicorn.run(build_app(), host=os.environ.get("INFRAHUB_SYNC_SERVICE_HOST", "127.0.0.1"), port=8000)
+    uvicorn.run(app, host=os.environ.get("INFRAHUB_SYNC_SERVICE_HOST", "127.0.0.1"), port=8000)
 
 
 if __name__ == "__main__":
