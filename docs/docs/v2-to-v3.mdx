@@ -88,7 +88,16 @@ does not map. For each one, it:
 - adds a mapping for the namespace kind with no source endpoint, which loads nothing from the
   source
 
-The report lists each change under `Notes`. When Infrahub refuses an anonymous schema read, the
+The command does not make all three changes in two cases:
+
+- When the namespace relationship does not resolve to exactly one concrete namespace kind, or
+  that kind has no human-friendly ID made of a single attribute, the command leaves the
+  namespace unmapped and makes none of the three changes.
+- When the uniqueness constraint has another field that `config.yml` does not map, the command
+  sets the namespace and adds the namespace mapping, but leaves the identifiers as they are.
+  V3 does not plan that kind until you map the field.
+
+The report lists each change, and each of these cases, under `Notes`. When Infrahub refuses an anonymous schema read, the
 report says so and the command changes nothing. Without `--live-schema`, edit the package by
 hand in the same way.
 
@@ -162,9 +171,9 @@ hand in the same way.
    the plan with `infrahub-sync approve` before `apply`; `sync` is refused in that mode. See
    [Run a sync](./running-a-sync.mdx).
 
-Before it writes, the command runs every registration check that needs no connection. A
-package it writes registers without edits, as long as the addresses are ones the Sync worker
-can reach.
+Before it writes, the command runs every registration check that needs no connection, so a
+package it writes registers without edits. Registration does not check the addresses. The Sync
+worker must reach them before you create a plan or run a sync.
 
 ### Addresses and other settings that V2 read from the environment
 
@@ -284,8 +293,10 @@ records that Infrahub identifies by fewer fields than NetBox, which V2 merged in
 
 On the NetBox example and the `demo` dataset, the first V3 plan holds no creates and no
 updates. It leaves out the racks, VLANs and devices that V2 merged, and the records that depend
-on them, and it records deletes of the nodes V2 wrote for those records. Apply never executes a
-delete. Read the first V3 plan of your own configuration before you apply it: your data can
+on them, and it records deletes of the nodes V2 wrote for those records. It also records a
+delete of Infrahub's `default` IP namespace (`IpamNamespace name=default`): the namespace
+mapping that `--live-schema` adds loads nothing from the source, so the plan finds the
+`default` namespace only in Infrahub. Apply never executes a delete. Read the first V3 plan of your own configuration before you apply it: your data can
 differ from the example.
 
 ## Where each action lives now

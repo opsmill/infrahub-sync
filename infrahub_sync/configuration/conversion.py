@@ -6,8 +6,8 @@ reads no file, opens no network connection and prints nothing; the ``configs con
 owns the input file, the report layout, the confirmation and the write.
 
 A result holds either a package mapping or one or more refusals, never both. Every refusal in
-the input is gathered before the result is returned, so one run names every reason the file
-cannot be converted.
+the input is gathered before the result is returned. The registration checks run only when the
+input has no other refusal, so their errors appear once the other refusals are fixed.
 
 The report entries never carry a credential value. A ``CredentialEntry`` names where the v2
 value came from and which V3 variable replaces it; a ``RefusalEntry`` for a credential setting

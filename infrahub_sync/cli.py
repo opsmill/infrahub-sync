@@ -779,7 +779,8 @@ def configs_convert(
     - an auth_method value v2 did not accept
     - a placeholder v2 did not read
     - an address with a user name or password
-    - a setting with no value
+    - an address with no value in config.yml, a v2 variable or a flag
+    - a placeholder in a setting v2 read from a variable, when no such variable is set
 
     \b
     Exit status 1 also when:
