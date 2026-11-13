@@ -1,4 +1,4 @@
-import type { Run } from "#/api/types";
+import type { Run, RunReference, VersionSummary } from "#/api/types";
 
 import type { System } from "./systems";
 
@@ -470,6 +470,19 @@ export function refLabel(ref: { phase: string; outcome?: string | null }): strin
   if (ref.phase === "planned") return ref.outcome === "no-change" ? "No differences" : "Plan ready";
   if (ref.phase === "applied") return ref.outcome === "no-change" ? "No differences" : "Applied";
   return `Unknown state: ${ref.phase}`;
+}
+
+/** The version whose `latest_applied_run` ended last; undefined when none was applied. */
+export function lastAppliedVersion(
+  versions: VersionSummary[]
+): { version: number; run: RunReference } | undefined {
+  const when = (run: RunReference) => run.finished_at ?? run.started_at;
+  let last: { version: number; run: RunReference } | undefined;
+  for (const v of versions) {
+    const run = v.latest_applied_run;
+    if (run && (!last || when(run) > when(last.run))) last = { version: v.registry_version, run };
+  }
+  return last;
 }
 
 /* ---------- lists of runs ---------- */

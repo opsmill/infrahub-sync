@@ -63,13 +63,13 @@ const ROW = cn("flex flex-col gap-y-2 px-4 py-3.5 md:items-start", SUBGRID);
 
 /**
  * When the configuration last wrote to the destination, for rows that wait on a person. "Never" is
- * stated only when every run was read and the latest run cannot have written.
+ * stated only when no applied run can exist and the latest run cannot have written.
  */
-function lastApplied(row: ConfigurationRow, runsTruncated: boolean) {
+function lastApplied(row: ConfigurationRow) {
   const asks = row.state === "failed" || row.state === "review" || row.run?.phase === "abandoned";
   if (!asks) return null;
   const applied = row.lastApplied;
-  if (!applied?.finished_at) return runsTruncated || mayHaveWritten(row.run) ? null : "never";
+  if (!applied?.finished_at) return !row.appliedKnown || mayHaveWritten(row.run) ? null : "never";
   const branch = applied.destination_branch;
   return {
     iso: applied.finished_at,
@@ -108,15 +108,7 @@ function ErrorClasses({ run, label }: { run?: Run; label: string }) {
   );
 }
 
-function Reason({
-  row,
-  quiet,
-  runsTruncated,
-}: {
-  row: ConfigurationRow;
-  quiet: boolean;
-  runsTruncated: boolean;
-}) {
+function Reason({ row, quiet }: { row: ConfigurationRow; quiet: boolean }) {
   const id = `reason-${row.summary.config_id}`;
   if (!row.state) {
     if (row.runUnknown === "pending") {
@@ -135,7 +127,7 @@ function Reason({
     );
   }
   const e = rowExplanation(row);
-  const last = lastApplied(row, runsTruncated);
+  const last = lastApplied(row);
   return (
     <div id={id} className="flex min-w-0 flex-col gap-0.5">
       <p
@@ -246,12 +238,10 @@ function RowAction({
 function Row({
   row,
   hint,
-  runsTruncated,
   onStart,
 }: {
   row: ConfigurationRow;
   hint?: MatchHint;
-  runsTruncated: boolean;
   onStart: (t: StartRunTarget) => void;
 }) {
   const id = row.summary.config_id;
@@ -282,7 +272,7 @@ function Row({
           <Stepper steps={rowSteps(row)} names={stepNames(row.run)} quiet={quiet} label={false} />
         )}
       </div>
-      <Reason row={row} quiet={quiet} runsTruncated={runsTruncated} />
+      <Reason row={row} quiet={quiet} />
       <div className="max-md:-mt-1 md:-mt-1.5 md:justify-self-end">
         <RowAction row={row} name={name} onStart={onStart} />
       </div>
@@ -723,7 +713,6 @@ export function ConfigurationsPage({
                             key={row.summary.config_id}
                             row={row}
                             hint={hint}
-                            runsTruncated={runsTruncated}
                             onStart={setStarting}
                           />
                         ))}

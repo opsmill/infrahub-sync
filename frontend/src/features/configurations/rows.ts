@@ -11,6 +11,7 @@ import {
   latestRunQuery,
   runQuery,
   runsQuery,
+  versionsQuery,
 } from "#/api/queries";
 import type { ConfigurationSummary, ConfigurationVersion, Run, RunResource } from "#/api/types";
 import {
@@ -20,6 +21,7 @@ import {
   explain,
   failureDetail,
   isOutdated,
+  lastAppliedVersion,
   type RunState,
   runState,
   runSteps,
@@ -30,19 +32,31 @@ import { describeSystem, mappedKinds, type System } from "#/domain/systems";
 /** A run is re-read this often while one of its executions has not finished. */
 const ACTIVE_REFRESH_MS = 2_000;
 
+/**
+ * What a row reads of the newest applied run. A run on the first page of `GET /runs` has its
+ * branch; a run reference from the version list does not.
+ */
+export interface AppliedRun {
+  finished_at?: string | null;
+  registry_version?: number | null;
+  destination_branch?: string | null;
+}
+
 export interface ConfigurationRow {
   summary: ConfigurationSummary;
   /** `summary.latest_version`; undefined when the Sync API does not return it. */
   latestVersion?: number;
   /** The newest run of the configuration, of any version. */
   run?: Run;
-  /** The newest applied run on the first page of `GET /runs`. */
-  lastApplied?: Run;
+  /** The newest applied run, from the first page of `GET /runs` or else from the version list. */
+  lastApplied?: AppliedRun;
+  /** False while an applied run can exist that neither the runs page nor the version list showed. */
+  appliedKnown: boolean;
   /** The purpose of an execution of `run` that has not finished, such as "apply". */
   inFlight?: string;
   /** When the unfinished execution of `run` was submitted, while no worker has picked it up. */
   queuedAt?: string;
-  /** True when a run on the first page of `GET /runs` used `latestVersion`. */
+  /** True when a run used `latestVersion`. */
   latestVersionRun: boolean;
   /** The latest version's package; undefined while it loads or when it failed. */
   version?: ConfigurationVersion;
@@ -133,6 +147,36 @@ export function useConfigurationRows() {
     else if (q?.isPending) unknown.set(c.config_id, "pending");
   });
 
+  const onFirstPage = new Map(
+    items.map((c) => [
+      c.config_id,
+      {
+        applied: runItems.find((r) => r.config_id === c.config_id && r.phase === "applied"),
+        latestVersionRun:
+          c.latest_version != null &&
+          runItems.some(
+            (r) => r.config_id === c.config_id && r.registry_version === c.latest_version
+          ),
+      },
+    ])
+  );
+  // With older runs than the first page holds, that page cannot say whether one of them applied a
+  // configuration or used its latest version. The version list can, and a newer run of the
+  // configuration appears on the first page, so one answer is enough.
+  const beyondFirstPage = runsTruncated
+    ? items.filter((c) => {
+        const page = onFirstPage.get(c.config_id);
+        return !page?.applied || (c.latest_version != null && !page.latestVersionRun);
+      })
+    : [];
+  const versionLists = useQueries({
+    queries: beyondFirstPage.map((c) => ({
+      ...versionsQuery(c.config_id),
+      refetchInterval: retryAfterFailure,
+    })),
+  });
+  const versionList = new Map(beyondFirstPage.map((c, i) => [c.config_id, versionLists[i]?.data]));
+
   const watched = [...latest.values()].filter((r) => r.phase === "accepted" || isWaitingPlan(r));
   const resources = useQueries({
     queries: watched.map((r) => ({
@@ -169,18 +213,22 @@ export function useConfigurationRows() {
     const version = versionResult?.data;
     const cfg = version?.declared_content.configuration;
     const runUnknown = unknown.get(summary.config_id);
+    const page = onFirstPage.get(summary.config_id);
+    const list = versionList.get(summary.config_id);
+    const listed = list ? lastAppliedVersion(list.items) : undefined;
     return {
       summary,
       latestVersion,
       run,
-      lastApplied: runItems.find((r) => r.config_id === summary.config_id && r.phase === "applied"),
+      lastApplied:
+        page?.applied ??
+        (listed && { finished_at: listed.run.finished_at, registry_version: listed.version }),
+      appliedKnown: !runsTruncated || Boolean(page?.applied) || Boolean(list && !list.next_cursor),
       inFlight,
       queuedAt: execution?.queuedAt,
       latestVersionRun:
-        latestVersion !== undefined &&
-        runItems.some(
-          (r) => r.config_id === summary.config_id && r.registry_version === latestVersion
-        ),
+        Boolean(page?.latestVersionRun) ||
+        Boolean(list?.items.find((v) => v.registry_version === latestVersion)?.latest_run),
       version,
       versionError: hasFailed(versionResult),
       source: cfg ? describeSystem(cfg.source) : undefined,
@@ -217,14 +265,14 @@ export function useConfigurationRows() {
     failureReason: configs.failureReason ?? runs.failureReason,
     /** The newest runs of every configuration, as the first page of `GET /runs` returns them. */
     runs: runItems,
-    /** Older runs exist than the first page holds; "Never applied" cannot be stated then. */
+    /** Older runs exist than the first page holds. */
     runsTruncated,
     /** More configurations exist than the first page holds. */
     configsTruncated: Boolean(configs.data?.next_cursor),
     refetch: () => {
       void configs.refetch();
       void runs.refetch();
-      for (const q of [...versionResults, ...older]) if (q.error) void q.refetch();
+      for (const q of [...versionResults, ...older, ...versionLists]) if (q.error) void q.refetch();
     },
   };
 }
