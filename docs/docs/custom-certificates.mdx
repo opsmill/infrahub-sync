@@ -32,8 +32,11 @@ Name a host directory of public CA certificate files in `.env` with
 read-only and trust its certificates next to the image's public roots. Each certificate file must
 hold PEM text and be named `*.pem` or `*.crt`: a `*.pem` or `*.crt` file that holds DER content is
 refused. Files with other names are not trusted, but a private key in any file stops the service.
-The certificates are trusted for sources, Infrahub
-and the object store. The development stack in `development/docker-compose.yml` reads the same
+The certificates are trusted for Infrahub, the object store and the sources of the ACI, Generic
+REST API, Nautobot, NetBox, Peering Manager and Prometheus adapters. The IP Fabric and Slurp'it
+adapters use their vendors' Python libraries, and whether those libraries read the certificates
+has not been checked. The
+development stack in `development/docker-compose.yml` reads the same
 setting. See [Trust a private certificate authority](./compose-deployment.mdx#trust-a-private-certificate-authority)
 for the rules: no private key in the directory, read access for user ID 10001, and a restart of
 `sync-api` and `sync-worker` after a change.
