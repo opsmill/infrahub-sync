@@ -1,0 +1,34 @@
+dev/specs/012-v2-configuration-conversion/checklists/requirements.md
+  s_9c7f8713d8e8dc::t_386b4b91612b18 1-42
+dev/specs/012-v2-configuration-conversion/spec.md
+  s_9c7f8713d8e8dc::t_8051e641f5df9d 44-50,59
+  s_9c7f8713d8e8dc::t_80818d86435ba5 53-55
+  s_9c7f8713d8e8dc::t_05bdf3853259e0 38-39
+  s_9c7f8713d8e8dc::t_0303eeaa31ee4b 80-81
+  s_9c7f8713d8e8dc::t_b5ac37037721f9 150
+  s_9c7f8713d8e8dc::t_b1cedd9d0e3a17 160
+  s_9c7f8713d8e8dc::t_7f1d00b6c187e9 211-215
+  s_9c7f8713d8e8dc::t_4c6d35832afd79 196-198
+  s_9c7f8713d8e8dc::t_214684f097de9b 280-282
+  s_9c7f8713d8e8dc::t_29f70c6b041694 1-28,32-37,40-43,60-79,82-149,151-159,161-174,180-195,199-210,216-234,240-251,256-279,283-310,313-319,321-373
+  s_9c7f8713d8e8dc::t_2f5a6e9914e768 311-312
+  s_9c7f8713d8e8dc::t_a541d43f7bf783 320
+  s_9c7f8713d8e8dc::t_92fa532c7a89a7 29-31
+  s_9c7f8713d8e8dc::t_daed691ff79a05 51-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fdc794906ab36f3899fdaf27aee730addcc9ff48",
+  "prompts": {},
+  "sessions": {
+    "s_9c7f8713d8e8dc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7b4ab04-36d6-4644-a214-69334e6a0d27",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
