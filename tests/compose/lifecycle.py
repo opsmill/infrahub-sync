@@ -339,6 +339,7 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
     canaries: Mapping[str, str],
     api_port: int = API_PORT,
     prefect_port: int = PREFECT_PORT,
+    access_key: str = "compose-suite-access-key",
 ) -> Path:
     """Write the `.env` one deployment runs on, and return it.
 
@@ -347,6 +348,9 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
     principal's token a second time as `INFRAHUB_SYNC_API_TOKEN`, which is what
     the `cli` service presents to the API. The passwords are the session's
     canaries, so their appearance anywhere an operator can see is a leak.
+
+    The S3 access key is a fixed name unless a caller passes one: the external store
+    tests start their own store with the same constant.
     """
     repository, _, version = image.rpartition(":")
     principals = json.dumps({"compose-suite": {"token": canaries["principal"], "administrator": True}})
@@ -359,7 +363,7 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
         "INFRAHUB_SYNC_PRODUCT_PASSWORD": canaries["product"],
         "INFRAHUB_SYNC_PREFECT_PASSWORD": canaries["prefect"],
         "INFRAHUB_SYNC_PREFECT_AUTH_STRING": canaries["prefect_auth"],
-        "INFRAHUB_SYNC_S3_ACCESS_KEY": "compose-suite-access-key",
+        "INFRAHUB_SYNC_S3_ACCESS_KEY": access_key,
         "INFRAHUB_SYNC_S3_SECRET_KEY": canaries["object_store"],
         "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": principals,
         "INFRAHUB_SYNC_API_TOKEN": canaries["principal"],

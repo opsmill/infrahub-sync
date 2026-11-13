@@ -1,9 +1,13 @@
 """No credential value appears where an operator can read it (spec 021 FR-016 to FR-018, SC-005).
 
-One deployment of the operator file, every credential set to a distinct generated value of 24
-characters or more: the deployment's own passwords and tokens, the object store keys, and all
-24 adapter credential variables. Three surfaces are searched for those values, and only the
-names found are reported:
+One deployment of the operator file, every credential set to a distinct value of 24 characters
+or more: the deployment's own passwords and tokens, both object store keys, and all 24 adapter
+credential variables. Each value is generated, except the Infrahub token: a plan needs the
+token the Infrahub fixture accepts, which is 36 characters. The fixture runs one plan of the
+smoke package before any search, so the API and the worker have resolved a credential, read
+the destination and written to the object store. The smoke package resolves only the Infrahub
+token; the other 23 adapter variables reach the worker but no run resolves them. Three surfaces
+are searched for those values, and only the names found are reported:
 
 - the output of the commands the operator documentation tells an operator to run
 - every container's log
@@ -23,11 +27,20 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tasks.smoke_dataset import SMOKE_BRANCH
+from tests.compose.conftest import FIXTURE_INFRAHUB_PORT
 from tests.compose.lifecycle import (
+    FIXTURE_OVERRIDE,
     Deployment,
+    api_client,
+    await_phase,
     canary,
+    container_reachable_host,
     docker,
+    idempotency,
     operator_environment,
+    register,
+    smoke_package,
     wait_for,
     worker_state,
 )
@@ -47,6 +60,7 @@ RECEIVERS: dict[str, set[str]] = {
     "INFRAHUB_SYNC_PRODUCT_PASSWORD": {"db-bootstrap", "sync-bootstrap", "sync-api", "sync-worker"},
     "INFRAHUB_SYNC_PREFECT_PASSWORD": {"db-bootstrap", "prefect-server"},
     "INFRAHUB_SYNC_PREFECT_AUTH_STRING": {"prefect-server", "sync-bootstrap", "sync-api", "sync-worker"},
+    "INFRAHUB_SYNC_S3_ACCESS_KEY": {"object-store", "sync-bootstrap", "sync-api", "sync-worker"},
     "INFRAHUB_SYNC_S3_SECRET_KEY": {"object-store", "sync-bootstrap", "sync-api", "sync-worker"},
     DESTINATION_SETTING: {"sync-api", "sync-worker"},
     **{setting: {"sync-worker"} for setting in WORKER_CREDENTIAL_SETTINGS if setting != DESTINATION_SETTING},
@@ -67,17 +81,45 @@ def _environment_values(container: str) -> list[str]:
     return json.loads(inspected.unredacted().strip().splitlines()[-1])
 
 
+def _run_one_plan(deployment: Deployment) -> None:
+    """Register the smoke package and plan it, so a run resolves its credential before any search."""
+    principal = json.loads(deployment.setting("INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"))["compose-suite"]["token"]
+    with api_client(deployment, principal) as client:
+        config_id, registry_version = register(
+            client, smoke_package(deployment.destination), "compose suite: leak check configuration"
+        )
+        created = client.post(
+            "/runs",
+            headers=idempotency("compose-leaks-plan"),
+            json={
+                "operation": "plan",
+                "config_id": config_id,
+                "registry_version": registry_version,
+                "branch": SMOKE_BRANCH,
+                "reason": "compose suite: plan before the leak searches",
+            },
+        )
+        assert created.status_code == 202, created.text
+        await_phase(client, created.json()["run"]["run_id"], "planned")
+
+
 @pytest.fixture(scope="module")
 def leak_deployment(
-    sync_image: str, canaries: dict[str, str], tmp_path_factory: pytest.TempPathFactory
+    sync_image: str,
+    infrahub_fixture: dict[str, str],
+    canaries: dict[str, str],
+    tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[tuple[Deployment, dict[str, str]]]:
     values = {
         "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD": canaries["administrator"],
         "INFRAHUB_SYNC_PRODUCT_PASSWORD": canaries["product"],
         "INFRAHUB_SYNC_PREFECT_PASSWORD": canaries["prefect"],
         "INFRAHUB_SYNC_PREFECT_AUTH_STRING": canaries["prefect_auth"],
+        # Set before the bundled store first starts: the store takes it as its root user.
+        "INFRAHUB_SYNC_S3_ACCESS_KEY": canary("s3-access-key"),
         "INFRAHUB_SYNC_S3_SECRET_KEY": canaries["object_store"],
-        DESTINATION_SETTING: canary("destination"),
+        # The token the Infrahub fixture accepts, so the plan can read the destination.
+        DESTINATION_SETTING: infrahub_fixture["token"],
     }
     for setting in WORKER_CREDENTIAL_SETTINGS:
         if setting != DESTINATION_SETTING:
@@ -85,20 +127,30 @@ def leak_deployment(
     assert all(len(value) >= 24 for value in values.values())
     directory = tmp_path_factory.mktemp("leaks")
     environment_file = operator_environment(
-        directory, image=sync_image, destination_token=values[DESTINATION_SETTING], canaries=canaries, api_port=API_PORT
+        directory,
+        image=sync_image,
+        destination_token=values[DESTINATION_SETTING],
+        canaries=canaries,
+        api_port=API_PORT,
+        access_key=values["INFRAHUB_SYNC_S3_ACCESS_KEY"],
     )
     with environment_file.open("a", encoding="utf-8") as settings:
         for setting in WORKER_CREDENTIAL_SETTINGS:
             if setting != DESTINATION_SETTING:
                 settings.write(f"{setting}={values[setting]}\n")
     deployment = Deployment(
-        instance=f"leaks{uuid.uuid4().hex[:10]}", environment_file=environment_file, api_port=API_PORT
+        instance=f"leaks{uuid.uuid4().hex[:10]}",
+        environment_file=environment_file,
+        overrides=(FIXTURE_OVERRIDE,),
+        destination=f"http://{container_reachable_host()}:{FIXTURE_INFRAHUB_PORT}",
+        api_port=API_PORT,
     )
     launched = deployment.up()
     try:
         assert launched.returncode == 0, launched.stderr[-3000:]
         wait_for("the deployment reporting a live worker", lambda: worker_state(deployment) in {"ready", "busy"})
         assert SECRETS.leaked(launched.unredacted(), values) == []
+        _run_one_plan(deployment)
         yield deployment, values
     finally:
         deployment.down(volumes=True)
