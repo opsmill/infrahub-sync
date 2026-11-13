@@ -422,31 +422,40 @@ The suite sets up the same services as the `from-netbox` check, then runs these 
    branch. NetBox does not change between the v2 sync and the plan.
 5. When the plan holds updates, it reads each updated node on the `v2-gate` branch by its kind
    and the destination ID that `runs plan --detail` prints, to get the values v2 wrote.
-6. It compares the plan with `tests/data/v2_gate/expected_deletes.yml` and writes
+6. It compares the plan with `tests/data/v2_gate/expected_deletes.yml` and
+   `tests/data/v2_gate/expected_left_out.yml`, and writes
    `.dev/nightly-e2e/gate-result.json`.
 
 The suite passes only when all of these hold:
 
-- The plan holds no creates, no updates, and no deletes that are not on the expected-delete
-  list. A delete matches an entry only when both its kind and its identity match.
+- The plan holds no creates and no updates.
+- Every record left out because of a problem, and every problem, is on the reviewed list
+  `tests/data/v2_gate/expected_left_out.yml`. An entry matches on its list (`left_out` or
+  `problem`), its type, its kind and its identity.
+- Every record left out because it depends on another record depends on an accepted record,
+  directly or through other dependent records.
+- Every delete is on `tests/data/v2_gate/expected_deletes.yml`, matched on its kind and its
+  identity, or is of a kind that has an accepted record left out.
 - The plan detail lists as many operations as the `operations:` total in the plan summary.
 - The plan computed deletes: the summary shows `delete_operations_computed: true`.
 
+The suite reads the two lists with `runs plan <run-id> --left-out` and `--problems`.
+
+The reviewed lists hold the records that the destination schema cannot represent. On the pinned
+`demo` dataset, Infrahub identifies racks, VLANs and devices by fewer fields than NetBox, so
+NetBox records that differ only in their site, rack or VLAN group map to one Infrahub node.
+v2 wrote such records into one node. Those Infrahub nodes then match no source record, which
+is why the plan records deletes of their kinds. Apply never executes a delete.
+
 `gate-result.json` records the v2 version, the Infrahub version, the dataset commit and
-SHA-256, the counts, and each unexpected entry with its kind and identity. For an update, the
-entry gives each field that differs with `v2`, the current value of that field on the
-`v2-gate` branch, which is the value v2 wrote, next to `v3`, the value V3 would write. When the
-suite cannot read the node or the field, `v2` holds `<not read>`. Treat every unexpected entry
-as a defect in V3 or in the conversion.
+SHA-256, the counts, the accepted entries, and each unexpected entry with its kind and identity.
+For an update, the entry gives each field that differs with `v2`, the current value of that
+field on the `v2-gate` branch, which is the value v2 wrote, next to `v3`, the value V3 would
+write. When the suite cannot read the node or the field, `v2` holds `<not read>`. Treat every
+unexpected entry as a defect in V3 or in the conversion.
 
-The expected-delete list starts empty. Add an entry, with its `kind`, `identity` and `reason`,
-only in a pull request where a reviewer accepts the reason.
-
-The plan summary on this build does not report records left out or problems, so the suite
-cannot count them. Until it can, the suite writes `gate-result.json` and then fails with
-"records left out and problems cannot be counted on this build", so it does not report a pass.
-Until then, a failure of this suite does not fail the nightly job: read its result in the
-`v2-gate` row and the gate line of the run summary.
+Add an entry to either list, with its reason, only in a pull request where a reviewer accepts
+the reason. A failure of this suite fails the nightly job.
 
 Run it from the repository root, with Docker running and no other development stack or NetBox
 in use, because the suite resets both:

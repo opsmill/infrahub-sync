@@ -12,5 +12,10 @@
 #     reason: <why V3 deletes this node and why the delete is correct>
 #
 # Add an entry only together with a reason that a reviewer accepts in the pull request that
-# adds it. The list starts empty.
-[]
+# adds it.
+- kind: IpamNamespace
+  identity: name=default
+  reason: >-
+    configs convert --live-schema adds an IpamNamespace mapping with no source endpoint, so the
+    plan finds no source record for Infrahub's built-in default namespace. Apply never executes a
+    delete.

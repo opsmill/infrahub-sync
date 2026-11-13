@@ -34,8 +34,13 @@ V2_PYNETBOX = "pynetbox==7.8.0"
 V2_EXAMPLE = ROOT / "tests" / "data" / "v2_examples" / "netbox_to_infrahub" / "config.yml"
 V2_GATE_BRANCH = "v2-gate"
 EXPECTED_DELETES = ROOT / "tests" / "data" / "v2_gate" / "expected_deletes.yml"
+EXPECTED_LEFT_OUT = ROOT / "tests" / "data" / "v2_gate" / "expected_left_out.yml"
 GATE_RESULT = "gate-result.json"
 UNCOUNTED = "records left out and problems cannot be counted on this build"
+# The cause `runs plan --left-out` prints for a record that depends on a left-out record.
+DEPENDS_ON_LEFT_OUT = "depends_on_left_out"
+_DEPENDS_ON_PREFIX = "depends on "
+_DEPENDS_ON_THROUGH = " through "
 DELETES_NOT_COMPUTED = "the plan did not compute delete operations, so an unexpected delete cannot be ruled out"
 # The value an update finding gives for a field whose current destination value was not read.
 NOT_READ = "<not read>"
@@ -372,17 +377,29 @@ def compare_plan(  # noqa: PLR0913 -- the plan detail, its summary and the lists
     current: dict[tuple[str, str], dict[str, Any]] | None = None,
     left_out: list[dict[str, Any]] | None = None,
     problems: list[dict[str, Any]] | None = None,
+    expected_left_out: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Compare the first V3 plan with the data v2 wrote; `None` means a list was not counted.
 
     `total` is the `operations:` total the plan summary printed and `deletes_computed` whether
     the plan computed deletes. `current` maps the kind and identity of each updated node to
     the current destination values of its fields, which are the values v2 wrote.
+    `left_out` and `problems` are entries from `report_entries`.
 
-    The gate passes only when the plan holds no create, no update, no delete missing from
-    the expected-delete list, when records left out and problems were counted and are 0,
-    when the detail lists as many operations as the total, and when deletes were computed.
+    The gate passes only when the plan holds no create and no update, when records left out
+    and problems were counted, when the detail lists as many operations as the total, when
+    deletes were computed, and when nothing else is unexpected (spec 012 FR-023):
+    - a record left out because of a problem, and a problem, must be on the expected left-out
+      list
+    - a record left out because it depends on a left-out record is accepted when that record
+      is accepted, through any number of steps
+    - a delete is accepted when it is on the expected-delete list, or when its kind has an
+      accepted record left out: v2 wrote those nodes under the identity that merged the
+      records, so no source record matches them
     """
+    unexpected, matched_left_out, accepted_dependents, accepted_kinds = _compare_left_out(
+        left_out, problems, expected_left_out or []
+    )
     expected = {(entry["kind"], identity_text(entry["identity"])): entry for entry in expected_deletes}
     counts: dict[str, int | None] = {
         "create": 0,
@@ -391,8 +408,8 @@ def compare_plan(  # noqa: PLR0913 -- the plan detail, its summary and the lists
         "left_out": None if left_out is None else len(left_out),
         "problems": None if problems is None else len(problems),
     }
-    unexpected: list[dict[str, Any]] = []
     matched: list[dict[str, Any]] = []
+    deletes_of_accepted_kinds = 0
     for operation in operations:
         action = operation["action"]
         counts[action] = (counts[action] or 0) + 1
@@ -400,6 +417,9 @@ def compare_plan(  # noqa: PLR0913 -- the plan detail, its summary and the lists
         if entry is not None:
             if entry not in matched:
                 matched.append(entry)
+            continue
+        if action == "delete" and operation["kind"] in accepted_kinds:
+            deletes_of_accepted_kinds += 1
             continue
         finding: dict[str, Any] = {
             "finding": action,
@@ -417,21 +437,92 @@ def compare_plan(  # noqa: PLR0913 -- the plan detail, its summary and the lists
             if operation.get("relationships"):
                 finding["relationships"] = operation["relationships"]
         unexpected.append(finding)
-    for label, findings in (("left_out", left_out), ("problem", problems)):
-        unexpected.extend(
-            {"finding": label, "kind": item.get("kind"), "identity": identity_text(item.get("identity", ""))}
-            for item in findings or ()
-        )
     complete = total == len(operations) and deletes_computed
     return {
         "counts": counts,
         "unexpected": unexpected,
         "expected_deletes_matched": matched,
+        "expected_left_out_matched": matched_left_out,
+        "left_out_dependents_accepted": accepted_dependents,
+        "deletes_of_accepted_kinds": deletes_of_accepted_kinds,
         "plan_total": total,
         "operations_listed": len(operations),
         "delete_operations_computed": deletes_computed,
         "passed": complete and left_out is not None and problems is not None and not unexpected,
     }
+
+
+def _compare_left_out(
+    left_out: list[dict[str, Any]] | None,
+    problems: list[dict[str, Any]] | None,
+    expected_left_out: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, set[str]]:
+    """Return the unexpected records left out and problems, the matched list entries, the
+    number of dependents accepted, and the kinds that have an accepted record left out."""
+    listed = {
+        (entry["list"], entry["type"], entry["kind"], identity_text(entry["identity"])): entry
+        for entry in expected_left_out or ()
+    }
+    unexpected: list[dict[str, Any]] = []
+    matched_left_out: list[dict[str, Any]] = []
+    accepted: set[tuple[str, str]] = set()
+    dependents: list[dict[str, Any]] = []
+    for label, findings in (("left_out", left_out), ("problem", problems)):
+        for item in findings or ():
+            identity = identity_text(item.get("identity", ""))
+            if label == "left_out" and item.get("type") == DEPENDS_ON_LEFT_OUT:
+                dependents.append(item)
+                continue
+            entry = listed.get((label, item.get("type"), item.get("kind"), identity))
+            if entry is None:
+                unexpected.append(_report_finding(label, item))
+                continue
+            if entry not in matched_left_out:
+                matched_left_out.append(entry)
+            if label == "left_out":
+                accepted.add((item.get("kind", ""), identity))
+    accepted_dependents = _accept_dependents(dependents, accepted)
+    unexpected.extend(_report_finding("left_out", item) for item in dependents if item not in accepted_dependents)
+    return unexpected, matched_left_out, len(accepted_dependents), {kind for kind, _identity in accepted}
+
+
+def _report_finding(label: str, item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "finding": label,
+        "type": item.get("type"),
+        "kind": item.get("kind"),
+        "identity": identity_text(item.get("identity", "")),
+        "text": item.get("text", ""),
+    }
+
+
+def depends_on(text: str) -> tuple[str, str] | None:
+    """Read the kind and identity that a `depends_on_left_out` line names.
+
+    The text is `depends on <kind> <identity> through <relationship>`.
+    """
+    if not text.startswith(_DEPENDS_ON_PREFIX) or _DEPENDS_ON_THROUGH not in text:
+        return None
+    named = text[len(_DEPENDS_ON_PREFIX) :].rsplit(_DEPENDS_ON_THROUGH, 1)[0]
+    kind, _, identity = named.partition(" ")
+    return kind, identity
+
+
+def _accept_dependents(dependents: list[dict[str, Any]], accepted: set[tuple[str, str]]) -> list[dict[str, Any]]:
+    """Accept, in place of `accepted`, each dependent whose record it depends on is accepted."""
+    result: list[dict[str, Any]] = []
+    pending = list(dependents)
+    while True:
+        remaining = []
+        for item in pending:
+            if depends_on(item.get("text", "")) in accepted:
+                accepted.add((item.get("kind", ""), identity_text(item.get("identity", ""))))
+                result.append(item)
+            else:
+                remaining.append(item)
+        if len(remaining) == len(pending):
+            return result
+        pending = remaining
 
 
 def gate_failure(result: dict[str, Any]) -> str:
@@ -457,6 +548,35 @@ def gate_failure(result: dict[str, Any]) -> str:
     if result["counts"]["left_out"] is None or result["counts"]["problems"] is None:
         reasons.append(UNCOUNTED)
     return "; ".join(reasons)
+
+
+def report_entries(output: str) -> list[dict[str, str]]:
+    """Read the lines `runs plan --left-out` or `--problems` prints: type, kind, identity and text."""
+    entries = []
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        first, kind, identity, text = ([*line.split("  ", 3), "", "", ""])[:4]
+        entries.append({"type": first, "kind": kind, "identity": identity, "text": text})
+    return entries
+
+
+def expected_left_out() -> list[dict[str, Any]]:
+    """Read the reviewed list of records left out and problems that the gate accepts (FR-023)."""
+    import yaml  # noqa: PLC0415 -- the summary and log steps run without the project's packages
+
+    entries = yaml.safe_load(EXPECTED_LEFT_OUT.read_text(encoding="utf-8")) or []
+    for entry in entries:
+        if not {"list", "type", "kind", "identity", "reason"} <= set(entry) or entry["list"] not in {
+            "left_out",
+            "problem",
+        }:
+            msg = (
+                f"{EXPECTED_LEFT_OUT.name} entry {entry} needs a list (left_out or problem), "
+                "a type, a kind, an identity and a reason"
+            )
+            raise ValueError(msg)
+    return entries
 
 
 def expected_deletes() -> list[dict[str, Any]]:
@@ -554,8 +674,8 @@ def v2_sync(work: Path, env: dict[str, str], context: dict[str, str]) -> Path:
     return project
 
 
-def v3_plan(project: Path, env: dict[str, str], context: dict[str, str]) -> tuple[str, str]:
-    """Convert the v2 configuration, register it, plan on the gate branch and read the plan detail."""
+def v3_plan(project: Path, env: dict[str, str], context: dict[str, str]) -> tuple[str, str, str, str]:
+    """Convert, register and plan on the gate branch; return the run, its detail, left-out and problem lists."""
     convert_env = {
         **env,
         "NETBOX_ADDRESS": context["netbox_address"],
@@ -600,7 +720,10 @@ def v3_plan(project: Path, env: dict[str, str], context: dict[str, str]) -> tupl
     if completed.get("outcome") != "planned":
         msg = f"the gate diff run ended with {completed.get('outcome', 'no outcome')}"
         raise RuntimeError(msg)
-    return run_id, run(*cli, "runs", "plan", run_id, "--detail", env=env, capture=True)
+    detail = run(*cli, "runs", "plan", run_id, "--detail", env=env, capture=True)
+    left_out = run(*cli, "runs", "plan", run_id, "--left-out", env=env, capture=True)
+    problems = run(*cli, "runs", "plan", run_id, "--problems", env=env, capture=True)
+    return run_id, detail, left_out, problems
 
 
 def v2_gate(env: dict[str, str], context: dict[str, str]) -> None:
@@ -610,7 +733,7 @@ def v2_gate(env: dict[str, str], context: dict[str, str]) -> None:
     run("uv", "run", "--no-sync", "infrahubctl", "branch", "create", V2_GATE_BRANCH, env=env)
     with tempfile.TemporaryDirectory(prefix="v2-gate-") as work:
         project = v2_sync(Path(work), env, context)
-        run_id, detail = v3_plan(project, env, context)
+        run_id, detail, left_out, problems = v3_plan(project, env, context)
     operations = plan_operations(detail)
     summary = plan_summary(detail)
     current = (
@@ -618,13 +741,15 @@ def v2_gate(env: dict[str, str], context: dict[str, str]) -> None:
         if any(operation["action"] == "update" for operation in operations)
         else {}
     )
-    # Pass `left_out=` and `problems=` once the plan summary reports them.
     result = compare_plan(
         operations,
         expected_deletes(),
         total=summary["total"],
         deletes_computed=summary["delete_operations_computed"],
         current=current,
+        left_out=report_entries(left_out),
+        problems=report_entries(problems),
+        expected_left_out=expected_left_out(),
     )
     REPORTS.mkdir(parents=True, exist_ok=True)
     (REPORTS / GATE_RESULT).write_text(

@@ -327,3 +327,15 @@ Nothing was unexpected, and the gate passed. On branch 010 the NetBox teardown t
 
 Decided by the product owner on 2026-11-13: the gate pins v2 `2.0.1` from PyPI, with no plan to
 move to `2.0.2`. It keeps running the NetBox example of the `2.0.2` tag.
+
+## 12. T031 lands (2026-11-14)
+
+Spec 020 merged into `feature/v3-develop` (#409, `cdaefbee`). This branch merged it, and then
+took from `scratch/012-on-010`, in one commit:
+
+- T031: the gate reads `runs plan --left-out` and `--problems`
+- the reviewed lists `expected_left_out.yml` and `expected_deletes.yml`
+- the rule that accepts dependents of listed records and deletes of their kinds
+
+The gate's outcome is again among the outcomes that fail the nightly job. All 40 tasks are
+done.

@@ -143,22 +143,127 @@ def test_compare_passes_when_only_listed_deletes_remain(runner: ModuleType, iden
 
 
 def test_compare_records_left_out_records_and_problems(runner: ModuleType) -> None:
-    """Records left out and problems, once the plan reports them, are findings."""
+    """Records left out and problems that are not on the reviewed list are findings."""
     result = runner.compare_plan(
         [],
         [],
         total=0,
         deletes_computed=True,
-        left_out=[{"kind": "DcimDevice", "identity": {"name": "edge"}}],
-        problems=[{"kind": "LocationSite", "identity": "name=MDF"}],
+        left_out=[{"type": "has_problem", "kind": "DcimDevice", "identity": "name=edge", "text": "has x"}],
+        problems=[{"type": "wrong_value_type", "kind": "LocationSite", "identity": "name=MDF", "text": "why"}],
     )
     assert result["counts"]["left_out"] == 1
     assert result["counts"]["problems"] == 1
-    assert result["unexpected"] == [
-        {"finding": "left_out", "kind": "DcimDevice", "identity": "name=edge"},
-        {"finding": "problem", "kind": "LocationSite", "identity": "name=MDF"},
+    assert [(item["finding"], item["type"], item["kind"], item["identity"]) for item in result["unexpected"]] == [
+        ("left_out", "has_problem", "DcimDevice", "name=edge"),
+        ("problem", "wrong_value_type", "LocationSite", "name=MDF"),
     ]
     assert result["passed"] is False
+
+
+def test_listed_left_out_records_and_problems_pass(runner: ModuleType) -> None:
+    """A record left out or a problem on the reviewed list is accepted, matched on list, type, kind and identity."""
+    listed = [
+        {
+            "list": "left_out",
+            "type": "has_problem",
+            "kind": "DcimDevice",
+            "identity": {"name": "PP:MDF"},
+            "reason": "r",
+        },
+        {
+            "list": "problem",
+            "type": "destination_identity_collision",
+            "kind": "DcimDevice",
+            "identity": "name=PP:MDF",
+            "reason": "r",
+        },
+    ]
+    result = runner.compare_plan(
+        [],
+        [],
+        total=0,
+        deletes_computed=True,
+        left_out=[{"type": "has_problem", "kind": "DcimDevice", "identity": "name=PP:MDF"}],
+        problems=[{"type": "destination_identity_collision", "kind": "DcimDevice", "identity": "name=PP:MDF"}],
+        expected_left_out=listed,
+    )
+    assert result["unexpected"] == []
+    assert result["expected_left_out_matched"] == listed
+    assert result["passed"] is True
+
+
+def test_report_entries_read_the_four_columns(runner: ModuleType) -> None:
+    output = "has_problem  DcimDevice  name=PP:MDF  has destination_identity_collision\n\n"
+    assert runner.report_entries(output) == [
+        {
+            "type": "has_problem",
+            "kind": "DcimDevice",
+            "identity": "name=PP:MDF",
+            "text": "has destination_identity_collision",
+        }
+    ]
+
+
+def test_expected_left_out_list_holds_the_merged_kinds_with_reasons(runner: ModuleType) -> None:
+    """The reviewed list names only records of the three kinds v2 merged, each with a reason."""
+    entries = runner.expected_left_out()
+    assert {entry["kind"] for entry in entries} == {"LocationRack", "IpamVLAN", "DcimDevice"}
+    assert all(entry["reason"] for entry in entries)
+    assert all(entry["type"] != runner.DEPENDS_ON_LEFT_OUT for entry in entries)
+
+
+_RACK = {"list": "left_out", "type": "has_problem", "kind": "LocationRack", "identity": "name=CC site=a", "reason": "r"}
+
+
+def _dependent(kind: str, identity: str, on_kind: str, on_identity: str) -> dict[str, str]:
+    return {
+        "type": "depends_on_left_out",
+        "kind": kind,
+        "identity": identity,
+        "text": f"depends on {on_kind} {on_identity} through parent",
+    }
+
+
+def test_dependents_of_a_listed_record_are_accepted_through_several_steps(runner: ModuleType) -> None:
+    left_out = [
+        {"type": "has_problem", "kind": "LocationRack", "identity": "name=CC site=a"},
+        _dependent("InterfacePhysical", "device=d1 name=eth0", "DcimDevice", "location=CC,a name=d1"),
+        _dependent("DcimDevice", "location=CC,a name=d1", "LocationRack", "name=CC site=a"),
+    ]
+    deletes = [
+        {"action": "delete", "kind": "DcimDevice", "identity": "location=CC,b name=d1"},
+        {"action": "delete", "kind": "InterfacePhysical", "identity": "device=x name=eth0"},
+    ]
+    result = runner.compare_plan(
+        deletes, [], total=2, deletes_computed=True, left_out=left_out, problems=[], expected_left_out=[_RACK]
+    )
+    assert result["unexpected"] == []
+    assert result["left_out_dependents_accepted"] == 2
+    assert result["deletes_of_accepted_kinds"] == 2
+    assert result["passed"] is True
+
+
+def test_dependent_of_an_unlisted_record_and_other_deletes_are_findings(runner: ModuleType) -> None:
+    left_out = [
+        {"type": "has_problem", "kind": "LocationRack", "identity": "name=CC site=a"},
+        _dependent("DcimDevice", "location=X name=d2", "LocationRack", "name=X site=b"),
+    ]
+    deletes = [{"action": "delete", "kind": "LocationSite", "identity": "name=gone"}]
+    result = runner.compare_plan(
+        deletes, [], total=1, deletes_computed=True, left_out=left_out, problems=[], expected_left_out=[_RACK]
+    )
+    assert [(item["finding"], item["kind"]) for item in result["unexpected"]] == [
+        ("left_out", "DcimDevice"),
+        ("delete", "LocationSite"),
+    ]
+    assert result["passed"] is False
+
+
+def test_depends_on_reads_the_kind_and_identity(runner: ModuleType) -> None:
+    text = "depends on DcimDevice location=Comms closet,dm-akron name=r1 through device"
+    assert runner.depends_on(text) == ("DcimDevice", "location=Comms closet,dm-akron name=r1")
+    assert runner.depends_on("has destination_identity_collision") is None
 
 
 def test_an_empty_plan_does_not_pass_until_left_out_and_problems_are_counted(runner: ModuleType) -> None:
@@ -290,9 +395,11 @@ def test_current_values_writes_a_value_that_is_not_json_as_text(runner: ModuleTy
     assert runner.current_values(plan, client) == {("IpamIPAddress", "address=10.0.0.1/24"): {"address": "10.0.0.1/24"}}
 
 
-def test_expected_delete_list_is_reviewed_and_starts_empty(runner: ModuleType) -> None:
-    """The shipped list holds no delete, so every delete fails the gate until a reviewer adds one."""
-    assert runner.expected_deletes() == []
+def test_expected_delete_list_holds_only_the_default_namespace(runner: ModuleType) -> None:
+    """The shipped list holds the one delete that `--live-schema` causes, with its reason."""
+    entries = runner.expected_deletes()
+    assert [(entry["kind"], entry["identity"]) for entry in entries] == [("IpamNamespace", "name=default")]
+    assert "--live-schema" in entries[0]["reason"]
 
 
 def test_expected_delete_entry_needs_a_reason(
@@ -309,8 +416,10 @@ def test_expected_delete_entry_needs_a_reason(
 class FakeCli:
     """Answer the gate's commands as the CLIs would, and keep what each v2 run read."""
 
-    def __init__(self, plan: str) -> None:
+    def __init__(self, plan: str, left_out: str = "", problems: str = "") -> None:
         self.plan = plan
+        self.left_out = left_out
+        self.problems = problems
         self.calls: list[tuple[tuple[str, ...], dict[str, str]]] = []
         self.read: dict[str, Any] = {}
 
@@ -345,6 +454,8 @@ class FakeCli:
             # `plan --config-id` creates the run; `runs plan` reads its detail.
             "--config-id": "run_id: gate-1\n",
             "show": "outcome: planned\n",
+            "--left-out": self.left_out,
+            "--problems": self.problems,
             "plan": self.plan,
         }
         return next((answer for word, answer in answers.items() if word in command), "")
@@ -377,7 +488,7 @@ def test_v2_gate_runs_v2_from_pypi_on_the_gate_branch(runner: ModuleType, monkey
     """v2 2.0.1 from PyPI generates and syncs the example once, isolated from the repository's settings."""
     cli = FakeCli(SAMPLE.read_text(encoding="utf-8"))
     monkeypatch.setattr(runner, "run", cli)
-    with pytest.raises(RuntimeError, match="create=1, update=1, delete=2"):
+    with pytest.raises(RuntimeError, match="create=1, update=1, delete=1"):
         runner.v2_gate(GATE_ENV, CONTEXT)
     commands = cli.commands
     assert commands[0] == ("uv", "run", "--no-sync", "infrahubctl", "branch", "create", "v2-gate")
@@ -403,7 +514,7 @@ def test_v2_gate_plans_the_converted_package_and_keeps_the_result(
     """The conversion reads the addresses from the v2 variables, and the result names what was compared."""
     cli = FakeCli(SAMPLE.read_text(encoding="utf-8"))
     monkeypatch.setattr(runner, "run", cli)
-    with pytest.raises(RuntimeError, match="create=1, update=1, delete=2"):
+    with pytest.raises(RuntimeError, match="create=1, update=1, delete=1"):
         runner.v2_gate(GATE_ENV, CONTEXT)
     convert, convert_env = cli.calls[3]
     assert convert[4:6] == ("configs", "convert")
@@ -417,12 +528,16 @@ def test_v2_gate_plans_the_converted_package_and_keeps_the_result(
     assert register[4:6] == ("configs", "register")
     assert register[6].endswith("package.yml")
     assert plan[plan.index("--branch") + 1] == "v2-gate"
-    assert cli.commands[-1][4:] == ("runs", "plan", "gate-1", "--detail")
+    assert [command[4:] for command in cli.commands[-3:]] == [
+        ("runs", "plan", "gate-1", "--detail"),
+        ("runs", "plan", "gate-1", "--left-out"),
+        ("runs", "plan", "gate-1", "--problems"),
+    ]
     result = json.loads((runner.REPORTS / "gate-result.json").read_text(encoding="utf-8"))
     assert result["v2_version"] == "2.0.1"
     assert result["infrahub_version"] == "1.10.6"
     assert result["dataset"] == {"name": "demo", "commit": "commit", "sha256": "digest"}
-    assert result["counts"] == {"create": 1, "update": 1, "delete": 2, "left_out": None, "problems": None}
+    assert result["counts"] == {"create": 1, "update": 1, "delete": 2, "left_out": 0, "problems": 0}
     assert result["passed"] is False
     assert destination == [(GATE_ENV, CONTEXT)]
     update = next(item for item in result["unexpected"] if item["finding"] == "update")
@@ -432,23 +547,38 @@ def test_v2_gate_plans_the_converted_package_and_keeps_the_result(
     ]
 
 
-def test_v2_gate_stops_on_an_empty_plan_because_left_out_and_problems_are_not_counted(
+def test_v2_gate_passes_on_an_empty_plan(
     runner: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
     destination: list[tuple[dict[str, str], dict[str, str]]],
 ) -> None:
-    """With no differences found, the gate still stops rather than report a pass it did not check."""
+    """No operation, no record left out and no problem: the gate passes."""
     monkeypatch.setattr(
         runner,
         "run",
         FakeCli("run_id: gate-1\noperations: 0\ndelete_operations_computed: true\nby_action: \nby_kind: \n"),
     )
-    with pytest.raises(RuntimeError, match=f"^{runner.UNCOUNTED}$"):
+    runner.v2_gate(GATE_ENV, CONTEXT)
+    result = json.loads((runner.REPORTS / "gate-result.json").read_text(encoding="utf-8"))
+    assert result["passed"] is True
+    assert result["counts"]["left_out"] == 0
+    assert destination == []
+
+
+def test_v2_gate_fails_on_an_unlisted_record_left_out(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A record left out that is not on the reviewed list fails the gate and is recorded."""
+    monkeypatch.setattr(
+        runner,
+        "run",
+        FakeCli(
+            "run_id: gate-1\noperations: 0\ndelete_operations_computed: true\nby_action: \nby_kind: \n",
+            left_out="has_problem  DcimDevice  name=PP:MDF  has destination_identity_collision\n",
+        ),
+    )
+    with pytest.raises(RuntimeError, match="left_out=1"):
         runner.v2_gate(GATE_ENV, CONTEXT)
     result = json.loads((runner.REPORTS / "gate-result.json").read_text(encoding="utf-8"))
-    assert result["passed"] is False
-    assert result["unexpected"] == []
-    assert destination == []
+    assert result["unexpected"][0]["identity"] == "name=PP:MDF"
 
 
 def test_v2_gate_removes_the_previous_result_when_an_early_step_fails(

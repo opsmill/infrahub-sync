@@ -1,0 +1,368 @@
+---
+# Records left out and problems that the v2-to-V3 plan gate accepts (spec 012 FR-023).
+#
+# Each entry is a record that the destination schema cannot represent: Infrahub identifies its
+# kind by fewer fields than NetBox, so several NetBox records map to one Infrahub node. Records
+# that depend on a listed record, and deletes of nodes of the same kinds, are accepted without
+# their own entry. List one only with a reason a reviewer accepts.
+#
+# Entry format:
+#
+#   - list: <left_out or problem>
+#     type: <first column of `runs plan --left-out` or `--problems`>
+#     kind: <destination node kind>
+#     identity: <identity as the list prints it>
+#     reason: <why the record cannot be represented>
+#
+# Written from the first complete gate run on 2026-11-13: v2 2.0.1, the pinned NetBox demo
+# dataset, spec 020 at 602cabab.
+- list: left_out
+  type: has_problem
+  kind: DcimDevice
+  identity: "location=IDF117,ncsu-117 name=PP:MDF"
+  reason: >-
+    NetBox device names are unique only together with the site and the rack; Infrahub identifies a
+    device by its name only, so the three devices named 'PP:MDF' map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: DcimDevice
+  identity: "location=IDF118,ncsu-118 name=PP:MDF"
+  reason: >-
+    NetBox device names are unique only together with the site and the rack; Infrahub identifies a
+    device by its name only, so the three devices named 'PP:MDF' map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: DcimDevice
+  identity: "location=IDF128,ncsu-128 name=PP:MDF"
+  reason: >-
+    NetBox device names are unique only together with the site and the rack; Infrahub identifies a
+    device by its name only, so the three devices named 'PP:MDF' map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Admin vlan_group=JBB104 vlan_id=204"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Admin vlan_group=JBB109 vlan_id=204"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Admin vlan_group=JBB115 vlan_id=204"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Admin vlan_group=JBB120 vlan_id=204"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Admin vlan_group=JBB127 vlan_id=204"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Admin vlan_group=JBB133 vlan_id=204"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Data vlan_group=JBB104 vlan_id=201"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Data vlan_group=JBB109 vlan_id=201"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Data vlan_group=JBB115 vlan_id=201"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Data vlan_group=JBB120 vlan_id=201"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Data vlan_group=JBB127 vlan_id=201"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Data vlan_group=JBB133 vlan_id=201"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Voice vlan_group=JBB104 vlan_id=202"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Voice vlan_group=JBB109 vlan_id=202"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Voice vlan_group=JBB115 vlan_id=202"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Voice vlan_group=JBB120 vlan_id=202"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Voice vlan_group=JBB127 vlan_id=202"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Voice vlan_group=JBB133 vlan_id=202"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Wireless vlan_group=JBB104 vlan_id=203"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Wireless vlan_group=JBB109 vlan_id=203"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Wireless vlan_group=JBB115 vlan_id=203"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Wireless vlan_group=JBB120 vlan_id=203"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Wireless vlan_group=JBB127 vlan_id=203"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: IpamVLAN
+  identity: "name=Wireless vlan_group=JBB133 vlan_id=203"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: left_out
+  type: has_problem
+  kind: LocationRack
+  identity: "name=Comms closet site=dm-akron"
+  reason: >-
+    NetBox rack names are unique per site; Infrahub identifies a rack by its name only, so the 12
+    racks named 'Comms closet' map to one node, which v2 merged into the rack at dm-yonkers
+- list: left_out
+  type: has_problem
+  kind: LocationRack
+  identity: "name=Comms closet site=dm-albany"
+  reason: >-
+    NetBox rack names are unique per site; Infrahub identifies a rack by its name only, so the 12
+    racks named 'Comms closet' map to one node, which v2 merged into the rack at dm-yonkers
+- list: left_out
+  type: has_problem
+  kind: LocationRack
+  identity: "name=Comms closet site=dm-binghamton"
+  reason: >-
+    NetBox rack names are unique per site; Infrahub identifies a rack by its name only, so the 12
+    racks named 'Comms closet' map to one node, which v2 merged into the rack at dm-yonkers
+- list: left_out
+  type: has_problem
+  kind: LocationRack
+  identity: "name=Comms closet site=dm-buffalo"
+  reason: >-
+    NetBox rack names are unique per site; Infrahub identifies a rack by its name only, so the 12
+    racks named 'Comms closet' map to one node, which v2 merged into the rack at dm-yonkers
+- list: left_out
+  type: has_problem
+  kind: LocationRack
+  identity: "name=Comms closet site=dm-camden"
+  reason: >-
+    NetBox rack names are unique per site; Infrahub identifies a rack by its name only, so the 12
+    racks named 'Comms closet' map to one node, which v2 merged into the rack at dm-yonkers
+- list: left_out
+  type: has_problem
+  kind: LocationRack
+  identity: "name=Comms closet site=dm-nashua"
+  reason: >-
+    NetBox rack names are unique per site; Infrahub identifies a rack by its name only, so the 12
+    racks named 'Comms closet' map to one node, which v2 merged into the rack at dm-yonkers
+- list: left_out
+  type: has_problem
+  kind: LocationRack
+  identity: "name=Comms closet site=dm-pittsfield"
+  reason: >-
+    NetBox rack names are unique per site; Infrahub identifies a rack by its name only, so the 12
+    racks named 'Comms closet' map to one node, which v2 merged into the rack at dm-yonkers
+- list: left_out
+  type: has_problem
+  kind: LocationRack
+  identity: "name=Comms closet site=dm-rochester"
+  reason: >-
+    NetBox rack names are unique per site; Infrahub identifies a rack by its name only, so the 12
+    racks named 'Comms closet' map to one node, which v2 merged into the rack at dm-yonkers
+- list: left_out
+  type: has_problem
+  kind: LocationRack
+  identity: "name=Comms closet site=dm-scranton"
+  reason: >-
+    NetBox rack names are unique per site; Infrahub identifies a rack by its name only, so the 12
+    racks named 'Comms closet' map to one node, which v2 merged into the rack at dm-yonkers
+- list: left_out
+  type: has_problem
+  kind: LocationRack
+  identity: "name=Comms closet site=dm-stamford"
+  reason: >-
+    NetBox rack names are unique per site; Infrahub identifies a rack by its name only, so the 12
+    racks named 'Comms closet' map to one node, which v2 merged into the rack at dm-yonkers
+- list: left_out
+  type: has_problem
+  kind: LocationRack
+  identity: "name=Comms closet site=dm-syracuse"
+  reason: >-
+    NetBox rack names are unique per site; Infrahub identifies a rack by its name only, so the 12
+    racks named 'Comms closet' map to one node, which v2 merged into the rack at dm-yonkers
+- list: left_out
+  type: has_problem
+  kind: LocationRack
+  identity: "name=Comms closet site=dm-utica"
+  reason: >-
+    NetBox rack names are unique per site; Infrahub identifies a rack by its name only, so the 12
+    racks named 'Comms closet' map to one node, which v2 merged into the rack at dm-yonkers
+- list: problem
+  type: destination_identity_collision
+  kind: DcimDevice
+  identity: "location=IDF117,ncsu-117 name=PP:MDF"
+  reason: >-
+    NetBox device names are unique only together with the site and the rack; Infrahub identifies a
+    device by its name only, so the three devices named 'PP:MDF' map to one node, which v2 merged
+- list: problem
+  type: destination_identity_collision
+  kind: IpamVLAN
+  identity: "name=Admin vlan_group=JBB104 vlan_id=204"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: problem
+  type: destination_identity_collision
+  kind: IpamVLAN
+  identity: "name=Data vlan_group=JBB104 vlan_id=201"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: problem
+  type: destination_identity_collision
+  kind: IpamVLAN
+  identity: "name=Voice vlan_group=JBB104 vlan_id=202"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: problem
+  type: destination_identity_collision
+  kind: IpamVLAN
+  identity: "name=Wireless vlan_group=JBB104 vlan_id=203"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: problem
+  type: destination_identity_collision
+  kind: LocationRack
+  identity: "name=Comms closet site=dm-akron"
+  reason: >-
+    NetBox rack names are unique per site; Infrahub identifies a rack by its name only, so the 12
+    racks named 'Comms closet' map to one node, which v2 merged into the rack at dm-yonkers
+- list: problem
+  type: identities_merge_in_destination
+  kind: DcimDevice
+  identity: "location=IDF117,ncsu-117 name=PP:MDF"
+  reason: >-
+    NetBox device names are unique only together with the site and the rack; Infrahub identifies a
+    device by its name only, so the three devices named 'PP:MDF' map to one node, which v2 merged
+- list: problem
+  type: identities_merge_in_destination
+  kind: IpamVLAN
+  identity: "name=Admin vlan_group=JBB104 vlan_id=204"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: problem
+  type: identities_merge_in_destination
+  kind: IpamVLAN
+  identity: "name=Data vlan_group=JBB104 vlan_id=201"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: problem
+  type: identities_merge_in_destination
+  kind: IpamVLAN
+  identity: "name=Voice vlan_group=JBB104 vlan_id=202"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
+- list: problem
+  type: identities_merge_in_destination
+  kind: IpamVLAN
+  identity: "name=Wireless vlan_group=JBB104 vlan_id=203"
+  reason: >-
+    NetBox VLANs are unique per VLAN group; Infrahub identifies a VLAN by fewer fields, so the
+    same name and VLAN ID in six VLAN groups map to one node, which v2 merged
