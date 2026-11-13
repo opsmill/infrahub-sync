@@ -30,9 +30,11 @@ three adapters, and the Sync services trusted only the public roots of the image
   adapter pages use. A name that is not on the list does not reach the worker.
 - **CA certificates.** An operator names a host directory of PEM files with
   `INFRAHUB_SYNC_CA_CERTIFICATES`. `sync-bootstrap`, `sync-api` and `sync-worker` mount it
-  read-only. Unset, they mount an empty named volume. At start, each process writes one bundle
-  of the public roots and those files to its scratch directory and points the trust variables
-  of its client libraries at it. A file that holds a private key stops the process.
+  read-only. Unset, they mount an empty named volume. At start, when the directory holds
+  certificate files, each process writes one bundle of the public roots and those files to its
+  scratch directory and points the trust variables of its client libraries at it. With no
+  certificate file, it writes no bundle and changes no trust variable. A file that holds a
+  private key stops the process.
 
 ## Consequences
 
@@ -43,7 +45,8 @@ three adapters, and the Sync services trusted only the public roots of the image
   adapter that need different credentials under unlisted names cannot both run.
 - An unreadable or private-key certificate file stops a process at start, naming the file.
 - Moving to an external store does not move earlier files.
-- `sync-bootstrap` sends four more S3 requests per start.
+- `sync-bootstrap` sends three more S3 requests per start when the bucket exists, and four more
+  when it creates the bucket.
 
 ## Alternatives considered
 
