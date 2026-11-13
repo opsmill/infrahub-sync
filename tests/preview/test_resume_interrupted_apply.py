@@ -175,7 +175,9 @@ def test_a_killed_apply_resumes_to_the_state_of_an_uninterrupted_apply(preview_e
         killed = True
         interrupted = _poll(
             lambda: client.get_run(run_id),
-            lambda resource: resource.run.phase == "apply-interrupted",
+            # The liveness monitor ends a killed worker's run with the phase `interrupted`; a
+            # worker that fails on its own ends it with `apply-interrupted`.
+            lambda resource: resource.run.phase in {"interrupted", "apply-interrupted"},
             INTERRUPTED_TIMEOUT_SECONDS,
         )
         assert interrupted.run.reconciliation_required is True

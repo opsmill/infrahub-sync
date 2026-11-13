@@ -14,8 +14,10 @@ brief was confirmed by the user. The brief is compared with this specification i
 
 An apply writes the operations of a saved plan to the destination one at a time, in one fixed order, and stops at
 the first failure. When a write may have reached the destination and the apply then fails — the worker is killed, the
-session is lost, the run is cancelled during the write — the run ends with the phase `apply-interrupted` or
-`sync-interrupted`, the execution outcome `ambiguous`, and `reconciliation_required` set (ADR 0010). Nothing clears
+session is lost, the run is cancelled during the write — the run ends with the execution outcome `ambiguous` and
+`reconciliation_required` set (ADR 0010). A worker that fails on its own ends the run with the phase
+`apply-interrupted` or `sync-interrupted`. A killed worker ends it with the phase `interrupted`, which the liveness
+monitor sets. Nothing clears
 that state. The only remedy is for the operator to inspect the destination, create a new plan and apply it.
 
 On a large import this repeats hours of work. A first sync of the tier L benchmark (87,815 objects) takes about

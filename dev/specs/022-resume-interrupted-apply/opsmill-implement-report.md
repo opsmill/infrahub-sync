@@ -1,7 +1,7 @@
 # Implementation report: Resume an interrupted apply
 
-**Status**: INCOMPLETE. All code tasks and review fixes are done, and the PostgreSQL store tests pass. The stack test
-(T034) and the benchmarks (T035) have not run, because they need infrastructure.
+**Status**: INCOMPLETE. All code tasks and review fixes are done, the PostgreSQL store tests pass and the stack test
+(T034) passes. Only the benchmarks (T035) have not run; they need the tier M and L datasets.
 
 - **Spec directory**: `dev/specs/022-resume-interrupted-apply/`
 - **Branch**: `022-resume-interrupted-apply`, stacked on `020-plan-problem-reporting` (PR #409), which was merged in at
@@ -32,10 +32,18 @@
   deselected`, with no test skipped. It printed
   `PASSED tests/product_store/test_resume_admissions.py::test_exactly_one_of_two_concurrent_resumes_is_admitted[postgresql]`,
   and the PostgreSQL cases added by the review fixes also passed. The whole PostgreSQL suite ran at head `e1abfad5`.
-- **T034 (not run)**: `tests/preview/test_resume_interrupted_apply.py` is written but was never run, because no stack
-  was running. It targets the preview stack, which PR #412 removes. The steps for the development stack are in
-  `tasks.md` under T034, and apply once #412 is merged into this branch. It is also the first run of the `verify`
-  destination filters against a live Infrahub.
+- **T034 (passed 2026-11-13T16:41:45Z)**: `INFRAHUB_SYNC_SMOKE_STACK=dev ... uv run pytest -m integration -rA
+  tests/preview/test_resume_interrupted_apply.py` reported `1 passed in 153.25s` on the development stack, with the
+  local NetBox `demo` dataset.
+  - The worker was killed at marker position 500 of 1,688 operations.
+  - `verify` passed; this was the first run of its destination read against a live Infrahub.
+  - The resume wrote the remaining 1,187 operations, and the run ended `applied` with `reconciliation_required`
+    cleared.
+  - The new plan held 0 creates and 0 updates.
+  - The first attempt found a test bug: a killed worker's run ends in phase `interrupted`, set by the liveness
+    monitor, not `apply-interrupted`. The test now accepts both phases, and spec.md is corrected.
+  - The test file moves to `tests/dev_stack/smoke/` when PR #412 is merged into this branch.
+  - Not checked: `verify`'s per-operation results on the live stack, because the test does not keep the CLI output.
 - **T035**: the SC-003 and SC-004 benchmarks need the tier M and L datasets. The baseline runs at `5f005776`.
 
 ## Review findings
