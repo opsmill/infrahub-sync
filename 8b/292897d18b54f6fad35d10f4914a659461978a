@@ -1,0 +1,27 @@
+tests/service/test_compose_bootstrap.py
+  s_3defe6e8bcd0ab::t_36ff1158b92d7c 603-611,613,616,621-630
+  s_3defe6e8bcd0ab::t_f1248b41400183 631-632
+infrahub_sync/service/bootstrap.py
+  s_3defe6e8bcd0ab::t_dc1b9ccacfdab0 212,217-218
+  s_3defe6e8bcd0ab::t_36ff1158b92d7c 205-207,213-216,219-233
+docs/docs/compose-deployment.mdx
+  s_3defe6e8bcd0ab::t_dc1b9ccacfdab0 373-375
+dev/specs/021-compose-store-credentials-ca/contracts/bootstrap-and-startup.md
+  s_3defe6e8bcd0ab::t_0d1db28ffd743f 25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8b292897d18b54f6fad35d10f4914a659461978a",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
