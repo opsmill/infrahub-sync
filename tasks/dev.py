@@ -18,6 +18,9 @@ process in the background. `dev.smoke` notices this mode from the running contai
 (the Prefect server runs, no `sync-api` container does) and first checks both host
 processes through the Sync API's `GET /status`.
 
+`dev.frontend` runs the web interface's development server on the host, in the
+foreground, against the Sync API of either mode.
+
 The image tag is `infrahub-sync:dev` unless `SYNC_IMAGE` names another one.
 
 Every setting the tasks print or use comes from `dev_settings()`, which asks Compose to
@@ -50,7 +53,7 @@ from invoke import Collection, Context, task
 
 from .netbox import DEV_STACK_PROJECT, WORKER_INFRAHUB_URL, attach_dev_worker, connect_dev_worker, load_netbox_env
 from .smoke_dataset import load_smoke_dataset
-from .utils import ESCAPED_REPO_PATH, REPO_BASE
+from .utils import ESCAPED_REPO_PATH, REPO_BASE, escape_path
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -118,6 +121,14 @@ BUNDLED_STORE_SERVICE = "object-store"
 BUNDLED_STORE_VARIABLE = "INFRAHUB_SYNC_BUNDLED_OBJECT_STORE"
 # Where each process reads CA certificates; in the containers, the CA mount's path.
 CA_DIRECTORY_VARIABLE = "INFRAHUB_SYNC_CA_DIRECTORY"
+# The web interface: its directory, the submodule that holds `@infrahub/ui`, the variables
+# its development server reads (the same names as the CLI's) and the address it serves.
+FRONTEND_DIRECTORY = "frontend"
+FRONTEND_SUBMODULE = "frontend/vendor/infrahub"
+FRONTEND_UI_PACKAGE = "frontend/vendor/infrahub/frontend/packages/ui"
+FRONTEND_URL_VARIABLE = "INFRAHUB_SYNC_API_URL"
+FRONTEND_TOKEN_VARIABLE = "INFRAHUB_SYNC_API_TOKEN"  # noqa: S105 -- a variable name
+FRONTEND_URL = "http://localhost:3000"
 # The `/status` worker states that mean a worker takes runs (see `service._service_status`).
 AVAILABLE_WORKER_STATES = frozenset({"ready", "busy"})
 
@@ -874,6 +885,64 @@ def dev_worker(context: Context) -> None:
         context.run(worker_command(settings), env=environment, pty=True)
 
 
+def frontend_token(bearer_tokens: str, shell_token: str = "") -> str:
+    """Return the bearer token the web interface's development server sends to the Sync API.
+
+    A token the shell exports as INFRAHUB_SYNC_API_TOKEN wins. Otherwise the stack's
+    principals decide: the public development token when a principal has it, or the token
+    of the only principal. With several principals and none of them the development one,
+    the task cannot choose, so it asks for the variable. The token is never printed.
+    """
+    if shell_token:
+        return shell_token
+    try:
+        principals = json.loads(bearer_tokens)
+    except ValueError:
+        principals = None
+    tokens = (
+        [
+            str(principal["token"])
+            for principal in principals.values()
+            if isinstance(principal, dict) and principal.get("token")
+        ]
+        if isinstance(principals, dict)
+        else []
+    )
+    if API_TOKEN in tokens:
+        return API_TOKEN
+    if len(tokens) == 1:
+        return tokens[0]
+    msg = f"Cannot choose a principal from BEARER_TOKENS; export {FRONTEND_TOKEN_VARIABLE} with the token to use"
+    raise DevStackError(msg)
+
+
+def _frontend_submodule_present() -> bool:
+    return (REPO_BASE / FRONTEND_UI_PACKAGE / "package.json").is_file()
+
+
+@task(name="frontend")
+def dev_frontend(context: Context) -> None:
+    """Run the web interface's development server on the host, against the stack's Sync API.
+
+    Fetches the `frontend/vendor/infrahub` submodule when it is missing (a checkout it
+    already holds is left as it is), installs the locked dependencies, then runs `pnpm dev`
+    in the foreground. The server forwards `/api` to the Sync API with the bearer token;
+    the token stays in the server process and never reaches the browser bundle.
+    """
+    settings = dev_settings(context)
+    environment = {
+        FRONTEND_URL_VARIABLE: settings.sync_api_url,
+        FRONTEND_TOKEN_VARIABLE: frontend_token(settings.bearer_tokens, os.environ.get(FRONTEND_TOKEN_VARIABLE, "")),
+    }
+    if not _frontend_submodule_present():
+        with context.cd(ESCAPED_REPO_PATH):
+            context.run(f"git submodule update --init {FRONTEND_SUBMODULE}", pty=True)
+    with context.cd(escape_path(REPO_BASE / FRONTEND_DIRECTORY)):
+        context.run("pnpm install --frozen-lockfile", pty=True)
+        print(f" - [{NAMESPACE}] Web interface on {FRONTEND_URL}, Sync API {settings.sync_api_url}; Ctrl-C stops it")
+        context.run("pnpm dev", env=environment, pty=True)
+
+
 def _publication_address(publication: Publication | None) -> str:
     return publication.address if publication is not None else "not published"
 
@@ -892,4 +961,5 @@ ns = Collection(
     dev_deps,
     dev_api,
     dev_worker,
+    dev_frontend,
 )
