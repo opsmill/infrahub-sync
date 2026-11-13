@@ -599,17 +599,23 @@ def host_object_store_url(settings: DevSettings, endpoint: str) -> str:
     """The object store endpoint a host process uses, from the endpoint its container gets.
 
     An endpoint that names the bundled store's service moves onto the store's loopback
-    publication; any other endpoint is an external store and is kept as it is.
+    publication; any other endpoint is an external store and is kept as it is. An endpoint
+    the URL parser refuses is kept too, so `sync-bootstrap` reports it by name.
 
     Raises:
         DevStackError: when the endpoint names the bundled store but the file leaves the
-            store out, for example with INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0.
+            store out, for example with INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0. The message
+            never prints the endpoint, which can carry a user name and password.
     """
-    if urlsplit(endpoint).hostname != BUNDLED_STORE_SERVICE:
+    try:
+        host = urlsplit(endpoint).hostname
+    except ValueError:
+        return endpoint
+    if host != BUNDLED_STORE_SERVICE:
         return endpoint
     if settings.object_store is None:
         msg = (
-            f"{S3_ENDPOINT_VARIABLE} names the bundled store ({endpoint}), but {DEV_COMPOSE_FILE} leaves the "
+            f"{S3_ENDPOINT_VARIABLE} names the bundled store, but {DEV_COMPOSE_FILE} leaves the "
             f"{BUNDLED_STORE_SERVICE} service out or does not publish it; set {S3_ENDPOINT_VARIABLE} to the "
             f"external store, or unset {BUNDLED_STORE_VARIABLE} to run the bundled store"
         )

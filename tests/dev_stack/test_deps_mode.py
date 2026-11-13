@@ -339,6 +339,31 @@ def test_host_processes_refuse_the_bundled_endpoint_without_the_bundled_store() 
     assert "INFRAHUB_SYNC_BUNDLED_OBJECT_STORE" in str(raised.value)
 
 
+def test_the_refusal_does_not_print_the_endpoint() -> None:
+    """An endpoint can carry a user name and password; sync-bootstrap refuses it, and this message never prints it."""
+    resolved = _without_bundled_store(_resolved(infrahub=True))
+    resolved["services"]["sync-worker"]["environment"]["INFRAHUB_SYNC_S3_ENDPOINT_URL"] = (
+        "http://leaked-user:leaked-secret@object-store:9000"
+    )
+    settings = dev.parse_dev_settings(resolved)
+
+    with pytest.raises(dev.DevStackError) as raised:
+        dev.host_environment(settings, "sync-worker")
+
+    assert "leaked" not in str(raised.value)
+
+
+def test_an_endpoint_the_url_parser_refuses_is_passed_on_unchanged() -> None:
+    """sync-bootstrap reports a malformed endpoint by name, so the host task passes it on instead of failing first."""
+    resolved = _resolved(infrahub=True)
+    resolved["services"]["sync-worker"]["environment"]["INFRAHUB_SYNC_S3_ENDPOINT_URL"] = "http://[object-store:9000"
+    settings = dev.parse_dev_settings(resolved)
+
+    environment = dev.host_environment(settings, "sync-worker")
+
+    assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == "http://[object-store:9000"
+
+
 def test_dev_deps_refuses_the_bundled_endpoint_without_the_bundled_store(context: Context, fake: FakeDocker) -> None:
     fake.resolve = _without_bundled_store
 
