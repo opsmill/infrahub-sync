@@ -154,3 +154,20 @@ def test_no_directory_setting_changes_nothing(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.delenv(trust_store.CA_DIRECTORY_ENV, raising=False)
 
     assert install_custom_ca_bundle() is None
+
+
+def test_an_unreadable_directory_is_refused_naming_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    directory = tmp_path / "ca"
+    directory.mkdir()
+
+    def refuse(_directory: Path) -> list[Path]:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(trust_store, "_certificate_files", refuse)
+
+    with pytest.raises(TrustStoreError) as refusal:
+        install_custom_ca_bundle(directory)
+
+    assert str(refusal.value) == (
+        f"cannot read the CA directory {directory} (PermissionError); user ID 10001 must be able to list it"
+    )

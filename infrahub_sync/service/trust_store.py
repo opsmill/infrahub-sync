@@ -57,7 +57,11 @@ def _certificate_files(directory: Path) -> list[Path]:
 
 def _checked(path: Path) -> bytes:
     """Return one file's content after refusing a private key and an unreadable certificate."""
-    content = path.read_bytes()
+    try:
+        content = path.read_bytes()
+    except OSError as error:
+        msg = f"cannot read {path.name} in the CA directory ({type(error).__name__})"
+        raise TrustStoreError(msg) from None
     if _PRIVATE_KEY_MARKER in content:
         msg = f"{path.name} holds a private key; the CA directory takes public certificates only"
         raise TrustStoreError(msg)
@@ -87,7 +91,13 @@ def install_custom_ca_bundle(directory: Path | None = None) -> Path | None:
         directory = Path(configured)
     if not directory.is_dir():
         return None
-    files = _certificate_files(directory)
+    try:
+        files = _certificate_files(directory)
+    except OSError as error:
+        msg = (
+            f"cannot read the CA directory {directory} ({type(error).__name__}); user ID 10001 must be able to list it"
+        )
+        raise TrustStoreError(msg) from None
     if not files:
         logger.info("no CA certificate file in %s", directory)
         return None

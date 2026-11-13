@@ -96,7 +96,10 @@ client = boto3.client("s3", endpoint_url=sys.argv[1], region_name="us-east-1",
     aws_access_key_id=sys.argv[2], aws_secret_access_key=sys.argv[3],
     config=Config(s3={"addressing_style": "path"}), verify=os.environ.get("PROBE_CA") or True)
 if sys.argv[4] == "create":
-    client.create_bucket(Bucket=sys.argv[5])
+    try:
+        client.create_bucket(Bucket=sys.argv[5])
+    except client.exceptions.BucketAlreadyOwnedByYou:
+        pass
     print(json.dumps([]))
 else:
     pages = client.get_paginator("list_objects_v2").paginate(Bucket=sys.argv[5])
