@@ -1,0 +1,181 @@
+.github/workflows/workflow-tests.yml
+  s_efeb25921ce544::t_e16719b629913b 78
+tests/test_unit_tier.py
+  s_efeb25921ce544::t_e16719b629913b 97
+tests/dev_stack/smoke/conftest.py
+  s_efeb25921ce544::t_e16719b629913b 1-121
+README.md
+  s_efeb25921ce544::t_e16719b629913b 77,81,84-86,92,101,105-108,111-113,115
+docs/docs/development/knowledge/repository-tour.md
+  s_efeb25921ce544::t_e16719b629913b 85,92,217,219-221,232-234,254-256
+tests/compose/lifecycle.py
+  s_efeb25921ce544::t_e16719b629913b 20
+.github/workflows/workflow-linter.yml
+  s_efeb25921ce544::t_e16719b629913b 218
+development/docker-compose.yml
+  s_efeb25921ce544::t_e16719b629913b 5,41-42,47,51,96,262-265,282
+tests/product_store/test_contract.py
+  s_efeb25921ce544::t_e16719b629913b 157-160,636-650,4623-4625,5060-5099
+  s_efeb25921ce544::t_5694846778dc01 5100-5103
+tests/test_workflow_contracts.py
+  s_efeb25921ce544::t_f730f03a5f0e74 690
+  s_efeb25921ce544::t_4c9c64a4bb39f0 704,720
+  s_efeb25921ce544::t_e16719b629913b 718-719
+tasks/dev.py
+  s_efeb25921ce544::t_e16719b629913b 35-37,70-72,74,108,387
+tests/compose/test_compose_contract.py
+  s_efeb25921ce544::t_e16719b629913b 72,729,733,742,753,758,779,834,836
+tests/integration/test_managed_write_guard_live.py
+  s_efeb25921ce544::t_e16719b629913b 32,61-62,99,102,104-105,113,118-121,123-125,130-132,134,139-140,143-146,228,236
+development/README.md
+  s_efeb25921ce544::t_e16719b629913b 1,3-8,14,17-20,22,24-29,31-33,39-44,48,65,68,71,101
+changelog/+withdrawn-plan-stays-withdrawn.fixed.md
+  s_efeb25921ce544::t_e16719b629913b 1
+.gitignore
+  s_efeb25921ce544::t_e16719b629913b 34,36-39
+dev/specs/010-prefect-from-sync-image/tasks.md
+  s_efeb25921ce544::t_e16719b629913b 120,122,133-134,136,211-214,216
+tests/dev_stack/test_netbox_network.py
+  s_efeb25921ce544::t_e16719b629913b 108,173,179,184,193,218,230,281
+tests/test_netbox_tasks.py
+  s_efeb25921ce544::t_e16719b629913b 11,18,204,218,487-513
+  s_efeb25921ce544::t_33c4571508d61a 514-515
+tests/test_nightly_e2e.py
+  s_efeb25921ce544::t_e16719b629913b 47,52-53,69-70,76,80-81,84,91-92,94-95,102,111,190-206
+tests/cli/test_parity_and_closure.py
+  s_efeb25921ce544::t_e16719b629913b 344
+tasks/tests.py
+  s_efeb25921ce544::t_e16719b629913b 10-11,23-24,74-141
+docs/docs/contributing.mdx
+  s_efeb25921ce544::t_e16719b629913b 119,126,158-162,165-167,170-174
+  s_efeb25921ce544::t_5611cf3c275bd0 175
+tests/service/test_approval_required.py
+  s_efeb25921ce544::t_e16719b629913b 281-284
+infrahub_sync/product_store/store.py
+  s_efeb25921ce544::t_e16719b629913b 161-162,164,314-319,331-336,356-363,817,822,835-836,852-854,856,2256-2257,2443,3264,3790-3797
+development/docker-compose.infrahub.yml
+  s_efeb25921ce544::t_e16719b629913b 8-9,15
+tests/integration/test_saved_plan_apply_integration.py
+  s_efeb25921ce544::t_e16719b629913b 78
+tests/compose/test_lifecycle.py
+  s_efeb25921ce544::t_e16719b629913b 25
+tests/service/test_cancel_planned_run.py
+  s_efeb25921ce544::t_e16719b629913b 483-506
+tests/service/test_config_routes.py
+  s_efeb25921ce544::t_e16719b629913b 1152
+infrahub_sync/service/service.py
+  s_efeb25921ce544::t_e16719b629913b 285-287
+development/netbox/docker-compose.netbox.yml
+  s_efeb25921ce544::t_e16719b629913b 63,65
+.github/scripts/update_infrahub.py
+  s_efeb25921ce544::t_e16719b629913b 3-7,31-32,34,39,43-44,52-55,57
+tests/dev_stack/test_profiles.py
+  s_efeb25921ce544::t_e16719b629913b 135-148
+AGENTS.md
+  s_efeb25921ce544::t_e16719b629913b 64,203,208-210
+tests/dev_stack/smoke/evidence.py
+  s_efeb25921ce544::t_e16719b629913b 1-77
+tests/dev_stack/smoke/test_cli_client.py
+  s_efeb25921ce544::t_e16719b629913b 1-241
+tests/test_development_stack_docs.py
+  s_efeb25921ce544::t_e16719b629913b 90-92
+tests/dev_stack/smoke/test_run_completion.py
+  s_efeb25921ce544::t_e16719b629913b 1-367
+tests/dev_stack/smoke/test_schema_drift.py
+  s_efeb25921ce544::t_e16719b629913b 1-179
+tests/test_benchmark_runner.py
+  s_efeb25921ce544::t_e16719b629913b 1203,1332,1364
+tasks/bench.py
+  s_efeb25921ce544::t_e16719b629913b 360
+tests/compose/test_fixture_prerequisites.py
+  s_efeb25921ce544::t_e16719b629913b 28,145,149,153,166-169
+tests/dev_stack/smoke/test_smoke_request_shapes.py
+  s_efeb25921ce544::t_e16719b629913b 1-223
+tests/dev_stack/test_loopback_publication.py
+  s_efeb25921ce544::t_e16719b629913b 1,26-27,101-104
+tests/compose/conftest.py
+  s_efeb25921ce544::t_e16719b629913b 319,376-388,393-396,400,418,425-430,463
+tests/test_task_names_in_docs.py
+  s_efeb25921ce544::t_e16719b629913b 1-58
+tests/dev_stack/smoke/test_config_lifecycle.py
+  s_efeb25921ce544::t_e16719b629913b 1-330
+tests/dev_stack/smoke/test_prefect_surface.py
+  s_efeb25921ce544::t_e16719b629913b 1-74
+changelog/+dev-stack-replaces-preview.removed.md
+  s_efeb25921ce544::t_e16719b629913b 1
+pyproject.toml
+  s_efeb25921ce544::t_e16719b629913b 262,468
+tests/compose/test_image_pins.py
+  s_efeb25921ce544::t_e16719b629913b 69
+.github/workflows/update-infrahub.yml
+  s_efeb25921ce544::t_e16719b629913b 46-50
+tests/dev_stack/smoke/test_evidence.py
+  s_efeb25921ce544::t_e16719b629913b 1-163
+tests/dev_stack/smoke/test_run_review.py
+  s_efeb25921ce544::t_e16719b629913b 1-360
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_efeb25921ce544::t_e16719b629913b 177,180,183-184,203-204,228,435,438,466,472,482,484-486
+tasks/netbox.py
+  s_efeb25921ce544::t_e16719b629913b 3,14,19,21,423-444,483-484,527-529,535,544-545
+tests/compose/test_managed_run.py
+  s_efeb25921ce544::t_e16719b629913b 22
+tests/dev_stack/smoke/test_service_api.py
+  s_efeb25921ce544::t_e16719b629913b 1-352
+tests/test_nightly_v2_gate.py
+  s_efeb25921ce544::t_f730f03a5f0e74 20-21,329-342,413-415,474,476,480
+docs/docs/v2-to-v3.mdx
+  s_efeb25921ce544::t_e16719b629913b 29
+docs/docs/creating-a-sync-project.mdx
+  s_efeb25921ce544::t_e16719b629913b 98
+tasks/smoke_dataset.py
+  s_efeb25921ce544::t_e16719b629913b 1,4-5
+tests/product_store/test_run_approval.py
+  s_efeb25921ce544::t_e16719b629913b 21-22,411-435
+tests/compose/stacks.py
+  s_efeb25921ce544::t_e16719b629913b 3-4
+docs/docs/development-stack.mdx
+  s_efeb25921ce544::t_e16719b629913b 115,440
+tests/dev_stack/test_infrahub_network.py
+  s_efeb25921ce544::t_e16719b629913b 5,92
+tasks/__init__.py
+  s_efeb25921ce544::t_e16719b629913b 5,23
+tests/dev_stack/test_compose_valid.py
+  s_efeb25921ce544::t_e16719b629913b 72
+tests/dev_stack/smoke/test_netbox_package.py
+  s_efeb25921ce544::t_e16719b629913b 1-351
+.github/scripts/nightly_e2e.py
+  s_efeb25921ce544::t_5b3858e90303e9 318,474-480,484-485,489-493,499-522,533,567,652-653,655,660
+  s_efeb25921ce544::t_e16719b629913b 21,64-72,75,77-80,83-89,92,98,105-139,141-146,149,174-175,177,180,217-219,675-676,681-684,691-692,696,699,701,735,738,740
+  s_efeb25921ce544::t_4c9c64a4bb39f0 22
+changelog/+concurrent-schema-initialization-deadlock.fixed.md
+  s_efeb25921ce544::t_e16719b629913b 1
+tests/dev_stack/test_smoke_dataset.py
+  s_efeb25921ce544::t_e16719b629913b 1-128
+tests/test_task_inventory.py
+  s_efeb25921ce544::t_e16719b629913b 1-100
+.github/workflows/workflow-nightly-e2e.yml
+  s_efeb25921ce544::t_4c9c64a4bb39f0 25,172
+  s_efeb25921ce544::t_e16719b629913b 92-93,97,99-100,102,152,162,177,180-182,187,198,206
+docs/docs/development/guidelines/testing-tiers.md
+  s_efeb25921ce544::t_e16719b629913b 16,19,30,35-36,47,50,52-55,64,72,104,106-110,112,115,123,130,132,140,146,224-226,231,233,240-246,248-249,270,272,279,284-285,291,328,330-332,335-336,339,342-343,346,366-370,373-375,397-398,522,543,547,550-551,554,563-564,566-569,571-572,575,578,688,691,701
+  s_efeb25921ce544::t_4c9c64a4bb39f0 523-524
+  s_efeb25921ce544::t_f730f03a5f0e74 409-410,418-422,426,451-452
+tests/dev_stack/smoke/test_python_client.py
+  s_efeb25921ce544::t_e16719b629913b 1-120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8665b643e477036e4439bfed2fc0b06b0daad895",
+  "prompts": {},
+  "sessions": {
+    "s_efeb25921ce544": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88805765-f610-4acc-a224-7c6f256e1599",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
