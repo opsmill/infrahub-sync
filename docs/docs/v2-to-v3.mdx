@@ -277,7 +277,8 @@ error: config.yml cannot be converted (1 reason)
 A release check compares the first V3 plan with the data V2 wrote. On a local NetBox loaded with
 the pinned `demo` dataset, V2 `2.0.1` synchronizes the `2.0.2` NetBox example into an empty
 Infrahub.
-The same `config.yml` is then converted with `configs convert --yes`, registered, and planned on
+The same `config.yml` is then converted with `configs convert --live-schema --yes`, registered, and
+planned on
 the same Infrahub branch, with no NetBox change in between. The check passes only when that plan
 holds no creates, no updates, no records left out, no problems, and only the deletes that the
 test lists as expected.

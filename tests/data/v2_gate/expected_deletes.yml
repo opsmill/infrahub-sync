@@ -1,7 +1,7 @@
 ---
 # Deletes that the v2-to-V3 plan gate accepts.
 #
-# The gate converts the v2 NetBox configuration, plans it against data that v2 2.0.2
+# The gate converts the v2 NetBox configuration, plans it against data that v2 2.0.1
 # synchronized, and fails on every create, update, left-out record and problem, and on every
 # delete that this list does not hold.
 #

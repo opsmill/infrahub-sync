@@ -324,3 +324,6 @@ What the gate accepted:
 
 Nothing was unexpected, and the gate passed. On branch 010 the NetBox teardown task is
 `netbox.destroy`.
+
+Decided by the product owner on 2026-11-13: the gate pins v2 `2.0.1` from PyPI, with no plan to
+move to `2.0.2`. It keeps running the NetBox example of the `2.0.2` tag.

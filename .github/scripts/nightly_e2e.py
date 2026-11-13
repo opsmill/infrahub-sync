@@ -24,11 +24,11 @@ EXPECTED_DEMO_OPERATIONS = 1688
 SCHEMA_SHA256 = "b74a0ff09cde3aafb1275293be7523f1b377d64073c43aca3ccc14cbe4c5a025"
 # The v2 release whose writes the first V3 plan is compared with. v1 and v2 shipped only as
 # the `infrahub-sync` package on PyPI, so the gate installs it from there, as a customer did.
-# 2.0.2 is not on PyPI yet (its GitHub release is a draft), so the gate runs 2.0.1, whose
-# sync code differs only in relationship attribution and generator fixes. The configuration
-# it runs is still the 2.0.2 NetBox example. Product owner decision, 2026-11-13.
+# The gate pins 2.0.1, the latest v2 release on PyPI (product owner decision, 2026-11-13).
+# The configuration it runs is the NetBox example of the `2.0.2` tag, because the 2.0.1
+# example maps kinds that the schema the gate loads does not have.
 V2_VERSION = "2.0.1"
-# v2.0.2 does not depend on pynetbox; its NetBox users installed it beside the package. The
+# v2 does not depend on pynetbox; its NetBox users installed it beside the package. The
 # version is the one this repository locks.
 V2_PYNETBOX = "pynetbox==7.8.0"
 V2_EXAMPLE = ROOT / "tests" / "data" / "v2_examples" / "netbox_to_infrahub" / "config.yml"

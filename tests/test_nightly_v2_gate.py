@@ -436,14 +436,14 @@ def test_summary_includes_the_gate_result(runner: ModuleType, monkeypatch: pytes
     """The run summary lists the v2-gate suite and the gate's counts."""
     runner.REPORTS.mkdir(parents=True)
     result = runner.compare_plan([], [], total=0, deletes_computed=True)
-    (runner.REPORTS / "gate-result.json").write_text(json.dumps({"v2_version": "2.0.2", **result}))
+    (runner.REPORTS / "gate-result.json").write_text(json.dumps({"v2_version": "2.0.1", **result}))
     summary = tmp_path / "summary.md"
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
     runner.summarize("abc")
     contents = summary.read_text()
     assert "| v2-gate | 0 | 1 | 0 | not started |" in contents
     assert (
-        "v2 2.0.2 to V3 plan gate: passed=false; create=0, update=0, delete=0, "
+        "v2 2.0.1 to V3 plan gate: passed=false; create=0, update=0, delete=0, "
         "left_out=not counted, problems=not counted; expected deletes matched=0"
     ) in contents
 
