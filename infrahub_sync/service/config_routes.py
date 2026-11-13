@@ -1,5 +1,6 @@
 """HTTP-only adapter for the shared configuration application service."""
 
+import os
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from functools import wraps
@@ -22,6 +23,7 @@ from infrahub_sync.client.models import (
     RegisteredVersionResource,
     ValidationReportResource,
 )
+from infrahub_sync.configuration.schema_validation import DestinationSchemaOptions
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_REASON
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
@@ -40,6 +42,7 @@ from .events import (
     config_decision_type,
     config_event,
 )
+from .liveness import LivenessPolicy
 from .models import ConfigMutationRequest
 from .paging import (
     DEFAULT_LIMIT,
@@ -101,6 +104,20 @@ def parse_bounded_integer(value: str, *, minimum: int, maximum: int) -> int:
     return number
 
 
+# The longest Infrahub branch name `configs validate --branch` accepts; Infrahub's own limit is
+# lower, and a longer value is refused before any read.
+_MAX_BRANCH_LENGTH = 250
+
+
+def parse_branch(value: str | None) -> str | None:
+    """Parse the ``branch`` query value of a validation: absent, or a non-empty printable name."""
+    if value is None:
+        return None
+    if not value or len(value) > _MAX_BRANCH_LENGTH or not value.isprintable() or value != value.strip():
+        raise ServiceAPIError(422, "request-invalid", "the request does not match the API schema")
+    return value
+
+
 def parse_page_limit(value: str | None) -> int | None:
     """Parse a list's ``limit`` query value without FastAPI's coercions (``1.0``, ``true``)."""
     return None if value is None else parse_bounded_integer(value, minimum=MIN_LIMIT, maximum=MAX_LIMIT)
@@ -115,10 +132,20 @@ class ConfigurationRoutes:
         product_projection: ProductProjection,
         service: Any = configs,
         secrets: tuple[str, ...] = (),
+        worker_liveness_seconds: float | None = None,
     ) -> None:
         self._projection = product_projection
         self._service = service
         self._secrets = secrets
+        # How recently a worker must have published its credential variable names to count as
+        # live: the service liveness rule, from the same setting `serve` reads.
+        self._worker_liveness_seconds = (
+            LivenessPolicy.from_environment(
+                worker_query_seconds=os.environ.get("PREFECT_WORKER_QUERY_SECONDS", "10")
+            ).stall_threshold_seconds
+            if worker_liveness_seconds is None
+            else worker_liveness_seconds
+        )
 
     def _call(self, operation: Any, **kwargs: Any) -> Any:
         """Translate configuration service refusals into fixed API classifications."""
@@ -224,17 +251,37 @@ class ConfigurationRoutes:
         return ConfigurationVersionResource.model_validate(result, from_attributes=True)
 
     def validate(
-        self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = _MAX_VALIDATION_FINDINGS_PAGE
+        self,
+        config_id: str,
+        registry_version: int,
+        *,
+        offset: int = 0,
+        limit: int = _MAX_VALIDATION_FINDINGS_PAGE,
+        branch: str | None = None,
     ) -> ValidationReportResource:
         """Validate a version and return the requested ordered findings page.
 
         This server's collected secrets reach the producer, which can replace a declared key
         whole before the diagnostic bounds cut it, and the same set is applied again to every
         finding on the returned page.
+
+        With ``branch``, the destination checks run against that Infrahub branch and the
+        package's credential references are compared with what the live workers hold (spec
+        019 FR-034 to FR-036). Without it, validation judges declared content only, as before.
         """
 
+        options: dict[str, Any] = {}
+        if branch is not None:
+            options = {
+                "destination_schema": DestinationSchemaOptions(branch=branch),
+                "worker_liveness_seconds": self._worker_liveness_seconds,
+            }
         report = self._call(
-            self._service.validate, config_id=config_id, registry_version=registry_version, secrets=self._secrets
+            self._service.validate,
+            config_id=config_id,
+            registry_version=registry_version,
+            secrets=self._secrets,
+            **options,
         )
         findings = tuple(
             configs.redact_finding(finding, self._secrets) for finding in report.findings[offset : offset + limit]
@@ -406,6 +453,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
     registry_version_parameter = APIPath()
     page_offset = Query()
     page_limit = Query()
+    branch_parameter = Query()
 
     @router.post("/configs", status_code=201)
     def register(
@@ -491,12 +539,14 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         _principal: Annotated[Principal, Depends(authenticate)],
         offset: Annotated[str, page_offset] = "0",
         limit: Annotated[str, page_limit] = str(_MAX_VALIDATION_FINDINGS_PAGE),
+        branch: Annotated[str | None, branch_parameter] = None,
     ) -> Any:
         return routes.validate(
             config_id,
             parse_bounded_integer(registry_version, minimum=1, maximum=MAX_REGISTRY_VERSION),
             offset=parse_bounded_integer(offset, minimum=0, maximum=MAX_REGISTRY_VERSION),
             limit=parse_bounded_integer(limit, minimum=1, maximum=_MAX_VALIDATION_FINDINGS_PAGE),
+            branch=parse_branch(branch),
         )
 
     return router

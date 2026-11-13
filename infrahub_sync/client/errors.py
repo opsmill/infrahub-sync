@@ -58,11 +58,14 @@ class APIError(SyncClientError):
         *,
         run_id: str | None = None,
         mutation_id: str | None = None,
+        left_out: int | None = None,
     ) -> None:
         self.status = status
         self.code = code
         self.run_id = run_id
         self.mutation_id = mutation_id
+        # Set on a `left-out-confirmation-required` refusal: the count the plan leaves out.
+        self.left_out = left_out
         super().__init__("the Sync API refused the request")
 
 

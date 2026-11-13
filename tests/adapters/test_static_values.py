@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import importlib
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
 import pytest
+from diffsync import Adapter
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel
 
@@ -156,12 +157,16 @@ def _convert(
     model: type[Any],
     store: _Store | None = None,
 ) -> dict[str, Any]:
-    """Run one adapter's `*_obj_to_diffsync` offline, with no provider client."""
+    """Run one adapter's `record_to_data` offline, with no provider client."""
     mapping = SchemaMappingModel(name=model._modelname, fields=fields)
-    holder = SimpleNamespace(store=store)
-    if adapter == "netbox":
-        return NetboxAdapter.netbox_obj_to_diffsync(cast("NetboxAdapter", holder), obj, mapping, model)
-    return NautobotAdapter.nautobot_obj_to_diffsync(cast("NautobotAdapter", holder), obj, mapping, model)
+    adapter_class = NetboxAdapter if adapter == "netbox" else NautobotAdapter
+    instance = adapter_class.__new__(adapter_class)
+    Adapter.__init__(instance)  # noqa: PLC2801 - the adapter is built without its provider client
+    if store is not None:
+        instance.store = store
+    instance.target = "source"
+    instance.config = SimpleNamespace(schema_mapping=[])
+    return instance.record_to_data(obj, mapping, model)
 
 
 def _assert_exact(data: dict[str, Any], name: str, expected: object) -> None:

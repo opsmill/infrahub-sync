@@ -73,12 +73,23 @@ def _joined(counts: Mapping[str, int]) -> str:
     return ", ".join(f"{key} {value}" for key, value in counts.items())
 
 
+def _left_out_detail(summary: Mapping[str, Any]) -> str:
+    """How many left-out records have a problem and how many depend on one, when recorded."""
+    with_problem = _count(summary.get("left_out_with_problem"))
+    dependent = _count(summary.get("left_out_dependent"))
+    if with_problem is None or dependent is None:
+        return ""
+    return f" (with a problem: {with_problem}, depending on one: {dependent})"
+
+
 def run_markdown(run: ProductRun, stage: str, outcome: str, next_action: str | None) -> str:
     """The artifact's markdown, built from the run record's named fields only.
 
-    `outcome` and `next_action` are the values the stage's last log line used. The next
-    steps are `runs show`, then `runs plan --detail` when the run holds a saved plan review,
-    then `next_action` when there is one.
+    `outcome` and `next_action` are the values the stage's last log line used. A plan or
+    `sync` stage whose summary records them adds the count of records left out and the count
+    of problems (spec 020 FR-028). The next steps are `runs show`, then `runs plan --detail`
+    when the run holds a saved plan review, then `runs plan --problems` and `--left-out` when
+    the plan leaves out records, then `next_action` when there is one.
     """
     run_id = run.run_id
     lines = [f"# Sync run {run_id}", "", f"- Stage: {stage}", f"- Outcome: {outcome}"]
@@ -92,9 +103,22 @@ def run_markdown(run: ProductRun, stage: str, outcome: str, next_action: str | N
     by_kind = _operations_by_kind(run.summary)
     if by_kind:
         lines.append(f"- Operations by kind: {_joined(by_kind)}")
+    left_out = _count(run.summary.get("left_out"))
+    if left_out is not None:
+        lines.append(f"- Records left out: {left_out}{_left_out_detail(run.summary)}")
+    problems = _count(run.summary.get("problems"))
+    if problems is not None:
+        lines.append(f"- Problems: {problems}")
     lines.extend(("", "## Next steps", "", f"- `infrahub-sync runs show {run_id}`"))
     if any(reference.kind == PLAN_REVIEW_ARTIFACT_KIND for reference in run.artifact_refs):
         lines.append(f"- `infrahub-sync runs plan {run_id} --detail`")
+    if left_out:
+        lines.extend(
+            (
+                f"- `infrahub-sync runs plan {run_id} --problems`",
+                f"- `infrahub-sync runs plan {run_id} --left-out`",
+            )
+        )
     if next_action:
         lines.append(f"- {next_action}")
     return "\n".join(lines) + "\n"

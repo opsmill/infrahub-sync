@@ -185,8 +185,10 @@ This changes the fingerprint for existing saved plans, so review and save a new 
 upgrading before you apply it.
 
 Several creates sharing a destination human-friendly ID, a unique attribute (including an
-inherited one), or a uniqueness constraint are refused as `DestinationIdentityCollisionError`.
-The error names the colliding rule. Applying those creates could converge distinct source
+inherited one), or a uniqueness constraint form an identity group. Since spec 020 the plan does
+not refuse the group: the problem pass records one `destination_identity_collision` problem and
+leaves every record of the group out of the plan (ADR 0020). The write surface still refuses
+such creates as `DestinationIdentityCollisionError`, naming the colliding rule. Applying those creates could converge distinct source
 objects onto one destination object. A unique attribute inherited from the same generic also
 refuses matching creates of different kinds. Updates are excluded, since each is keyed by its
 recorded destination id. The saved-plan apply gate checks these create-versus-create rules
@@ -194,9 +196,11 @@ before its first write.
 
 Planning also compares each create's human-friendly ID against every loaded source record
 of that kind. This includes unchanged records restored from the previous run's cache and
-records represented by updates. A single create is refused if a distinct source identity
-projects onto the same destination match key, including paths through nested peer identities.
-The error names the kind, source identity fields, destination match key, and fields the
+records represented by updates. When a distinct source identity projects onto the same
+destination match key as a create, including paths through nested peer identities, the plan
+records an `identities_merge_in_destination` problem and leaves those records out.
+`refuse_identity_groups` in `plan/keying.py`, which the plan no longer calls, still renders
+the earlier refusal text: it names the kind, source identity fields, destination match key, and fields the
 destination cannot distinguish. Alternative uniqueness constraints do not replace the
 human-friendly ID used to match a create. An update-only plan continues to use recorded
 destination ids.
