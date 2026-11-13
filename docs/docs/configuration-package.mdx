@@ -160,7 +160,14 @@ different request is refused with `idempotency-conflict`.
 ## Convert a config.yml file
 
 Several examples in the repository are `config.yml` files, not packages. Registration
-refuses them as they are. To convert one:
+refuses them as they are.
+
+`infrahub-sync configs convert config.yml` converts a v1 or v2 `config.yml` into a package. It
+prints each change it makes, asks before it writes `package.yml`, and needs no Sync API. See
+[Move a V2 configuration to V3](./v2-to-v3.mdx#move-a-v2-configuration-to-v3) for the report,
+the keys it drops, and the configurations it refuses.
+
+To convert a file by hand instead:
 
 1. Add `format_version: 1`, and indent the whole file under a `configuration:` key.
 2. Replace each literal credential value with a `$credential` reference, and declare the
@@ -169,6 +176,8 @@ refuses them as they are. To convert one:
 4. Replace example URLs with addresses that the Sync worker can reach.
 5. Remove settings that the adapter does not accept in a registered package. The adapter
    pages list the accepted settings.
+6. Write a destination `source` or `owner` group name as
+   `{kind: CoreAccountGroup, name: <name>}`. A registered package refuses a bare name.
 
 A `config.yml` file is used directly only by the
 [Prefect remote run](./reference/prefect-remote-run.mdx) and by Python callers that load a

@@ -1,0 +1,22 @@
+run_id: run-gate-sample
+plan_checksum: sha256:0000000000000000000000000000000000000000000000000000000000000000
+checksum_ok: true
+checksum_source: Sync API saved plan
+operations: 4
+destination_branch: v2-gate
+delete_operations_computed: true
+schema_fingerprint: sha256:1111111111111111111111111111111111111111111111111111111111111111
+verification_note: the destination schema matched the plan
+by_action: create=1, update=1, delete=2
+by_kind: BuiltinTag=1, DcimDevice=1, IpamNamespace=1, LocationSite=1
+2 delete operation(s) are recorded and NONE will be executed by apply.
+The owner setting applies only to values this run creates.
+op-0001 create BuiltinTag name=Gold
+  payload: {"description":null,"name":"Gold"}
+op-0002 update DcimDevice name=dmi01-akron-rtr01
+  destination id: 18a0c1d2-0000-4000-8000-000000000002
+  payload: {"description":"edge router","serial_number":"SN-123"}
+  relationships: [{"name":"role","peer":{"name":"router"}}]
+  last change: serial_number (attribute): updated_by=v2-import, updated_at=2026-10-22T10:00:00Z
+op-0003 delete IpamNamespace name=default (not executed)
+op-0004 delete LocationSite name=MDF Old (not executed)

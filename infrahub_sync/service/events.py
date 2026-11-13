@@ -20,6 +20,8 @@ _STAGE_SUCCESS_TYPES = {
     "verify": f"{_RUN_PREFIX}verified",
     "apply": f"{_RUN_PREFIX}applied",
     "sync": f"{_RUN_PREFIX}synced",
+    # A resume of an interrupted apply (spec 022): the rest of the saved plan was applied.
+    "resume": f"{_RUN_PREFIX}resumed",
 }
 RUN_CANCELLED = f"{_RUN_PREFIX}cancelled"
 RUN_FAILED = f"{_RUN_PREFIX}failed"

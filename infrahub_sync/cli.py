@@ -9,14 +9,15 @@ import json
 import logging
 import os
 import sys
+import tempfile
 import unicodedata
 from contextlib import contextmanager
 from enum import Enum
 from functools import wraps
 from math import isfinite
-from pathlib import Path  # noqa: TC003 - Typer resolves command annotations at runtime.
+from pathlib import Path
 from time import sleep
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, NoReturn, TypeVar, cast
 from uuid import uuid4
 
 import typer
@@ -37,6 +38,7 @@ from infrahub_sync.client import (
     ProtocolError,
     RegisteredConfigurationResource,
     RegisteredVersionResource,
+    ResumeRunRequest,
     RunResource,
     RunTerminalError,
     RunWaitTimeoutError,
@@ -57,6 +59,13 @@ from infrahub_sync.client.models import (
     StageFailureResource,
     stage_failure_resource,
 )
+from infrahub_sync.configuration.conversion import (
+    ConversionInputError,
+    ConversionResult,
+    convert_v2_configuration,
+    visible_v2_variables,
+)
+from infrahub_sync.configuration.conversion_report import next_step_lines, refusal_lines, report_lines
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 
 if TYPE_CHECKING:
@@ -642,6 +651,226 @@ def configs_validate(
         raise typer.Exit(code=1)
 
 
+# --- configs convert: a local command that needs no Sync API ------------------------------
+
+
+def _stdin_is_terminal() -> bool:
+    """Return whether standard input is a terminal; tests replace this to cover both paths."""
+    return sys.stdin.isatty()
+
+
+def _echo_lines(lines: list[str], *, err: bool = False) -> None:
+    for line in lines:
+        typer.echo(_display(line), err=err)
+
+
+def _convert_fail(message: str, code: int) -> NoReturn:
+    """Print ``message`` to standard error and stop with exit status ``code``."""
+    typer.echo(_display(message), err=True)
+    raise typer.Exit(code)
+
+
+def _read_v2_configuration(path: Path) -> object:
+    """Read and parse ``path``; a YAML error names only the line and column (research R9)."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        _convert_fail(f"error: cannot read {path}", 2)
+    try:
+        return yaml.safe_load(text)
+    except yaml.MarkedYAMLError as error:
+        # The problem text can quote the failing token, which may be a credential.
+        mark = error.problem_mark or error.context_mark
+        where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark is not None else ""
+        _convert_fail(f"error: {path.name} is not valid YAML{where}", 2)
+    except yaml.YAMLError:
+        _convert_fail(f"error: {path.name} is not valid YAML", 2)
+
+
+class _PackageDumper(yaml.SafeDumper):
+    """Write every value in full: a YAML anchor in config.yml does not become ``&id001`` in the package."""
+
+    def ignore_aliases(self, data: Any) -> bool:  # noqa: ARG002 - PyYAML's signature.
+        return True
+
+
+def _create_exclusively(output: Path, text: str) -> None:
+    """Create ``output`` with ``text``, failing with ``FileExistsError`` when it exists.
+
+    A write that fails removes the file it created, so no partial package is left behind.
+    """
+    handle = output.open("x", encoding="utf-8")
+    try:
+        with handle:
+            handle.write(text)
+    except OSError:
+        output.unlink(missing_ok=True)
+        raise
+
+
+def _write_package(output: Path, package: Mapping[str, Any], *, replace: bool) -> None:
+    """Write through a temporary file in the target directory, then move it in place (research R8).
+
+    With ``replace``, the move is a rename that replaces ``output``. Without it, the move is a
+    hard link, which fails with ``FileExistsError`` when ``output`` was created after the
+    command checked for it, for example while the question waited for an answer. On a file
+    system without hard links, the file is created exclusively instead, which keeps that rule.
+    """
+    text = yaml.dump(
+        dict(package), Dumper=_PackageDumper, sort_keys=False, default_flow_style=False, allow_unicode=True
+    )
+    handle = tempfile.NamedTemporaryFile(  # noqa: SIM115 - closed before the move below.
+        "w", encoding="utf-8", dir=output.parent, prefix=f".{output.name}.", suffix=".tmp", delete=False
+    )
+    temporary = Path(handle.name)
+    try:
+        with handle:
+            handle.write(text)
+        temporary.chmod(0o644)
+        if replace:
+            temporary.replace(output)
+        else:
+            try:
+                os.link(temporary, output)
+            except FileExistsError:
+                raise
+            except OSError:
+                _create_exclusively(output, text)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _is_same_file(first: Path, second: Path) -> bool:
+    """Return whether two paths name the same file; a path that does not exist names none."""
+    try:
+        return first.samefile(second)
+    except OSError:
+        return False
+
+
+def _with_live_schema(path: Path, result: ConversionResult) -> tuple[ConversionResult, Mapping[str, Any]]:
+    """Fill IP namespaces from the live Infrahub schema; a filled package that fails a check is refused."""
+    # Imported here: the schema reader pulls in the Infrahub SDK, which no other convert path needs.
+    # pylint: disable-next=import-outside-toplevel
+    from infrahub_sync.configuration.conversion_live_schema import with_live_schema
+
+    filled = with_live_schema(result)
+    if filled.package is None:
+        _echo_lines(refusal_lines(path.name, filled.refusals), err=True)
+        raise typer.Exit(1)
+    return filled, filled.package
+
+
+@configs_app.command("convert")
+def configs_convert(
+    path: Path = typer.Argument(..., help="The v1 or v2 config.yml to read."),
+    *,
+    output: Path | None = typer.Option(
+        None, "--output", help="Where to write the package. Defaults to package.yml next to PATH."
+    ),
+    force: bool = typer.Option(False, "--force", help="Replace an existing output file."),  # noqa: FBT003
+    yes: bool = typer.Option(False, "--yes", help="Write without asking."),  # noqa: FBT003
+    source_url: str | None = typer.Option(
+        None, "--source-url", help="The source address. Overrides the file and the v2 variables."
+    ),
+    destination_url: str | None = typer.Option(
+        None, "--destination-url", help="The Infrahub address. Overrides the file and the v2 variables."
+    ),
+    live_schema: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--live-schema",
+        help="Read the Infrahub schema, without a token, and map an unmapped IP namespace to 'default'.",
+    ),
+) -> None:
+    """Convert a v1 or v2 config.yml into a V3 configuration package. Needs no Sync API.
+
+    \b
+    The command never prints or reads a credential value. It opens no network
+    connection unless --live-schema is given; then it reads the Infrahub schema
+    without a token and maps each IP namespace that a uniqueness constraint
+    needs and config.yml does not map to the 'default' namespace, where v2
+    wrote it. It prints a report, asks before it writes, and writes nothing
+    without a terminal unless --yes is given.
+
+    \b
+    The report names each credential setting that v2 used with the
+    environment variable the Sync worker reads in V3, each address with its origin (a flag, a v2
+    variable, or config.yml), each dropped key with its reason, and notes.
+    It warns when config.yml still holds a literal credential, when the
+    shipped Compose file does not pass a credential variable to the Sync
+    worker, when an address is localhost or 127.0.0.1, and when an address
+    came from a generic variable name.
+
+    \b
+    Exit status 1, nothing written, when the configuration has any of:
+    - a source or destination name that is not a bundled adapter
+    - a custom adapter (INFP-654, planned for 3.0)
+    - a destination other than Infrahub
+    - a setting the bundled adapter does not accept
+    - an `auth_method` value v2 did not accept
+    - a placeholder v2 did not read
+    - an address with a user name or password
+    - an address with no value in config.yml, a v2 variable or a flag
+    - a placeholder in a setting v2 read from a variable, when no such variable is set
+
+    \b
+    Exit status 1 also when:
+    - the package fails a registration check
+    - the output file exists and --force is not given
+    - --output names the input file, even with --force
+    - there is no terminal and --yes is not given
+    - the package cannot be written
+
+    \b
+    Exit status 2 when:
+    - PATH cannot be read
+    - PATH is not valid YAML
+    - PATH is not a v1 or v2 configuration
+    - the directory of the output file does not exist
+    """
+    data = _read_v2_configuration(path)
+    target = output if output is not None else path.parent / "package.yml"
+    if not target.parent.is_dir():
+        _convert_fail(f"error: the directory of {target} does not exist", 2)
+    if _is_same_file(target, path):
+        if output is None:
+            _convert_fail(f"error: the default output {target} is the input file; pass --output with another path", 1)
+        _convert_fail(f"error: --output {target} is the input file {path}; choose another path", 1)
+    if target.exists() and not force:
+        _convert_fail(f"{target} exists; pass --force to replace it", 1)
+    try:
+        result = convert_v2_configuration(
+            cast("Mapping[str, Any]", data),
+            visible_v2_variables(os.environ),
+            source_url=source_url,
+            destination_url=destination_url,
+        )
+    except ConversionInputError as error:
+        _convert_fail(f"error: {path.name} cannot be converted: {error}", 2)
+    if result.package is None:
+        _echo_lines(refusal_lines(path.name, result.refusals), err=True)
+        raise typer.Exit(1)
+    package = result.package
+    if live_schema:
+        result, package = _with_live_schema(path, result)
+    _echo_lines([*report_lines(path.name, cast("dict[str, Any]", data)["name"], result), ""])
+    if not yes:
+        if not _stdin_is_terminal():
+            _convert_fail("nothing written; run again with --yes", 1)
+        if not typer.confirm(f"Write {target}?", default=False):
+            typer.echo("nothing written")
+            raise typer.Exit(0)
+    try:
+        _write_package(target, package, replace=force)
+    except FileExistsError:
+        _convert_fail(f"{target} exists; pass --force to replace it", 1)
+    except OSError as error:
+        # strerror describes the failure; the filename attributes are not printed.
+        reason = f": {error.strerror}" if error.strerror else ""
+        _convert_fail(f"error: cannot write {target}{reason}", 1)
+    _echo_lines([f"Wrote {target}", *next_step_lines(str(target), result)])
+
+
 def _echo_run(resource: RunResource) -> None:
     run = resource.run
     selected = resource.orchestration[-1] if resource.orchestration else None
@@ -692,6 +921,47 @@ def _echo_reads(resource: RunResource) -> None:
                 ("source_read", _side_read_text(reading.reads.source)),
                 ("destination_read", _side_read_text(reading.reads.destination)),
             )
+        )
+
+
+def _echo_apply_progress(resource: RunResource) -> None:
+    """Print a write's progress, whether the run can be resumed, each kind's counts and its resumes.
+
+    Nothing is printed for a run that never started a write (spec 022 contracts/cli.md). The
+    lines hold positions, counts, kinds, actors and times only, never a value from the plan.
+    """
+    progress = resource.apply_progress
+    if progress is None:
+        return
+    saved = f"saved {progress.saved_at.isoformat()}" if progress.saved_at is not None else "no position saved"
+    if progress.by_kind:
+        committed = sum(entry.committed for entry in progress.by_kind)
+        total = sum(entry.committed + entry.uncertain + entry.not_reached for entry in progress.by_kind)
+        typer.echo(_display(f"progress: {committed}/{total} operations committed ({saved})"))
+    else:
+        # The saved plan cannot be read, so only the saved position is known.
+        position = "<none>" if progress.position is None else progress.position
+        typer.echo(_display(f"progress: last committed position {position} ({saved})"))
+    if not progress.resumable:
+        resumable = "no"
+    elif progress.verify_required:
+        resumable = "yes (verify required)"
+    else:
+        resumable = "yes"
+    typer.echo(f"resumable: {resumable}")
+    for entry in progress.by_kind:
+        typer.echo(
+            _display(
+                f"kind {entry.kind}: committed {entry.committed}, uncertain {entry.uncertain}, "
+                f"not reached {entry.not_reached}"
+            )
+        )
+    for number, resume in enumerate(resource.resumes, start=1):
+        start = "from the first operation" if resume.start_after is None else f"after {resume.start_after}"
+        outcome = resume.outcome or "unfinished"
+        wrote = "" if resume.operations_written is None else f", wrote {resume.operations_written} operations"
+        typer.echo(
+            _display(f"resume {number}: {resume.actor} {resume.requested_at.isoformat()} {start} {outcome}{wrote}")
         )
 
 
@@ -1001,7 +1271,10 @@ def _failure_lines(failure: Mapping[str, Any], record: StageFailureResource | No
         yield f"field: {record.field}"
     applied = failure.get("applied_operations")
     if record.operations_total is not None and isinstance(applied, list):
-        yield f"written: {len(applied)} of {record.operations_total} operations"
+        # The whole run's count, so a stopped resume includes what earlier executions wrote. A
+        # record from an older Sync API has only this execution's list (spec 022 research R6).
+        written = record.operations_written if record.operations_written is not None else len(applied)
+        yield f"written: {written} of {record.operations_total} operations"
     detail = record.failed_operation_detail
     failed_operation = failure.get("failed_operation")
     if detail is not None and isinstance(failed_operation, str):
@@ -1059,10 +1332,22 @@ _LEFT_OUT_CONFIRMATION_REQUIRED = "left-out-confirmation-required"
 # The refusal of a stage on a run that already admitted a write, or that has an unresolved
 # submission or a running execution (spec 020 FR-023 keeps the code, decision 4).
 _RUN_EXECUTION_CONFLICT = "run-execution-conflict"
+_VERIFY_REQUIRED = "verify-required"
+_CHECKSUM_CONFLICT = "checksum-conflict"
+_APPROVAL_REQUIRED = "approval-required"
+_RESUME_REFUSAL_HINTS = {
+    _VERIFY_REQUIRED: "run infrahub-sync verify {run_id} first",
+    # An interrupted run that was never approved, a `sync` run for example, is approved like a
+    # planned one (spec 022 FR-019).
+    _APPROVAL_REQUIRED: "run infrahub-sync approve {run_id} --expected-checksum {expected_checksum} first",
+}
+# The CLI does not know here whether the run can be resumed, so the hint names the line of
+# `runs show` that tells (spec 022): a resumable run continues with `verify` and `runs resume`.
 _RUN_EXECUTION_CONFLICT_NEXT_ACTION = (
-    "If this run already admitted a write, its plan is not applied again: review the run with "
-    "`infrahub-sync runs show`, then create and review a new plan with `infrahub-sync plan`. "
-    "If a stage of this run is still running, wait for it to finish."
+    "If this run already admitted a write, `apply` does not apply its plan again: review the run "
+    "with `infrahub-sync runs show`. When it prints `resumable: yes`, run `infrahub-sync verify RUN_ID`, "
+    "then `infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM`; otherwise create and review a new plan with "
+    "`infrahub-sync plan`. If a stage of this run is still running, wait for it to finish."
 )
 
 
@@ -1100,6 +1385,19 @@ def _left_out_refusal_count(client: SyncClient, run_id: str, error: APIError) ->
         return client.get_plan(run_id).summary.left_out
     except SyncClientError:
         return None
+
+
+def _checksum_conflict_hint(client: SyncClient, run_id: str, given: str) -> str:
+    """The hint of a resume refused for its checksum: the saved plan's checksum and the one given.
+
+    The saved checksum is read with one more request. When that request fails, the hint names
+    the command that prints it, so the refusal already printed stays the error this command reports.
+    """
+    try:
+        saved = client.get_plan(run_id).checksum
+    except SyncClientError:
+        return f"you gave {given}; `infrahub-sync runs plan {run_id}` prints the saved plan's checksum"
+    return f"the saved plan's checksum is {saved}; you gave {given}"
 
 
 def _echo_failed_checks(recorded: object, *, err: bool = True) -> None:
@@ -1343,7 +1641,11 @@ def approve_cmd(
     reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the approval."),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
 ) -> None:
-    """Record approval of the named run's saved plan without applying it."""
+    """Record approval of the named run's saved plan without applying it.
+
+    The run is in phase `planned`, or its write stopped part-way and it can be resumed: a site that
+    requires approval then approves it before `runs resume`, for example a `sync` run.
+    """
     with _client_errors():
         client = _client(ctx)
         request = cast(
@@ -1406,6 +1708,32 @@ def _echo_verification_checks(resource: RunResource) -> None:
     for check in checks:
         if isinstance(check, str):
             typer.echo(_display(f"check: {check} passed"))
+    if isinstance(verification, dict):
+        _echo_verification_operations(verification)
+
+
+def _echo_verification_operations(verification: dict[str, Any]) -> None:
+    """Print the state of each uncertain operation of an interrupted run (spec 022 FR-006).
+
+    One `operation ID KIND ACTION: STATE` line per reported operation, the count the report
+    left out when it was truncated, and, whenever there is a report, the note that a resume
+    writes the plan's values over every operation reported as differs.
+    """
+    operations = verification.get("operations")
+    if not isinstance(operations, list):
+        return
+    for entry in operations:
+        if isinstance(entry, dict):
+            typer.echo(
+                _display(
+                    f"operation {entry.get('operation_id')} {entry.get('kind')} "
+                    f"{entry.get('action')}: {entry.get('state')}"
+                )
+            )
+    truncated = verification.get("operations_truncated")
+    if isinstance(truncated, int) and not isinstance(truncated, bool) and truncated > 0:
+        typer.echo(f"operations not reported: {truncated}")
+    typer.echo("note: runs resume writes the plan's values over every operation reported as differs")
 
 
 @app.command("whoami")
@@ -1519,6 +1847,78 @@ def runs_cancel(
         _echo_run(client.cancel_run(run_id, request, key))
 
 
+@runs_app.command("resume")
+def runs_resume(
+    ctx: typer.Context,
+    *,
+    run_id: str = typer.Argument(..., help="Service-issued run ID whose write was interrupted."),
+    expected_checksum: str = typer.Option(..., "--expected-checksum", help="Checksum printed by `runs plan`."),
+    confirm_left_out: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--confirm-left-out",
+        help="Confirm that you reviewed the records the plan leaves out; required when it leaves out any.",
+    ),
+    reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the resume."),
+    idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
+    wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for this run's resume execution."),  # noqa: FBT003
+    wait_timeout: float = typer.Option(DEFAULT_WAIT_TIMEOUT, "--wait-timeout", help="Bounded wait in seconds."),
+    poll_interval: float = typer.Option(DEFAULT_POLL_INTERVAL, "--poll-interval", help="Poll interval in seconds."),
+) -> None:
+    """Resume an interrupted apply from the run's saved position, after a `verify` passed.
+
+    The resume applies the rest of the run's saved plan in a new execution on the same run. It writes
+    the plan's values over every operation that `verify` reported as differing from the plan.
+    """
+    with _client_errors():
+        client = _waiting_client(ctx, wait_timeout=wait_timeout, poll_interval=poll_interval)
+        key = _idempotency_key(idempotency_key)
+        _echo_idempotency_key(key)
+        request = cast(
+            "ResumeRunRequest",
+            _request(
+                ResumeRunRequest,
+                expected_checksum=expected_checksum,
+                confirm_writes=True,
+                confirm_left_out=confirm_left_out,
+                reason=reason,
+            ),
+        )
+        try:
+            accepted = client.resume(run_id, request, key)
+        except APIError as error:
+            if error.code == _LEFT_OUT_CONFIRMATION_REQUIRED:
+                left_out = _left_out_refusal_count(client, run_id, error)
+                count = "" if left_out is None else f" {left_out}"
+                typer.echo(
+                    f"resume refused: this plan leaves out{count} records; confirm with --confirm-left-out", err=True
+                )
+                raise typer.Exit(1) from None
+            template = _RESUME_REFUSAL_HINTS.get(error.code)
+            hint = None if template is None else template.format(run_id=run_id, expected_checksum=expected_checksum)
+            if hint is None and error.code != _CHECKSUM_CONFLICT:
+                raise
+            label, fields = _error_fields(error)
+            typer.echo(f"error: {label}", err=True)
+            _echo_fields(fields, err=True)
+            if hint is None:
+                # Scenario 3: the error shows the given checksum and the saved plan's checksum.
+                hint = _checksum_conflict_hint(client, run_id, expected_checksum)
+            typer.echo(_display(f"hint: {hint}"), err=True)
+            raise typer.Exit(1) from None
+        _echo_run(accepted)
+        # The run's position when the resume was accepted is where the resume starts.
+        position = accepted.apply_progress.position if accepted.apply_progress is not None else None
+        _echo_fields((("start_after", position),))
+        try:
+            completed = _wait(client, accepted, wait=wait, wait_timeout=wait_timeout, poll_interval=poll_interval)
+        except RunTerminalError as error:
+            _echo_stage_failure(client, error.run_id, stage="resume")
+            raise
+        if wait:
+            _echo_run(completed)
+            _echo_apply_progress(completed)
+
+
 @runs_app.command("show")
 def runs_show(
     ctx: typer.Context,
@@ -1534,11 +1934,20 @@ def runs_show(
     stage whose read state the worker could not store.
     A failed stage adds its error type and, when the run recorded them, a `cause:` and a `hint:` line.
     A `sync` that stopped after a plan that leaves out records adds a `sync stopped:` and a `hint:` line.
+    A run with a write adds a `progress:` line, a `resumable:` line, one `kind` line per kind with its committed,
+    uncertain and not reached operations, and one `resume` line per resume of the run. The counts are over the
+    plan's positions, recorded deletes included. The uncertain operations follow the saved position: through the
+    failed operation when the worker recorded it, and every remaining operation when the worker was killed or its
+    last save is not known to have succeeded. While a resume runs, they are the next 500 creates and updates
+    and the recorded deletes between them; while a first apply or `sync` runs, none are uncertain. A `resume`
+    line counts the creates and updates that resume wrote; the `written:` line of a failed write counts those of
+    every execution of the run.
     """
     with _client_errors():
         resource = _client(ctx).get_run(run_id)
     _echo_run(resource)
     _echo_reads(resource)
+    _echo_apply_progress(resource)
     # The latest execution of each stage; the orchestration list is in run order.
     latest_by_stage = {execution.purpose: execution for execution in resource.orchestration}
     # A failed stage's cause and next action, as the run's results recorded them (FR-002).

@@ -681,6 +681,11 @@ class ApplyRecord:
     # holds them. Not summary keys, and not part of the record's equality: two records of
     # one apply compare equal whether or not they carry them.
     operations_total: int | None = dataclass_field(default=None, compare=False)
+    # The creates and updates the whole run wrote, this execution's `applied_operations` and,
+    # for a resume, every create and update at or before the position it started after (spec
+    # 022 research R6). Equal to `len(applied_operations)` for a first apply. Not a summary
+    # key, and not part of the record's equality.
+    operations_written: int | None = dataclass_field(default=None, compare=False)
     failed_operation_detail: Mapping[str, Any] | None = dataclass_field(default=None, compare=False)
 
     @property

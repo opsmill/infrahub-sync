@@ -55,7 +55,7 @@ MAX_LIMIT = 200
 # Page sizes of a run's log (spec 017, contracts/logs-route.md), and the stages it filters by.
 DEFAULT_LOG_LIMIT = 200
 MAX_LOG_LIMIT = 1000
-LOG_STAGES: tuple[str, ...] = ("plan", "verify", "apply", "sync")
+LOG_STAGES: tuple[str, ...] = ("plan", "verify", "apply", "sync", "resume")
 
 # The largest page of a saved plan's problem, left-out or kept list, and the default (spec 020,
 # contracts/sync-api.md).
@@ -170,6 +170,19 @@ class ApproveRunRequest(_RequestModel):
 class CancelRunRequest(_RequestModel):
     """Request cancellation of an accepted run."""
 
+    reason: str | None = Field(default=None, min_length=1)
+
+
+class ResumeRunRequest(_RequestModel):
+    """Request a resume of an interrupted apply from the run's saved position (spec 022 data-model.md).
+
+    The checks match `ApplyRunRequest`: `expected_checksum` must equal the saved plan's checksum,
+    `confirm_writes` must be true, and `confirm_left_out` is required when the plan left out records.
+    """
+
+    expected_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
+    confirm_writes: bool = False
+    confirm_left_out: StrictBool = False
     reason: str | None = Field(default=None, min_length=1)
 
 
@@ -464,11 +477,71 @@ class PrincipalResource(_ResourceModel):
     approval_required: bool = False
 
 
+class ApplyProgressKindResource(_ResourceModel):
+    """How many of one kind's operations were committed, are uncertain, and were not reached."""
+
+    kind: str
+    committed: int = Field(ge=0)
+    uncertain: int = Field(ge=0)
+    not_reached: int = Field(ge=0)
+
+
+class ApplyProgressResource(_ResourceModel):
+    """How far a run's write got through its saved plan (spec 022 data-model.md "Run progress view").
+
+    `position` is the highest saved position over all the run's write executions, or `None` when
+    none was saved. `resumable` is true when the run's write was interrupted and no execution is
+    unfinished; `verify_required` is true when no `verify` passed after the latest interruption.
+    """
+
+    position: int | None = Field(default=None, ge=0)
+    saved_at: datetime | None = None
+    resumable: bool = False
+    verify_required: bool = False
+    by_kind: tuple[ApplyProgressKindResource, ...] = ()
+
+    @field_validator("saved_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone(value, _EXECUTION_TIME_MESSAGE)
+
+
+class ResumeResource(_ResourceModel):
+    """One resume request of a run: who asked, when, why, where it started, and how it ended.
+
+    `outcome` is the resume execution's terminal outcome, or `None` while it has not ended.
+    `operations_written` is the number of creates and updates this resume committed: every one after
+    `start_after` for a resume that succeeded, otherwise those through its own last saved position,
+    a lower bound for a resume that was stopped after writing past it. `None` when the saved plan
+    cannot be read.
+    """
+
+    actor: str
+    requested_at: datetime
+    reason: str | None = None
+    start_after: int | None = Field(default=None, ge=0)
+    outcome: str | None = None
+    operations_written: int | None = Field(default=None, ge=0)
+
+    @field_validator("requested_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        checked = _timezone(value, _EXECUTION_TIME_MESSAGE)
+        assert checked is not None
+        return checked
+
+
 class RunResource(_ResourceModel):
-    """Combine a public run record with its orchestration history."""
+    """Combine a public run record with its orchestration history.
+
+    `apply_progress` is `None` for a run that never started a write, and for a Sync API that
+    predates spec 022; `resumes` is then empty.
+    """
 
     run: PublicRunResource
     orchestration: tuple[OrchestrationSummary, ...]
+    apply_progress: ApplyProgressResource | None = None
+    resumes: tuple[ResumeResource, ...] = ()
 
 
 class ApprovedPlanSummaryResource(_ResourceModel):
@@ -780,6 +853,9 @@ class StageFailureResource(_ResourceModel):
     record: FailureRecordReferenceResource | None = None
     field: str | None = None
     operations_total: int | None = Field(default=None, ge=0)
+    # The creates and updates the whole run wrote, across every execution (spec 022 research R6).
+    # `None` in a record written before this field existed; `applied_operations` then counts.
+    operations_written: int | None = Field(default=None, ge=0)
     failed_operation_detail: FailedOperationDetailResource | None = None
 
 

@@ -39,9 +39,9 @@ concurrency:
 
 jobs:
   end-to-end:
-    name: "Integration, smoke, saved plan, and local NetBox example"
+    name: "Integration, smoke, saved plan, local NetBox example, and v2-to-V3 plan gate"
     runs-on: ubuntu-22.04
-    timeout-minutes: 240
+    timeout-minutes: 300
     steps:
       - name: "Check out the requested commit"
         id: checkout
@@ -142,6 +142,18 @@ jobs:
         continue-on-error: true
         run: python3 .github/scripts/nightly_e2e.py logs from-netbox
 
+      - name: "Plan from the converted v2 configuration against the data v2 wrote"
+        id: v2-gate
+        if: always() && steps.images.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 60
+        run: uv run --no-sync python .github/scripts/nightly_e2e.py suite v2-gate
+
+      - name: "Save v2-gate container logs on failure"
+        if: always() && steps.v2-gate.outcome == 'failure'
+        continue-on-error: true
+        run: python3 .github/scripts/nightly_e2e.py logs v2-gate
+
       - name: "Summarize each suite"
         if: always() && steps.checkout.outcome == 'success'
         env:
@@ -165,6 +177,16 @@ jobs:
         with:
           name: nightly-e2e-failed-container-logs
           path: .dev/nightly-e2e/*-containers.log
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: "Upload the v2-to-V3 plan gate result"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-e2e-v2-gate-result
+          path: .dev/nightly-e2e/gate-result.json
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
@@ -193,9 +215,10 @@ jobs:
           SMOKE: ${{ steps.smoke.outcome }}
           SAVED_PLAN: ${{ steps.saved-plan.outcome }}
           FROM_NETBOX: ${{ steps.from-netbox.outcome }}
+          V2_GATE: ${{ steps.v2-gate.outcome }}
         run: |
           for outcome in "$SHA_GUARD" "$DEPENDENCIES" "$IMAGES" "$INTEGRATION" \
-            "$SMOKE" "$SAVED_PLAN" "$FROM_NETBOX"; do
+            "$SMOKE" "$SAVED_PLAN" "$FROM_NETBOX" "$V2_GATE"; do
             if [ "$outcome" != success ]; then
               echo "At least one end-to-end suite or prerequisite did not pass" >&2
               exit 1

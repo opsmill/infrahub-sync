@@ -65,6 +65,7 @@ _RUN_NAMES: Final = {
     "verify": "Verify sync plan of {configuration}",
     "apply": "Apply sync plan of {configuration}",
     "sync": "Sync {configuration}",
+    "resume": "Resume sync plan of {configuration}",
 }
 # Lines read per Prefect log request (spec 017, research R4). Prefect's own default page size;
 # a page shorter than this is the last one.
@@ -102,7 +103,13 @@ class RunLogRead:
     logs: tuple[FlowRunLog, ...] = ()
 
 
-_UNNAMED_RUNS: Final = {"plan": "Plan sync", "verify": "Verify sync plan", "apply": "Apply sync plan", "sync": "Sync"}
+_UNNAMED_RUNS: Final = {
+    "plan": "Plan sync",
+    "verify": "Verify sync plan",
+    "apply": "Apply sync plan",
+    "sync": "Sync",
+    "resume": "Resume sync plan",
+}
 
 
 def run_name(stage: object, configuration_name: object) -> str:

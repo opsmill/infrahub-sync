@@ -208,8 +208,11 @@ buried in `results`. It becomes `true` in the same transaction that makes a clai
 sync execution terminal as `interrupted` / `ambiguous` — whether that verdict is written by
 the worker itself, by liveness reconciliation, or by cancellation. The store derives the
 condition from the verdict and the execution's purpose rather than taking it as an argument,
-so no caller can write it `false`, and no result merge, replacement, or later terminal
-transition clears it.
+so no caller can write it `false`, and no result merge or replacement clears it. The one
+transition that clears it is a `resume` execution that ends `succeeded`: the store sets
+`reconciliation_required` to `false` and the phase to `applied` in the same transaction.
+A resume is admitted through its own `resume_admissions` row; the run's `write_admissions`
+row is kept.
 
 Each `PrefectExecutionLink` records:
 

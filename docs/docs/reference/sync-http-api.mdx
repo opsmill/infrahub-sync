@@ -20,7 +20,9 @@ control.
 - **Configuration version**: one immutable registered revision of a configuration,
   identified by `config_id` and `registry_version`.
 - **Run**: one attempt to synchronize one configuration version to one branch, identified by
-  `run_id`. A run creates exactly one plan and applies that plan at most once.
+  `run_id`. A run creates exactly one plan and applies that plan at most once. A resume does not
+  apply the plan again: it continues the interrupted apply from the operation after its last saved
+  position.
 - **Plan**: the creates, updates and recorded deletes that a run computes before it writes,
   with their checksum. Verify and apply act on the plan of the run they name: they do not
   compute a new plan.
@@ -410,6 +412,7 @@ an absent reason and a `null` reason are the same value, and both differ from an
 | `POST /runs/{run_id}/verify` | Accept a verification that runs every pre-write check of `apply` against the destination, except the left-out confirmation, writes nothing, and does not change the run's phase. |
 | `POST /runs/{run_id}/approve` | Record approval of the run's saved plan for the exact retained checksum. Writes nothing and submits no execution. |
 | `POST /runs/{run_id}/apply` | Accept a confirmed apply for the exact retained reviewed checksum. |
+| `POST /runs/{run_id}/resume` | Accept a confirmed resume of an interrupted run: apply the rest of its saved plan, after its saved position, on the same run. |
 | `POST /runs/{run_id}/cancel` | Ask Prefect to cancel only the latest active linked execution, or, when the run has no active execution and is in phase `planned`, withdraw its plan. |
 
 ### CLI commands and the API actions they call
@@ -434,6 +437,7 @@ lists their identifiers.
 | `infrahub-sync verify RUN_ID` | `POST /runs/{run_id}/verify` |
 | `infrahub-sync approve RUN_ID` | `POST /runs/{run_id}/approve` |
 | `infrahub-sync apply RUN_ID` | `POST /runs/{run_id}/apply` |
+| `infrahub-sync runs resume RUN_ID` | `POST /runs/{run_id}/resume` |
 | `infrahub-sync runs list` | `GET /runs` |
 | `infrahub-sync runs show RUN_ID` | `GET /runs/{run_id}` |
 | `infrahub-sync runs plan RUN_ID` | `GET /runs/{run_id}/plan` |
@@ -644,6 +648,7 @@ destination branch. The event types are:
 | `infrahub_sync.run.planned` | A plan stage succeeded. |
 | `infrahub_sync.run.verified` | A verify stage succeeded. |
 | `infrahub_sync.run.applied` | An apply stage succeeded. |
+| `infrahub_sync.run.resumed` | A resume stage succeeded: the rest of the saved plan was applied. |
 | `infrahub_sync.run.synced` | A sync stage succeeded. |
 | `infrahub_sync.run.failed` | A stage failed, or was interrupted. `outcome` is `failed`, or `ambiguous` when the stage may have written to the destination. The Sync API records this event, with `outcome` `ambiguous`, when it ends an execution whose worker stopped without recording a result. |
 | `infrahub_sync.run.cancelled` | An execution that a cancel request stopped ended cancelled, or a cancel request withdrew a finished plan. `actor` and `reason` come from the cancel request. For a withdrawal, the Sync API records this event itself, with the `run.accepted` event of the request. |
@@ -828,6 +833,19 @@ Two failures of the saved plan files have names of their own, and both belong to
 When the destination cannot be reached, the stage fails with the destination error, and no
 check after it is reported as passed.
 
+A verification is also accepted on an interrupted run whose write may have reached the
+destination; see [Resume an interrupted run](#resume-an-interrupted-run). After every check
+passes, it reads the node of each uncertain operation from the destination and stores
+`results.verification.operations`, one `{operation_id, kind, action, state}` entry for each,
+with `state` one of `matches`, `differs` and `missing`. A create whose key more than one node
+at the destination holds is reported as `differs`. Recorded deletes are never listed, because
+they are never written. It never stores a value. When more than
+2,000 operations are uncertain, it reports the first 2,000 and stores the count of the others
+in `results.verification.operations_truncated`. The states never make the verification fail. A
+failed read of those nodes does: the failure record names its cause by the error's class, such
+as an unreachable destination or a refused token. For a failure that names a system or a
+credential, the record's `next_action` ends with running `verify` again, then `runs resume`.
+
 ### Approve the reviewed plan
 
 Approval records that the reviewed plan is accepted, bound to its checksum. It writes nothing
@@ -849,9 +867,12 @@ curl --request POST \
 The service evaluates the request in this order:
 
 1. Authorization (`403 forbidden`), then a replay of the same idempotency key.
-2. A run in phase `cancelled` is refused with `409 run-cancelled`. A run that is not in phase
-   `planned`, or that has an execution in progress, is refused with `409 run-not-approvable`;
-   the message names the phase or the stage that is running.
+2. A run in phase `cancelled` is refused with `409 run-cancelled`. A run that is neither in
+   phase `planned` nor resumable, or that has an execution in progress, is refused with
+   `409 run-not-approvable`; the message names the phase or the stage that is running. A run
+   is resumable when its write stopped part-way; see
+   [Resume an interrupted run](#resume-an-interrupted-run). The store checks this again when it
+   stores the approval, so no approval is stored while a verification or a resume runs.
 3. The saved plan is read as for `GET /runs/{run_id}/plan` (`404 run-not-found`,
    `410 artifact-expired`, `503 plan-unavailable`).
 4. A plan whose checksum could not be confirmed is refused with `409 plan-checksum-unverified`.
@@ -875,7 +896,7 @@ mutation receipt, so a retry with the same key returns it unchanged. The run's `
 }
 ```
 
-Approval is not a phase: an approved run stays in phase `planned`. Approval does not run the
+Approval is not a phase: an approved run stays in the phase it was in. Approval does not run the
 destination checks; `apply` runs them, and `verify` reports their result beforehand.
 
 ### Apply the reviewed plan
@@ -922,6 +943,126 @@ The service refuses to apply a run in phase `cancelled` with `409 run-cancelled`
 approval setting, before it reserves the mutation receipt. The store's write admission refuses
 it too, so a cancel and an apply of the same run cannot both succeed. This applies to every
 cancelled run, including a run whose `verify` stage was cancelled while it ran.
+
+### Resume an interrupted run
+
+An apply, a `sync` and a resume save a progress marker while they write: the position, in the
+saved plan's order, of the last operation committed. Positions count from 0 and include
+recorded deletes. They save it after every 500 committed creates and updates, at the first
+commit after 30 seconds, when the write stops, and after the plan's last operation. They do not
+save when the kind changes: the plan is sorted by tier and then by operation ID, so the kinds of
+one tier are mixed. When the marker cannot be saved for 5 minutes, the write stops and the run
+is interrupted.
+
+`GET /runs/{run_id}` returns how far the write got under `apply_progress`, and each resume under
+`resumes`. `apply_progress` is `null` when the run has no `apply`, `sync` or `resume` execution.
+A `sync` killed while it was still planning has a `sync` execution, so it returns an object
+whose `position` is `null`:
+
+```json
+"apply_progress": {
+  "position": 5999,
+  "saved_at": "2026-11-12T10:15:00Z",
+  "resumable": true,
+  "verify_required": true,
+  "by_kind": [
+    {"kind": "DcimDevice", "committed": 1200, "uncertain": 0, "not_reached": 0},
+    {"kind": "DcimInterface", "committed": 4800, "uncertain": 4000, "not_reached": 0}
+  ]
+},
+"resumes": []
+```
+
+In this example, the worker was killed after it saved position 5999, the 6,000th operation, and
+the plan holds no recorded delete. `position` is the highest saved position over all the run's
+write executions. The counts of `by_kind` are over the plan's positions, so a recorded delete
+is counted as `committed` at or before `position`, as `uncertain` inside the uncertain
+operations, and as `not_reached` after them. `uncertain` counts the operations after `position`
+that may have reached the destination:
+
+- through the failed operation, when the failure record of the latest write execution names it;
+- through the next 500 creates and updates and the recorded deletes between them, when the last
+  save is known to have succeeded, for example while a resume still runs;
+- through the end of the plan in every other case, for example when the worker was killed.
+
+While the first apply or `sync` of a run still runs, `reconciliation_required` is `false` and no
+operation is counted as `uncertain`.
+
+A failure record stores the `flow_run_id` of the execution that wrote it, and only a record of
+the latest write execution names the failed operation. A record stored before this field existed
+names none, so every remaining operation is uncertain.
+
+After a resume that succeeded, `apply_progress.resumable` is `false`, every operation is
+`committed`, and `resumes` holds one entry:
+
+```json
+"resumes": [
+  {"actor": "alice", "requested_at": "2026-11-12T11:02:00Z", "reason": null, "start_after": 5999, "outcome": "succeeded", "operations_written": 4000}
+]
+```
+
+Each entry of `resumes` holds `operations_written`: the creates and updates that resume wrote,
+after its `start_after`. For a resume that succeeded, the count runs to the end of the plan; for
+a resume that was stopped, it runs to its own last saved position. When a resume or an apply
+succeeds, the run's summary counts the whole plan. The `operations_written` of a failure record
+counts the creates and updates at or before the position the execution started after, plus the
+ones the execution wrote. After a kill, operations an earlier execution wrote past its last
+saved position are counted only once a later execution writes them again.
+
+A run is `resumable` when `reconciliation_required` is `true`, the run is not
+cancelled, its plan is saved, and no execution of it is unfinished. `verify_required` is `true`
+until a verification passes after the latest interruption.
+
+When the worker of a `sync` run is killed while it is still planning, the run requires
+reconciliation but saved no plan, so it wrote nothing. Its `apply_progress` has `position: null`,
+`resumable: false`, `verify_required: false` and an empty `by_kind`. A verification of that run
+is refused with `409 run-execution-conflict`, and a resume with `409 run-not-resumable`; both
+refusals are recorded in the run's audit history. Start a new `plan` or `sync` run instead.
+
+The service reads the kind and action of each operation from the saved plan once per run, and
+keeps them in memory, so polling `GET /runs/{run_id}` does not read the whole plan on every
+request. When the plan expired or cannot be read, `by_kind` is empty, and the service logs a
+warning that names the run, the error class and the error code, without the error message.
+
+A resume applies the run's saved plan from the operation after `position`, in a new execution
+of purpose `resume` on the same run. It does not read the source or create a plan, for an
+apply run and for a `sync` run. It requires the saved plan's checksum and explicit write
+confirmation:
+
+```bash
+curl --request POST \
+  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/resume \
+  --header "Authorization: Bearer $SYNC_API_TOKEN" \
+  --header "Idempotency-Key: resume-20260810T1500-0123abcd" \
+  --header "Content-Type: application/json" \
+  --data '{
+    "expected_checksum": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "confirm_writes": true,
+    "reason": "resume after the worker restart"
+  }'
+```
+
+`reason` is optional, and `confirm_left_out` works as for `apply`. Only the actor who created the
+run, or an administrator, can resume it (`403 forbidden`). The service answers `202` with the
+run. It refuses a resume before any write:
+
+| Status | Code | When |
+| --- | --- | --- |
+| 409 | `confirmation-required` | `confirm_writes` is not `true`. |
+| 409 | `run-not-resumable` | The run is not interrupted, is cancelled, saved no plan, or has an unfinished execution. This includes an applied run, a run whose apply failed before its first write, a run that was never applied, a `sync` run that stopped after its plan, and a `sync` run whose worker was killed before it saved its plan. The message says which; for a run that saved no plan, it says that a new `plan` or `sync` run is the next step. |
+| 409 | `checksum-conflict` | `expected_checksum` differs from the saved plan's checksum. |
+| 409 | `left-out-confirmation-required` | The plan leaves out records and `confirm_left_out` is not `true`. |
+| 409 | `approval-required` / `approval-checksum-mismatch` | The service requires approval and the run has none for this checksum. The `approval-required` message names `infrahub-sync approve RUN_ID --expected-checksum CHECKSUM`; an interrupted run can be approved. |
+| 409 | `verify-required` | No verification passed on the run after its latest interruption. |
+| 409 | `run-execution-conflict` | Another resume of the run is unfinished. |
+| 410 / 503 | `artifact-expired` / `plan-unavailable` | The saved plan expired or cannot be read. |
+
+Every resume request, accepted or refused, is recorded in the run's audit history and event
+list with the operation `resume`. The worker runs every pre-write check again before its first
+write. When a resume ends `succeeded`, the run's phase becomes `applied` and
+`reconciliation_required` becomes `false`. When a resume is interrupted, the run stays
+resumable, and the next resume needs a new verification. A resume writes the plan's values over
+every node that the verification reported as `differs`.
 
 ### Require an approved plan
 
@@ -1009,16 +1150,17 @@ confirmed before any success is published.
 
 Public run resources carry `reconciliation_required`. It is `false` on every new run and
 becomes `true` only when a write execution ends without proving what reached the
-destination. Nothing sets it back to `false`.
+destination. Only a resume that ends `succeeded` sets it back to `false`; see
+[Resume an interrupted run](#resume-an-interrupted-run).
 
 | What happened | Durable outcome | Your next step |
 | --- | --- | --- |
 | Another writer held the guard for the whole deadline | `failed`; no destination was contacted and nothing was written | Create a new plan: the other writer may have changed the destination |
 | A destination-sensitive check failed under the guard | The existing specific refusal; nothing was written | Fix the cause and create a new plan |
-| The adapter failed after the first operation was dispatched | `interrupted` / `ambiguous`, `reconciliation_required: true`, with the partial `ApplyRecord` in the retained results | Inspect the destination, then create a new plan |
-| You cancelled a run whose worker already held the write | `interrupted` / `ambiguous`, `reconciliation_required: true`; the cancel request answers `409 cancellation-ambiguous` | Inspect the destination, then create a new plan |
+| The adapter failed after the first operation was dispatched | `interrupted` / `ambiguous`, `reconciliation_required: true`, with the partial `ApplyRecord` in the retained results | Verify the run, then resume it or create a new plan |
+| You cancelled a run whose worker already held the write | `interrupted` / `ambiguous`, `reconciliation_required: true`; the cancel request answers `409 cancellation-ambiguous` | Verify the run, then resume it or create a new plan |
 | You cancelled a finished plan before applying it | `cancelled` / `cancelled`; nothing was written, and `approve` and `apply` now answer `409 run-cancelled` | Create a new plan run if you still want the change |
-| The worker or its guard session was lost | `interrupted` / `ambiguous`, `reconciliation_required: true` | Inspect the destination, then create a new plan |
+| The worker or its guard session was lost | `interrupted` / `ambiguous`, `reconciliation_required: true` | Verify the run, then resume it or create a new plan |
 | The run completed normally | The existing succeeded result | Nothing; this run accepts no further write |
 
 Cancellation is not a clean-stop guarantee for a write. A worker that has already begun
@@ -1028,8 +1170,15 @@ path won first.
 
 ### Reconcile an uncertain write
 
-Sync never calls an adapter or infers success after an uncertain result, and there is no
-endpoint that clears `reconciliation_required`. Reconcile by planning again:
+Sync never retries a write by itself after an uncertain result. There are two ways to
+reconcile an interrupted run.
+
+Resume it on the same run, as [Resume an interrupted run](#resume-an-interrupted-run)
+describes: run `POST /runs/{run_id}/verify`, read the state of each uncertain operation in
+`results.verification.operations`, then call `POST /runs/{run_id}/resume`. A successful resume
+is the only request that clears `reconciliation_required`.
+
+Or plan again, for example when a node reported as `differs` holds a change that must stay:
 
 1. create a new plan run on the same registered configuration;
 2. read its summary. A plan with no operations means the destination currently matches the desired

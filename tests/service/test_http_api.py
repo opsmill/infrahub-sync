@@ -1839,6 +1839,7 @@ def test_confirmation_schema_errors_and_openapi_contract(
         "/runs/{run_id}/artifacts/{artifact_id}",
         "/runs/{run_id}/verify",
         "/runs/{run_id}/apply",
+        "/runs/{run_id}/resume",
         "/runs/{run_id}/approve",
         "/runs/{run_id}/cancel",
         "/status",

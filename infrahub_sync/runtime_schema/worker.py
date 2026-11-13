@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 # the source dependency a no-source apply exists to avoid.
 RuntimeModelScope = Literal["destination", "both"]
 STAGE_RUNTIME_MODEL_SCOPE: Mapping[str, RuntimeModelScope | None] = MappingProxyType(
-    {"plan": "both", "sync": "both", "apply": "destination", "verify": None}
+    {"plan": "both", "sync": "both", "apply": "destination", "resume": "destination", "verify": None}
 )
 
 

@@ -146,6 +146,25 @@ def operator_cause(exc: BaseException, secrets: Sequence[str]) -> dict[str, Any]
     return recorded
 
 
+def resumable_next_action(exc: BaseException, secrets: Sequence[str]) -> dict[str, Any]:
+    """The next action of a stopped write on a run that keeps its saved plan, or nothing.
+
+    Only the default next action of `OperationApplyFailedError`, the one for an operation whose
+    reach is unknown, names a new plan where a resume applies: the uniqueness refusal and the
+    operation that wrote nothing keep their own advice. The link is the one `operator_cause`
+    takes its next action from. A failure whose fix is in the source data or the configuration
+    (`_SOURCE_FIX_TYPES`) keeps the new-plan advice of its template, as `_templates` does: a
+    resume would apply the same saved plan again.
+    """
+    if _classify(exc).failure_type in _SOURCE_FIX_TYPES:
+        return {}
+    links = cause_chain(exc, follow_context=False)
+    link = next((link for link in links if isinstance(link, PlanArtifactError) and link.next_action), None)
+    if isinstance(link, OperationApplyFailedError) and link.next_action == OperationApplyFailedError.next_action:
+        return {"next_action": _recordable(RESUMABLE_WRITE_NEXT_ACTION, secrets)}
+    return {}
+
+
 # The classification table for connection, timeout and token failures (spec 020 plan.md, open
 # risk R12). It reads the exception type and the HTTP status code attribute only, never text.
 #
@@ -332,6 +351,37 @@ def _record_load_template(fields: dict[str, Any], _where: str, _adapter: str) ->
 
 
 _PLAN_AGAIN = "then plan again."
+# The closing step on a run whose write stopped part-way (spec 022): it keeps its saved plan,
+# and a resume needs a `verify` that passed after the latest write.
+_VERIFY_AND_RESUME = (
+    "then run `infrahub-sync verify RUN_ID` again, then "
+    "`infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM`."
+)
+# The next action of a write that stopped at an operation whose reach is unknown, on a run that
+# keeps its saved plan (spec 022). It replaces `OperationApplyFailedError.next_action`, which
+# names a new plan because the CLI-local and direct Prefect paths have no resume.
+RESUMABLE_WRITE_NEXT_ACTION = (
+    "Nothing was rolled back: the operations applied before this one stay written, and this one may have "
+    "written part of its own change. Resolve the underlying error at the destination, then run "
+    "`infrahub-sync verify RUN_ID`, then `infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM`: the "
+    "resume writes the rest of the "
+    "saved plan, and writing an operation that already succeeded again converges rather than duplicating."
+)
+# The failure types that name a system or a credential, not the source data: once fixed, a
+# resumable run continues with its saved plan. A record or a transform fix needs a new plan.
+_RESUMABLE_TYPES = frozenset(
+    {
+        "system_unreachable",
+        "system_timeout",
+        "token_rejected",
+        "permission_missing",
+        "tls_certificate_rejected",
+        "credential_missing",
+    }
+)
+# The failure types whose fix is in a source record or a transform: a new plan is needed even on
+# a run that keeps its saved plan, because the saved plan holds the values that failed.
+_SOURCE_FIX_TYPES = frozenset({"record_load_failed", "transform_failed"})
 _REACH = "Check that {adapter} answers at the address the configuration names, " + _PLAN_AGAIN
 
 # One fixed template per failure type: the cause and the next action, filled with the recorded
@@ -378,13 +428,20 @@ _TEMPLATES: dict[str, Callable[[dict[str, Any], str, str], _Template]] = {
 }
 
 
-def _templates(fields: dict[str, Any]) -> _Template:
-    """The cause and the next action of one failure type, from fixed templates over recorded fields."""
+def _templates(fields: dict[str, Any], *, resumable: bool = False) -> _Template:
+    """The cause and the next action of one failure type, from fixed templates over recorded fields.
+
+    On a resumable run, the next action of a system or credential failure ends with `verify`
+    and `runs resume` instead of a new plan.
+    """
     template = _TEMPLATES.get(fields["failure_type"])
     if template is None:
         return None, None
     system = fields["system"]
-    return template(fields, _where(system), system["adapter"] if system else "the system")
+    cause, next_action = template(fields, _where(system), system["adapter"] if system else "the system")
+    if resumable and next_action is not None and fields["failure_type"] in _RESUMABLE_TYPES:
+        next_action = next_action.removesuffix(_PLAN_AGAIN) + _VERIFY_AND_RESUME
+    return cause, next_action
 
 
 def _record_reference(link: BaseException | None) -> dict[str, Any] | None:
@@ -414,8 +471,12 @@ def failure_record(
     *,
     secrets: Sequence[str] = (),
     destination_adapter: str = APPLY_DESTINATION_ADAPTER,
+    resumable: bool = False,
 ) -> dict[str, Any]:
     """The spec 020 fields of a `<stage>_failure` record, and a template cause and next action.
+
+    `resumable` is true when the run's write stopped part-way and the run keeps its saved plan
+    (spec 022): the next action then names `verify` and `runs resume`, not a new plan.
 
     Returns every key of `FAILURE_RECORD_KEYS`, `None` where the failure does not name it, and
     `cause` and `next_action` when a template exists for the failure type. The caller keeps the
@@ -453,7 +514,7 @@ def failure_record(
         "record": _record_reference(link),
         "field": field_name,
     }
-    cause, next_action = _templates(fields)
+    cause, next_action = _templates(fields, resumable=resumable)
     recorded = dict(fields)
     if cause:
         recorded["cause"] = _recordable(cause, secrets)
@@ -479,10 +540,12 @@ _MAX_IDENTITY_DEPTH = 3
 
 
 def apply_progress(record: ApplyRecord | None) -> dict[str, Any]:
-    """The plan's operation count and the failed operation's action, kind and identity, when known.
+    """The plan's operation count, the run's written count and the failed operation, when known.
 
-    The engine reads them from the plan (`Potenda.apply_plan`). The identity is the source record
-    identity the plan holds, which FR-019 allows; each string is capped.
+    The engine reads them from the plan (`Potenda.apply_plan`). `operations_written` counts the
+    creates and updates of every execution of the run, through the position a resume started
+    after (spec 022 research R6). The identity is the source record identity the plan holds,
+    which FR-019 allows; each string is capped.
     """
     if record is None:
         return {}
@@ -490,6 +553,9 @@ def apply_progress(record: ApplyRecord | None) -> dict[str, Any]:
     total = record.operations_total
     if isinstance(total, int) and not isinstance(total, bool) and total >= 0:
         progress["operations_total"] = total
+    written = record.operations_written
+    if isinstance(written, int) and not isinstance(written, bool) and written >= 0:
+        progress["operations_written"] = written
     detail = record.failed_operation_detail
     if record.failed_operation is not None and detail is not None:
         action, kind = _name(detail.get("action")), _name(detail.get("kind"))

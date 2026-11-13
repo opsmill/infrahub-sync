@@ -1203,9 +1203,8 @@ a large volume.
 ## When the outcome of a write is uncertain
 
 If a write ends without proving what reached the destination, the deployment
-does not retry it. Repeating a write whose outcome is unknown is the one thing
-that could turn an uncertain state into a wrong one, so the run is left terminal
-and the record carries what is known.
+does not retry it by itself. The record carries what is known, including how
+far the write got through the saved plan.
 
 `reconciliation_required` is a field of the run itself rather than something
 buried in its evidence, so deciding whether a run needs reconciling never means
@@ -1229,14 +1228,20 @@ phase `apply-failed` and outcome `failed`, with
 stage, the error type, the operations already applied, and the one that failed.
 
 `reconciliation_required` is a write-only verdict: an interrupted `plan` or
-`verify` cannot have written, so it is not set for one, and nothing sets it back
-to false.
+`verify` cannot have written, so it is not set for one. Only a resume that ends
+successfully sets it back to false.
 
-In both cases, read the record, inspect the destination, and then take a fresh
-plan run. A new plan reads the destination as it now is, so what it proposes is
-what is still outstanding. The terminal run is never reopened and no later run
-inherits its admission. A failure that never began writing is an ordinary failed
-run, and needs only a new plan.
+A run with phase `apply-interrupted` or `sync-interrupted` can be resumed on the
+same run: run `verify RUN_ID`, which reports the destination state of each
+operation that may have reached it, then `runs resume RUN_ID
+--expected-checksum CHECKSUM`. See
+[Resume an interrupted apply](./running-a-sync.mdx#resume-an-interrupted-apply).
+
+For an `apply-failed` run, or when you do not want to resume, read the record,
+inspect the destination, and then take a fresh plan run. A new plan reads the
+destination as it now is, so what it proposes is what is still outstanding. No
+later run inherits the earlier run's admission. A failure that never began
+writing is an ordinary failed run, and needs only a new plan.
 
 ## What this topology does not do
 

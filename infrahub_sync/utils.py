@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from infrahub_sync.plan.models import ApplyRecord
     from infrahub_sync.plan.ownership import WriteOwnership
     from infrahub_sync.plan.reader import RawPlanArtifact
+    from infrahub_sync.potenda.apply_progress import ApplyProgressObserver
     from infrahub_sync.runtime_schema import RuntimeModelPlan
 
 
@@ -438,6 +439,8 @@ class PlanApplier:
         allow_destination_change: bool = False,
         expected_checksum: str | None = None,
         confirm_left_out: bool = False,
+        progress: ApplyProgressObserver | None = None,
+        start_after: int | None = None,
     ) -> ApplyRecord:
         """Apply the stored plan — the engine's contract, unchanged; writes no run file (AD069).
 
@@ -458,7 +461,8 @@ class PlanApplier:
         operator's approval is decided against the artifact the apply loop consumes.
         `ownership` travels with it, required and without a default, because this seam
         assembles the apply and an apply assembled without a write-ownership boundary is
-        an unguarded write.
+        an unguarded write. `progress` and `start_after` travel to the engine unchanged
+        (spec 022); `None` for both applies the whole plan and reports nothing.
 
         Raises:
             PlanVerificationError: the plan was computed against a different destination
@@ -472,6 +476,8 @@ class PlanApplier:
             artifact=artifact,
             expected_checksum=expected_checksum,
             confirm_left_out=confirm_left_out,
+            progress=progress,
+            start_after=start_after,
         )
 
     def check_plan(self, *, config_version: str | None = None, allow_destination_change: bool = False) -> PlanCheck:
