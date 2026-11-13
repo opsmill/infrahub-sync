@@ -181,7 +181,7 @@ beside it. No second file.
   2. checks that each file loads with `ssl.SSLContext.load_verify_locations`, and otherwise stops with
      an error that names the file and the `ssl` error class
   3. writes the `certifi.where()` content followed by the operator's files to
-     `$TMPDIR/infrahub-sync-ca-bundle.pem` (`TMPDIR=/tmp/infrahub-sync`, tmpfs, `Dockerfile:109`), mode
+     `$TMPDIR/infrahub-sync-ca-bundle-<random>.pem` (one per process since the review) (`TMPDIR=/tmp/infrahub-sync`, tmpfs, `Dockerfile:109`), mode
      `0600`
   4. sets `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` and `INFRAHUB_TLS_CA_FILE` in
      `os.environ` to that file, unless the variable is already set, in which case it logs a warning

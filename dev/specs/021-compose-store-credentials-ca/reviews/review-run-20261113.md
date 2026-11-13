@@ -54,7 +54,8 @@ configuration file exists, so every aspect was on.
   identity in the release notes would not match; add `github.ref_type == 'tag'`
   (`.github/workflows/workflow-publish.yml`).
 - code: the bundle path is fixed, so two host-mode processes rewrite the same file at start; use a
-  per-process file (`trust_store.py`). **Fixed:** `mkstemp`.
+  per-process file (`trust_store.py`). **Fixed:** `mkstemp`, removed when the
+  process ends.
 - code: wildcard DNS search domains can make `object-store` resolve while the bundled store is left
   out (`bootstrap.py`, `check_store_settings`).
 - code: on a versioned bucket the delete leaves an older version of the check object.

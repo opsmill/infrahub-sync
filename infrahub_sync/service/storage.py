@@ -202,7 +202,10 @@ class EndpointSettingError(ValueError):
 
 def _endpoint(values: Mapping[str, str]) -> str | None:
     """Validate the optional S3-compatible endpoint, passing the operator string to Boto3."""
-    endpoint = _optional_setting(values, S3_ENDPOINT_ENV)
+    try:
+        endpoint = _optional_setting(values, S3_ENDPOINT_ENV)
+    except ValueError as error:
+        raise EndpointSettingError(str(error)) from None
     if endpoint is None:
         return None
     msg = f"{S3_ENDPOINT_ENV} must be an absolute http or https URL without userinfo"

@@ -34,7 +34,7 @@ name maps to one bundled adapter and one credential setting of that adapter's ca
 | Host directory | `INFRAHUB_SYNC_CA_CERTIFICATES`; unset means an empty named volume |
 | Mount | `/etc/infrahub-sync/ca`, read-only, on `sync-bootstrap`, `sync-api` and `sync-worker` |
 | Files read | `*.pem` and `*.crt` in the directory, not in subdirectories |
-| Written bundle | `/tmp/infrahub-sync/infrahub-sync-ca-bundle.pem`, mode `0600`, `certifi` roots first |
+| Written bundle | `/tmp/infrahub-sync/infrahub-sync-ca-bundle-<random>.pem`, one per process, removed at exit, mode `0600`, `certifi` roots first |
 | Variables set | `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE`, `INFRAHUB_TLS_CA_FILE`, each only when unset |
 
 State: the bundle is written once per process start and lives on tmpfs, so it is gone after a

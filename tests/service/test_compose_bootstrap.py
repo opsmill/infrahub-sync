@@ -600,3 +600,5 @@ def test_another_refused_s3_setting_is_not_reported_as_the_endpoint(
 
     assert "refused: object-store-setting-invalid" in caplog.text
     assert value not in caplog.text
+    if name == "INFRAHUB_SYNC_S3_ADDRESSING_STYLE":
+        assert "INFRAHUB_SYNC_S3_ADDRESSING_STYLE must be path or virtual" in caplog.text

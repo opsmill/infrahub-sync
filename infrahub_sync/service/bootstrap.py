@@ -262,9 +262,12 @@ def _converge() -> None:
         # The message names the setting and the rule, never the value (`storage._endpoint`).
         logger.error("%s", error)  # noqa: TRY400 - a fixed message; the family follows.
         raise BootstrapError(OBJECT_STORE_ENDPOINT_INVALID) from None
-    except ValueError:
+    except ValueError as error:
         # Another refused S3 setting: the addressing style, or a region botocore refuses.
-        # botocore's own message may quote the value, so only the family is reported.
+        # Storage's own messages name the setting only; botocore's may quote the value, so
+        # for those only the family is reported.
+        if not isinstance(error, BotoCoreError):
+            logger.error("%s", error)  # noqa: TRY400 - a fixed message; the family follows.
         raise BootstrapError(OBJECT_STORE_SETTING_INVALID) from None
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
