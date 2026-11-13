@@ -41,6 +41,12 @@ release_label_files: &release_label_files
   - ".github/workflows/trigger-push-stable.yml"
   - ".github/workflows/update-infrahub-sdk.yml"
 
+# The web interface and the submodule that holds its design system. The CI job
+# fetches that submodule, so a change to `.gitmodules` re-runs it too.
+frontend_all:
+  - "frontend/**"
+  - ".gitmodules"
+
 github_workflows: &github_workflows
   - ".github/workflows/*.yml"
 

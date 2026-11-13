@@ -31,6 +31,7 @@ jobs:
       documentation: ${{ steps.changes.outputs.documentation_all }}
       sync: ${{ steps.changes.outputs.sync_all }}
       github_workflows: ${{ steps.changes.outputs.github_workflows }}
+      frontend: ${{ steps.changes.outputs.frontend_all }}
     steps:
       - name: "Check out repository code"
         uses: "actions/checkout@v7"
@@ -129,6 +130,41 @@ jobs:
       - name: "Linting: rumdl"
         run: "uv run rumdl check ."
 
+  # Biome, the TypeScript check and a production build of the web interface.
+  # `@infrahub/ui` comes from the `frontend/vendor/infrahub` submodule, so the
+  # checkout fetches it.
+  frontend-lint:
+    if: needs.files-changed.outputs.frontend == 'true'
+    needs: ["files-changed"]
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ./frontend
+    steps:
+      - name: "Check out repository code"
+        uses: "actions/checkout@v7"
+        with:
+          submodules: true
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          package_json_file: frontend/package.json
+      - name: Install NodeJS
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: "Install dependencies"
+        run: pnpm install --frozen-lockfile
+      - name: "Linting: Biome"
+        run: pnpm check
+      - name: "Linting: TypeScript"
+        run: pnpm typecheck
+      - name: "Build"
+        run: pnpm build
+
   action-lint:
     if: needs.files-changed.outputs.github_workflows == 'true'
     needs: ["files-changed"]
@@ -160,8 +196,6 @@ jobs:
     steps:
       - name: "Check out repository code"
         uses: "actions/checkout@v7"
-        with:
-          submodules: true
       - name: Install pnpm
         uses: pnpm/action-setup@v6
         with:
@@ -194,8 +228,6 @@ jobs:
     steps:
       - name: "Check out repository code"
         uses: "actions/checkout@v7"
-        with:
-          submodules: true
 
       # The official GitHub Action for Vale doesn't work, installing manually instead:
       # https://github.com/errata-ai/vale-action/issues/103

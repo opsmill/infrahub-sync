@@ -191,6 +191,27 @@ reports no available worker, it fails and tells you to start `dev.worker`. In th
 worker runs on the host, so the smoke package names Infrahub by its host address,
 `http://127.0.0.1:8000` with the default `INFRAHUB_PORT`.
 
+## Run the web interface
+
+With the stack running in either mode, start the development server of the web interface in its
+own terminal:
+
+```bash
+uv run invoke dev.frontend
+```
+
+`dev.frontend` needs `pnpm`. If `pnpm` is not on your `PATH`, run `corepack enable pnpm` first.
+The task fetches the `frontend/vendor/infrahub` submodule when it is missing, installs the locked
+dependencies and serves the interface on `http://localhost:3000` until you stop it with Ctrl-C.
+
+The server forwards `/api` to the Sync API of the stack with a bearer token, chosen in this order:
+
+- `INFRAHUB_SYNC_API_TOKEN`, when your shell exports it.
+- The development token, when a principal in `BEARER_TOKENS` has it.
+- The token of the only principal in `BEARER_TOKENS`.
+
+The token stays in the server process and is not included in the browser bundle.
+
 ## Use an Infrahub that already runs
 
 To sync into an Infrahub you started separately, for example with Infrahub's own Compose file,

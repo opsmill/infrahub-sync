@@ -1,0 +1,1 @@
+The configuration page of the Sync web interface shows one registered version on one page instead of tabs: the source and destination systems with their addresses, the mapping of source models to Infrahub kinds, a comparison with an earlier version, and the latest runs of that version. The runs table no longer names the user who started a run.

@@ -1,0 +1,4 @@
+[submodule "frontend/vendor/infrahub"]
+	path = frontend/vendor/infrahub
+	url = https://github.com/opsmill/infrahub.git
+	branch = develop
