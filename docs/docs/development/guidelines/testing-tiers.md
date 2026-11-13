@@ -398,6 +398,75 @@ uv run invoke dev.destroy
 uv run invoke netbox.destroy
 ```
 
+##### The `v2-gate` suite
+
+The `v2-gate` suite checks that a v2 configuration converted by `configs convert` plans no
+change against the data v2 wrote. It is a suite of `.github/scripts/nightly_e2e.py`, not a
+pytest test, and the nightly end-to-end workflow runs it after the `from-netbox` check.
+
+The suite sets up the same services as the `from-netbox` check, then runs these steps:
+
+1. It removes the development stack, loads the pinned `demo` dataset into the local NetBox,
+   starts the development stack and loads the schema snapshot from `tests/data/nightly_schema/`.
+2. It creates the `v2-gate` branch in Infrahub.
+3. It installs `infrahub-sync==2.0.1` from PyPI in its own environment with `uvx`, together
+   with `pynetbox==7.8.0`, and runs v2 `generate` and `sync` with
+   `tests/data/v2_examples/netbox_to_infrahub/config.yml` on the `v2-gate` branch. v2 receives
+   only `PATH`, `HOME`, `TMPDIR` and its NetBox and Infrahub variables.
+   The configuration is the NetBox example of the `2.0.2` tag, because the `2.0.1` example maps
+   kinds that the loaded schema does not have.
+4. It converts the same `config.yml` with `configs convert --live-schema --yes`, using the host
+   addresses of NetBox and Infrahub, then sets the package's addresses to the ones the Sync
+   worker reaches on the stack's networks (`http://netbox:8080` and
+   `http://infrahub-server:8000`). It registers the package and runs `plan` on the `v2-gate`
+   branch. NetBox does not change between the v2 sync and the plan.
+5. When the plan holds updates, it reads each updated node on the `v2-gate` branch by its kind
+   and the destination ID that `runs plan --detail` prints, to get the values v2 wrote.
+6. It compares the plan with `tests/data/v2_gate/expected_deletes.yml` and
+   `tests/data/v2_gate/expected_left_out.yml`, and writes
+   `.dev/nightly-e2e/gate-result.json`.
+
+The suite passes only when all of these hold:
+
+- The plan holds no creates and no updates.
+- Every record left out because of a problem, and every problem, is on the reviewed list
+  `tests/data/v2_gate/expected_left_out.yml`. An entry matches on its list (`left_out` or
+  `problem`), its type, its kind and its identity.
+- Every record left out because it depends on another record depends on an accepted record,
+  directly or through other dependent records.
+- Every delete is on `tests/data/v2_gate/expected_deletes.yml`, matched on its kind and its
+  identity, or is of a kind that has an accepted record left out.
+- The plan detail lists as many operations as the `operations:` total in the plan summary.
+- The plan computed deletes: the summary shows `delete_operations_computed: true`.
+
+The suite reads the two lists with `runs plan <run-id> --left-out` and `--problems`.
+
+The reviewed lists hold the records that the destination schema cannot represent. On the pinned
+`demo` dataset, Infrahub identifies racks, VLANs and devices by fewer fields than NetBox, so
+NetBox records that differ only in their site, rack or VLAN group map to one Infrahub node.
+v2 wrote such records into one node. Those Infrahub nodes then match no source record, which
+is why the plan records deletes of their kinds. Apply never executes a delete.
+
+`gate-result.json` records the v2 version, the Infrahub version, the dataset commit and
+SHA-256, the counts, the accepted entries, and each unexpected entry with its kind and identity.
+For an update, the entry gives each field that differs with `v2`, the current value of that
+field on the `v2-gate` branch, which is the value v2 wrote, next to `v3`, the value V3 would
+write. When the suite cannot read the node or the field, `v2` holds `<not read>`. Treat every
+unexpected entry as a defect in V3 or in the conversion.
+
+Add an entry to either list, with its reason, only in a pull request where a reviewer accepts
+the reason. A failure of this suite fails the nightly job.
+
+Run it from the repository root, with Docker running and no other development stack or NetBox
+in use, because the suite resets both:
+
+```bash
+uv run python .github/scripts/nightly_e2e.py suite v2-gate
+```
+
+In the nightly workflow, the result is uploaded as the `nightly-e2e-v2-gate-result` artifact.
+When you finish a local run, remove both stacks as for the `from-netbox` check.
+
 ##### The saved-plan write-surface qualifications
 
 Three live qualifications exercise the saved-plan write surface end to end.
@@ -460,8 +529,8 @@ what the test pins is that the destination converges them.
 #### Nightly end-to-end report
 
 `.github/workflows/workflow-nightly-e2e.yml` runs the integration tests, the
-development stack's smoke tests, saved-plan live tests, and `from-netbox` check against disposable
-services. A scheduler outside GitHub can dispatch it each night. To dispatch one run
+development stack's smoke tests, saved-plan live tests, `from-netbox` check, and `v2-gate` suite
+against disposable services. A scheduler outside GitHub can dispatch it each night. To dispatch one run
 manually, use a full commit SHA already merged into `feature/v3-develop`:
 
 ```bash

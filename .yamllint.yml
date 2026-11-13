@@ -4,6 +4,9 @@ extends: default
 ignore: |
   /.venv
   /examples
+  # Byte-for-byte copies of the v2 2.0.2 and v1 1.6.1 example configurations, kept
+  # unedited as conversion input (see tests/data/v2_examples/README.md).
+  /tests/data/v2_examples
   /docs/node_modules
   /docs/pnpm-lock.yaml
   /frontend/node_modules
