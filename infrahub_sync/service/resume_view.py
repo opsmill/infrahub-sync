@@ -110,19 +110,37 @@ def _failure_of(run: ProductRun, link: PrefectExecutionLink | None) -> Mapping[s
     return failure
 
 
+def _last_save_succeeded(latest: PrefectExecutionLink | None, failure: Mapping[str, object] | None) -> bool:
+    """Whether the latest write execution's last save attempt is known to have succeeded (research R11).
+
+    It never is when the execution saved no marker of its own. While the execution runs, its
+    own marker counts as its last save. Once it ended, it counts only when the worker recorded
+    its own failure, did not stop with `ApplyProgressLostError`, and the last operation the
+    record lists as applied is the one the marker names, so no commit followed the last save.
+
+    A worker that never recorded its end, because it was killed or liveness ended its execution
+    first, may have kept committing for up to 5 minutes while its saves failed. The store holds
+    nothing that tells this apart from saves that succeeded: `terminal_at` is the time liveness
+    noticed, not the time the worker stopped, and a time cannot bound a number of commits.
+    """
+    if latest is None or latest.apply_progress is None:
+        return False
+    if latest.terminal_at is None:
+        return True
+    if failure is None or failure.get("error_type") == _PROGRESS_LOST_ERROR:
+        return False
+    applied = failure.get("applied_operations")
+    return isinstance(applied, list) and bool(applied) and applied[-1] == latest.apply_progress.operation_id
+
+
 def uncertain_positions(run: ProductRun, operations: Sequence[tuple[str, str]]) -> range:
     """The uncertain window of an interrupted run, over the saved plan's operations in stored order.
 
     `operations` are the saved plan's `(operation_id, action)` pairs. The failing operation is
     the one named by the failure record the latest write execution wrote itself.
 
-    The last save counts as successful only when the latest write execution saved a marker of
-    its own, recorded its own failure, and did not stop with `ApplyProgressLostError` (research
-    R11). A worker that recorded its own failure reached the store at its end, and the engine
-    tries to save the last committed position just before that record is written. A worker that never
-    recorded its end, because it was killed or liveness ended its execution first, may have
-    kept committing for up to 5 minutes while its saves failed, and the store holds nothing
-    that tells this apart from saves that succeeded, so every remaining operation is uncertain.
+    Whether the last save succeeded follows research R11 (`_last_save_succeeded`). When it
+    is not known to have succeeded, every remaining operation is uncertain.
     """
     marker = run_apply_progress(run)
     position = None if marker is None else marker.position
@@ -135,12 +153,7 @@ def uncertain_positions(run: ProductRun, operations: Sequence[tuple[str, str]]) 
             (index for index, (operation_id, _action) in enumerate(operations) if operation_id == failed_operation),
             None,
         )
-    last_save_failed = (
-        latest is None
-        or latest.apply_progress is None
-        or failure is None
-        or failure.get("error_type") == _PROGRESS_LOST_ERROR
-    )
+    last_save_failed = not _last_save_succeeded(latest, failure)
     writes = [action != "delete" for _operation_id, action in operations]
     return uncertain_window(position, writes, failed_index=failed_index, last_save_failed=last_save_failed)
 

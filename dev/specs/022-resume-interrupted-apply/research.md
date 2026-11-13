@@ -157,13 +157,18 @@ them tells a worker whose saves were failing from one whose saves succeeded:
   `terminal_at` can still be followed by more than 500 commits once a save failed.
 
 **Decision**: the last save attempt counts as successful only when the latest write execution saved a marker of its
-own, wrote its own failure record (one whose `flow_run_id` names it), and did not stop with `ApplyProgressLostError`.
-A worker that wrote its own failure record reached the store at its end, and the engine tries to save the last
-committed position just before that record is written. The rule is not exact in one case: that last save fails and
-the store becomes reachable again in the moment before the failure record is written, after earlier saves had also
-failed. The record does not say whether that save succeeded. In every other case, including a worker that was killed or whose execution
-liveness ended first, every operation after the marker is uncertain. This makes the window wider for a killed worker
-than "the next 500"; `verify` reads at most 2,000 of them (FR-005).
+own and one of these holds:
+
+- the execution is still running: its own marker is its last save, and the view is informational, because `verify`
+  and a resume are admitted only once every execution has ended;
+- the execution ended, its worker wrote its own failure record (one whose `flow_run_id` names it), the record is not
+  `ApplyProgressLostError`, and the last operation the record lists in `applied_operations` is the one the marker
+  names. The engine saves the last committed position just before that record is written, so the two agree exactly
+  when that save succeeded.
+
+In every other case, including a worker that was killed or whose execution liveness ended first, every operation
+after the marker is uncertain. This makes the window wider for a killed worker than "the next 500"; `verify` reads at
+most 2,000 of them (FR-005).
 
 **Window size after a successful save**: counted in commits, not plan positions. A recorded delete is never
 dispatched, so it is not a commit (FR-002). The window runs from the position after the marker through the 500th

@@ -176,7 +176,8 @@ check that no new plan was created.
   operations through the 500th create or update after the marker when the last save attempt succeeded, and every
   operation after the marker when it did not or when that is not known. The failing operation and the outcome of the
   last save attempt come only from the failure record that the latest write execution wrote itself; the last save
-  attempt counts as successful only when that execution saved a marker and recorded its own end (research R11).
+  attempt counts as successful only when that execution saved a marker, recorded its own end, and the last operation
+  that record lists as applied is the one the marker names (research R11).
 - **FR-006**: For each uncertain operation, `verify` MUST report one of "already matches the plan", "differs from the
   plan" or "missing at the destination", and MUST return this report through the Sync API and the CLI. The output
   MUST say that a resume writes the plan's values over every operation reported as "differs from the plan".

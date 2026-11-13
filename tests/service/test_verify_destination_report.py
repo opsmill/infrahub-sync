@@ -145,6 +145,12 @@ class _Reader:
         return {operation.operation_id: PlannedNodeRead(self.node) for operation in operations}
 
 
+def _hold_lost(operations: Sequence[PlannedOperation], *, through: int) -> dict[str, Any]:
+    """The worker's own record of a lost hold, after it applied every create and update through `through`."""
+    applied = [operation.operation_id for operation in operations[: through + 1] if operation.action != "delete"]
+    return {"error_type": "ApplyGuardLostError", "applied_operations": applied}
+
+
 def _report(run: ProductRun, operations: Sequence[PlannedOperation], reader: object) -> dict[str, Any]:
     projection = SimpleNamespace(lookup_run=lambda _run_id: SimpleNamespace(value=run))
     return service_flow._destination_report(
@@ -178,7 +184,7 @@ def test_the_window_ends_with_the_failing_operation_when_it_is_known() -> None:
 def test_the_window_holds_the_next_500_operations_when_the_last_save_succeeded() -> None:
     operations = _operations(1_200)
     # The worker recorded its own failure, one that names no operation: the hold was lost.
-    run = _interrupted_run(operations, marker=99, failure={"error_type": "ApplyGuardLostError"})
+    run = _interrupted_run(operations, marker=99, failure=_hold_lost(operations, through=99))
 
     report = _report(run, operations, _Reader())
 
@@ -188,7 +194,7 @@ def test_the_window_holds_the_next_500_operations_when_the_last_save_succeeded()
 def test_the_window_counts_500_commits_when_recorded_deletes_sit_between_them() -> None:
     """Recorded deletes are never dispatched, so 500 commits can span more than 500 positions (review item 4)."""
     operations = [_operation(index, "delete" if index > 99 and index % 4 == 3 else "create") for index in range(1_200)]
-    run = _interrupted_run(operations, marker=99, failure={"error_type": "ApplyGuardLostError"})
+    run = _interrupted_run(operations, marker=99, failure=_hold_lost(operations, through=99))
 
     report = _report(run, operations, _Reader())
 
@@ -199,7 +205,7 @@ def test_the_window_counts_500_commits_when_recorded_deletes_sit_between_them() 
 def test_the_progress_view_counts_recorded_deletes_inside_the_window_as_uncertain() -> None:
     """The view counts the plan's positions, so it holds the same window as `verify` (review item 4)."""
     operations = [_operation(index, "delete" if index > 99 and index % 4 == 3 else "create") for index in range(1_200)]
-    run = _interrupted_run(operations, marker=99, failure={"error_type": "ApplyGuardLostError"})
+    run = _interrupted_run(operations, marker=99, failure=_hold_lost(operations, through=99))
 
     view = apply_progress_view(
         run, [(operation.operation_id, operation.kind, operation.action) for operation in operations]
@@ -240,6 +246,51 @@ def test_a_worker_stopped_without_recording_its_end_leaves_every_operation_after
     report = _report(run, operations, _Reader())
 
     assert _reported_positions(report, operations) == list(range(100, 1_200))
+
+
+def test_a_worker_whose_last_save_failed_before_it_recorded_its_end_leaves_every_operation_uncertain() -> None:
+    """The record names a later last applied operation than the marker: the save before it failed (research R11)."""
+    operations = _operations(1_200)
+    run = _interrupted_run(operations, marker=99, failure=_hold_lost(operations, through=850))
+
+    report = _report(run, operations, _Reader())
+
+    assert _reported_positions(report, operations) == list(range(100, 1_200))
+
+
+def test_a_running_resume_shows_the_next_500_after_its_own_marker_as_uncertain() -> None:
+    """While the latest write runs, its own marker counts as its last save (research R11)."""
+    operations = _operations(1_200)
+
+    def marker(position: int, start_after: int | None) -> ApplyProgress:
+        return ApplyProgress(
+            position=position,
+            operation_id=operations[position].operation_id,
+            total=len(operations),
+            start_after=start_after,
+            saved_at=SAVED_AT,
+        )
+
+    run = ProductRun(
+        run_id="interrupted-run",
+        operation="plan",
+        configuration_reference="config@1",
+        started_at=SAVED_AT,
+        phase="resume-running",
+        reconciliation_required=True,
+        prefect_executions=(
+            _execution("apply-1", "apply", marker(99, None)),
+            _execution("verify-1", "verify"),
+            PrefectExecutionLink(flow_run_id="resume-1", purpose="resume", attempt=1, apply_progress=marker(199, 99)),
+        ),
+    )
+
+    view = apply_progress_view(
+        run, [(operation.operation_id, operation.kind, operation.action) for operation in operations]
+    )
+
+    assert view is not None
+    assert [(entry.committed, entry.uncertain, entry.not_reached) for entry in view.by_kind] == [(200, 500, 500)]
 
 
 def test_an_older_failure_record_without_an_execution_identifier_does_not_bound_the_window() -> None:
