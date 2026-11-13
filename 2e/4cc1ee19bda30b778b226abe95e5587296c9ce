@@ -1,0 +1,21 @@
+.github/scripts/nightly_e2e.py
+  s_efeb25921ce544::t_c229b468028964 608-609
+tests/test_nightly_v2_gate.py
+  s_efeb25921ce544::t_707893d6d5aac3 454-471
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2e4cc1ee19bda30b778b226abe95e5587296c9ce",
+  "prompts": {},
+  "sessions": {
+    "s_efeb25921ce544": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88805765-f610-4acc-a224-7c6f256e1599",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
