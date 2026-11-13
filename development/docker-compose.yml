@@ -93,7 +93,7 @@ x-silo-image: &silo-image >-
 
 services:
   postgres:
-    image: "postgres:16-alpine"
+    image: "postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"  # yamllint disable-line rule:line-length
     environment:
       POSTGRES_USER: "postgres"
       POSTGRES_PASSWORD: "devpassword"

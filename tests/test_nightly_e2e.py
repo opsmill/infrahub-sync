@@ -187,3 +187,20 @@ def test_summary_names_sha_refusal(runner: ModuleType, monkeypatch: pytest.Monke
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
     runner.summarize("bad-sha", sha_guard="failure")
     assert "Requested commit refused by the merged-commit SHA guard." in summary.read_text()
+
+
+def test_the_pin_check_covers_the_development_stack_and_skips_built_images(
+    runner: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every image the development file pulls needs a digest; the Sync image it builds does not."""
+    assert any("development/docker-compose.yml" in files for _options, files in runner.PINNED_STACKS)
+    resolved = {
+        "services": {
+            "postgres": {"image": "postgres:16-alpine"},
+            "sync-api": {"image": "infrahub-sync:dev", "build": {"context": "."}},
+        }
+    }
+    assert runner.third_party_images(resolved) == ["postgres:16-alpine"]
+    monkeypatch.setattr(runner, "run", lambda *_command, **_kwargs: json.dumps(resolved))
+    with pytest.raises(RuntimeError, match="missing digest pins"):
+        runner.assert_pinned_images()

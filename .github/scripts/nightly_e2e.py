@@ -76,12 +76,13 @@ def environment() -> dict[str, str]:
     return env
 
 
-# The third-party services the suites start: the development stack's Infrahub files, and
-# the local NetBox. The development file itself builds the Sync image from the checkout.
+# The Compose files the suites start: the development stack, with every profile and the
+# Infrahub files it includes, and the local NetBox. A service that the file builds from the
+# checkout (the Sync image) is not a third-party image, so the pin check leaves it out.
 PINNED_STACKS = (
     (
-        ("--profile", "infrahub"),
-        ("development/docker-compose.infrahub.yml", "development/docker-compose.infrahub-ports.yml"),
+        ("--profile", "sync", "--profile", "infrahub"),
+        ("development/docker-compose.yml",),
     ),
     (
         ("--env-file", "development/netbox/netbox.env"),
@@ -101,13 +102,27 @@ DEV_STACK_COMMAND = (
 )
 
 
+def third_party_images(resolved: dict[str, object]) -> list[str]:
+    """Return the images of the services a resolved Compose file pulls rather than builds."""
+    services = resolved.get("services")
+    if not isinstance(services, dict):
+        return []
+    return sorted(
+        {
+            str(definition["image"])
+            for definition in services.values()
+            if isinstance(definition, dict) and definition.get("image") and "build" not in definition
+        }
+    )
+
+
 def assert_pinned_images() -> None:
     """Refuse any third-party Compose image without a SHA-256 digest before starting services."""
     for options, files in PINNED_STACKS:
         command = ["docker", "compose", *options]
         for file in files:
             command.extend(("-f", file))
-        images = run(*command, "config", "--images", capture=True).splitlines()
+        images = third_party_images(json.loads(run(*command, "config", "--format", "json", capture=True)))
         if not images or any(re.fullmatch(r".+@sha256:[0-9a-f]{64}", image) is None for image in images):
             msg = f"Compose images are missing digest pins in {', '.join(files)}: {images}"
             raise RuntimeError(msg)
