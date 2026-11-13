@@ -291,3 +291,36 @@ LAG interfaces.
   and the gate then runs once more against the final spec 020.
 
 The full result is `gate-result.json` from the run. It was not committed.
+
+## 11. Gate run on the development stack (2026-11-13)
+
+This run used the local branch `scratch/012-on-010` (`6dfe113d`). That branch is
+`scratch/012-on-020` with the branch `010-prefect-pr2-preview-removal` (`5c348f35`) merged in,
+plus spec 020 at `b59138ff`. With branch 010, the gate no longer uses the preview stack:
+
+- It starts the development stack with `dev.start`.
+- It converts with the host addresses, so `--live-schema` can read the schema.
+- It then sets the package's addresses to those the containerized Sync worker reaches,
+  `http://netbox:8080` and `http://infrahub-server:8000`.
+
+The unit tier passed: 8,022 tests.
+
+Counts, the same as on the preview stack:
+
+| Count | Value |
+| --- | --- |
+| Creates | 0 |
+| Updates | 0 |
+| Deletes | 829 |
+| Records left out | 867 |
+| Problems | 11 |
+
+What the gate accepted:
+
+- 50 entries of `expected_left_out.yml`
+- 828 records that depend on an accepted record
+- 828 deletes of accepted kinds
+- 1 expected delete: `IpamNamespace default`
+
+Nothing was unexpected, and the gate passed. On branch 010 the NetBox teardown task is
+`netbox.destroy`.
