@@ -109,4 +109,16 @@ Still open:
 
 - T031 (blocked on spec 020) and T033 (the first real gate run, which resets the preview stack).
 - Whether the conversion sets `protect: true`, so that V3 protects what it creates as v2 did.
-- 19 of the 22 commits carry a `Claude-Session` trailer, which must be removed before a push.
+- The `v2-gate` suite imports `tasks/preview.py` and starts the preview stack. The branch
+  `010-prefect-pr2-preview-removal` deletes that stack, so the suite must move to its replacement
+  when that branch merges. The commit that moved the preview Infrahub to port 8000 (`65d20c55`)
+  was left out of this branch, because it changes only files that branch deletes and the gate
+  reads the port from the preview settings.
+- `COMPOSE_WORKER_CREDENTIAL_VARIABLES` is pinned to `docker-compose.yml` by a test. The branch
+  `021-compose-store-credentials-ca` changes that file, so the list may need an update when it
+  merges.
+
+The `Claude-Session` trailers of the cherry-picked commits were removed. The gate fixture
+`tests/data/v2_gate/plan_detail_sample.txt` now holds the lines `runs plan --detail` prints on
+this base (`schema_fingerprint`, `verification_note`, the owner notice and `last change`), and
+the gate tests pass with them.

@@ -175,6 +175,8 @@ To convert a file by hand instead:
 4. Replace example URLs with addresses that the Sync worker can reach.
 5. Remove settings that the adapter does not accept in a registered package. The adapter
    pages list the accepted settings.
+6. Write a destination `source` or `owner` group name as
+   `{kind: CoreAccountGroup, name: <name>}`. A registered package refuses a bare name.
 
 A `config.yml` file is used directly only by the
 [Prefect remote run](./reference/prefect-remote-run.mdx) and by Python callers that load a
