@@ -135,7 +135,9 @@ destination. `infrahub-sync runs show RUN_ID` then reports
 `summary.may_have_partially_written` set.
 
 Do not apply that plan again. For an interrupted run (`reconciliation_required: true`), run
-`verify RUN_ID` and then `runs resume RUN_ID --expected-checksum CHECKSUM`; see
+`infrahub-sync verify RUN_ID` and then
+`infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM`. `verify` needs the Sync API and
+reads the destination, to report which of the uncertain operations reached it; see
 [Resume an interrupted apply](../running-a-sync.mdx#resume-an-interrupted-apply). Otherwise,
 follow the
 [reconciliation procedure](../compose-deployment#when-the-outcome-of-a-write-is-uncertain):

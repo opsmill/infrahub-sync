@@ -20,7 +20,9 @@ control.
 - **Configuration version**: one immutable registered revision of a configuration,
   identified by `config_id` and `registry_version`.
 - **Run**: one attempt to synchronize one configuration version to one branch, identified by
-  `run_id`. A run creates exactly one plan and applies that plan at most once.
+  `run_id`. A run creates exactly one plan and applies that plan at most once. A resume does not
+  apply the plan again: it continues the interrupted apply from the operation after its last saved
+  position.
 - **Plan**: the creates, updates and recorded deletes that a run computes before it writes,
   with their checksum. Verify and apply act on the plan of the run they name: they do not
   compute a new plan.
@@ -644,6 +646,7 @@ destination branch. The event types are:
 | `infrahub_sync.run.planned` | A plan stage succeeded. |
 | `infrahub_sync.run.verified` | A verify stage succeeded. |
 | `infrahub_sync.run.applied` | An apply stage succeeded. |
+| `infrahub_sync.run.resumed` | A resume stage succeeded: the rest of the saved plan was applied. |
 | `infrahub_sync.run.synced` | A sync stage succeeded. |
 | `infrahub_sync.run.failed` | A stage failed, or was interrupted. `outcome` is `failed`, or `ambiguous` when the stage may have written to the destination. The Sync API records this event, with `outcome` `ambiguous`, when it ends an execution whose worker stopped without recording a result. |
 | `infrahub_sync.run.cancelled` | An execution that a cancel request stopped ended cancelled, or a cancel request withdrew a finished plan. `actor` and `reason` come from the cancel request. For a withdrawal, the Sync API records this event itself, with the `run.accepted` event of the request. |
@@ -950,7 +953,9 @@ one tier are mixed. When the marker cannot be saved for 5 minutes, the write sto
 is interrupted.
 
 `GET /runs/{run_id}` returns how far the write got under `apply_progress`, and each resume under
-`resumes`. `apply_progress` is `null` for a run that never started a write:
+`resumes`. `apply_progress` is `null` when the run has no `apply`, `sync` or `resume` execution.
+A `sync` killed while it was still planning has a `sync` execution, so it returns an object
+whose `position` is `null`:
 
 ```json
 "apply_progress": {

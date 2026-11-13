@@ -486,8 +486,11 @@ logged as a warning with the run ID and the error class, and writing continues. 
 turns true 5 minutes after the first failed save since the last successful one, so a quiet period
 between scheduled saves is never counted.
 
-A run is **resumable** when `reconciliation_required` is set, the run is not cancelled and none of
-its executions is unfinished (`infrahub_sync/service/resume_view.py`). On such a run:
+A run is **resumable** when `reconciliation_required` is set, the run is not cancelled, none of
+its executions is unfinished, and its `plan-review` document is published
+(`run_is_resumable` in `infrahub_sync/service/resume_view.py`, `_plan_published` in the store). A
+`sync` whose worker was killed while it was still planning requires reconciliation but published
+no plan, so it is not resumable. On such a run:
 
 - `_reserve_existing` admits a `verify`, the one exception to the refusal of every stage on a run
   that holds a `write_admissions` row. After the pre-write checks pass, the `verify` stage computes
