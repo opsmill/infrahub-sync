@@ -45,7 +45,7 @@ from .storage import (
     S3_REGION_ENV,
     Boto3S3Client,
     EndpointSettingError,
-    build_s3_client,
+    s3_client_arguments,
     service_product_projection,
 )
 from .trust_store import TrustStoreError, install_custom_ca_bundle
@@ -257,18 +257,25 @@ def _converge() -> None:
     and a loop already running here would leave the second unable to start one.
     """
     try:
-        client = build_s3_client(os.environ, builder=boto3.client)
+        arguments = s3_client_arguments(os.environ)
     except EndpointSettingError as error:
         # The message names the setting and the rule, never the value (`storage._endpoint`).
         logger.error("%s", error)  # noqa: TRY400 - a fixed message; the family follows.
         raise BootstrapError(OBJECT_STORE_ENDPOINT_INVALID) from None
     except ValueError as error:
-        # Another refused S3 setting: the addressing style, or a region botocore refuses.
-        # Storage's own messages name the setting only; botocore's may quote the value, so
-        # for those only the family is reported.
-        if not isinstance(error, BotoCoreError):
-            logger.error("%s", error)  # noqa: TRY400 - a fixed message; the family follows.
+        # Storage's own checks: the message names the setting, never its value.
+        logger.error("%s", error)  # noqa: TRY400 - a fixed message; the family follows.
         raise BootstrapError(OBJECT_STORE_SETTING_INVALID) from None
+    # botocore's own refusals quote the value they refuse ("Invalid endpoint: <url>"), so
+    # none of their text is logged: only a fixed line and the family.
+    try:
+        client = boto3.client("s3", **arguments)
+    except BotoCoreError:
+        logger.error("the S3 client refused %s", S3_REGION_ENV)
+        raise BootstrapError(OBJECT_STORE_SETTING_INVALID) from None
+    except ValueError:
+        logger.error("the S3 client refused %s", S3_ENDPOINT_ENV)
+        raise BootstrapError(OBJECT_STORE_ENDPOINT_INVALID) from None
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
     check_store_settings(os.environ.get(S3_ENDPOINT_ENV) or None)

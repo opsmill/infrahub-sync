@@ -602,3 +602,18 @@ def test_another_refused_s3_setting_is_not_reported_as_the_endpoint(
     assert value not in caplog.text
     if name == "INFRAHUB_SYNC_S3_ADDRESSING_STYLE":
         assert "INFRAHUB_SYNC_S3_ADDRESSING_STYLE must be path or virtual" in caplog.text
+
+
+@pytest.mark.parametrize("endpoint", ["http://bad_host:9000", "http://[::1"])
+def test_an_endpoint_the_s3_client_refuses_is_reported_without_its_value(
+    endpoint: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """botocore's own message quotes the endpoint; only a fixed line and the family are logged."""
+    monkeypatch.setenv("INFRAHUB_SYNC_S3_ENDPOINT_URL", endpoint)
+
+    with caplog.at_level("ERROR"):
+        assert bootstrap.main() == 1
+
+    assert "refused: object-store-endpoint-invalid" in caplog.text
+    assert endpoint not in caplog.text
+    assert "bad_host" not in caplog.text
