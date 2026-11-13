@@ -164,3 +164,8 @@ used. Mapping each VRF to a namespace, as the V3 example does, puts prefixes in 
 than v2 did. V3 has no way to set an identity component to a peer that exists only in Infrahub,
 such as the built-in `default` namespace. Until such an edit exists, the gate cannot plan the
 NetBox example.
+
+Rerun on 2026-11-13 with v2 `2.0.1` from PyPI (product owner decision, because `2.0.2` is not
+published), still with the `2.0.2` NetBox example: v2 `generate` and `sync` processed all 1,119
+models, `configs convert` and `configs register` succeeded, and the plan stopped at the same
+`ip_namespace` identity check. The gate is blocked only by that check.
