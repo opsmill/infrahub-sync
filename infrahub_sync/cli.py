@@ -1117,8 +1117,8 @@ _RESUME_REFUSAL_HINTS = {
 # `runs show` that tells (spec 022): a resumable run continues with `verify` and `runs resume`.
 _RUN_EXECUTION_CONFLICT_NEXT_ACTION = (
     "If this run already admitted a write, `apply` does not apply its plan again: review the run "
-    "with `infrahub-sync runs show`. When it prints `resumable: yes`, run `infrahub-sync verify`, "
-    "then `infrahub-sync runs resume`; otherwise create and review a new plan with "
+    "with `infrahub-sync runs show`. When it prints `resumable: yes`, run `infrahub-sync verify RUN_ID`, "
+    "then `infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM`; otherwise create and review a new plan with "
     "`infrahub-sync plan`. If a stage of this run is still running, wait for it to finish."
 )
 

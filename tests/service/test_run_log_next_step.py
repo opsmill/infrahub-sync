@@ -749,7 +749,10 @@ def test_the_unpublished_artifact_warning_carries_the_sync_prefix(
 # --- the next step of a run that keeps its saved plan (spec 022) ------------------------------
 
 _UNREACHABLE = ServerNotReachableError(address="https://infrahub.example.test")
-_VERIFY_AND_RESUME = "then run `infrahub-sync verify` on this run again, then `infrahub-sync runs resume`."
+_VERIFY_AND_RESUME = (
+    "then run `infrahub-sync verify RUN_ID` again, then "
+    "`infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM`."
+)
 
 
 def _interrupted_run(

@@ -90,5 +90,8 @@ def test_a_second_apply_prints_the_conflict_refusal_and_the_next_step(client: Ma
     assert "create and review a new plan" in hints[0]
     assert "`infrahub-sync plan`" in hints[0]
     # Spec 022: a run that can be resumed continues with `verify`, then `runs resume`.
-    assert "When it prints `resumable: yes`, run `infrahub-sync verify`, then `infrahub-sync runs resume`" in hints[0]
+    assert (
+        "When it prints `resumable: yes`, run `infrahub-sync verify RUN_ID`, then `infrahub-sync runs resume RUN_ID"
+        in hints[0]
+    )
     client.wait_for_run.assert_not_called()

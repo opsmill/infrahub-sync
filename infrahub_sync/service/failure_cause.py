@@ -152,8 +152,12 @@ def resumable_next_action(exc: BaseException, secrets: Sequence[str]) -> dict[st
     Only the default next action of `OperationApplyFailedError`, the one for an operation whose
     reach is unknown, names a new plan where a resume applies: the uniqueness refusal and the
     operation that wrote nothing keep their own advice. The link is the one `operator_cause`
-    takes its next action from.
+    takes its next action from. A failure whose fix is in the source data or the configuration
+    (`_SOURCE_FIX_TYPES`) keeps the new-plan advice of its template, as `_templates` does: a
+    resume would apply the same saved plan again.
     """
+    if _classify(exc).failure_type in _SOURCE_FIX_TYPES:
+        return {}
     links = cause_chain(exc, follow_context=False)
     link = next((link for link in links if isinstance(link, PlanArtifactError) and link.next_action), None)
     if isinstance(link, OperationApplyFailedError) and link.next_action == OperationApplyFailedError.next_action:
@@ -349,14 +353,18 @@ def _record_load_template(fields: dict[str, Any], _where: str, _adapter: str) ->
 _PLAN_AGAIN = "then plan again."
 # The closing step on a run whose write stopped part-way (spec 022): it keeps its saved plan,
 # and a resume needs a `verify` that passed after the latest write.
-_VERIFY_AND_RESUME = "then run `infrahub-sync verify` on this run again, then `infrahub-sync runs resume`."
+_VERIFY_AND_RESUME = (
+    "then run `infrahub-sync verify RUN_ID` again, then "
+    "`infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM`."
+)
 # The next action of a write that stopped at an operation whose reach is unknown, on a run that
 # keeps its saved plan (spec 022). It replaces `OperationApplyFailedError.next_action`, which
 # names a new plan because the CLI-local and direct Prefect paths have no resume.
 RESUMABLE_WRITE_NEXT_ACTION = (
     "Nothing was rolled back: the operations applied before this one stay written, and this one may have "
     "written part of its own change. Resolve the underlying error at the destination, then run "
-    "`infrahub-sync verify` on this run, then `infrahub-sync runs resume`: the resume writes the rest of the "
+    "`infrahub-sync verify RUN_ID`, then `infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM`: the "
+    "resume writes the rest of the "
     "saved plan, and writing an operation that already succeeded again converges rather than duplicating."
 )
 # The failure types that name a system or a credential, not the source data: once fixed, a
@@ -371,6 +379,9 @@ _RESUMABLE_TYPES = frozenset(
         "credential_missing",
     }
 )
+# The failure types whose fix is in a source record or a transform: a new plan is needed even on
+# a run that keeps its saved plan, because the saved plan holds the values that failed.
+_SOURCE_FIX_TYPES = frozenset({"record_load_failed", "transform_failed"})
 _REACH = "Check that {adapter} answers at the address the configuration names, " + _PLAN_AGAIN
 
 # One fixed template per failure type: the cause and the next action, filled with the recorded

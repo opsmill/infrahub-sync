@@ -28,7 +28,13 @@ from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.potenda import SideLoadError
 from infrahub_sync.runtime_schema import DestinationSchemaUnavailableError
 from infrahub_sync.runtime_schema.errors import DestinationBranchNotFoundError
-from infrahub_sync.service.failure_cause import FAILURE_RECORD_KEYS, failure_record, operator_cause
+from infrahub_sync.service.failure_cause import (
+    FAILURE_RECORD_KEYS,
+    RESUMABLE_WRITE_NEXT_ACTION,
+    failure_record,
+    operator_cause,
+    resumable_next_action,
+)
 from tests.service.failure_cases import APPLIED_OPERATION, CASES, FAILED_OPERATION, NEUTRAL_TEXT, SOURCE, FailureCase
 
 if TYPE_CHECKING:
@@ -385,7 +391,8 @@ def test_a_secret_in_infrahubs_rejection_message_is_masked_before_the_message_is
         pytest.param(False, "then plan again.", id="not-resumable"),
         pytest.param(
             True,
-            "then run `infrahub-sync verify` on this run again, then `infrahub-sync runs resume`.",
+            "then run `infrahub-sync verify RUN_ID` again, then "
+            "`infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM`.",
             id="resumable",
         ),
     ],
@@ -408,3 +415,21 @@ def test_a_record_load_failure_keeps_plan_again_on_a_resumable_run() -> None:
 
     assert recorded["failure_type"] == "record_load_failed"
     assert recorded["next_action"].endswith("then plan again.")
+
+
+@pytest.mark.parametrize(
+    ("inner", "expected"),
+    [
+        pytest.param(
+            ServerNotResponsiveError(url="https://infrahub.example.test", timeout=5),
+            {"next_action": RESUMABLE_WRITE_NEXT_ACTION},
+            id="reach-unknown-resumes",
+        ),
+        pytest.param(_record_load(ValueError("bad value")), {}, id="source-fix-keeps-plan-again"),
+    ],
+)
+def test_the_resume_advice_skips_a_failure_fixed_in_the_source(inner: BaseException, expected: dict[str, str]) -> None:
+    """A wrapped apply failure whose fix is in the source keeps its template's new-plan advice."""
+    exc = _from(OperationApplyFailedError("failed", apply_record=ApplyRecord(failed_operation="op_1")), inner)
+
+    assert resumable_next_action(exc, ()) == expected
