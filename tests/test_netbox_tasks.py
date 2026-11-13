@@ -8,13 +8,14 @@ import json
 import shlex
 from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 import pytest
 import yaml
 from invoke import Context
 
-from tasks import netbox
+from tasks import dev, netbox
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -200,7 +201,7 @@ def test_up_waits_for_netbox_and_prints_no_seed_step(
     monkeypatch.setattr(netbox, "_compose", lambda *_args, **_kwargs: events.append("compose"))
     monkeypatch.setattr(netbox, "_wait_for_http", lambda *_args, **_kwargs: events.append("wait"))
 
-    cast("Task", netbox.up).body(context)
+    cast("Task", netbox.start).body(context)
 
     assert events == ["compose", "wait"]
     printed = capsys.readouterr().out
@@ -214,7 +215,7 @@ def test_down_removes_containers_and_volumes(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(netbox, "load_netbox_env", lambda: REQUIRED_VALUES)
     monkeypatch.setattr(netbox, "_compose", lambda _context, arguments, _values: calls.append(arguments))
 
-    cast("Task", netbox.down).body(context)
+    cast("Task", netbox.destroy).body(context)
 
     assert calls == ["down --volumes"]
 
@@ -481,6 +482,35 @@ def test_demo_package_writes_the_local_copy(
     assert written["configuration"]["source"]["settings"]["url"] == "http://localhost:8082"
     assert written["configuration"]["destination"]["settings"]["url"] == "http://localhost:18080"
     assert str(destination) in capsys.readouterr().out
+
+
+def test_demo_package_names_the_infrahub_the_development_stack_publishes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Without --infrahub-url, the Infrahub URL is the stack's publication, not a fixed port."""
+    destination = tmp_path / "from-netbox.local.yml"
+    settings = SimpleNamespace(infrahub=dev.Publication(host_ip="127.0.0.1", port="18000"), infrahub_network="")
+    monkeypatch.setattr(netbox, "load_netbox_env", lambda: REQUIRED_VALUES)
+    monkeypatch.setattr(netbox, "STATE_DIR", destination.parent)
+    monkeypatch.setattr(netbox, "LOCAL_PACKAGE", destination)
+    monkeypatch.setattr(dev, "dev_settings", lambda: settings)
+
+    cast("Task", netbox.demo_package).body(Context())
+
+    written = yaml.safe_load(destination.read_text(encoding="utf-8"))
+    assert written["configuration"]["destination"]["settings"]["url"] == "http://127.0.0.1:18000"
+
+
+def test_demo_package_needs_an_infrahub_url_for_an_infrahub_on_another_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The worker's address for an attached Infrahub does not answer on the host."""
+    settings = SimpleNamespace(infrahub=None, infrahub_network="infrahub_default")
+    monkeypatch.setattr(netbox, "load_netbox_env", lambda: REQUIRED_VALUES)
+    monkeypatch.setattr(dev, "dev_settings", lambda: settings)
+
+    with pytest.raises(netbox.NetboxError, match="--infrahub-url"):
+        cast("Task", netbox.demo_package).body(Context())
 
 
 @pytest.mark.parametrize(("dataset", "tier"), [("seed", "X"), ("demo", "M"), ("demo", "L")])

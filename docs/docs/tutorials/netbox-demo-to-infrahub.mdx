@@ -174,14 +174,14 @@ your checkout and starts all of them in containers.
 export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="${INFRAHUB_API_TOKEN}"
 ```
 
-2. Build the image and start the stack:
+2. Start the stack against Infrahub's network:
 
 ```bash
-uv run invoke build
-uv run invoke start
+uv run invoke dev.start --infrahub-network infrahub_default
 ```
 
-`start` waits until every service is healthy, then connects the worker to Infrahub's Docker
+`dev.start` builds the image from your checkout when it is missing or its build inputs
+changed. It waits until every service is healthy, then connects the worker to Infrahub's Docker
 network, `infrahub_default`, and prints
 `The worker is on infrahub_default; it reaches Infrahub at http://infrahub-server:8000`,
 followed by the Sync API address, its bearer token, and the Prefect UI address. The network
@@ -200,8 +200,8 @@ The response reports `"service": "ready"` when the worker is running. The API to
 authenticates the CLI to the Sync API. It is separate from
 `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, which the worker uses to access Infrahub.
 
-If you change either credential later, export the new value and run `uv run invoke start`
-again. It recreates the worker with the new environment and connects it to Infrahub's
+If you change either credential later, export the new value and run
+`uv run invoke dev.start --infrahub-network infrahub_default` again. It recreates the worker with the new environment and connects it to Infrahub's
 network again.
 
 For the addresses, the image rebuild after a code change, and the other stack commands, see
@@ -225,7 +225,7 @@ The `grep` prints the two addresses: `https://demo.netbox.dev` for the source an
 `http://infrahub-server:8000` for the destination.
 
 The worker runs in a container, and inside a container `localhost` is the container itself,
-not your machine. On Infrahub's network, which the worker joined at `invoke start`, Infrahub's
+not your machine. On Infrahub's network, which the worker joined at `invoke dev.start`, Infrahub's
 API container answers at its service name, `infrahub-server`, on port 8000.
 
 The worker reads `source.settings.url` and `destination.settings.url` from the registered
@@ -432,10 +432,10 @@ To remove the Sync service and its data (registered packages, runs, and plans), 
 `infrahub-sync` directory:
 
 ```bash
-uv run invoke destroy
+uv run invoke dev.destroy
 ```
 
-The image built from your checkout is kept, so the next `uv run invoke start` does not
+The image built from your checkout is kept, so the next `uv run invoke dev.start` does not
 rebuild it.
 
 To stop Infrahub and keep its data, from the Infrahub directory:
@@ -463,13 +463,13 @@ The service worker cannot resolve a credential reference declared by the package
 package contains credential references and declarations, but secret
 credential values belong only in the worker environment. The package names
 `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, and the worker reads
-their values when its container starts. Export both, then run `uv run invoke start`, which
+their values when its container starts. Export both, then run `uv run invoke dev.start --infrahub-network infrahub_default`, which
 recreates the worker with the new values:
 
 ```bash
 export INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="<your-netbox-token>"
 export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
-uv run invoke start
+uv run invoke dev.start --infrahub-network infrahub_default
 ```
 
 This error names whichever adapter (NetBox or Infrahub) is missing its variables — the same message is raised for either one.
@@ -479,11 +479,11 @@ This error names whichever adapter (NetBox or Infrahub) is missing its variables
 The flow run's error names `infrahub-server` and says the name or service is not known.
 The worker is not connected to Infrahub's network. That happens when Infrahub was started
 after the Sync service, when a `docker compose up` recreated the worker without
-`invoke start`, or when Infrahub runs under another Compose project name.
+`invoke dev.start`, or when Infrahub runs under another Compose project name.
 
-Run `uv run invoke start` again; it connects the worker to `infrahub_default` when that
-network exists. For another project name, set `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` to its
-network, for example `lab_default` for `docker compose -p lab`, before you run it.
+Run `uv run invoke dev.start --infrahub-network infrahub_default` again; it connects the worker
+to that network when it exists. For another project name, pass its network instead, for example
+`--infrahub-network lab_default` for `docker compose -p lab`.
 
 ### A plan run reports destination models missing from the schema
 

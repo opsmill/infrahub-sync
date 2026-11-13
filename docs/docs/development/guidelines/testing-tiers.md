@@ -11,13 +11,12 @@ title: "Testing tiers"
 settings and skip behavior below were read at that revision from
 [`tasks/tests.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tasks/tests.py),
 [`tasks/__init__.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tasks/__init__.py),
-[`tasks/preview.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tasks/preview.py),
 the modules under [`tests/integration/`](https://github.com/opsmill/infrahub-sync/tree/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/integration) and the
 `[tool.pytest.ini_options]` markers in [`pyproject.toml`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/pyproject.toml). The unit tier
-and `check-310` were run at that revision. The integration sequence below was not replayed
+and the Python 3.10 check (now `tests.check-310`) were run at that revision. The integration sequence below was not replayed
 live for this revision; the nightly workflow runs a similar sequence.
 
-The Redis rows and steps were removed afterward, because V3 refuses configured sync stores; that part of the guide describes the later test classification, not this revision.
+The Redis rows and steps were removed afterward, because V3 refuses configured sync stores; that part of the guide describes the later test classification, not this revision. The preview stack was removed afterward too: the live sequences below use the development stack (`development/docker-compose.yml`), and the smoke suite moved to `tests/dev_stack/smoke/` under the `smoke` marker.
 
 Which test command to run, what each one needs before it can prove anything, and what it
 writes. [Testing](testing.md) covers what makes an individual test worth having; this page
@@ -28,14 +27,13 @@ covers which suite it belongs in and which gate runs it.
 Most of the suites below skip themselves when their prerequisite is missing, and a skip exits
 zero. That is deliberate for the live tiers: a missing external service or a stack that is not
 running leaves those tests skipped rather than blocking you. It does **not** extend to
-everything — the offline default needs the `docker compose` CLI, and without it the unmarked
-preview configuration test fails rather than skipping (see
+everything — the offline default needs the `docker compose` CLI (see
 [The offline default](#the-offline-default)).
 
 Where a suite does skip, **a green result only proves what actually ran**. Before claiming a
 tier passed, confirm it was collected and executed, not skipped. The two places this matters
-most are the preview smoke suite, where every test skips when the stack is unreachable, and
-`uv run invoke check-310`, which skips all three of its legs at once.
+most are the smoke suite, where every test skips when the stack is unreachable, and
+`uv run invoke tests.check-310`, which skips all three of its legs at once.
 
 ### The offline default
 
@@ -46,17 +44,15 @@ uv run invoke tests.tests-unit
 This is the single offline default, and it is what a change has to keep green. It runs:
 
 ```text
-pytest -m "not integration and not preview and not docker and not compose"
+pytest -m "not integration and not smoke and not docker and not compose"
 ```
 
-So it excludes four marker families: `integration`, `preview`, `docker` and `compose`. It needs no network, no credentials and no running stack.
+So it excludes four marker families: `integration`, `smoke`, `docker` and `compose`. It needs no network, no credentials and no running stack.
 
-**It does need the `docker compose` CLI on your PATH.** One unmarked module under
-`tests/preview/` shells out to `docker compose … config --format json` to resolve the preview
-Compose files, and it does so with `check=True` and no availability guard — so on a machine
-without that CLI the offline default **fails** with `FileNotFoundError` rather than skipping.
-That command resolves the Compose files and starts no service. Install Docker Desktop, or the
-Compose plugin, before treating a red offline run as a real regression.
+**It does need the `docker compose` CLI on your PATH.** Unmarked modules under
+`tests/compose/` and `tests/dev_stack/` run `docker compose … config --format json` to resolve
+the repository's Compose files. That command resolves the files and starts no service. Install
+Docker Desktop, or the Compose plugin, before treating a red offline run as a real regression.
 
 Below Python 3.11 the task adds two ignores, because the Sync service is unavailable there:
 
@@ -65,7 +61,7 @@ Below Python 3.11 the task adds two ignores, because the Sync service is unavail
 ```
 
 Prefer the task over a hand-written `pytest` invocation. A bare `pytest -q` collects the
-preview and integration suites against whatever environment your shell happens to name.
+smoke and integration suites against whatever environment your shell happens to name.
 
 ### The tiers
 
@@ -73,7 +69,7 @@ preview and integration suites against whatever environment your shell happens t
 |---|---|---|---|
 | Unit | `uv run invoke tests.tests-unit` | The installed extras, plus the `docker compose` CLI on your PATH | Nothing outside `tmp_path` |
 | Integration | `uv run invoke tests.tests-integration` | Varies by family — see below; no single set of variables covers the tier | Varies by family: read-only, temporary local state, or a disposable live target — see below |
-| Preview smoke | `uv run invoke preview.smoke` | The preview stack, started with `preview.up` | Seeds and writes to the disposable stack |
+| Smoke | `uv run invoke dev.smoke` | The development stack, started with `dev.start` | Seeds and writes to the disposable stack |
 | Image smoke | `uv run pytest -m docker tests/image/test_image_artifact.py` | A locally built image named by `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION`, and a Docker daemon | Throwaway containers it starts and removes |
 | Compose (opt-in) | `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose` | A Docker daemon and a locally built `infrahub-sync:compose-test` image | A real container stack it brings up and tears down |
 
@@ -105,18 +101,18 @@ needs, the second names each setting and where to get it.
 
 | Setting | Points to | How to get it from the local stacks |
 |---|---|---|
-| `INFRAHUB_ADDRESS`, `INFRAHUB_API_TOKEN` | A disposable Infrahub | The preview Infrahub: `http://localhost:8080`, and `INFRAHUB_INITIAL_ADMIN_TOKEN` from `development/preview.env` |
+| `INFRAHUB_ADDRESS`, `INFRAHUB_API_TOKEN` | A disposable Infrahub | The development stack's Infrahub: `http://127.0.0.1:8000`, and the development admin token `06438eb2-8019-4776-878c-0941b1f1d1ec` that `development/docker-compose.infrahub.yml` defaults to. This token is public, so use it only while the stack publishes Infrahub on `127.0.0.1`. When `INFRAHUB_BIND_ADDRESS` publishes Infrahub on another address, export `INFRAHUB_INITIAL_ADMIN_TOKEN` with a token of your own and use the same value as `INFRAHUB_API_TOKEN`. If that address is not `0.0.0.0`, also set `INFRAHUB_ADDRESS` to `http://<that address>:8000` (or the port in `INFRAHUB_PORT`) |
 | `NETBOX_URL`, `NETBOX_TOKEN` | A NetBox with the `seed` dataset | Printed by `uv run invoke netbox.seed` |
-| `PREFECT_API_URL` | A Prefect server that has the served `infrahub-sync` deployment | The preview Prefect: `http://localhost:4210/api`. Start the deployment separately, as the remote-run module docstring describes |
-| `APPLY_GUARD_TEST_POSTGRESQL_DSN` | A disposable PostgreSQL database | A separate database on the preview PostgreSQL (port 5439). These tests terminate backends on it |
-| `PRODUCT_STORE_TEST_POSTGRESQL_DSN` | A disposable PostgreSQL database | A second separate database on the preview PostgreSQL |
-| `INFRAHUB_SYNC_STORAGE_INTEGRATION_DATABASE_URL` | A disposable PostgreSQL database | A third separate database on the preview PostgreSQL |
-| `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_BUCKET`, `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_ENDPOINT_URL` | An S3-compatible bucket | The preview MinIO: bucket `infrahub-sync-preview` at `http://127.0.0.1:9010`. `preview.up` creates the bucket |
+| `PREFECT_API_URL` | A Prefect server that has the served `infrahub-sync` deployment | The development stack's Prefect: `http://127.0.0.1:4230/api`. Start the deployment separately, as the remote-run module docstring describes |
+| `APPLY_GUARD_TEST_POSTGRESQL_DSN` | A disposable PostgreSQL database | A separate database on the development stack's PostgreSQL (port 5440). These tests terminate backends on it |
+| `PRODUCT_STORE_TEST_POSTGRESQL_DSN` | A disposable PostgreSQL database | A second separate database on the development stack's PostgreSQL |
+| `INFRAHUB_SYNC_STORAGE_INTEGRATION_DATABASE_URL` | A disposable PostgreSQL database | A third separate database on the development stack's PostgreSQL |
+| `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_BUCKET`, `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_ENDPOINT_URL` | An S3-compatible bucket | The development stack's object store: bucket `infrahub-sync` at `http://127.0.0.1:9010`. `dev.start` creates the bucket |
 | `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_PREFIX`, `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_REGION` | Optional; the key prefix and region | Defaults: `integration` for the storage test, `us-east-1` for the region |
-| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Credentials for that bucket | `PREVIEW_MINIO_ACCESS_KEY` and `PREVIEW_MINIO_SECRET_KEY` from `development/preview.env` |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Credentials for that bucket | The development defaults `devaccesskey` and `devsecretkey` from `development/docker-compose.yml` |
 
 Use a separate, empty database for each of the three PostgreSQL settings. Do not reuse the
-preview service's own `infrahub_sync` database: these tests lock, terminate, create, and drop
+development stack's own `infrahub_sync` database: these tests lock, terminate, create, and drop
 objects in the database they receive.
 
 Three families need more detail than the tables give:
@@ -124,17 +120,16 @@ Three families need more detail than the tables give:
 - **Saved-plan apply** needs a NetBox reachable at `NETBOX_URL`, seeded with the fixed dataset
   the test module's own docstring describes (sites `site-a`/`site-b`/`site-c`, racks
   `rack-site-<x>-<n>`, devices `dev-01`…`dev-40`, tags `tag-01`…`tag-10`). `development/netbox/`
-  provisions exactly that NetBox, disposable and local, following the same pattern as the
-  preview environment's `development/docker-compose.preview.yml`:
+  provisions exactly that NetBox, disposable and local:
 
   ```bash
   uv run invoke netbox.seed        # starts NetBox, resets it, loads the `seed` dataset, and prints the URL and token
   ```
 
   `netbox.seed` starts NetBox itself and prints its URL and development token when it
-  finishes — running `netbox.up` first is unnecessary and makes NetBox run its first
+  finishes — running `netbox.start` first is unnecessary and makes NetBox run its first
   migration twice; on a small host that first migration can take 15 minutes or more. Use
-  `netbox.up` on its own only for an empty NetBox with nothing loaded, or to reprint the
+  `netbox.start` on its own only for an empty NetBox with nothing loaded, or to reprint the
   banner later without touching the already-running containers.
   `netbox.seed` accepts `--dataset`: `seed` (the default) for this test, or `demo` for
   [the `from-netbox` example check](#the-from-netbox-example-check). Each dataset replaces
@@ -142,13 +137,13 @@ Three families need more detail than the tables give:
   `INFRAHUB_ADDRESS` and
   `INFRAHUB_API_TOKEN` at a disposable Infrahub with the schema library loaded (see step 4 of
   [Run the complete tier](#run-the-complete-tier)) — the test writes to it and does not clean up, so reset it
-  (`invoke preview.down --volumes`, `preview.up`, reload the schema) between runs. Then:
+  (`invoke dev.destroy`, `dev.start`, reload the schema) between runs. Then:
 
   ```bash
   uv run pytest -m integration tests/integration/test_saved_plan_apply_integration.py
   ```
 
-  `uv run invoke netbox.down` removes the NetBox containers and their data volumes.
+  `uv run invoke netbox.destroy` removes the NetBox containers and their data volumes.
 - **Prefect idempotency** needs no external service. It skips unless `prefect` and
   `opsmill_prefect_extras` import, then starts Prefect's own isolated temporary API server with
   `PREFECT_HOME` and `PREFECT_LOCAL_STORAGE_PATH` redirected under `tmp_path`. It writes only
@@ -226,32 +221,32 @@ targets.
 
 ##### Run the complete tier
 
-This sequence uses the preview stack and the local NetBox. Run it
-from the repository root. The values in angle brackets come from `development/preview.env` or
-from the `netbox.seed` output; do not commit them.
+This sequence uses the development stack and the local NetBox. Run it
+from the repository root. The values in angle brackets come from the `netbox.seed` output; do
+not commit them. The other values are the development defaults of `development/docker-compose.yml`.
 
 1. Start the services and create the three test databases:
 
    ```bash
-   uv run invoke preview.up
+   uv run invoke dev.start
    for database in apply_guard_test product_store_test storage_test; do
-     docker exec infrahub-sync-preview-sync-postgres-1 createdb -U postgres "$database"
+     docker exec infrahub-sync-dev-postgres-1 createdb -U postgres "$database"
    done
    ```
 
 2. Set the environment:
 
    ```bash
-   export INFRAHUB_ADDRESS="http://localhost:8080"
-   export INFRAHUB_API_TOKEN="<INFRAHUB_INITIAL_ADMIN_TOKEN>"
-   export PREFECT_API_URL="http://localhost:4210/api"
-   export APPLY_GUARD_TEST_POSTGRESQL_DSN="postgresql://postgres:postgres@127.0.0.1:5439/apply_guard_test"
-   export PRODUCT_STORE_TEST_POSTGRESQL_DSN="postgresql://postgres:postgres@127.0.0.1:5439/product_store_test"
-   export INFRAHUB_SYNC_STORAGE_INTEGRATION_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5439/storage_test"
-   export INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_BUCKET="infrahub-sync-preview"
+   export INFRAHUB_ADDRESS="http://127.0.0.1:8000"
+   export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
+   export PREFECT_API_URL="http://127.0.0.1:4230/api"
+   export APPLY_GUARD_TEST_POSTGRESQL_DSN="postgresql://postgres:devpassword@127.0.0.1:5440/apply_guard_test"
+   export PRODUCT_STORE_TEST_POSTGRESQL_DSN="postgresql://postgres:devpassword@127.0.0.1:5440/product_store_test"
+   export INFRAHUB_SYNC_STORAGE_INTEGRATION_DATABASE_URL="postgresql://postgres:devpassword@127.0.0.1:5440/storage_test"
+   export INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_BUCKET="infrahub-sync"
    export INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_ENDPOINT_URL="http://127.0.0.1:9010"
-   export AWS_ACCESS_KEY_ID="<PREVIEW_MINIO_ACCESS_KEY>"
-   export AWS_SECRET_ACCESS_KEY="<PREVIEW_MINIO_SECRET_KEY>"
+   export AWS_ACCESS_KEY_ID="devaccesskey"
+   export AWS_SECRET_ACCESS_KEY="devsecretkey"
    ```
 
    For the remote-run test, also start the served deployment in a second terminal, as
@@ -272,28 +267,28 @@ from the `netbox.seed` output; do not commit them.
 4. Run the saved-plan family on a fresh Infrahub, with the schema snapshot loaded:
 
    ```bash
-   uv run invoke preview.down --volumes
+   uv run invoke dev.destroy
    uv run invoke netbox.seed
-   uv run invoke preview.up
+   uv run invoke dev.start
    uv run infrahubctl schema load tests/data/nightly_schema --wait 120
    export NETBOX_URL="<URL printed by netbox.seed>"
    export NETBOX_TOKEN="<token printed by netbox.seed>"
    uv run pytest -m integration -rs tests/integration/test_saved_plan_apply_integration.py
    ```
 
-   `preview.down --volumes` also removes the three test databases, so run step 4 after step 3.
+   `dev.destroy` also removes the three test databases, so run step 4 after step 3.
 
 5. Remove the services and their data:
 
    ```bash
-   uv run invoke preview.down --volumes
-   uv run invoke netbox.down
+   uv run invoke dev.destroy
+   uv run invoke netbox.destroy
    ```
 
    Stop the served deployment if you started one.
 
 The nightly workflow runs the same families through `.github/scripts/nightly_e2e.py`, which
-derives the settings from the preview configuration.
+derives the settings from the development stack's resolved Compose file.
 
 What these tests do to their targets differs, and the difference matters when you choose what to
 point them at:
@@ -330,24 +325,25 @@ Run these commands from the repository root:
    uv run invoke netbox.seed --dataset demo
    ```
 
-2. Start a fresh preview stack. The worker resolves the package's `netbox-token` credential
+2. Start a fresh development stack. The worker resolves the package's `netbox-token` credential
    from its own environment, so set `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` to the token that step 1
-   printed before `preview.up` starts the worker. `preview.up` sets
-   `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` for the worker itself.
+   printed before `dev.start` creates the worker container. `dev.start` sets
+   `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` to the stack's Infrahub admin token, and connects
+   the worker to NetBox's network.
 
    ```bash
-   uv run invoke preview.down --volumes
-   INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="<token printed by netbox.seed>" uv run invoke preview.up
+   uv run invoke dev.destroy
+   INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="<token printed by netbox.seed>" uv run invoke dev.start
    ```
 
-3. Load the schema library into the preview Infrahub. The example maps onto the 16 schemas
+3. Load the schema library into the development stack's Infrahub. The example maps onto the 16 schemas
    of the `infrahub/traditional-infrastructure-sot` Marketplace collection.
    `tests/data/nightly_schema/` contains a snapshot of that collection, and the nightly
-   workflow loads the same snapshot. The token is the preview's development admin token from
-   `development/preview.env`.
+   workflow loads the same snapshot. The token is the development admin token that
+   `development/docker-compose.infrahub.yml` defaults to.
 
    ```bash
-   export INFRAHUB_ADDRESS="http://localhost:8080"
+   export INFRAHUB_ADDRESS="http://127.0.0.1:8000"
    export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
    uv run infrahubctl schema load tests/data/nightly_schema --wait 120
    ```
@@ -367,15 +363,16 @@ Run these commands from the repository root:
    snapshot, record the difference in the pull request.
 
 4. Write the local package and register it. The shipped package names the public NetBox
-   demo and an Infrahub on port 8000. `netbox.demo-package` writes
-   `.netbox/from-netbox.local.yml`, a copy that points at the local NetBox and the preview
-   Infrahub. The mapping and the credential references stay the same. Pass
-   `--infrahub-url` to use another Infrahub address.
+   demo and an Infrahub on port 8000. `netbox.demo-package --dev-stack` writes
+   `.netbox/from-netbox.local.yml`, a copy that points at the addresses the worker container
+   reaches: NetBox at `http://netbox:8080` and Infrahub at `http://infrahub-server:8000`. The
+   mapping and the credential references stay the same. Pass `--infrahub-url` to use another
+   Infrahub address.
 
    ```bash
-   uv run invoke netbox.demo-package
-   export INFRAHUB_SYNC_API_URL="http://localhost:8010"
-   export INFRAHUB_SYNC_API_TOKEN="preview-tester-token-0001"
+   uv run invoke netbox.demo-package --dev-stack
+   export INFRAHUB_SYNC_API_URL="http://127.0.0.1:8001"
+   export INFRAHUB_SYNC_API_TOKEN="infrahub-sync-dev-token"
    uv run infrahub-sync configs register .netbox/from-netbox.local.yml --reason "register the local NetBox demo import"
    ```
 
@@ -397,8 +394,8 @@ in the pull request.
 When you finish, remove both stacks and their data volumes:
 
 ```bash
-uv run invoke preview.down --volumes
-uv run invoke netbox.down
+uv run invoke dev.destroy
+uv run invoke netbox.destroy
 ```
 
 ##### The `v2-gate` suite
@@ -409,8 +406,8 @@ pytest test, and the nightly end-to-end workflow runs it after the `from-netbox`
 
 The suite sets up the same services as the `from-netbox` check, then runs these steps:
 
-1. It resets the preview stack, loads the pinned `demo` dataset into the local NetBox, starts
-   the preview stack and loads the schema snapshot from `tests/data/nightly_schema/`.
+1. It removes the development stack, loads the pinned `demo` dataset into the local NetBox,
+   starts the development stack and loads the schema snapshot from `tests/data/nightly_schema/`.
 2. It creates the `v2-gate` branch in Infrahub.
 3. It installs `infrahub-sync==2.0.1` from PyPI in its own environment with `uvx`, together
    with `pynetbox==7.8.0`, and runs v2 `generate` and `sync` with
@@ -418,12 +415,15 @@ The suite sets up the same services as the `from-netbox` check, then runs these 
    only `PATH`, `HOME`, `TMPDIR` and its NetBox and Infrahub variables.
    The configuration is the NetBox example of the `2.0.2` tag, because the `2.0.1` example maps
    kinds that the loaded schema does not have.
-4. It converts the same `config.yml` with `configs convert --yes`, registers the package, and
-   runs `plan` on the `v2-gate` branch. NetBox does not change between the v2 sync and the plan.
+4. It converts the same `config.yml` with `configs convert --live-schema --yes`, using the host
+   addresses of NetBox and Infrahub, then sets the package's addresses to the ones the Sync
+   worker reaches on the stack's networks (`http://netbox:8080` and
+   `http://infrahub-server:8000`). It registers the package and runs `plan` on the `v2-gate`
+   branch. NetBox does not change between the v2 sync and the plan.
 5. When the plan holds updates, it reads each updated node on the `v2-gate` branch by its kind
    and the destination ID that `runs plan --detail` prints, to get the values v2 wrote.
 6. It compares the plan with `tests/data/v2_gate/expected_deletes.yml` and writes
-   `.preview/nightly-e2e/gate-result.json`.
+   `.dev/nightly-e2e/gate-result.json`.
 
 The suite passes only when all of these hold:
 
@@ -448,8 +448,8 @@ cannot count them. Until it can, the suite writes `gate-result.json` and then fa
 Until then, a failure of this suite does not fail the nightly job: read its result in the
 `v2-gate` row and the gate line of the run summary.
 
-Run it from the repository root, with Docker running and no other preview stack or NetBox in
-use, because the suite resets both:
+Run it from the repository root, with Docker running and no other development stack or NetBox
+in use, because the suite resets both:
 
 ```bash
 uv run python .github/scripts/nightly_e2e.py suite v2-gate
@@ -519,9 +519,9 @@ what the test pins is that the destination converges them.
 
 #### Nightly end-to-end report
 
-`.github/workflows/workflow-nightly-e2e.yml` runs the integration tests, preview
-smoke tests, saved-plan live tests, `from-netbox` check, and `v2-gate` suite against
-disposable services. A scheduler outside GitHub can dispatch it each night. To dispatch one run
+`.github/workflows/workflow-nightly-e2e.yml` runs the integration tests, the
+development stack's smoke tests, saved-plan live tests, `from-netbox` check, and `v2-gate` suite
+against disposable services. A scheduler outside GitHub can dispatch it each night. To dispatch one run
 manually, use a full commit SHA already merged into `feature/v3-develop`:
 
 ```bash
@@ -540,18 +540,18 @@ The workflow checks out that exact commit and refuses one that is not an ancesto
 of the current `feature/v3-develop` head. In the GitHub Actions run, open the job
 summary for pass, fail, and skip counts and duration by suite. Download the
 `nightly-e2e-junit` artifact for individual test results. A failed suite also
-uploads its container and preview process logs in
+uploads its container logs in
 `nightly-e2e-failed-container-logs`. The workflow reports failures but is not a
 required pull-request check and does not publish a release candidate.
 
-#### Preview smoke
+#### Smoke
 
 ```bash
-uv run invoke preview.up
-uv run invoke preview.smoke
+uv run invoke dev.start
+uv run invoke dev.smoke
 ```
 
-`preview.smoke` seeds the smoke dataset and then runs `pytest -m preview tests/preview -q`
+`dev.smoke` seeds the smoke dataset and then runs `pytest -m smoke tests/dev_stack/smoke -q`
 against the running stack. It writes: the seed creates a device on `main` and forks the
 `preview-smoke` branch, and the suite drives real plan and apply runs against that branch.
 Every test in it skips rather than fails when the stack is not reachable.
@@ -560,26 +560,22 @@ The suite runs in a single process by design. Its modules share one Infrahub bra
 Prefect deployment, and a collection hook orders them against each other; a distributed run
 would split that ordering across workers.
 
-**Five modules under [`tests/preview/`](https://github.com/opsmill/infrahub-sync/tree/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/preview) are not part of that tier.** They
-carry no `preview` marker, so they already run in the ordinary unit gate — 70 tests in total —
-and they need no stack:
+**Two modules under `tests/dev_stack/smoke/` are not part of that tier.** They carry no `smoke`
+marker, so they already run in the ordinary unit gate, and they need no stack:
 
-| Module | What it covers | Tests |
-|---|---|---|
-| [`test_evidence.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/preview/test_evidence.py) | The two helpers the live qualification rows capture evidence with, plus a read of [Contributing](../../contributing.mdx) that holds the documented setup command to the pinned package manager | 9 |
-| [`test_preview_configuration.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/preview/test_preview_configuration.py) | Regression checks on the disposable preview environment, including the Compose resolution that needs the `docker compose` CLI | 25 |
-| [`test_preview_legacy_state.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/preview/test_preview_legacy_state.py) | That the preview refuses retired-vocabulary state and resets it destructively | 9 |
-| [`test_preview_worker_identity.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/preview/test_preview_worker_identity.py) | That the preview starts the supported service worker without static identity plumbing | 4 |
-| [`test_smoke_request_shapes.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/preview/test_smoke_request_shapes.py) | That the smoke suite's request bodies are the ones the shipped API accepts | 23 |
+| Module | What it covers |
+|---|---|
+| `test_evidence.py` | The two helpers the live qualification rows capture evidence with, plus a read of [Contributing](../../contributing.mdx) that holds the documented setup command to the pinned package manager |
+| `test_smoke_request_shapes.py` | That the smoke suite's request bodies are the ones the shipped API accepts |
 
-Directory is not marker: do not assume a module under `tests/preview/` is opt-in. If you touch
-Contributing or the preview tasks, run the unmarked set directly as a fast pre-check:
+Directory is not marker: do not assume a module under `tests/dev_stack/smoke/` is opt-in. If you
+touch Contributing or the smoke suite, run the unmarked set directly as a fast pre-check:
 
 ```bash
-uv run pytest -q -m "not preview" tests/preview
+uv run pytest -q -m "not smoke" tests/dev_stack/smoke
 ```
 
-[Run the preview stack](../guides/preview-stack.md) is the full procedure for the stack
+[Local development stack](../../development-stack.mdx) is the full procedure for the stack
 itself.
 
 #### Image smoke
@@ -689,10 +685,10 @@ the installed `infrahub-testcontainers` package. The `testcontainers` extra requ
 `infrahub-testcontainers` 1.11.9 or later, and `uv.lock` pins 1.11.9, so the fixture runs
 Infrahub 1.11.9. Set `INFRAHUB_TESTING_IMAGE_VER` to run another Infrahub version.
 
-### `check-310`
+### `tests.check-310`
 
 ```bash
-uv run invoke check-310
+uv run invoke tests.check-310
 ```
 
 This reproduces the three CI legs your active environment cannot reach:
@@ -702,7 +698,7 @@ This reproduces the three CI legs your active environment cannot reach:
 3. the unit tests on Python 3.10 with the `dev` extra alone, which is the base install that
    has no service dependencies.
 
-It builds its environments under `.preview/check-310-venv` and leaves your active `.venv`
+It builds its environments under `.dev/check-310-venv` and leaves your active `.venv`
 alone, and it stops at the first failing leg.
 
 **When Python 3.10 is not installed, the task checks nothing and exits zero.** Its output

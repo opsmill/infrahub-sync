@@ -17,6 +17,8 @@ SAMPLE = ROOT / "tests" / "data" / "v2_gate" / "plan_detail_sample.txt"
 CONTEXT = {
     "netbox_address": "http://localhost:8001",
     "infrahub_address": "http://localhost:8080",
+    "worker_netbox_address": "http://netbox:8080",
+    "worker_infrahub_address": "http://infrahub-server:8000",
     "infrahub_version": "1.10.6",
     "dataset_commit": "commit",
     "dataset_sha256": "digest",
@@ -324,6 +326,20 @@ class FakeCli:
                     (directory / adapter).mkdir()
             else:
                 self.read["adapters"] = sorted(path.name for path in directory.iterdir() if path.is_dir())
+        if "convert" in command:
+            # The gate rewrites the package the conversion wrote to the worker's addresses.
+            source = Path(command[command.index("convert") + 1])
+            package = {
+                "format_version": 1,
+                "configuration": {
+                    "source": {"name": "netbox", "settings": {"url": "http://localhost:8001"}},
+                    "destination": {"name": "infrahub", "settings": {"url": "http://localhost:8080"}},
+                },
+            }
+            (source.parent / "package.yml").write_text(yaml.safe_dump(package), encoding="utf-8")
+        if "register" in command:
+            registered = Path(command[command.index("register") + 1])
+            self.read["registered"] = yaml.safe_load(registered.read_text(encoding="utf-8"))
         answers = {
             "register": "config_id: config-1\nregistry_version: 1\n",
             # `plan --config-id` creates the run; `runs plan` reads its detail.
@@ -394,6 +410,9 @@ def test_v2_gate_plans_the_converted_package_and_keeps_the_result(
     assert convert[-2:] == ("--live-schema", "--yes")
     assert convert_env["NETBOX_ADDRESS"] == CONTEXT["netbox_address"]
     assert convert_env["INFRAHUB_ADDRESS"] == CONTEXT["infrahub_address"]
+    settings = cli.read["registered"]["configuration"]
+    assert settings["source"]["settings"]["url"] == "http://netbox:8080"
+    assert settings["destination"]["settings"]["url"] == "http://infrahub-server:8000"
     register, plan = cli.commands[4], cli.commands[5]
     assert register[4:6] == ("configs", "register")
     assert register[6].endswith("package.yml")
@@ -452,12 +471,12 @@ def test_v2_gate_suite_seeds_demo_and_starts_a_fresh_stack(runner: ModuleType, m
     """The gate prepares NetBox and Infrahub as the from-netbox suite does, then runs the gate."""
     events: list[str] = []
     monkeypatch.setattr(runner, "environment", dict)
-    monkeypatch.setattr(runner, "start_preview", lambda _env: events.append("up"))
+    monkeypatch.setattr(runner, "start_stack", lambda _env: events.append("up"))
     monkeypatch.setattr(runner, "schema", lambda _env: events.append("schema"))
-    monkeypatch.setattr(runner, "gate_context", lambda: CONTEXT)
+    monkeypatch.setattr(runner, "gate_context", lambda _env: CONTEXT)
     monkeypatch.setattr(runner, "v2_gate", lambda _env, context: events.append(f"gate {context['infrahub_address']}"))
     monkeypatch.setattr(runner, "run", lambda *command, **_kwargs: events.append(" ".join(command)))
     runner.suite("v2-gate")
-    assert events[0].endswith("invoke preview.down --volumes")
+    assert events[0].endswith("invoke dev.destroy")
     assert events[1].endswith("invoke netbox.seed --dataset demo")
     assert events[2:] == ["up", "schema", "gate http://localhost:8080"]

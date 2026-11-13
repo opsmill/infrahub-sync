@@ -1,10 +1,10 @@
 """Move the pinned Infrahub release, and its matching image digest, to a new version.
 
-The development and preview stacks pin Infrahub by tag and by the tag's top-level
-index digest (see the header of `development/docker-compose.infrahub.yml`). A tag
-without its digest would still pull the old image, so both move together. The
-current pin is read from `development/preview.env`, the one file that states it
-as plain values, and every occurrence in the pinned files is rewritten.
+The development stack pins Infrahub by tag and by the tag's top-level index digest (see
+the header of `development/docker-compose.infrahub.yml`). A tag without its digest would
+still pull the old image, so both move together. The current pin is read from the
+default image reference of that file, and every occurrence in the pinned files is
+rewritten.
 
 Pages that report a measured run (ADRs, tutorials, platform limits) name the
 version they were measured on and are left alone.
@@ -28,21 +28,20 @@ if TYPE_CHECKING:
 
 ROOT = Path(__file__).resolve().parents[2]
 IMAGE = "registry.opsmill.io/opsmill/infrahub"
-PREVIEW_ENV = Path("development/preview.env")
-# Every file that carries the pinned version; the first two also carry the digest.
+INFRAHUB_COMPOSE = Path("development/docker-compose.infrahub.yml")
+# Every file that carries the pinned version; the first also carries the digest.
 PINNED_FILES = (
-    Path("development/docker-compose.infrahub.yml"),
-    PREVIEW_ENV,
-    Path("development/docker-compose.preview.yml"),
+    INFRAHUB_COMPOSE,
     Path("tests/compose/conftest.py"),
     Path("tests/compose/fixture-override.yaml"),
     Path("tests/compose/test_compose_contract.py"),
-    Path("tests/preview/test_preview_configuration.py"),
 )
-DIGEST_FILES = (Path("development/docker-compose.infrahub.yml"), PREVIEW_ENV)
+DIGEST_FILES = (INFRAHUB_COMPOSE,)
 REQUIRED_PLATFORMS = frozenset({"linux/amd64", "linux/arm64"})
 VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
+# The default reference of the Infrahub image: the version and its index digest.
+PINNED_REFERENCE = re.compile(r"INFRAHUB_DOCKER_IMAGE_DIGEST-([0-9]+\.[0-9]+\.[0-9]+)@(sha256:[0-9a-f]{64})")
 
 
 class UpdateError(RuntimeError):
@@ -50,18 +49,12 @@ class UpdateError(RuntimeError):
 
 
 def current_pin(root: Path) -> tuple[str, str]:
-    """Return the version and bare digest (`sha256:...`) the preview env file pins."""
-    values: dict[str, str] = {}
-    for line in (root / PREVIEW_ENV).read_text(encoding="utf-8").splitlines():
-        key, sep, value = line.partition("=")
-        if sep and not key.startswith("#"):
-            values[key.strip()] = value.strip()
-    version = values.get("VERSION", "")
-    digest = values.get("INFRAHUB_DOCKER_IMAGE_DIGEST", "").removeprefix("@")
-    if not VERSION_PATTERN.fullmatch(version) or not DIGEST_PATTERN.fullmatch(digest):
-        msg = f"{PREVIEW_ENV} does not pin a version and digest: VERSION={version!r}"
+    """Return the version and bare digest (`sha256:...`) the Infrahub Compose file pins by default."""
+    found = PINNED_REFERENCE.search((root / INFRAHUB_COMPOSE).read_text(encoding="utf-8"))
+    if found is None:
+        msg = f"{INFRAHUB_COMPOSE} does not pin a version and digest in its default image reference"
         raise UpdateError(msg)
-    return version, digest
+    return found.group(1), found.group(2)
 
 
 def resolve_digest(version: str) -> str:

@@ -687,7 +687,7 @@ def test_nightly_job_fails_on_every_suite_but_the_v2_gate() -> None:
     steps = jobs(NIGHTLY_WORKFLOW)["end-to-end"]["steps"]
     final = next(step for step in steps if step.get("name") == "Fail the run if a suite did not pass")
     loop = final["run"].split("; do", 1)[0]
-    for variable in ("SHA_GUARD", "DEPENDENCIES", "IMAGES", "INTEGRATION", "PREVIEW", "SAVED_PLAN", "FROM_NETBOX"):
+    for variable in ("SHA_GUARD", "DEPENDENCIES", "IMAGES", "INTEGRATION", "SMOKE", "SAVED_PLAN", "FROM_NETBOX"):
         assert f'"${variable}"' in loop
     assert '"$V2_GATE"' not in loop
     text = NIGHTLY_WORKFLOW.read_text(encoding="utf-8")
@@ -701,7 +701,7 @@ def test_nightly_suites_report_independently_and_clean_up() -> None:
     image_check = next(
         index for index, step in enumerate(steps) if "nightly_e2e.py verify-images" in str(step.get("run", ""))
     )
-    for name in ("integration", "preview", "saved-plan", "from-netbox", "v2-gate"):
+    for name in ("integration", "smoke", "saved-plan", "from-netbox", "v2-gate"):
         step = by_id[name]
         assert image_check < steps.index(step)
         assert step["continue-on-error"] is True
@@ -715,9 +715,9 @@ def test_nightly_suites_report_independently_and_clean_up() -> None:
         )
     uploads = [step for step in steps if str(step.get("uses", "")).startswith(UPLOAD_ACTION)]
     assert {step["with"]["path"] for step in uploads} == {
-        ".preview/nightly-e2e/*.xml",
-        ".preview/nightly-e2e/*-containers.log",
-        ".preview/nightly-e2e/gate-result.json",
+        ".dev/nightly-e2e/*.xml",
+        ".dev/nightly-e2e/*-containers.log",
+        ".dev/nightly-e2e/gate-result.json",
     }
     assert all(step["if"] == "always()" for step in uploads)
     assert any(

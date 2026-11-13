@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
-REPORTS = ROOT / ".preview" / "nightly-e2e"
-SUITES = ("integration", "preview", "saved-plan", "from-netbox", "v2-gate")
+REPORTS = ROOT / ".dev" / "nightly-e2e"
+SUITES = ("integration", "smoke", "saved-plan", "from-netbox", "v2-gate")
 EXPECTED_DEMO_OPERATIONS = 1688
 SCHEMA_SHA256 = "b74a0ff09cde3aafb1275293be7523f1b377d64073c43aca3ccc14cbe4c5a025"
 # The v2 release whose writes the first V3 plan is compared with. v1 and v2 shipped only as
@@ -61,53 +61,92 @@ def run(*command: str, env: dict[str, str] | None = None, capture: bool = False,
 
 
 def environment() -> dict[str, str]:
-    """Provide the shipped disposable service addresses and credentials to the tests."""
-    from tasks.netbox import load_netbox_env, netbox_token, netbox_url  # noqa: PLC0415 -- suite-only dependency
-    from tasks.preview import (  # noqa: PLC0415 -- match the preview task's runtime settings
-        _runtime_env,  # noqa: PLC2701 -- use the same environment as the preview task
-        load_preview_env,
-        preview_urls,
-    )
+    """Provide the development stack's addresses and credentials to the tests.
 
-    preview = load_preview_env()
+    The Sync API and the worker run in the development stack's containers. The tests run on
+    the host, so they get the worker's environment moved onto the stack's loopback
+    publications (`dev.host_environment`), plus the host addresses of Infrahub, the Sync API
+    and NetBox. `dev.start` reads the same environment, so the worker container receives the
+    NetBox credential from it.
+    """
+    from tasks import dev  # noqa: PLC0415 -- suite-only dependency
+    from tasks.netbox import load_netbox_env, netbox_token, netbox_url  # noqa: PLC0415 -- suite-only dependency
+
+    settings = dev.dev_settings()
     netbox = load_netbox_env()
-    urls = preview_urls(preview)
-    env = _runtime_env(preview)
-    store_url = env["INFRAHUB_SYNC_DATABASE_URL"]
+    principals = json.loads(settings.bearer_tokens)
+    env = dict(os.environ)
+    env.update(dev.host_environment(settings, "sync-worker"))
+    store_url = env[dev.DATABASE_URL_VARIABLE]
     env.update(
         {
-            "INFRAHUB_SYNC_API_URL": urls["sync_api"],
-            "INFRAHUB_SYNC_API_TOKEN": json.loads(preview["PREVIEW_BEARER_TOKENS"])["tester@local"]["token"],
+            "INFRAHUB_ADDRESS": settings.infrahub_url,
+            "INFRAHUB_API_TOKEN": settings.infrahub_admin_token,
+            # What a registered package's `infrahub-token` reference resolves.
+            dev.INFRAHUB_CREDENTIAL_VARIABLE: settings.infrahub_admin_token,
+            "INFRAHUB_SYNC_CONFIG_DIRECTORY": str(ROOT / "examples"),
+            "INFRAHUB_SYNC_API_URL": settings.sync_api_url,
+            "INFRAHUB_SYNC_API_TOKEN": principals[min(principals)]["token"],
             "NETBOX_URL": netbox_url(netbox),
             "NETBOX_TOKEN": netbox_token(netbox),
-            # What the preview worker resolves for a registered package's `netbox-token`.
+            # What the worker resolves for a registered package's `netbox-token`.
             "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN": netbox_token(netbox),
             "APPLY_GUARD_TEST_POSTGRESQL_DSN": store_url,
             "PRODUCT_STORE_TEST_POSTGRESQL_DSN": store_url,
             "INFRAHUB_SYNC_STORAGE_INTEGRATION_DATABASE_URL": store_url,
             "INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_BUCKET": env["INFRAHUB_SYNC_S3_BUCKET"],
-            "INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_ENDPOINT_URL": env["INFRAHUB_SYNC_S3_ENDPOINT_URL"],
+            "INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_ENDPOINT_URL": env[dev.S3_ENDPOINT_VARIABLE],
             "INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_PREFIX": "nightly-e2e",
         }
     )
     return env
 
 
-def assert_pinned_images() -> None:
-    """Refuse any Compose image without a SHA-256 digest before starting services."""
-    definitions = (
-        (
-            "development/preview.env",
-            "development/docker-compose.infrahub.yml",
-            "development/docker-compose.preview.yml",
-        ),
-        ("development/netbox/netbox.env", "development/netbox/docker-compose.netbox.yml"),
+# The Compose files the suites start: the development stack, with every profile and the
+# Infrahub files it includes, and the local NetBox. A service that the file builds from the
+# checkout (the Sync image) is not a third-party image, so the pin check leaves it out.
+PINNED_STACKS = (
+    (
+        ("--profile", "sync", "--profile", "infrahub"),
+        ("development/docker-compose.yml",),
+    ),
+    (
+        ("--env-file", "development/netbox/netbox.env"),
+        ("development/netbox/docker-compose.netbox.yml",),
+    ),
+)
+# The development stack, with every profile, for its logs.
+DEV_STACK_COMMAND = (
+    "docker",
+    "compose",
+    "-f",
+    "development/docker-compose.yml",
+    "--profile",
+    "sync",
+    "--profile",
+    "infrahub",
+)
+
+
+def third_party_images(resolved: dict[str, Any]) -> list[str]:
+    """Return the images of the services a resolved Compose file pulls rather than builds."""
+    services: dict[str, dict[str, Any]] = resolved.get("services") or {}
+    return sorted(
+        {
+            str(definition["image"])
+            for definition in services.values()
+            if definition.get("image") and "build" not in definition
+        }
     )
-    for env_file, *files in definitions:
-        command = ["docker", "compose", "--env-file", env_file]
+
+
+def assert_pinned_images() -> None:
+    """Refuse any third-party Compose image without a SHA-256 digest before starting services."""
+    for options, files in PINNED_STACKS:
+        command = ["docker", "compose", *options]
         for file in files:
             command.extend(("-f", file))
-        images = run(*command, "config", "--images", capture=True).splitlines()
+        images = third_party_images(json.loads(run(*command, "config", "--format", "json", capture=True)))
         if not images or any(re.fullmatch(r".+@sha256:[0-9a-f]{64}", image) is None for image in images):
             msg = f"Compose images are missing digest pins in {', '.join(files)}: {images}"
             raise RuntimeError(msg)
@@ -132,13 +171,13 @@ def schema(env: dict[str, str]) -> None:
     run("uv", "run", "--no-sync", "infrahubctl", "schema", "load", str(path), "--wait", "120", env=env)
 
 
-def start_preview(env: dict[str, str]) -> None:
-    """Allow the disposable Infrahub health check one cold-start retry."""
+def start_stack(env: dict[str, str]) -> None:
+    """Start the development stack, allowing the Infrahub health check one cold-start retry."""
     try:
-        run("uv", "run", "--no-sync", "invoke", "preview.up", env=env)
+        run("uv", "run", "--no-sync", "invoke", "dev.start", env=env)
     except subprocess.CalledProcessError:
         time.sleep(30)
-        run("uv", "run", "--no-sync", "invoke", "preview.up", env=env)
+        run("uv", "run", "--no-sync", "invoke", "dev.start", env=env)
 
 
 def parsed_fields(output: str) -> dict[str, str]:
@@ -175,7 +214,9 @@ def check_import_counts(run_id: str, env: dict[str, str]) -> None:
 
 def from_netbox(env: dict[str, str]) -> None:
     """Register, plan, and apply the shipped example against the local demo dataset."""
-    run("uv", "run", "--no-sync", "invoke", "netbox.demo-package", env=env)
+    # The worker runs in a container, so the package names NetBox and Infrahub on the
+    # networks it joins.
+    run("uv", "run", "--no-sync", "invoke", "netbox.demo-package", "--dev-stack", env=env)
     registered = parsed_fields(
         run(
             "uv",
@@ -274,7 +315,7 @@ def plan_summary(output: str) -> dict[str, Any]:
 
 
 def gate_client(env: dict[str, str], context: dict[str, str]) -> Any:  # noqa: ANN401 -- live-suite dependency
-    """Return an Infrahub client for the preview Infrahub the gate plans against."""
+    """Return an Infrahub client for the development stack's Infrahub the gate plans against."""
     from infrahub_sdk import Config, InfrahubClientSync  # noqa: PLC0415 -- live-suite dependency
 
     return InfrahubClientSync(config=Config(address=context["infrahub_address"], api_token=env["INFRAHUB_API_TOKEN"]))
@@ -430,24 +471,53 @@ def expected_deletes() -> list[dict[str, Any]]:
     return entries
 
 
-def gate_context() -> dict[str, str]:
-    """Name the local NetBox, the preview Infrahub and the pinned dataset the gate runs against."""
+def gate_context(env: dict[str, str]) -> dict[str, str]:
+    """Name the local NetBox, the development stack's Infrahub and the pinned dataset the gate runs against.
+
+    The host addresses serve v2, which runs on the host, and the schema read of
+    `configs convert --live-schema`. The worker addresses are what the registered package
+    names, because the Sync worker runs in a container on the stack's networks.
+    """
     from tasks.netbox import (  # noqa: PLC0415 -- suite-only dependency
         DEMO_SQL_COMMIT,
         DEMO_SQL_SHA256,
-        load_netbox_env,
-        netbox_url,
+        WORKER_INFRAHUB_URL,
+        WORKER_NETBOX_URL,
     )
-    from tasks.preview import load_preview_env, preview_urls  # noqa: PLC0415 -- suite-only dependency
 
-    preview = load_preview_env()
     return {
-        "netbox_address": netbox_url(load_netbox_env()),
-        "infrahub_address": preview_urls(preview)["infrahub"],
-        "infrahub_version": preview.get("VERSION", "unknown"),
+        "netbox_address": env["NETBOX_URL"],
+        "infrahub_address": env["INFRAHUB_ADDRESS"],
+        "worker_netbox_address": WORKER_NETBOX_URL,
+        "worker_infrahub_address": WORKER_INFRAHUB_URL,
+        "infrahub_version": infrahub_version(env),
         "dataset_commit": DEMO_SQL_COMMIT,
         "dataset_sha256": DEMO_SQL_SHA256,
     }
+
+
+def infrahub_version(env: dict[str, str]) -> str:
+    """Return the version the development stack's Infrahub reports, or `unknown`."""
+    import httpx  # noqa: PLC0415 -- live-suite dependency
+    from infrahub_sdk import Config, InfrahubClientSync  # noqa: PLC0415 -- live-suite dependency
+    from infrahub_sdk.exceptions import Error as InfrahubSdkError  # noqa: PLC0415 -- live-suite dependency
+
+    # The version is a label in the result, never a reason to fail the gate.
+    try:
+        client = InfrahubClientSync(config=Config(address=env["INFRAHUB_ADDRESS"], api_token=env["INFRAHUB_API_TOKEN"]))
+        return str(client.get_version())
+    except (httpx.HTTPError, InfrahubSdkError, ValueError):
+        return "unknown"
+
+
+def worker_addresses(package: Path, context: dict[str, str]) -> None:
+    """Point the registered package at the addresses the containerized Sync worker reaches."""
+    import yaml  # noqa: PLC0415 -- the summary and log steps run without the project's packages
+
+    data = yaml.safe_load(package.read_text(encoding="utf-8"))
+    data["configuration"]["source"]["settings"]["url"] = context["worker_netbox_address"]
+    data["configuration"]["destination"]["settings"]["url"] = context["worker_infrahub_address"]
+    package.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
 
 def v2_sync(work: Path, env: dict[str, str], context: dict[str, str]) -> Path:
@@ -460,7 +530,7 @@ def v2_sync(work: Path, env: dict[str, str], context: dict[str, str]) -> Path:
     project.mkdir()
     (project / "config.yml").write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
     # v2 `generate` reads the Infrahub address from the file only, not from INFRAHUB_ADDRESS.
-    # It runs on a copy that names the preview Infrahub, so the file that `sync` and the
+    # It runs on a copy that names the development stack's Infrahub, so the file that `sync` and the
     # conversion read keeps the example's address and the variables must take precedence.
     generator = work / "generate"
     generator.mkdir()
@@ -494,6 +564,7 @@ def v3_plan(project: Path, env: dict[str, str], context: dict[str, str]) -> tupl
     cli = ("uv", "run", "--no-sync", "infrahub-sync")
     # `--live-schema` maps the IP namespace v2 never mapped to `default`, where v2 wrote it.
     run(*cli, "configs", "convert", str(project / "config.yml"), "--live-schema", "--yes", env=convert_env)
+    worker_addresses(project / "package.yml", context)
     registered = parsed_fields(
         run(
             *cli,
@@ -578,15 +649,15 @@ def v2_gate(env: dict[str, str], context: dict[str, str]) -> None:
 
 
 def demo_suite(name: str, env: dict[str, str]) -> None:
-    """Seed the `demo` dataset, start a fresh preview stack with the schema, and run one NetBox suite."""
-    run("uv", "run", "--no-sync", "invoke", "preview.down", "--volumes", env=env)
+    """Seed the `demo` dataset, start a fresh development stack with the schema, and run one NetBox suite."""
+    run("uv", "run", "--no-sync", "invoke", "dev.destroy", env=env)
     run("uv", "run", "--no-sync", "invoke", "netbox.seed", "--dataset", "demo", env=env)
-    start_preview(env)
+    start_stack(env)
     schema(env)
     if name == "from-netbox":
         from_netbox(env)
     else:
-        v2_gate(env, gate_context())
+        v2_gate(env, gate_context(env))
 
 
 def suite(name: str) -> None:
@@ -601,33 +672,33 @@ def suite(name: str) -> None:
     try:
         env = environment()
         if name == "integration":
-            start_preview(env)
-            run("uv", "run", "--no-sync", "invoke", "preview.seed", env=env)
+            start_stack(env)
+            run("uv", "run", "--no-sync", "invoke", "dev.seed", env=env)
             # The saved-plan case needs its own fresh destination and seed dataset.
             env.pop("NETBOX_URL")
             env.pop("NETBOX_TOKEN")
             run("uv", "run", "--no-sync", "pytest", "-m", "integration", "--junitxml", str(report), env=env)
-        elif name == "preview":
-            run("uv", "run", "--no-sync", "invoke", "preview.down", "--volumes", env=env)
-            start_preview(env)
-            run("uv", "run", "--no-sync", "invoke", "preview.seed", env=env)
+        elif name == "smoke":
+            run("uv", "run", "--no-sync", "invoke", "dev.destroy", env=env)
+            start_stack(env)
+            run("uv", "run", "--no-sync", "invoke", "dev.seed", env=env)
             run(
                 "uv",
                 "run",
                 "--no-sync",
                 "pytest",
                 "-m",
-                "preview",
-                "tests/preview",
+                "smoke",
+                "tests/dev_stack/smoke",
                 "-q",
                 "--junitxml",
                 str(report),
-                env=env,
+                env={**env, "INFRAHUB_SYNC_SMOKE_STACK": "dev"},
             )
         elif name == "saved-plan":
-            run("uv", "run", "--no-sync", "invoke", "preview.down", "--volumes", env=env)
+            run("uv", "run", "--no-sync", "invoke", "dev.destroy", env=env)
             run("uv", "run", "--no-sync", "invoke", "netbox.seed", env=env)
-            start_preview(env)
+            start_stack(env)
             schema(env)
             run(
                 "uv",
@@ -661,27 +732,13 @@ def suite(name: str) -> None:
 
 
 def collect_logs(name: str) -> None:
-    """Save container and host process logs before a later suite resets the stacks."""
+    """Save the development stack's and NetBox's container logs before a later suite resets them."""
     REPORTS.mkdir(parents=True, exist_ok=True)
     path = REPORTS / f"{name}-containers.log"
+    netbox = ("docker", "compose", *PINNED_STACKS[1][0], "-f", PINNED_STACKS[1][1][0])
     with path.open("w", encoding="utf-8") as output:
-        for env_file, *files in (
-            (
-                "development/preview.env",
-                "development/docker-compose.infrahub.yml",
-                "development/docker-compose.preview.yml",
-            ),
-            ("development/netbox/netbox.env", "development/netbox/docker-compose.netbox.yml"),
-        ):
-            command = ["docker", "compose", "--env-file", env_file]
-            for file in files:
-                command.extend(("-f", file))
+        for command in (DEV_STACK_COMMAND, netbox):
             subprocess.run([*command, "logs", "--no-color"], cwd=ROOT, stdout=output, stderr=output, check=False)  # noqa: S603
-        for process in ("sync-api", "prefect-worker"):
-            log = ROOT / ".preview" / f"{process}.log"
-            if log.exists():
-                output.write(f"\n{process}:\n")
-                output.write(log.read_text(encoding="utf-8", errors="replace"))
 
 
 def gate_summary() -> list[str]:

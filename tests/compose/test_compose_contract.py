@@ -69,10 +69,7 @@ SILO_IMAGE = (
 )
 DEVELOPMENT_COMPOSE = Path(__file__).resolve().parents[2] / "development"
 DESTINATION_COMPOSE = DEVELOPMENT_COMPOSE / "docker-compose.infrahub.yml"
-PREVIEW_COMPOSE = DEVELOPMENT_COMPOSE / "docker-compose.preview.yml"
-PREVIEW_ENV = DEVELOPMENT_COMPOSE / "preview.env"
-# Every service of the destination file is under this profile. `preview.env` selects it
-# through COMPOSE_PROFILES; a resolution without that file has to name it.
+# Every service of the destination file is under this profile, so a resolution names it.
 INFRAHUB_PROFILE = ("--profile", "infrahub")
 
 # The two durable volumes and the services allowed to mount them. The short-lived
@@ -729,15 +726,11 @@ def test_the_operator_selects_another_sync_image_with_two_settings(
     )
 
 
-@pytest.mark.parametrize("files", [(DESTINATION_COMPOSE,), (DESTINATION_COMPOSE, PREVIEW_COMPOSE)])
-@pytest.mark.parametrize("env_files", [(), (PREVIEW_ENV,)])
-def test_destination_and_preview_default_images_are_tagged_indexes(
-    compose_version: str, files: tuple[Path, ...], env_files: tuple[Path, ...]
-) -> None:
+def test_destination_default_images_are_tagged_indexes(compose_version: str) -> None:
     """Compose's resolved defaults must retain readable tags and immutable digests."""
     del compose_version
     result = compose(
-        [*INFRAHUB_PROFILE, "config", "--format", "json"], files=files, env_files=env_files, inherit_environment=False
+        [*INFRAHUB_PROFILE, "config", "--format", "json"], files=(DESTINATION_COMPOSE,), inherit_environment=False
     )
     assert result.returncode == 0, result.stderr
     configured = json.loads(result.stdout)
@@ -746,25 +739,7 @@ def test_destination_and_preview_default_images_are_tagged_indexes(
         for name, definition in services(configured).items()
         if not TAGGED_INDEX_REFERENCE.fullmatch(str(definition["image"]))
     )
-    assert mutable == [], f"destination or preview images lack tag and digest: {mutable}"
-
-
-def test_preview_env_tags_match_compose_pin_defaults(compose_version: str) -> None:
-    """Shipped preview tags and digests stay aligned with the Compose defaults."""
-    del compose_version
-    models = []
-    for env_files in ((), (PREVIEW_ENV,)):
-        result = compose(
-            [*INFRAHUB_PROFILE, "config", "--format", "json"],
-            files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
-            env_files=env_files,
-            inherit_environment=False,
-        )
-        assert result.returncode == 0, result.stderr
-        models.append(services(json.loads(result.stdout)))
-    defaults, shipped = models
-    for name in ("task-manager", "infrahub-server", "task-worker", "sync-prefect"):
-        assert shipped[name]["image"] == defaults[name]["image"], name
+    assert mutable == [], f"destination images lack tag and digest: {mutable}"
 
 
 def test_tagged_index_reference_requires_a_tag_after_the_last_slash() -> None:
@@ -775,22 +750,18 @@ def test_tagged_index_reference_requires_a_tag_after_the_last_slash() -> None:
 
 
 def test_image_overrides_keep_their_matching_digests(compose_version: str) -> None:
-    """Custom Infrahub and Prefect tags can be paired with their own index digests."""
+    """A custom Infrahub tag can be paired with its own index digest."""
     del compose_version
     infrahub_digest = "@sha256:" + "a" * 64
-    prefect_digest = "@sha256:" + "b" * 64
     result = compose(
         [*INFRAHUB_PROFILE, "config", "--format", "json"],
-        files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
-        env_files=(PREVIEW_ENV,),
+        files=(DESTINATION_COMPOSE,),
         inherit_environment=False,
         environment={
             "MESSAGE_QUEUE_DOCKER_IMAGE": "example.invalid/rabbitmq:custom",
             "INFRAHUB_DOCKER_IMAGE": "example.invalid/infrahub",
             "VERSION": "custom",
             "INFRAHUB_DOCKER_IMAGE_DIGEST": infrahub_digest,
-            "PREVIEW_PREFECT_IMAGE_TAG": "custom",
-            "PREVIEW_PREFECT_IMAGE_DIGEST": prefect_digest,
         },
     )
     assert result.returncode == 0, result.stderr
@@ -798,7 +769,6 @@ def test_image_overrides_keep_their_matching_digests(compose_version: str) -> No
     assert configured["message-queue"]["image"] == "example.invalid/rabbitmq:custom"
     for name in ("task-manager", "infrahub-server", "task-worker"):
         assert configured[name]["image"] == f"example.invalid/infrahub:custom{infrahub_digest}"
-    assert configured["sync-prefect"]["image"] == f"prefecthq/prefect:custom{prefect_digest}"
 
 
 def test_local_image_override_can_drop_the_digest(compose_version: str) -> None:
@@ -806,22 +776,18 @@ def test_local_image_override_can_drop_the_digest(compose_version: str) -> None:
     del compose_version
     result = compose(
         [*INFRAHUB_PROFILE, "config", "--format", "json"],
-        files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
-        env_files=(PREVIEW_ENV,),
+        files=(DESTINATION_COMPOSE,),
         inherit_environment=False,
         environment={
             "INFRAHUB_DOCKER_IMAGE": "local-infrahub",
             "VERSION": "custom",
             "INFRAHUB_DOCKER_IMAGE_DIGEST": "",
-            "PREVIEW_PREFECT_IMAGE_TAG": "custom",
-            "PREVIEW_PREFECT_IMAGE_DIGEST": "",
         },
     )
     assert result.returncode == 0, result.stderr
     configured = services(json.loads(result.stdout))
     for name in ("task-manager", "infrahub-server", "task-worker"):
         assert configured[name]["image"] == "local-infrahub:custom"
-    assert configured["sync-prefect"]["image"] == "prefecthq/prefect:custom"
 
 
 @pytest.mark.parametrize("digest_override", [{}, {"INFRAHUB_DOCKER_IMAGE_DIGEST": ""}])
@@ -865,15 +831,14 @@ def test_standalone_version_override_drops_the_shipped_digest(compose_version: s
     del compose_version
     result = compose(
         [*INFRAHUB_PROFILE, "config", "--format", "json"],
-        files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
+        files=(DESTINATION_COMPOSE,),
         inherit_environment=False,
-        environment={"VERSION": "custom", "PREVIEW_PREFECT_IMAGE_TAG": "custom"},
+        environment={"VERSION": "custom"},
     )
     assert result.returncode == 0, result.stderr
     configured = services(json.loads(result.stdout))
     for name in ("task-manager", "infrahub-server", "task-worker"):
         assert configured[name]["image"] == "registry.opsmill.io/opsmill/infrahub:custom"
-    assert configured["sync-prefect"]["image"] == "prefecthq/prefect:custom"
 
 
 # ---------------------------------------------------------------------------

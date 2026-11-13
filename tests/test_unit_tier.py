@@ -94,7 +94,7 @@ def test_the_unit_command_excludes_compose_and_keeps_the_plugin(
     marker = shlex.split(command)[shlex.split(command).index("-m") + 1]
     assert {term.strip() for term in marker.split("and")} >= {
         "not integration",
-        "not preview",
+        "not smoke",
         "not docker",
         "not compose",
     }

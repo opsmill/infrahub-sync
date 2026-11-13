@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   end-to-end:
-    name: "Integration, preview, saved plan, local NetBox example, and v2-to-V3 plan gate"
+    name: "Integration, smoke, saved plan, local NetBox example, and v2-to-V3 plan gate"
     runs-on: ubuntu-22.04
     timeout-minutes: 300
     steps:
@@ -89,17 +89,17 @@ jobs:
         continue-on-error: true
         run: python3 .github/scripts/nightly_e2e.py logs integration
 
-      - name: "Run the preview smoke suite"
-        id: preview
+      - name: "Run the development stack smoke suite"
+        id: smoke
         if: always() && steps.images.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 30
-        run: uv run --no-sync python .github/scripts/nightly_e2e.py suite preview
+        run: uv run --no-sync python .github/scripts/nightly_e2e.py suite smoke
 
-      - name: "Save preview container logs on failure"
-        if: always() && steps.preview.outcome == 'failure'
+      - name: "Save smoke container logs on failure"
+        if: always() && steps.smoke.outcome == 'failure'
         continue-on-error: true
-        run: python3 .github/scripts/nightly_e2e.py logs preview
+        run: python3 .github/scripts/nightly_e2e.py logs smoke
 
       - name: "Run the saved-plan live suite with the seed dataset"
         id: saved-plan
@@ -149,7 +149,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nightly-e2e-junit
-          path: .preview/nightly-e2e/*.xml
+          path: .dev/nightly-e2e/*.xml
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
@@ -159,7 +159,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nightly-e2e-failed-container-logs
-          path: .preview/nightly-e2e/*-containers.log
+          path: .dev/nightly-e2e/*-containers.log
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
@@ -169,23 +169,22 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nightly-e2e-v2-gate-result
-          path: .preview/nightly-e2e/gate-result.json
+          path: .dev/nightly-e2e/gate-result.json
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: "Stop preview services and remove volumes"
+      - name: "Stop the development stack and remove volumes"
         if: always()
         run: |
-          uv run --no-sync invoke preview.down --volumes || \
-            docker compose --env-file development/preview.env \
-              -f development/docker-compose.infrahub.yml \
-              -f development/docker-compose.preview.yml down --volumes
+          uv run --no-sync invoke dev.destroy || \
+            docker compose -f development/docker-compose.yml \
+              --profile sync --profile infrahub down --volumes --remove-orphans
 
       - name: "Stop NetBox services and remove volumes"
         if: always()
         run: |
-          uv run --no-sync invoke netbox.down || \
+          uv run --no-sync invoke netbox.destroy || \
             docker compose --env-file development/netbox/netbox.env \
               -f development/netbox/docker-compose.netbox.yml down --volumes
 
@@ -196,7 +195,7 @@ jobs:
           DEPENDENCIES: ${{ steps.dependencies.outcome }}
           IMAGES: ${{ steps.images.outcome }}
           INTEGRATION: ${{ steps.integration.outcome }}
-          PREVIEW: ${{ steps.preview.outcome }}
+          SMOKE: ${{ steps.smoke.outcome }}
           SAVED_PLAN: ${{ steps.saved-plan.outcome }}
           FROM_NETBOX: ${{ steps.from-netbox.outcome }}
         # The v2-gate suite cannot pass on this build: it stops because records left out and
@@ -204,7 +203,7 @@ jobs:
         # Add V2_GATE to the failing outcomes with T031, when records left out and problems are counted.
         run: |
           for outcome in "$SHA_GUARD" "$DEPENDENCIES" "$IMAGES" "$INTEGRATION" \
-            "$PREVIEW" "$SAVED_PLAN" "$FROM_NETBOX"; do
+            "$SMOKE" "$SAVED_PLAN" "$FROM_NETBOX"; do
             if [ "$outcome" != success ]; then
               echo "At least one end-to-end suite or prerequisite did not pass" >&2
               exit 1
