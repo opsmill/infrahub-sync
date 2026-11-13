@@ -1,0 +1,55 @@
+dev/specs/022-resume-interrupted-apply/tasks.md
+  s_b91a98d41025f3::t_c4247569300099 77-81
+infrahub_sync/service/flow.py
+  s_b91a98d41025f3::t_e838dd6990c0cd 65-72
+  s_b91a98d41025f3::t_1337fff4a74bc9 23
+  s_b91a98d41025f3::t_329b11361ab783 882
+  s_b91a98d41025f3::t_085a2454ec02e8 673-678,682-718
+  s_b91a98d41025f3::t_dfbc4354cd7dae 854-855,870
+  s_b91a98d41025f3::t_4eeb71d5315e1c 114
+  s_b91a98d41025f3::t_48d5ee2c0d5cc1 640,649-652
+  s_b91a98d41025f3::t_e524f8968a1907 58-63
+  s_b91a98d41025f3::t_97bea33a2469d2 719-720
+tests/service/test_verify_destination_report.py
+  s_b91a98d41025f3::t_ebfd9f537aed8a 1-50,54-99,115-249,251-261,263-266,268-289,293-348,350-356,360-361,363-366,368
+  s_b91a98d41025f3::t_7bb1302d13909f 51-53,262,267,362,367
+  s_b91a98d41025f3::t_fc36829b93e796 100-114,250,290-292,349,357-359
+infrahub_sync/adapters/infrahub.py
+  s_b91a98d41025f3::t_6772673c9a8b33 2143-2177,2187-2210,2214,2217-2252,2254-2276,2282-2294,2296-2297,2301-2317
+  s_b91a98d41025f3::t_628fe42bef9a18 43
+  s_b91a98d41025f3::t_50ddcd69b93d99 2211-2213,2215-2216
+  s_b91a98d41025f3::t_7fb300b31f9fc2 2058-2059,2064
+  s_b91a98d41025f3::t_9fb601588f625c 2253
+  s_b91a98d41025f3::t_fc36829b93e796 2019,2178-2186,2298-2300
+  s_b91a98d41025f3::t_9b3bfd5f9eb4f1 2038,2045-2047,2061-2063,2277-2281,2295
+  s_b91a98d41025f3::t_7dc00a3cf45eef 1991-2018,2020-2037,2039-2044,2048-2057,2060,2065-2072
+tests/test_destination_check.py
+  s_b91a98d41025f3::t_85312f9bbaa108 27-28,55-65,134,363
+  s_b91a98d41025f3::t_fc36829b93e796 48-51,253,262-264,269-271,281-289,319-330,341-352,385-387
+  s_b91a98d41025f3::t_f098e6072c63b6 105-108,110
+  s_b91a98d41025f3::t_740bbc73cea237 1-26,29-47,52-54,66-104,109,111-133,135-252,254-261,265-268,272-280,290-318,331-340,353-362,364-384,388-393
+infrahub_sync/plan/destination_check.py
+  s_b91a98d41025f3::t_bd4e446505da74 1-148
+tests/cli/test_client_commands.py
+  s_b91a98d41025f3::t_fc36829b93e796 12
+  s_b91a98d41025f3::t_34a070aecda588 1766-1803
+infrahub_sync/cli.py
+  s_b91a98d41025f3::t_9b3bfd5f9eb4f1 1450-1451
+  s_b91a98d41025f3::t_9afbbe67cce8a2 1452-1475
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2af6d000280380be417fdbecd9136905da414cda",
+  "prompts": {},
+  "sessions": {
+    "s_b91a98d41025f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c1e68d9-bc95-47b9-bd6b-c5aa572517ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
