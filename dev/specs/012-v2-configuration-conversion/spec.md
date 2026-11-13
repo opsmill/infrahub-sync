@@ -379,8 +379,8 @@ the operations.
   this must stay so.
 - **Lineage.** The V3 Infrahub adapter accepts the `source` and `owner` settings as `{kind, name}`
   ([spec 014](../014-import-lineage/spec.md) FR-003). v2 protected every attribute it created;
-  V3 protects none unless the package sets `protect` (spec 014 D-4). Whether the conversion sets
-  `protect` is not decided. Lineage and protection are not compared by a plan, so they are not
+  V3 protects none unless the package sets `protect` (spec 014 D-4). Decided by the product owner
+  on 2026-11-13: the conversion does not set `protect`, because protection is not the V3 default. Lineage and protection are not compared by a plan, so they are not
   expected to cause an update in the gate; the gate would show it if they did.
 - **No v2 state moves.** No cache directory, Redis store or saved plan is moved. The first V3
   plan reads Infrahub as it finds it.

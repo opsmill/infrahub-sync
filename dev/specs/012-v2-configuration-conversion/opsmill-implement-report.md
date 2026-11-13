@@ -108,7 +108,7 @@ Changes made for the code that `feature/v3-develop` gained since 2026-10-22:
 Still open:
 
 - T031 (blocked on spec 020) and T033 (the first real gate run, which resets the preview stack).
-- Whether the conversion sets `protect: true`, so that V3 protects what it creates as v2 did.
+- Decided on 2026-11-13: the conversion does not set `protect`, because it is not the V3 default.
 - The `v2-gate` suite imports `tasks/preview.py` and starts the preview stack. The branch
   `010-prefect-pr2-preview-removal` deletes that stack, so the suite must move to its replacement
   when that branch merges. The commit that moved the preview Infrahub to port 8000 (`65d20c55`)

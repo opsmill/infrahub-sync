@@ -417,7 +417,7 @@ The suite sets up the same services as the `from-netbox` check, then runs these 
    `tests/data/v2_examples/netbox_to_infrahub/config.yml` on the `v2-gate` branch. v2 receives
    only `PATH`, `HOME`, `TMPDIR` and its NetBox and Infrahub variables.
 4. It converts the same `config.yml` with `configs convert --yes`, registers the package, and
-   runs `diff` on the `v2-gate` branch. NetBox does not change between the v2 sync and the plan.
+   runs `plan` on the `v2-gate` branch. NetBox does not change between the v2 sync and the plan.
 5. When the plan holds updates, it reads each updated node on the `v2-gate` branch by its kind
    and the destination ID that `runs plan --detail` prints, to get the values v2 wrote.
 6. It compares the plan with `tests/data/v2_gate/expected_deletes.yml` and writes
