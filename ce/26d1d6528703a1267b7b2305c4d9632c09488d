@@ -1,0 +1,35 @@
+docs/docs/compose-deployment.mdx
+  s_3defe6e8bcd0ab::t_95f7a91f3b19d3 589-591,594,597-599
+  s_3defe6e8bcd0ab::t_0fbdad573819b2 600
+tests/compose/test_credential_leaks.py
+  s_3defe6e8bcd0ab::t_c9b08dd3c34cae 140-142
+  s_3defe6e8bcd0ab::t_9625b76040c3b8 1-139,143-144
+tests/test_workflow_contracts.py
+  s_3defe6e8bcd0ab::t_7489ffcd10fe55 746,752-791
+  s_3defe6e8bcd0ab::t_952b647a71b26d 792-793
+tests/compose/test_documentation.py
+  s_3defe6e8bcd0ab::t_95f7a91f3b19d3 474-496
+.github/workflows/workflow-nightly-e2e.yml
+  s_3defe6e8bcd0ab::t_b8c9994e006c84 233
+  s_3defe6e8bcd0ab::t_6b5b4a140192a2 15-31,205-207,209-232,234-240,242-246,308,314
+dev/specs/021-compose-store-credentials-ca/research.md
+  s_3defe6e8bcd0ab::t_719f9434a561d7 298-306,309-320
+dev/specs/021-compose-store-credentials-ca/tasks.md
+  s_3defe6e8bcd0ab::t_53ce5c4b157b67 117-119,123,127
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ce26d1d6528703a1267b7b2305c4d9632c09488d",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
