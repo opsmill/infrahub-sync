@@ -1100,6 +1100,7 @@ def _failure_evidence(
     outcome: str,
     record: ApplyRecord | None,
     secrets: Sequence[str],
+    resumable: bool = False,
 ) -> dict[str, Any]:
     """Describe one failure, with whatever is known about what it wrote.
 
@@ -1112,6 +1113,9 @@ def _failure_evidence(
     the engine returned — a sidecar write, the guard's release, the product commit — carries
     none, and the scope's record is what that one wrote. The engine's record also holds the
     plan's operation count and the failed operation's action, kind and identity.
+
+    `resumable` is true when the run's write stopped part-way and the run keeps its saved plan
+    (spec 022); a template's next action then names `verify` and `runs resume`.
     """
     evidence: dict[str, Any] = {
         "stage": stage,
@@ -1134,7 +1138,7 @@ def _failure_evidence(
     if isinstance(exc, UnsupportedSyncStoreError):
         evidence.update(reason=UNSUPPORTED_STORE_REASON, message=UNSUPPORTED_STORE_MESSAGE)
     evidence.update(operator_cause(exc, secrets))
-    evidence.update(_structured_cause(stage, exc, secrets, evidence))
+    evidence.update(_structured_cause(stage, exc, secrets, evidence, resumable=resumable))
     if stage in ("verify", *_SAVED_PLAN_WRITE_STAGES):
         # The pre-write check a verify or an apply failed on, by name, so an operator reads
         # which check refuses the apply, and both stages name the same one (SC-004). Both
@@ -1157,7 +1161,7 @@ def _failure_evidence(
 
 
 def _structured_cause(
-    stage: str, exc: Exception, secrets: Sequence[str], recorded: Mapping[str, Any]
+    stage: str, exc: Exception, secrets: Sequence[str], recorded: Mapping[str, Any], *, resumable: bool = False
 ) -> dict[str, Any]:
     """The `failure_record` fields, keeping the cause and next action `operator_cause` recorded.
 
@@ -1166,7 +1170,7 @@ def _structured_cause(
     error here records `internal_error`.
     """
     try:
-        fields = failure_record(stage, exc, secrets=secrets)
+        fields = failure_record(stage, exc, secrets=secrets, resumable=resumable)
     except Exception as unexpected:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         logger.warning("failure record fields could not be built (%s)", type(unexpected).__name__)
         fields = dict.fromkeys(FAILURE_RECORD_KEYS)
@@ -1270,7 +1274,13 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
         else:
             ambiguous = dispatch_started
         terminal_state, terminal_outcome = ("interrupted", "ambiguous") if ambiguous else ("failed", "failed")
-        evidence = _failure_evidence(stage, exc, outcome=terminal_outcome, record=record, secrets=secrets)
+        # The run keeps its saved plan when this failure leaves it interrupted, or when a
+        # `verify` of an interrupted run failed: the next step is `verify`, then `runs resume`
+        # (spec 022), not a new plan.
+        resumable = stored.phase != "cancelled" and (ambiguous if stage != "verify" else stored.reconciliation_required)
+        evidence = _failure_evidence(
+            stage, exc, outcome=terminal_outcome, record=record, secrets=secrets, resumable=resumable
+        )
         # The execution that wrote the record: results are merged, so a later execution of the
         # same purpose that never records a failure leaves this record in place (spec 022,
         # research R11). The progress view uses a record only when it names the latest write.

@@ -332,6 +332,21 @@ def _record_load_template(fields: dict[str, Any], _where: str, _adapter: str) ->
 
 
 _PLAN_AGAIN = "then plan again."
+# The closing step on a run whose write stopped part-way (spec 022): it keeps its saved plan,
+# and a resume needs a `verify` that passed after the latest write.
+_VERIFY_AND_RESUME = "then run `infrahub-sync verify` on this run again, then `infrahub-sync runs resume`."
+# The failure types that name a system or a credential, not the source data: once fixed, a
+# resumable run continues with its saved plan. A record or a transform fix needs a new plan.
+_RESUMABLE_TYPES = frozenset(
+    {
+        "system_unreachable",
+        "system_timeout",
+        "token_rejected",
+        "permission_missing",
+        "tls_certificate_rejected",
+        "credential_missing",
+    }
+)
 _REACH = "Check that {adapter} answers at the address the configuration names, " + _PLAN_AGAIN
 
 # One fixed template per failure type: the cause and the next action, filled with the recorded
@@ -378,13 +393,20 @@ _TEMPLATES: dict[str, Callable[[dict[str, Any], str, str], _Template]] = {
 }
 
 
-def _templates(fields: dict[str, Any]) -> _Template:
-    """The cause and the next action of one failure type, from fixed templates over recorded fields."""
+def _templates(fields: dict[str, Any], *, resumable: bool = False) -> _Template:
+    """The cause and the next action of one failure type, from fixed templates over recorded fields.
+
+    On a resumable run, the next action of a system or credential failure ends with `verify`
+    and `runs resume` instead of a new plan.
+    """
     template = _TEMPLATES.get(fields["failure_type"])
     if template is None:
         return None, None
     system = fields["system"]
-    return template(fields, _where(system), system["adapter"] if system else "the system")
+    cause, next_action = template(fields, _where(system), system["adapter"] if system else "the system")
+    if resumable and next_action is not None and fields["failure_type"] in _RESUMABLE_TYPES:
+        next_action = next_action.removesuffix(_PLAN_AGAIN) + _VERIFY_AND_RESUME
+    return cause, next_action
 
 
 def _record_reference(link: BaseException | None) -> dict[str, Any] | None:
@@ -414,8 +436,12 @@ def failure_record(
     *,
     secrets: Sequence[str] = (),
     destination_adapter: str = APPLY_DESTINATION_ADAPTER,
+    resumable: bool = False,
 ) -> dict[str, Any]:
     """The spec 019 fields of a `<stage>_failure` record, and a template cause and next action.
+
+    `resumable` is true when the run's write stopped part-way and the run keeps its saved plan
+    (spec 022): the next action then names `verify` and `runs resume`, not a new plan.
 
     Returns every key of `FAILURE_RECORD_KEYS`, `None` where the failure does not name it, and
     `cause` and `next_action` when a template exists for the failure type. The caller keeps the
@@ -453,7 +479,7 @@ def failure_record(
         "record": _record_reference(link),
         "field": field_name,
     }
-    cause, next_action = _templates(fields)
+    cause, next_action = _templates(fields, resumable=resumable)
     recorded = dict(fields)
     if cause:
         recorded["cause"] = _recordable(cause, secrets)

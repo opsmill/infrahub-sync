@@ -17,6 +17,7 @@ import pytest
 
 pytest.importorskip("prefect")
 
+from infrahub_sdk.exceptions import ServerNotReachableError
 from prefect.states import State
 
 from infrahub_sync.plan.errors import PlanArtifactError
@@ -740,3 +741,73 @@ def test_the_unpublished_artifact_warning_carries_the_sync_prefix(
     warnings = [call[2] for call in calls if call[0] == "log" and call[1] == logging.WARNING]
     assert len(warnings) == 1
     assert warnings[0].startswith(_PREFIX + "run summary artifact for run run-ok")
+
+
+# --- the next step of a run that keeps its saved plan (spec 022) ------------------------------
+
+_UNREACHABLE = ServerNotReachableError(address="https://infrahub.example.test")
+_VERIFY_AND_RESUME = "then run `infrahub-sync verify` on this run again, then `infrahub-sync runs resume`."
+
+
+def test_a_write_that_stops_part_way_names_verify_and_resume_as_the_next_step(tmp_path: Path) -> None:
+    """The run is interrupted and keeps its saved plan: a new plan is not the next step."""
+    projection, flow_run_id = _claimed_run(tmp_path, "run-write-stopped", "apply")
+
+    recorded = _record(projection, ("run-write-stopped", flow_run_id), "apply", _UNREACHABLE, dispatch_started=True)
+
+    assert recorded is not None
+    assert recorded.outcome == "ambiguous"
+    assert recorded.next_action is not None
+    assert recorded.next_action.endswith(_VERIFY_AND_RESUME)
+    assert "plan again" not in recorded.next_action
+
+
+def test_a_failed_verify_of_an_interrupted_run_names_verify_and_resume_as_the_next_step(tmp_path: Path) -> None:
+    projection = local_product_projection(tmp_path)
+    projection.create_run(
+        ProductRun(
+            run_id="run-verify-read",
+            operation="apply",
+            configuration_reference="config-001@1",
+            config_id="config-001",
+            registry_version=1,
+            package_checksum="a" * 64,
+            actor="owner",
+            started_at=datetime.now(timezone.utc),
+            phase="apply-interrupted",
+            reconciliation_required=True,
+            summary={"sync_name": "inventory"},
+        )
+    )
+    flow_run_id = str(uuid5(NAMESPACE_URL, "run-verify-read"))
+    append_execution(
+        projection, "run-verify-read", PrefectExecutionLink(flow_run_id=flow_run_id, purpose="verify", attempt=1)
+    )
+    assert projection.claim_execution("run-verify-read", flow_run_id, worker_id=_WORKER_ID)
+
+    recorded = service_flow._record_failure(
+        "run-verify-read",
+        "verify",
+        _UNREACHABLE,
+        logging.getLogger("test-service"),
+        [],
+        projection,
+        flow_run_id,
+        _WORKER_ID,
+        dispatch_started=False,
+        record=None,
+    )
+
+    assert recorded is not None
+    assert recorded.next_action is not None
+    assert recorded.next_action.endswith(_VERIFY_AND_RESUME)
+
+
+def test_a_failed_plan_keeps_plan_again_as_the_next_step(tmp_path: Path) -> None:
+    projection, flow_run_id = _claimed_run(tmp_path, "run-plan-read", "plan")
+
+    recorded = _record(projection, ("run-plan-read", flow_run_id), "plan", _UNREACHABLE, dispatch_started=False)
+
+    assert recorded is not None
+    assert recorded.next_action is not None
+    assert recorded.next_action.endswith("then plan again.")

@@ -1110,10 +1110,13 @@ _RESUME_REFUSAL_HINTS = {
     # planned one (spec 022 FR-019).
     _APPROVAL_REQUIRED: "run infrahub-sync approve {run_id} --expected-checksum {expected_checksum} first",
 }
+# The CLI does not know here whether the run can be resumed, so the hint names the line of
+# `runs show` that tells (spec 022): a resumable run continues with `verify` and `runs resume`.
 _RUN_EXECUTION_CONFLICT_NEXT_ACTION = (
-    "If this run already admitted a write, its plan is not applied again: review the run with "
-    "`infrahub-sync runs show`, then create and review a new plan with `infrahub-sync plan`. "
-    "If a stage of this run is still running, wait for it to finish."
+    "If this run already admitted a write, `apply` does not apply its plan again: review the run "
+    "with `infrahub-sync runs show`. When it prints `resumable: yes`, run `infrahub-sync verify`, "
+    "then `infrahub-sync runs resume`; otherwise create and review a new plan with "
+    "`infrahub-sync plan`. If a stage of this run is still running, wait for it to finish."
 )
 
 
@@ -1407,7 +1410,11 @@ def approve_cmd(
     reason: str | None = typer.Option(None, "--reason", help="Optional audit reason for the approval."),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
 ) -> None:
-    """Record approval of the named run's saved plan without applying it."""
+    """Record approval of the named run's saved plan without applying it.
+
+    The run is in phase `planned`, or its write stopped part-way and it can be resumed: a site that
+    requires approval then approves it before `runs resume`, for example a `sync` run.
+    """
     with _client_errors():
         client = _client(ctx)
         request = cast(
@@ -1697,7 +1704,12 @@ def runs_show(
     A failed stage adds its error type and, when the run recorded them, a `cause:` and a `hint:` line.
     A `sync` that stopped after a plan that leaves out records adds a `sync stopped:` and a `hint:` line.
     A run with a write adds a `progress:` line, a `resumable:` line, one `kind` line per kind with its committed,
-    uncertain and not reached operations, and one `resume` line per resume of the run.
+    uncertain and not reached operations, and one `resume` line per resume of the run. The counts are over the
+    plan's positions, recorded deletes included. The uncertain operations follow the saved position: through the
+    failed operation when the worker recorded it, and every remaining operation when the worker was killed or its
+    last save is not known to have succeeded. While the write runs, they are the next 500 creates and updates
+    and the recorded deletes between them. A `resume` line counts the creates and updates that resume wrote; the
+    `written:` line of a failed write counts those of every execution of the run.
     """
     with _client_errors():
         resource = _client(ctx).get_run(run_id)

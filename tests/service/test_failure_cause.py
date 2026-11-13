@@ -377,3 +377,34 @@ def test_a_secret_in_infrahubs_rejection_message_is_masked_before_the_message_is
     assert recorded is not None
     assert len(recorded) <= MAX_REJECTED_WRITE_MESSAGE
     assert secret[:4] not in recorded
+
+
+@pytest.mark.parametrize(
+    ("resumable", "ending"),
+    [
+        pytest.param(False, "then plan again.", id="not-resumable"),
+        pytest.param(
+            True,
+            "then run `infrahub-sync verify` on this run again, then `infrahub-sync runs resume`.",
+            id="resumable",
+        ),
+    ],
+)
+def test_an_unreachable_destination_names_the_next_step_of_the_run(resumable: bool, ending: str) -> None:  # noqa: FBT001
+    """Spec 022: a run that keeps its saved plan continues with `verify` and `runs resume`."""
+    recorded = failure_record(
+        "verify", ServerNotReachableError(address="https://infrahub.example.test"), resumable=resumable
+    )
+
+    assert recorded["next_action"].startswith("Check that infrahub answers at the address the configuration names")
+    assert recorded["next_action"].endswith(ending)
+
+
+def test_a_record_load_failure_keeps_plan_again_on_a_resumable_run() -> None:
+    """A fix in the source data needs a new plan: a resume writes the saved plan's values."""
+    exc = _record_load(ValueError("bad value"))
+
+    recorded = failure_record("resume", exc, resumable=True)
+
+    assert recorded["failure_type"] == "record_load_failed"
+    assert recorded["next_action"].endswith("then plan again.")
