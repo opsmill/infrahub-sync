@@ -1,0 +1,54 @@
+dev/specs/022-resume-interrupted-apply/contracts/http-api.md
+  s_b91a98d41025f3::t_5445839c3720fc 74-75
+  s_b91a98d41025f3::t_201cb95086b552 51,55-61
+  s_b91a98d41025f3::t_960aff676412fa 62-63
+infrahub_sync/service/flow.py
+  s_b91a98d41025f3::t_8e266ba6320305 109-115,1147-1148
+  s_b91a98d41025f3::t_8e10e257f52279 1285-1288
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_b91a98d41025f3::t_5445839c3720fc 505-506
+infrahub_sync/cli.py
+  s_b91a98d41025f3::t_5445839c3720fc 1710
+  s_b91a98d41025f3::t_e00b5f6fcd8acd 1711-1713
+dev/specs/022-resume-interrupted-apply/contracts/cli.md
+  s_b91a98d41025f3::t_201cb95086b552 30-35
+tests/service/test_flow_and_prefect.py
+  s_b91a98d41025f3::t_a886f1f029f1cc 58
+  s_b91a98d41025f3::t_bdf7aabaafd92a 610-613
+infrahub_sync/service/failure_cause.py
+  s_b91a98d41025f3::t_8e266ba6320305 149-163,353-361
+docs/docs/reference/sync-http-api.mdx
+  s_b91a98d41025f3::t_5445839c3720fc 962,973-978,984-991
+  s_b91a98d41025f3::t_697b5c9e3e859a 992
+docs/docs/running-a-sync.mdx
+  s_b91a98d41025f3::t_5445839c3720fc 643-648
+tests/service/test_run_log_next_step.py
+  s_b91a98d41025f3::t_43bc6dea4e91f6 852-854
+  s_b91a98d41025f3::t_3d52d82b73e300 23-25,28,755-758,762,775-778,780-793,799,803-851,855-859,861
+docs/docs/reference/cli.mdx
+  s_10bb14e51f32f2::t_85c4b4cfabc58a 463-466
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6e1a843f94261be6b12fe129a2e125ab0a9a5238",
+  "prompts": {},
+  "sessions": {
+    "s_10bb14e51f32f2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a86d910d81f5b5093",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_b91a98d41025f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c1e68d9-bc95-47b9-bd6b-c5aa572517ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
