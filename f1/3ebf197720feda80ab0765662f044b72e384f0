@@ -1,0 +1,48 @@
+README.md
+  s_3defe6e8bcd0ab::t_3ce913e888c061 107-108
+tests/test_netbox_tasks.py
+  s_3defe6e8bcd0ab::t_3ce913e888c061 11,18,487-513
+  s_3defe6e8bcd0ab::t_16565a1cfbfb9b 514-515
+tasks/netbox.py
+  s_3defe6e8bcd0ab::t_3ce913e888c061 423-444,527,535
+.github/scripts/nightly_e2e.py
+  s_3defe6e8bcd0ab::t_3ce913e888c061 16,80-82,85-86,106-117,124
+docs/docs/development/knowledge/repository-tour.md
+  s_3defe6e8bcd0ab::t_3ce913e888c061 254-255
+tests/dev_stack/smoke/test_netbox_package.py
+  s_3defe6e8bcd0ab::t_3ce913e888c061 17-19,30,71-75,78-83,85-88,92,99-129,321-324
+docs/docs/contributing.mdx
+  s_3defe6e8bcd0ab::t_3ce913e888c061 159-161
+docs/docs/development/guidelines/testing-tiers.md
+  s_3defe6e8bcd0ab::t_3ce913e888c061 104
+development/docker-compose.yml
+  s_3defe6e8bcd0ab::t_3ce913e888c061 283-286,340
+infrahub_sync/product_store/store.py
+  s_3defe6e8bcd0ab::t_3ce913e888c061 312-317,809,814,844-846,848,3265
+tests/dev_stack/test_smoke_dataset.py
+  s_3defe6e8bcd0ab::t_3ce913e888c061 1-128
+tests/product_store/test_contract.py
+  s_3defe6e8bcd0ab::t_3ce913e888c061 636-650
+tests/test_nightly_e2e.py
+  s_3defe6e8bcd0ab::t_3ce913e888c061 190-206
+tasks/dev.py
+  s_3defe6e8bcd0ab::t_3ce913e888c061 67-69,71,376
+changelog/+concurrent-schema-initialization-deadlock.fixed.md
+  s_3defe6e8bcd0ab::t_3ce913e888c061 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f13ebf197720feda80ab0765662f044b72e384f0",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
