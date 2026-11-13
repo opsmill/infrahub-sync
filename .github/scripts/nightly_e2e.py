@@ -505,7 +505,7 @@ def v3_plan(project: Path, env: dict[str, str], context: dict[str, str]) -> tupl
     planned = parsed_fields(
         run(
             *cli,
-            "diff",
+            "plan",
             "--config-id",
             registered["config_id"],
             "--version",

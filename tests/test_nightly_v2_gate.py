@@ -326,7 +326,8 @@ class FakeCli:
                 self.read["adapters"] = sorted(path.name for path in directory.iterdir() if path.is_dir())
         answers = {
             "register": "config_id: config-1\nregistry_version: 1\n",
-            "diff": "run_id: gate-1\n",
+            # `plan --config-id` creates the run; `runs plan` reads its detail.
+            "--config-id": "run_id: gate-1\n",
             "show": "outcome: planned\n",
             "plan": self.plan,
         }

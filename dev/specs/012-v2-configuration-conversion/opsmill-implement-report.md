@@ -122,3 +122,34 @@ The `Claude-Session` trailers of the cherry-picked commits were removed. The gat
 `tests/data/v2_gate/plan_detail_sample.txt` now holds the lines `runs plan --detail` prints on
 this base (`schema_fingerprint`, `verification_note`, the owner notice and `last change`), and
 the gate tests pass with them.
+
+## 8. First gate run (T033), 2026-11-13
+
+Run from this worktree with `uv run python .github/scripts/nightly_e2e.py suite v2-gate`, with
+`PREVIEW_INFRAHUB_PORT=8000` in the git-ignored `development/preview.local.env`.
+
+1. The first attempt stopped before v2 ran: `infrahub-sync==2.0.2` is not on PyPI, and the
+   `2.0.2` GitHub release is still a draft. The nightly job fails the same way until it is
+   published. The second attempt installed v2 from the local `2.0.2` tag (`1453aafa`) through a
+   temporary edit that was not committed.
+2. v2 `generate` and `sync` wrote the pinned NetBox `demo` dataset to the `v2-gate` branch.
+   `configs convert` and `configs register` succeeded.
+3. The first V3 plan failed before it read either side, with `UnwritableConvergenceIdentityError`:
+   `destination kind 'IpamPrefix': no complete writable destination convergence identity;
+   unusable components: ip_namespace, ip_namespace__name__value`. `IpamIPAddress` fails the same
+   check. The other 19 mappings pass it.
+
+Cause: the v2 NetBox example identifies prefixes by `(prefix, vrf)` and addresses by
+`(address, vrf)` and does not map `ip_namespace`, so v2 wrote every prefix and address into the
+`default` namespace. V3 requires every component of a destination uniqueness constraint to be
+mapped, and Infrahub's constraint for these kinds includes `ip_namespace`. The V3 example package
+maps each NetBox VRF to its own namespace (`ipam.vrfs` → `IpamNamespace`), which does not match
+what v2 wrote either. Adding `ip_namespace` without an `IpamNamespace` mapping fails at the source
+read (`'NetboxAdapter' object has no attribute 'IpamNamespace'`).
+
+No creates, updates or deletes could be counted. The gate does not pass, and the fix needs a
+decision: change how V3 builds the identity of a kind whose namespace defaults to `default`, make
+the conversion add a namespace mapping, or document that a v2 NetBox configuration must be edited
+before its first V3 plan.
+
+The suite now calls `plan` instead of the deprecated `diff`.
