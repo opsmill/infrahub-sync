@@ -96,7 +96,7 @@ def test_a_store_created_before_the_feature_gains_the_column_once_and_reads_old_
 def test_a_marker_round_trips(tmp_path: Path, profile: str) -> None:
     projection = _projection_with_execution(tmp_path, profile)
 
-    assert projection.record_apply_progress("run-001", _FLOW_RUN_ID, _MARKER) is True
+    assert projection.record_apply_progress("run-001", _FLOW_RUN_ID, _MARKER) == "saved"
 
     assert _link(projection).apply_progress == _MARKER
     assert _link(_projection(tmp_path, profile)).apply_progress == _MARKER
@@ -106,19 +106,20 @@ def test_a_later_marker_replaces_the_earlier_one(tmp_path: Path, profile: str) -
     projection = _projection_with_execution(tmp_path, profile)
     later = _MARKER.model_copy(update={"position": 99, "operation_id": "op_fedcba9876543210"})
 
-    assert projection.record_apply_progress("run-001", _FLOW_RUN_ID, _MARKER) is True
-    assert projection.record_apply_progress("run-001", _FLOW_RUN_ID, later) is True
+    assert projection.record_apply_progress("run-001", _FLOW_RUN_ID, _MARKER) == "saved"
+    assert projection.record_apply_progress("run-001", _FLOW_RUN_ID, later) == "saved"
 
     assert _link(projection).apply_progress == later
 
 
 def test_a_write_after_the_execution_is_terminal_changes_nothing(tmp_path: Path, profile: str) -> None:
     projection = _projection_with_execution(tmp_path, profile)
-    assert projection.record_apply_progress("run-001", _FLOW_RUN_ID, _MARKER) is True
+    assert projection.record_apply_progress("run-001", _FLOW_RUN_ID, _MARKER) == "saved"
     assert projection.abandon_execution("run-001", _FLOW_RUN_ID, terminal_at=datetime.now(timezone.utc))
 
     late = _MARKER.model_copy(update={"position": 99})
-    assert projection.record_apply_progress("run-001", _FLOW_RUN_ID, late) is False
+    # The store says why nothing changed, so the worker stops at once (review item 1).
+    assert projection.record_apply_progress("run-001", _FLOW_RUN_ID, late) == "ended"
 
     assert _link(projection).apply_progress == _MARKER
 
@@ -126,7 +127,7 @@ def test_a_write_after_the_execution_is_terminal_changes_nothing(tmp_path: Path,
 def test_a_write_to_an_unknown_execution_changes_nothing(tmp_path: Path, profile: str) -> None:
     projection = _projection_with_execution(tmp_path, profile)
 
-    assert projection.record_apply_progress("run-001", "flow-unknown", _MARKER) is False
+    assert projection.record_apply_progress("run-001", "flow-unknown", _MARKER) == "unknown"
 
     assert _link(projection).apply_progress is None
 

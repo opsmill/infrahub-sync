@@ -707,7 +707,7 @@ def _destination_report(
         or not isinstance(destination, DestinationNodeReader)
     ):
         return {}
-    window = uncertain_positions(stored, [operation.operation_id for operation in operations])
+    window = uncertain_positions(stored, [(operation.operation_id, operation.action) for operation in operations])
     reported, truncated = reported_operations(operations, window)
     try:
         reads = destination.read_planned_nodes(reported)
@@ -1269,6 +1269,10 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
             ambiguous = dispatch_started
         terminal_state, terminal_outcome = ("interrupted", "ambiguous") if ambiguous else ("failed", "failed")
         evidence = _failure_evidence(stage, exc, outcome=terminal_outcome, record=record, secrets=secrets)
+        # The execution that wrote the record: results are merged, so a later execution of the
+        # same purpose that never records a failure leaves this record in place (spec 022,
+        # research R11). The progress view uses a record only when it names the latest write.
+        evidence["flow_run_id"] = flow_run_id
         results: dict[str, Any] = {f"{stage}_failure": evidence}
         if stage == "verify":
             writeback: ExecutionWriteback = ExecutionMergeWriteback(results=results)

@@ -64,6 +64,7 @@ from tests.product_store.postgresql_isolation import IsolatedSchema, dsn_or_skip
 EXPECTED_PUBLIC_NAMES = {
     "WRITE_PURPOSES",
     "ApplyProgress",
+    "ApplyProgressSave",
     "ArtifactReference",
     "ArtifactUnavailableError",
     "AuditEvent",

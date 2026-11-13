@@ -2,6 +2,7 @@
 
 from infrahub_sync.product_store.models import (
     ApplyProgress,
+    ApplyProgressSave,
     ArtifactReference,
     AuditEvent,
     BaselineWriteback,
@@ -50,6 +51,7 @@ from infrahub_sync.product_store.store import (
 __all__ = (
     "WRITE_PURPOSES",
     "ApplyProgress",
+    "ApplyProgressSave",
     "ArtifactReference",
     "ArtifactUnavailableError",
     "AuditEvent",

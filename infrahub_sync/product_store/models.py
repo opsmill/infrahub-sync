@@ -108,6 +108,13 @@ class ApplyProgress(BaseModel):
         return self
 
 
+# What the store answers when asked to save a progress marker (spec 022, research R2): `saved`
+# when the execution's row changed; `ended` when the execution exists but is terminal, which is
+# final, because a terminal execution never takes a marker again; `unknown` when the run has no
+# such execution.
+ApplyProgressSave: TypeAlias = Literal["saved", "ended", "unknown"]
+
+
 class PrefectExecutionLink(BaseModel):
     """Historical correlation to one purpose-labelled Prefect flow execution."""
 

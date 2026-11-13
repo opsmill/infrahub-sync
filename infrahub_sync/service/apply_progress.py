@@ -10,6 +10,12 @@ When saves keep failing, `should_stop()` asks the engine to stop before its next
 the first failed attempt since the last successful save is 5 minutes old (research R4,
 critique E4), so a quiet period between scheduled saves is never counted as a failure.
 
+When the store answers that the execution has ended, for example because liveness marked it
+interrupted while this worker kept writing, the answer is final: no later save can succeed,
+so `should_stop()` asks the engine to stop before its next dispatch at once, and the observer
+tries no further save. A save that raises, or that names an execution the store does not
+know, keeps the 5-minute rule.
+
 A log line never holds an exception message: a failed save is logged by error class only
 (docs/docs/development/guidelines/secret-redaction.md).
 """
@@ -79,6 +85,8 @@ class StoreApplyProgressObserver:
         self._commits_since_attempt = 0
         self._last_attempt_at = clock()
         self._first_failure_at: float | None = None
+        # Set once the store answers that the execution ended; never cleared.
+        self._execution_ended = False
 
     def committed(self, index: int, operation: PlannedOperation) -> None:
         """Remember the committed operation, and save when 500 commits or 30 seconds passed."""
@@ -99,13 +107,15 @@ class StoreApplyProgressObserver:
         self._save()
 
     def should_stop(self) -> bool:
-        """Whether the first failed save since the last successful one is 5 minutes old."""
-        return (
+        """Whether the execution ended, or the first failed save since the last successful one is 5 minutes old."""
+        return self._execution_ended or (
             self._first_failure_at is not None and self._clock() - self._first_failure_at >= STOP_AFTER_FAILING_SECONDS
         )
 
     def _save(self) -> None:
         """Save the last committed position unless nothing was committed since the last save.
+
+        Nothing is tried once the store answered that the execution ended.
 
         Every attempt restarts the commit count and the timer, so a store that keeps failing
         is tried again at the next scheduled save rather than after every commit.
@@ -115,7 +125,7 @@ class StoreApplyProgressObserver:
         never end the apply it reports on. The warning names the error class, so a
         programming error still shows in the worker log.
         """
-        if self._last_committed is None or self._last_committed[0] == self._saved_position:
+        if self._execution_ended or self._last_committed is None or self._last_committed[0] == self._saved_position:
             return
         position, operation_id = self._last_committed
         self._commits_since_attempt = 0
@@ -133,11 +143,22 @@ class StoreApplyProgressObserver:
             logger.warning("Apply progress of run %s was not saved (%s)", self._run_id, type(exc).__name__)
             self._save_failed()
             return
-        if not stored:
-            # The position is not saved, so the attempt counts as failed: an execution that
-            # ended or is unknown has nothing a resume could start after.
+        if stored == "ended":
+            # Final: the execution never takes a marker again, so the apply stops before its
+            # next dispatch rather than writing on for 5 minutes without a resumable position.
             logger.warning(
-                "Apply progress of run %s was not saved: execution %s is ended or unknown",
+                "Apply progress of run %s was not saved: execution %s has ended; the apply stops "
+                "before its next operation",
+                self._run_id,
+                self._flow_run_id,
+            )
+            self._execution_ended = True
+            return
+        if stored != "saved":
+            # The position is not saved, so the attempt counts as failed: an unknown execution
+            # has nothing a resume could start after.
+            logger.warning(
+                "Apply progress of run %s was not saved: execution %s is unknown",
                 self._run_id,
                 self._flow_run_id,
             )

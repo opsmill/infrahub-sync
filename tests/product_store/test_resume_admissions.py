@@ -560,7 +560,7 @@ def test_the_run_position_is_the_highest_saved_position_over_all_write_execution
     apply_flow = _submit(
         projection, run_id, _reserve(projection, run_id, "m-apply", operation="apply"), purpose="apply"
     )
-    assert projection.record_apply_progress(run_id, apply_flow, _marker(6_000, saved_at=_STARTED_AT))
+    assert projection.record_apply_progress(run_id, apply_flow, _marker(6_000, saved_at=_STARTED_AT)) == "saved"
     assert projection.interrupt_execution(run_id, apply_flow) is True
     _verify(projection, run_id, "m-verify")
     resume_flow = _submit(projection, run_id, _reserve_resume(projection, run_id, "m-resume"), purpose="resume")
@@ -568,7 +568,10 @@ def test_the_run_position_is_the_highest_saved_position_over_all_write_execution
     assert run_apply_progress(_run(projection, run_id)) == _marker(6_000, saved_at=_STARTED_AT)
 
     later = _STARTED_AT + timedelta(minutes=5)
-    assert projection.record_apply_progress(run_id, resume_flow, _marker(6_500, saved_at=later, start_after=6_000))
+    assert (
+        projection.record_apply_progress(run_id, resume_flow, _marker(6_500, saved_at=later, start_after=6_000))
+        == "saved"
+    )
     progress = run_apply_progress(_run(projection, run_id))
     assert progress is not None
     assert (progress.position, progress.saved_at) == (6_500, later)

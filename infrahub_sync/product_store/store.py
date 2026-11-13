@@ -35,6 +35,7 @@ from infrahub_sync.product_store.models import (
     RUN_ALREADY_CANCELLED_MESSAGE,
     RUN_CANCELLED_MESSAGE,
     ApplyProgress,
+    ApplyProgressSave,
     ArtifactReference,
     AuditEvent,
     BaselineWriteback,
@@ -650,7 +651,7 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def record_side_reads(self, run_id: str, flow_run_id: str, documents: Mapping[Side, Mapping[str, Any]]) -> bool: ...
 
-    def record_apply_progress(self, run_id: str, flow_run_id: str, document: ApplyProgress) -> bool: ...
+    def record_apply_progress(self, run_id: str, flow_run_id: str, document: ApplyProgress) -> ApplyProgressSave: ...
 
     def run_is_resumable(self, run_id: str) -> bool: ...
 
@@ -1579,20 +1580,48 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             (*(_json(dict(document)) for document in documents.values()), run_id, flow_run_id),
         )
 
-    def record_apply_progress(self, run_id: str, flow_run_id: str, document: ApplyProgress) -> bool:
+    def record_apply_progress(self, run_id: str, flow_run_id: str, document: ApplyProgress) -> ApplyProgressSave:
         """Store a write execution's progress marker while the execution is not terminal.
 
-        Returns whether a row changed. A write that arrives after the execution ended, for
-        example from a worker that kept running after liveness marked it interrupted, changes
-        nothing (spec 022, research R2). The document is validated again before any SQL runs,
-        so a caller that bypassed the model's checks cannot store another shape.
+        Returns `saved` when the row changed. A write that arrives after the execution ended,
+        for example from a worker that kept running after liveness marked it interrupted,
+        changes nothing and returns `ended`, so the worker can stop at once (spec 022, research
+        R2 and R4); a write to an execution the run does not have returns `unknown`. The
+        document is validated again before any SQL runs, so a caller that bypassed the model's
+        checks cannot store another shape.
+
+        The update and the read that explains a refused update share one transaction. An
+        execution's `terminal_at` is only ever set, never cleared, so `ended` stays true once read.
         """
         checked = ApplyProgress.model_validate(document.model_dump())
-        return self._execution_update(
-            "UPDATE prefect_executions SET apply_progress = ? "
-            "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL",
-            (_json(checked.model_dump(mode="json")), run_id, flow_run_id),
-        )
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(
+                    self._sql(
+                        "UPDATE prefect_executions SET apply_progress = ? "
+                        "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL"
+                    ),
+                    (_json(checked.model_dump(mode="json")), run_id, flow_run_id),
+                )
+                answer: ApplyProgressSave = "saved"
+                if cursor.rowcount != 1:
+                    cursor.execute(
+                        self._sql("SELECT 1 FROM prefect_executions WHERE run_id = ? AND flow_run_id = ?"),
+                        (run_id, flow_run_id),
+                    )
+                    answer = "unknown" if cursor.fetchone() is None else "ended"
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            else:
+                return answer
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
 
     def run_is_resumable(self, run_id: str) -> bool:
         """Whether the run is resumable: see `_run_is_resumable` (spec 022 data-model.md "State rules")."""
@@ -3898,8 +3927,11 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """
         return self._records.record_side_reads(run_id, flow_run_id, documents)
 
-    def record_apply_progress(self, run_id: str, flow_run_id: str, document: ApplyProgress) -> bool:
-        """Store a write execution's progress marker on a non-terminal execution; return whether it changed.
+    def record_apply_progress(self, run_id: str, flow_run_id: str, document: ApplyProgress) -> ApplyProgressSave:
+        """Store a write execution's progress marker on a non-terminal execution.
+
+        Returns `saved`, `ended` when the execution is terminal, or `unknown` when the run has
+        no such execution (`_RelationalRunStore.record_apply_progress`).
 
         The marker holds positions, an operation identifier and a time, never a value
         (spec 022 data-model.md "Execution progress marker").

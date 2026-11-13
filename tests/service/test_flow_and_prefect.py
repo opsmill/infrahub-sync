@@ -619,6 +619,8 @@ def test_service_apply_failure_retains_partial_write_evidence(
         "infrahub_message": None,
         "record": None,
         "field": None,
+        # The execution that wrote the record (spec 022, research R11).
+        "flow_run_id": stored.prefect_executions[0].flow_run_id,
     }
     assert stored.prefect_executions[0].terminal_state == "interrupted"
 

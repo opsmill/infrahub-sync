@@ -59,6 +59,12 @@ The engine checks it before each dispatch, next to `ownership.before_operation()
 `ApplyProgressLostError`, which carries the partial `ApplyRecord`. Because at least one write was dispatched, the
 existing ADR 0010 exit records the run as interrupted.
 
+When the store answers that the execution has already ended (`record_apply_progress` returns `ended`), for example
+because liveness marked it interrupted while the worker kept writing, the answer is final: no later save can succeed.
+`should_stop()` then returns true at once, the observer tries no further save, and the engine raises
+`ApplyProgressLostError` before its next dispatch. A save that raises, or that names an unknown execution, keeps the
+5-minute rule.
+
 ## R5. Admitting a second write on the same run
 
 **Finding**: `write_admissions` has `run_id` as its primary key, and `_reserve_existing(admit_write=True)` refuses
@@ -132,3 +138,39 @@ resume stage with the run's saved plan; the flow never calls the plan stage for 
   them. `verify` results gain `operations`.
 
 All changes are additive under `v3-unstable`.
+
+## R11. Whether the last save attempt succeeded
+
+**Question**: after the marker, how many operations may have reached the destination when the failing operation is
+not known? The worker saves after 500 commits or 30 seconds, so after a successful save at most 500 commits follow
+before the next attempt. After failed saves, the worker keeps committing for up to 5 minutes (R4), so any number of
+operations may follow the marker.
+
+**Stored data considered**: the marker's `saved_at`, the execution's `terminal_at`, and the worker heartbeat. None of
+them tells a worker whose saves were failing from one whose saves succeeded:
+
+- `terminal_at` is set by liveness at the time it notices the worker is gone, not at the time the worker stopped, and
+  a worker can keep writing after it (R4).
+- When the worker cannot reach the store, the store holds nothing the worker wrote after its last successful save; the
+  worker heartbeat goes to the same store and is overwritten by later heartbeats.
+- A time rule cannot bound commits: 500 commits can take less than a second, so a marker saved shortly before
+  `terminal_at` can still be followed by more than 500 commits once a save failed.
+
+**Decision**: the last save attempt counts as successful only when the latest write execution saved a marker of its
+own, wrote its own failure record (one whose `flow_run_id` names it), and did not stop with `ApplyProgressLostError`.
+A worker that wrote its own failure record reached the store at its end, and the engine tries to save the last
+committed position just before that record is written. The rule is not exact in one case: that last save fails and
+the store becomes reachable again in the moment before the failure record is written, after earlier saves had also
+failed. The record does not say whether that save succeeded. In every other case, including a worker that was killed or whose execution
+liveness ended first, every operation after the marker is uncertain. This makes the window wider for a killed worker
+than "the next 500"; `verify` reads at most 2,000 of them (FR-005).
+
+**Window size after a successful save**: counted in commits, not plan positions. A recorded delete is never
+dispatched, so it is not a commit (FR-002). The window runs from the position after the marker through the 500th
+create or update, and holds the recorded deletes between them. The progress view counts those deletes as uncertain,
+because its counts are over plan positions; the `verify` report never lists a delete.
+
+**Failure records**: results are merged across executions, so `<purpose>_failure` can belong to an earlier
+execution of the same purpose. The worker stores the writing execution's `flow_run_id` in the record, and the view
+uses the failing operation only from a record of the latest write execution. A record stored before this field
+existed counts as not belonging to it, so the window falls back to every remaining operation.

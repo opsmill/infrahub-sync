@@ -1753,8 +1753,8 @@ class RunService:
         )
         return run.model_copy(update={"prefect_executions": links})
 
-    def _plan_operations(self, run: ProductRun) -> tuple[tuple[str, str], ...] | None:
-        """The saved plan's `(operation_id, kind)` pairs in stored order, or `None` when unreadable.
+    def _plan_operations(self, run: ProductRun) -> tuple[tuple[str, str, str], ...] | None:
+        """The saved plan's `(operation_id, kind, action)` triples in stored order, or `None` when unreadable.
 
         Read only for a run with a write execution. A plan that expired or cannot be read leaves
         the progress view without per-kind counts rather than failing the read of the run.
@@ -1765,7 +1765,7 @@ class RunService:
             plan = self._plan(run.run_id)
         except ServiceAPIError:
             return None
-        return tuple((operation.operation_id, operation.kind) for operation in plan.operations)
+        return tuple((operation.operation_id, operation.kind, operation.action) for operation in plan.operations)
 
     def _resume_receipt(
         self, run: ProductRun, link: PrefectExecutionLink, pending: tuple[str, MutationReceipt] | None

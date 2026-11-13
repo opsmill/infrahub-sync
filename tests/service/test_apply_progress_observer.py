@@ -20,7 +20,7 @@ from infrahub_sync.service.apply_progress import (
 if TYPE_CHECKING:
     import pytest
 
-    from infrahub_sync.product_store import ApplyProgress, ProductProjection
+    from infrahub_sync.product_store import ApplyProgress, ApplyProgressSave, ProductProjection
 
 _LOGGER_NAME = "infrahub_sync.service.apply_progress"
 _CANARY = "db.internal.example:5432 password=ZZ-PROGRESS-CANARY"
@@ -42,19 +42,19 @@ class _Operation:
 
 
 class _Store:
-    """Stands in for the projection; records every attempt, and can fail or report a missed row."""
+    """Stands in for the projection; records every attempt, and can fail or answer that nothing was saved."""
 
     def __init__(self) -> None:
         self.attempts: list[ApplyProgress] = []
         self.fail = False
-        self.row_missing = False
+        self.answer: ApplyProgressSave = "saved"
 
-    def record_apply_progress(self, run_id: str, flow_run_id: str, document: ApplyProgress) -> bool:
+    def record_apply_progress(self, run_id: str, flow_run_id: str, document: ApplyProgress) -> ApplyProgressSave:
         assert (run_id, flow_run_id) == ("run-001", "flow-apply-1")
         self.attempts.append(document)
         if self.fail:
             raise ConnectionError(_CANARY)
-        return not self.row_missing
+        return self.answer
 
     @property
     def positions(self) -> list[int]:
@@ -169,14 +169,41 @@ def test_a_failing_store_keeps_being_tried_and_logs_one_warning_per_failure_with
         assert record.exc_info is None
 
 
-def test_a_save_to_an_ended_execution_counts_as_failed(caplog: pytest.LogCaptureFixture) -> None:
+def test_a_save_to_an_ended_execution_stops_the_apply_before_its_next_dispatch(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Liveness ended the execution while the worker kept writing: the answer is final (review item 1)."""
     store, clock = _Store(), _Clock()
-    store.row_missing = True
+    store.answer = "ended"
     observer = _observer(store, clock)
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
         _commit(observer, 0, 1)
         observer.kind_finished(0)
+        # No 5-minute wait: the next dispatch is refused at once.
+        assert observer.should_stop() is True
+        # The stop the engine reports next tries no further save.
+        _commit(observer, 1, SAVE_EVERY_COMMITS)
+        observer.stopped(SAVE_EVERY_COMMITS + 1)
+
+    assert store.positions == [0]
+    warnings = [record for record in caplog.records if record.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "run-001" in message
+    assert "ended" in message
+    assert warnings[0].exc_info is None
+
+
+def test_a_save_to_an_unknown_execution_counts_as_a_failed_attempt(caplog: pytest.LogCaptureFixture) -> None:
+    store, clock = _Store(), _Clock()
+    store.answer = "unknown"
+    observer = _observer(store, clock)
+
+    with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
+        _commit(observer, 0, 1)
+        observer.kind_finished(0)
+    assert observer.should_stop() is False
     clock.value += STOP_AFTER_FAILING_SECONDS
 
     assert observer.should_stop() is True

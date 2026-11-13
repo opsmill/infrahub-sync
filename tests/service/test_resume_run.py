@@ -99,8 +99,8 @@ def _operation_id(index: int) -> str:
     return f"op_{index:016x}"
 
 
-def _plan_operations() -> list[tuple[str, str]]:
-    return [(_operation_id(index), _kind(index)) for index in range(_TOTAL)]
+def _plan_operations() -> list[tuple[str, str, str]]:
+    return [(_operation_id(index), _kind(index), "create") for index in range(_TOTAL)]
 
 
 # --- the Sync API ------------------------------------------------------------------------
@@ -185,15 +185,18 @@ def _interrupted_run(
     flow_run_id = _latest_flow_run_id(projection, run_id)
     assert projection.claim_execution(run_id, flow_run_id, worker_id=_WORKER_ID)
     if marker is not None:
-        assert projection.record_apply_progress(
-            run_id,
-            flow_run_id,
-            ApplyProgress(
-                position=marker,
-                operation_id=_operation_id(marker),
-                total=total,
-                saved_at=datetime(2026, 11, 12, 10, 15, tzinfo=timezone.utc),
-            ),
+        assert (
+            projection.record_apply_progress(
+                run_id,
+                flow_run_id,
+                ApplyProgress(
+                    position=marker,
+                    operation_id=_operation_id(marker),
+                    total=total,
+                    saved_at=datetime(2026, 11, 12, 10, 15, tzinfo=timezone.utc),
+                ),
+            )
+            == "saved"
         )
     assert projection.interrupt_execution(run_id, flow_run_id)
     stored = projection.lookup_run(run_id).value
@@ -262,10 +265,11 @@ def test_an_interrupted_run_shows_its_marker_and_each_kinds_counts(service_api: 
     assert progress["saved_at"].startswith("2026-11-12T10:15:00")
     assert progress["resumable"] is True
     assert progress["verify_required"] is True
-    # The failing operation is unknown and the last save succeeded: the next 500 are uncertain.
+    # Liveness ended the execution, so its worker recorded nothing about its last save attempt:
+    # every operation after the marker is uncertain (research R11).
     assert progress["by_kind"] == [
         {"kind": "BuiltinTag", "committed": 6000, "uncertain": 500, "not_reached": 0},
-        {"kind": "BuiltinStatus", "committed": 0, "uncertain": 0, "not_reached": 3500},
+        {"kind": "BuiltinStatus", "committed": 0, "uncertain": 3500, "not_reached": 0},
     ]
     assert body["resumes"] == []
 
@@ -537,15 +541,18 @@ def _interrupted_sync_run(api: _API) -> str:
     run_id, flow_run_id = _sync_run(api)
     # The `sync` stage publishes its plan, with its checksum, before its apply part (research R9).
     _publish_plan(projection, run_id, total=_TOTAL)
-    assert projection.record_apply_progress(
-        run_id,
-        flow_run_id,
-        ApplyProgress(
-            position=_MARKER,
-            operation_id=_operation_id(_MARKER),
-            total=_TOTAL,
-            saved_at=datetime(2026, 11, 12, 10, 15, tzinfo=timezone.utc),
-        ),
+    assert (
+        projection.record_apply_progress(
+            run_id,
+            flow_run_id,
+            ApplyProgress(
+                position=_MARKER,
+                operation_id=_operation_id(_MARKER),
+                total=_TOTAL,
+                saved_at=datetime(2026, 11, 12, 10, 15, tzinfo=timezone.utc),
+            ),
+        )
+        == "saved"
     )
     assert projection.interrupt_execution(run_id, flow_run_id)
     stored = projection.lookup_run(run_id).value
@@ -648,7 +655,27 @@ def test_the_uncertain_window(
     last_save_failed: bool,  # noqa: FBT001 - a parametrized case, not a flag
     expected: range,
 ) -> None:
-    assert uncertain_window(position, _TOTAL, failed_index=failed_index, last_save_failed=last_save_failed) == expected
+    writes = [True] * _TOTAL
+    assert uncertain_window(position, writes, failed_index=failed_index, last_save_failed=last_save_failed) == expected
+
+
+@pytest.mark.parametrize(
+    ("writes", "expected"),
+    [
+        # Every second operation is a recorded delete, which is never dispatched, so 500 commits
+        # span 999 positions after the marker (review item 4).
+        ([True, False] * 1_000, range(10, 1_009)),
+        # Recorded deletes after the 500th commit are not part of the window.
+        ([True] * 510 + [False] * 10, range(10, 510)),
+        # Fewer than 500 commits remain: the window runs to the end of the plan.
+        ([True] * 20 + [False] * 5, range(10, 25)),
+    ],
+    ids=["interleaved-deletes", "deletes-after-the-500th-commit", "few-commits-left"],
+)
+def test_the_window_after_a_successful_save_counts_500_commits_not_positions(
+    writes: list[bool], expected: range
+) -> None:
+    assert uncertain_window(9, writes, failed_index=None, last_save_failed=False) == expected
 
 
 # --- the worker and the engine ----------------------------------------------------------------
@@ -818,12 +845,14 @@ def test_an_interrupted_apply_resumes_after_its_marker_and_the_run_ends_applied(
     assert interrupted.reconciliation_required is True
     assert interrupted.prefect_executions[-1].apply_progress is not None
     assert interrupted.prefect_executions[-1].apply_progress.position == _MARKER
-    operations = [(operation_id, _kind(index)) for index, operation_id in enumerate(plan_ids)]
+    operations = [(operation_id, _kind(index), "create") for index, operation_id in enumerate(plan_ids)]
     view = apply_progress_view(interrupted, operations)
     assert view is not None
+    # The worker was stopped without recording how its apply ended, so its last save is not
+    # known to have succeeded: every operation after the marker is uncertain (research R11).
     assert [(entry.kind, entry.committed, entry.uncertain, entry.not_reached) for entry in view.by_kind] == [
         ("BuiltinTag", 6000, 500, 0),
-        ("BuiltinStatus", 0, 0, 3500),
+        ("BuiltinStatus", 0, 3500, 0),
     ]
 
     _pass_verify(projection, run_id)
@@ -932,12 +961,15 @@ def resume_worker(
     run_id = "20261112T1200-ee55ff66"
     projection = _store_run(tmp_path, run_id)
     apply_flow_run_id = _admit_apply(projection, run_id, request.param)
-    assert projection.record_apply_progress(
-        run_id,
-        apply_flow_run_id,
-        ApplyProgress(
-            position=_MARKER, operation_id=_operation_id(_MARKER), total=_TOTAL, saved_at=datetime.now(timezone.utc)
-        ),
+    assert (
+        projection.record_apply_progress(
+            run_id,
+            apply_flow_run_id,
+            ApplyProgress(
+                position=_MARKER, operation_id=_operation_id(_MARKER), total=_TOTAL, saved_at=datetime.now(timezone.utc)
+            ),
+        )
+        == "saved"
     )
     assert projection.interrupt_execution(run_id, apply_flow_run_id)
     _pass_verify(projection, run_id)
@@ -1026,7 +1058,7 @@ def test_progress_lost_during_a_resume_takes_the_adr_0010_exit_and_keeps_the_run
     resume_worker: tuple[ProductProjection, str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`ApplyProgressLostError` after a dispatch ends the resume interrupted, never succeeded."""
-    projection, run_id, _resume_flow_run_id = resume_worker
+    projection, run_id, resume_flow_run_id = resume_worker
     partial = ApplyRecord(applied_operations=(_operation_id(_MARKER + 1),), operations_total=_TOTAL)
 
     def lose_progress(_instance: object, **kwargs: Any) -> NoReturn:  # noqa: ANN401
@@ -1044,6 +1076,8 @@ def test_progress_lost_during_a_resume_takes_the_adr_0010_exit_and_keeps_the_run
     assert stored is not None
     assert (stored.phase, stored.outcome, stored.reconciliation_required) == ("resume-interrupted", "ambiguous", True)
     assert stored.results["resume_failure"]["error_type"] == "ApplyProgressLostError"
+    # The record names the execution that wrote it, so a later execution's view can tell (review item 2).
+    assert stored.results["resume_failure"]["flow_run_id"] == resume_flow_run_id
     assert stored.prefect_executions[-1].terminal_state == "interrupted"
     # The resume saved no marker of its own, so its last save is not known to have succeeded:
     # every operation after the run's position is uncertain (critique E3).

@@ -37,7 +37,7 @@ from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlannedOperation
 from infrahub_sync.product_store import ApplyProgress, PrefectExecutionLink, ProductRun
 from infrahub_sync.service import flow as service_flow
-from infrahub_sync.service.resume_view import UNCERTAIN_AFTER_SUCCESSFUL_SAVE
+from infrahub_sync.service.resume_view import UNCERTAIN_AFTER_SUCCESSFUL_SAVE, apply_progress_view
 from tests.plan.artifact_fixtures import TAMPERABLE_VALUE
 from tests.service.test_verify_destination import ALL_CHECKS, _break_lineage, _execute, _harness, _stored, _verify
 
@@ -78,7 +78,12 @@ def _interrupted_run(
     own_marker: bool = True,
     failure: Mapping[str, Any] | None = None,
 ) -> ProductRun:
-    """A run whose apply saved `marker` (or an earlier apply did, when not `own_marker`) and was interrupted."""
+    """A run whose apply saved `marker` (or an earlier apply did, when not `own_marker`) and was interrupted.
+
+    `failure` is the latest write execution's own failure record: it is stamped with that
+    execution's identifier unless it names one already. `None` stores no failure record, as
+    when liveness ended the execution after its worker stopped.
+    """
     progress = (
         None
         if marker is None
@@ -115,6 +120,7 @@ def _interrupted_run(
         )
     )
     failure_key = "apply_failure" if own_marker else "resume_failure"
+    results = {} if failure is None else {failure_key: {"flow_run_id": "interrupted-apply", **failure}}
     return ProductRun(
         run_id="interrupted-run",
         operation="plan",
@@ -122,7 +128,7 @@ def _interrupted_run(
         started_at=SAVED_AT,
         phase="apply-interrupted",
         reconciliation_required=True,
-        results={failure_key: dict(failure or {})},
+        results=results,
         prefect_executions=tuple(executions),
     )
 
@@ -171,11 +177,37 @@ def test_the_window_ends_with_the_failing_operation_when_it_is_known() -> None:
 
 def test_the_window_holds_the_next_500_operations_when_the_last_save_succeeded() -> None:
     operations = _operations(1_200)
-    run = _interrupted_run(operations, marker=99, failure={"error_type": "AbandonedExecution"})
+    # The worker recorded its own failure, one that names no operation: the hold was lost.
+    run = _interrupted_run(operations, marker=99, failure={"error_type": "ApplyGuardLostError"})
 
     report = _report(run, operations, _Reader())
 
     assert _reported_positions(report, operations) == list(range(100, 100 + UNCERTAIN_AFTER_SUCCESSFUL_SAVE))
+
+
+def test_the_window_counts_500_commits_when_recorded_deletes_sit_between_them() -> None:
+    """Recorded deletes are never dispatched, so 500 commits can span more than 500 positions (review item 4)."""
+    operations = [_operation(index, "delete" if index > 99 and index % 4 == 3 else "create") for index in range(1_200)]
+    run = _interrupted_run(operations, marker=99, failure={"error_type": "ApplyGuardLostError"})
+
+    report = _report(run, operations, _Reader())
+
+    creates_after_the_marker = [index for index in range(100, 1_200) if operations[index].action != "delete"]
+    assert _reported_positions(report, operations) == creates_after_the_marker[:UNCERTAIN_AFTER_SUCCESSFUL_SAVE]
+
+
+def test_the_progress_view_counts_recorded_deletes_inside_the_window_as_uncertain() -> None:
+    """The view counts the plan's positions, so it holds the same window as `verify` (review item 4)."""
+    operations = [_operation(index, "delete" if index > 99 and index % 4 == 3 else "create") for index in range(1_200)]
+    run = _interrupted_run(operations, marker=99, failure={"error_type": "ApplyGuardLostError"})
+
+    view = apply_progress_view(
+        run, [(operation.operation_id, operation.kind, operation.action) for operation in operations]
+    )
+
+    assert view is not None
+    # 500 creates and the 166 recorded deletes between them: positions 100 to 765.
+    assert [(entry.committed, entry.uncertain, entry.not_reached) for entry in view.by_kind] == [(100, 666, 434)]
 
 
 @pytest.mark.parametrize(
@@ -198,6 +230,87 @@ def test_the_window_holds_every_operation_after_the_marker_when_the_last_save_fa
     report = _report(run, operations, _Reader())
 
     assert _reported_positions(report, operations) == list(range(100, 1_200))
+
+
+def test_a_worker_stopped_without_recording_its_end_leaves_every_operation_after_the_marker_uncertain() -> None:
+    """Liveness ended the execution: whether saves were failing before it stopped is unknown (research R11)."""
+    operations = _operations(1_200)
+    run = _interrupted_run(operations, marker=99, failure=None)
+
+    report = _report(run, operations, _Reader())
+
+    assert _reported_positions(report, operations) == list(range(100, 1_200))
+
+
+def test_an_older_failure_record_without_an_execution_identifier_does_not_bound_the_window() -> None:
+    operations = _operations(40)
+    run = _interrupted_run(operations, marker=9, failure={"failed_operation": operations[14].operation_id})
+    older = {key: value for key, value in run.results["apply_failure"].items() if key != "flow_run_id"}
+    run = run.model_copy(update={"results": {"apply_failure": older}})
+
+    report = _report(run, operations, _Reader())
+
+    assert _reported_positions(report, operations) == list(range(10, 40))
+
+
+def _execution(flow_run_id: str, purpose: str, progress: ApplyProgress | None = None) -> PrefectExecutionLink:
+    return PrefectExecutionLink(
+        flow_run_id=flow_run_id,
+        purpose=purpose,
+        attempt=1,
+        terminal_at=SAVED_AT,
+        terminal_state="interrupted" if purpose != "verify" else "completed",
+        terminal_outcome="ambiguous" if purpose != "verify" else "succeeded",
+        apply_progress=progress,
+    )
+
+
+def test_a_failure_record_of_an_earlier_resume_does_not_bound_the_window_of_a_later_one() -> None:
+    """Resume #1 fails at X after saving X-1; resume #2 starts at X and is killed before its first save.
+
+    The `resume_failure` record still names X, but resume #1 wrote it (review item 2). Resume #2
+    saved no marker, so its last save is not known to have succeeded: every operation from X on
+    is uncertain, not X alone.
+    """
+    operations = _operations(1_200)
+    failing = 300
+
+    def marker(position: int, start_after: int | None) -> ApplyProgress:
+        return ApplyProgress(
+            position=position,
+            operation_id=operations[position].operation_id,
+            total=len(operations),
+            start_after=start_after,
+            saved_at=SAVED_AT,
+        )
+
+    run = ProductRun(
+        run_id="interrupted-run",
+        operation="plan",
+        configuration_reference="config@1",
+        started_at=SAVED_AT,
+        phase="resume-interrupted",
+        reconciliation_required=True,
+        results={
+            "resume_failure": {
+                "flow_run_id": "resume-1",
+                "error_type": "OperationApplyFailedError",
+                "failed_operation": operations[failing].operation_id,
+            }
+        },
+        prefect_executions=(
+            _execution("apply-1", "apply", marker(99, None)),
+            _execution("verify-1", "verify"),
+            _execution("resume-1", "resume", marker(failing - 1, 99)),
+            _execution("verify-2", "verify"),
+            _execution("resume-2", "resume"),
+            PrefectExecutionLink(flow_run_id="running-verify", purpose="verify", attempt=1),
+        ),
+    )
+
+    report = _report(run, operations, _Reader())
+
+    assert _reported_positions(report, operations) == list(range(failing, 1_200))
 
 
 def test_a_window_above_2000_operations_reports_2000_and_counts_the_rest() -> None:

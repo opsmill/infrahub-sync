@@ -1,8 +1,8 @@
 """Derive a run's apply progress view and its resume history (spec 022 data-model.md).
 
 Nothing here is stored: the view is derived from the run's executions, their saved progress
-markers, the failure record of the latest write execution and the saved plan's operations, in
-the plan's stored order. Every function is pure, so the Sync API and the `verify` report
+markers, the failure record the latest write execution wrote, if any, and the saved plan's
+operations, in the plan's stored order. Every function is pure, so the Sync API and the `verify` report
 (critique E3) compute the same uncertain window.
 
 The view holds positions, operation counts and kinds only, never a value read from or written
@@ -21,8 +21,9 @@ if TYPE_CHECKING:
 
     from infrahub_sync.product_store import MutationReceipt, PrefectExecutionLink, ProductRun
 
-# How many operations after the saved position may have been written when the failing operation
-# is unknown and the last save succeeded: the worker saves at least every 500 commits (R3).
+# How many commits after the saved position may have reached the destination when the failing
+# operation is unknown and the last save succeeded: the worker saves at least every 500 commits
+# (R3). Recorded deletes are never dispatched, so they are not commits and are not counted.
 UNCERTAIN_AFTER_SUCCESSFUL_SAVE = 500
 # The error class the engine raises when the apply stopped because its progress could not be saved.
 _PROGRESS_LOST_ERROR = "ApplyProgressLostError"
@@ -30,26 +31,36 @@ _PROGRESS_LOST_ERROR = "ApplyProgressLostError"
 
 def uncertain_window(
     position: int | None,
-    total: int,
+    writes: Sequence[bool],
     *,
     failed_index: int | None,
     last_save_failed: bool,
 ) -> range:
     """Return the positions of the operations that may or may not have reached the destination.
 
+    `writes` holds one entry per operation of the saved plan, in stored order: true for a create
+    or an update, which the apply dispatches, false for a recorded delete, which it never does.
+
     The window starts after the saved `position` (at the first operation when nothing was
-    saved). It ends with the failing operation when it is known; otherwise it holds the next
-    500 operations when the last save attempt succeeded, and every remaining operation when it
-    did not (critique E3, FR-005).
+    saved). It ends with the failing operation when it is known. Otherwise, when the last save
+    attempt succeeded, it runs through the 500th create or update after the start, because the
+    worker saves after 500 commits and a recorded delete is not a commit; the recorded deletes
+    between them are inside the window. When the last save attempt is not known to have
+    succeeded, the window holds every remaining operation (critique E3, FR-005, research R11).
     """
-    start = 0 if position is None else position + 1
+    total = len(writes)
+    start = min(total, 0 if position is None else position + 1)
     if failed_index is not None and failed_index >= start:
-        end = failed_index + 1
+        end = min(total, failed_index + 1)
     elif last_save_failed:
         end = total
     else:
-        end = start + UNCERTAIN_AFTER_SUCCESSFUL_SAVE
-    return range(min(start, total), min(end, total))
+        end, commits = start, 0
+        while end < total and commits < UNCERTAIN_AFTER_SUCCESSFUL_SAVE:
+            if writes[end]:
+                commits += 1
+            end += 1
+    return range(start, end)
 
 
 def latest_write_execution(run: ProductRun) -> PrefectExecutionLink | None:
@@ -84,41 +95,64 @@ def run_is_resumable(run: ProductRun) -> bool:
     )
 
 
-def _failure_of(run: ProductRun, link: PrefectExecutionLink | None) -> Mapping[str, object]:
+def _failure_of(run: ProductRun, link: PrefectExecutionLink | None) -> Mapping[str, object] | None:
+    """The failure record `link` wrote, or `None` when it wrote none.
+
+    Results are merged across executions, so `<purpose>_failure` can belong to an earlier
+    execution of the same purpose. A record counts only when its `flow_run_id` names `link`;
+    a record stored before records carried that identifier never does.
+    """
     if link is None:
-        return {}
+        return None
     failure = run.results.get(f"{link.purpose}_failure")
-    return failure if isinstance(failure, dict) else {}
+    if not isinstance(failure, dict) or failure.get("flow_run_id") != link.flow_run_id:
+        return None
+    return failure
 
 
-def uncertain_positions(run: ProductRun, operation_ids: Sequence[str]) -> range:
+def uncertain_positions(run: ProductRun, operations: Sequence[tuple[str, str]]) -> range:
     """The uncertain window of an interrupted run, over the saved plan's operations in stored order.
 
-    The failing operation is the one the latest write execution's failure record names. The
-    Sync API stores no failed save attempt, so the last save counts as successful only when the
-    latest write execution saved a marker of its own and did not stop with
-    `ApplyProgressLostError`.
+    `operations` are the saved plan's `(operation_id, action)` pairs. The failing operation is
+    the one named by the failure record the latest write execution wrote itself.
+
+    The last save counts as successful only when the latest write execution saved a marker of
+    its own, recorded its own failure, and did not stop with `ApplyProgressLostError` (research
+    R11). A worker that recorded its own failure reached the store at its end, and the engine
+    tries to save the last committed position just before that record is written. A worker that never
+    recorded its end, because it was killed or liveness ended its execution first, may have
+    kept committing for up to 5 minutes while its saves failed, and the store holds nothing
+    that tells this apart from saves that succeeded, so every remaining operation is uncertain.
     """
     marker = run_apply_progress(run)
     position = None if marker is None else marker.position
     latest = latest_write_execution(run)
     failure = _failure_of(run, latest)
-    failed_operation = failure.get("failed_operation")
+    failed_operation = None if failure is None else failure.get("failed_operation")
     failed_index = None
     if isinstance(failed_operation, str):
-        failed_index = next((index for index, value in enumerate(operation_ids) if value == failed_operation), None)
-    own = None if latest is None else latest.apply_progress
-    if failed_index is not None and own is not None and failed_index <= own.position:
-        # An earlier execution of the same purpose recorded this failure: the latest one got past it.
-        failed_index = None
+        failed_index = next(
+            (index for index, (operation_id, _action) in enumerate(operations) if operation_id == failed_operation),
+            None,
+        )
     last_save_failed = (
-        latest is None or latest.apply_progress is None or failure.get("error_type") == _PROGRESS_LOST_ERROR
+        latest is None
+        or latest.apply_progress is None
+        or failure is None
+        or failure.get("error_type") == _PROGRESS_LOST_ERROR
     )
-    return uncertain_window(position, len(operation_ids), failed_index=failed_index, last_save_failed=last_save_failed)
+    writes = [action != "delete" for _operation_id, action in operations]
+    return uncertain_window(position, writes, failed_index=failed_index, last_save_failed=last_save_failed)
 
 
-def _by_kind(run: ProductRun, operations: Sequence[tuple[str, str]]) -> tuple[ApplyProgressKindResource, ...]:
-    """Count each kind's committed, uncertain and not reached operations, in the plan's kind order."""
+def _by_kind(run: ProductRun, operations: Sequence[tuple[str, str, str]]) -> tuple[ApplyProgressKindResource, ...]:
+    """Count each kind's committed, uncertain and not reached operations, in the plan's kind order.
+
+    The counts are over the plan's positions, so a recorded delete is counted where it stands:
+    committed at or before the marker, uncertain inside the window `uncertain_positions`
+    returns, not reached after it. The `verify` report reads the same window and lists only its
+    creates and updates, because a recorded delete is never written.
+    """
     marker = run_apply_progress(run)
     if marker is not None and (
         marker.position >= len(operations) or operations[marker.position][0] != marker.operation_id
@@ -126,19 +160,19 @@ def _by_kind(run: ProductRun, operations: Sequence[tuple[str, str]]) -> tuple[Ap
         # The marker does not point into this plan, so no count derived from it would be true.
         return ()
     counts: dict[str, list[int]] = {}
-    for _operation_id, kind in operations:
+    for _operation_id, kind, _action in operations:
         counts.setdefault(kind, [0, 0, 0])
     if run.phase == "applied" and not run.reconciliation_required:
-        for _operation_id, kind in operations:
+        for _operation_id, kind, _action in operations:
             counts[kind][0] += 1
     else:
         committed_through = -1 if marker is None else marker.position
         uncertain = (
-            uncertain_positions(run, [operation_id for operation_id, _kind in operations])
+            uncertain_positions(run, [(operation_id, action) for operation_id, _kind, action in operations])
             if run.reconciliation_required
             else range(0)
         )
-        for index, (_operation_id, kind) in enumerate(operations):
+        for index, (_operation_id, kind, _action) in enumerate(operations):
             state = 0 if index <= committed_through else 1 if index in uncertain else 2
             counts[kind][state] += 1
     return tuple(
@@ -147,10 +181,12 @@ def _by_kind(run: ProductRun, operations: Sequence[tuple[str, str]]) -> tuple[Ap
     )
 
 
-def apply_progress_view(run: ProductRun, operations: Sequence[tuple[str, str]] | None) -> ApplyProgressResource | None:
+def apply_progress_view(
+    run: ProductRun, operations: Sequence[tuple[str, str, str]] | None
+) -> ApplyProgressResource | None:
     """The run's progress view, or `None` for a run that never started a write.
 
-    `operations` are the saved plan's `(operation_id, kind)` pairs in stored order, or `None`
+    `operations` are the saved plan's `(operation_id, kind, action)` triples in stored order, or `None`
     when the plan cannot be read; the per-kind counts are then empty.
     """
     if latest_write_execution(run) is None:

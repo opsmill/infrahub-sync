@@ -45,9 +45,9 @@ position is safe.
   marker.
 - **Pre-write checks**: every check that `apply` runs before its first destination write, as defined by spec 019.
 - **Uncertain operations**: the operations after the progress marker that may have reached the destination. When
-  the failing operation is known, they run through it. When the worker was killed, it is not known, so they are the
-  next 500 operations after the marker if the last save attempt succeeded, and every remaining operation if it did
-  not.
+  the failing operation is known, they run through it. When it is not known, they run through the 500th create or
+  update after the marker if the last save attempt succeeded, and they are every remaining operation if it did not or
+  if that is not known, as when the worker was killed (research R11).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -157,10 +157,13 @@ check that no new plan was created.
   committed operations, every 30 seconds, at the end of each kind, when an operation fails, and when the apply ends,
   whichever comes first.
 - **FR-002**: The system MUST save a position only after every operation up to and including that position was
-  committed. A saved marker MUST never point past an operation that was not committed.
+  committed. A saved marker MUST never point past an operation that was not committed. A recorded delete is never
+  sent to the destination, so it is not a committed operation and does not count toward the 500 of FR-001.
 - **FR-003**: When a marker save fails, the system MUST log a warning that names the run and keep writing; the next
   save MUST try again with the newer position. When no save has succeeded for 5 minutes, the system MUST stop the
-  apply and end the run as interrupted.
+  apply and end the run as interrupted. When the store answers that the execution has already ended, for example
+  because liveness marked it interrupted while the worker kept writing, the system MUST stop the apply before its
+  next operation without waiting 5 minutes.
 - **FR-004**: Users MUST be able to view, for an interrupted run and for a run being applied, the progress marker and,
   for each kind, how many operations were committed, how many are uncertain and how many were not reached. The system
   derives these counts from the marker and the saved plan.
@@ -169,8 +172,11 @@ check that no new plan was created.
 
 - **FR-005**: The system MUST accept `verify` on an interrupted run. For such a run, `verify` MUST run every
   pre-write check, as it does for any run, and MUST also read from the destination the nodes of the uncertain
-  operations: the operations after the marker through the failing operation when it is known; otherwise the next 500
-  operations when the last save attempt succeeded, and every operation after the marker when it did not.
+  operations: the operations after the marker through the failing operation when it is known; otherwise the
+  operations through the 500th create or update after the marker when the last save attempt succeeded, and every
+  operation after the marker when it did not or when that is not known. The failing operation and the outcome of the
+  last save attempt come only from the failure record that the latest write execution wrote itself; the last save
+  attempt counts as successful only when that execution saved a marker and recorded its own end (research R11).
 - **FR-006**: For each uncertain operation, `verify` MUST report one of "already matches the plan", "differs from the
   plan" or "missing at the destination", and MUST return this report through the Sync API and the CLI. The output
   MUST say that a resume writes the plan's values over every operation reported as "differs from the plan".
