@@ -20,6 +20,12 @@ dev/specs/012-v2-configuration-conversion/research.md
   s_9c7f8713d8e8dc::t_a38365b5833273 1-32,35-38,48-50,55-67,71-93,96-130,132-147,150-185,189-201
 dev/specs/012-v2-configuration-conversion/data-model.md
   s_9c7f8713d8e8dc::t_37a44c8be27bf4 1-16,19-95
+dev/specs/012-v2-configuration-conversion/tasks.md
+  s_efeb25921ce544::t_8e8c04a0f60b6a 59,67
+infrahub_sync/configuration/conversion_report.py
+  s_efeb25921ce544::t_8e8c04a0f60b6a 1-115
+infrahub_sync/cli.py
+  s_efeb25921ce544::t_8e8c04a0f60b6a 12,18,20,58-63,622-719
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -31,6 +37,14 @@ dev/specs/012-v2-configuration-conversion/data-model.md
       "agent_id": {
         "tool": "claude",
         "id": "b7b4ab04-36d6-4644-a214-69334e6a0d27",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_efeb25921ce544": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88805765-f610-4acc-a224-7c6f256e1599",
         "model": "claude-opus-5-5"
       },
       "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
