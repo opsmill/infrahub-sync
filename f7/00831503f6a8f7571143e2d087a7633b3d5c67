@@ -1,0 +1,19 @@
+.github/scripts/nightly_e2e.py
+  s_3d2aa62b06667a::t_9a57edd8c7762c 16,106,108,113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f700831503f6a8f7571143e2d087a7633b3d5c67",
+  "prompts": {},
+  "sessions": {
+    "s_3d2aa62b06667a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a5ca7a3d0e6c657bf",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
