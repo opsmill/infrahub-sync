@@ -600,14 +600,34 @@ def test_a_refused_check_write_names_its_family(status: int, code: str, family: 
     assert len(objects.deleted) == 1
 
 
-def test_a_check_key_that_cannot_be_deleted_is_logged_without_failing(caplog: pytest.LogCaptureFixture) -> None:
-    objects = _Objects(delete_error=ClientError(_client_error("AccessDenied", 403), "DeleteObject"))
+@pytest.mark.parametrize(
+    ("status", "code", "family"),
+    [(403, "AccessDenied", "object-store-access-refused"), (500, "InternalError", "object-store-unavailable")],
+)
+def test_a_check_key_that_cannot_be_deleted_stops_bootstrap(
+    status: int, code: str, family: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Sync deletes objects it no longer needs, so a store that refuses deletes is refused here."""
+    objects = _Objects(delete_error=ClientError(_client_error(code, status), "DeleteObject"))
 
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("ERROR"), pytest.raises(BootstrapError) as refusal:
         check_create_only(objects, BUCKET, "infrahub-sync")
 
+    assert refusal.value.family == family
     assert "the create-only check could not delete its key under .infrahub-sync/bootstrap-check" in caplog.text
     assert CREDENTIAL_CANARY not in caplog.text
+
+
+def test_an_earlier_refusal_is_kept_when_the_delete_also_fails() -> None:
+    objects = _Objects(
+        honors_create_only=False,
+        delete_error=ClientError(_client_error("AccessDenied", 403), "DeleteObject"),
+    )
+
+    with pytest.raises(BootstrapError) as refusal:
+        check_create_only(objects, BUCKET, "infrahub-sync")
+
+    assert refusal.value.family == "object-store-unsupported"
 
 
 @pytest.mark.parametrize(

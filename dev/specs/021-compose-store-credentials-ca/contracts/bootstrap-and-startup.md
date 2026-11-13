@@ -22,7 +22,7 @@ Every bootstrap failure is reported as one fixed name and nothing else
 | `object-store-endpoint-invalid` | the endpoint is not an absolute `http` or `https` URL, or carries a user name or password | `refused: object-store-endpoint-invalid`, then the fixed message below |
 | `bundled-object-store-not-left-out` | the endpoint names a host other than `object-store` and `object-store` resolves | `refused: bundled-object-store-not-left-out` |
 | `object-store-endpoint-not-set` | the endpoint names `object-store` and that name does not resolve | `refused: object-store-endpoint-not-set` |
-| `object-store-access-refused` | `HeadBucket` answers 403 | `refused: object-store-access-refused` |
+| `object-store-access-refused` | `HeadBucket`, `CreateBucket`, a check write or the check delete answers 403 | `refused: object-store-access-refused` |
 | `object-store-unsupported` | the second create-only write of the check key succeeds, or the store answers 501 | `refused: object-store-unsupported` |
 | `object-store-setting-invalid` | the addressing style is unknown, or the S3 client refuses the region | `refused: object-store-setting-invalid` |
 

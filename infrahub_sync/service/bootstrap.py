@@ -202,17 +202,35 @@ def check_create_only(objects: Any, bucket: str, prefix: str) -> None:
     store refusing the second write. A store that accepts it would let a write replace a
     stored artifact. The key is new, so a store that refuses the first write refuses every
     create-only write, and no artifact could be stored.
+
+    Sync also deletes objects it no longer needs, so a store that refuses to delete the check
+    key stops bootstrap too, unless an earlier refusal already did.
     """
     path = f"{CREATE_ONLY_CHECK_PATH}/{uuid.uuid4()}"
     key = f"{prefix}/{path}" if prefix else path
     try:
-        if not _write_if_absent(objects, bucket, key) or _write_if_absent(objects, bucket, key):
-            raise BootstrapError(OBJECT_STORE_UNSUPPORTED)
-    finally:
-        try:
-            objects.delete(bucket=bucket, key=key)
-        except (ClientError, BotoCoreError):
-            logger.warning("the create-only check could not delete its key under %s", CREATE_ONLY_CHECK_PATH)
+        unsupported = not _write_if_absent(objects, bucket, key) or _write_if_absent(objects, bucket, key)
+    except BootstrapError:
+        _delete_check_key(objects, bucket, key)
+        raise
+    refusal = _delete_check_key(objects, bucket, key)
+    if unsupported:
+        raise BootstrapError(OBJECT_STORE_UNSUPPORTED)
+    if refusal is not None:
+        raise refusal
+
+
+def _delete_check_key(objects: Any, bucket: str, key: str) -> BootstrapError | None:
+    """Delete the check key, and return the refusal when the store does not delete it."""
+    try:
+        objects.delete(bucket=bucket, key=key)
+    except ClientError as error:
+        logger.error("the create-only check could not delete its key under %s", CREATE_ONLY_CHECK_PATH)  # noqa: TRY400 - a fixed message; the family follows.
+        return _refusal(error)
+    except BotoCoreError:
+        logger.error("the create-only check could not delete its key under %s", CREATE_ONLY_CHECK_PATH)  # noqa: TRY400 - a fixed message; the family follows.
+        return BootstrapError(OBJECT_STORE_UNAVAILABLE)
+    return None
 
 
 async def converge_work_pool(client: Any, name: str) -> bool:

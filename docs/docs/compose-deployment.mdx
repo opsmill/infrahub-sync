@@ -370,7 +370,9 @@ answers that it is absent, so a credential that may not create buckets works wit
 created. A 403 answer to `HeadBucket`, `CreateBucket` or the check write stops it with
 `refused: object-store-access-refused`, and a 501 answer with `refused: object-store-unsupported`.
 It then writes one empty check object under `<prefix>/.infrahub-sync/bootstrap-check/` twice with
-`If-None-Match: *`, and deletes it. A store that accepts the second write stops it with
+`If-None-Match: *`, and deletes it. A store that refuses the delete stops it too, with
+`refused: object-store-access-refused` for a 403 answer, because Sync deletes objects it no
+longer needs. A store that accepts the second write stops it with
 `refused: object-store-unsupported`, because Sync relies on that refusal to never replace a
 stored artifact. A store that refuses the first write, to a key that did not exist, stops it with
 the same refusal, because it would refuse every artifact that Sync writes this way.
