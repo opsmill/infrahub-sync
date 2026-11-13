@@ -1,0 +1,27 @@
+docs/docs/adapters/aci.mdx
+  s_3defe6e8bcd0ab::t_44986cf13d21fa 11
+docs/docs/adapters/genericrestapi.mdx
+  s_3defe6e8bcd0ab::t_641ba96b5e84e7 11
+docs/docs/adapters/ipfabric.mdx
+  s_3defe6e8bcd0ab::t_9403c225b5e126 11
+docs/docs/adapters/peering-manager.mdx
+  s_3defe6e8bcd0ab::t_66fe215b08d0a9 11
+docs/docs/adapters/slurpit.mdx
+  s_3defe6e8bcd0ab::t_6b4614d5aaafdc 11,118-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6c94b12dbd35ccb8bccf58880867e62485a08549",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
