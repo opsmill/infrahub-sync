@@ -217,13 +217,12 @@ jobs:
           ARCHITECTURES: ${{ inputs.compose_architectures }}
         run: |
           set -eu
+          # Matched as text: an integer comparison errors on a number past its range,
+          # and an `if` takes that error as false.
           case "${REPEAT}" in
-            ''|*[!0-9]*) echo "compose_repeat must be a whole number, not ${REPEAT}" >&2; exit 1 ;;
+            [1-9]|1[0-9]|20) ;;
+            *) echo "compose_repeat must be a whole number from 1 to 20" >&2; exit 1 ;;
           esac
-          if [ "${REPEAT}" -lt 1 ] || [ "${REPEAT}" -gt 20 ]; then
-            echo "compose_repeat must be between 1 and 20" >&2
-            exit 1
-          fi
           case "${ARCHITECTURES}" in
             amd64) runners='["ubuntu-22.04"]' ;;
             arm64) runners='["ubuntu-24.04-arm"]' ;;
