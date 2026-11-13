@@ -226,6 +226,14 @@ identity, or because Infrahub holds several nodes with the same identity. `Dropd
 not checked` means the run had no destination schema snapshot, so the plan did not compare
 Dropdown values with their choices.
 
+A left-out record protects only the Infrahub node that has the record's own identity. A node in
+Infrahub with a different identity can still be listed as a delete, for example when the
+record's identity changed in the source, or when version 2 wrote the node under an identity
+that merged several records. The deletes of the nodes that depend on that node, such as the
+devices and interfaces in a rack, can be listed too. The plan records its deletes, and an
+apply never runs them: it lists them in `skipped_delete_operations`
+([ADR 0004](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0004-deletes-are-recorded-but-never-executed.md)).
+
 To list every entry, use one of these options of `runs plan`:
 
 ```bash

@@ -350,7 +350,12 @@ plan finishes and that each #374 case is written or listed.
 - A record depends on a left-out record that itself depends on a record with a problem: every
   record in the chain is left out, and each names the record it depends on.
 - A left-out record already exists in Infrahub from an earlier run: the plan proposes no update
-  and no delete for it, and the Infrahub node stays as it is.
+  and no delete for it, and the Infrahub node stays as it is. This protects only the node that
+  has the record's own identity. A node in Infrahub with a different identity can still be
+  listed as a delete, when the record's identity changed or when version 2 wrote the node under
+  a merged identity, and so can the deletes of the nodes that depend on it, such as the devices
+  and interfaces in a rack. Planned deletes are recorded in the plan and never run (ADR 0004;
+  apply lists them in `skipped_delete_operations`).
 - Every source record is left out: the plan finishes with zero operations, and the summary shows
   the left-out count. There is nothing to apply.
 - The source or Infrahub cannot be reached, or refuses a token, during a plan: the plan fails
@@ -679,7 +684,11 @@ specification 009".
 - Duplicate records and identity collisions leave out every record involved, not all but one,
   because the plan cannot tell which record is correct.
 - A problem in a record that already exists in Infrahub leaves the Infrahub node as it is. The
-  plan proposes no update and no delete for it.
+  plan proposes no update and no delete for it. This holds only for the node that has the
+  record's own identity: a node with a different identity, after the record's identity changed
+  or because version 2 wrote it under a merged identity, can still be listed as a delete, with
+  the deletes of the nodes that depend on it. Planned deletes are recorded in the plan and never
+  run (ADR 0004; apply lists them in `skipped_delete_operations`).
 - Source values may appear in problem reasons and in Infrahub's message, as they already do in
   the plan operations the team reviews. Credential values do not appear (FR-029).
 - Infrahub's error message describes the write Infrahub received, which holds source data and no
