@@ -1,0 +1,225 @@
+tasks/dev.py
+  s_b91a98d41025f3::t_591c8dd13110e2 21-23,56,124-131,888-945,964
+.github/file-filters.yml
+  s_580c97c57d3e55::t_580d0f5f97a02c 44-49
+.github/workflows/workflow-linter.yml
+  s_580c97c57d3e55::t_38299b72dce6ca 34,133-167
+.gitmodules
+  s_580c97c57d3e55::t_a8e4343d38941f 1-4
+.yamllint.yml
+  s_580c97c57d3e55::t_cf19b52ace3f16 9-12
+AGENTS.md
+  s_580c97c57d3e55::t_65a06e87a2d007 145-148
+changelog/+configuration-page-one-view.changed.md
+  s_580c97c57d3e55::t_c29f4d164b5f2e 1
+changelog/+dev-frontend-task.housekeeping.md
+  s_580c97c57d3e55::t_499770f89524ee 1
+changelog/+withdrawn-plan-stays-withdrawn.fixed.md
+  s_580c97c57d3e55::t_9762d4179ac967 1
+docs/docs/development-stack.mdx
+  s_580c97c57d3e55::t_3784411e06660f 205-225
+frontend/.cta.json
+  s_580c97c57d3e55::t_4811a5b80f622e 1-20
+frontend/.gitignore
+  s_580c97c57d3e55::t_793be110bf211d 1-13
+frontend/.npmrc
+  s_580c97c57d3e55::t_8481f1301ad891 1
+frontend/README.md
+  s_580c97c57d3e55::t_0a69599c0f62ee 1-273
+frontend/biome.json
+  s_580c97c57d3e55::t_a2b79e004c470b 1-44
+frontend/index.html
+  s_580c97c57d3e55::t_a94599cc55ff7e 1-27
+frontend/package.json
+  s_580c97c57d3e55::t_fbfc96da02331c 1-55
+frontend/pnpm-lock.yaml
+  s_580c97c57d3e55::t_11781f93080b39 1-4737
+frontend/pnpm-workspace.yaml
+  s_580c97c57d3e55::t_a5eaaf3959d15f 1-28
+frontend/src/api/actions.ts
+  s_580c97c57d3e55::t_593473210a1712 1-40
+frontend/src/api/client.ts
+  s_580c97c57d3e55::t_59f8dd2d6deb91 1-49
+frontend/src/api/errors.ts
+  s_580c97c57d3e55::t_55bc3e89809ffd 1-27
+frontend/src/api/queries.ts
+  s_580c97c57d3e55::t_eabc5e686028ed 1-408
+frontend/src/api/types.generated.ts
+  s_580c97c57d3e55::t_68ac0c823678ac 1-2578
+frontend/src/api/types.ts
+  s_580c97c57d3e55::t_65c75346cdbbe6 1-64
+frontend/src/components/announcer.tsx
+  s_580c97c57d3e55::t_a7a6704d0e039e 1-35
+frontend/src/components/boundaries.tsx
+  s_580c97c57d3e55::t_89e6e20e90dbee 1-67
+frontend/src/components/classes.ts
+  s_580c97c57d3e55::t_8b6d1fceb34262 1-40
+frontend/src/components/icons.tsx
+  s_580c97c57d3e55::t_8c8bbe74d654fb 1-195
+frontend/src/components/page.tsx
+  s_580c97c57d3e55::t_fad8644640a396 1-648
+frontend/src/components/run-status.tsx
+  s_580c97c57d3e55::t_d69f5ddbb72bc2 1-222
+frontend/src/components/shift-panel.tsx
+  s_580c97c57d3e55::t_17f46d9b0fbc66 1-310
+frontend/src/components/theme-menu.tsx
+  s_580c97c57d3e55::t_66e3a20f76c2c4 1-81
+frontend/src/domain/mapping.ts
+  s_580c97c57d3e55::t_9f79c25cf5b56e 1-170
+frontend/src/domain/plan-reads.ts
+  s_580c97c57d3e55::t_3408906e7baa71 1-106
+frontend/src/domain/run-history.ts
+  s_580c97c57d3e55::t_3d039cb4d6ba9a 1-52
+frontend/src/domain/run-log.ts
+  s_580c97c57d3e55::t_d33945082e6a1d 1-52
+frontend/src/domain/run-state.ts
+  s_580c97c57d3e55::t_5a9817852cf8b8 1-627
+frontend/src/domain/run-steps.ts
+  s_580c97c57d3e55::t_feb3ce21376de6 1-380
+frontend/src/domain/systems.ts
+  s_580c97c57d3e55::t_06d76bdda5f843 1-56
+frontend/src/features/configurations/ConfigurationPage.tsx
+  s_580c97c57d3e55::t_0829a19b428bea 1-525
+frontend/src/features/configurations/ConfigurationsPage.tsx
+  s_580c97c57d3e55::t_281cb608141d0c 1-819
+frontend/src/features/configurations/InSyncSection.tsx
+  s_580c97c57d3e55::t_7ec26b97f4bd01 1-169
+frontend/src/features/configurations/RunPreview.tsx
+  s_580c97c57d3e55::t_e595c3d7e9d00b 1-199
+frontend/src/features/configurations/RunsPerDay.tsx
+  s_580c97c57d3e55::t_860065046da66b 1-172
+frontend/src/features/configurations/detail-mapping-panel.tsx
+  s_580c97c57d3e55::t_b93de4485bdbf4 1-431
+frontend/src/features/configurations/detail-mapping.tsx
+  s_580c97c57d3e55::t_c4b21a7017ceef 1-214
+frontend/src/features/configurations/detail-systems.tsx
+  s_580c97c57d3e55::t_d850fbd8d7b92b 1-181
+frontend/src/features/configurations/detail-version-bar.tsx
+  s_580c97c57d3e55::t_fb702967543e59 1-203
+frontend/src/features/configurations/detail.ts
+  s_580c97c57d3e55::t_f4b215df31e1c3 1-150
+frontend/src/features/configurations/row-parts.tsx
+  s_580c97c57d3e55::t_309c5cc6661af3 1-104
+frontend/src/features/configurations/rows.ts
+  s_580c97c57d3e55::t_ead6bd30e0dd8c 1-377
+frontend/src/features/runs/ChangesDock.tsx
+  s_580c97c57d3e55::t_fe54580722fcdf 1-304
+frontend/src/features/runs/ChangesSheet.tsx
+  s_580c97c57d3e55::t_229f89804837ec 1-448
+frontend/src/features/runs/PlanReads.tsx
+  s_580c97c57d3e55::t_ce0b4b4115f3d4 1-272
+frontend/src/features/runs/PlanReview.tsx
+  s_580c97c57d3e55::t_22ff79d65ce86a 1-167
+frontend/src/features/runs/RunActions.tsx
+  s_580c97c57d3e55::t_6f3ab2cddaff36 1-642
+frontend/src/features/runs/RunPage.tsx
+  s_580c97c57d3e55::t_9962f78240e551 1-658
+frontend/src/features/runs/RunTimeStrip.tsx
+  s_580c97c57d3e55::t_ac3b0eef934b84 1-1215
+frontend/src/features/runs/RunTimeline.tsx
+  s_580c97c57d3e55::t_3fa0d779716f5d 1-523
+frontend/src/features/runs/RunsPage.tsx
+  s_580c97c57d3e55::t_11dba4a756fcdc 1-635
+frontend/src/features/runs/RunsTable.tsx
+  s_580c97c57d3e55::t_e1e3892ae94ec7 1-515
+frontend/src/features/runs/StartRunDialog.tsx
+  s_580c97c57d3e55::t_e5f413283c553c 1-408
+frontend/src/features/runs/StepLog.tsx
+  s_580c97c57d3e55::t_c6b95a00e90aa2 1-609
+frontend/src/features/runs/StepRows.tsx
+  s_580c97c57d3e55::t_8e90e2eeb9a1aa 1-370
+frontend/src/features/runs/changes/ChangesList.tsx
+  s_580c97c57d3e55::t_1ea978447a7449 1-344
+frontend/src/features/runs/changes/ChangesReview.tsx
+  s_580c97c57d3e55::t_e776f56d0c41f1 1-74
+frontend/src/features/runs/changes/DetailsPanel.tsx
+  s_580c97c57d3e55::t_5cc36ccef67f5f 1-142
+frontend/src/features/runs/changes/LedgerDiff.tsx
+  s_580c97c57d3e55::t_16257d6b28c9eb 1-403
+frontend/src/features/runs/changes/parts.tsx
+  s_580c97c57d3e55::t_b9b5c015547ee6 1-28
+frontend/src/features/runs/changes/useVirtual.ts
+  s_580c97c57d3e55::t_ff499af403583f 1-54
+frontend/src/features/runs/changes/views.ts
+  s_580c97c57d3e55::t_e84f328825d799 1-153
+frontend/src/features/runs/form.tsx
+  s_580c97c57d3e55::t_fb615afa2075bf 1-284
+frontend/src/features/runs/plan-download.tsx
+  s_580c97c57d3e55::t_7fc101e676adf9 1-210
+frontend/src/features/runs/plan-values.ts
+  s_580c97c57d3e55::t_a4e251e765640a 1-151
+frontend/src/features/runs/run-notices.tsx
+  s_580c97c57d3e55::t_f745b2e3829a2b 1-588
+frontend/src/features/runs/run-sections.tsx
+  s_580c97c57d3e55::t_348cf91343271c 1-194
+frontend/src/features/runs/step-time.tsx
+  s_580c97c57d3e55::t_024db13d8fa06b 1-35
+frontend/src/lib/theme.ts
+  s_580c97c57d3e55::t_a48864f6f3fca9 1-79
+frontend/src/lib/time.ts
+  s_580c97c57d3e55::t_3e92b7249e2253 1-141
+frontend/src/lib/title.ts
+  s_580c97c57d3e55::t_5a7fae4f4f109b 1-9
+frontend/src/main.tsx
+  s_580c97c57d3e55::t_8efa4e48533d35 1-18
+frontend/src/routeTree.gen.ts
+  s_580c97c57d3e55::t_7f8ba2bc50a715 1-113
+frontend/src/router.tsx
+  s_580c97c57d3e55::t_378d0da1edfc92 1-24
+frontend/src/routes/__root.tsx
+  s_580c97c57d3e55::t_4e76cea79b7a98 1-457
+frontend/src/routes/configs.$configId.tsx
+  s_580c97c57d3e55::t_5a851ad8574318 1-50
+frontend/src/routes/index.tsx
+  s_580c97c57d3e55::t_e33d70bdcae949 1-60
+frontend/src/routes/runs.$runId.tsx
+  s_580c97c57d3e55::t_6e7050e9a019bd 1-18
+frontend/src/routes/runs.index.tsx
+  s_580c97c57d3e55::t_f6eaf739e2ce3f 1-29
+frontend/src/styles.css
+  s_580c97c57d3e55::t_f1d13edbb83447 1-228
+frontend/tsconfig.json
+  s_580c97c57d3e55::t_4601ccb43d3340 1-29
+frontend/tsr.config.json
+  s_580c97c57d3e55::t_acce51d9f5ed69 1-3
+frontend/vendor/infrahub
+  s_580c97c57d3e55::t_b578848a6fffbc 1
+frontend/vite.config.ts
+  s_580c97c57d3e55::t_b83267b1349c94 1-31
+infrahub_sync/product_store/store.py
+  s_580c97c57d3e55::t_7fc3782345759e 161-162,164,331-336,2256-2257,2443,3790-3797
+infrahub_sync/service/service.py
+  s_580c97c57d3e55::t_39ab73a0b12f57 285-287
+tests/dev_stack/test_dev_tasks.py
+  s_580c97c57d3e55::t_81c2148ffd2c28 407,409-470
+tests/product_store/test_run_approval.py
+  s_580c97c57d3e55::t_61ab0cb95a62a6 21-22,411-435
+tests/service/test_approval_required.py
+  s_580c97c57d3e55::t_43144b27459c41 281-284
+tests/service/test_cancel_planned_run.py
+  s_580c97c57d3e55::t_d6243f8c8ed3cb 483-506
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f9e77f43a97109869e8c0907eb05919df1f143cb",
+  "prompts": {},
+  "sessions": {
+    "s_580c97c57d3e55": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0e445122-3bcc-4447-9b88-a81b96657701",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_b91a98d41025f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c1e68d9-bc95-47b9-bd6b-c5aa572517ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
