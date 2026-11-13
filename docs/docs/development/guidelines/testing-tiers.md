@@ -412,10 +412,12 @@ The suite sets up the same services as the `from-netbox` check, then runs these 
 1. It resets the preview stack, loads the pinned `demo` dataset into the local NetBox, starts
    the preview stack and loads the schema snapshot from `tests/data/nightly_schema/`.
 2. It creates the `v2-gate` branch in Infrahub.
-3. It installs `infrahub-sync==2.0.2` from PyPI in its own environment with `uvx`, together
+3. It installs `infrahub-sync==2.0.1` from PyPI in its own environment with `uvx`, together
    with `pynetbox==7.8.0`, and runs v2 `generate` and `sync` with
    `tests/data/v2_examples/netbox_to_infrahub/config.yml` on the `v2-gate` branch. v2 receives
    only `PATH`, `HOME`, `TMPDIR` and its NetBox and Infrahub variables.
+   The configuration is the `2.0.2` NetBox example. The suite runs the `2.0.1` program because
+   `2.0.2` is not published on PyPI.
 4. It converts the same `config.yml` with `configs convert --yes`, registers the package, and
    runs `plan` on the `v2-gate` branch. NetBox does not change between the v2 sync and the plan.
 5. When the plan holds updates, it reads each updated node on the `v2-gate` branch by its kind

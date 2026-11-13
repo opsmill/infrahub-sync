@@ -358,14 +358,14 @@ def destination(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> list[tup
 
 @pytest.mark.usefixtures("destination")
 def test_v2_gate_runs_v2_from_pypi_on_the_gate_branch(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-    """v2 2.0.2 from PyPI generates and syncs the example once, isolated from the repository's settings."""
+    """v2 2.0.1 from PyPI generates and syncs the example once, isolated from the repository's settings."""
     cli = FakeCli(SAMPLE.read_text(encoding="utf-8"))
     monkeypatch.setattr(runner, "run", cli)
     with pytest.raises(RuntimeError, match="create=1, update=1, delete=2"):
         runner.v2_gate(GATE_ENV, CONTEXT)
     commands = cli.commands
     assert commands[0] == ("uv", "run", "--no-sync", "infrahubctl", "branch", "create", "v2-gate")
-    v2 = ("uvx", "--from", "infrahub-sync==2.0.2", "--with", "pynetbox==7.8.0", "infrahub-sync")
+    v2 = ("uvx", "--from", "infrahub-sync==2.0.1", "--with", "pynetbox==7.8.0", "infrahub-sync")
     assert commands[1][:9] == (*v2, "generate", "--name", "from-netbox")
     assert commands[2][:9] == (*v2, "sync", "--name", "from-netbox")
     v2_env = cli.calls[2][1]
@@ -400,7 +400,7 @@ def test_v2_gate_plans_the_converted_package_and_keeps_the_result(
     assert diff[diff.index("--branch") + 1] == "v2-gate"
     assert cli.commands[-1][4:] == ("runs", "plan", "gate-1", "--detail")
     result = json.loads((runner.REPORTS / "gate-result.json").read_text(encoding="utf-8"))
-    assert result["v2_version"] == "2.0.2"
+    assert result["v2_version"] == "2.0.1"
     assert result["infrahub_version"] == "1.10.6"
     assert result["dataset"] == {"name": "demo", "commit": "commit", "sha256": "digest"}
     assert result["counts"] == {"create": 1, "update": 1, "delete": 2, "left_out": None, "problems": None}
