@@ -84,6 +84,22 @@ def test_unmapped_namespace_of_a_uniqueness_constraint_becomes_default() -> None
     assert [(entry.kind, entry.field, entry.skipped) for entry in filled] == [("IpamPrefix", "ip_namespace", None)]
 
 
+def test_constraint_with_another_unmapped_field_is_reported_incomplete() -> None:
+    snapshot = copy.deepcopy(_SNAPSHOT)
+    snapshot["IpamPrefix"]["uniqueness_constraints"] = [["prefix__value", "ip_namespace", "description__value"]]
+    snapshot["IpamPrefix"]["attributes"]["description"] = _TEXT
+    configuration = _configuration()
+    filled = fill_default_ip_namespaces(configuration, normalize_destination_schema(snapshot))
+    prefix = configuration["schema_mapping"][1]
+    assert {"name": "ip_namespace", "static": "default", "reference": "IpamNamespace"} in prefix["fields"]
+    assert prefix["identifiers"] == ["prefix", "vrf"]
+    assert [(entry.skipped, entry.unmapped) for entry in filled] == [(None, ("description",))]
+    note = conversion_live_schema._fill_note(filled[0]).text
+    assert "needs description mapped" in note
+    assert "IpamPrefix will not plan" in note
+    assert "identifiers are now" not in note
+
+
 def test_namespace_kind_that_is_not_one_concrete_kind_is_skipped() -> None:
     snapshot = copy.deepcopy(_SNAPSHOT)
     snapshot["BuiltinIPNamespace"]["used_by"] = ["IpamNamespace", "OtherNamespace"]

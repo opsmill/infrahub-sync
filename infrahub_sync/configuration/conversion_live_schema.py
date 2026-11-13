@@ -40,12 +40,18 @@ _DEFAULT_BRANCH = "main"
 
 @dataclass(frozen=True, slots=True)
 class FilledRelationship:
-    """One relationship the command mapped to the default IP namespace, or why it could not."""
+    """One relationship the command mapped to the default IP namespace, or why it could not.
+
+    ``unmapped`` names the uniqueness-constraint fields that are still not mapped after the
+    fill. When it is not empty, the identifiers were left as they were and the kind still
+    cannot plan.
+    """
 
     kind: str
     field: str
     identifiers: tuple[str, ...] = ()
     skipped: str | None = None
+    unmapped: tuple[str, ...] = ()
 
 
 def read_live_destination_schema(package: Mapping[str, Any]) -> DestinationSchemaSnapshot:
@@ -107,11 +113,17 @@ def fill_default_ip_namespaces(
                 continue
             fields.append({"name": relationship.name, "static": DEFAULT_IP_NAMESPACE, "reference": kind})
             mapped = {field.get("name") for field in fields}
-            if all(component in mapped for component in constraint):
+            unmapped = tuple(component for component in constraint if component not in mapped)
+            if not unmapped:
                 mapping["identifiers"] = list(constraint)
             _ensure_namespace_mapping(mappings, kind, name_attribute, before=mapping)
             filled.append(
-                FilledRelationship(mapping["name"], relationship.name, tuple(mapping.get("identifiers") or ()))
+                FilledRelationship(
+                    mapping["name"],
+                    relationship.name,
+                    tuple(mapping.get("identifiers") or ()),
+                    unmapped=unmapped,
+                )
             )
     return tuple(filled)
 
@@ -181,11 +193,16 @@ def _fill_note(entry: FilledRelationship) -> NoteEntry:
         return NoteEntry(
             f"{location}: not mapped and needed by the destination uniqueness constraint; not filled: {entry.skipped}"
         )
-    return NoteEntry(
+    filled = (
         f"{location}: not mapped in config.yml and needed by the destination uniqueness constraint; "
-        f"set to the {DEFAULT_IP_NAMESPACE!r} namespace, where v2 wrote it; identifiers are now "
-        f"{', '.join(entry.identifiers)}"
+        f"set to the {DEFAULT_IP_NAMESPACE!r} namespace, where v2 wrote it"
     )
+    if entry.unmapped:
+        return NoteEntry(
+            f"{filled}; the uniqueness constraint also needs {', '.join(entry.unmapped)} mapped, "
+            f"so {entry.kind} will not plan until it is; identifiers were not changed"
+        )
+    return NoteEntry(f"{filled}; identifiers are now {', '.join(entry.identifiers)}")
 
 
 def _check_filled(package: Mapping[str, Any]) -> tuple[RefusalEntry, ...]:
