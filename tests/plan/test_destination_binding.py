@@ -255,7 +255,7 @@ class _RecordingEngine:
         self.artifacts: list[object] = []
         self.last_applied_plan_action_counts = {"create": 1, "update": 2, "delete": 3}
 
-    def apply_plan(
+    def apply_plan(  # noqa: PLR0913 — mirrors the keyword arguments of `Potenda.apply_plan`
         self,
         *,
         ownership: object,
@@ -263,8 +263,10 @@ class _RecordingEngine:
         artifact: object = None,
         expected_checksum: str | None = None,
         confirm_left_out: bool = False,
+        progress: object = None,
+        start_after: int | None = None,
     ) -> ApplyRecord:
-        _ = config_version, expected_checksum, ownership, confirm_left_out
+        _ = config_version, expected_checksum, ownership, confirm_left_out, progress, start_after
         self.apply_calls += 1
         # Recorded, not ignored: the seam's read is what the engine must apply, so a delegation
         # that arrived without it would mean the engine reads the artifact a second time.

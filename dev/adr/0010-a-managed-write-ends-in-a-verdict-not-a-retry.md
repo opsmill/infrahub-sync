@@ -1,6 +1,10 @@
 # 10. A managed write holds one configuration guard and ends in a verdict, not a retry
 
-**Status**: Accepted
+**Status**: Accepted; partly superseded on 2026-11-13 by
+[ADR 0027](0027-an-interrupted-apply-resumes-from-its-saved-position.md) — an interrupted run
+whose writes are safe to repeat is no longer terminal: a `verify` is admitted on it, a resume
+continues it from its saved position, and a successful resume clears `reconciliation_required`.
+The rejected write-attempt alternative is reconsidered there. The body below is unchanged
 **Date**: 2026-09-03
 **Source**: PH-3 apply-guard unit 1B
 

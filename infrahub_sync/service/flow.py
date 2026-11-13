@@ -19,6 +19,7 @@ from typing import Any, Literal, NoReturn
 from uuid import UUID
 
 import httpx
+from infrahub_sdk.exceptions import Error as InfrahubSdkError
 from prefect import flow, get_run_logger
 from prefect.artifacts import create_markdown_artifact
 from prefect.client.orchestration import get_client
@@ -53,8 +54,21 @@ from infrahub_sync.orchestration.flow import (
     RunLoggerBridge,
 )
 from infrahub_sync.plan.config_version import resolve_config_version
+from infrahub_sync.plan.destination_check import (
+    DestinationNodeReader,
+    DestinationReadError,
+    reported_operations,
+    verification_report,
+)
 from infrahub_sync.plan.errors import PlanSchemaChangedError, PlanVerificationError, failed_checks
-from infrahub_sync.plan.models import ApplyRecord, CheckName, PlanManifest, PreWriteCheck, ordered_checks
+from infrahub_sync.plan.models import (
+    ApplyRecord,
+    CheckName,
+    PlanManifest,
+    PlannedOperation,
+    PreWriteCheck,
+    ordered_checks,
+)
 from infrahub_sync.plan.ownership import ProvenWriteOwnership, WriteDispatchTracker
 from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import SavedPlan, resolve_run_directory
@@ -72,6 +86,7 @@ from infrahub_sync.product_store import (
     ExecutionWriteback,
     ProductProjection,
     ProductRun,
+    run_apply_progress,
 )
 from infrahub_sync.runtime_schema import (
     STAGE_RUNTIME_MODEL_SCOPE,
@@ -82,6 +97,7 @@ from infrahub_sync.runtime_schema import (
 from infrahub_sync.utils import PlanApplier
 
 from .apply_guard import ApplyGuard, hold_apply_guard
+from .apply_progress import StoreApplyProgressObserver
 from .checkpoints import (
     CheckpointUnavailableError,
     publish_final_checkpoint,
@@ -89,11 +105,18 @@ from .checkpoints import (
     rehydrate_plan_checkpoint,
 )
 from .events import run_event, stage_result_type
-from .failure_cause import FAILURE_RECORD_KEYS, apply_progress, failure_record, operator_cause
+from .failure_cause import (
+    FAILURE_RECORD_KEYS,
+    apply_progress,
+    failure_record,
+    operator_cause,
+    resumable_next_action,
+)
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME, run_name
 from .read_progress import StoreSideReadObserver, record_waiting
+from .resume_view import uncertain_positions
 from .run_artifact import publish_run_artifact
 from .scratch import StageScratch, stage_scratch
 from .service import PLAN_ARTIFACT_ID, PLAN_REPORT_KEY
@@ -143,7 +166,15 @@ _WORKER_PAGE_SIZE = 200
 _NO_CONFIGURATION_DIRECTORY = ""
 # The stages the managed write scope covers. A read stage has nothing to be uncertain
 # about, so it keeps its own deliberate handling where the two differ.
-_WRITE_STAGES = ("apply", "sync")
+_WRITE_STAGES = ("apply", "sync", "resume")
+# The stages that apply a saved plan the run already holds, without planning: an apply, and a
+# resume of an interrupted one from the run's saved position (spec 022, FR-010). The resume of
+# an interrupted `sync` is the same stage: the `sync` saved its plan and checksum before its
+# apply part, so the resume never plans again or reads the source (FR-017, research R9).
+_SAVED_PLAN_WRITE_STAGES = ("apply", "resume")
+# Every stage the service worker runs. A `resume` applies the rest of an interrupted run's
+# saved plan (spec 022).
+ServiceStage = Literal["plan", "verify", "apply", "sync", "resume"]
 
 
 class RegisteredPlanVerificationError(PlanVerificationError, ValueError):
@@ -576,10 +607,12 @@ def _worker_execution_context(
         raise ValueError(_REGISTERED_VERSION_INVALID) from None
     if registered.package_checksum != package_checksum or package.checksum() != package_checksum:
         raise ValueError(_REGISTERED_CHECKSUM_MISMATCH)
-    # A saved-plan apply and a verify construct the destination only, so they resolve no
-    # source credential.
+    # A saved-plan apply, a resume and a verify construct the destination only, so they
+    # resolve no source credential (spec 022 FR-010: a resume never reads the source).
     instance = resolve_runtime_instance(
-        package, directory=_NO_CONFIGURATION_DIRECTORY, resolve_source_credentials=stage not in ("apply", "verify")
+        package,
+        directory=_NO_CONFIGURATION_DIRECTORY,
+        resolve_source_credentials=stage not in ("apply", "resume", "verify"),
     )
     instance._configuration_binding = binding
     scope = model_scope if model_scope is not None else STAGE_RUNTIME_MODEL_SCOPE.get(stage)
@@ -611,6 +644,7 @@ def _check_destination(  # pylint: disable=too-many-arguments
     config_directory: str | None,
     projection: ProductProjection,
     scratch: StageScratch,
+    report: dict[str, Any] | None = None,
 ) -> tuple[PreWriteCheck, ...]:
     """Run, against the destination, every pre-write check a saved-plan apply runs, and write nothing.
 
@@ -619,6 +653,10 @@ def _check_destination(  # pylint: disable=too-many-arguments
     destination adapter, then `PlanApplier.check_plan` — the destination binding and the
     engine's gate. No write guard is taken: nothing here writes, and the result describes
     the destination as it was when it was read. Returns every check that passed, in order.
+
+    When every check passed and `report` is given, the destination report of an interrupted
+    run is added to it (`_destination_report`), from the same destination adapter and the
+    same read of the plan the checks used.
     """
     manifest = _verify_registered_apply(
         instance=instance,
@@ -639,7 +677,54 @@ def _check_destination(  # pylint: disable=too-many-arguments
     _require_planned_schema(run_id=run_id, manifest=manifest, models=destination_instance._runtime_models)
     applier = PlanApplier.open_existing(destination_instance, run_id=run_id, branch=branch, base_directory=scratch.root)
     passed = applier.check_plan()
+    if report is not None:
+        report.update(
+            _destination_report(
+                projection, run_id, operations=passed.loaded.operations, destination=applier.engine.destination
+            )
+        )
     return ordered_checks((*_FILE_CHECKS, "destination_schema", *passed.checks))
+
+
+def _destination_report(
+    projection: ProductProjection,
+    run_id: str,
+    *,
+    operations: Sequence[PlannedOperation],
+    destination: object,
+) -> dict[str, Any]:
+    """The per-operation report of an interrupted run's `verify` (spec 022 FR-005 to FR-008).
+
+    Empty unless the run requires reconciliation and is not cancelled. The running `verify`
+    itself is unfinished, so the store's resumable-run rule, which requires every execution
+    to be finished, cannot be asked here; the store admitted this `verify` on that rule.
+
+    The uncertain window is the one the run's progress view shows (`uncertain_positions`).
+    Its creates and updates are read from the destination, at most `VERIFY_REPORT_LIMIT` of
+    them, and each is reported as `matches`, `differs` or `missing`. Nothing is written, and
+    the report holds no value. A failed read fails the `verify` with a fixed message.
+    """
+    stored = projection.lookup_run(run_id).value
+    if (
+        stored is None
+        or not stored.reconciliation_required
+        or stored.phase == "cancelled"
+        or not isinstance(destination, DestinationNodeReader)
+    ):
+        return {}
+    window = uncertain_positions(stored, [(operation.operation_id, operation.action) for operation in operations])
+    reported, truncated = reported_operations(operations, window)
+    try:
+        reads = destination.read_planned_nodes(reported)
+    except (InfrahubSdkError, httpx.HTTPError, OSError) as exc:
+        # The message is fixed: the original's text can carry a destination address, a header
+        # or a credential. The original stays the cause, so the failure record classifies it
+        # (an unreachable destination, a refused token) by its class, never by its text.
+        raise DestinationReadError from exc
+    result: dict[str, Any] = {"operations": verification_report(reported, reads)}
+    if truncated:
+        result["operations_truncated"] = truncated
+    return result
 
 
 def _configuration_write_guard(configuration_id: str) -> AbstractContextManager[ApplyGuard]:
@@ -663,9 +748,23 @@ def _require_registered_write(binding: tuple[str, int, str] | None) -> str:
     return binding[0]
 
 
+def resume_start_after(projection: ProductProjection, run_id: str) -> int | None:
+    """The position a resume starts after: the run's highest saved progress marker.
+
+    `None` when no write execution of the run saved a marker, so the resume applies the plan
+    from its first operation (spec 022, critique E2, research R6).
+    """
+    stored = projection.lookup_run(run_id).value
+    if stored is None:
+        msg = f"API-created Sync run {run_id!r} is unavailable"
+        raise RuntimeError(msg)
+    marker = run_apply_progress(stored)
+    return None if marker is None else marker.position
+
+
 def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-statements
     run_id: str,
-    stage: Literal["plan", "verify", "apply", "sync"],
+    stage: ServiceStage,
     config_id: str | None,
     registry_version: int | None,
     package_checksum: str | None,
@@ -686,7 +785,9 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     A `plan` or `sync` stage records both sides as `waiting` as soon as it starts, before the
     live schema read and before a `sync` waits for its write guard, so a stage that fails
     before either read returns both sides as `not_started`. It then gives the engine an
-    observer that stores each side's read on the execution `flow_run_id`.
+    observer that stores each side's read on the execution `flow_run_id`. An `apply` or `sync`
+    stage gives the engine an observer that saves its progress marker on the same execution
+    (spec 022, research R3).
 
     A `sync` whose plan leaves out records stops after the plan is saved, before any write,
     and gives back its write admission (spec 020 FR-012, research R11): see `_left_out_stop`.
@@ -694,15 +795,15 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     if stage in ("plan", "sync"):
         record_waiting(projection, run_id, flow_run_id)
     parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
-    if stage in ("apply", "sync"):
+    if stage in _WRITE_STAGES:
         if not confirm_writes:
             msg = f"confirm_writes=true is required for service stage={stage}"
             raise ValueError(msg)
         # Before anything is resolved: the guard serializes writers per registered
         # configuration, so a run that names none cannot be serialized against them.
         _require_registered_write(parameter_binding)
-    if stage == "apply" and expected_checksum is None:
-        msg = "expected_checksum is required for service stage=apply"
+    if stage in _SAVED_PLAN_WRITE_STAGES and expected_checksum is None:
+        msg = f"expected_checksum is required for service stage={stage}"
         raise ValueError(msg)
     # A write defers its live schema read until the guard is held, so no destination
     # snapshot it validates against can predate a contended wait.
@@ -713,7 +814,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         projection=projection,
         run_branch=branch,
         stage=stage,
-        build_models=stage not in ("apply", "sync"),
+        build_models=stage not in _WRITE_STAGES,
     )
 
     secrets[:] = collect_secret_values(instance)
@@ -759,6 +860,8 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             _require_verified=True,
         )
         assert isinstance(saved, SavedPlan)
+        # The per-operation report of an interrupted run, filled only after every check passed.
+        destination_report: dict[str, Any] = {}
         if parameter_binding is None:
             # A legacy run cannot be applied by the service, so it has no destination checks
             # to run: it reports its file checks and says the destination was not checked.
@@ -773,6 +876,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 config_directory=config_directory,
                 projection=projection,
                 scratch=scratch,
+                report=destination_report,
             )
             destination_checked = True
         result = {
@@ -784,9 +888,13 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             "verification_notes": list(saved.verification_notes),
             "checks": list(checks),
             "destination_checked": destination_checked,
+            **destination_report,
         }
         writeback = ExecutionMergeWriteback(results={"verification": result})
-    elif stage == "apply":
+    elif stage in _SAVED_PLAN_WRITE_STAGES:
+        # An apply, or a resume of an interrupted `apply` or `sync`: the same saved plan, the
+        # same checks in the same order, and never the plan stage or the source (spec 022
+        # FR-010, FR-011, FR-017).
         run_directory = scratch.run_directory(instance.name, run_id)
         # The plan this apply was approved for, resolved and validated whole before any
         # adapter factory exists. A checkpoint that is absent, oversized, corrupt,
@@ -815,6 +923,9 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 stage=stage,
             )
             _require_planned_schema(run_id=run_id, manifest=manifest, models=instance._runtime_models)
+            # Read under the guard, so no other write of this configuration moves it; the same
+            # value is where the engine starts and what the resume's markers record (R6).
+            start_after = resume_start_after(projection, run_id) if stage == "resume" else None
             applied = execute_run(
                 instance,
                 operation="apply",
@@ -827,15 +938,28 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 record_applied=tracker.record_applied,
                 base_directory=scratch.root,
                 _lock_already_held=True,
+                _apply_progress=StoreApplyProgressObserver(
+                    projection, run_id, flow_run_id, total=manifest.operations_count, start_after=start_after
+                ),
+                _start_after=start_after,
             )
         # Outside the guard, so the release this stage reports is already confirmed, and
         # before the product commit, so the run's evidence is durable before its verdict.
         assert isinstance(applied, RunResult)
         publish_final_checkpoint(projection, run_id, run_directory=run_directory, secrets=secrets)
         result = _result_data(applied)
+        outcome = applied.status
+        if stage == "resume":
+            # A resume that succeeds leaves the whole saved plan applied, so the run's outcome is
+            # `applied` even when nothing was left to write after the saved position, and the
+            # engine's counts, which become the run's summary, are the whole plan's, as for an
+            # apply that was never interrupted. Each resume's own count is derived from its
+            # marker in the run's `resumes` (spec 022 FR-016, research R6).
+            outcome = "applied"
+            result = {**result, "operation": "resume", "outcome": outcome, "start_after": start_after}
         writeback = ExecutionFinishWriteback(
             phase="applied",
-            outcome=applied.status,
+            outcome=outcome,
             finished_at=datetime.now(timezone.utc),
             summary={"sync_name": sync_name, **{key: applied.summary[key] for key in ACTION_KEYS}},
             results=result,
@@ -907,6 +1031,9 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 base_directory=scratch.root,
                 _lock_already_held=True,
                 _run_file_mode="sync",
+                _apply_progress=StoreApplyProgressObserver(
+                    projection, run_id, flow_run_id, total=manifest.operations_count
+                ),
             )
             assert isinstance(applied, RunResult)
         # Same order the apply stage publishes in, for the same reason.
@@ -972,12 +1099,13 @@ def _left_out_stop(
 
 
 def _failure_evidence(
-    stage: Literal["plan", "verify", "apply", "sync"],
+    stage: ServiceStage,
     exc: Exception,
     *,
     outcome: str,
     record: ApplyRecord | None,
     secrets: Sequence[str],
+    resumable: bool = False,
 ) -> dict[str, Any]:
     """Describe one failure, with whatever is known about what it wrote.
 
@@ -990,6 +1118,9 @@ def _failure_evidence(
     the engine returned — a sidecar write, the guard's release, the product commit — carries
     none, and the scope's record is what that one wrote. The engine's record also holds the
     plan's operation count and the failed operation's action, kind and identity.
+
+    `resumable` is true when the run's write stopped part-way and the run keeps its saved plan
+    (spec 022); a template's next action then names `verify` and `runs resume`.
     """
     evidence: dict[str, Any] = {
         "stage": stage,
@@ -1012,8 +1143,10 @@ def _failure_evidence(
     if isinstance(exc, UnsupportedSyncStoreError):
         evidence.update(reason=UNSUPPORTED_STORE_REASON, message=UNSUPPORTED_STORE_MESSAGE)
     evidence.update(operator_cause(exc, secrets))
-    evidence.update(_structured_cause(stage, exc, secrets, evidence))
-    if stage in ("verify", "apply"):
+    if resumable:
+        evidence.update(resumable_next_action(exc, secrets))
+    evidence.update(_structured_cause(stage, exc, secrets, evidence, resumable=resumable))
+    if stage in ("verify", *_SAVED_PLAN_WRITE_STAGES):
         # The pre-write check a verify or an apply failed on, by name, so an operator reads
         # which check refuses the apply, and both stages name the same one (SC-004). Both
         # rehydrate the plan checkpoint first. Names from this repository's own vocabulary,
@@ -1021,7 +1154,11 @@ def _failure_evidence(
         named = ("checkpoint",) if isinstance(exc, CheckpointUnavailableError) else failed_checks(exc)
         if named:
             evidence["failed_checks"] = list(named)
-    if stage == "apply" and isinstance(exc, RegisteredPlanVerificationError) and exc.recovery_action is not None:
+    if (
+        stage in _SAVED_PLAN_WRITE_STAGES
+        and isinstance(exc, RegisteredPlanVerificationError)
+        and exc.recovery_action is not None
+    ):
         evidence["recovery_action"] = exc.recovery_action
     written = effective_apply_record(exc, record)
     if written is not None:
@@ -1031,7 +1168,7 @@ def _failure_evidence(
 
 
 def _structured_cause(
-    stage: str, exc: Exception, secrets: Sequence[str], recorded: Mapping[str, Any]
+    stage: str, exc: Exception, secrets: Sequence[str], recorded: Mapping[str, Any], *, resumable: bool = False
 ) -> dict[str, Any]:
     """The `failure_record` fields, keeping the cause and next action `operator_cause` recorded.
 
@@ -1040,7 +1177,7 @@ def _structured_cause(
     error here records `internal_error`.
     """
     try:
-        fields = failure_record(stage, exc, secrets=secrets)
+        fields = failure_record(stage, exc, secrets=secrets, resumable=resumable)
     except Exception as unexpected:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         logger.warning("failure record fields could not be built (%s)", type(unexpected).__name__)
         fields = dict.fromkeys(FAILURE_RECORD_KEYS)
@@ -1104,7 +1241,7 @@ def result_next_action(result: dict[str, Any]) -> str | None:
 
 def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     run_id: str,
-    stage: Literal["plan", "verify", "apply", "sync"],
+    stage: ServiceStage,
     exc: Exception,
     run_logger: RunLogger,
     secrets: Sequence[str],
@@ -1144,7 +1281,17 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
         else:
             ambiguous = dispatch_started
         terminal_state, terminal_outcome = ("interrupted", "ambiguous") if ambiguous else ("failed", "failed")
-        evidence = _failure_evidence(stage, exc, outcome=terminal_outcome, record=record, secrets=secrets)
+        # The run keeps its saved plan when this failure leaves it interrupted, or when it was
+        # already interrupted, as for a failed `verify` or a resume that failed before its first
+        # write: the next step is `verify`, then `runs resume` (spec 022), not a new plan.
+        resumable = stored.phase != "cancelled" and (ambiguous or stored.reconciliation_required)
+        evidence = _failure_evidence(
+            stage, exc, outcome=terminal_outcome, record=record, secrets=secrets, resumable=resumable
+        )
+        # The execution that wrote the record: results are merged, so a later execution of the
+        # same purpose that never records a failure leaves this record in place (spec 022,
+        # research R11). The progress view uses a record only when it names the latest write.
+        evidence["flow_run_id"] = flow_run_id
         results: dict[str, Any] = {f"{stage}_failure": evidence}
         if stage == "verify":
             writeback: ExecutionWriteback = ExecutionMergeWriteback(results=results)
@@ -1303,7 +1450,7 @@ def _service_run_name() -> str:
 @flow(name=SERVICE_FLOW_NAME, flow_run_name=_service_run_name)
 def service_sync_run(  # pylint: disable=too-many-positional-arguments
     run_id: str,
-    stage: Literal["plan", "verify", "apply", "sync"],
+    stage: ServiceStage,
     config_id: str | None = None,
     registry_version: int | None = None,
     package_checksum: str | None = None,

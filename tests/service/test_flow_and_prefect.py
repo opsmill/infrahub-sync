@@ -55,6 +55,7 @@ from infrahub_sync.product_store import (
 )
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.deploy import CATALOGUE
+from infrahub_sync.service.failure_cause import RESUMABLE_WRITE_NEXT_ACTION
 from infrahub_sync.service.flow import service_sync_run
 from infrahub_sync.service.orchestration import (
     SERVICE_DEFINITION,
@@ -70,6 +71,10 @@ if TYPE_CHECKING:
     from prefect.client.schemas.actions import DeploymentUpdate
 
     from infrahub_sync.configuration import ConfigurationPackage
+
+# What a faked `_verify_registered_apply` returns: the stage reads only the plan's operation
+# count before the faked apply (spec 022, the apply progress observer's `total`).
+_UNCHECKED_MANIFEST = SimpleNamespace(operations_count=1)
 
 
 @pytest.fixture
@@ -570,7 +575,7 @@ def test_service_apply_failure_retains_partial_write_evidence(
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
-    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: _UNCHECKED_MANIFEST)
     monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     failure = OperationApplyFailedError("destination rejected operation", apply_record=partial)
@@ -602,8 +607,10 @@ def test_service_apply_failure_retains_partial_write_evidence(
         "outcome": "ambiguous",
         "error_type": "OperationApplyFailedError",
         "cause_type": None,
-        # The class's own next action, never the destination's message.
-        "next_action": failure.next_action,
+        # A fixed next action, never the destination's message. The run is interrupted and keeps
+        # its saved plan, so the worker names `verify` and `runs resume` instead of the class's
+        # own advice, a new plan (spec 022).
+        "next_action": RESUMABLE_WRITE_NEXT_ACTION,
         **partial.as_summary_keys(),
         # Spec 020 ADR 0021: an apply failure with no known cause is an internal error at the
         # destination, with no cause text.
@@ -615,6 +622,8 @@ def test_service_apply_failure_retains_partial_write_evidence(
         "infrahub_message": None,
         "record": None,
         "field": None,
+        # The execution that wrote the record (spec 022, research R11).
+        "flow_run_id": stored.prefect_executions[0].flow_run_id,
     }
     assert stored.prefect_executions[0].terminal_state == "interrupted"
 
@@ -663,7 +672,7 @@ def test_success_writeback_persistence_failure_is_not_recorded_as_business_failu
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
-    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: _UNCHECKED_MANIFEST)
     monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
     monkeypatch.setattr(service_flow, "_plan", lambda *_args, **_kwargs: saved)
     commits: list[str] = []
@@ -701,7 +710,7 @@ def test_success_writeback_commit_error_preserves_reread_committed_result(
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
-    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: _UNCHECKED_MANIFEST)
     monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
     monkeypatch.setattr(service_flow, "_plan", lambda *_args, **_kwargs: saved)
     commit = projection.commit_claimed_execution
@@ -736,7 +745,7 @@ def test_service_confirmed_sync_retains_the_semantic_sync_operation(
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
-    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: _UNCHECKED_MANIFEST)
     monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     def core(_instance: object, *, operation: str, **_kwargs: object) -> SavedPlan | RunResult:
@@ -782,7 +791,7 @@ def test_service_plan_worker_updates_the_api_created_run_and_publishes_review(
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
-    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: _UNCHECKED_MANIFEST)
     monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     def plan(_instance, *, run_id: str, branch: str | None, composed_sync: bool, **_kwargs: object):  # noqa: ARG001
@@ -866,7 +875,7 @@ def test_confirmed_service_sync_calls_plan_verify_apply_in_order_on_one_run(
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
-    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: _UNCHECKED_MANIFEST)
     monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     def plan(_instance, *, run_id: str, branch: str | None, composed_sync: bool, **_kwargs: object):  # noqa: ARG001
@@ -1207,7 +1216,7 @@ def test_a_wrapped_apply_failure_records_the_class_it_was_raised_from(
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
-    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: _UNCHECKED_MANIFEST)
     monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     def fail_apply(*_args: object, **_kwargs: object) -> NoReturn:
@@ -1254,7 +1263,7 @@ def test_the_recorded_cause_holds_infrahubs_message_and_no_other_error_text(
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
-    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: _UNCHECKED_MANIFEST)
     monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     def fail_apply(*_args: object, **_kwargs: object) -> NoReturn:
@@ -1307,7 +1316,7 @@ def _apply_failure_outcome(
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
-    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: _UNCHECKED_MANIFEST)
     monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     def fail_apply(*_args: object, **_kwargs: object) -> NoReturn:
@@ -1518,7 +1527,7 @@ def _record_apply_failure(  # noqa: PLR0913 - the stage inputs, its secrets and 
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: secrets)
-    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: _UNCHECKED_MANIFEST)
     monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     def fail_apply(*_args: object, **_kwargs: object) -> NoReturn:

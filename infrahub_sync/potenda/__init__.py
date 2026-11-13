@@ -6,6 +6,7 @@ import re
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
+from operator import methodcaller
 from typing import TYPE_CHECKING, Any, cast
 
 # The one costly module-level import: apply's exception boundary must name the SDK's errors.
@@ -43,6 +44,7 @@ from infrahub_sync.plan.write_surface import (
     resolve_destination_lineage,
     resolve_destination_metadata_read,
 )
+from infrahub_sync.potenda.apply_progress import ApplyProgressLostError
 from infrahub_sync.potenda.read_progress import SideReadReport
 
 # Justified once here rather than per site. Nearly every `infrahub_sync`
@@ -121,7 +123,7 @@ def _side_adapter_name(config: SyncInstance | None, role: Side, adapter: Adapter
 
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from diffsync import Adapter, DiffSyncModel
@@ -133,6 +135,7 @@ if TYPE_CHECKING:
     from infrahub_sync.plan.models import PlanManifest, PlannedOperation, PreWriteCheck, VerificationFailure
     from infrahub_sync.plan.ownership import WriteOwnership
     from infrahub_sync.plan.reader import LoadedPlan, RawPlanArtifact
+    from infrahub_sync.potenda.apply_progress import ApplyProgressObserver
     from infrahub_sync.potenda.read_progress import Side, SideReadObserver
 
 
@@ -312,6 +315,24 @@ def _failure_reach_and_remedy(exc: Exception, *, record: ApplyRecord) -> tuple[s
         "this operation may itself have written part of its change before failing — re-applying the plan converges it",
         None,
     )
+
+
+def _report_progress(progress: ApplyProgressObserver | None, report: Callable[[ApplyProgressObserver], object]) -> bool:
+    """Make one call on the apply's progress observer, and return its answer as a `bool`.
+
+    An observer that raises never changes the apply's result, as for spec 018's read observer:
+    its failure is logged once, by error class only, and the apply continues — so a failure
+    in `stopped` cannot replace the error that stopped the apply, nor drop the partial record
+    that error carries. A `should_stop` that raises counts as "do not stop". `None` reports
+    nothing and answers false.
+    """
+    if progress is None:
+        return False
+    try:
+        return bool(report(progress))
+    except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught  # an observer never fails an apply
+        logger.warning("Apply: the progress observer failed (%s)", type(exc).__name__)
+        return False
 
 
 def _operational_failure_summary(exc: Exception) -> str:
@@ -1022,7 +1043,7 @@ class Potenda:
             raise ValueError(msg)
         return validate_config_version(supplied)
 
-    def apply_plan(  # pylint: disable=too-many-statements  # one sequential gate-then-write flow; splitting would hide the order
+    def apply_plan(  # pylint: disable=too-many-statements,too-many-branches  # one sequential gate-then-write flow; splitting would hide the order
         self,
         *,
         ownership: WriteOwnership,
@@ -1030,6 +1051,8 @@ class Potenda:
         artifact: RawPlanArtifact | None = None,
         expected_checksum: str | None = None,
         confirm_left_out: bool = False,
+        progress: ApplyProgressObserver | None = None,
+        start_after: int | None = None,
     ) -> ApplyRecord:
         """Apply this run's saved plan artifact to the destination, and return what it did.
 
@@ -1075,6 +1098,16 @@ class Potenda:
             confirm_left_out: The person confirmed that they reviewed the records the plan
                 leaves out. Required when the plan's report leaves out any record, and
                 ignored otherwise (spec 020 FR-010, FR-011).
+            progress: Receives each committed operation, each finished kind and the stop of
+                this apply, and is asked before every dispatch whether the apply must stop
+                (spec 022, research R3, R4). `committed` is called only after the destination
+                call returned and the operation was recorded as applied, so a saved position
+                never runs ahead of a commit (FR-002). `None` reports nothing.
+            start_after: For a resume, the position in stored order of the last operation an
+                earlier execution committed. Operations at that position or before it are
+                neither dispatched nor recorded by this apply, recorded deletes included;
+                every pre-write check still runs on the whole plan first (research R6).
+                `None` applies the plan from its first operation.
 
         Returns:
             The `ApplyRecord`: the ordered applied identifiers (whose final element is
@@ -1082,7 +1115,8 @@ class Potenda:
             count. A completed apply records `failed_operation` as `None`.
 
         Raises:
-            ValueError: this run has no `run_dir`, or no configuration version can be formed.
+            ValueError: this run has no `run_dir`, no configuration version can be formed, or
+                `start_after` is not a position in the plan; nothing was written.
             PlanFormatV1Error: this run holds no `plan/` directory (FR-019).
             PlanVerificationError: a pre-apply check failed, or the artifact does not hash to
                 `expected_checksum`; nothing was written.
@@ -1092,6 +1126,8 @@ class Potenda:
             PlanFormatApplyUnsupportedError: the plan's format is 2 or 3; nothing was written.
             LeftOutConfirmationRequiredError: the plan leaves out records and
                 `confirm_left_out` is false; nothing was written.
+            ApplyProgressLostError: `progress.should_stop()` returned true before a dispatch,
+                carrying the partial record; the operation it stopped at was not written.
             OperationApplyFailedError: an operation failed inside the operational boundary
                 (`OPERATIONAL_APPLY_FAILURES`), carrying the partial record.
             ApplyRecordInvariantError: a completed apply's record does not account for every
@@ -1134,79 +1170,130 @@ class Potenda:
         # check. The Sync API checks this too, and a direct caller of this method cannot skip
         # it; refused before the first dispatch, so nothing is written.
         _require_left_out_confirmation(loaded.manifest, run_id=run_id, confirm_left_out=confirm_left_out)
-        self._last_applied_plan_action_counts = {
-            action: sum(operation.action == action for operation in loaded.operations) for action in ACTIONS
-        }
 
         # One memo for the whole apply, discarded with it — the same lifetime as the run. The
         # destination supplies it, so the engine builds a resolver for a destination it does
         # not have to name (AD086).
         peers = destination.new_peer_resolver()
 
+        operations = loaded.operations
+        # Read from the plan for the failure record of a stopped apply (spec 020 FR-014).
+        operations_total = len(operations)
+        if start_after is not None and not 0 <= start_after < operations_total:
+            msg = (
+                f"Cannot resume the apply of run {run_id!r} after position {start_after}: the plan holds "
+                f"{operations_total} operation(s), at positions 0 to {operations_total - 1}."
+            )
+            raise ValueError(msg)
+        # A resume starts after the last operation an earlier execution committed; the
+        # operations before it belong to that execution's record, not to this one (R6).
+        first = 0 if start_after is None else start_after + 1
+        # The run's counts, not this execution's: an apply that returns has accounted for the
+        # whole plan, the operations before `start_after` through the executions that committed
+        # them, so a resume reports the counts an apply that was never interrupted reports (R6).
+        self._last_applied_plan_action_counts = {
+            action: sum(operation.action == action for operation in operations) for action in ACTIONS
+        }
+        # The creates and updates the run committed before this execution: every one at or
+        # before `start_after`, because a saved position never points past an operation that was
+        # not committed (FR-002). A recorded delete is never written, so it is not counted. An
+        # earlier execution that stopped may have written more after its marker; this execution
+        # writes those again and counts them once, as its own.
+        written_before = sum(operation.action != "delete" for operation in operations[:first])
+
         applied: list[str] = []
         skipped_deletes: list[str] = []
-        # Read from the plan for the failure record of a stopped apply (spec 020 FR-014).
-        operations_total = len(loaded.operations)
-        for operation in loaded.operations:
+        for index in range(first, operations_total):
+            operation = operations[index]
             if operation.action == "delete":
                 skipped_deletes.append(operation.operation_id)
-                continue
-            try:
-                ownership.before_operation()
-            except BaseException as exc:
-                # A lost hold dispatched nothing, so this operation is named in neither
-                # set and is **not** recorded as possibly half-written.
-                # The suppression is not masking a defect — no annotation can declare an
-                # attribute on an exception type this module does not own.
-                exc.apply_record = ApplyRecord(  # ty: ignore[unresolved-attribute]
-                    applied_operations=tuple(applied),
-                    skipped_delete_operations=tuple(skipped_deletes),
-                    operations_total=operations_total,
-                )
-                raise
-            try:
-                destination.apply_planned_operation(operation=operation, peers=peers)
-            except BaseException as exc:
-                # The partial record travels on the error so the CLI can merge what was
-                # written before it records `failed` (AD069). Re-raising bare would lose it.
-                partial = ApplyRecord(
-                    applied_operations=tuple(applied),
-                    skipped_delete_operations=tuple(skipped_deletes),
-                    # Named on the record because a mutation can commit remotely before its
-                    # response or transport fails, so this operation may have changed the
-                    # destination while belonging to neither recorded set.
-                    failed_operation=operation.operation_id,
-                    # Carried up from the refusal itself: only the write surface knows
-                    # whether it got as far as a mutation. `None` for anything that does not
-                    # say, which is the unchanged "may have written" reading (S6).
-                    failed_operation_wrote=getattr(exc, "wrote", None),
-                    operations_total=operations_total,
-                    failed_operation_detail={
-                        "action": operation.action,
-                        "kind": operation.kind,
-                        "identity": dict(operation.identity),
-                    },
-                )
-                if not isinstance(exc, OPERATIONAL_APPLY_FAILURES):
-                    # An interrupt or a defect: it propagates as itself, with its own
-                    # traceback, carrying the record so what was written stays readable from the
-                    # run (AD062). See `OPERATIONAL_APPLY_FAILURES` for the boundary.
+            else:
+                # Asked before the ownership proof, so the proof stays immediately before the
+                # dispatch it authorizes. Progress that can no longer be saved stops the next
+                # write rather than letting the apply run on without a resumable position (R4).
+                if _report_progress(progress, methodcaller("should_stop")):
+                    _report_progress(progress, methodcaller("stopped", index))
+                    msg = (
+                        f"The apply of run {run_id!r} stopped before operation {operation.operation_id!r} "
+                        f"because its progress could not be saved. The {len(applied)} operation(s) applied "
+                        "before it stay written, and the operation it stopped at was not written."
+                    )
+                    raise ApplyProgressLostError(
+                        msg,
+                        apply_record=ApplyRecord(
+                            applied_operations=tuple(applied),
+                            skipped_delete_operations=tuple(skipped_deletes),
+                            operations_total=operations_total,
+                            operations_written=written_before + len(applied),
+                        ),
+                    )
+                try:
+                    ownership.before_operation()
+                except BaseException as exc:
+                    # A lost hold dispatched nothing, so this operation is named in neither
+                    # set and is **not** recorded as possibly half-written.
                     # The suppression is not masking a defect — no annotation can declare an
                     # attribute on an exception type this module does not own.
-                    exc.apply_record = partial  # ty: ignore[unresolved-attribute]
+                    exc.apply_record = ApplyRecord(  # ty: ignore[unresolved-attribute]
+                        applied_operations=tuple(applied),
+                        skipped_delete_operations=tuple(skipped_deletes),
+                        operations_total=operations_total,
+                        operations_written=written_before + len(applied),
+                    )
+                    _report_progress(progress, methodcaller("stopped", index))
                     raise
-                reach, next_action = _failure_reach_and_remedy(exc, record=partial)
-                msg = (
-                    f"Applying operation {operation.operation_id!r} of run {run_id!r} to the destination "
-                    f"failed with {_operational_failure_summary(exc)}. The {len(applied)} operation(s) "
-                    f"applied before it stay written, and {reach}."
-                )
-                raise OperationApplyFailedError(msg, apply_record=partial, next_action=next_action) from exc
-            applied.append(operation.operation_id)
+                try:
+                    destination.apply_planned_operation(operation=operation, peers=peers)
+                except BaseException as exc:
+                    # The partial record travels on the error so the CLI can merge what was
+                    # written before it records `failed` (AD069). Re-raising bare would lose it.
+                    partial = ApplyRecord(
+                        applied_operations=tuple(applied),
+                        skipped_delete_operations=tuple(skipped_deletes),
+                        # Named on the record because a mutation can commit remotely before its
+                        # response or transport fails, so this operation may have changed the
+                        # destination while belonging to neither recorded set.
+                        failed_operation=operation.operation_id,
+                        # Carried up from the refusal itself: only the write surface knows
+                        # whether it got as far as a mutation. `None` for anything that does not
+                        # say, which is the unchanged "may have written" reading (S6).
+                        failed_operation_wrote=getattr(exc, "wrote", None),
+                        operations_total=operations_total,
+                        operations_written=written_before + len(applied),
+                        failed_operation_detail={
+                            "action": operation.action,
+                            "kind": operation.kind,
+                            "identity": dict(operation.identity),
+                        },
+                    )
+                    # Never `committed`: the call raised, so this operation is not known to be
+                    # written, and a saved position must not claim it (FR-002).
+                    _report_progress(progress, methodcaller("stopped", index))
+                    if not isinstance(exc, OPERATIONAL_APPLY_FAILURES):
+                        # An interrupt or a defect: it propagates as itself, with its own
+                        # traceback, carrying the record so what was written stays readable from
+                        # the run (AD062). See `OPERATIONAL_APPLY_FAILURES` for the boundary.
+                        # The suppression is not masking a defect — no annotation can declare an
+                        # attribute on an exception type this module does not own.
+                        exc.apply_record = partial  # ty: ignore[unresolved-attribute]
+                        raise
+                    reach, next_action = _failure_reach_and_remedy(exc, record=partial)
+                    msg = (
+                        f"Applying operation {operation.operation_id!r} of run {run_id!r} to the destination "
+                        f"failed with {_operational_failure_summary(exc)}. The {len(applied)} operation(s) "
+                        f"applied before it stay written, and {reach}."
+                    )
+                    raise OperationApplyFailedError(msg, apply_record=partial, next_action=next_action) from exc
+                applied.append(operation.operation_id)
+                # Only now, after the destination call returned and the record holds it (FR-002).
+                _report_progress(progress, methodcaller("committed", index, operation))
+            if index + 1 == operations_total or operations[index + 1].kind != operation.kind:
+                _report_progress(progress, methodcaller("kind_finished", index))
 
         completed = ApplyRecord(
             applied_operations=tuple(applied),
             skipped_delete_operations=tuple(skipped_deletes),
+            operations_written=written_before + len(applied),
         )
 
         # The closing proof, before anything may record this apply as complete: a hold
@@ -1222,13 +1309,16 @@ class Potenda:
         # clauses by construction, so checking unconditionally would replace a clear
         # destination-rejection message with an invariant error, and checking inside the
         # loop would fail on the first iteration.
-        planned_ids = {operation.operation_id for operation in loaded.operations}
+        # A resume accounts only for the operations after `start_after`; the ones before it are
+        # in the record of the execution that reached them (R6).
+        planned_ids = {operation.operation_id for operation in operations[first:]}
         recorded_ids = set(applied) | set(skipped_deletes)
-        if recorded_ids != planned_ids or len(applied) + len(skipped_deletes) != loaded.manifest.operations_count:
+        expected_count = loaded.manifest.operations_count - first
+        if recorded_ids != planned_ids or len(applied) + len(skipped_deletes) != expected_count:
             msg = (
                 f"The apply of run {run_id!r} completed but its record does not account for the plan: "
                 f"{len(applied)} applied and {len(skipped_deletes)} delete(s) skipped against "
-                f"{loaded.manifest.operations_count} recorded operation(s); "
+                f"{expected_count} recorded operation(s) to apply; "
                 f"{sorted(planned_ids - recorded_ids)} are in neither set and "
                 f"{sorted(recorded_ids - planned_ids)} are in no plan."
             )

@@ -51,6 +51,7 @@ from .models import (
     PlanResource,
     PrincipalResource,
     ResultsResource,
+    ResumeRunRequest,
     RunLogPage,
     RunPage,
     RunResource,
@@ -499,6 +500,17 @@ def create_app(
         key: Annotated[str, Depends(idempotency_key)],
     ) -> JSONResponse:
         status, content = await service.apply_run(run_id, body, principal, key)
+        return JSONResponse(status_code=status, content=content)
+
+    @application.post("/runs/{run_id}/resume", status_code=202, response_model=RunResource, responses=ERROR_RESPONSES)
+    async def resume_run(
+        run_id: str,
+        body: ResumeRunRequest,
+        principal: Annotated[Principal, Depends(authenticate)],
+        key: Annotated[str, Depends(idempotency_key)],
+    ) -> JSONResponse:
+        """Resume an interrupted write from the run's saved position, after a `verify` passed (spec 022)."""
+        status, content = await service.resume_run(run_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
     @application.post(

@@ -14,6 +14,8 @@ from .errors import (
     TransportError,
 )
 from .models import (
+    ApplyProgressKindResource,
+    ApplyProgressResource,
     ApplyRunRequest,
     ApprovedPlanSummaryResource,
     ApprovedRunResource,
@@ -50,6 +52,8 @@ from .models import (
     RegisteredConfigurationResource,
     RegisteredVersionResource,
     ResultsResource,
+    ResumeResource,
+    ResumeRunRequest,
     RunApprovalResource,
     RunLogLine,
     RunLogPage,
@@ -68,6 +72,8 @@ from .models import (
 
 __all__ = [
     "APIError",
+    "ApplyProgressKindResource",
+    "ApplyProgressResource",
     "ApplyRunRequest",
     "ApproveRunRequest",
     "ApprovedPlanSummaryResource",
@@ -109,6 +115,8 @@ __all__ = [
     "RegisteredConfigurationResource",
     "RegisteredVersionResource",
     "ResultsResource",
+    "ResumeResource",
+    "ResumeRunRequest",
     "RunApprovalResource",
     "RunLogLine",
     "RunLogPage",
