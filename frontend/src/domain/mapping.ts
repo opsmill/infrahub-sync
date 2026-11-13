@@ -3,6 +3,8 @@ import type { DeclaredMapping } from "#/api/types";
 type Field = NonNullable<DeclaredMapping["fields"]>[number];
 type Filter = NonNullable<DeclaredMapping["filters"]>[number];
 
+export type { Field as MappingField, Filter as MappingFilter };
+
 const OPERATION_WORDS: Record<string, string> = {
   "==": "equals",
   "!=": "does not equal",
@@ -15,9 +17,12 @@ const OPERATION_WORDS: Record<string, string> = {
   regex: "matches the pattern",
 };
 
+/** A filter's operation in words: `is empty`, `equals`. An operation without words stays as declared. */
+export const filterOperation = (f: Filter) => OPERATION_WORDS[f.operation] ?? f.operation;
+
 /** A filter in words, as the package declares it: `rack is empty`, `type.value equals "lag"`. */
 export const filterWords = (f: Filter) =>
-  `${f.field} ${OPERATION_WORDS[f.operation] ?? f.operation}${f.value != null ? ` ${JSON.stringify(f.value)}` : ""}`;
+  `${f.field} ${filterOperation(f)}${f.value != null ? ` ${JSON.stringify(f.value)}` : ""}`;
 
 /** Where a field's value comes from: a source field, a fixed value, or nothing declared. */
 export const fieldSource = (f: Field) =>

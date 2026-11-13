@@ -24,7 +24,8 @@ import { StartRunDialog, type StartRunTarget } from "#/features/runs/StartRunDia
 import { useDocumentTitle } from "#/lib/title";
 
 import { type ConfigurationDetail, useConfigurationDetail } from "./detail";
-import { MappingList, MappingPanel } from "./detail-mapping";
+import { MappingList } from "./detail-mapping";
+import { MappingPanel } from "./detail-mapping-panel";
 import { MAPPING_SECTION_ID, Systems } from "./detail-systems";
 import { VersionBar } from "./detail-version-bar";
 

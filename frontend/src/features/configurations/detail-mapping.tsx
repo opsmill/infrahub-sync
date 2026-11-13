@@ -3,18 +3,15 @@ import { Link } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { cn } from "tailwind-variants";
 
-import { ArrowRightIcon, ChevronRightIcon, XIcon } from "#/components/icons";
+import { ArrowRightIcon, ChevronRightIcon } from "#/components/icons";
 import { FOCUS_INSET } from "#/components/page";
-import { PANEL_ICON_BUTTON, ShiftPanel } from "#/components/shift-panel";
 import {
-  fieldSource,
-  filterWords,
   groupBySource,
   type MappingChange,
   type MappingDiff,
   type MappingEntry,
 } from "#/domain/mapping";
-import { fmt, plural } from "#/domain/run-state";
+import { plural } from "#/domain/run-state";
 
 /** The rows shown before "Show more". Whole source models are shown, so the count can be higher. */
 const ROWS_SHOWN = 8;
@@ -27,11 +24,11 @@ const ROW =
 const CHANGE_WORD = { added: "New", changed: "Changed", removed: "Removed" };
 
 /** How a mapping or a field differs from the version compared with. */
-function ChangeBadge({ status }: { status: MappingChange["status"] }) {
+export function ChangeBadge({ status }: { status: MappingChange["status"] }) {
   return (
     <span
       className={cn(
-        "shrink-0 rounded-md px-1.5 font-medium font-sans text-[11px] leading-5",
+        "shrink-0 whitespace-nowrap rounded-md px-1.5 font-medium font-sans text-[11px] leading-5",
         status === "added" && "bg-(--change-create-surface) text-(--change-create-text)",
         status === "changed" && "bg-(--change-update-surface) text-(--change-update-text)",
         status === "removed" && "bg-content-strong text-foreground-muted"
@@ -213,264 +210,5 @@ export function MappingList({
       <Groups configId={configId} entries={all ? entries : first.flat()} open={open} />
       {first.length < groups.length && expand(all ? "Show less" : "Show more")}
     </Card>
-  );
-}
-
-const BADGE_AFTER = "ml-2 inline-block align-middle";
-
-/** The fields, filters and computed fields of one mapping, with what differs when compared. */
-function MappingDetail({
-  entry,
-  sourceLabel,
-  destinationLabel,
-  against,
-}: {
-  entry: MappingEntry;
-  sourceLabel: string;
-  destinationLabel: string;
-  against?: number;
-}) {
-  const { mapping, change } = entry;
-  const fields = mapping.fields ?? [];
-  const filters = mapping.filters ?? [];
-  const transforms = mapping.transforms ?? [];
-  const added = new Set(change?.fieldsAdded);
-  const changed = new Set(change?.fieldsChanged);
-  const before = new Map((change?.was?.fields ?? []).map((f) => [f.name, f]));
-  const removed = (change?.fieldsRemoved ?? []).flatMap((name) => before.get(name) ?? []);
-  return (
-    <div className="flex flex-col gap-3 text-[13px]">
-      <p className="font-mono text-foreground-muted text-xs [overflow-wrap:anywhere]">
-        from {mapping.mapping}
-        {mapping.identifiers?.length ? (
-          <span className="font-sans text-subtle"> · matched on </span>
-        ) : null}
-        {mapping.identifiers?.join(", ")}
-      </p>
-      {change && against !== undefined && (
-        <p className="text-pretty text-foreground-muted text-xs">
-          {change.status === "added"
-            ? `Version ${against} does not have this mapping.`
-            : `Compared with version ${against}: ${
-                [
-                  change.fieldsAdded.length &&
-                    `${plural(change.fieldsAdded.length, "field", "fields")} added`,
-                  change.fieldsChanged.length &&
-                    `${plural(change.fieldsChanged.length, "field", "fields")} changed`,
-                  change.fieldsRemoved.length &&
-                    `${plural(change.fieldsRemoved.length, "field", "fields")} removed`,
-                  change.rulesChanged &&
-                    "the source model, identifiers, filters or computed fields differ",
-                ]
-                  .filter(Boolean)
-                  .join(", ") || "the order of the fields differs"
-              }.`}
-        </p>
-      )}
-      {(fields.length > 0 || removed.length > 0) && (
-        <table className="max-w-3xl text-left">
-          <thead>
-            <tr className="text-[11px] text-subtle">
-              <th scope="col" className="pr-3 pb-1 font-medium">
-                {sourceLabel} field
-              </th>
-              <th scope="col" className="w-6 pb-1">
-                <span className="sr-only">to</span>
-              </th>
-              <th scope="col" className="pb-1 font-medium">
-                {destinationLabel} attribute or relationship
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {fields.map((f) => {
-              const was = changed.has(f.name) ? before.get(f.name) : undefined;
-              return (
-                <tr key={f.name} className="align-top">
-                  <td className="py-0.5 pr-3 font-mono text-foreground-muted text-xs leading-5 [overflow-wrap:anywhere]">
-                    {fieldSource(f)}
-                    {was && fieldSource(was) !== fieldSource(f) && (
-                      <span className="ml-1.5 font-sans text-[11px] text-subtle">
-                        was <span className="font-mono line-through">{fieldSource(was)}</span>
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-0.5">
-                    <ArrowRightIcon className="mt-1 size-3 text-subtle-muted" />
-                  </td>
-                  <td className="py-0.5 font-mono text-xs leading-5 [overflow-wrap:anywhere]">
-                    {f.name}
-                    {f.reference && (
-                      <code className="ml-1.5 rounded bg-content-strong px-1 py-px text-[0.85em] text-foreground-muted">
-                        <span className="sr-only">peer kind </span>
-                        {f.reference}
-                      </code>
-                    )}
-                    {added.has(f.name) && (
-                      <span className={BADGE_AFTER}>
-                        <ChangeBadge status="added" />
-                      </span>
-                    )}
-                    {was && (
-                      <span className={BADGE_AFTER}>
-                        <ChangeBadge status="changed" />
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-            {removed.map((f) => (
-              <tr key={f.name} className="align-top text-subtle">
-                <td className="py-0.5 pr-3 font-mono text-xs leading-5 line-through [overflow-wrap:anywhere]">
-                  {fieldSource(f)}
-                </td>
-                <td className="py-0.5">
-                  <ArrowRightIcon className="mt-1 size-3 text-subtle-muted" />
-                </td>
-                <td className="py-0.5 font-mono text-xs leading-5 [overflow-wrap:anywhere]">
-                  <span className="line-through">{f.name}</span>
-                  <span className={BADGE_AFTER}>
-                    <ChangeBadge status="removed" />
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      {filters.length > 0 && (
-        <div>
-          <h3 className="mb-1 text-subtle text-xs">Only source records where</h3>
-          <ul className="flex flex-col gap-0.5 font-mono text-xs">
-            {filters.map((f) => (
-              <li key={filterWords(f)}>{filterWords(f)}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {transforms.length > 0 && (
-        <div>
-          <h3 className="mb-1 text-subtle text-xs">Computed source fields</h3>
-          <div className="flex flex-col gap-2">
-            {transforms.map((t) => (
-              <div key={t.field}>
-                <p className="font-mono text-xs">{t.field} =</p>
-                <pre className="mt-0.5 max-w-3xl whitespace-pre-wrap break-words rounded-md border bg-content px-2 py-1 font-mono text-[11px] text-foreground-muted leading-5">
-                  {t.expression}
-                </pre>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** A link that opens another mapping in the panel, drawn as an icon button. */
-function Step({
-  configId,
-  entry,
-  label,
-  up = false,
-}: {
-  configId: string;
-  entry?: MappingEntry;
-  label: string;
-  up?: boolean;
-}) {
-  return (
-    <Link
-      to="/configs/$configId"
-      params={{ configId }}
-      search={(s) => ({ ...s, kind: entry?.key ?? s.kind })}
-      replace
-      resetScroll={false}
-      aria-label={label}
-      aria-disabled={!entry}
-      tabIndex={entry ? undefined : -1}
-      className={cn(PANEL_ICON_BUTTON, FOCUS_INSET)}
-    >
-      <ChevronRightIcon className={cn("size-3.5", up ? "-rotate-90" : "rotate-90")} />
-    </Link>
-  );
-}
-
-/**
- * The mapping named by `open`, in a panel on the right of the page. The previous and next buttons
- * follow the order of the declaration.
- */
-export function MappingPanel({
-  configId,
-  version,
-  entries,
-  open,
-  against,
-  sourceLabel,
-  destinationLabel,
-  shiftTargetId,
-  onClose,
-}: {
-  configId: string;
-  version?: number;
-  entries: MappingEntry[];
-  /** The key of the mapping to show; the panel is closed when no mapping has it. */
-  open?: string;
-  /** The version the mapping is compared with. */
-  against?: number;
-  sourceLabel: string;
-  destinationLabel: string;
-  /** The id of the element the panel moves left to make room for itself. */
-  shiftTargetId: string;
-  onClose: () => void;
-}) {
-  const at = entries.findIndex((e) => e.key === open);
-  const entry = entries[at];
-  return (
-    <ShiftPanel
-      open={entry !== undefined}
-      label={`Mapping of ${entry?.mapping.name}`}
-      onClose={onClose}
-      shiftTargetId={shiftTargetId}
-      widthKey="mapping-panel-width"
-    >
-      {entry && (
-        <>
-          <div className="flex flex-col gap-1 border-b px-4 pt-2 pb-3">
-            <div className="flex items-center gap-2">
-              <span className="text-subtle text-xs">Version {version}</span>
-              <span className="ml-auto flex shrink-0 items-center">
-                <span className="mr-1 text-subtle text-xs tabular-nums">
-                  {fmt(at + 1)} of {fmt(entries.length)}
-                </span>
-                <Step configId={configId} entry={entries[at - 1]} label="Previous mapping" up />
-                <Step configId={configId} entry={entries[at + 1]} label="Next mapping" />
-                <button
-                  type="button"
-                  aria-label="Close the panel"
-                  onClick={onClose}
-                  className={cn(PANEL_ICON_BUTTON, FOCUS_INSET)}
-                >
-                  <XIcon />
-                </button>
-              </span>
-            </div>
-            <h2 className="flex min-w-0 items-center gap-2 font-medium font-mono text-base">
-              <span className="truncate">{entry.mapping.name}</span>
-              {entry.change && <ChangeBadge status={entry.change.status} />}
-            </h2>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3">
-            <MappingDetail
-              entry={entry}
-              sourceLabel={sourceLabel}
-              destinationLabel={destinationLabel}
-              against={against}
-            />
-          </div>
-        </>
-      )}
-    </ShiftPanel>
   );
 }
