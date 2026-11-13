@@ -633,6 +633,21 @@ def test_postgresql_schema_bootstrap_retries_only_duplicate_catalog_conflicts(sq
     successful.close.assert_called_once_with()
 
 
+def test_postgresql_schema_bootstrap_retries_a_deadlock_with_a_running_writer() -> None:
+    """A writer that takes `product_runs` then `prefect_executions` can deadlock a starting
+    process, which holds the opposite order; PostgreSQL aborts one side with 40P01."""
+    deadlocked = _bootstrap_connection(_FakeDriverError(sqlstate="40P01"))
+    successful = _bootstrap_connection()
+    connections = [deadlocked, successful]
+
+    PostgreSQLRunStore(lambda: connections.pop(0))
+
+    assert not connections
+    deadlocked.rollback.assert_called_once_with()
+    deadlocked.close.assert_called_once_with()
+    successful.commit.assert_called_once_with()
+
+
 def test_postgresql_schema_bootstrap_does_not_swallow_other_ddl_failures() -> None:
     connection = _bootstrap_connection(_FakeDriverError(sqlstate="42501"))
 

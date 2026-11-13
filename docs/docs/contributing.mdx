@@ -156,7 +156,9 @@ it writes, and why a skipped test does not count as a pass. See
 ### Run the Sync service locally
 
 The development stack runs the Sync API, the worker, PostgreSQL, object storage, Prefect and a
-disposable Infrahub in containers built from your working tree. It uses development credentials.
+disposable Infrahub in containers. The Sync API, the worker and Prefect run an image built from
+your working tree; PostgreSQL, object storage and Infrahub run published images. It uses
+development credentials.
 [Local development stack](./development-stack.mdx) describes it in detail.
 
 ```bash

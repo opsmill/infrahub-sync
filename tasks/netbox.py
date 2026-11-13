@@ -119,9 +119,6 @@ WORKER_NETBOX_URL = "http://netbox:8080"
 # The address the dev stack's worker uses for a local Infrahub started from Infrahub's own
 # Compose file, once it has joined that project's network: the service name and its port.
 WORKER_INFRAHUB_URL = "http://infrahub-server:8000"
-# Where the development stack publishes its Infrahub on the host by default
-# (`development/docker-compose.infrahub-ports.yml`).
-HOST_INFRAHUB_URL = "http://127.0.0.1:8000"
 # NetBox's first migration run took roughly 16 minutes on the reference machine, right at
 # the previous 960s ceiling -- this leaves real headroom instead of racing it.
 WAIT_TIMEOUT_SECONDS = 1800
@@ -423,6 +420,28 @@ def restore_demo_database(context: Context, values: dict[str, str], sql_file: Pa
     _wait_for_http(f"{netbox_url(values)}/api/", "NetBox")
 
 
+def host_infrahub_url() -> str:
+    """Return the URL the host reaches the development stack's Infrahub at.
+
+    Read from the development Compose configuration, so `INFRAHUB_PORT` and
+    `INFRAHUB_BIND_ADDRESS` apply.
+
+    Raises:
+        NetboxError: when `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` selects an Infrahub on
+            another Docker network, whose address on this host is not known.
+    """
+    from . import dev  # noqa: PLC0415 -- dev imports this module at load time
+
+    settings = dev.dev_settings()
+    if settings.infrahub is None:
+        msg = (
+            f"{dev.INFRAHUB_NETWORK_VARIABLE} names {settings.infrahub_network}, whose address on this host "
+            "is not known; pass --infrahub-url"
+        )
+        raise NetboxError(msg)
+    return settings.infrahub.url
+
+
 def local_package_text(shipped: str, netbox: str, infrahub: str) -> str:
     """The shipped package text with its NetBox and Infrahub URLs replaced.
 
@@ -505,7 +524,7 @@ def demo_package(_context: Context, infrahub_url: str = "", dev_stack: bool = Fa
 
     The copy keeps the shipped mapping and credential references and changes only the two
     URLs. Without `--dev-stack`, the URLs are the host addresses of this NetBox and of the
-    development stack's Infrahub (`HOST_INFRAHUB_URL`). `--dev-stack` writes the addresses
+    development stack's Infrahub (`host_infrahub_url`). `--dev-stack` writes the addresses
     the development stack's worker uses instead: NetBox and Infrahub on the Compose
     networks the worker joins at `invoke dev.start`. `--infrahub-url` replaces the Infrahub address in either case.
     """
@@ -513,7 +532,7 @@ def demo_package(_context: Context, infrahub_url: str = "", dev_stack: bool = Fa
     source = WORKER_NETBOX_URL if dev_stack else netbox_url(values)
     destination = infrahub_url
     if not destination:
-        destination = WORKER_INFRAHUB_URL if dev_stack else HOST_INFRAHUB_URL
+        destination = WORKER_INFRAHUB_URL if dev_stack else host_infrahub_url()
     text = local_package_text(SHIPPED_PACKAGE.read_text(encoding="utf-8"), source, destination)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     LOCAL_PACKAGE.write_text(text, encoding="utf-8")

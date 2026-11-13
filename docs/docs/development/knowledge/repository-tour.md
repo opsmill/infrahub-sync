@@ -251,7 +251,8 @@ records the upstream commit and the local additions.
 [`tests/`][src-tests] mirrors the source tree: `adapters/`, `api/`, `cache/`, `cli/`, `client/`,
 `configuration/`, `conformance/`, `plan/`, `product_store/`, `runtime_schema/`, `service/`,
 `orchestration/`, `release/` and `testcontainers/`, plus `dev_stack/` for the development
-stack's tasks, Compose file and opt-in smoke suite (`dev_stack/smoke/`), the opt-in
+stack's tasks, Compose file and smoke suite (`dev_stack/smoke/`, whose `smoke`-marked tests are
+opt-in), the opt-in
 `integration/`, `image/` and `compose/` suites, and the frozen `vendored_prefect_extras/` copy.
 
 Which of these the default gate runs, and which need something live, is

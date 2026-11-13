@@ -280,6 +280,10 @@ services:
       timeout: 10s
       retries: 30
       start_period: 20s
+    # The smoke suite's no-source-read check runs a listener on the host and names it
+    # through this route, so a validation that read the source would reach it.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   sync-worker:
     profiles: ["sync"]
@@ -333,7 +337,7 @@ services:
       INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY: "${INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY:-}"
       INFRAHUB_SYNC_CREDENTIAL_SLURPIT_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_SLURPIT_TOKEN:-}"
     volumes: *sync-source-and-ca
-    # The only service that reaches a destination. The root `docker-compose.yml`
+    # The only service that reaches a source or a destination. The root `docker-compose.yml`
     # carries no host route on purpose; here it lets a package reach a service published
     # on this machine that has no Compose network to join, and it costs nothing when unused.
     extra_hosts:
