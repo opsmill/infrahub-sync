@@ -67,6 +67,9 @@ Exact per-test times were not recorded; the date is the run date.
 | `tests/compose/test_credential_leaks.py` (6 cases; the fixture now plans the smoke package first, and the S3 access key has a generated value) | e2e | `INFRAHUB_SYNC_COMPOSE_PROJECT_PREFIX=s021t INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose -p no:cacheprovider tests/compose/test_credential_leaks.py` | 2026-11-13 | image built from `069862b9`, test change in `aa457dcd`; Infrahub 1.11.9 fixture; Docker shared with the development stack | `6 passed in 153.68s (0:02:33)` |
 | `tests/compose/test_external_store.py::test_a_plan_reaches_netbox_infrahub_and_the_store_behind_a_private_ca`, `::test_without_the_ca_bootstrap_refuses_the_tls_store`, `::test_each_bundled_adapter_client_follows_the_ca_bundle[with-ca]`, `[without-ca]` | e2e | same prefix and image settings, `uv run pytest -m compose -p no:cacheprovider tests/compose/test_external_store.py -k "private_ca or without_the_ca or follows_the_ca"` | 2026-11-13 | image built from `069862b9`, tests in `f64f7e8f`; Silo and a TLS front (Infrahub forwarder, NetBox stand-in) on their own network, test CA with key identifiers | `4 passed, 7 deselected in 220.91s (0:03:40)` |
 | `tests/compose/test_external_store.py` (whole file, 11 cases) | e2e | same prefix and image settings, `uv run pytest -m compose -p no:cacheprovider tests/compose/test_external_store.py` | 2026-11-13 | as above | `11 passed in 389.15s (0:06:29)` |
+| After the code review and the merge of 010: `tests/compose/test_external_store.py` and `tests/compose/test_credential_leaks.py` | e2e | `INFRAHUB_SYNC_COMPOSE_PROJECT_PREFIX=s021t INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose/test_external_store.py tests/compose/test_credential_leaks.py` | 2026-11-13 | image built at `f13ebf19` | `17 passed in 306.20s` |
+| `tests/adapters/test_certificate_checks_off.py` (4 cases, new file) | unit | `uv run pytest tests/adapters/test_certificate_checks_off.py` | 2026-11-13 | n/a | `4 passed` |
+| Full unit tier after the code review | unit | `uv run invoke tests.tests-unit` | 2026-11-13 | Python 3.13, SQLite 3.51.0 | `7362 passed`, the 4 SQLite failures below, and 3 Nautobot cases fixed in `647fbd0c` (`60 passed` for that file) |
 | Nightly 10-run lifecycle measurement (T040, T042) | e2e | `gh workflow run workflow-nightly-e2e.yml -f sha=<sha> -f compose_repeat=10` | deferred — needs CI on a pushed branch | GitHub Actions, linux/amd64 and linux/arm64 | — |
 
 The 4 unit-tier failures are SQLite migration tests in `tests/product_store/test_contract.py`.
@@ -91,8 +94,18 @@ A second review on 2026-11-13 ran all six aspects as separate agents
 running Compose stack were fixed in the commit that follows this report change. The review file
 marks each finding fixed or open. The two test findings that needed the Compose stack, a TLS run
 without the CA that must fail and a leak test that runs a plan, were fixed on 2026-11-13.
-No `/code-review --fix` pass ran on this branch: every forked attempt stopped on an authentication
-error.
+A `/code-review xhigh --fix` pass then ran on 2026-11-13 over the spec 021 changes. It found 15
+issues and fixed 11 in `cb2e2a14`. Of the 4 it left, one was fixed afterwards in `d8cd140b`: a
+CA directory turned certificate checks back on for NetBox and Nautobot sources set to
+`verify_ssl: false`. Three are left as they are:
+
+- Compose starts `sync-bootstrap` when the bundled store fails, because leaving the store out
+  depends on that. The docs say how to tell the two apart.
+- A CA path that is not a directory logs a warning and does not stop the service.
+- Compose cannot limit the bundled store setting to 0 or 1.
+
+The review also noted that `tasks/dev.py` copies the container CA path into host-mode processes.
+That file is outside this spec and is not changed.
 
 ## Autonomous decisions
 
