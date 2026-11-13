@@ -74,11 +74,11 @@ operation after the marker was written once more and the run ends applied.
 **Independent Test**: interrupt an apply, set the fake destination to hold some uncertain nodes as planned, some
 changed and some absent, run `verify`, and compare the report.
 
-- [ ] T024 [US2] Add the comparison in `infrahub_sync/plan/destination_check.py`: for one planned create or update and the node read from the destination (or none), return `matches`, `differs` or `missing`, comparing every planned attribute and relationship, never returning values (research R7)
-- [ ] T025 [US2] Add a read of nodes by recorded identifier or complete human-friendly identifier, grouped by kind with one query per kind, to the Infrahub adapter in `infrahub_sync/adapters/infrahub.py`
-- [ ] T026 [US2] In the `verify` stage, when the run is resumable and every pre-write check passed, compute the uncertain window (critique E3), read its nodes, and store `results.verification.operations` and, above 2,000 operations, `operations_truncated`, in `infrahub_sync/service/flow.py` (FR-005 to FR-008)
-- [ ] T027 [US2] Print one `operation ID KIND ACTION: STATE` line per reported operation, the truncation line and the overwrite note in `verify` output, in `infrahub_sync/cli.py` (FR-006, contracts/cli.md)
-- [ ] T028 [P] [US2] Test in `tests/service/test_verify_destination_report.py` and `tests/test_destination_check.py`: the three states; the window when the failing operation is known, when it is unknown with a successful last save, and when the last save failed; the report never holds an attribute value; a failed pre-write check fails `verify` and produces no report; differs and missing never fail `verify`
+- [X] T024 [US2] Add the comparison in `infrahub_sync/plan/destination_check.py`: for one planned create or update and the node read from the destination (or none), return `matches`, `differs` or `missing`, comparing every planned attribute and relationship, never returning values (research R7)
+- [X] T025 [US2] Add a read of nodes by recorded identifier or complete human-friendly identifier, grouped by kind with one query per kind, to the Infrahub adapter in `infrahub_sync/adapters/infrahub.py`
+- [X] T026 [US2] In the `verify` stage, when the run is resumable and every pre-write check passed, compute the uncertain window (critique E3), read its nodes, and store `results.verification.operations` and, above 2,000 operations, `operations_truncated`, in `infrahub_sync/service/flow.py` (FR-005 to FR-008)
+- [X] T027 [US2] Print one `operation ID KIND ACTION: STATE` line per reported operation, the truncation line and the overwrite note in `verify` output, in `infrahub_sync/cli.py` (FR-006, contracts/cli.md)
+- [X] T028 [P] [US2] Test in `tests/service/test_verify_destination_report.py` and `tests/test_destination_check.py`: the three states; the window when the failing operation is known, when it is unknown with a successful last save, and when the last save failed; the report never holds an attribute value; a failed pre-write check fails `verify` and produces no report; differs and missing never fail `verify`
 
 **Checkpoint**: `verify` explains an interruption (P2 acceptance scenarios).
 

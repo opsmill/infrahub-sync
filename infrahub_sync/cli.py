@@ -1447,6 +1447,32 @@ def _echo_verification_checks(resource: RunResource) -> None:
     for check in checks:
         if isinstance(check, str):
             typer.echo(_display(f"check: {check} passed"))
+    if isinstance(verification, dict):
+        _echo_verification_operations(verification)
+
+
+def _echo_verification_operations(verification: dict[str, Any]) -> None:
+    """Print the state of each uncertain operation of an interrupted run (spec 022 FR-006).
+
+    One `operation ID KIND ACTION: STATE` line per reported operation, the count the report
+    left out when it was truncated, and, whenever there is a report, the note that a resume
+    writes the plan's values over every operation reported as differs.
+    """
+    operations = verification.get("operations")
+    if not isinstance(operations, list):
+        return
+    for entry in operations:
+        if isinstance(entry, dict):
+            typer.echo(
+                _display(
+                    f"operation {entry.get('operation_id')} {entry.get('kind')} "
+                    f"{entry.get('action')}: {entry.get('state')}"
+                )
+            )
+    truncated = verification.get("operations_truncated")
+    if isinstance(truncated, int) and not isinstance(truncated, bool) and truncated > 0:
+        typer.echo(f"operations not reported: {truncated}")
+    typer.echo("note: runs resume writes the plan's values over every operation reported as differs")
 
 
 @app.command("whoami")

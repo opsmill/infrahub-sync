@@ -40,6 +40,7 @@ from infrahub_sync.configuration.infrahub_lineage import (
 from infrahub_sync.generator import has_field
 from infrahub_sync.infrahub_errors import classify_infrahub_error
 from infrahub_sync.plan.canonical import canonical_json_bytes
+from infrahub_sync.plan.destination_check import DestinationNode, PlannedNodeRead, comparable_value
 from infrahub_sync.plan.errors import (
     ImportAccountMismatchError,
     NamedLineageNodeNotFoundError,
@@ -1987,6 +1988,88 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 current[reference.field] = {related.id} if related.id else set()
         return current
 
+    def read_planned_nodes(self, operations: Sequence[PlannedOperation]) -> dict[str, PlannedNodeRead]:
+        """Read the destination node of each planned create and update, and write nothing (spec 022).
+
+        Grouped by kind: the updates of one kind in one query by their recorded ids, and the
+        creates of one kind in one query by their human-friendly-ID values, each create then
+        matched exactly on every component, the way the destination matches the create's
+        upsert. A relationship component is matched on the peer id the plan's peer resolves
+        to. A kind that declares no human-friendly ID is matched on the identity's direct
+        values, as the peer resolver does.
+
+        Each planned peer is resolved to its destination node id with the apply's own
+        resolver, one query per distinct peer. A peer that matches no node, or several, is
+        recorded as `None` rather than raised. Deletes are not read.
+
+        Only the fields the operations write, and the key components, are selected.
+        """
+        peers = self.new_peer_resolver()
+        by_kind: dict[str, list[PlannedOperation]] = {}
+        for operation in operations:
+            if operation.action in ("create", "update"):
+                by_kind.setdefault(operation.kind, []).append(operation)
+        reads: dict[str, PlannedNodeRead] = {}
+        for kind, kind_operations in by_kind.items():
+            node_schema = self.schema.get(kind)
+            if not isinstance(node_schema, NodeSchemaAPI):
+                # The pre-write checks refuse a plan whose kind the destination does not declare.
+                reads.update({operation.operation_id: PlannedNodeRead(None) for operation in kind_operations})
+                continue
+            planned = {operation.operation_id: _planned_peer_ids(operation, peers) for operation in kind_operations}
+            nodes = self._read_kind_nodes(node_schema, kind_operations, planned)
+            for operation in kind_operations:
+                node = nodes.get(operation.operation_id)
+                reads[operation.operation_id] = PlannedNodeRead(
+                    node=None if node is None else _destination_node(node, operation, node_schema),
+                    planned_peers=planned[operation.operation_id],
+                )
+        return reads
+
+    def _read_kind_nodes(
+        self,
+        node_schema: NodeSchemaAPI,
+        operations: Sequence[PlannedOperation],
+        planned: Mapping[str, Mapping[str, frozenset[str] | None]],
+    ) -> dict[str, InfrahubNodeSync]:
+        """The nodes of one kind's planned updates and creates, keyed by operation id."""
+        kind = node_schema.kind
+        components = _create_key_components(node_schema, operations)
+        include, exclude = _planned_read_selection(node_schema, operations, components)
+        found: dict[str, InfrahubNodeSync] = {}
+        updates = [operation for operation in operations if operation.action == "update" and operation.destination_id]
+        if updates:
+            ids = sorted({str(operation.destination_id) for operation in updates})
+            by_id = {
+                str(node.id): node
+                for node in self.client.filters(
+                    kind=kind, ids=ids, populate_store=False, include=include, exclude=exclude
+                )
+            }
+            for operation in updates:
+                node = by_id.get(str(operation.destination_id))
+                if node is not None:
+                    found[operation.operation_id] = node
+        keys = {
+            operation.operation_id: _planned_create_key(operation, components, planned[operation.operation_id])
+            for operation in operations
+            if operation.action == "create"
+        }
+        if any(key is not None for key in keys.values()):
+            filters = _create_filters(components, operations, keys)
+            index: dict[tuple[str, ...], InfrahubNodeSync] = {}
+            for node in self.client.filters(
+                kind=kind, populate_store=False, include=include, exclude=exclude, **filters
+            ):
+                key = _node_create_key(node, components)
+                if key is not None:
+                    index.setdefault(key, node)
+            for operation_id, key in keys.items():
+                node = None if key is None else index.get(key)
+                if node is not None:
+                    found[operation_id] = node
+        return found
+
     def _set_owner_on_added_edges(
         self,
         *,
@@ -2055,6 +2138,181 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             "unkeyed and every re-apply would duplicate the object."
         )
         raise UnaccountedIdentityComponentError(msg)
+
+
+def _planned_peer_ids(operation: PlannedOperation, peers: PeerResolver) -> dict[str, frozenset[str] | None]:
+    """The destination node ids of each relationship's planned peers, `None` when one does not resolve."""
+    resolved: dict[str, frozenset[str] | None] = {}
+    for reference in operation.relationships or ():
+        try:
+            resolved[reference.field] = frozenset(
+                peers.resolve(
+                    peer_kind=reference.peer_kind,
+                    identity=peer,
+                    referring_operation_id=operation.operation_id,
+                )
+                for peer in reference.peers
+            )
+        except (PeerNotFoundError, PeerAmbiguousError):
+            resolved[reference.field] = None
+    return resolved
+
+
+# One field of a create's key: its name, and whether it is a relationship.
+_KeyComponent: TypeAlias = tuple[str, bool]
+
+
+def _create_key_components(node_schema: NodeSchemaAPI, operations: Sequence[PlannedOperation]) -> list[_KeyComponent]:
+    """The fields a create of this kind is matched on: its human-friendly-ID components' fields.
+
+    A component crossing a relationship is matched on the relationship's peer. A kind that
+    declares no human-friendly ID is matched on the direct attribute values its creates'
+    identities carry.
+    """
+    relationships = set(node_schema.relationship_names)
+    attributes = set(node_schema.attribute_names)
+    paths = _hfid_components(node_schema)
+    if paths:
+        names = [path.split(_COMPONENT_PATH_SEPARATOR, 1)[0] for path in paths]
+    else:
+        names = sorted(
+            {
+                name
+                for operation in operations
+                if operation.action == "create"
+                for name, value in operation.identity.items()
+                if name in attributes and not isinstance(value, (Mapping, list, tuple))
+            }
+        )
+    components: list[_KeyComponent] = []
+    for name in names:
+        component = (name, name in relationships)
+        if (name in relationships or name in attributes) and component not in components:
+            components.append(component)
+    return components
+
+
+def _key_text(value: Any) -> str:
+    """One key component in a comparable, hashable form."""
+    return canonical_json_bytes(comparable_value(value)).decode("utf-8")
+
+
+def _planned_attribute_value(operation: PlannedOperation, name: str) -> Any:
+    """The value a create writes for one attribute: its payload's, else its identity's."""
+    payload = operation.payload or {}
+    return payload[name] if name in payload else operation.identity.get(name)
+
+
+def _planned_create_key(
+    operation: PlannedOperation, components: Sequence[_KeyComponent], planned_peers: Mapping[str, frozenset[str] | None]
+) -> tuple[str, ...] | None:
+    """The key a planned create is matched on, or `None` when no node can match it.
+
+    No node can match a create whose key has no value, or whose peer resolves to no node. A
+    kind with no key at all is never read: an unfiltered query would match any node of it, and
+    the apply refuses such a create before writing.
+    """
+    if not components:
+        return None
+    values: list[str] = []
+    for name, is_relationship in components:
+        if is_relationship:
+            ids = planned_peers.get(name)
+            if not ids or len(ids) != 1:
+                return None
+            values.append(next(iter(ids)))
+        else:
+            value = _planned_attribute_value(operation, name)
+            if value is None:
+                return None
+            values.append(_key_text(value))
+    return tuple(values)
+
+
+def _node_create_key(node: InfrahubNodeSync, components: Sequence[_KeyComponent]) -> tuple[str, ...] | None:
+    """The same key, read from a destination node, or `None` when a component has no value."""
+    values: list[str] = []
+    for name, is_relationship in components:
+        if is_relationship:
+            peer_id = getattr(getattr(node, name, None), "id", None)
+            if not peer_id:
+                return None
+            values.append(str(peer_id))
+        else:
+            value = getattr(getattr(node, name, None), "value", None)
+            if value is None:
+                return None
+            values.append(_key_text(value))
+    return tuple(values)
+
+
+def _create_filters(
+    components: Sequence[_KeyComponent],
+    operations: Sequence[PlannedOperation],
+    keys: Mapping[str, tuple[str, ...] | None],
+) -> dict[str, Any]:
+    """The query filter for one kind's creates: every value of each attribute component.
+
+    The filter can match more nodes than the creates name, so each node is then matched on
+    its whole key. A kind whose key holds no attribute is filtered on its peers' ids.
+    """
+    values: dict[int, dict[str, Any]] = {}
+    for operation in operations:
+        key = keys.get(operation.operation_id)
+        if key is None:
+            continue
+        for position, (name, is_relationship) in enumerate(components):
+            raw = key[position] if is_relationship else _planned_attribute_value(operation, name)
+            values.setdefault(position, {}).setdefault(key[position], raw)
+    has_attribute = any(not is_relationship for _, is_relationship in components)
+    return {
+        (f"{name}__ids" if is_relationship else f"{name}__values"): list(values.get(position, {}).values())
+        for position, (name, is_relationship) in enumerate(components)
+        if is_relationship != has_attribute
+    }
+
+
+def _planned_read_selection(
+    node_schema: NodeSchemaAPI, operations: Sequence[PlannedOperation], components: Sequence[_KeyComponent]
+) -> tuple[list[str], list[str]]:
+    """The relationships to include and the fields to exclude, so a read selects only what it compares.
+
+    Only the fields the operations write and the key components, as `_current_peer_ids` does.
+    """
+    needed = {name for name, _ in components}
+    for operation in operations:
+        needed.update(operation.payload or {})
+        needed.update(reference.field for reference in operation.relationships or ())
+    include = [
+        relationship.name
+        for relationship in node_schema.relationships
+        if relationship.cardinality == "many" and relationship.name in needed
+    ]
+    exclude = [
+        *(name for name in node_schema.attribute_names if name not in needed),
+        *(name for name in node_schema.relationship_names if name not in needed),
+    ]
+    return include, exclude
+
+
+def _destination_node(
+    node: InfrahubNodeSync, operation: PlannedOperation, node_schema: NodeSchemaAPI
+) -> DestinationNode:
+    """What the node holds for the fields one operation writes: attribute values and peer ids."""
+    attribute_names = set(node_schema.attribute_names)
+    cardinality = {relationship.name: relationship.cardinality for relationship in node_schema.relationships}
+    attributes: dict[str, Any] = {}
+    peers: dict[str, frozenset[str]] = {}
+    for name in [*(operation.payload or {}), *(reference.field for reference in operation.relationships or ())]:
+        if name in attribute_names:
+            attributes[name] = getattr(node, name).value
+        elif name in cardinality:
+            related = getattr(node, name)
+            if cardinality[name] == "many":
+                peers[name] = frozenset(related.peer_ids)
+            else:
+                peers[name] = frozenset({str(related.id)}) if related.id else frozenset()
+    return DestinationNode(attributes=attributes, peers=peers)
 
 
 _LINEAGE_EDGE_PROPERTIES = ("source", "owner", "is_protected")

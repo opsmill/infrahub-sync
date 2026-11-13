@@ -20,6 +20,7 @@ from typing import Any, Literal, NoReturn
 from uuid import UUID
 
 import httpx
+from infrahub_sdk.exceptions import Error as InfrahubSdkError
 from prefect import flow, get_run_logger
 from prefect.artifacts import create_markdown_artifact
 from prefect.client.orchestration import get_client
@@ -54,8 +55,21 @@ from infrahub_sync.orchestration.flow import (
     RunLoggerBridge,
 )
 from infrahub_sync.plan.config_version import resolve_config_version
+from infrahub_sync.plan.destination_check import (
+    DestinationNodeReader,
+    DestinationReadError,
+    reported_operations,
+    verification_report,
+)
 from infrahub_sync.plan.errors import PlanSchemaChangedError, PlanVerificationError, failed_checks
-from infrahub_sync.plan.models import ApplyRecord, CheckName, PlanManifest, PreWriteCheck, ordered_checks
+from infrahub_sync.plan.models import (
+    ApplyRecord,
+    CheckName,
+    PlanManifest,
+    PlannedOperation,
+    PreWriteCheck,
+    ordered_checks,
+)
 from infrahub_sync.plan.ownership import ProvenWriteOwnership, WriteDispatchTracker
 from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import SavedPlan, resolve_run_directory
@@ -97,6 +111,7 @@ from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME, run_name
 from .read_progress import StoreSideReadObserver, record_waiting
+from .resume_view import uncertain_positions
 from .run_artifact import publish_run_artifact
 from .scratch import StageScratch, stage_scratch
 from .service import PLAN_ARTIFACT_ID, PLAN_REPORT_KEY
@@ -622,6 +637,7 @@ def _check_destination(  # pylint: disable=too-many-arguments
     config_directory: str | None,
     projection: ProductProjection,
     scratch: StageScratch,
+    report: dict[str, Any] | None = None,
 ) -> tuple[PreWriteCheck, ...]:
     """Run, against the destination, every pre-write check a saved-plan apply runs, and write nothing.
 
@@ -630,6 +646,10 @@ def _check_destination(  # pylint: disable=too-many-arguments
     destination adapter, then `PlanApplier.check_plan` — the destination binding and the
     engine's gate. No write guard is taken: nothing here writes, and the result describes
     the destination as it was when it was read. Returns every check that passed, in order.
+
+    When every check passed and `report` is given, the destination report of an interrupted
+    run is added to it (`_destination_report`), from the same destination adapter and the
+    same read of the plan the checks used.
     """
     manifest = _verify_registered_apply(
         instance=instance,
@@ -650,7 +670,52 @@ def _check_destination(  # pylint: disable=too-many-arguments
     _require_planned_schema(run_id=run_id, manifest=manifest, models=destination_instance._runtime_models)
     applier = PlanApplier.open_existing(destination_instance, run_id=run_id, branch=branch, base_directory=scratch.root)
     passed = applier.check_plan()
+    if report is not None:
+        report.update(
+            _destination_report(
+                projection, run_id, operations=passed.loaded.operations, destination=applier.engine.destination
+            )
+        )
     return ordered_checks((*_FILE_CHECKS, "destination_schema", *passed.checks))
+
+
+def _destination_report(
+    projection: ProductProjection,
+    run_id: str,
+    *,
+    operations: Sequence[PlannedOperation],
+    destination: object,
+) -> dict[str, Any]:
+    """The per-operation report of an interrupted run's `verify` (spec 022 FR-005 to FR-008).
+
+    Empty unless the run requires reconciliation and is not cancelled. The running `verify`
+    itself is unfinished, so the store's resumable-run rule, which requires every execution
+    to be finished, cannot be asked here; the store admitted this `verify` on that rule.
+
+    The uncertain window is the one the run's progress view shows (`uncertain_positions`).
+    Its creates and updates are read from the destination, at most `VERIFY_REPORT_LIMIT` of
+    them, and each is reported as `matches`, `differs` or `missing`. Nothing is written, and
+    the report holds no value. A failed read fails the `verify` with a fixed message.
+    """
+    stored = projection.lookup_run(run_id).value
+    if (
+        stored is None
+        or not stored.reconciliation_required
+        or stored.phase == "cancelled"
+        or not isinstance(destination, DestinationNodeReader)
+    ):
+        return {}
+    window = uncertain_positions(stored, [operation.operation_id for operation in operations])
+    reported, truncated = reported_operations(operations, window)
+    try:
+        reads = destination.read_planned_nodes(reported)
+    except (InfrahubSdkError, httpx.HTTPError, OSError):
+        # The original's text can carry a destination address, a header or a credential.
+        raise DestinationReadError from None
+    result: dict[str, Any] = {"operations": verification_report(reported, reads)}
+    if truncated:
+        result["operations_truncated"] = truncated
+    return result
 
 
 def _configuration_write_guard(configuration_id: str) -> AbstractContextManager[ApplyGuard]:
@@ -786,6 +851,8 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             _require_verified=True,
         )
         assert isinstance(saved, SavedPlan)
+        # The per-operation report of an interrupted run, filled only after every check passed.
+        destination_report: dict[str, Any] = {}
         if parameter_binding is None:
             # A legacy run cannot be applied by the service, so it has no destination checks
             # to run: it reports its file checks and says the destination was not checked.
@@ -800,6 +867,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 config_directory=config_directory,
                 projection=projection,
                 scratch=scratch,
+                report=destination_report,
             )
             destination_checked = True
         result = {
@@ -811,6 +879,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             "verification_notes": list(saved.verification_notes),
             "checks": list(checks),
             "destination_checked": destination_checked,
+            **destination_report,
         }
         writeback = ExecutionMergeWriteback(results={"verification": result})
     elif stage in _SAVED_PLAN_WRITE_STAGES:

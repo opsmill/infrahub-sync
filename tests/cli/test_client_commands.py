@@ -9,7 +9,7 @@ import sys
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -1763,6 +1763,44 @@ def test_a_successful_verify_prints_one_line_per_check_that_passed(client: Magic
     assert result.exit_code == 0, result.output
     printed = [line for line in result.output.splitlines() if line.startswith("check: ")]
     assert printed == [f"check: {name} passed" for name in checks]
+    assert not any(line.startswith(("operation ", "note: ")) for line in result.output.splitlines())
+
+
+@pytest.mark.parametrize(("truncated", "truncation_lines"), [(None, []), (1200, ["operations not reported: 1200"])])
+def test_a_verify_of_an_interrupted_run_prints_each_operations_state_and_the_overwrite_note(
+    client: MagicMock, truncated: int | None, truncation_lines: list[str]
+) -> None:
+    """Spec 022 FR-006, contracts/cli.md: one line per uncertain operation, then the truncation and the note."""
+    accepted = _run()
+    verification: dict[str, Any] = {
+        "checks": ["checkpoint"],
+        "destination_checked": True,
+        "operations": [
+            {"operation_id": "op_0000000000000001", "kind": "DcimDevice", "action": "create", "state": "matches"},
+            {"operation_id": "op_0000000000000002", "kind": "DcimDevice", "action": "update", "state": "differs"},
+            {"operation_id": "op_0000000000000003", "kind": "DcimInterface", "action": "create", "state": "missing"},
+        ],
+    }
+    if truncated is not None:
+        verification["operations_truncated"] = truncated
+    completed = accepted.model_copy(
+        update={"run": accepted.run.model_copy(update={"results": {"verification": verification}})}
+    )
+    client.verify.return_value = accepted
+    client.wait_for_run.side_effect = lambda _accepted, **_kwargs: completed
+
+    result = _invoke(client, "verify", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    start = lines.index("check: checkpoint passed") + 1
+    assert lines[start:] == [
+        "operation op_0000000000000001 DcimDevice create: matches",
+        "operation op_0000000000000002 DcimDevice update: differs",
+        "operation op_0000000000000003 DcimInterface create: missing",
+        *truncation_lines,
+        "note: runs resume writes the plan's values over every operation reported as differs",
+    ]
 
 
 def test_a_failed_verify_names_each_check_it_failed_and_the_next_action(client: MagicMock) -> None:
