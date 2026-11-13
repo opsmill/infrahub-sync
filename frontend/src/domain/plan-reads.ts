@@ -74,6 +74,11 @@ function sideRead(
   };
 }
 
+/** The sides whose read the Sync API recorded as failed in this execution. */
+export function failedReadSides(o: Orchestration): SideRead["side"][] {
+  return (["source", "destination"] as const).filter((side) => o.reads?.[side]?.state === "failed");
+}
+
 /** The reads of the Plan step's execution; undefined when the Sync API recorded none. */
 export function planReads(
   s: RunStep,

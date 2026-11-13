@@ -6,6 +6,7 @@ import type { Orchestration, Plan, Run } from "#/api/types";
 import { ArrowRightIcon } from "#/components/icons";
 import { CopyButton, FOCUS, InlineCode, Notice } from "#/components/page";
 import { BranchBadge, When } from "#/components/run-status";
+import { failedReadSides } from "#/domain/plan-reads";
 import { executableCount, type FailureDetail, fmt, phaseLabel } from "#/domain/run-state";
 import type { System } from "#/domain/systems";
 import { useNow } from "#/lib/time";
@@ -92,6 +93,7 @@ export function FailureNotice({
   const cut = interruption(run, orchestration);
   const stage = cut?.purpose ?? f.stage;
   const connect = [f.causeType, f.errorType].some((t) => t !== undefined && CONNECT_ERRORS.has(t));
+  const failedSides = failedExec ? failedReadSides(failedExec) : [];
   const summary = (run.summary ?? {}) as Record<string, unknown>;
   const skippedDeletes =
     typeof summary.skipped_delete_count === "number" ? summary.skipped_delete_count : undefined;
@@ -166,7 +168,14 @@ export function FailureNotice({
           <p>
             This configuration reads {source.label}
             {at(source.host)} and writes to {destination.label}
-            {at(destination.host)}. The Sync service did not record which of them failed.
+            {at(destination.host)}.{" "}
+            {failedSides.length === 2
+              ? "The reads of both systems failed."
+              : failedSides[0] === "source"
+                ? `The read of the source, ${source.label}, failed.`
+                : failedSides[0] === "destination"
+                  ? `The read of the destination, ${destination.label}, failed.`
+                  : "The Sync service did not record which of them failed."}
           </p>
         )}
         {cut?.mayHaveWritten && (

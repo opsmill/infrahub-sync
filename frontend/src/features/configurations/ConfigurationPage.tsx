@@ -117,10 +117,11 @@ function versionState(detail: ConfigurationDetail): VersionState | undefined {
  * when the state line above already reads that the selected version's latest run applied it.
  */
 function AppliedLine({ detail }: { detail: ConfigurationDetail }) {
-  const { configId, selected, latest, summary, lastApplied, versionsComplete } = detail;
+  const { configId, selected, latest, summary, summaries, lastApplied, versionsComplete } = detail;
   if (selected === undefined) return null;
   if (!lastApplied) {
-    return versionsComplete ? (
+    // Without any run, the state line already says that nothing ran.
+    return versionsComplete && summaries.some((v) => v.latest_run) ? (
       <p className="text-[13px] text-foreground-muted">No version has been applied yet.</p>
     ) : null;
   }
