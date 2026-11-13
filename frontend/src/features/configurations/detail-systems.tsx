@@ -148,7 +148,7 @@ export function Systems({
       hash={MAPPING_SECTION_ID}
       replace
       className={cn(
-        "relative inline-flex h-7 shrink-0 items-center rounded-full border bg-content px-3 font-medium text-foreground-muted text-xs tabular-nums transition-colors duration-150 ease-out hover:bg-content-muted motion-reduce:transition-none",
+        "relative inline-flex h-7 shrink-0 items-center rounded-full border bg-content bg-linear-to-b from-transparent to-transparent px-3 font-medium text-foreground-muted text-xs tabular-nums transition-colors duration-150 ease-out hover:from-content-muted hover:to-content-muted motion-reduce:transition-none",
         FOCUS
       )}
     >
