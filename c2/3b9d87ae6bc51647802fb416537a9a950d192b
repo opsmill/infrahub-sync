@@ -1,0 +1,19 @@
+dev/specs/012-v2-configuration-conversion/opsmill-implement-report.md
+  s_3defe6e8bcd0ab::t_6b972b42cbb801 172-185
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c23b9d87ae6bc51647802fb416537a9a950d192b",
+  "prompts": {},
+  "sessions": {
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

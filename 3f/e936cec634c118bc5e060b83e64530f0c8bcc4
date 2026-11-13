@@ -1,0 +1,23 @@
+.github/scripts/nightly_e2e.py
+  s_efeb25921ce544::t_d38c3c44f703f0 508
+tests/test_nightly_v2_gate.py
+  s_efeb25921ce544::t_d38c3c44f703f0 329-330
+dev/specs/012-v2-configuration-conversion/opsmill-implement-report.md
+  s_efeb25921ce544::t_38ee82b25333db 125-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3fe936cec634c118bc5e060b83e64530f0c8bcc4",
+  "prompts": {},
+  "sessions": {
+    "s_efeb25921ce544": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "88805765-f610-4acc-a224-7c6f256e1599",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
