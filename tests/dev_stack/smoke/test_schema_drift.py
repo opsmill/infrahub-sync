@@ -20,11 +20,11 @@ import pytest
 import yaml
 
 from infrahub_sync.client import SyncClient
-from tasks.preview import SCHEMA_FILE, SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
-from tests.preview.evidence import canary_leaks
-from tests.preview.test_cli_client import ANSI, package_file, run_cli, run_cli_command
-from tests.preview.test_run_completion import _await_prefect_terminal_state
-from tests.preview.test_service_api import (
+from tasks.smoke_dataset import SCHEMA_FILE, SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
+from tests.dev_stack.smoke.evidence import canary_leaks
+from tests.dev_stack.smoke.test_cli_client import ANSI, package_file, run_cli, run_cli_command
+from tests.dev_stack.smoke.test_run_completion import _await_prefect_terminal_state
+from tests.dev_stack.smoke.test_service_api import (
     authenticated_client,
     device_types,
     infrahub_client,
@@ -34,9 +34,9 @@ from tests.preview.test_service_api import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-pytestmark = pytest.mark.preview
+pytestmark = pytest.mark.smoke
 
-REASON = "preview qualification: refuse an apply whose destination schema moved"
+REASON = "smoke qualification: refuse an apply whose destination schema moved"
 # The plan maps this attribute, so its kind is part of the semantics the fingerprint
 # covers. Text and TextArea both hold the seeded string values, so the conversion is
 # reversible in either direction and no device loses its `type`.
@@ -73,27 +73,27 @@ def _load_attribute_kind(client: Any, kind: str) -> None:  # noqa: ANN401 — th
 
 
 def test_an_apply_refuses_a_plan_whose_destination_schema_changed(  # noqa: PLR0914
-    preview_env: dict[str, Any], tmp_path: Path, evidence_dir: Path
+    smoke_env: dict[str, Any], tmp_path: Path, evidence_dir: Path
 ) -> None:
     """`PlanSchemaChangedError` through CLI rendering, `get_results`, and the raw body."""
-    seed_source_branch(preview_env)
-    sdk = infrahub_client(preview_env)
+    seed_source_branch(smoke_env)
+    sdk = infrahub_client(smoke_env)
     original_kind = _attribute_kind(sdk, DRIFTED_ATTRIBUTE)
     drifted_kind = _reversible_kind(original_kind)
     artifacts: dict[str, object] = {}
 
     registered = run_cli(
-        preview_env,
+        smoke_env,
         "configs",
         "register",
-        str(package_file(preview_env, tmp_path)),
+        str(package_file(smoke_env, tmp_path)),
         "--reason",
         REASON,
         artifacts=artifacts,
         artifact_name="schema drift configs register",
     )
     planned = run_cli(
-        preview_env,
+        smoke_env,
         "plan",
         "--config-id",
         registered["config_id"],
@@ -113,7 +113,7 @@ def test_an_apply_refuses_a_plan_whose_destination_schema_changed(  # noqa: PLR0
     try:
         _load_attribute_kind(sdk, drifted_kind)
         refused = run_cli_command(
-            preview_env,
+            smoke_env,
             "apply",
             run_id,
             "--expected-checksum",
@@ -133,7 +133,7 @@ def test_an_apply_refuses_a_plan_whose_destination_schema_changed(  # noqa: PLR0
     assert "apply failed: PlanSchemaChangedError" in rendered, rendered
     assert "hint: create and review a new plan before applying again" in rendered, rendered
 
-    with SyncClient(preview_env["urls"]["sync_api"], preview_env["bearer_token"], timeout=30.0) as client:
+    with SyncClient(smoke_env["urls"]["sync_api"], smoke_env["bearer_token"], timeout=30.0) as client:
         results = client.get_results(run_id)
     failure = results.results["apply_failure"]
     assert failure["stage"] == "apply"
@@ -142,7 +142,7 @@ def test_an_apply_refuses_a_plan_whose_destination_schema_changed(  # noqa: PLR0
     assert failure.get("may_have_partially_written") in {None, False}, failure
 
     transcript = evidence_dir / "schema-drift-results-http.jsonl"
-    with authenticated_client(preview_env, transcript=transcript) as api:
+    with authenticated_client(smoke_env, transcript=transcript) as api:
         recorded = api.get(f"/runs/{run_id}")
         assert recorded.status_code == 200, recorded.text
         assert recorded.json()["run"]["phase"] == "apply-failed", recorded.text
@@ -151,7 +151,7 @@ def test_an_apply_refuses_a_plan_whose_destination_schema_changed(  # noqa: PLR0
         assert body.json()["results"]["apply_failure"]["error_type"] == "PlanSchemaChangedError", body.text
         flow_run_id = recorded.json()["orchestration"][-1]["flow_run_id"]
 
-    assert _await_prefect_terminal_state(preview_env, flow_run_id) == "FAILED"
+    assert _await_prefect_terminal_state(smoke_env, flow_run_id) == "FAILED"
 
     assert device_types(sdk, SMOKE_BRANCH)[SHARED_DEVICE_NAME] == before
     assert _attribute_kind(sdk, DRIFTED_ATTRIBUTE) == original_kind
@@ -172,7 +172,7 @@ def test_an_apply_refuses_a_plan_whose_destination_schema_changed(  # noqa: PLR0
     )
     assert (
         canary_leaks(
-            preview_env["infrahub_token"],
+            smoke_env["infrahub_token"],
             artifacts,
         )
         == []

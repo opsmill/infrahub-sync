@@ -12,18 +12,17 @@ The test kills a worker, so it is opt-in twice: it is marked `integration`, and 
 of "The `from-netbox` example check" in `docs/docs/development/guidelines/testing-tiers.md`.
 The smoke package is too small: its apply ends before a progress marker is saved.
 
-The stack is the preview environment (`invoke preview.up`, a host worker process) or, with
-`INFRAHUB_SYNC_SMOKE_STACK=dev`, the development stack (the `sync-worker` container). It skips,
-never fails, when that stack is not reachable. On the preview stack the test restarts the worker
-with `invoke preview.up`, which passes this process's environment to the worker, so set
-`INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` as for `preview.up`: the last plan reads NetBox.
+The stack is the development stack (`invoke dev.start`), whose worker is the `sync-worker`
+container: the test kills it and starts it again with Docker Compose. It skips, never fails, when
+the stack is not reachable, and in dependencies mode (`dev.deps`, a host worker), where there is
+no worker container to kill. It is marked `integration`, not `smoke`, so `invoke dev.smoke`
+never kills the worker.
 """
 
 from __future__ import annotations
 
 import os
-import signal
-import subprocess  # noqa: S404 -- fixed argv: Docker Compose and the preview task, to stop and start the worker
+import subprocess  # noqa: S404 -- fixed argv: Docker Compose, to stop and start the worker
 import time
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -32,9 +31,9 @@ import pytest
 
 from infrahub_sync.client import SyncClient
 from tasks import dev
-from tasks.preview import REPO_ROOT, STATE_DIR
-from tests.preview.test_cli_client import run_cli, run_cli_command
-from tests.preview.test_service_api import infrahub_client
+from tasks.utils import REPO_BASE as REPO_ROOT
+from tests.dev_stack.smoke.test_cli_client import run_cli, run_cli_command
+from tests.dev_stack.smoke.test_service_api import infrahub_client
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -45,8 +44,6 @@ pytestmark = pytest.mark.integration
 
 CONFIG_VARIABLE = "INFRAHUB_SYNC_RESUME_CHECK_CONFIG"
 REASON = "resume check: interrupt an apply and resume it"
-# The preview stack's host worker, started by `invoke preview.up` with a pid file.
-PREVIEW_WORKER = "prefect-worker"
 DEV_WORKER = "sync-worker"
 PROGRESS_TIMEOUT_SECONDS = 600.0
 # The liveness monitor ends a killed worker's execution after its stall threshold.
@@ -67,33 +64,29 @@ def _configuration() -> tuple[str, str]:
     return config_id, version
 
 
-def _on_dev_stack() -> bool:
-    return os.environ.get(dev.SMOKE_STACK_VARIABLE) == "dev"
+def _require_worker_container() -> None:
+    """Skip in dependencies mode, where the worker runs on the host and has no container."""
+    if os.environ.get(dev.SMOKE_STACK_VARIABLE) == dev.DEPS_SMOKE_STACK:
+        pytest.skip("the worker runs on the host in dependencies mode; run this test with `invoke dev.start`")
+
+
+def _compose_worker(action: str) -> None:
+    subprocess.run(  # noqa: S603
+        ["docker", "compose", "--profile", "sync", "-f", dev.DEV_COMPOSE_FILE, action, DEV_WORKER],  # noqa: S607
+        cwd=REPO_ROOT,
+        check=True,
+        timeout=RESTART_TIMEOUT_SECONDS,
+    )
 
 
 def _kill_worker() -> None:
     """Stop the worker without letting it clean up, as a crash or an out-of-memory kill would."""
-    if _on_dev_stack():
-        subprocess.run(  # noqa: S603
-            ["docker", "compose", "--profile", "sync", "-f", dev.DEV_COMPOSE_FILE, "kill", DEV_WORKER],  # noqa: S607
-            cwd=REPO_ROOT,
-            check=True,
-        )
-        return
-    pid = int((STATE_DIR / f"{PREVIEW_WORKER}.pid").read_text(encoding="utf-8").strip())
-    # `preview.up` starts the worker in its own session, so its process group holds the flow
-    # run subprocess that is writing.
-    os.killpg(os.getpgid(pid), signal.SIGKILL)
+    _compose_worker("kill")
 
 
 def _start_worker() -> None:
-    """Start the worker again; `preview.up` starts only the processes that are not running."""
-    command = (
-        ["docker", "compose", "--profile", "sync", "-f", dev.DEV_COMPOSE_FILE, "start", DEV_WORKER]
-        if _on_dev_stack()
-        else ["uv", "run", "invoke", "preview.up"]
-    )
-    subprocess.run(command, cwd=REPO_ROOT, check=True, timeout=RESTART_TIMEOUT_SECONDS)  # noqa: S603
+    """Start the killed worker container again."""
+    _compose_worker("start")
 
 
 def _poll(read: Callable[[], RunResource], done: Callable[[RunResource], bool], timeout: float) -> RunResource:
@@ -110,15 +103,15 @@ def _poll(read: Callable[[], RunResource], done: Callable[[RunResource], bool], 
     return resource
 
 
-def _create_branch(preview_env: dict[str, Any]) -> str:
+def _create_branch(smoke_env: dict[str, Any]) -> str:
     name = f"resume-check-{uuid.uuid4().hex[:8]}"
-    infrahub_client(preview_env).branch.create(branch_name=name, sync_with_git=False, wait_until_completion=True)
+    infrahub_client(smoke_env).branch.create(branch_name=name, sync_with_git=False, wait_until_completion=True)
     return name
 
 
-def _plan(preview_env: dict[str, Any], config: tuple[str, str], branch: str, artifacts: dict[str, object]) -> str:
+def _plan(smoke_env: dict[str, Any], config: tuple[str, str], branch: str, artifacts: dict[str, object]) -> str:
     planned = run_cli(
-        preview_env,
+        smoke_env,
         "plan",
         "--config-id",
         config[0],
@@ -143,17 +136,18 @@ def _has_saved_progress(resource: RunResource) -> bool:
     return progress is not None and progress.position is not None and progress.position > 0
 
 
-def test_a_killed_apply_resumes_to_the_state_of_an_uninterrupted_apply(preview_env: dict[str, Any]) -> None:
+def test_a_killed_apply_resumes_to_the_state_of_an_uninterrupted_apply(smoke_env: dict[str, Any]) -> None:
     """Interrupt, `runs show`, `verify`, `runs resume`; a new plan then has no create and no update."""
     config = _configuration()
-    branch = _create_branch(preview_env)
+    _require_worker_container()
+    branch = _create_branch(smoke_env)
     artifacts: dict[str, object] = {}
-    client = SyncClient(preview_env["urls"]["sync_api"], preview_env["bearer_token"])
+    client = SyncClient(smoke_env["urls"]["sync_api"], smoke_env["bearer_token"])
 
-    run_id = _plan(preview_env, config, branch, artifacts)
+    run_id = _plan(smoke_env, config, branch, artifacts)
     checksum = client.get_plan(run_id).checksum
     run_cli(
-        preview_env,
+        smoke_env,
         "apply",
         run_id,
         "--expected-checksum",
@@ -186,19 +180,19 @@ def test_a_killed_apply_resumes_to_the_state_of_an_uninterrupted_apply(preview_e
         if killed:
             _start_worker()
 
-    shown = run_cli_command(preview_env, "runs", "show", run_id, artifacts=artifacts, artifact_name="runs show")
+    shown = run_cli_command(smoke_env, "runs", "show", run_id, artifacts=artifacts, artifact_name="runs show")
     assert shown.returncode == 0, shown.stderr
     assert "resumable: yes (verify required)" in shown.stdout, shown.stdout
     assert "progress: " in shown.stdout, shown.stdout
 
     verified = run_cli_command(
-        preview_env, "verify", run_id, "--reason", REASON, artifacts=artifacts, artifact_name="verify"
+        smoke_env, "verify", run_id, "--reason", REASON, artifacts=artifacts, artifact_name="verify"
     )
     assert verified.returncode == 0, f"{verified.stdout}\n{verified.stderr}"
     assert "note: runs resume writes the plan's values over every operation reported as differs" in verified.stdout
 
     run_cli(
-        preview_env,
+        smoke_env,
         "runs",
         "resume",
         run_id,
@@ -216,6 +210,6 @@ def test_a_killed_apply_resumes_to_the_state_of_an_uninterrupted_apply(preview_e
     assert len(resumed.resumes) == 1
     assert resumed.resumes[0].outcome == "succeeded"
 
-    replanned = client.get_plan(_plan(preview_env, config, branch, artifacts)).summary.by_action
+    replanned = client.get_plan(_plan(smoke_env, config, branch, artifacts)).summary.by_action
     assert replanned.get("create", 0) == 0, replanned
     assert replanned.get("update", 0) == 0, replanned

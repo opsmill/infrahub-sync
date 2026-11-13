@@ -3,7 +3,7 @@
 Two helpers, shared by every module that drives the running stack. The transcript hook is
 what makes an in-process `httpx` client an auditable direct-HTTP surface: without a
 recorded request and response pair, "the raw route was exercised" rests on the test's own
-narration. The canary scan is the single place the preview's Infrahub token is looked for,
+narration. The canary scan is the single place the stack's Infrahub token is looked for,
 so a newly captured artifact is covered by naming it in one mapping rather than by writing
 another check.
 """

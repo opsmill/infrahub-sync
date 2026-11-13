@@ -42,7 +42,8 @@
   - The new plan held 0 creates and 0 updates.
   - The first attempt found a test bug: a killed worker's run ends in phase `interrupted`, set by the liveness
     monitor, not `apply-interrupted`. The test now accepts both phases, and spec.md is corrected.
-  - The test file moves to `tests/dev_stack/smoke/` when PR #412 is merged into this branch.
+  - The test file moved to `tests/dev_stack/smoke/test_resume_interrupted_apply.py` when PR #412 was merged into
+    this branch; it no longer needs `INFRAHUB_SYNC_SMOKE_STACK=dev`.
   - Not checked: `verify`'s per-operation results on the live stack, because the test does not keep the CLI output.
 - **T035**: the SC-003 and SC-004 benchmarks need the tier M and L datasets. The baseline runs at `5f005776`.
 

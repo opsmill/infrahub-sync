@@ -148,27 +148,24 @@ Recorded on 2026-11-13, on Python 3.11.8 with the `dev`, `prefect` and `service`
   API reference is written by hand; `POST /runs/{run_id}/resume`, `apply_progress`, `resumes` and the
   `verify` report were added to `docs/docs/reference/sync-http-api.mdx`.
 
-### T034: run the integration test (not run here)
+### T034: run the integration test
 
-`tests/preview/test_resume_interrupted_apply.py` was observed to skip cleanly with no stack running
-(`pytest -m integration`). To run it:
+`tests/dev_stack/smoke/test_resume_interrupted_apply.py` skips cleanly with no stack running
+(`pytest -m integration`). It moved from `tests/preview/` when PR #412 removed the preview stack. To run it:
 
-1. Follow steps 1 to 4 of "The `from-netbox` example check" in
-   `docs/docs/development/guidelines/testing-tiers.md` (local NetBox `demo` dataset, `preview.up`, the schema
+1. Start the development stack (`invoke dev.start`) and follow steps 1 to 4 of "The `from-netbox` example
+   check" in `docs/docs/development/guidelines/testing-tiers.md` (local NetBox `demo` dataset, the schema
    library, `configs register .netbox/from-netbox.local.yml`).
 2. Run:
 
    ```bash
    INFRAHUB_SYNC_RESUME_CHECK_CONFIG="<config_id>@<registry_version>" \
-   INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="<token printed by netbox.seed>" \
-     uv run pytest -m integration tests/preview/test_resume_interrupted_apply.py
+     uv run pytest -m integration tests/dev_stack/smoke/test_resume_interrupted_apply.py
    ```
 
-   On the development stack instead of the preview stack, add `INFRAHUB_SYNC_SMOKE_STACK=dev`; the test then
-   kills and starts the `sync-worker` container. On the preview stack the test restarts the worker with
-   `invoke preview.up`, which passes the pytest environment to the worker, so the NetBox token must be set
-   there. The test creates its own branch, kills the worker once a
-   progress marker is saved, and restarts the worker afterwards.
+   The test creates its own branch, kills the `sync-worker` container once a progress marker is saved, and
+   starts it again with Docker Compose. It skips in dependencies mode (`dev.deps`), where the worker runs on
+   the host.
 
 ### T035: benchmark commands (deferred — needs the benchmark stack)
 

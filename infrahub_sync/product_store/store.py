@@ -324,6 +324,12 @@ END
 # their symbolic names even when an exception provides ``sqlite_errorcode``.
 _SQLITE_UNIQUE_CONSTRAINT_CODES = frozenset({1555, 2067})
 _POSTGRESQL_SCHEMA_CONFLICT_CODES = frozenset({"23505", "42P07", "42710"})
+# What schema initialization retries on PostgreSQL: the duplicate-catalog conflicts above,
+# and a deadlock (40P01). The advisory lock below serializes initializers, but not a writer
+# that is already running: `add_prefect_execution` updates `product_runs` and then inserts
+# into `prefect_executions`, while an initializer locks the two tables in the opposite
+# order, so PostgreSQL can abort the initializer with 40P01.
+_POSTGRESQL_SCHEMA_INITIALIZATION_RETRY_CODES = _POSTGRESQL_SCHEMA_CONFLICT_CODES | {"40P01"}
 _POSTGRESQL_DUPLICATE_COLUMN_CODE = "42701"
 # On PostgreSQL, ``_column_nullability`` is the one catalog read that needs nullability, and
 # it projects exactly (column_name, is_nullable). The other two read column names alone. PostgreSQL
@@ -402,6 +408,14 @@ _PREFECT_POSITION_ATTEMPTS = 3
 _FIXED_CHECKPOINT_ARTIFACT_IDS = frozenset({PLAN_CHECKPOINT_ARTIFACT_ID, FINAL_CHECKPOINT_ARTIFACT_ID})
 _RESULT_MERGE_ATTEMPTS = 5
 _SCHEMA_INITIALIZATION_ATTEMPTS = 2
+# Serializes schema initialization across processes that start together, per schema. Each
+# `CREATE INDEX IF NOT EXISTS` takes a SHARE lock on its table even when the index exists,
+# and the audit-event fill that follows needs ROW EXCLUSIVE on the same table, so two
+# unserialized initializers deadlock. The transaction-level lock is released at commit or
+# rollback.
+_POSTGRESQL_SCHEMA_INITIALIZATION_LOCK = (
+    "SELECT pg_advisory_xact_lock(hashtextextended('infrahub_sync.product_store.schema.' || current_schema(), 0))"
+)
 # Measured, not guessed: across roughly 4,800 trials of 8 concurrent distinct-checksum
 # add_configuration_version() callers against SQLite (the tightest case, single-writer
 # locking), the worst observed attempt count for any one caller was 5-7. This budget
@@ -873,12 +887,12 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         *,
         placeholder: str,
         dialect: Literal["sqlite", "postgresql"],
-        schema_conflict_codes: frozenset[str] = frozenset(),
+        initialization_retry_codes: frozenset[str] = frozenset(),
     ) -> None:
         self._connect = connect
         self._placeholder = placeholder
         self._dialect = dialect
-        self._schema_conflict_codes = schema_conflict_codes
+        self._initialization_retry_codes = initialization_retry_codes
         self._initialize()
 
     def _sql(self, statement: str) -> str:
@@ -891,6 +905,8 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             try:
                 cursor = connection.cursor()
                 try:
+                    if self._dialect == "postgresql":
+                        cursor.execute(_POSTGRESQL_SCHEMA_INITIALIZATION_LOCK)
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             cursor.execute(statement)
@@ -906,10 +922,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                     connection.commit()
                 except Exception as exc:  # pylint: disable=broad-exception-caught
                     # Synchronous DB-API drivers do not share a common error base; retry only
-                    # documented PostgreSQL duplicate-catalog SQLSTATEs and duplicate-column
-                    # races from a concurrent ALTER TABLE ADD COLUMN on either backend.
+                    # the PostgreSQL SQLSTATEs in `initialization_retry_codes` (duplicate
+                    # catalog entries and a deadlock) and duplicate-column races from a
+                    # concurrent ALTER TABLE ADD COLUMN on either backend.
                     connection.rollback()
-                    if _sqlstate(exc) not in self._schema_conflict_codes and not _is_duplicate_column_error(exc):
+                    if _sqlstate(exc) not in self._initialization_retry_codes and not _is_duplicate_column_error(exc):
                         raise
                     if attempt + 1 == _SCHEMA_INITIALIZATION_ATTEMPTS:
                         raise
@@ -3661,7 +3678,7 @@ class PostgreSQLRunStore(_RelationalRunStore):
             connect,
             placeholder="%s",
             dialect="postgresql",
-            schema_conflict_codes=_POSTGRESQL_SCHEMA_CONFLICT_CODES,
+            initialization_retry_codes=_POSTGRESQL_SCHEMA_INITIALIZATION_RETRY_CODES,
         )
 
 

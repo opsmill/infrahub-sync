@@ -1,10 +1,10 @@
-"""Fixtures for the preview smoke suite.
+"""Fixtures for the development stack's smoke suite.
 
-These tests run against the environment `invoke preview.up` starts and confirm
-the simple things on every preview surface (Python API, Sync HTTP API,
-Prefect) so a tester never starts from a broken environment. They are not a
-replacement for human testing, and they skip — never fail — when the preview
-environment is not running.
+These tests run against the development stack that `invoke dev.start` (or `dev.deps` with
+`dev.api` and `dev.worker`) starts, and confirm the simple things on every surface (Python
+API, Sync HTTP API, Prefect) so a tester never starts from a broken stack. They are not a
+replacement for human testing, and they skip — never fail — when the stack is not running.
+`invoke dev.smoke` seeds Infrahub and runs them.
 
 They share one Infrahub branch and one Prefect deployment, and the collection
 hook below orders them against each other, so the suite runs single-process:
@@ -23,7 +23,7 @@ import httpx
 import pytest
 
 from tasks import dev
-from tasks.preview import REPO_ROOT, PreviewError, load_preview_env, preview_urls
+from tasks.utils import REPO_BASE as REPO_ROOT
 
 if TYPE_CHECKING:
     from _pytest.nodes import Item
@@ -57,49 +57,26 @@ def pytest_collection_modifyitems(items: list[Item]) -> None:
 def evidence_dir() -> Path:
     """Where the qualification rows write their captured HTTP transcripts.
 
-    Under the preview's own gitignored runtime state, next to the service logs, so one
-    directory holds everything a run of the matrix leaves behind for a reader.
+    Under the development stack's gitignored runtime state, so one directory holds everything
+    a run of the matrix leaves behind for a reader.
     """
-    path = REPO_ROOT / ".preview" / "evidence"
+    path = REPO_ROOT / ".dev" / "evidence"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 @pytest.fixture(scope="session")
-def preview_settings() -> dict[str, Any]:
-    """Shipped-plus-local preview settings, with derived URLs and tokens.
+def smoke_settings() -> dict[str, Any]:
+    """The development stack's settings, with derived URLs and tokens.
 
-    A missing or trimmed settings file skips like every other
-    unavailable-environment condition; these tests never fail for setup reasons.
-    """
-    stack = os.environ.get(dev.SMOKE_STACK_VARIABLE)
-    if stack in {"dev", dev.DEPS_SMOKE_STACK}:
-        return _dev_stack_settings(host_worker=stack == dev.DEPS_SMOKE_STACK)
-    try:
-        values = load_preview_env()
-    except PreviewError as exc:
-        pytest.skip(f"preview settings unavailable ({exc}); start with `invoke preview.up`")
-    urls = preview_urls(values)
-    principals = json.loads(values["PREVIEW_BEARER_TOKENS"])
-    first_actor = min(principals)
-    return {
-        "values": values,
-        "urls": urls,
-        "infrahub_token": values["INFRAHUB_INITIAL_ADMIN_TOKEN"],
-        "bearer_token": principals[first_actor]["token"],
-        "actor": first_actor,
-        "examples_dir": str(REPO_ROOT / "examples"),
-    }
-
-
-def _dev_stack_settings(*, host_worker: bool = False) -> dict[str, Any]:
-    """The same settings, read from the development stack that `invoke dev.smoke` runs against.
-
-    There the worker runs in a container, so a package names Infrahub by its service name
+    The worker runs in a container, so a package names Infrahub by its service name
     (`urls["infrahub"]`) while the suite's own Infrahub client uses the host publication
-    (`urls["infrahub_host"]`). With `host_worker` (`dev.worker` on the host, after
-    `dev.deps`), the package names the host publication too.
+    (`urls["infrahub_host"]`). In dependencies mode (`dev.worker` on the host, after
+    `dev.deps`, which `dev.smoke` reports through `INFRAHUB_SYNC_SMOKE_STACK`), the package
+    names the host publication too. Unreadable settings skip like every other
+    unavailable-stack condition; these tests never fail for setup reasons.
     """
+    host_worker = os.environ.get(dev.SMOKE_STACK_VARIABLE) == dev.DEPS_SMOKE_STACK
     try:
         settings = dev.dev_settings()
     except dev.DevStackError as exc:
@@ -107,7 +84,7 @@ def _dev_stack_settings(*, host_worker: bool = False) -> dict[str, Any]:
     principals = json.loads(settings.bearer_tokens)
     first_actor = min(principals)
     return {
-        "values": {"PREVIEW_WORK_POOL": settings.work_pool},
+        "work_pool": settings.work_pool,
         "urls": {
             "infrahub": settings.infrahub_url if host_worker else settings.worker_infrahub_url,
             "infrahub_host": settings.infrahub_url,
@@ -127,18 +104,18 @@ def infrahub_host_url(settings: dict[str, Any]) -> str:
 
 
 @pytest.fixture(scope="session")
-def preview_env(preview_settings: dict[str, Any]) -> dict[str, Any]:
-    """Skip the suite when any preview endpoint is unreachable."""
+def smoke_env(smoke_settings: dict[str, Any]) -> dict[str, Any]:
+    """Skip the suite when any endpoint of the stack is unreachable."""
     probes = {
-        "Infrahub": f"{infrahub_host_url(preview_settings)}/api/config",
-        "Prefect": f"{preview_settings['urls']['prefect']}/api/health",
-        "Sync API": f"{preview_settings['urls']['sync_api']}/openapi.json",
+        "Infrahub": f"{infrahub_host_url(smoke_settings)}/api/config",
+        "Prefect": f"{smoke_settings['urls']['prefect']}/api/health",
+        "Sync API": f"{smoke_settings['urls']['sync_api']}/openapi.json",
     }
     for description, url in probes.items():
         try:
             response = httpx.get(url, timeout=5)
         except httpx.HTTPError as exc:
-            pytest.skip(f"preview environment not running ({description}: {exc}); start it with `invoke preview.up`")
+            pytest.skip(f"development stack not running ({description}: {exc}); start it with `invoke dev.start`")
         if response.status_code >= 500:
-            pytest.skip(f"preview {description} unhealthy (HTTP {response.status_code})")
-    return preview_settings
+            pytest.skip(f"development stack {description} unhealthy (HTTP {response.status_code})")
+    return smoke_settings

@@ -132,3 +132,17 @@ def test_every_sync_image_service_mounts_the_checkout_read_only(service: str, pa
     assert mount["type"] == "bind"
     assert Path(mount["source"]) == REPO_ROOT / package
     assert mount.get("read_only") is True
+
+
+@pytest.mark.parametrize(
+    "retired",
+    [
+        "development/docker-compose.dev.yml",
+        "development/docker-compose.preview.yml",
+        "development/preview.env",
+        "tasks/preview.py",
+    ],
+)
+def test_the_retired_stack_files_do_not_exist(retired: str) -> None:
+    """The development stack is the only local stack; the preview stack and the old file name are gone."""
+    assert not (REPO_ROOT / retired).exists()

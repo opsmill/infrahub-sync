@@ -1,8 +1,8 @@
-"""The smoke dataset that `dev.seed`, `dev.smoke`, `preview.seed` and `preview.smoke` write.
+"""The smoke dataset that `dev.seed` and `dev.smoke` write.
 
 One schema, one device on `main`, and the disposable smoke branch forked after it. The
-smoke suite (`tests/preview/`) asserts on these names. This module holds no Invoke task
-and imports no other task module, so both task modules can use it.
+smoke suite (`tests/dev_stack/smoke/`) and the compose tier's Infrahub fixture assert on
+these names. This module holds no Invoke task and imports no other task module.
 """
 
 from __future__ import annotations

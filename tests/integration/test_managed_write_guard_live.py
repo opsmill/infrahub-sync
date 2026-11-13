@@ -29,7 +29,7 @@ configurations, which the guard does not serialize at all, the pair still came b
 lock readings distinguish serialization from luck, which is why every leg also requires
 an observed waiting request.
 
-These legs need the live preview stack (`invoke preview.up` plus `invoke preview.seed`).
+These legs need the running development stack (`invoke dev.start` plus `invoke dev.seed`).
 An absent stack is the only thing they skip for, and the skip names the missing service.
 
 Psycopg and the guard's key derivation are imported inside the functions that use them,
@@ -58,14 +58,8 @@ import httpx
 import pytest
 from typing_extensions import Self
 
-from tasks.preview import (
-    SHARED_DEVICE_NAME,
-    SMOKE_BRANCH,
-    SMOKE_KIND,
-    PreviewError,
-    load_preview_env,
-    preview_urls,
-)
+from tasks import dev
+from tasks.smoke_dataset import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -102,10 +96,13 @@ _DROP_KEY = "SELECT pg_advisory_unlock(%s)"
 
 @dataclass(frozen=True, slots=True)
 class LiveStack:
-    """The reachable preview endpoints one leg drives."""
+    """The reachable development stack endpoints one leg drives."""
 
     sync_api: str
+    # Where the worker, in its container, reaches Infrahub: the URL a package names.
     infrahub: str
+    # Where this test, on the host, reaches the same Infrahub.
+    infrahub_host: str
     infrahub_token: str
     bearer_token: str
     database_url: str
@@ -113,38 +110,40 @@ class LiveStack:
 
 @pytest.fixture(name="live_stack", scope="session")
 def live_stack_fixture() -> LiveStack:
-    """Return the running preview stack, or skip naming exactly what is missing."""
+    """Return the running development stack, or skip naming exactly what is missing."""
     # pylint: disable-next=import-outside-toplevel
     import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
 
     try:
-        values = load_preview_env()
-    except PreviewError as exc:
-        pytest.skip(f"preview settings unavailable ({exc}); start the stack with `invoke preview.up`")
-    urls = preview_urls(values)
-    database_url = f"postgresql://postgres:postgres@127.0.0.1:{values['PREVIEW_STORAGE_POSTGRES_PORT']}/infrahub_sync"
+        settings = dev.dev_settings()
+        database_url = dev.host_environment(settings, "sync-worker")[dev.DATABASE_URL_VARIABLE]
+    except dev.DevStackError as exc:
+        pytest.skip(f"development stack settings unavailable ({exc}); start the stack with `invoke dev.start`")
     for description, url in (
-        ("Sync API", f"{urls['sync_api']}/openapi.json"),
-        ("Infrahub", f"{urls['infrahub']}/api/config"),
-        ("Prefect", f"{urls['prefect']}/api/health"),
+        ("Sync API", f"{settings.sync_api_url}/openapi.json"),
+        ("Infrahub", f"{settings.infrahub_url}/api/config"),
+        ("Prefect", f"{settings.prefect_url}/api/health"),
     ):
         try:
             response = httpx.get(url, timeout=10)
         except httpx.HTTPError as exc:
-            pytest.skip(f"preview {description} unreachable at {url} ({exc}); start it with `invoke preview.up`")
+            pytest.skip(
+                f"development stack {description} unreachable at {url} ({exc}); start it with `invoke dev.start`"
+            )
         if response.status_code >= 500:
-            pytest.skip(f"preview {description} unhealthy at {url} (HTTP {response.status_code})")
+            pytest.skip(f"development stack {description} unhealthy at {url} (HTTP {response.status_code})")
     try:
         with psycopg.connect(database_url, connect_timeout=10) as probe:
             probe.execute("SELECT 1")
     except psycopg.Error as exc:
-        pytest.skip(f"preview service PostgreSQL unreachable ({exc}); start it with `invoke preview.up`")
-    principals = json.loads(values["PREVIEW_BEARER_TOKENS"])
+        pytest.skip(f"development stack PostgreSQL unreachable ({exc}); start it with `invoke dev.start`")
+    principals = json.loads(settings.bearer_tokens)
     actor = min(principals)
     return LiveStack(
-        sync_api=urls["sync_api"],
-        infrahub=urls["infrahub"],
-        infrahub_token=values["INFRAHUB_INITIAL_ADMIN_TOKEN"],
+        sync_api=settings.sync_api_url,
+        infrahub=settings.worker_infrahub_url,
+        infrahub_host=settings.infrahub_url,
+        infrahub_token=settings.infrahub_admin_token,
         bearer_token=principals[actor]["token"],
         database_url=database_url,
     )
@@ -226,7 +225,7 @@ def _seed_one_source_update(live_stack: LiveStack) -> str:
     """
     from infrahub_sdk import InfrahubClientSync  # pylint: disable=import-outside-toplevel
 
-    client = InfrahubClientSync(address=live_stack.infrahub, config={"api_token": live_stack.infrahub_token})
+    client = InfrahubClientSync(address=live_stack.infrahub_host, config={"api_token": live_stack.infrahub_token})
     # Copied verbatim, every mapped field: a mirror carrying any manufactured value would
     # be an update, and an update rewriting a device's own unique name is rejected.
     payloads = [
@@ -234,7 +233,7 @@ def _seed_one_source_update(live_stack: LiveStack) -> str:
         for node in client.all(kind=SMOKE_KIND, branch=SMOKE_BRANCH)
     ]
     assert SHARED_DEVICE_NAME in {payload["name"] for payload in payloads}, (
-        f"{SHARED_DEVICE_NAME!r} is not on {SMOKE_BRANCH}; run `uv run invoke preview.seed`"
+        f"{SHARED_DEVICE_NAME!r} is not on {SMOKE_BRANCH}; run `uv run invoke dev.seed`"
     )
     for payload in payloads:
         client.create(kind=SMOKE_KIND, branch="main", data=payload).save(allow_upsert=True)

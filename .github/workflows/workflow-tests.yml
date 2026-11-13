@@ -75,7 +75,7 @@ jobs:
         run: uv sync --python ${{ matrix.python-version }} --frozen --extra dev --extra prefect --extra service
 
       # Runs only `-m "not integration"`. Integration tests need a live
-      # Infrahub instance and are opted into via `invoke tests-integration`
+      # Infrahub instance and are opted into via `invoke tests.tests-integration`
       # (run locally; not gated here yet — TODO: add Infrahub service
       # container or compose stack and a separate integration-tests job).
       - name: "pytest: unit tests"

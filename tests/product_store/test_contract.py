@@ -161,6 +161,10 @@ class _CursorAdapter:
             return self
         if "ALTER COLUMN" in stripped and "DROP NOT NULL" in stripped:
             return self
+        if "pg_advisory_xact_lock" in stripped:
+            # SQLite already serializes writers; the schema-initialization lock has no
+            # SQLite counterpart to emulate.
+            return self
         stripped = stripped.replace(
             "CAST(COALESCE(submitted_at, last_observed_at) AS TIMESTAMPTZ)",
             "infrahub_sync_execution_timestamp_microseconds(COALESCE(submitted_at, last_observed_at))",
@@ -634,6 +638,21 @@ def test_postgresql_schema_bootstrap_retries_only_duplicate_catalog_conflicts(sq
     conflicted.close.assert_called_once_with()
     successful.commit.assert_called_once_with()
     successful.close.assert_called_once_with()
+
+
+def test_postgresql_schema_bootstrap_retries_a_deadlock_with_a_running_writer() -> None:
+    """A writer that takes `product_runs` then `prefect_executions` can deadlock a starting
+    process, which holds the opposite order; PostgreSQL aborts one side with 40P01."""
+    deadlocked = _bootstrap_connection(_FakeDriverError(sqlstate="40P01"))
+    successful = _bootstrap_connection()
+    connections = [deadlocked, successful]
+
+    PostgreSQLRunStore(lambda: connections.pop(0))
+
+    assert not connections
+    deadlocked.rollback.assert_called_once_with()
+    deadlocked.close.assert_called_once_with()
+    successful.commit.assert_called_once_with()
 
 
 def test_postgresql_schema_bootstrap_does_not_swallow_other_ddl_failures() -> None:
@@ -4608,6 +4627,9 @@ class _FakePostgreSQLCursor:
     def _dispatch(self, operation: str, parameters: Sequence[Any]) -> tuple[tuple[Any, ...], ...]:  # noqa: PLR0911, PLR0912
         connection = self._connection
         database = connection.database
+        if operation.startswith("SELECT pg_advisory_xact_lock("):
+            # One fake connection at a time: the schema-initialization lock is always free.
+            return ((None,),)
         if match := _FAKE_CREATE_TABLE.match(operation):
             table = match.group(1)
             if table not in database.tables:
@@ -5038,6 +5060,50 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
         # The CHECK constraint must actually enforce the binding invariant against a real server,
         # not merely exist by name.
         _assert_real_postgresql_refuses_partial_configuration_binding(dsn)
+    finally:
+        schema.drop()
+
+
+_CONCURRENT_INITIALIZERS = 4
+_CONCURRENT_INITIALIZATION_ROUNDS = 5
+
+
+@pytest.mark.integration
+def test_postgresql_run_store_initializes_concurrently_against_a_real_server() -> None:
+    """Several processes starting at once must all initialize the same existing schema.
+
+    Every service process runs the schema initialization on start-up, so two workers that
+    start flow runs together initialize concurrently. Each `CREATE INDEX IF NOT EXISTS`
+    takes a SHARE lock on its table even when the index exists, and the audit-event fill
+    that follows needs ROW EXCLUSIVE on the same table. Two initializers each holding the
+    SHARE lock and waiting for the other's is a deadlock, and PostgreSQL aborts one of them.
+    """
+    endpoint = _reachable_postgresql_dsn()
+    if endpoint is None:
+        pytest.skip("psycopg is not installed, or PRODUCT_STORE_TEST_POSTGRESQL_DSN is unset/unreachable")
+    # pylint: disable-next=import-outside-toplevel,import-error
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
+
+    from infrahub_sync.service.storage import PsycopgConnectionFactory
+
+    schema = isolated_schema(endpoint)
+    dsn = schema.dsn
+
+    def connect() -> DBAPIConnection:
+        return PsycopgConnectionFactory(psycopg.connect)(dsn)
+
+    try:
+        schema.reset()
+        PostgreSQLRunStore(connect)
+        for _ in range(_CONCURRENT_INITIALIZATION_ROUNDS):
+            start = Barrier(_CONCURRENT_INITIALIZERS)
+
+            def initialize(_index: int, start: Barrier = start) -> None:
+                start.wait()
+                PostgreSQLRunStore(connect)
+
+            with ThreadPoolExecutor(max_workers=_CONCURRENT_INITIALIZERS) as pool:
+                list(pool.map(initialize, range(_CONCURRENT_INITIALIZERS)))
     finally:
         schema.drop()
 
