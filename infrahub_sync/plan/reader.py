@@ -64,6 +64,7 @@ from infrahub_sync.plan.models import (
     LastChangeRecord,
     PlanManifest,
     PlannedOperation,
+    PlanReport,
     PlanReportRecord,
 )
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME
@@ -210,7 +211,11 @@ def _report_count_mismatch(record: PlanReportRecord, lines: list[dict[str, Any]]
 
 
 def _report_lines(report_bytes: bytes) -> list[dict[str, Any]] | None:
-    """The report's lines as mappings, or `None` when a line is not a report entry."""
+    """The report's lines as mappings, or `None` when a line is not a valid report entry.
+
+    Each line is checked against the model of its entry, so a review that reads the report
+    later (`SavedPlan.summary()`, the report pages) never meets a line it cannot read.
+    """
     lines: list[dict[str, Any]] = []
     for raw_line in operation_record_lines(report_bytes):
         try:
@@ -220,6 +225,10 @@ def _report_lines(report_bytes: bytes) -> list[dict[str, Any]] | None:
         if not isinstance(line, dict) or line.get("entry") not in _REPORT_ENTRIES:
             return None
         lines.append(line)
+    try:
+        PlanReport.from_lines(lines)
+    except ValidationError:
+        return None
     return lines
 
 

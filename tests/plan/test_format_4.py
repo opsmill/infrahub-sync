@@ -22,6 +22,7 @@ path, not only on the reader.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -31,7 +32,7 @@ from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.errors import PlanVerificationError
 from infrahub_sync.plan.models import LineageAccountRecord, LineageNodeRecord, PlanLineageRecord
-from infrahub_sync.plan.reader import load_plan_artifact
+from infrahub_sync.plan.reader import load_plan_artifact, report_mismatch
 from infrahub_sync.plan.review import resolve_run_directory
 from infrahub_sync.plan.writer import (
     LAST_CHANGES_FILE_NAME,
@@ -301,3 +302,28 @@ def test_format_3_fields_are_kept(tmp_path: Path) -> None:
     updates = [operation for operation in loaded.operations if operation.action == "update"]
     assert updates
     assert all(operation.destination_id for operation in updates)
+
+
+def _manifest_for(report_bytes: bytes, *, kept: int) -> dict[str, Any]:
+    return {
+        "format_version": 4,
+        "report": {
+            "digest": hashlib.sha256(report_bytes).hexdigest(),
+            "size": len(report_bytes),
+            "problems": 0,
+            "left_out": 0,
+            "left_out_with_problem": 0,
+            "left_out_dependent": 0,
+            "kept": kept,
+        },
+    }
+
+
+def test_a_report_line_its_entry_model_refuses_is_a_mismatch() -> None:
+    """A `kept` line without `record` matches its digest and counts, and is still refused."""
+    report_bytes = b'{"entry":"kept","cause":"peer_not_found_in_source","relationship":"tenant"}\n'
+
+    assert report_mismatch(_manifest_for(report_bytes, kept=1), report_bytes) == (
+        "one JSON object per line, each a problem, left-out or kept entry",
+        "a line that is not",
+    )

@@ -212,11 +212,6 @@ def _peer_pair(
         SourcePeerUnresolvedError: the peer is in none of the candidate kinds' buckets and
             `destination_only_identity` does not admit it (the **absent** arm).
     """
-    placeholder = not_in_source_peer_pair(unique_id)
-    if placeholder is not None:
-        # A peer the source does not return (spec 019 research R5): named by a placeholder the
-        # problem pass removes, instead of the absent refusal or a literal destination identity.
-        return placeholder
     probed = _probe_peer_kind(
         store=store,
         candidates=candidates,
@@ -224,6 +219,13 @@ def _peer_pair(
         owning_kind=owning_kind,
         field=field,
     )
+    placeholder = not_in_source_peer_pair(unique_id) if probed is None else None
+    if placeholder is not None:
+        # A peer the source does not return (spec 020 research R5): named by a placeholder the
+        # problem pass removes, instead of the absent refusal or a literal destination identity.
+        # The store is probed first, so a stored peer whose unique ID starts like a
+        # placeholder is still that peer.
+        return placeholder
     if probed is None:
         if len(candidates) == 1 and literal_peer_kind_is_unambiguous(config, owning_kind, field, candidates[0]):
             literal = destination_only_identity(
