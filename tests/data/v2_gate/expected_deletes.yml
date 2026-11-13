@@ -1,0 +1,21 @@
+---
+# Deletes that the v2-to-V3 plan gate accepts.
+#
+# The gate converts the v2 NetBox configuration, plans it against data that v2 2.0.1
+# synchronized, and fails on every create, update, left-out record and problem, and on every
+# delete that this list does not hold.
+#
+# Entry format, one mapping per expected delete:
+#
+#   - kind: <destination node kind, for example DcimDevice>
+#     identity: <identity of the node in the plan>
+#     reason: <why V3 deletes this node and why the delete is correct>
+#
+# Add an entry only together with a reason that a reviewer accepts in the pull request that
+# adds it.
+- kind: IpamNamespace
+  identity: name=default
+  reason: >-
+    configs convert --live-schema adds an IpamNamespace mapping with no source endpoint, so the
+    plan finds no source record for Infrahub's built-in default namespace. Apply never executes a
+    delete.

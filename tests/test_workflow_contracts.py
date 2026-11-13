@@ -678,6 +678,25 @@ def test_nightly_route_is_dispatch_only_and_requires_an_exact_merged_commit() ->
     assert guard_step["env"]["NIGHTLY_SHA"] == f"${{{{ inputs.{SHA_INPUT} }}}}"
 
 
+def test_nightly_job_fails_on_every_suite_including_the_v2_gate() -> None:
+    """The v2 gate counts records left out and problems (T031), so its failure fails the job."""
+    steps = jobs(NIGHTLY_WORKFLOW)["end-to-end"]["steps"]
+    final = next(step for step in steps if step.get("name") == "Fail the run if a suite did not pass")
+    loop = final["run"].split("; do", 1)[0]
+    for variable in (
+        "SHA_GUARD",
+        "DEPENDENCIES",
+        "IMAGES",
+        "INTEGRATION",
+        "SMOKE",
+        "SAVED_PLAN",
+        "FROM_NETBOX",
+        "V2_GATE",
+    ):
+        assert f'"${variable}"' in loop
+    assert final["env"]["V2_GATE"] == "${{ steps.v2-gate.outcome }}"
+
+
 def test_nightly_suites_report_independently_and_clean_up() -> None:
     """Each selected suite retains evidence and later suites run after a failure."""
     steps = jobs(NIGHTLY_WORKFLOW)["end-to-end"]["steps"]
@@ -685,7 +704,7 @@ def test_nightly_suites_report_independently_and_clean_up() -> None:
     image_check = next(
         index for index, step in enumerate(steps) if "nightly_e2e.py verify-images" in str(step.get("run", ""))
     )
-    for name in ("integration", "smoke", "saved-plan", "from-netbox"):
+    for name in ("integration", "smoke", "saved-plan", "from-netbox", "v2-gate"):
         step = by_id[name]
         assert image_check < steps.index(step)
         assert step["continue-on-error"] is True
@@ -701,6 +720,7 @@ def test_nightly_suites_report_independently_and_clean_up() -> None:
     assert {step["with"]["path"] for step in uploads} == {
         ".dev/nightly-e2e/*.xml",
         ".dev/nightly-e2e/*-containers.log",
+        ".dev/nightly-e2e/gate-result.json",
     }
     assert all(step["if"] == "always()" for step in uploads)
     assert any(

@@ -210,6 +210,7 @@ $ infrahub-sync configs [OPTIONS] COMMAND [ARGS]...
 * `show`: Show a configuration or one of its versions.
 * `versions`: List a configuration&#x27;s versions, newest...
 * `validate`: Validate a registered configuration version.
+* `convert`: Convert a v1 or v2 config.yml into a V3...
 
 ### `infrahub-sync configs register`
 
@@ -328,6 +329,74 @@ $ infrahub-sync configs validate [OPTIONS] {CONFIG} {version}
 * `--offset <int>`: Finding offset.  [default: 0]
 * `--limit <int>`: Maximum findings to return.  [default: 256]
 * `--branch <str>`: Also check the mapping, the import account&#x27;s permissions and the workers&#x27; credential variables against this Infrahub branch. Exits 1 when a finding on the returned page is an error; read every page with --offset to check them all.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync configs convert`
+
+Convert a v1 or v2 config.yml into a V3 configuration package. Needs no Sync API.
+
+
+The command never prints or reads a credential value. It opens no network
+connection unless --live-schema is given; then it reads the Infrahub schema
+without a token and maps each IP namespace that a uniqueness constraint
+needs and config.yml does not map to the &#x27;default&#x27; namespace, where v2
+wrote it. It prints a report, asks before it writes, and writes nothing
+without a terminal unless --yes is given.
+
+
+The report names each credential setting that v2 used with the
+environment variable the Sync worker reads in V3, each address with its origin (a flag, a v2
+variable, or config.yml), each dropped key with its reason, and notes.
+It warns when config.yml still holds a literal credential, when the
+shipped Compose file does not pass a credential variable to the Sync
+worker, when an address is localhost or 127.0.0.1, and when an address
+came from a generic variable name.
+
+
+Exit status 1, nothing written, when the configuration has any of:
+- a source or destination name that is not a bundled adapter
+- a custom adapter (INFP-654, planned for 3.0)
+- a destination other than Infrahub
+- a setting the bundled adapter does not accept
+- an `auth_method` value v2 did not accept
+- a placeholder v2 did not read
+- an address with a user name or password
+- an address with no value in config.yml, a v2 variable or a flag
+- a placeholder in a setting v2 read from a variable, when no such variable is set
+
+
+Exit status 1 also when:
+- the package fails a registration check
+- the output file exists and --force is not given
+- --output names the input file, even with --force
+- there is no terminal and --yes is not given
+- the package cannot be written
+
+
+Exit status 2 when:
+- PATH cannot be read
+- PATH is not valid YAML
+- PATH is not a v1 or v2 configuration
+- the directory of the output file does not exist
+
+**Usage**:
+
+```console
+$ infrahub-sync configs convert [OPTIONS] {path}
+```
+
+**Arguments**:
+
+* `path`: The v1 or v2 config.yml to read.  [required]
+
+**Options**:
+
+* `--output <path>`: Where to write the package. Defaults to package.yml next to PATH.
+* `--force`: Replace an existing output file.
+* `--yes`: Write without asking.
+* `--source-url <str>`: The source address. Overrides the file and the v2 variables.
+* `--destination-url <str>`: The Infrahub address. Overrides the file and the v2 variables.
+* `--live-schema`: Read the Infrahub schema, without a token, and map an unmapped IP namespace to &#x27;default&#x27;.
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync runs`
