@@ -1,0 +1,26 @@
+dev/specs/022-resume-interrupted-apply/spec.md
+  s_b91a98d41025f3::t_599b8b99c5af48 17-20
+tests/preview/test_resume_interrupted_apply.py
+  s_b91a98d41025f3::t_41828462ce360a 178-180
+dev/specs/022-resume-interrupted-apply/tasks.md
+  s_b91a98d41025f3::t_cc81cfd2ff2266 95-97
+dev/specs/022-resume-interrupted-apply/opsmill-implement-report.md
+  s_b91a98d41025f3::t_53c3310227b8de 35-46
+  s_b91a98d41025f3::t_2881a40bf1e34c 3-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "66bc32ff3b69b6b06c1b811821ae246c638b823a",
+  "prompts": {},
+  "sessions": {
+    "s_b91a98d41025f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c1e68d9-bc95-47b9-bd6b-c5aa572517ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
