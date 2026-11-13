@@ -552,6 +552,16 @@ class PlanManifest(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def _report_only_from_format_4(self) -> PlanManifest:
+        """A format 2 or 3 manifest has no plan report, so it cannot claim the report's checks."""
+        if self.format_version < REPORT_FORMAT_VERSION and (
+            self.report is not None or self.dropdown_values_checked is not None
+        ):
+            msg = f"'report' and 'dropdown_values_checked' need format_version {REPORT_FORMAT_VERSION} or later"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
     def _require_registered_schema_binding(self) -> PlanManifest:
         """A registered plan records the schema semantics it was computed against.
 

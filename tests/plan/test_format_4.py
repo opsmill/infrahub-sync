@@ -26,12 +26,13 @@ import hashlib
 import json
 from typing import TYPE_CHECKING, Any
 
+import pydantic
 import pytest
 
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.errors import PlanVerificationError
-from infrahub_sync.plan.models import LineageAccountRecord, LineageNodeRecord, PlanLineageRecord
+from infrahub_sync.plan.models import LineageAccountRecord, LineageNodeRecord, PlanLineageRecord, PlanManifest
 from infrahub_sync.plan.reader import load_plan_artifact, report_mismatch
 from infrahub_sync.plan.review import resolve_run_directory
 from infrahub_sync.plan.writer import (
@@ -327,3 +328,27 @@ def test_a_report_line_its_entry_model_refuses_is_a_mismatch() -> None:
         "one JSON object per line, each a problem, left-out or kept entry",
         "a line that is not",
     )
+
+
+@pytest.mark.parametrize("field", ["report", "dropdown_values_checked"])
+def test_a_format_3_manifest_cannot_carry_a_report_field(tmp_path: Path, field: str) -> None:
+    """Review would otherwise read a legacy plan as one whose report checks ran."""
+    directory = resolve_run_directory(SYNC_NAME, RUN_ID, base_directory=tmp_path)
+    write_plan_artifact(
+        run_dir=directory,
+        run_id=RUN_ID,
+        config_version=CONFIG_VERSION,
+        source_snapshot=[],
+        deletes_computed=True,
+        operations=[],
+    )
+    manifest = json.loads((directory / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes())
+    manifest["format_version"] = 3
+    manifest.setdefault("dropdown_values_checked", True)
+    if field == "report":
+        manifest.pop("dropdown_values_checked")
+    else:
+        manifest.pop("report")
+
+    with pytest.raises(pydantic.ValidationError):
+        PlanManifest.model_validate(manifest)
