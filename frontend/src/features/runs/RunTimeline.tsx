@@ -14,6 +14,7 @@ import {
   StateLabel,
   When,
 } from "#/components/run-status";
+import { planReads } from "#/domain/plan-reads";
 import { fmt, type RunState, runCounts, type StepState } from "#/domain/run-state";
 import {
   type Artifact,
@@ -28,6 +29,7 @@ import {
 import type { System } from "#/domain/systems";
 import { formatAbsolute } from "#/lib/time";
 
+import { PlanReads } from "./PlanReads";
 import { PlanFacts } from "./PlanReview";
 import type { PlanRequest } from "./run-sections";
 import { clock, stepNode, WaitTime } from "./step-time";
@@ -210,8 +212,11 @@ const PREPOSITION: Record<StepState, string> = {
   skipped: "after",
 };
 
-/** "in 44 s, after 7 s in the queue", "after 27 s", "for 2 h 16 min" while the step still runs or waits. */
-function StepTime({ s }: { s: RunStep }) {
+/**
+ * "in 44 s, after 7 s in the queue", "after 27 s", "for 2 h 16 min" while the step still runs or waits.
+ * `hideQueue` leaves the queue time to the step's own Queue row.
+ */
+function StepTime({ s, hideQueue }: { s: RunStep; hideQueue?: boolean }) {
   const wait = reviewWait(s);
   const o = s.exec;
   let time: ReactNode;
@@ -223,7 +228,7 @@ function StepTime({ s }: { s: RunStep }) {
       o.submitted_at && o.claimed_at
         ? new Date(o.claimed_at).getTime() - new Date(o.submitted_at).getTime()
         : 0;
-    if (o.claimed_at && queuedMs >= QUEUE_SHOWN_FROM_MS) queued = queuedFor(o);
+    if (o.claimed_at && queuedMs >= QUEUE_SHOWN_FROM_MS && !hideQueue) queued = queuedFor(o);
     const from = o.claimed_at ?? o.submitted_at;
     if (o.terminal_at) time = ranFor(o);
     else if (from) time = <WaitTime wait={{ from }} />;
@@ -650,6 +655,7 @@ export function RunTimeline({
     const sentence = stepSentence(s);
     // The notice on the run's outcome takes the place of the step's sentence; its details follow.
     const stepNotice = s.index === noticeIndex ? notice : null;
+    const reads = planReads(s, source, destination);
     items.push(
       <Event
         key={s.id}
@@ -674,18 +680,21 @@ export function RunTimeline({
                 <StateIcon state={ICON_STATE[s.state]} className="size-3.5 shrink-0" />
                 <span className="first-letter:uppercase">{stateLabel(s)}</span>
               </span>
-              <StepTime s={s} />
+              <StepTime s={s} hideQueue={Boolean(reads)} />
             </span>
           </span>
         }
       >
         {stepNotice}
+        {reads && <PlanReads reads={reads} step={s} run={run} />}
         <div className="flex flex-col gap-1 empty:hidden">
           {glance(s) ? (
             <ChangesGlance run={run} onOpenChanges={onOpenChanges} />
           ) : (
             sentence &&
-            !stepNotice && (
+            !stepNotice &&
+            // The rows of a running plan already say what it is doing.
+            !(reads && s.state === "active") && (
               <p className="text-pretty text-[13px] text-foreground-muted">{sentence}</p>
             )
           )}

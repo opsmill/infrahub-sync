@@ -11,6 +11,14 @@ export const clock = (iso: string) =>
     minute: "2-digit",
   });
 
+/** "01:13:36", for times inside one step. */
+export const clockSeconds = (iso: string) =>
+  new Date(iso).toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+
 /** How long a review lasted, or has lasted so far, counted every second while it still waits. */
 export function WaitTime({ wait }: { wait: Wait }) {
   const now = useNow(1000);
