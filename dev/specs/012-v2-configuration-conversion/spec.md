@@ -322,8 +322,10 @@ the operations.
   every delete it holds is on the test's list of expected deletes, and when every record left
   out and every problem is on the test's list of expected left-out records. Each entry on either
   list MUST give the kind, the identity and the reason; an entry on the left-out list also gives
-  the problem type of spec 020. A delete, a record left out or a problem that is not on its list
-  MUST fail the gate. Changed on 2026-11-13 by the product owner: a record that the destination
+  the problem type of spec 020. A record left out because it depends on an accepted record is
+  accepted, and so is a delete of a kind that has an accepted record left out (decided by the
+  product owner on 2026-11-13). Any other delete, record left out or problem that is not on its
+  list MUST fail the gate. Changed on 2026-11-13 by the product owner: a record that the destination
   schema cannot represent, such as NetBox devices that share a name where Infrahub identifies a
   device by name alone, is a difference between the two schemas, not a defect.
 - **FR-024**: Every create, update, unlisted delete, unlisted record left out or unlisted problem

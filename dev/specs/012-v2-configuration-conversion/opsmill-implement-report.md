@@ -272,15 +272,22 @@ LAG interfaces.
   source endpoint, so the `default` namespace has no source record. This delete comes from the
   conversion.
 
-### Not decided
+### Decisions
 
-- Whether `expected_left_out.yml` lists the 39 records left out because of a problem, and
-  whether the gate then accepts the records that depend on a listed record without listing all
-  828 of them.
-- How the gate treats the 828 deletes of nodes that v2 merged: list them, accept the deletes
-  that follow from a listed record, or have spec 020 withhold deletes of a kind that has records
-  left out.
-- Whether the `default` namespace delete goes on the expected-delete list, or the conversion
-  avoids it.
+- The product owner decided on 2026-11-13:
+  - `expected_left_out.yml` lists the 39 records left out because of a problem, and the 11
+    problems, each with a reason.
+  - The gate accepts the records that depend on an accepted record, through several levels.
+  - The gate accepts the deletes of a kind that has an accepted record left out.
+  - The `default` namespace delete goes on `expected_deletes.yml`.
+- The spec 020 session confirmed that the 828 deletes are not a spec 020 defect. Spec 020 FR-008
+  protects only the node that has the identity of the record left out, and these deletes are of
+  dependent nodes that v2 attached to `Comms closet` at `dm-yonkers`. That rack's source record
+  matches and is not left out. Planned deletes are never executed (ADR 0004). Spec 020 adds a
+  documentation note only.
+- On the local branch `scratch/012-on-020` (commit `e26ea32e`), a replay of this run against the
+  two lists passes. The lists match 50 entries and accept 828 dependent records and 828 deletes,
+  and nothing is unexpected. The change moves to this branch with T031 once spec 020 is final,
+  and the gate then runs once more against the final spec 020.
 
 The full result is `gate-result.json` from the run. It was not committed.
