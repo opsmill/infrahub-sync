@@ -156,8 +156,10 @@ check that no new plan was created.
 #### Progress marker
 
 - **FR-001**: While applying a saved plan, the system MUST save the progress marker. It MUST save it after every 500
-  committed operations, every 30 seconds, at the end of each kind, when an operation fails, and when the apply ends,
-  whichever comes first.
+  committed operations, at the first commit after 30 seconds, when an operation fails, and after the plan's last
+  operation, whichever comes first. It does not save when the kind changes: the plan is sorted by tier and then by
+  operation identifier, so the kinds of one tier interleave and a save at each change of kind would follow nearly
+  every commit.
 - **FR-002**: The system MUST save a position only after every operation up to and including that position was
   committed. A saved marker MUST never point past an operation that was not committed. A recorded delete is never
   sent to the destination, so it is not a committed operation and does not count toward the 500 of FR-001.

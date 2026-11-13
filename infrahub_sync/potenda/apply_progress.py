@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 class ApplyProgressObserver(Protocol):
-    """Receives each committed operation, each finished kind, and the stop of an apply.
+    """Receives each committed operation, each change of kind, the plan's end, and the stop of an apply.
 
     The engine calls these methods on the thread that dispatches the operations, one call at a
     time. An exception raised here never changes the apply's result: the engine logs it by
@@ -34,10 +34,12 @@ class ApplyProgressObserver(Protocol):
         """
 
     def kind_finished(self, index: int) -> None:
-        """The operation at `index` is the last one of its kind in this run of the plan.
+        """The operation at `index` is followed by an operation of another kind, or is the plan's last.
 
-        Called after the operation at `index` was handled, when the next operation has another
-        kind, and after the plan's last operation.
+        Called after the operation at `index` was handled, when the next operation in stored
+        order has another kind, and after the plan's last operation. The stored order sorts by
+        tier and then by operation ID, a hash, so the kinds of one tier interleave: this can be
+        called after nearly every operation, and the same kind can come back later.
         """
 
     def stopped(self, index: int) -> None:

@@ -38,12 +38,17 @@ writes (SC-003).
 **Decision**: `Potenda.apply_plan` accepts an optional `progress: ApplyProgressObserver` protocol (in
 `infrahub_sync/potenda/apply_progress.py`) with `committed(index, operation)`, `kind_finished(index)`,
 `stopped(index)` and `should_stop() -> bool`. The service worker passes a `StoreApplyProgressObserver`
-(`infrahub_sync/service/apply_progress.py`) that throttles saves (every 500 commits, every 30 seconds, at each kind
-boundary, at the end or failure) and tracks the time of the last successful save. The CLI-local and test paths pass
+(`infrahub_sync/service/apply_progress.py`) that throttles saves (every 500 commits, at the first commit after 30
+seconds, after the plan's last operation, and on failure) and tracks the time of the last successful save. The CLI-local and test paths pass
 nothing and behave as today.
 
 **Rationale**: mirrors spec 018's `SideReadObserver` / `StoreSideReadObserver` split, which keeps the engine free of
 store imports and keeps the save failure policy in the service.
+
+**No save at a change of kind** (amended): the engine still calls `kind_finished(index)` when the next operation's
+kind differs, but the observer saves only when `index` is the plan's last position. The plan is sorted by tier and
+then by `operation_id`, a hash, so the kinds of one tier interleave; a save at every change of kind updated the row
+about once per commit, against the "about 180 on tier L" of R2.
 
 **Ordering (FR-002)**: the observer is told about operation `i` only after the destination call for `i` returned
 and `applied.append` ran, so a saved position never runs ahead of a commit.

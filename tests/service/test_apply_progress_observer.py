@@ -106,25 +106,35 @@ def test_saves_at_the_first_commit_after_30_seconds() -> None:
     assert store.positions == [4]
 
 
-def test_saves_at_each_kind_boundary_and_at_the_end_with_the_last_commit() -> None:
-    store, clock = _Store(), _Clock()
-    observer = _observer(store, clock)
-    _commit(observer, 0, 3)
-
-    observer.kind_finished(2)
-    # A delete at 3 is never committed; the boundary after it saves nothing new.
-    observer.kind_finished(3)
-    _commit(observer, 4, 2)
-    observer.kind_finished(5)
-
-    assert store.positions == [2, 5]
-
-
-def test_a_kind_boundary_before_any_commit_saves_nothing() -> None:
+def test_a_change_of_kind_before_the_plan_end_saves_nothing() -> None:
+    """Kinds of one tier interleave in the plan's order: a save at each change would follow nearly every commit."""
     store, clock = _Store(), _Clock()
     observer = _observer(store, clock)
 
-    observer.kind_finished(0)
+    for index in range(SAVE_EVERY_COMMITS - 1):
+        observer.committed(index, _Operation(index))  # ty: ignore[invalid-argument-type] - an operation stand-in
+        observer.kind_finished(index)
+
+    assert store.attempts == []
+
+
+def test_saves_after_the_plan_last_operation_with_the_last_commit() -> None:
+    store, clock = _Store(), _Clock()
+    observer = _observer(store, clock, start_after=_TOTAL - 10)
+    _commit(observer, _TOTAL - 9, 7)
+
+    observer.kind_finished(_TOTAL - 3)
+    # A delete at the plan's last position is never committed; the end saves the last commit.
+    observer.kind_finished(_TOTAL - 1)
+
+    assert store.positions == [_TOTAL - 3]
+
+
+def test_a_stop_before_any_commit_saves_nothing() -> None:
+    store, clock = _Store(), _Clock()
+    observer = _observer(store, clock)
+
+    observer.kind_finished(_TOTAL - 1)
     observer.stopped(1)
 
     assert store.attempts == []
@@ -150,7 +160,7 @@ def test_a_failing_store_keeps_being_tried_and_logs_one_warning_per_failure_with
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
         _commit(observer, 0, 1)
-        observer.kind_finished(0)
+        observer.stopped(1)
         # Every attempt restarts the count, so a failing store is not tried after every commit.
         _commit(observer, 1, SAVE_EVERY_COMMITS - 1)
         _commit(observer, SAVE_EVERY_COMMITS, 1)
@@ -179,7 +189,7 @@ def test_a_save_to_an_ended_execution_stops_the_apply_before_its_next_dispatch(
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
         _commit(observer, 0, 1)
-        observer.kind_finished(0)
+        observer.stopped(1)
         # No 5-minute wait: the next dispatch is refused at once.
         assert observer.should_stop() is True
         # The stop the engine reports next tries no further save.
@@ -202,7 +212,7 @@ def test_a_save_to_an_unknown_execution_counts_as_a_failed_attempt(caplog: pytes
 
     with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
         _commit(observer, 0, 1)
-        observer.kind_finished(0)
+        observer.stopped(1)
     assert observer.should_stop() is False
     clock.value += STOP_AFTER_FAILING_SECONDS
 
@@ -215,12 +225,12 @@ def test_should_stop_turns_true_5_minutes_after_the_first_failed_attempt() -> No
     observer = _observer(store, clock)
     store.fail = True
     _commit(observer, 0, 1)
-    observer.kind_finished(0)
+    observer.stopped(1)
     first_failure = clock.value
 
     clock.value = first_failure + STOP_AFTER_FAILING_SECONDS / 2
     _commit(observer, 1, 1)
-    observer.kind_finished(1)
+    observer.stopped(2)
     clock.value = first_failure + STOP_AFTER_FAILING_SECONDS - 0.1
     assert observer.should_stop() is False
 
@@ -233,12 +243,12 @@ def test_a_successful_save_clears_the_failure_and_the_stop() -> None:
     observer = _observer(store, clock)
     store.fail = True
     _commit(observer, 0, 1)
-    observer.kind_finished(0)
+    observer.stopped(1)
 
     clock.value += STOP_AFTER_FAILING_SECONDS - 1
     store.fail = False
     _commit(observer, 1, 1)
-    observer.kind_finished(1)
+    observer.stopped(2)
     clock.value += STOP_AFTER_FAILING_SECONDS
 
     assert store.positions == [0, 1]
@@ -249,7 +259,7 @@ def test_should_stop_stays_false_during_a_quiet_period_between_successful_saves(
     store, clock = _Store(), _Clock()
     observer = _observer(store, clock)
     _commit(observer, 0, 1)
-    observer.kind_finished(0)
+    observer.stopped(1)
 
     # One slow operation: no commit and no save for an hour.
     clock.value += 3_600

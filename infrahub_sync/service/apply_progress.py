@@ -2,7 +2,9 @@
 
 The worker gives Potenda a `StoreApplyProgressObserver`, which saves the position of the last
 committed operation to the execution's row (spec 022, research R2 and R3). It saves after 500
-commits, after 30 seconds, at each kind boundary, when the apply stops and at its end. A saved
+commits, at the first commit after 30 seconds, when the apply stops and after the plan's last
+operation. It does not save at a change of kind, because the kinds of one tier interleave in
+the plan's order. A saved
 position never runs ahead of a commit, because the engine reports an operation only after its
 destination call returned and the apply recorded it.
 
@@ -98,9 +100,16 @@ class StoreApplyProgressObserver:
         ):
             self._save()
 
-    def kind_finished(self, index: int) -> None:  # noqa: ARG002  # pylint: disable=unused-argument  # saves the last commit
-        """Save at a kind boundary and after the plan's last operation."""
-        self._save()
+    def kind_finished(self, index: int) -> None:
+        """Save after the plan's last operation; a change of kind before it saves nothing.
+
+        The plan is sorted by tier and then by operation ID, a hash, so the kinds of one tier
+        interleave and a change of kind can follow nearly every operation. Saving at each one
+        would update the execution's row about once per commit; the 500-commit count and the
+        30-second interval bound the operations a resume repeats.
+        """
+        if index + 1 >= self._total:
+            self._save()
 
     def stopped(self, index: int) -> None:  # noqa: ARG002  # pylint: disable=unused-argument  # saves the last commit
         """Save when the apply stops, so the marker names the last operation known to be committed."""
