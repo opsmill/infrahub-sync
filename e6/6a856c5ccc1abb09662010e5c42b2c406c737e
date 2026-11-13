@@ -1,0 +1,23 @@
+tests/product_store/test_contract.py
+  s_11782fc4bc9a91::t_34cdfde0ee1632 636-650
+changelog/+concurrent-schema-initialization-deadlock.fixed.md
+  s_11782fc4bc9a91::t_6ffc7ec9727a75 1
+infrahub_sync/product_store/store.py
+  s_11782fc4bc9a91::t_f6e6cf2aaac3e4 312-317,809,814,844-846,848,3265
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e66a856c5ccc1abb09662010e5c42b2c406c737e",
+  "prompts": {},
+  "sessions": {
+    "s_11782fc4bc9a91": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4d1b81fa-9ee2-4fcb-b7c2-e14783f62cad",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
