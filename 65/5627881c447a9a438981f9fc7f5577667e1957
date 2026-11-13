@@ -1,0 +1,54 @@
+infrahub_sync/service/flow.py
+  s_b91a98d41025f3::t_cdfea4c84ba7e9 1103,1116-1118,1141,1164,1173,1277-1283
+infrahub_sync/cli.py
+  s_b91a98d41025f3::t_8f32a251c589a7 1113-1114,1116-1119
+  s_b91a98d41025f3::t_94bd1010853952 1710-1712
+  s_b91a98d41025f3::t_9899ff64467506 1413-1417,1707-1709
+tests/service/test_run_log_next_step.py
+  s_b91a98d41025f3::t_1ccd1dbeec3662 20,744-813
+tests/service/test_failure_cause.py
+  s_b91a98d41025f3::t_1ccd1dbeec3662 380-410
+infrahub_sync/service/failure_cause.py
+  s_b91a98d41025f3::t_dd4fae312176a5 335-349
+  s_b91a98d41025f3::t_9a3d579addb920 482
+  s_b91a98d41025f3::t_98b28f2405cda9 396-401,406-409
+  s_b91a98d41025f3::t_87bb6c804ea62f 439,443-444
+  s_3defe6e8bcd0ab::t_f3e402934abf31 445
+tests/cli/test_stopped_apply_output.py
+  s_b91a98d41025f3::t_a39c4061586202 9-10
+  s_b91a98d41025f3::t_bba52cba29b035 92-93
+docs/docs/reference/cli.mdx
+  s_10bb14e51f32f2::t_27ead312833d33 119-121,460-465
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "655627881c447a9a438981f9fc7f5577667e1957",
+  "prompts": {},
+  "sessions": {
+    "s_10bb14e51f32f2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a86d910d81f5b5093",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_3defe6e8bcd0ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3d2e4fe7-f392-45de-af55-7b0fc8a7eb6d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_b91a98d41025f3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c1e68d9-bc95-47b9-bd6b-c5aa572517ea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
