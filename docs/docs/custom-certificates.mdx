@@ -40,5 +40,5 @@ for the rules: no private key in the directory, read access for user ID 10001, a
 `verify_ssl: false` turns off verification for the Infrahub destination and for adapters that
 support that setting. It does not establish trust, so use it only for development. When
 `INFRAHUB_SYNC_CA_CERTIFICATES` names a directory that holds certificates, the services set
-`REQUESTS_CA_BUNDLE`, and the `requests` library then verifies the NetBox and Nautobot
-connections against the bundle even when the package sets `verify_ssl: false`.
+`REQUESTS_CA_BUNDLE`. A NetBox or Nautobot source with `verify_ssl: false` still skips the
+certificate check.

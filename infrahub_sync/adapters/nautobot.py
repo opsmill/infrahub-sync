@@ -19,7 +19,7 @@ from infrahub_sync import (
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.configuration.credentials import select_runtime_credential
 
-from .utils import get_value
+from .utils import get_value, keep_certificate_checks_off
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
             raise ValueError(msg)
 
         client = pynautobot.api(url=url, token=token, threading=True, max_workers=5, retries=3, verify=verify_ssl)
+        keep_certificate_checks_off(client.http_session)
         return client
 
     def cursor_tier_for(self, model_name: str) -> CursorTier:

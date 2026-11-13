@@ -102,7 +102,7 @@ docker-compose.yml                              # settings, scale, CA mount, cre
 infrahub_sync/testcontainers/docker-compose.yml # copy of the root file
 development/docker-compose.yml                  # same settings, credential list and CA mount; PostgreSQL digest pin
 infrahub_sync/service/
-├── storage.py        # build_s3_client, addressing style
+├── storage.py        # s3_client_arguments, s3_key_prefix, addressing style (build_s3_client was removed in review)
 ├── bootstrap.py      # client builder, half-set guard, HeadBucket, create-only check, CA call
 ├── trust_store.py    # new: install_custom_ca_bundle
 ├── serve.py          # CA call in main
