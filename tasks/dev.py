@@ -64,10 +64,11 @@ PREFECT_URL = "http://127.0.0.1:4230"
 DEV_COMPOSE_FILE = "development/docker-compose.yml"
 # The Infrahub services' own file, which the development file includes.
 INFRAHUB_COMPOSE_FILE = REPO_BASE / "development" / "docker-compose.infrahub.yml"
-# The profiles the top-level `start` and `build` select: the Sync services. The core
-# services (PostgreSQL, the object store, the Prefect server) have no profile and always start.
+# The default profile of the Compose commands, which the benchmark runner's start and build
+# use: the Sync services. The core services (PostgreSQL, the object store, the Prefect
+# server) have no profile and always start.
 START_PROFILES = ("sync",)
-# Every profile of the development file, so `destroy` removes every service it started.
+# Every profile of the development file, so `dev.destroy` removes every service it started.
 ALL_PROFILES = ("sync", "infrahub")
 # The services `dev.restart` recreates so they import the mounted source again.
 SYNC_SERVICES = ("sync-bootstrap", "sync-api", "sync-worker")
@@ -372,7 +373,7 @@ def rebuild_decision(context: Context, image: str = DEV_IMAGE, root: Path = REPO
 
 
 def infrahub_network() -> str:
-    """The Compose network of the local Infrahub the top-level `start` connects the worker to."""
+    """The Compose network of the local Infrahub that `_start` connects the worker to."""
     return os.environ.get(INFRAHUB_NETWORK_VARIABLE) or DEFAULT_INFRAHUB_NETWORK
 
 

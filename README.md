@@ -104,7 +104,8 @@ in the documentation. In short:
 
 - The worker reaches the stack's Infrahub at `http://infrahub-server:8000`. To use an Infrahub
   started from Infrahub's own Compose file instead, run
-  `uv run invoke dev.start --infrahub-network infrahub_default`.
+  `export INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK=infrahub_default` before `uv run invoke dev.start`.
+  The later `dev.start` and `dev.restart` commands then keep the worker on that network.
 - `uv run invoke netbox.seed --dataset demo` starts a local NetBox with the official demo
   data. The worker joins NetBox's network and reaches it at `http://netbox:8080`.
 - Set `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` (and, with your own Infrahub,
