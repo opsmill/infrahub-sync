@@ -91,6 +91,7 @@ After the sync completes, every NetBox device, interface, VLAN, prefix, and rela
 | Peering Manager | Peering Manager → Infrahub · Infrahub → Peering Manager |
 | Prometheus | Prometheus → Infrahub |
 | Slurp'it | Slurp'it → Infrahub |
+| Webex | Webex → Infrahub |
 | Generic REST API | external system → Infrahub |
 
 ### Choosing your adapter
