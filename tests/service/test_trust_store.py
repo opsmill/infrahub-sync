@@ -115,9 +115,7 @@ def test_an_already_set_trust_variable_is_kept_and_named(
     assert "value-canary" not in caplog.text
 
 
-def test_a_file_holding_a_private_key_is_refused_by_name_only(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_a_file_holding_a_private_key_is_refused_by_name_only(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     directory = tmp_path / "ca"
     directory.mkdir()
     (directory / "ca.pem").write_bytes(_ca_certificate("Spec 021 Test CA"))

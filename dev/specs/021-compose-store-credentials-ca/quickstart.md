@@ -74,3 +74,19 @@ runs.
 On a release candidate, read the GitHub Release body. Expected: a "Container image" section with
 `registry.opsmill.io/opsmill/infrahub-sync:<version>@sha256:...` and a `cosign verify` command whose
 identity is `ci-docker-image.yml` at a release tag. Run that command; it verifies the signature.
+
+## Results on 2026-11-13
+
+Run on a macOS arm64 host with Docker 29.8.2 and Compose 5.5.0, against `infrahub-sync:compose-test`
+built from this branch.
+
+| Section | Result |
+| --- | --- |
+| Offline checks | Pass. The unit tier passes apart from 4 SQLite migration tests in `tests/product_store/test_contract.py` that fail the same way on unchanged `feature/v3-develop` (this host's SQLite 3.51.0 refuses `sqlite_master` changes). |
+| 1. External store, both addressing styles | Pass (`tests/compose/test_external_store.py`, Silo outside the deployment). The bucket was created with the store's root credential, so a credential without create permission is covered by unit tests only. |
+| 2. Half-set external store | Unit tests only (`tests/service/test_compose_bootstrap.py`). |
+| 3. Store that accepts a second create-only write | Pass (proxy in front of Silo). |
+| 4. Credentials of every bundled adapter | Pass (`test_the_worker_container_resolves_the_shipped_aci_package_credentials`); planning against a recorded ACI server was not done. |
+| 5. Private CA | Pass for the object store over TLS (`test_a_store_behind_a_private_ca_is_trusted_with_checks_on`) and the private-key refusal (unit). Infrahub and a source over TLS were not run. |
+| 6. Leak checks and lifecycle tier | Leak checks pass (`tests/compose/test_credential_leaks.py`). The 10-run CI measurements were not run. |
+| 7. Release notes digest | The `record_image` step was run against a stub `gh` (`tests/test_workflow_contracts.py`); not run on a release. |

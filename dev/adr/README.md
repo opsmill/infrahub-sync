@@ -56,6 +56,9 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why a stage's last log line and run summary artifact are written after the outcome is
   stored, where their outcome and next action come from, what the artifact may contain, and
   why a recorded verdict is the reported state.
+- [0026 — The Compose deployment takes an external object store, adapter credentials and CA certificates from `.env`](0026-the-compose-deployment-takes-an-external-store-credentials-and-ca-from-env.md)
+  — why the bundled store is scaled to zero to leave it out, why the worker receives a fixed
+  list of credential variables, and why the CA directory is the one read-only shared mount.
 
 ## Related
 

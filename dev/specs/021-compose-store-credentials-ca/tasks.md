@@ -152,14 +152,14 @@ external store runs. US5 (released image) is independent.
 
 ## Phase 9: Polish and records
 
-- [ ] T054 Write `dev/adr/0026-the-compose-deployment-takes-an-external-store-credentials-and-ca-from-env.md` from the draft in `research.md` R10, with the result of T002, and add it to `dev/adr/README.md` (FR-027)
-- [ ] T055 [P] Add the news fragment `changelog/+compose-store-credentials-ca.added.md` naming the external store settings, the setting that leaves the bundled store out, the credential variables, the CA setting and the release notes digest (FR-028)
-- [ ] T056 [P] Update the operations pages that name the object store or the worker credentials (`docs/docs/operations/*.mdx`) to match
-- [ ] T057 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .` and `uv run invoke tests.tests-unit`; fix every finding
-- [ ] T058 Run `uv run invoke docs.generate` and `uv run invoke docs.docusaurus` and fix every failure
-- [ ] T059 Run the CLI sanity commands of `AGENTS.md` (`--help`, `configs --help`, `runs --help`)
-- [ ] T060 Run every quickstart section and record the result in `dev/specs/021-compose-store-credentials-ca/quickstart.md`
-- [ ] T061 Record in ADR 0026 any minimum Compose version change from T002
+- [X] T054 Write `dev/adr/0026-the-compose-deployment-takes-an-external-store-credentials-and-ca-from-env.md` from the draft in `research.md` R10, with the result of T002, and add it to `dev/adr/README.md` (FR-027)
+- [X] T055 [P] Add the news fragment `changelog/+compose-store-credentials-ca.added.md` naming the external store settings, the setting that leaves the bundled store out, the credential variables, the CA setting and the release notes digest (FR-028)
+- [X] T056 [P] Update the operations pages that name the object store or the worker credentials (`docs/docs/operations/*.mdx`) to match
+- [X] T057 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .` and `uv run invoke tests.tests-unit`; fix every finding
+- [X] T058 Run `uv run invoke docs.generate` and `uv run invoke docs.docusaurus` and fix every failure
+- [X] T059 Run the CLI sanity commands of `AGENTS.md` (`--help`, `configs --help`, `runs --help`)
+- [X] T060 Run every quickstart section and record the result in `dev/specs/021-compose-store-credentials-ca/quickstart.md`
+- [X] T061 Record in ADR 0026 any minimum Compose version change from T002
 
 ## Dependencies & Execution Order
 

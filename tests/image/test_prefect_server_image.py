@@ -57,7 +57,9 @@ def test_the_prefect_server_answers_its_health_check_under_a_read_only_root(imag
             time.sleep(2)
         logs = docker(["logs", "--tail", "40", container])
         assert answered is not None
-        assert answered.returncode == 0, f"/api/health did not answer within {READY_SECONDS}s\n{logs.stdout}{logs.stderr}"
+        assert answered.returncode == 0, (
+            f"/api/health did not answer within {READY_SECONDS}s\n{logs.stdout}{logs.stderr}"
+        )
         assert answered.stdout.strip().endswith("ok")
     finally:
         docker(["rm", "--force", container])
