@@ -454,9 +454,10 @@ def test_a_missing_optional_peer_is_kept_on_its_own_record_without_a_source_id()
 class _Location(DiffSyncModelMixin, DiffSyncModel):
     _modelname = "LocationGeneric"
     _identifiers = ("name",)
-    _attributes = ("parent",)
+    _attributes = ("parent", "sibling")
     name: str
     parent: str | None = None
+    sibling: str | None = None
     local_id: str | None = None
 
 
@@ -498,17 +499,19 @@ class _TreeSource(DiffSyncMixin, Adapter):
     ) -> dict[str, Any]:
         source_id = str(record["id"])
         data: dict[str, Any] = {"local_id": source_id, "name": record["name"]}
-        if record.get("parent"):
+        for field_name in ("parent", "sibling"):
+            if not record.get(field_name):
+                continue
             unique_id = peer_unique_id(
                 self,
                 element.name,
-                str(record["parent"]),
+                str(record[field_name]),
                 owner=(element.name, source_id),
-                field="parent",
-                required=reference_is_required(model, "parent"),
+                field=field_name,
+                required=reference_is_required(model, field_name),
             )
             if unique_id is not None:
-                data["parent"] = unique_id
+                data[field_name] = unique_id
         return data
 
 
@@ -580,6 +583,31 @@ def test_a_record_that_waits_for_a_cycle_member_listed_later_resolves_it() -> No
     assert _entries(source) == [
         ("peer_not_found_in_source", "LocationGeneric", "1", "parent", ("LocationGeneric", "2"), None, None, True)
     ]
+
+
+def test_a_record_in_two_cycles_resolves_the_reference_that_does_not_close_its_first_cycle() -> None:
+    """a is in the cycle a, b through `parent` and refers to c of the cycle c, d through `sibling`.
+
+    Only the reference that closes each cycle is written without its peer: a still names c.
+    """
+    source = _tree(
+        "LocationGeneric",
+        [
+            {"id": 1, "name": "a", "parent": 2, "sibling": 3},
+            {"id": 2, "name": "b", "parent": 1},
+            {"id": 3, "name": "c", "parent": 4},
+            {"id": 4, "name": "d", "parent": 3},
+        ],
+    )
+
+    assert _loaded(source, "LocationGeneric") == ["1", "2", "3", "4"]
+    assert source.get("LocationGeneric", "a").model_dump()["sibling"] == "c"
+    assert source.get("LocationGeneric", "b").model_dump()["parent"] == "a"
+    assert source.get("LocationGeneric", "d").model_dump()["parent"] == "c"
+    assert sorted(
+        (entry.record.source_id, entry.field, entry.peer.source_id if entry.peer else None, entry.in_cycle)
+        for entry in source.load_report.entries
+    ) == [("1", "parent", "2", True), ("3", "parent", "4", True)]
 
 
 def test_a_reference_that_closes_a_cycle_has_its_own_reason() -> None:

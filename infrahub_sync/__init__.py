@@ -498,8 +498,9 @@ class _ReadState:
     retained_ids: dict[str, set[str]] = dataclasses.field(default_factory=dict)
     # Per kind being admitted by `load_records`: the listed source IDs not admitted yet.
     pending: dict[str, set[str]] = dataclasses.field(default_factory=dict)
-    # The (kind, source ID) of a record of a cycle that `load_records` admits without waiting.
-    released: set[tuple[str, str]] = dataclasses.field(default_factory=set)
+    # The references that close a cycle, which `load_records` admits without waiting: the kind
+    # and source ID of the referring record, then the kind and source ID of the peer.
+    released: set[tuple[str, str, str, str]] = dataclasses.field(default_factory=set)
     # The number of the source admission step in progress (`LoadReportEntry.admission`).
     admission: int = 0
 
@@ -624,11 +625,11 @@ class DiffSyncMixin(WarmSourceReadMixin):
                 )
                 if deferred and len(deferred) == len(waiting):
                     # No record was admitted in this pass: the waiting records form a cycle.
-                    member = self._cycle_member([record for _e, record in deferred], waits_for)
-                    if member is None:
+                    edge = self._cycle_edge([record for _e, record in deferred], waits_for)
+                    if edge is None:
                         pending.clear()  # not reached: a waited-for record always has a source ID
                     else:
-                        state.released.add((kind, member))
+                        state.released.add((kind, edge[0], kind, edge[1]))
                 waiting = deferred
                 # A deferred record ran its transforms before its references were resolved.
                 transforms_applied = True
@@ -659,28 +660,36 @@ class DiffSyncMixin(WarmSourceReadMixin):
                 pending.discard(record_id)
         return deferred, waits_for
 
-    def _cycle_member(self, records: list[Any], waits_for: list[str]) -> str | None:
-        """The source ID of the first listed record of a cycle among `records`.
+    def _cycle_edge(self, records: list[Any], waits_for: list[str]) -> tuple[str, str] | None:
+        """The reference that closes a cycle among `records`: the source IDs of the record and its peer.
 
         `waits_for[i]` is the source ID of the record `records[i]` waits for. Following the
-        waits from the first record reaches a cycle, since every waited-for record waits too.
+        waits from the first record reaches a cycle, since every waited-for record waits too;
+        the record of the cycle listed first gives the reference.
         """
         position_of: dict[str, int] = {}
         for position, record in enumerate(records):
             record_id = source_record_id(self.record_source_id(record))
             if record_id is not None:
                 position_of.setdefault(record_id, position)
-        visited: list[int] = []
+        # The order in which each position was reached, by position.
+        reached: dict[int, int] = {}
         position = 0
-        while position not in visited:
-            visited.append(position)
+        while position not in reached:
+            reached[position] = len(reached)
             position = position_of.get(waits_for[position], position)
-        cycle = visited[visited.index(position) :]
-        return source_record_id(self.record_source_id(records[min(cycle)]))
+        first = min(seen for seen, step in reached.items() if step >= reached[position])
+        record_id = source_record_id(self.record_source_id(records[first]))
+        return None if record_id is None else (record_id, waits_for[first])
 
-    def wait_is_released(self, owner_kind: str, owner_source_id: str | None) -> bool:
-        """Tell whether the record `owner_source_id` of `owner_kind` is admitted without waiting (a cycle)."""
-        return owner_source_id is not None and (owner_kind, owner_source_id) in self._read_state.released
+    def wait_is_released(
+        self, owner_kind: str, owner_source_id: str | None, peer_kind: str, peer_source_id: str
+    ) -> bool:
+        """Tell whether the reference of `owner_source_id` to `peer_source_id` closes a cycle, admitted without waiting."""
+        return (
+            owner_source_id is not None
+            and (owner_kind, owner_source_id, peer_kind, peer_source_id) in self._read_state.released
+        )
 
     def peer_is_pending(self, peer_kind: str, peer_source_id: str) -> bool:
         """Tell whether the read lists the record `peer_source_id` of `peer_kind` and has not admitted it yet."""
