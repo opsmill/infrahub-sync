@@ -8,7 +8,7 @@ import ReferenceLink from "../../src/components/Card";
 
 In a [configuration package](../configuration-package.mdx), name `ipfabricsync` as the source. Then register the package, create and review a plan, and apply the plan, as described in [Run a sync](../running-a-sync.mdx).
 
-On a Compose deployment, from source or from a release package, the worker receives the credential variables this page names, and no others. See [Credentials on a Compose deployment](./choosing-an-adapter.mdx#credentials-on-a-compose-deployment).
+On a Compose deployment, from source or from a release package, the worker receives the `INFRAHUB_SYNC_CREDENTIAL_*` variables this page names. The other environment variables on this page apply only to direct adapter use and do not reach the worker. The worker also receives the credential variables of the other bundled adapters. See [Credentials on a Compose deployment](./choosing-an-adapter.mdx#credentials-on-a-compose-deployment).
 
 ## What is IP Fabric?
 
