@@ -3,7 +3,31 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    import requests
+
     from infrahub_sync import DiffSyncMixin
+
+
+def keep_certificate_checks_off(session: requests.Session) -> requests.Session:
+    """Keep `session.verify = False` in force when a CA bundle variable is set.
+
+    `requests` lets `REQUESTS_CA_BUNDLE` and `CURL_CA_BUNDLE` replace a session-level
+    `verify = False` on every request that does not pass `verify` itself. The Sync services
+    set `REQUESTS_CA_BUNDLE` when an operator adds CA certificates, which would turn
+    certificate checks back on for a source configured with `verify_ssl: false`.
+    """
+    if session.verify is not False:
+        return session
+    merge = session.merge_environment_settings
+
+    def merge_keeping_checks_off(url, proxies, stream, verify, cert):
+        settings = merge(url, proxies, stream, verify, cert)
+        if verify is None:
+            settings["verify"] = False
+        return settings
+
+    session.merge_environment_settings = merge_keeping_checks_off  # ty: ignore[invalid-assignment]
+    return session
 
 
 def build_mapping(adapter: DiffSyncMixin, reference: str, obj, field) -> str:

@@ -138,9 +138,9 @@ hand in the same way.
    - `Credentials`: each credential setting, where V2 took its value from, and the
      `INFRAHUB_SYNC_CREDENTIAL_` variable the Sync worker reads in V3. A warning follows when
      `config.yml` still holds a literal value, and when the `docker-compose.yml` shipped with
-     this version does not pass the variable to the Sync worker. The shipped file passes only
-     `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and
-     `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN`.
+     this version does not pass the variable to the Sync worker. The shipped file passes a
+     fixed list of credential variables for the bundled adapters, listed in
+     [Credential variables the worker receives](./compose-deployment.mdx#credential-variables-the-worker-receives).
    - `Settings taken from the environment or the file`: each address, and each other setting
      that V2 read from an environment variable, with the value written and where it came from.
      A warning follows for a `localhost` or `127.0.0.1` address, and for an address taken from a

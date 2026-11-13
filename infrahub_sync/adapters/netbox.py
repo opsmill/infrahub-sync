@@ -19,7 +19,7 @@ from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.configuration.credentials import select_runtime_credential
 
 from .references import peer_unique_id, peer_unique_ids, reference_is_required
-from .utils import get_value
+from .utils import get_value, keep_certificate_checks_off
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
         # Set SSL verification
         session = Session()
         session.verify = verify_ssl
-        client.http_session = session
+        client.http_session = keep_certificate_checks_off(session)
         return client
 
     def cursor_tier_for(self, model_name: str) -> CursorTier:

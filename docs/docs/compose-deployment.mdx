@@ -77,7 +77,9 @@ is a maintained build of the MinIO server. It is licensed under the AGPLv3, and
 its source is at [github.com/pgsty/silo](https://github.com/pgsty/silo). The
 deployment does not publish the object store port and does not start its
 browser console. The Sync services use it over the deployment's own network,
-and its port is not published on the host.
+and its port is not published on the host. A team that already runs an
+S3-compatible store can use it instead and leave this one out; see
+[Use your own S3-compatible store](#use-your-own-s3-compatible-store).
 
 Run every `docker compose` command on this page from the directory that holds
 `docker-compose.yml` and `.env`. Compose finds both files there without `-f` or
@@ -120,7 +122,7 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | --- | --- | --- |
 | `INFRAHUB_SYNC_API_TOKEN` | empty | The token the `cli` service presents. It must equal a principal's `token` in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. Empty, every `cli` call is refused. |
 | `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` | empty | The destination Infrahub token, for a package that references it. |
-| `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN` | empty | Source tokens, for a package that references them. Only the worker receives them. |
+| `INFRAHUB_SYNC_CREDENTIAL_*` | empty | Source credentials, for a package that references them. Only the worker receives them. The full list is in [Credential variables the worker receives](#credential-variables-the-worker-receives). |
 | `VERSION` | the release the file was taken from | The tag of the Sync image. See [Choose an image](#choose-an-image). |
 | `INFRAHUB_SYNC_DOCKER_IMAGE` | `registry.opsmill.io/opsmill/infrahub-sync` | The repository of the Sync image. |
 | `INFRAHUB_SYNC_DATABASE_URL` | composed | The product database connection string, as a whole. |
@@ -133,6 +135,10 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_PREFECT_DATABASE`, `INFRAHUB_SYNC_PREFECT_ROLE` | `prefect` | The Prefect database and its owner role. |
 | `INFRAHUB_SYNC_S3_BUCKET`, `INFRAHUB_SYNC_S3_PREFIX` | `infrahub-sync` | The artifact bucket and key prefix. |
 | `INFRAHUB_SYNC_S3_REGION` | `us-east-1` | The object store region. |
+| `INFRAHUB_SYNC_S3_ENDPOINT_URL` | `http://object-store:9000` | The object store address. Set it, with `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0`, to use your own store; see [Use your own S3-compatible store](#use-your-own-s3-compatible-store). |
+| `INFRAHUB_SYNC_S3_ADDRESSING_STYLE` | `path` | `path` puts the bucket in the request path, `virtual` in the host name. Any other value stops the Sync services and `sync-bootstrap`. |
+| `INFRAHUB_SYNC_CA_CERTIFICATES` | empty (an empty named volume) | A host directory of CA certificate files in PEM text format, named `*.pem` or `*.crt`, that `sync-bootstrap`, `sync-api` and `sync-worker` trust next to the public roots. See [Trust a private certificate authority](#trust-a-private-certificate-authority). |
+| `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE` | `1` | `0` leaves the bundled store out: Compose creates no `object-store-init` or `object-store` container. |
 | `INFRAHUB_SYNC_WORK_POOL` | `infrahub-sync` | The Prefect work pool. |
 | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | `300` | How long a run admission stays valid. |
 | `INFRAHUB_SYNC_REQUIRE_APPROVAL` | `false` | Set on `sync-api`. When `true`, `apply` refuses a plan that has no approval matching the checksum it names, and `sync` is refused; operators run `plan`, `approve` and `apply` instead. Accepted values are `true`, `1`, `yes`, `on`, `false`, `0`, `no` and `off`, in any case. Any other value, including an empty one, stops `sync-api` at startup. The service reads it for each `apply` or `sync` request, so restart `sync-api` to change it; stored runs and approvals are not changed. `infrahub-sync whoami` prints the value as `approval_required`. See [Require an approved plan](./running-a-sync.mdx#require-an-approved-plan). |
@@ -285,11 +291,150 @@ Only `sync-worker` receives these tokens. Registration and the default
 validation judge declared content without resolving a source secret, so the API
 and the bootstrap job never hold one.
 
+### Credential variables the worker receives
+
+Compose can pass only variables the file names, so `sync-worker` receives a fixed list of
+credential variables: a name for each credential setting of each bundled adapter, and every
+name the shipped examples and adapter pages use. A package for this deployment uses these names
+as its `env` identifiers. A name that is not on the list does not reach the worker, and a run
+that selects it fails naming the variable. Each one is optional: set only the ones your packages
+reference.
+
+| Adapter | Variables |
+| --- | --- |
+| `aci` | `INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_USERNAME`, `INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_PASSWORD` |
+| `genericrestapi` | `INFRAHUB_SYNC_CREDENTIAL_REST_API_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_REST_API_USERNAME`, `INFRAHUB_SYNC_CREDENTIAL_REST_API_PASSWORD`, and for the [Device42](./adapters/device42.mdx), [LibreNMS](./adapters/librenms.mdx), [Observium](./adapters/observium.mdx) and [PeeringDB](./adapters/peeringdb.mdx) pages `INFRAHUB_SYNC_CREDENTIAL_DEVICE42_USERNAME`, `INFRAHUB_SYNC_CREDENTIAL_DEVICE42_PASSWORD`, `INFRAHUB_SYNC_CREDENTIAL_LIBRENMS_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_OBSERVIUM_USERNAME`, `INFRAHUB_SYNC_CREDENTIAL_OBSERVIUM_PASSWORD`, `INFRAHUB_SYNC_CREDENTIAL_PEERINGDB_API_KEY` |
+| `infrahub` | `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` (the destination; `sync-api` receives it too), `INFRAHUB_SYNC_CREDENTIAL_SOURCE_INFRAHUB_TOKEN` (Infrahub as a source) |
+| `ipfabricsync` | `INFRAHUB_SYNC_CREDENTIAL_IPF_TOKEN` |
+| `nautobot` | `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN` |
+| `netbox` | `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` |
+| `peeringmanager` | `INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_USERNAME`, `INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_PASSWORD` |
+| `prometheus` | `INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_USERNAME`, `INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_PASSWORD` |
+| `slurpitsync` | `INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY`, `INFRAHUB_SYNC_CREDENTIAL_SLURPIT_TOKEN` |
+
+Which service receives which credential:
+
+- `sync-worker` receives every variable above.
+- `sync-api` receives only `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, for the destination
+  schema reads it serves.
+- `sync-bootstrap`, `prefect-server` and `cli` receive no adapter credential.
+
+`configs validate` reports, as an error, each `INFRAHUB_SYNC_CREDENTIAL_*` variable that a
+package's `$credential` references name and that no live worker holds. It names the variable and
+never prints a value. Each live worker publishes the names of the credential variables it holds.
+When no live worker has published them, the check cannot run and `configs validate` reports a
+warning instead.
+
 :::note
 That both adapters install and import is a packaging property of this release.
 It is not a statement that any particular NetBox or Nautobot server version has
 been qualified against it.
 :::
+
+## Use your own S3-compatible store
+
+A team that already runs an S3-compatible store can keep plans and run files there. Create a
+bucket and a credential for Sync in that store, then set these values in `.env` together:
+
+```bash
+INFRAHUB_SYNC_S3_ENDPOINT_URL=https://s3.example.com
+INFRAHUB_SYNC_S3_BUCKET=<bucket>
+INFRAHUB_SYNC_S3_PREFIX=infrahub-sync
+INFRAHUB_SYNC_S3_REGION=<region>
+INFRAHUB_SYNC_S3_ACCESS_KEY=<access key for that bucket>
+INFRAHUB_SYNC_S3_SECRET_KEY=<secret key for that bucket>
+INFRAHUB_SYNC_S3_ADDRESSING_STYLE=path
+INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0
+```
+
+With `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0`, Compose creates no `object-store-init` or
+`object-store` container, so the bundled store never receives the credential of your store.
+`sync-bootstrap` refuses to start when the two settings disagree:
+
+- `refused: bundled-object-store-not-left-out`: the endpoint names your store while the bundled
+  store runs. The bundled store takes `INFRAHUB_SYNC_S3_ACCESS_KEY` and
+  `INFRAHUB_SYNC_S3_SECRET_KEY` as its own root credential, so it has received yours. Set
+  `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0`, then run `docker compose up -d --wait --remove-orphans`.
+- `refused: object-store-endpoint-not-set`: the bundled store is left out but the endpoint still
+  names it. `sync-bootstrap` depends on the bundled store as an optional service, so Compose also
+  starts it, with a warning, when the bundled store failed to start, and the refusal is the same.
+  Run `docker compose ps --all object-store` to tell the two apart.
+
+Use `https` for your store. Request signing never sends the secret key, but over `http` object
+content crosses the network in plain text. An endpoint that carries a user name or a password is
+refused with `refused: object-store-endpoint-invalid`. An unknown addressing style, an empty key
+prefix, a region that the S3 client refuses, or another client setting it refuses, such as a key
+pair with one half missing, stops it with `refused: object-store-setting-invalid`.
+
+### What Sync needs from the store
+
+`sync-bootstrap` checks for the bucket with `HeadBucket` and creates it only when the store
+answers that it is absent, so a credential that may not create buckets works with a bucket you
+created. A 403 answer to `HeadBucket`, `CreateBucket` or the check write stops it with
+`refused: object-store-access-refused`, and a 501 answer with `refused: object-store-unsupported`.
+It then writes one empty check object under `<prefix>/.infrahub-sync/bootstrap-check/` twice with
+`If-None-Match: *`, and deletes it. A store that refuses the delete stops it too, with
+`refused: object-store-access-refused` for a 403 answer, because Sync deletes objects it no
+longer needs. A store that accepts the second write stops it with
+`refused: object-store-unsupported`, because Sync relies on that refusal to never replace a
+stored artifact. A store that refuses the first write, to a key that did not exist, stops it with
+the same refusal, because it would refuse every artifact that Sync writes this way.
+
+The S3 operations Sync uses:
+
+| Operation | What Sync relies on |
+| --- | --- |
+| `PutObject` | A single request with the whole body |
+| `PutObject` with `If-None-Match: *` | A second write of an existing key is refused with `412 PreconditionFailed` |
+| `GetObject`, `HeadObject` | A missing key answers `404`, not `403` |
+| `CopyObject`, `DeleteObject` | One key at a time, within the bucket |
+| `HeadBucket`, `CreateBucket` | `sync-bootstrap` only |
+
+A missing key must answer `404`. On stores with S3-style access policies that usually means the
+credential may list the bucket.
+
+OpsMill tests this setup with a Silo instance outside the deployment. No other product is
+named as supported.
+
+Moving from the bundled store to your own does not copy earlier plans and run files. They stay in
+the `object-store-data` volume, and `runs plan` and `runs artifacts` cannot read the files of runs
+made before the move.
+
+## Trust a private certificate authority
+
+When a source, Infrahub or your own object store presents a certificate that a private
+certificate authority signed, give the Sync services the certificate of that authority. Put one or more
+public CA certificate files in PEM text format, named `*.pem` or `*.crt`, in a directory, name it in `.env`, and start
+the deployment:
+
+```bash
+INFRAHUB_SYNC_CA_CERTIFICATES=./ca
+```
+
+The value is an absolute path or starts with `./`. `sync-bootstrap`, `sync-api` and `sync-worker`
+mount the directory read-only at `/etc/infrahub-sync/ca`, and each one trusts its certificates
+next to the public roots of the image. Certificate checks stay on. A flow run the worker starts
+trusts the same certificates. At every start, each of the three services logs the number of
+certificates it loaded and the path of the bundle it wrote, or that the directory holds no
+certificate file. When a trust variable such as
+`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` or `INFRAHUB_TLS_CA_FILE` is already set,
+it wins, and the service logs a warning that names the variable and not its value.
+
+- The directory holds public certificates only. A service stops at start when a file in it holds
+  a private key, and the error names the file and prints none of its content. A file that is not
+  a readable certificate stops it too.
+- User ID 10001, which the services run as, must be able to list the directory and read its files.
+- Each server certificate that the authority signed must carry an authority key identifier, and
+  the CA certificate a subject key identifier. Python 3.13 checks certificates in strict mode, and
+  the adapters refuse a server certificate without these extensions, even though the services
+  start and the object store accepts it. Most certificate tools add both by default.
+- The IP Fabric and Slurp'it adapters use their vendors' Python libraries. Whether those libraries read the bundle
+  has not been checked.
+- A change to the files takes effect only after `sync-api` and `sync-worker` restart:
+  `docker compose up -d` starts only `sync-bootstrap` again. Run
+  `docker compose restart sync-api sync-worker`.
+
+Unset, the mount is an empty named volume, and the services trust only the image's public roots.
 
 ## Start the deployment {#after-the-first-start}
 
@@ -459,13 +604,17 @@ Docker Compose reads one `docker-compose.override.yml`, and merges it into
 - If the file already has a `prefect-server` entry, add the two `environment`
   keys and the `ports` entry of the snippet to it. Keep the entries it already
   has.
-- Check the result before you start it. The command prints the merged file, so
-  look for `PREFECT_UI_ENABLED: "true"` and one `prefect-server` port bound to
-  `127.0.0.1`:
+- Check the result before you start it. The command prints the merged service without
+  filling in the values from `.env`, so it prints no credential. Look for
+  `PREFECT_UI_ENABLED: "true"` and one `prefect-server` port bound to `127.0.0.1`:
 
   ```bash
-  docker compose config prefect-server
+  docker compose config --no-interpolate prefect-server
   ```
+
+  Without `--no-interpolate`, `docker compose config` prints every credential the service
+  receives. Do not run it that way, and do not share `docker inspect` output, which prints a
+  container's whole environment.
 
 To keep the snippet in its own file instead, save it under another name, for
 example `prefect-ui.override.yml`, and name every file on each command, starting

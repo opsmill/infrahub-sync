@@ -42,7 +42,10 @@ checkout, run `git switch feature/v3-develop` and `git pull` instead of cloning.
 ### Choose a mode
 
 The stack runs in one of two modes. Both start the same PostgreSQL, object store, Prefect
-server and Infrahub containers, and both end with the same check, `dev.smoke`.
+server and Infrahub containers, and both end with the same check, `dev.smoke`. With
+`INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0`, neither mode starts the object store containers: the
+Sync processes use the store that `INFRAHUB_SYNC_S3_ENDPOINT_URL` names instead (see
+[Use an external object store or a private CA](#use-an-external-object-store-or-a-private-ca)).
 
 - Everything in containers (`dev.start`): the Sync API and the worker also run in containers.
   Use this mode to try a change the way an operator deployment runs it.
@@ -295,6 +298,33 @@ uv run invoke dev.destroy
 Compose cannot make a variable required only when another one has a given value, so the
 development tasks check this before they start the containers. A plain `docker compose up`
 does not check it. The benchmark runner applies the same check to its Infrahub.
+
+### Use an external object store or a private CA
+
+These settings apply to both modes: the containers of `dev.start`, and the host processes of
+`dev.api` and `dev.worker`.
+
+To use an S3-compatible store you run instead of the bundled one, set these variables:
+
+| Variable | Value |
+| --- | --- |
+| `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE` | `0`: Compose starts no `object-store-init` or `object-store` container |
+| `INFRAHUB_SYNC_S3_ENDPOINT_URL` | The store's endpoint |
+| `INFRAHUB_SYNC_S3_ADDRESSING_STYLE` | `path` (the default) or `virtual`, whichever the store accepts |
+| `MINIO_ACCESS_KEY` | The store's access key, which the Sync processes receive as `AWS_ACCESS_KEY_ID` |
+| `MINIO_SECRET_KEY` | The store's secret key, which the Sync processes receive as `AWS_SECRET_ACCESS_KEY` |
+
+The development stack reads the credentials from `MINIO_ACCESS_KEY` and `MINIO_SECRET_KEY`, not
+from the `INFRAHUB_SYNC_S3_ACCESS_KEY` and `INFRAHUB_SYNC_S3_SECRET_KEY` of the
+[Compose deployment](./compose-deployment.mdx). When they are unset, the Sync processes use the
+bundled store's development keys. `dev.deps` prints the endpoint as the object store. If
+`INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0` is set while the endpoint still names the bundled store,
+`dev.deps`, `dev.api` and `dev.worker` refuse to start and name both settings.
+
+To trust a private certificate authority, set `INFRAHUB_SYNC_CA_CERTIFICATES` to a host
+directory of CA certificate files. The containers mount it, and `dev.api` and `dev.worker` read
+it in place. A relative path is relative to the `development/` directory. When it is unset, the
+Sync processes trust no extra certificate.
 
 ## Run a first sync
 

@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import os
 import sqlite3
+import sys
 import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -29,6 +30,7 @@ from infrahub_sync.configuration.worker_credentials import held_credential_names
 
 from .orchestration import SERVICE_DEFINITION
 from .storage import service_product_projection
+from .trust_store import TrustStoreError, install_custom_ca_bundle
 
 if TYPE_CHECKING:
     import logging
@@ -551,6 +553,11 @@ def neutral_working_directory() -> Iterator[Path]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Start one fail-closed service process worker."""
+    try:
+        install_custom_ca_bundle()
+    except TrustStoreError as error:
+        sys.stderr.write(f"{error}\n")
+        return 1
     pool = _pool_argument(argv)
     # Entered before the worker exists, so nothing this parent imports later -- the
     # runner, its crash hooks, or an adapter -- can resolve out of a source tree.

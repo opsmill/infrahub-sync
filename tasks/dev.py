@@ -116,6 +116,11 @@ HOST_PROCESS_ADDRESS = "127.0.0.1"
 API_FACTORY = "infrahub_sync.service.serve:build_app"
 DATABASE_URL_VARIABLE = "INFRAHUB_SYNC_DATABASE_URL"
 S3_ENDPOINT_VARIABLE = "INFRAHUB_SYNC_S3_ENDPOINT_URL"
+# The bundled store's service, the host name its endpoint names inside the stack.
+BUNDLED_STORE_SERVICE = "object-store"
+BUNDLED_STORE_VARIABLE = "INFRAHUB_SYNC_BUNDLED_OBJECT_STORE"
+# Where each process reads CA certificates; in the containers, the CA mount's path.
+CA_DIRECTORY_VARIABLE = "INFRAHUB_SYNC_CA_DIRECTORY"
 # The web interface: its directory, the submodule that holds `@infrahub/ui`, the variables
 # its development server reads (the same names as the CLI's) and the address it serves.
 FRONTEND_DIRECTORY = "frontend"
@@ -179,13 +184,17 @@ class DevSettings:
     # The image every Sync-image service runs, `SYNC_IMAGE` or `infrahub-sync:dev`.
     image: str = DEV_IMAGE
     # The publications the host processes of `dev.api` and `dev.worker` use; None when
-    # the file does not publish them.
+    # the file does not publish them. The object store's is also None when
+    # INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0 leaves the bundled store out.
     postgres: Publication | None = None
     object_store: Publication | None = None
     # The resolved environments of the `sync-api` and `sync-worker` containers, which
     # `host_environment()` moves onto the loopback publications.
     api_environment: Mapping[str, str] = field(default_factory=dict)
     worker_environment: Mapping[str, str] = field(default_factory=dict)
+    # The host directories bound into each container, by container path.
+    api_binds: Mapping[str, str] = field(default_factory=dict)
+    worker_binds: Mapping[str, str] = field(default_factory=dict)
 
     @property
     def sync_api_url(self) -> str:
@@ -239,6 +248,27 @@ def _environment(services: Mapping[str, Any], name: str) -> dict[str, str]:
     """Return one service's resolved environment; a variable without a value is left out."""
     environment = (services.get(name) or {}).get("environment") or {}
     return {key: str(value) for key, value in environment.items() if value is not None}
+
+
+def _binds(services: Mapping[str, Any], name: str) -> dict[str, str]:
+    """Return one service's bind mounts as container path to host path; Compose makes the host path absolute."""
+    volumes = (services.get(name) or {}).get("volumes") or []
+    return {
+        str(volume["target"]): str(volume["source"])
+        for volume in volumes
+        if isinstance(volume, dict) and volume.get("type") == "bind" and volume.get("source") and volume.get("target")
+    }
+
+
+def _bundled_store_publication(services: Mapping[str, Any]) -> Publication | None:
+    """Return the bundled store's publication, or None when the file or a `scale` of 0 leaves it out.
+
+    With INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0, Compose keeps `object-store` and its port in
+    the resolved model and creates no container, so its port names nothing.
+    """
+    if int((services.get(BUNDLED_STORE_SERVICE) or {}).get("scale", 1)) == 0:
+        return None
+    return _optional_publication(services, BUNDLED_STORE_SERVICE, 9000)
 
 
 def infrahub_server(services: Mapping[str, Any]) -> tuple[Publication, str]:
@@ -313,9 +343,11 @@ def parse_dev_settings(resolved: Mapping[str, Any], *, infrahub_network: str = "
         work_pool=str(sync_api_environment.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "")),
         image=str((services.get(BUILD_SERVICE) or {}).get("image") or DEV_IMAGE),
         postgres=_optional_publication(services, "postgres", 5432),
-        object_store=_optional_publication(services, "object-store", 9000),
+        object_store=_bundled_store_publication(services),
         api_environment=_environment(services, "sync-api"),
         worker_environment=_environment(services, "sync-worker"),
+        api_binds=_binds(services, "sync-api"),
+        worker_binds=_binds(services, "sync-worker"),
     )
 
 
@@ -563,25 +595,63 @@ def _on_loopback(url: str, publication: Publication) -> str:
     return urlunsplit(parts._replace(netloc=netloc))
 
 
+def host_object_store_url(settings: DevSettings, endpoint: str) -> str:
+    """The object store endpoint a host process uses, from the endpoint its container gets.
+
+    An endpoint that names the bundled store's service moves onto the store's loopback
+    publication; any other endpoint is an external store and is kept as it is. An endpoint
+    the URL parser refuses is kept too, so `sync-bootstrap` reports it by name.
+
+    Raises:
+        DevStackError: when the endpoint names the bundled store but the file leaves the
+            store out, for example with INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0. The message
+            never prints the endpoint, which can carry a user name and password.
+    """
+    try:
+        host = urlsplit(endpoint).hostname
+    except ValueError:
+        return endpoint
+    if host != BUNDLED_STORE_SERVICE:
+        return endpoint
+    if settings.object_store is None:
+        msg = (
+            f"{S3_ENDPOINT_VARIABLE} names the bundled store, but {DEV_COMPOSE_FILE} leaves the "
+            f"{BUNDLED_STORE_SERVICE} service out or does not publish it; set {S3_ENDPOINT_VARIABLE} to the "
+            f"external store, or unset {BUNDLED_STORE_VARIABLE} to run the bundled store"
+        )
+        raise DevStackError(msg)
+    return _on_loopback(endpoint, settings.object_store)
+
+
 def host_environment(settings: DevSettings, service: Literal["sync-api", "sync-worker"]) -> dict[str, str]:
-    """The environment of `dev.api` or `dev.worker`: the container's, moved onto loopback.
+    """The environment of `dev.api` or `dev.worker`: the container's, moved onto the host.
 
     The settings are the ones the `sync-api` or `sync-worker` container would get, so a
     shell variable that changes the containers changes the host processes too. Only the
-    addresses differ: PostgreSQL, the object store and the Prefect server are reached on
-    their loopback publications instead of their service names. A variable resolved to
-    an empty value is left out, so the shell's own value, if any, applies.
+    addresses and paths differ: PostgreSQL, the bundled object store and the Prefect
+    server are reached on their loopback publications instead of their service names, an
+    external object store is reached at its own endpoint, and the CA directory is the
+    host directory INFRAHUB_SYNC_CA_CERTIFICATES names. A variable resolved to an empty
+    value is left out, so the shell's own value, if any, applies.
     """
-    if settings.postgres is None or settings.object_store is None:
-        msg = f"{DEV_COMPOSE_FILE} must publish postgres and object-store for the host processes"
+    if settings.postgres is None:
+        msg = f"{DEV_COMPOSE_FILE} must publish postgres for the host processes"
         raise DevStackError(msg)
     source = settings.api_environment if service == "sync-api" else settings.worker_environment
+    binds = settings.api_binds if service == "sync-api" else settings.worker_binds
     environment = {key: value for key, value in source.items() if value}
     if DATABASE_URL_VARIABLE not in environment:
         msg = f"{service} has no {DATABASE_URL_VARIABLE} in {DEV_COMPOSE_FILE}"
         raise DevStackError(msg)
     environment[DATABASE_URL_VARIABLE] = _on_loopback(environment[DATABASE_URL_VARIABLE], settings.postgres)
-    environment[S3_ENDPOINT_VARIABLE] = settings.object_store.url
+    if S3_ENDPOINT_VARIABLE in environment:
+        environment[S3_ENDPOINT_VARIABLE] = host_object_store_url(settings, environment[S3_ENDPOINT_VARIABLE])
+    # The container path exists only in the container. A bind mount there carries the
+    # host directory of INFRAHUB_SYNC_CA_CERTIFICATES; without one, the mount is the
+    # empty named volume and the host processes trust no extra certificate.
+    ca_directory = environment.pop(CA_DIRECTORY_VARIABLE, "")
+    if ca_directory in binds:
+        environment[CA_DIRECTORY_VARIABLE] = binds[ca_directory]
     environment["PREFECT_API_URL"] = f"{settings.prefect_url}/api"
     if service == "sync-api":
         environment["INFRAHUB_SYNC_SERVICE_HOST"] = HOST_PROCESS_ADDRESS
@@ -779,6 +849,8 @@ def dev_deps(context: Context, infrahub_network: str = "") -> None:
     INFRAHUB_INITIAL_ADMIN_TOKEN keeps the public default.
     """
     settings = _start_settings(context, infrahub_network)
+    # Refuses the bundled store's endpoint without the bundled store before anything starts.
+    object_store = host_object_store_url(settings, settings.worker_environment.get(S3_ENDPOINT_VARIABLE, ""))
     _rebuild_when_stale(context, settings)
     profiles = DEPS_PROFILES if not settings.infrahub_network else ()
     compose(
@@ -795,7 +867,7 @@ def dev_deps(context: Context, infrahub_network: str = "") -> None:
     )
     _print_urls(settings, host_worker=True)
     print(f" - [{NAMESPACE}] PostgreSQL  {_publication_address(settings.postgres)}")
-    print(f" - [{NAMESPACE}] Object store {_publication_url(settings.object_store)}")
+    print(f" - [{NAMESPACE}] Object store {object_store or 'not set'}")
     print(f" - [{NAMESPACE}] Next: `uv run invoke dev.api` and `uv run invoke dev.worker`, each in its own terminal")
 
 
@@ -879,10 +951,6 @@ def dev_frontend(context: Context) -> None:
 
 def _publication_address(publication: Publication | None) -> str:
     return publication.address if publication is not None else "not published"
-
-
-def _publication_url(publication: Publication | None) -> str:
-    return publication.url if publication is not None else "not published"
 
 
 ns = Collection(

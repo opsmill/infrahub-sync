@@ -311,7 +311,7 @@ schema_mapping:
 
 - For basic auth, set both `username` and `password`
 - For bearer auth, set `auth_method: bearer` and provide `token`
-- In a registered package, declare credentials as `$credential` references and set their variables in the worker environment. `PROM_USERNAME`, `PROM_PASSWORD`, and `PROM_TOKEN` apply only to direct adapter use.
+- In a registered package, declare credentials as `$credential` references and set their variables in the worker environment. On a Compose deployment, use `INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_USERNAME` and `INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_PASSWORD`, the names the worker receives. `PROM_USERNAME`, `PROM_PASSWORD`, and `PROM_TOKEN` apply only to direct adapter use.
 
 ### API mode specific
 

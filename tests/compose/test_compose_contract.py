@@ -28,7 +28,6 @@ from tests.compose.conftest import (
     SYNC_SCRATCH_ROOTS,
     SYNC_SERVICES,
     compose,
-    mount_sources,
     resolve,
     resolve_privately,
     service,
@@ -77,6 +76,23 @@ INFRAHUB_PROFILE = ("--profile", "infrahub")
 PERSISTENT_VOLUMES = {"postgres-data", "object-store-data"}
 PERSISTENT_SERVICES = {"postgres", "object-store-init", "object-store"}
 
+# Spec 021 FR-011: the one shared, read-only mount -- the operator's CA directory -- on the
+# three services that make outgoing TLS connections. Unset, its source is an empty named
+# volume that nothing writes.
+CA_TARGET = "/etc/infrahub-sync/ca"
+CA_VOLUME = "sync-ca-certificates"
+CA_SERVICES = {"sync-bootstrap", "sync-api", "sync-worker"}
+
+
+def writable_mounts(definition: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Every mount of one resolved service that its container can write to."""
+    return [mount for mount in definition.get("volumes") or [] if not mount.get("read_only")]
+
+
+def is_ca_mount(mount: Mapping[str, Any]) -> bool:
+    return mount.get("target") == CA_TARGET and mount.get("read_only") is True
+
+
 # The test-only override, and the host route it adds -- in the form Compose
 # resolves it to, since the file writes `name:value` and the model renders
 # `name=value`. One service reaches the declared destination: the worker that
@@ -90,7 +106,39 @@ ROUTED_SERVICES = {"sync-worker"}
 # and only the worker runs one, so the worker is the only service that may be
 # given either. Naming them here rather than deriving them from the file keeps
 # this a statement of the contract instead of a restatement of the YAML.
-SOURCE_TOKEN_SETTINGS = ("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN")
+# Spec 021 FR-008: one documented name for each credential setting of each bundled adapter,
+# and every name the shipped examples and adapter pages use, so those packages run unedited.
+# The table is dev/specs/021-compose-store-credentials-ca/contracts/environment-variables.md.
+CREDENTIAL_PREFIX = "INFRAHUB_SYNC_CREDENTIAL_"
+ADAPTER_CREDENTIAL_NAMES: dict[tuple[str, str], tuple[str, ...]] = {
+    ("aci", "username"): ("CISCO_APIC_USERNAME",),
+    ("aci", "password"): ("CISCO_APIC_PASSWORD",),
+    ("genericrestapi", "token"): ("REST_API_TOKEN", "LIBRENMS_TOKEN", "PEERINGDB_API_KEY"),
+    ("genericrestapi", "username"): ("REST_API_USERNAME", "DEVICE42_USERNAME", "OBSERVIUM_USERNAME"),
+    ("genericrestapi", "password"): ("REST_API_PASSWORD", "DEVICE42_PASSWORD", "OBSERVIUM_PASSWORD"),
+    ("infrahub", "token"): ("INFRAHUB_API_TOKEN", "SOURCE_INFRAHUB_TOKEN"),
+    ("ipfabricsync", "auth"): ("IPF_TOKEN",),
+    ("nautobot", "token"): ("NAUTOBOT_TOKEN",),
+    ("netbox", "token"): ("NETBOX_TOKEN",),
+    ("peeringmanager", "token"): ("PEERING_MANAGER_TOKEN",),
+    ("peeringmanager", "username"): ("PEERING_MANAGER_USERNAME",),
+    ("peeringmanager", "password"): ("PEERING_MANAGER_PASSWORD",),
+    ("prometheus", "token"): ("PROMETHEUS_TOKEN",),
+    ("prometheus", "username"): ("PROMETHEUS_USERNAME",),
+    ("prometheus", "password"): ("PROMETHEUS_PASSWORD",),
+    ("slurpitsync", "api_key"): ("SLURPIT_API_KEY",),
+    ("slurpitsync", "token"): ("SLURPIT_TOKEN",),
+}
+WORKER_CREDENTIAL_SETTINGS = tuple(
+    sorted({f"{CREDENTIAL_PREFIX}{name}" for names in ADAPTER_CREDENTIAL_NAMES.values() for name in names})
+)
+
+# The source credentials the bundled adapters resolve. Only a run consumes one,
+# and only the worker runs one, so the worker is the only service that may be
+# given any of them.
+SOURCE_TOKEN_SETTINGS = tuple(
+    setting for setting in WORKER_CREDENTIAL_SETTINGS if setting != "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
+)
 SOURCE_TOKEN_RECEIVERS = {"sync-worker"}
 
 # The destination credential, and the two services that resolve one. The API
@@ -172,8 +220,8 @@ def test_the_api_and_the_worker_share_no_mount_source(model: dict[str, Any]) -> 
     serves it have no filesystem in common, so the intersection is the thing to
     assert — not that each one's list happens to look right today.
     """
-    api = mount_sources(service(model, "sync-api"))
-    worker = mount_sources(service(model, "sync-worker"))
+    api = {str(mount["source"]) for mount in writable_mounts(service(model, "sync-api"))}
+    worker = {str(mount["source"]) for mount in writable_mounts(service(model, "sync-worker"))}
 
     assert api & worker == set(), f"sync-api and sync-worker both mount {sorted(api & worker)}"
 
@@ -187,8 +235,9 @@ def test_a_sync_service_mounts_nothing_at_all(model: dict[str, Any], name: str) 
     transport exists to replace.
     """
     definition = service(model, name)
+    mounts = [mount for mount in definition.get("volumes") or [] if not is_ca_mount(mount)]
 
-    assert definition.get("volumes") in (None, []), f"{name} mounts {definition['volumes']}"
+    assert mounts == [], f"{name} mounts {mounts}"
 
 
 @pytest.mark.parametrize("name", SYNC_SERVICES)
@@ -211,10 +260,10 @@ def test_only_postgresql_and_the_object_store_keep_a_named_volume(model: dict[st
     holders = {
         name
         for name, definition in services(model).items()
-        if any(mount.get("type") == "volume" for mount in definition.get("volumes") or [])
+        if any(mount.get("type") == "volume" for mount in writable_mounts(definition))
     }
 
-    assert declared == PERSISTENT_VOLUMES, f"the file declares the volumes {sorted(declared)}"
+    assert declared == PERSISTENT_VOLUMES | {CA_VOLUME}, f"the file declares the volumes {sorted(declared)}"
     assert holders == PERSISTENT_SERVICES, f"named volumes are held by {sorted(holders)}"
 
 
@@ -260,6 +309,34 @@ def test_no_service_mounts_a_host_path(cli_model: dict[str, Any]) -> None:
     )
 
     assert binds == [], f"these services mount a host path: {binds}"
+
+
+def test_a_named_ca_directory_is_the_only_host_path_and_is_read_only(contract_environment: dict[str, str]) -> None:
+    """Spec 021: with INFRAHUB_SYNC_CA_CERTIFICATES set, the CA directory is bound read-only, and nothing else."""
+    resolved = resolve({**contract_environment, "INFRAHUB_SYNC_CA_CERTIFICATES": "/srv/infrahub-sync/ca"})
+    binds = {
+        name: (mount.get("source"), mount.get("target"), mount.get("read_only"))
+        for name, definition in services(resolved).items()
+        for mount in definition.get("volumes") or []
+        if mount.get("type") == "bind"
+    }
+
+    assert binds == dict.fromkeys(CA_SERVICES, ("/srv/infrahub-sync/ca", CA_TARGET, True))
+
+
+def test_the_ca_mount_and_setting_reach_only_the_tls_clients(model: dict[str, Any]) -> None:
+    """FR-011: sync-bootstrap, sync-api and sync-worker, and no other service."""
+    mounted = {
+        name for name, definition in services(model).items() if any(map(is_ca_mount, definition.get("volumes") or []))
+    }
+    configured = {
+        name
+        for name, definition in services(model).items()
+        if (definition.get("environment") or {}).get("INFRAHUB_SYNC_CA_DIRECTORY") == CA_TARGET
+    }
+
+    assert mounted == CA_SERVICES
+    assert configured == CA_SERVICES
 
 
 def test_the_bootstrap_script_comes_from_an_inline_config(model: dict[str, Any]) -> None:
@@ -854,9 +931,10 @@ def test_no_sync_service_takes_a_filesystem_input(model: dict[str, Any]) -> None
     what the deployment runs before the operator has registered anything.
     """
     readers = {
-        name: definition.get("volumes") or []
+        name: mounts
         for name, definition in services(model).items()
-        if name.startswith("sync-") and (definition.get("volumes") or [])
+        if name.startswith("sync-")
+        and (mounts := [mount for mount in definition.get("volumes") or [] if not is_ca_mount(mount)])
     }
 
     assert readers == {}, f"Sync services taking a filesystem input: {sorted(readers)}"
@@ -1060,3 +1138,129 @@ def test_a_declared_source_credential_reaches_only_the_worker(
     }
     assert carriers == SOURCE_TOKEN_RECEIVERS, f"{setting} value reached {sorted(carriers)}"
     assert service(resolved, "sync-worker")["environment"][setting] == planted
+
+
+# ---------------------------------------------------------------------------
+# The team's own S3-compatible store (spec 021, FR-001, FR-002)
+# ---------------------------------------------------------------------------
+
+STORE_SERVICES = ("sync-bootstrap", "sync-api", "sync-worker")
+BUNDLED_STORE_SERVICES = ("object-store-init", "object-store")
+LEAVE_OUT_SETTING = "INFRAHUB_SYNC_BUNDLED_OBJECT_STORE"
+EXTERNAL_STORE = {
+    "INFRAHUB_SYNC_S3_ENDPOINT_URL": "https://s3.example.test",
+    "INFRAHUB_SYNC_S3_ADDRESSING_STYLE": "virtual",
+    LEAVE_OUT_SETTING: "0",
+}
+
+
+@pytest.mark.parametrize("name", STORE_SERVICES)
+def test_the_store_settings_default_to_the_bundled_store(model: dict[str, Any], name: str) -> None:
+    environment = services(model)[name]["environment"]
+
+    assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == "http://object-store:9000"
+    assert environment["INFRAHUB_SYNC_S3_ADDRESSING_STYLE"] == "path"
+
+
+@pytest.mark.parametrize("name", STORE_SERVICES)
+def test_the_store_settings_come_from_the_environment(contract_environment: dict[str, str], name: str) -> None:
+    environment = services(resolve({**contract_environment, **EXTERNAL_STORE}))[name]["environment"]
+
+    assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == "https://s3.example.test"
+    assert environment["INFRAHUB_SYNC_S3_ADDRESSING_STYLE"] == "virtual"
+
+
+@pytest.mark.parametrize("name", BUNDLED_STORE_SERVICES)
+def test_the_bundled_store_runs_by_default(model: dict[str, Any], name: str) -> None:
+    assert services(model)[name].get("scale", 1) == 1
+
+
+@pytest.mark.parametrize("name", BUNDLED_STORE_SERVICES)
+def test_the_bundled_store_can_be_left_out(contract_environment: dict[str, str], name: str) -> None:
+    resolved = services(resolve({**contract_environment, **EXTERNAL_STORE}))
+
+    assert resolved[name].get("scale") == 0
+
+
+def test_bootstrap_does_not_require_a_left_out_bundled_store(contract_environment: dict[str, str]) -> None:
+    """Every Sync service still resolves, and bootstrap waits for the store only when it runs."""
+    resolved = services(resolve({**contract_environment, **EXTERNAL_STORE}))
+    dependency = resolved["sync-bootstrap"]["depends_on"]["object-store"]
+
+    assert dependency["condition"] == "service_healthy"
+    assert dependency["required"] is False
+    assert set(STORE_SERVICES) <= set(resolved)
+
+
+# ---------------------------------------------------------------------------
+# The credential variables of every bundled adapter (spec 021, FR-008)
+# ---------------------------------------------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CREDENTIAL_NAME = re.compile(rf"{CREDENTIAL_PREFIX}[A-Z0-9_]+")
+
+
+def test_the_worker_holds_exactly_the_documented_credential_variables(model: dict[str, Any]) -> None:
+    environment = services(model)["sync-worker"]["environment"]
+
+    held = sorted(name for name in environment if name.startswith(CREDENTIAL_PREFIX))
+    assert held == list(WORKER_CREDENTIAL_SETTINGS)
+    assert len(held) == 24
+
+
+def test_the_list_names_every_credential_setting_of_every_bundled_adapter() -> None:
+    from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES
+
+    settings = {
+        (name, path)
+        for name, capabilities in BUILTIN_ADAPTER_CAPABILITIES.items()
+        for path in capabilities.credential_setting_paths
+    }
+
+    assert settings == set(ADAPTER_CREDENTIAL_NAMES)
+
+
+def test_the_list_holds_every_name_the_examples_and_adapter_pages_use() -> None:
+    """A shipped package or a documented one runs on the Compose deployment unedited."""
+    sources = [*REPO_ROOT.glob("examples/*/package.yml"), *REPO_ROOT.glob("docs/docs/adapters/*.mdx")]
+    used = {name for path in sources for name in CREDENTIAL_NAME.findall(path.read_text(encoding="utf-8"))}
+
+    assert sources
+    assert used <= set(WORKER_CREDENTIAL_SETTINGS), sorted(used - set(WORKER_CREDENTIAL_SETTINGS))
+
+
+@pytest.mark.parametrize("setting", WORKER_CREDENTIAL_SETTINGS)
+def test_each_credential_variable_is_optional_in_the_file(setting: str) -> None:
+    """Written `${NAME:-}`: an unset variable resolves empty and the deployment still starts."""
+    text = COMPOSE_FILE.read_text(encoding="utf-8")
+
+    assert f'{setting}: "${{{setting}:-}}"' in text
+
+
+# ---------------------------------------------------------------------------
+# Image pins of the development stack (spec 021 FR-023, FR-024)
+# ---------------------------------------------------------------------------
+
+DEVELOPMENT_FILE = DEVELOPMENT_COMPOSE / "docker-compose.yml"
+DEVELOPMENT_SYNC_IMAGE = "infrahub-sync:dev"
+
+
+def test_every_development_image_other_than_the_checkout_build_is_named_by_digest(compose_version: str) -> None:
+    """The development stack builds the Sync image from the checkout; every other image is pinned.
+
+    The root file's own case covers the packaged copy, which is byte-identical to it.
+    """
+    del compose_version
+    result = compose(
+        ["--profile", "sync", "--profile", "infrahub", "config", "--format", "json"],
+        files=(DEVELOPMENT_FILE,),
+        inherit_environment=False,
+    )
+    assert result.returncode == 0, result.stderr
+    mutable = sorted(
+        f"{name}: {definition['image']}"
+        for name, definition in services(json.loads(result.stdout)).items()
+        if definition["image"] != DEVELOPMENT_SYNC_IMAGE and not IMMUTABLE_REFERENCE.fullmatch(str(definition["image"]))
+    )
+
+    assert mutable == [], f"these development services are not pinned to a digest: {mutable}"
