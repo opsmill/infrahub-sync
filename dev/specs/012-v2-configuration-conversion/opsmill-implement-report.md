@@ -215,3 +215,10 @@ this refusal stops the plan first. What the gate expects for these devices is no
 
 During these runs, the branch `010-prefect-pr2-preview-removal` used ports 8000 and 9010. The
 local preview settings now use 8090 and 9020.
+
+Decided by the product owner on 2026-11-13: the `PP:MDF` collision is not a defect. NetBox
+device names are unique only together with other fields such as the site and the rack, while
+the destination schema identifies a device by name alone. Spec 020 turns this refusal into
+records left out with the problem type `destination_identity_collision`. FR-023 now accepts
+records left out and problems that are on a reviewed list, as it does for deletes. T031 adds that
+list once spec 020 is merged.

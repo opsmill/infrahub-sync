@@ -318,12 +318,17 @@ the operations.
   - one sync with v2 `2.0.2` and its NetBox example `config.yml`
   - that same `config.yml` converted with `--yes`, registered, and planned on the same branch
     with no NetBox change in between
-- **FR-023**: The gate MUST pass only when the first V3 plan holds 0 creates, 0 updates, 0 records
-  left out and 0 problems, and when every delete it holds is on the test's list of expected
-  deletes. Each entry on that list MUST give the kind, the identity and the reason the delete is
-  expected. A delete that is not on the list MUST fail the gate.
-- **FR-024**: Every create, update, record left out or problem that the gate finds MUST be treated
-  as a defect, in V3 or in the conversion, and fixed before the testing release.
+- **FR-023**: The gate MUST pass only when the first V3 plan holds 0 creates and 0 updates, when
+  every delete it holds is on the test's list of expected deletes, and when every record left
+  out and every problem is on the test's list of expected left-out records. Each entry on either
+  list MUST give the kind, the identity and the reason; an entry on the left-out list also gives
+  the problem type of spec 020. A delete, a record left out or a problem that is not on its list
+  MUST fail the gate. Changed on 2026-11-13 by the product owner: a record that the destination
+  schema cannot represent, such as NetBox devices that share a name where Infrahub identifies a
+  device by name alone, is a difference between the two schemas, not a defect.
+- **FR-024**: Every create, update, unlisted delete, unlisted record left out or unlisted problem
+  that the gate finds MUST be treated as a defect, in V3 or in the conversion, and fixed before
+  the testing release.
 - **FR-025**: The gate MUST record, for each finding, the kind and the identity, and for an update
   each field that differs with the value v2 wrote next to the value V3 would write.
 - **FR-026**: The gate MUST run in the nightly end-to-end workflow, and a failure MUST block the
