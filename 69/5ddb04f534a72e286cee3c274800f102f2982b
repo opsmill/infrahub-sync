@@ -1,0 +1,53 @@
+docs/docs/development/knowledge/repository-tour.md
+  s_82fe233503ea5c::t_e9dd90948a982c 98
+  s_82fe233503ea5c::t_6fe8bc26655533 107-113
+dev/specs/020-plan-problem-reporting/spec.md
+  s_82fe233503ea5c::t_7609a179e3ff90 36
+dev/specs/archive/017-sync-run-events-logs/EXTRACTED.md
+  s_82fe233503ea5c::t_7609a179e3ff90 1-112
+dev/specs/archive/017-sync-run-events-logs/spec.md
+  s_82fe233503ea5c::t_7609a179e3ff90 1-279
+dev/adr/README.md
+  s_82fe233503ea5c::t_e4504eb2d8d26f 98-104
+dev/adr/0033-an-event-is-saved-in-the-transaction-of-its-decision.md
+  s_82fe233503ea5c::t_ef9113c2d94829 1-81,83-109
+  s_82fe233503ea5c::t_ce00b73cdd25ad 82
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_82fe233503ea5c::t_3129419beb1494 169-171
+  s_82fe233503ea5c::t_540d7a0258f179 143-148
+  s_82fe233503ea5c::t_ee30d7421b4113 183-215
+dev/adr/0034-a-run-log-is-read-from-prefect-through-the-sync-api.md
+  s_82fe233503ea5c::t_5e828ba19f0133 1-79
+tests/product_store/test_audit_event_migration.py
+  s_82fe233503ea5c::t_7609a179e3ff90 3
+docs/docs/development/adr-index.mdx
+  s_82fe233503ea5c::t_1e5c9b450224c6 39-40
+docs/docs/reference/durable-product-records.mdx
+  s_82fe233503ea5c::t_a5c222fd7f13cd 280-284
+docs/docs/development/guidelines/secret-redaction.md
+  s_b19fc81df24856::t_ffa0d90da8a8d1 26-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "695ddb04f534a72e286cee3c274800f102f2982b",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_b19fc81df24856": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-awriter-b-891ab6aec388be04",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
