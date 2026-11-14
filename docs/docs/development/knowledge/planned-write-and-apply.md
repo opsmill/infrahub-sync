@@ -486,11 +486,25 @@ logged as a warning with the run ID and the error class, and writing continues. 
 turns true 5 minutes after the first failed save since the last successful one, so a quiet period
 between scheduled saves is never counted.
 
+When `record_apply_progress` answers `ended`, because the liveness monitor ended the execution
+while the worker kept writing, the answer is final: the observer tries no further save,
+`should_stop()` returns true at once, and the engine raises `ApplyProgressLostError` before its
+next dispatch. A save that raises, or that names an unknown execution, keeps the 5-minute rule.
+
 A run is **resumable** when `reconciliation_required` is set, the run is not cancelled, none of
 its executions is unfinished, and its `plan-review` document is published
 (`run_is_resumable` in `infrahub_sync/service/resume_view.py`, `_plan_published` in the store). A
 `sync` whose worker was killed while it was still planning requires reconciliation but published
-no plan, so it is not resumable. On such a run:
+no plan, so it is not resumable.
+
+The column stays set for such a run: ending the execution does not stop the worker, which can
+still publish its plan and write afterwards, so the absence of a plan does not prove that
+nothing will be written. The rule is checked when a request arrives, so the run becomes resumable
+once its plan is published. Until then `runs resume` answers `409 run-not-resumable`, `verify`
+answers `409 run-execution-conflict` and `approve` answers `409 run-not-approvable`, each
+before reading the plan. The three refusals are recorded in the audit history.
+
+On a resumable run:
 
 - `_reserve_existing` admits a `verify`, the one exception to the refusal of every stage on a run
   that holds a `write_admissions` row. After the pre-write checks pass, the `verify` stage computes
@@ -513,9 +527,22 @@ no plan, so it is not resumable. On such a run:
   `matches`, `differs` or `missing` for each operation and never a value. A create is matched on
   its human-friendly ID components, or, for a kind with none, on the identity's direct values that
   are not null. When more than one destination node has the key, the create is reported as
-  `differs`, never `matches`. Above 2,000 operations it
-  stores `operations_truncated`. A failed read fails the `verify` with a fixed message, and the
-  original error stays the cause, so the failure record classifies it by its class.
+  `differs`, never `matches`. For a kind with a human-friendly ID, an attribute component is
+  filtered with `<attribute>__values` and a relationship component with `<relationship>__ids`, on
+  the IDs the plan's peers resolve to; the destination combines the filters with AND. For a kind
+  with none, creates are grouped by the set of attributes in their key, with one query for each
+  set. A kind with no human-friendly ID is not keyed on its uniqueness constraints, so a
+  constraint that includes a relationship, such as (device, name), is not part of the key: when
+  two destination nodes differ only on that relationship, a create with the key they share is
+  reported as `differs`. The relationship filters are covered by unit tests against the
+  in-memory client only. Above 2,000 operations it
+  stores `operations_truncated`. A read that fails with a destination library error, an HTTP
+  error or an operating-system error fails the `verify` with `DestinationReadError` and a fixed
+  message; the original error stays the cause, so the failure record classifies it by its class
+  (`infrahub_sync/service/flow.py`). A `ValueError`, `KeyError` or `AttributeError` raised while
+  the nodes are read is a defect in Sync or in the shape of the data, not an unreachable
+  destination: it is not mapped, the `verify` fails, and its failure record names the error class
+  only, never the message.
 - `approve` accepts the run as it accepts a run in phase `planned`, so a site that requires approval
   can resume a run that was never approved, such as a `sync` run. The service checks the run before
   it reads the plan, and the store checks it again in the conditional update that stores the
@@ -536,6 +563,28 @@ each create and update is a convergent upsert keyed by the recorded ID or the co
 ID ([ADR 0012](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0012-the-convergent-upsert-is-the-replace-set-write.md),
 [ADR 0013](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0013-writes-are-keyed-by-recorded-id-and-complete-hfid.md)).
 A destination whose writes are not safe to repeat must not be resumed this way.
+
+The progress view's per-kind counts need each operation's kind and action. A client that waits
+for a run (`--wait`) reads `GET /runs/{run_id}` repeatedly, and a tier L plan holds about 88,000
+operations, so the Sync API does not parse the plan on every request. `_PlanLayoutCache` in
+`infrahub_sync/service/service.py` keeps each plan's `(operation_id, kind, action)` entries, in
+stored order, keyed by the run ID and the plan artifact's digest:
+
+- A published plan never changes, so an entry is never stale, and each API process fills its own
+  cache with the same entries. Several API processes need no shared state and no invalidation.
+- A plan whose reference has passed its `expires_at` bypasses the cache, with the rule the
+  artifact store applies, so every process stops reporting per-kind counts at the same time.
+- A failed read, an expired plan included, is not cached. It is logged as a warning with the run
+  ID, the error class and the error code, never the message.
+- The cache holds at most 200,000 operations over all runs (`PLAN_LAYOUT_CACHE_OPERATIONS`), and
+  drops the least recently read run first. A larger plan is not cached. About 200 bytes per
+  operation (an estimate, not measured) keeps it under about 40 MB per API process.
+
+Storing the layout in the store when the write starts was rejected: it needs a column migration
+on both database backends and a write from the worker, for data the published plan already
+holds.
+
+<!-- Extracted from dev/specs/archive/022-resume-interrupted-apply on 2026-11-14 -->
 
 ### Deletes are recorded, never executed
 

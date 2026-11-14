@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-11-13
-**Source**: `dev/specs/022-resume-interrupted-apply/research.md` (R1, R2, R5, R6, R7, R8, R11, R12, R13)
+**Source**: `dev/specs/archive/022-resume-interrupted-apply/research.md` (R1, R2, R4, R5, R6, R7, R8, R11, R12, R13, R14)
 
 ## Context
 
@@ -41,8 +41,16 @@ Three facts of the current code make a cheaper recovery possible:
   interleave, and a save at each change of kind would follow nearly every commit. A position is
   saved only after every operation up to it was committed. The update applies only while the execution is not terminal. When saves fail
   for 5 minutes, counted from the first failed save, the apply stops and the run is interrupted.
+  When the store answers that the execution has already ended, for example because the liveness
+  monitor ended it while the worker kept writing, no later save can succeed, so the apply stops
+  before its next write.
 - **`verify` on an interrupted run.** A run is resumable when `reconciliation_required` is set,
-  the run is not cancelled and no execution of it is unfinished. A `verify` is admitted on a
+  the run is not cancelled, no execution of it is unfinished and its plan review document is
+  published. A `sync` whose worker was ended while it was still planning keeps
+  `reconciliation_required`: ending the execution does not stop the worker, which can still
+  publish its plan and write afterwards. The rule is checked when a request arrives, so such a
+  run becomes resumable once its plan is published. Until then `verify`, `approve` and
+  `runs resume` refuse it. A `verify` is admitted on a
   resumable run; this is the one exception to "a read needs a run that has admitted no write".
   After the pre-write checks pass, `verify` reads the nodes of the uncertain operations from the
   destination and reports each create and update as `matches`, `differs` or `missing`. The report
@@ -111,3 +119,9 @@ fixed order makes one position enough.
 **Keeping the marker in the run's local state file or an artifact.** Artifacts are written once,
 and the local state file stays on the worker, so the last position of a killed worker would be
 lost.
+
+**Leaving `reconciliation_required` unset for a `sync` that saved no plan.** A `sync` publishes
+its plan before its first write, so when the liveness monitor ends such an execution nothing
+has been written yet. But the worker may still be running, publish its plan and write, so the
+absence of a plan does not prove that nothing will be written. Clearing the column could hide
+a write.

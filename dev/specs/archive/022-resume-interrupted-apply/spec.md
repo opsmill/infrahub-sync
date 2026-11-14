@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-12
 
-**Status**: Draft
+**Status**: Extracted
 
 **Input**: The idea brief "Resume an interrupted apply", grilled with the user on 2026-11-12. Every decision in the
 brief was confirmed by the user. The brief is compared with this specification in
