@@ -32,7 +32,7 @@ For *why* the format is shaped this way, see [ADR 0001](https://github.com/opsmi
 └── plan/                     # the artifact
     ├── operations.jsonl      # written FIRST
     ├── last_changes.jsonl    # written second, only when the destination is Infrahub
-    ├── report.jsonl          # written third (format 4): problems, left-out and kept records
+    ├── report.jsonl          # format 4, written before the manifest: problems, left-out and kept records
     └── manifest.json         # written LAST — its presence is the commit point
 ```
 
