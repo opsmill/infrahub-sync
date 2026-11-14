@@ -1,0 +1,38 @@
+docs/docs/development/knowledge/sync-architecture.md
+  s_82fe233503ea5c::t_a75bf096d2d452 82-114
+dev/adr/0035-the-engine-reports-each-sides-read-to-an-optional-observer.md
+  s_82fe233503ea5c::t_f53cf5821f96ad 1-93
+docs/docs/development/guidelines/secret-redaction.md
+  s_82fe233503ea5c::t_87767ff55924e3 71-80
+dev/specs/archive/018-plan-read-progress/EXTRACTED.md
+  s_82fe233503ea5c::t_3a1d8498cdc368 1-100
+dev/adr/README.md
+  s_82fe233503ea5c::t_bb2bebada5ebd3 105-108
+docs/docs/development/knowledge/repository-tour.md
+  s_82fe233503ea5c::t_d28ad1893c3d80 98
+  s_82fe233503ea5c::t_39e0b867a3fee1 107-109
+dev/specs/archive/018-plan-read-progress/quickstart.md
+  s_82fe233503ea5c::t_3a1d8498cdc368 1-45
+dev/specs/archive/018-plan-read-progress/spec.md
+  s_82fe233503ea5c::t_3a1d8498cdc368 1-192
+docs/docs/development/adr-index.mdx
+  s_82fe233503ea5c::t_3a1d8498cdc368 41
+dev/specs/020-plan-problem-reporting/spec.md
+  s_82fe233503ea5c::t_3a1d8498cdc368 37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cc42456c2a1a8710695e149529545d057900c4ce",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
