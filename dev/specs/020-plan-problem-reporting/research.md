@@ -397,7 +397,7 @@ Compared field by field with old `data-model.md` and `contracts/plan-artifact-fo
   `<kind>`: N records without identity").
 - **Reserved `cleared_relationships` field: not carried over.** Old 009 reserved it on updates
   for old spec 010 (second sync), with a refusal `plan-feature-not-supported`. Old spec 010 is not
-  on `feature/v3-develop` (the current `dev/specs/010-prefect-from-sync-image/` is another
+  on `feature/v3-develop` (the current `dev/specs/archive/010-prefect-from-sync-image/` is another
   subject), and no current specification asks for it. A later format can add it.
 - **Format 3 apply.** Old 009's contract refused format 2 and 3 apply with "plan again before
   applying", and its assumptions accepted that for the testing release. Kept: R9.

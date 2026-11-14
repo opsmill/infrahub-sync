@@ -254,6 +254,8 @@ records the upstream commit and the local additions.
 | `tests.py` | `tests.tests-unit`, `tests.tests-integration`, `tests.all` and `tests.check-310` |
 | `dev.py` | The local development stack: the `dev` namespace (`dev.start`, `dev.deps`, `dev.api`, `dev.worker`, `dev.restart`, `dev.smoke` and the rest) |
 | `smoke_dataset.py` | The smoke dataset that `dev.seed` and `dev.smoke` load; no task of its own |
+| `netbox.py` | The local NetBox for adapter work: the `netbox` namespace (`netbox.start`, `netbox.seed`, `netbox.destroy`, and dataset dump, restore and change tasks) |
+| `bench.py` | The NetBox benchmark runner: the `bench` namespace. It reads the Infrahub port and admin token of its destination through `resolved_compose()` in `dev.py` |
 | `release.py` | Keeping the image pin in `docker-compose.yml` in step with the package version |
 
 [Quality gates](quality-gates.md) explains what the aggregates really run, and
@@ -264,7 +266,13 @@ records the upstream commit and the local additions.
 - [`development/`][src-development] holds the local stacks. `docker-compose.yml` is the
   development stack the `dev` tasks run, formerly `docker-compose.dev.yml`; it includes the
   Infrahub services from `docker-compose.infrahub.yml`, with `docker-compose.infrahub-ports.yml`
-  as the override file of that include, which changes only their host ports. Runtime state the
+  as the override file of that include, which changes only their host ports.
+  PostgreSQL, the object store and `prefect-server` have no profile; `sync-bootstrap`,
+  `sync-api` and `sync-worker` have the `sync` profile; every included Infrahub service has the
+  `infrahub` profile. `dev.start` turns on both profiles and `dev.deps` only `infrahub`. The
+  tasks read ports, the project name and the Infrahub admin token from
+  `docker compose config --format json` (`dev_settings()` in `tasks/dev.py`), so a setting has
+  one default, in the Compose file. ADR 0029 records why. Runtime state the
   tasks and tests write lives under `.dev/`, which Git ignores.
   [Local development stack](../../development-stack.mdx) is the procedure.
 - The root `docker-compose.yml` is the operator deployment. It pulls the released image from

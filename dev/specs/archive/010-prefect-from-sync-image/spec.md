@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-22
 
-**Status**: Draft
+**Status**: Extracted
 
 **Input**: Idea brief "Compose stacks run Prefect from the Sync image (spec A)", product-owner
 decisions D-1 to D-17 of 2026-10-21.
@@ -93,7 +93,7 @@ These are final product-owner decisions. This specification does not reopen them
 - **D-2** (scope clarified 2026-10-22): in the root file and the test fixture, nothing outside
   the Sync image calls the Prefect API. The CLI holds no Prefect credential. In the development
   stack, the host processes `dev.api` and `dev.worker` may call it.
-- **D-3**: [ADR 0019](../../adr/0019-prefect-is-an-internal-component-of-sync.md) is amended:
+- **D-3**: [ADR 0019](../../../adr/0019-prefect-is-an-internal-component-of-sync.md) is amended:
   later, the Prefect API will be reachable only through the Sync API, either as one process or
   through a proxy (not decided yet). Keeping the Prefect database password out of `sync-api` is
   an extra layer of protection, not a principle.
@@ -154,7 +154,7 @@ The team pulls three images instead of four. The default deployment publishes on
 port and serves no Prefect UI.
 
 **Why this priority**: the root file is the supported customer deployment
-([ADR 0016](../../adr/0016-the-compose-deployment-is-one-tag-pinned-file.md)). A version
+([ADR 0016](../../../adr/0016-the-compose-deployment-is-one-tag-pinned-file.md)). A version
 mismatch between Prefect server and client, or an exposed Prefect port, affects every customer.
 
 **Independent Test**: start the root file with a complete `.env` on a host with no Sync volumes,
@@ -192,7 +192,7 @@ without an image rebuild.
 development Compose files and two task namespaces.
 
 **Independent Test**: from a fresh checkout, follow
-[`development-stack.mdx`](../../../docs/docs/development-stack.mdx) to run `dev.start`, then
+[`development-stack.mdx`](../../../../docs/docs/development-stack.mdx) to run `dev.start`, then
 `dev.smoke`.
 
 **Acceptance Scenarios**:
@@ -346,9 +346,9 @@ image, and complete a plan and an apply.
 - **FR-009**: The release notes MUST say that no in-place update from `3.0.0a5` is supported,
   that operators run `docker compose down -v` first, which state this removes (D-14), and that
   `INFRAHUB_SYNC_PREFECT_PORT` has no effect without the override snippet.
-- **FR-010**: [ADR 0019](../../adr/0019-prefect-is-an-internal-component-of-sync.md) MUST be
+- **FR-010**: [ADR 0019](../../../adr/0019-prefect-is-an-internal-component-of-sync.md) MUST be
   amended as stated in D-3, and
-  [ADR 0016](../../adr/0016-the-compose-deployment-is-one-tag-pinned-file.md) MUST gain a note
+  [ADR 0016](../../../adr/0016-the-compose-deployment-is-one-tag-pinned-file.md) MUST gain a note
   on the override snippet and on the root file shipped as package data.
 
 #### Bundled object store
@@ -446,13 +446,13 @@ image, and complete a plan and an apply.
   read the same settings from the development Compose file or its defaults (planning settled how,
   in [research.md R6](research.md#r6-how-tasksbenchpy-reads-the-development-settings-planning-check-4)).
   Test: a search over `.github/`, `docs/` and `AGENTS.md` finds no removed task name.
-- **FR-027**: [`development-stack.mdx`](../../../docs/docs/development-stack.mdx) MUST describe both
+- **FR-027**: [`development-stack.mdx`](../../../../docs/docs/development-stack.mdx) MUST describe both
   modes well enough for an engineer with a fresh checkout to reach a passing `dev.smoke` without
   other documents.
 
 ### Key Entities
 
-- **Root Compose file** (existing, [ADR 0016](../../adr/0016-the-compose-deployment-is-one-tag-pinned-file.md)):
+- **Root Compose file** (existing, [ADR 0016](../../../adr/0016-the-compose-deployment-is-one-tag-pinned-file.md)):
   the customer deployment. Changes: `prefect-server` runs the Sync image, the Prefect UI is off,
   the Prefect port is not published, the object store runs Silo. Also ships as package data.
 - **Development stack** (existing, merged): one Compose file that replaces
@@ -489,7 +489,7 @@ image, and complete a plan and an apply.
 
 ## Constitution Alignment
 
-Against the [project constitution](../../../docs/docs/development/constitution.md):
+Against the [project constitution](../../../../docs/docs/development/constitution.md):
 
 - **VII. Simplicity and maintainability**: supported. Fewer Compose files, fewer tasks, no
   background process handling.

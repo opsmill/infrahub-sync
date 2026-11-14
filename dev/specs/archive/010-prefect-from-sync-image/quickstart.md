@@ -32,7 +32,7 @@ Expected:
 - Only `sync-api` shows a published port, `127.0.0.1:8001->8000/tcp`. Product-owner decision 2026-10-23: the Sync API defaults to host port 8001; 8000 is for Infrahub.
 
 Then register, plan and apply a configuration with the CLI, as in
-[`running-a-sync.mdx`](../../../docs/docs/running-a-sync.mdx).
+[`running-a-sync.mdx`](../../../../docs/docs/running-a-sync.mdx).
 
 ## User Story 2: everything in containers
 

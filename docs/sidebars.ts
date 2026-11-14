@@ -136,6 +136,7 @@ const sidebars: SidebarsConfig = {
             'development/guidelines/testing-tiers',
             'development/guidelines/secret-redaction',
             'development/guidelines/ci-workflows',
+            'development/guidelines/invoke-tasks',
           ],
         },
         'development/constitution',

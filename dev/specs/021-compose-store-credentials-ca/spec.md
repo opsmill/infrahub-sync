@@ -8,7 +8,7 @@
 
 **Release**: the V3 testing release (clarified on 2026-11-12). Old specification 013 placed these
 items there; specification 010 calls them "the remaining 3.0 blockers listed under Jira card
-INFP-692" ([010 spec.md](../010-prefect-from-sync-image/spec.md), Summary and decision D-4). Work
+INFP-692" ([010 spec.md](../archive/010-prefect-from-sync-image/spec.md), Summary and decision D-4). Work
 this specification names as out of scope belongs to 3.0 or 3.x.
 
 **Input**: rebuild of what is left of old specification 013 "Fewer images in the Compose
@@ -27,7 +27,7 @@ Sources:
   The recheck corrects the gap report in nine places; where they differ, this specification
   follows the recheck.
 - Merged specifications this one builds on:
-  [010](../010-prefect-from-sync-image/spec.md),
+  [010](../archive/010-prefect-from-sync-image/spec.md),
   [archive/007](../archive/007-harbor-image-publishing/spec.md),
   [014](../014-import-lineage/spec.md), [019](../019-plan-approval/spec.md), and the decision
   records in [`dev/adr/`](../../adr/README.md), in particular
@@ -590,7 +590,7 @@ SBOM commands.
 ## Dependencies
 
 - **Specification 010 "PR 2".** Tasks T026, T028, T036, T037, T039, T061 to T064 and T066 of
-  [010 tasks.md](../010-prefect-from-sync-image/tasks.md) must be done first (decision 1). Until
+  [010 tasks.md](../archive/010-prefect-from-sync-image/tasks.md) must be done first (decision 1). Until
   T039 is done, `development/docker-compose.preview.yml` still runs `prefecthq/prefect` and the
   bundled store from a preview file, and FR-023 cannot pass. Specification 019 still ran the
   preview tier on 2026-11-10, so the tests it runs there move under `dev.smoke` with T039.

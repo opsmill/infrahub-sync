@@ -294,6 +294,15 @@ parameter therefore never reaches the flow body.
 - **Pinning the version is not optional here.** The extra pins `prefect==3.8.6` exactly,
   because the base dependency set and Prefect's transitive `redis` requirement interact —
   see [ADR 8](https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/dev/adr/0008-declare-redis-directly-instead-of-the-diffsync-extra.md).
+- **A Prefect upgrade moves three pins together.** The Prefect server runs from the Sync image
+  through `infrahub_sync.service.prefect_server:create_prefect_app`, so the `prefect` pin sets
+  both the server and the client version. `fastapi` is pinned at 0.141.1 in the `prefect` and
+  `service` extras because FastAPI 0.159 breaks `prefect.server.api.server.create_app` on
+  Prefect 3.8.6; check the server factory before you move it. The `testcontainers` extra pulls
+  in `prefect-client` through `infrahub-testcontainers`, which pins it exactly. `prefect` and
+  `prefect-client` install into the same `prefect/` directory, so `uv.lock` must resolve them
+  to one version; `tests/test_release_pin.py` fails when they differ. See
+  [ADR 0030](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0030-the-end-to-end-test-class-inherits-infrahubs.md).
 
 ### Optional imports
 

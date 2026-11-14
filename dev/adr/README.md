@@ -78,6 +78,15 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why an apply saves a progress marker, why `verify` is admitted on an interrupted run and
   reports each uncertain operation, and why a resume on the same run clears
   `reconciliation_required`. Partly supersedes 0010.
+- [0028 — The bundled object store runs from the Silo image](0028-the-bundled-object-store-runs-from-the-silo-image.md)
+  — why every Sync Compose stack runs the object store from a pinned `pgsty/silo` release, the
+  standard variant, and why the volume repair step stays.
+- [0029 — The development stack is one Compose file with profiles, run by one `dev` namespace](0029-the-development-stack-is-one-compose-file-with-profiles.md)
+  — why the preview stack was merged into one file with `sync` and `infrahub` profiles, why the
+  tasks read settings from the resolved Compose file, and when the image rebuilds.
+- [0030 — The end-to-end test class inherits Infrahub's, and the Prefect pins move together](0030-the-end-to-end-test-class-inherits-infrahubs.md)
+  — why `TestInfrahubSyncDocker` inherits `TestInfrahubDocker`, and why the `prefect` and
+  `prefect-client` pins must name one version.
 
 ## Related
 

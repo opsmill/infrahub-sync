@@ -60,7 +60,7 @@ R3–R6.
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-Against the [project constitution](../../../docs/docs/development/constitution.md), version
+Against the [project constitution](../../../../docs/docs/development/constitution.md), version
 1.0.3.
 
 | Principle | Result | Reason |

@@ -1,6 +1,6 @@
 """No workflow, page or agent guide runs a task name the Invoke rename removed.
 
-`dev/specs/010-prefect-from-sync-image/contracts/invoke-tasks.md` lists the removed names.
+`dev/specs/archive/010-prefect-from-sync-image/contracts/invoke-tasks.md` lists the removed names.
 The versioned 2.x documentation describes the earlier release and is not searched.
 """
 
