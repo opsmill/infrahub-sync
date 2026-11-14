@@ -8,7 +8,7 @@ import ReferenceLink from "../../src/components/Card";
 
 In a [configuration package](../configuration-package.mdx), name `slurpitsync` as the source. Then register the package, create and review a plan, and apply the plan, as described in [Run a sync](../running-a-sync.mdx).
 
-On a Compose deployment, from source or from a release package, the worker receives only the Infrahub, NetBox, and Nautobot tokens, so this adapter's credentials cannot reach it in this release. See [Credentials on a Compose deployment](./choosing-an-adapter.mdx#credentials-on-a-compose-deployment).
+On a Compose deployment, from source or from a release package, the worker receives the `INFRAHUB_SYNC_CREDENTIAL_*` variables this page names. The other environment variables on this page apply only to direct adapter use and do not reach the worker. The worker also receives the credential variables of the other bundled adapters. For `token`, use `INFRAHUB_SYNC_CREDENTIAL_SLURPIT_TOKEN`. See [Credentials on a Compose deployment](./choosing-an-adapter.mdx#credentials-on-a-compose-deployment).
 
 The example package is [`examples/slurpit_to_infrahub/package.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/slurpit_to_infrahub/package.yml).
 
@@ -115,10 +115,10 @@ The worker resolves these references from its own environment. Give both
 worker.
 
 The bundled [Compose deployment](../compose-deployment.mdx) cannot run this Slurp’it package.
-Its worker uses the bundle's bound image, which does not include the Slurp’it SDK, and the
-worker does not receive `INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY`. Registering the package does not install the SDK
-or pass the key to that worker. To run it with a service worker, deploy a worker image that
-includes the SDK and give `INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY` to that worker's environment.
+Its worker uses the bundle's bound image, which does not include the Slurp’it SDK. The worker
+receives `INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY`, but registering the package does not install
+the SDK. To run it with a service worker, deploy a worker image that includes the SDK and give
+`INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY` to that worker's environment.
 
 See [Configuration package](../configuration-package.mdx) for the full envelope reference.
 

@@ -27,6 +27,35 @@ _ENV_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # Prefect credentials among them. A declared package may name only variables in this namespace,
 # which no service setting uses, so a registered reference cannot select one of those.
 ENV_CREDENTIAL_PREFIX = "INFRAHUB_SYNC_CREDENTIAL_"
+# The credential variables the `sync-worker` service of `docker-compose.yml` passes through,
+# without the prefix and in the file's order: a name for each credential setting of each
+# bundled adapter. `test_conversion_worker_variables.py` fails when the file and this differ.
+COMPOSE_WORKER_CREDENTIAL_SUFFIXES = (
+    "INFRAHUB_API_TOKEN",
+    "CISCO_APIC_USERNAME",
+    "CISCO_APIC_PASSWORD",
+    "REST_API_TOKEN",
+    "REST_API_USERNAME",
+    "REST_API_PASSWORD",
+    "DEVICE42_USERNAME",
+    "DEVICE42_PASSWORD",
+    "LIBRENMS_TOKEN",
+    "OBSERVIUM_USERNAME",
+    "OBSERVIUM_PASSWORD",
+    "PEERINGDB_API_KEY",
+    "SOURCE_INFRAHUB_TOKEN",
+    "IPF_TOKEN",
+    "NAUTOBOT_TOKEN",
+    "NETBOX_TOKEN",
+    "PEERING_MANAGER_TOKEN",
+    "PEERING_MANAGER_USERNAME",
+    "PEERING_MANAGER_PASSWORD",
+    "PROMETHEUS_TOKEN",
+    "PROMETHEUS_USERNAME",
+    "PROMETHEUS_PASSWORD",
+    "SLURPIT_API_KEY",
+    "SLURPIT_TOKEN",
+)
 _ENV_CREDENTIAL_IDENTIFIER = re.compile(rf"^{ENV_CREDENTIAL_PREFIX}[A-Za-z0-9_]+$")
 _REGISTERED_CONTEXT = "_infrahub_sync_registered_context"
 

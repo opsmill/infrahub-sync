@@ -330,7 +330,10 @@ def test_service_storage_factory_validates_settings_and_hides_startup_details() 
     assert result is not None
     assert captured["bucket"] == "sync-artifacts"
     assert captured["prefix"] == "stable"
-    assert captured["sdk"] == {"service": "s3", "endpoint_url": "https://s3.test", "region_name": None}
+    sdk = cast("dict[str, object]", captured["sdk"])
+    config = sdk.pop("config")
+    assert sdk == {"service": "s3", "endpoint_url": "https://s3.test", "region_name": None}
+    assert config.s3 == {"addressing_style": "path"}  # ty: ignore[unresolved-attribute]  # botocore Config
 
     for name, value in (
         ("INFRAHUB_SYNC_DATABASE_URL", ""),
@@ -564,6 +567,76 @@ def test_service_storage_endpoint_accepts_valid_authorities(endpoint: str) -> No
         projection_builder=projection_builder,
     )
     assert received == [endpoint]
+
+
+@pytest.mark.parametrize(("setting", "expected"), [(None, "path"), ("path", "path"), ("virtual", "virtual")])
+def test_the_s3_client_arguments_carry_the_addressing_style(setting: str | None, expected: str) -> None:
+    """Unset keeps today's path-style requests; `virtual` selects virtual-hosted-style requests."""
+    from infrahub_sync.service import storage
+
+    values = {storage.S3_ENDPOINT_ENV: "https://s3.example.test", storage.S3_REGION_ENV: "eu-west-1"}
+    if setting is not None:
+        values[storage.S3_ADDRESSING_STYLE_ENV] = setting
+
+    arguments = storage.s3_client_arguments(values)
+
+    assert arguments["endpoint_url"] == "https://s3.example.test"
+    assert arguments["region_name"] == "eu-west-1"
+    assert arguments["config"].s3 == {"addressing_style": expected}
+
+
+@pytest.mark.parametrize("style", ["auto", "Virtual", "style-secret-canary"])
+def test_an_unknown_addressing_style_is_refused_without_its_value(style: str) -> None:
+    from infrahub_sync.service import storage
+
+    with pytest.raises(ValueError, match="must be path or virtual") as error:
+        storage.s3_client_arguments({storage.S3_ADDRESSING_STYLE_ENV: style})
+
+    assert str(error.value) == f"{storage.S3_ADDRESSING_STYLE_ENV} must be path or virtual"
+    assert style not in str(error.value)
+
+
+def test_an_empty_addressing_style_is_refused() -> None:
+    from infrahub_sync.service import storage
+
+    with pytest.raises(ValueError) as error:
+        storage.s3_client_arguments({storage.S3_ADDRESSING_STYLE_ENV: ""})
+
+    assert str(error.value) == f"{storage.S3_ADDRESSING_STYLE_ENV} must be a non-empty string when set"
+
+
+@pytest.mark.parametrize("endpoint", ["http://user@s3.example.test", "https://user:secret-canary@s3.example.test"])
+def test_the_s3_client_arguments_refuse_userinfo(endpoint: str) -> None:
+    """The endpoint is checked before any client exists, so no S3 request can carry it (FR-005)."""
+    from infrahub_sync.service import storage
+
+    with pytest.raises(storage.EndpointSettingError) as error:
+        storage.s3_client_arguments({storage.S3_ENDPOINT_ENV: endpoint})
+
+    assert str(error.value) == f"{storage.S3_ENDPOINT_ENV} must be an absolute http or https URL without userinfo"
+    assert "secret-canary" not in str(error.value)
+
+
+@pytest.mark.parametrize(("setting", "expected"), [(None, "auto"), ("path", "path"), ("virtual", "virtual")])
+def test_without_an_endpoint_an_unset_style_is_left_to_botocore(setting: str | None, expected: str) -> None:
+    """With no endpoint the client reaches AWS S3, where botocore chose the style before this setting."""
+    from infrahub_sync.service import storage
+
+    values = {} if setting is None else {storage.S3_ADDRESSING_STYLE_ENV: setting}
+
+    arguments = storage.s3_client_arguments(values)
+
+    assert arguments["endpoint_url"] is None
+    assert arguments["config"].s3 == {"addressing_style": expected}
+
+
+def test_the_key_prefix_defaults_and_loses_its_slashes() -> None:
+    from infrahub_sync.service import storage
+
+    assert storage.s3_key_prefix({}) == "infrahub-sync"
+    assert storage.s3_key_prefix({storage.S3_PREFIX_ENV: "/stable/"}) == "stable"
+    with pytest.raises(ValueError, match="INFRAHUB_SYNC_S3_PREFIX must be a non-empty string when set"):
+        storage.s3_key_prefix({storage.S3_PREFIX_ENV: "  "})
 
 
 def test_psycopg_adapter_marks_only_driver_errors() -> None:

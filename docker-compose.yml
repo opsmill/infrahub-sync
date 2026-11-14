@@ -46,7 +46,15 @@ x-sync-storage: &sync-storage
     @postgres:5432/${INFRAHUB_SYNC_PRODUCT_DATABASE:-infrahub_sync}}"
   INFRAHUB_SYNC_S3_BUCKET: "${INFRAHUB_SYNC_S3_BUCKET:-infrahub-sync}"
   INFRAHUB_SYNC_S3_PREFIX: "${INFRAHUB_SYNC_S3_PREFIX:-infrahub-sync}"
-  INFRAHUB_SYNC_S3_ENDPOINT_URL: "http://object-store:9000"
+  # The bundled store by default. To use an S3-compatible store the team runs, set the
+  # endpoint and the addressing style in `.env`, and leave the bundled store out with
+  # INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0; sync-bootstrap refuses either setting without
+  # the other.
+  INFRAHUB_SYNC_S3_ENDPOINT_URL: "${INFRAHUB_SYNC_S3_ENDPOINT_URL:-http://object-store:9000}"
+  INFRAHUB_SYNC_S3_ADDRESSING_STYLE: "${INFRAHUB_SYNC_S3_ADDRESSING_STYLE:-path}"
+  # Where the CA mount below lands; each process trusts the certificates in it next to the
+  # public roots (infrahub_sync/service/trust_store.py).
+  INFRAHUB_SYNC_CA_DIRECTORY: "/etc/infrahub-sync/ca"
   INFRAHUB_SYNC_S3_REGION: "${INFRAHUB_SYNC_S3_REGION:-us-east-1}"
   AWS_ACCESS_KEY_ID: "${INFRAHUB_SYNC_S3_ACCESS_KEY:?INFRAHUB_SYNC_S3_ACCESS_KEY is required}"
   AWS_SECRET_ACCESS_KEY: "${INFRAHUB_SYNC_S3_SECRET_KEY:?INFRAHUB_SYNC_S3_SECRET_KEY is required}"
@@ -56,6 +64,12 @@ x-sync-storage: &sync-storage
   # caller that can create a deployment in the work pool decides what the worker
   # runs. Each Sync process presents it; the CLI service is not given it.
   PREFECT_API_AUTH_STRING: "${INFRAHUB_SYNC_PREFECT_AUTH_STRING:?the Prefect API credential is required}"
+
+# The operator's CA certificates, read-only. INFRAHUB_SYNC_CA_CERTIFICATES names a host
+# directory of *.pem and *.crt files; unset, the mount is an empty named volume and the
+# services trust only the image's public roots. It holds public certificates, never a key.
+x-sync-ca: &sync-ca
+  - "${INFRAHUB_SYNC_CA_CERTIFICATES:-sync-ca-certificates}:/etc/infrahub-sync/ca:ro"
 
 services:
   postgres:
@@ -101,6 +115,8 @@ services:
   # Repair its ownership once in a short-lived service so the long-running server
   # never needs root, even during startup.
   object-store-init:
+    # 0 leaves the bundled store out: Compose creates no container for it.
+    scale: ${INFRAHUB_SYNC_BUNDLED_OBJECT_STORE:-1}
     image: >-
       pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc4155d9a7e41ff58cdb65ddd13ba9304e67184e13c25bc5cb34016269d7
     restart: "no"
@@ -122,6 +138,8 @@ services:
     # Silo, a maintained build of the MinIO server. Source:
     # https://github.com/pgsty/silo, licensed under the AGPLv3. It reads the
     # MINIO_* settings below and accepts the `server` command.
+    # 0 leaves the bundled store out: Compose creates no container for it.
+    scale: ${INFRAHUB_SYNC_BUNDLED_OBJECT_STORE:-1}
     image: >-
       pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc4155d9a7e41ff58cdb65ddd13ba9304e67184e13c25bc5cb34016269d7
     restart: unless-stopped
@@ -215,11 +233,14 @@ services:
         condition: service_completed_successfully
       object-store:
         condition: service_healthy
+        # Absent when the bundled store is left out.
+        required: false
       prefect-server:
         condition: service_healthy
     environment:
       <<: *sync-storage
     read_only: true
+    volumes: *sync-ca
     tmpfs: *sync-scratch
 
   sync-api:
@@ -252,6 +273,7 @@ services:
       # the link off.
       INFRAHUB_SYNC_PREFECT_UI_URL: "${INFRAHUB_SYNC_PREFECT_UI_URL:-}"
     read_only: true
+    volumes: *sync-ca
     tmpfs: *sync-scratch
     ports:
       - "${INFRAHUB_SYNC_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_SYNC_API_PORT:-8001}:8000"
@@ -292,16 +314,47 @@ services:
       PREFECT_WORKER_HEARTBEAT_SECONDS: "${PREFECT_WORKER_HEARTBEAT_SECONDS:-10}"
       # Optional for the same reason as on the API above.
       INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
-      # The source credentials the bundled NetBox and Nautobot adapters resolve,
-      # and the only service given either: a run is what consumes one, and the
-      # worker is what runs one. Optional rather than required, because a
-      # deployment that syncs neither source must still start -- and because a
-      # token nothing selects has no reason to exist here. When a registered
-      # package does select one, the resolver refuses an absent or empty value
-      # by name, so an unset token fails that run rather than this container.
-      INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN:-}"
+      # The source credentials of every bundled adapter, and only the worker is given
+      # them: a run is what consumes one, and the worker is what runs one. A package for
+      # this deployment references these names; the operator documentation lists them
+      # by adapter. Optional rather than required, because a deployment that syncs
+      # none of these sources must still start. When a registered package does select
+      # one, the resolver refuses an absent or empty value by name, so an unset
+      # credential fails that run rather than this container.
+      # aci
+      INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_USERNAME: "${INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_USERNAME:-}"
+      INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_PASSWORD: "${INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_PASSWORD:-}"
+      # genericrestapi (and the Device42, LibreNMS, Observium and PeeringDB pages)
+      INFRAHUB_SYNC_CREDENTIAL_REST_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_REST_API_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_REST_API_USERNAME: "${INFRAHUB_SYNC_CREDENTIAL_REST_API_USERNAME:-}"
+      INFRAHUB_SYNC_CREDENTIAL_REST_API_PASSWORD: "${INFRAHUB_SYNC_CREDENTIAL_REST_API_PASSWORD:-}"
+      INFRAHUB_SYNC_CREDENTIAL_DEVICE42_USERNAME: "${INFRAHUB_SYNC_CREDENTIAL_DEVICE42_USERNAME:-}"
+      INFRAHUB_SYNC_CREDENTIAL_DEVICE42_PASSWORD: "${INFRAHUB_SYNC_CREDENTIAL_DEVICE42_PASSWORD:-}"
+      INFRAHUB_SYNC_CREDENTIAL_LIBRENMS_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_LIBRENMS_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_OBSERVIUM_USERNAME: "${INFRAHUB_SYNC_CREDENTIAL_OBSERVIUM_USERNAME:-}"
+      INFRAHUB_SYNC_CREDENTIAL_OBSERVIUM_PASSWORD: "${INFRAHUB_SYNC_CREDENTIAL_OBSERVIUM_PASSWORD:-}"
+      INFRAHUB_SYNC_CREDENTIAL_PEERINGDB_API_KEY: "${INFRAHUB_SYNC_CREDENTIAL_PEERINGDB_API_KEY:-}"
+      # infrahub as a source
+      INFRAHUB_SYNC_CREDENTIAL_SOURCE_INFRAHUB_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_SOURCE_INFRAHUB_TOKEN:-}"
+      # ipfabricsync
+      INFRAHUB_SYNC_CREDENTIAL_IPF_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_IPF_TOKEN:-}"
+      # nautobot
       INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN:-}"
+      # netbox
+      INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN:-}"
+      # peeringmanager
+      INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_USERNAME: "${INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_USERNAME:-}"
+      INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_PASSWORD: "${INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_PASSWORD:-}"
+      # prometheus
+      INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_USERNAME: "${INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_USERNAME:-}"
+      INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_PASSWORD: "${INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_PASSWORD:-}"
+      # slurpitsync
+      INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY: "${INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY:-}"
+      INFRAHUB_SYNC_CREDENTIAL_SLURPIT_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_SLURPIT_TOKEN:-}"
     read_only: true
+    volumes: *sync-ca
     tmpfs: *sync-scratch
 
   # The operator's client, in the same image, behind a profile so no ordinary
@@ -373,3 +426,5 @@ configs:
 volumes:
   postgres-data:
   object-store-data:
+  # Empty, and never written: the default source of the read-only CA mount.
+  sync-ca-certificates:
