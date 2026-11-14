@@ -1,0 +1,54 @@
+dev/adr/README.md
+  s_82fe233503ea5c::t_62f3cee0c3cb6b 118-120
+dev/adr/0022-saved-plan-format-4.md
+  s_82fe233503ea5c::t_62f3cee0c3cb6b 5-6
+docs/docs/running-a-sync.mdx
+  s_82fe233503ea5c::t_62f3cee0c3cb6b 270-279
+dev/adr/0021-a-failure-record-holds-a-structured-cause.md
+  s_82fe233503ea5c::t_62f3cee0c3cb6b 5-7
+docs/docs/development/adr-index.mdx
+  s_82fe233503ea5c::t_62f3cee0c3cb6b 45
+docs/docs/development/knowledge/adapter-anatomy.md
+  s_82fe233503ea5c::t_62f3cee0c3cb6b 92-102
+dev/specs/archive/020-plan-problem-reporting/EXTRACTED.md
+  s_82fe233503ea5c::t_cc54954788fc07 1-9,11-193
+  s_82fe233503ea5c::t_cdec9e2116a2b8 10
+docs/docs/development/guidelines/secret-redaction.md
+  s_82fe233503ea5c::t_62f3cee0c3cb6b 71-81
+  s_82fe233503ea5c::t_602a299c9bcdd1 82
+docs/docs/reference/durable-product-records.mdx
+  s_82fe233503ea5c::t_62f3cee0c3cb6b 104-105
+docs/docs/development/knowledge/plan-artifact.md
+  s_82fe233503ea5c::t_62f3cee0c3cb6b 14-18,35,48,170,180-181,244-259
+dev/adr/0039-workers-publish-the-names-of-their-credential-variables.md
+  s_82fe233503ea5c::t_c0d62280bd4dce 1-60
+dev/adr/0025-a-warm-source-read-admits-changed-records.md
+  s_82fe233503ea5c::t_62f3cee0c3cb6b 5
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_82fe233503ea5c::t_62f3cee0c3cb6b 187-190
+dev/adr/0020-records-with-problems-are-left-out-of-a-plan.md
+  s_82fe233503ea5c::t_62f3cee0c3cb6b 5-6
+dev/specs/archive/020-plan-problem-reporting/quickstart.md
+  s_82fe233503ea5c::t_78c19559695b8c 1-61
+dev/specs/archive/020-plan-problem-reporting/spec.md
+  s_82fe233503ea5c::t_78c19559695b8c 33-37,69,75,513,517
+  s_82fe233503ea5c::t_fd5c495bc76e69 1-32,38-68,70-74,76-512,514-516,518-798
+dev/specs/archive/020-plan-problem-reporting/opsmill-implement-report.md
+  s_82fe233503ea5c::t_78c19559695b8c 1-488
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fefe3a118c0937035eecf0b18b52900e8a7fe43e",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
