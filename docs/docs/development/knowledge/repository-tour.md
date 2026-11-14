@@ -95,7 +95,7 @@ Two facts about it are often missed:
 [The configuration write guard](apply-guard.md) covers the advisory lock that serializes one
 configuration's writes.
 
-Three service modules carry what a run tells the operator:
+Five service modules carry what a run tells the operator:
 
 - `failure_cause.py` builds the stage failure record: it classifies the error into a
   `failure_type` and copies a fixed set of fields of typed errors (system, Infrahub error code,
@@ -104,6 +104,13 @@ Three service modules carry what a run tells the operator:
 - `run_artifact.py` builds the markdown artifact the worker publishes on each Prefect flow run,
   including the left-out and problem counts and the review commands of a plan that leaves out
   records.
+- `events.py` builds the event of a request, a configuration change or a stage result, and its
+  type (`infrahub_sync.run.accepted`, `infrahub_sync.run.planned` and the others). The store
+  saves the event of an accepted request or a stage result in the transaction that saves the
+  answer or the result. ADR 0033 records why, and which events are saved by a call of their own.
+- `run_log.py` keeps the lines that Sync wrote out of a run's Prefect log, for
+  `GET /runs/{run_id}/logs`. [How the Sync API reads a run's log](orchestration-prefect.md#how-the-sync-api-reads-a-runs-log)
+  describes it.
 - `flow.py` also stops a `sync` whose plan leaves out records, after the plan checkpoint and
   before any write. The stage result carries a `failure` with `failure_type:
   left_out_review_required`, and the store releases the run's write admission in the same

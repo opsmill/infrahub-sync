@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-06
 
-**Status**: Draft
+**Status**: Extracted
 
 **Input**: The idea brief "Sync run events and logs, aligned with Infrahub", grilled with the user on 2026-11-06.
 Every decision in the brief was confirmed by the user. The brief is compared with this specification in
@@ -28,7 +28,7 @@ Today the Sync API records an audit event for each decision it takes on a run or
 (accepted, replayed, refused, cancelled, unavailable), but no HTTP route returns these events. The frontend
 rebuilds a run's history from status fields.
 
-ADR [0019](../../adr/0019-prefect-is-an-internal-component-of-sync.md) makes Prefect an internal component of Sync.
+ADR [0019](../../../adr/0019-prefect-is-an-internal-component-of-sync.md) makes Prefect an internal component of Sync.
 Its amendment of 2026-10-23 says that the Prefect API will later be reachable only through the Sync API. Infrahub
 1.12 already works this way: it serves its events and its task logs from Prefect through its own API, filtered and
 paged (brief, section "How Infrahub does it").

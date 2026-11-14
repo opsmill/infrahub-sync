@@ -277,7 +277,11 @@ cancellable. A losing request never reaches Prefect; its receipt is stored alrea
 carrying `409 run-execution-conflict`, so replaying that client key replays the refusal. An
 accepted run receipt therefore carries a Prefect flow-run ID only when its stored response is
 a successful submission. `AuditEvent` records secret-safe actor, reason, operation, and outcome evidence
-for accepted mutations and refusals.
+for accepted mutations, refusals and stage results. It also holds an event type, the
+configuration, the configuration version, the branch and the related resources, which
+`GET /events` returns and filters on. The store methods that save the answer to an accepted
+request or a stage result take the event and save it in the same transaction; `record_audit`
+saves the event of a refusal, a replay or a request that could not be confirmed.
 
 `record_results` updates retained result evidence without changing product phase, outcome,
 or finish time. Service verification uses this operation because verification is read-only

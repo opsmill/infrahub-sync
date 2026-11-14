@@ -95,6 +95,13 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why the three lists page by position in a fixed order and not by offset, why a cursor is
   valid only for its list and filters, and why every value a list shows or filters on is stored
   in a column.
+- [0033 — An event is saved in the same transaction as the decision it records](0033-an-event-is-saved-in-the-transaction-of-its-decision.md)
+  — why the event of an accepted request or a stage result is saved by the store call that saves
+  the answer or the result, which events are saved by a call of their own, and how events are
+  typed, related to resources and paged.
+- [0034 — A run's log is read from Prefect through the Sync API and holds only the lines that Sync wrote](0034-a-run-log-is-read-from-prefect-through-the-sync-api.md)
+  — why Sync keeps no copy of a run's log, how a line that Sync wrote is told from a line of
+  Prefect's engine, and why a recognized failure ends the flow run with a returned `Failed` state.
 
 ## Related
 
