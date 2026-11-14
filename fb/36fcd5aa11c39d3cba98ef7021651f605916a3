@@ -1,0 +1,20 @@
+CLAUDE.md
+  s_82fe233503ea5c::t_51d5fed8d9a72e 6
+  s_82fe233503ea5c::t_eff367366d2451 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fb36fcd5aa11c39d3cba98ef7021651f605916a3",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
