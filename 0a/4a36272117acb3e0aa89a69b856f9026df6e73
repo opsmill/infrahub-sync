@@ -1,0 +1,40 @@
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_82fe233503ea5c::t_8780a1abbfccbb 489-493
+  s_82fe233503ea5c::t_8018fe122029e8 530-545
+  s_82fe233503ea5c::t_a3b2ede2d95118 567-588
+  s_82fe233503ea5c::t_57343974b9a035 498-507
+tests/dev_stack/smoke/test_resume_interrupted_apply.py
+  s_82fe233503ea5c::t_58283b14175d77 3-4
+dev/adr/0027-an-interrupted-apply-resumes-from-its-saved-position.md
+  s_82fe233503ea5c::t_0a12ecc0be56e5 122-127
+  s_82fe233503ea5c::t_7ad4fefb68b412 5
+  s_82fe233503ea5c::t_7205c7266c7a27 44-46,48-53
+dev/specs/archive/022-resume-interrupted-apply/EXTRACTED.md
+  s_82fe233503ea5c::t_5a78f8bb3711af 1-110
+dev/specs/archive/022-resume-interrupted-apply/spec.md
+  s_a5c03fc4a4f99d::t_e0307d0e24722d 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0a4a36272117acb3e0aa89a69b856f9026df6e73",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a5c03fc4a4f99d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-awriter-022-c334ae49517c58ac",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
