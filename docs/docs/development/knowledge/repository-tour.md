@@ -29,14 +29,18 @@ behavior.
 
 ### The command-line client and its HTTP client
 
-- [`infrahub_sync/cli.py`][src-infrahub-sync-cli-py] — the Typer entry point. It is a client of the Sync HTTP API and
-  nothing else: it constructs no HTTP request itself and reads neither the source system nor a
-  local plan file.
+- [`infrahub_sync/cli.py`][src-infrahub-sync-cli-py] — the Typer entry point. It is a client of
+  the Sync HTTP API: it constructs no HTTP request itself and reads neither the source system
+  nor a local plan file. `configs convert` is the exception: it does not call the Sync API. It
+  reads a v1 or v2 `config.yml` and writes a package on the machine where it runs. With
+  `--live-schema` it reads the destination Infrahub schema without a token, through
+  `configuration/conversion_live_schema.py`; without the flag it opens no network connection.
 - [`infrahub_sync/client/`][src-infrahub-sync-client] — the only place that builds Sync API requests.
   `client.py` holds the synchronous client, `models.py` its typed request and response shapes,
   and `errors.py` its error taxonomy.
 
-The command surface is `configs`, `runs`, `plan`, `sync` and `apply`. See the
+The command surface is `configs` (including the local `configs convert`), `runs`, `plan`,
+`verify`, `approve`, `sync`, `apply`, `events` and `whoami`. See the
 [CLI reference](../../reference/cli.mdx) for every option.
 
 To trace a registered run from a CLI command to execution, follow these modules:
@@ -55,8 +59,8 @@ see [the registered-run lifecycle](sync-architecture.md#one-registered-run).
 ### Configuration admission
 
 `infrahub_sync/configuration/` decides what a registered package is allowed to declare. It
-performs no I/O against a source or destination unless a caller explicitly opts in to the
-destination-schema checks.
+performs no I/O against a source or destination unless a caller explicitly opts in: to the
+destination-schema checks, or to the schema read of `configs convert --live-schema`.
 
 | Module | Owns |
 |---|---|
@@ -69,6 +73,10 @@ destination-schema checks.
 | `schema_validation.py` | The opt-in destination-schema checks |
 | `warnings.py` | Intentional omissions and unqualified optional features |
 | `runtime.py` | Runtime resolution, including the effective destination branch |
+| `conversion.py` | `configs convert`: the pure conversion of a v1 or v2 `config.yml` into a package, the tables of what v2 read from the environment, and the worker's credential variables |
+| `conversion_authentication.py` | Which credential settings each v2 authentication method used, so a converted package references only those |
+| `conversion_live_schema.py` | `configs convert --live-schema`: the destination-schema read without a token, and the fill of an unmapped IP namespace with `default` |
+| `conversion_report.py` | The text of the conversion report, the refusals and the next steps |
 
 [Configuration foundation](configuration-foundation.md) explains the declared identity,
 credential references and the connection-free capability declaration in full.
@@ -380,6 +388,12 @@ records the upstream commit and the local additions.
 stack's tasks, Compose file and smoke suite (`dev_stack/smoke/`, whose `smoke`-marked tests are
 opt-in), the opt-in
 `integration/`, `image/` and `compose/` suites, and the frozen `vendored_prefect_extras/` copy.
+
+Two fixture directories serve the v1 and v2 conversion. `tests/data/v2_examples/` holds
+byte-for-byte copies of the example `config.yml` files of the `2.0.2` tag, and of the NetBox
+example of the `1.6.1` tag. Its README says not to edit them and how to copy them again from
+their tag. `tests/data/v2_gate/` holds the reviewed lists that the nightly `v2-gate` suite
+compares the first V3 plan with.
 
 Which of these the default gate runs, and which need something live, is
 [Testing tiers](../guidelines/testing-tiers.md).

@@ -102,6 +102,7 @@ const sidebars: SidebarsConfig = {
             'development/knowledge/planned-write-and-apply',
             'development/knowledge/apply-guard',
             'development/knowledge/configuration-foundation',
+            'development/knowledge/v2-configuration-conversion',
             'development/knowledge/execution-surface',
             'development/knowledge/orchestration-prefect',
             'development/knowledge/quality-gates',

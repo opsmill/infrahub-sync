@@ -455,7 +455,10 @@ write. When the suite cannot read the node or the field, `v2` holds `<not read>`
 unexpected entry as a defect in V3 or in the conversion.
 
 Add an entry to either list, with its reason, only in a pull request where a reviewer accepts
-the reason. A failure of this suite fails the nightly job.
+the reason. List only records that the destination schema cannot represent: the records that
+depend on them, and the deletes of their kinds, are accepted without entries. Review both lists
+when the pinned `demo` dataset, the NetBox example in `tests/data/v2_examples/` or the way a plan
+reports records left out and problems changes. A failure of this suite fails the nightly job.
 
 Run it from the repository root, with Docker running and no other development stack or NetBox
 in use, because the suite resets both:

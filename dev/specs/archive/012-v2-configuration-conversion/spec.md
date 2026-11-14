@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-22
 
-**Status**: Draft
+**Status**: Extracted
 
 **Release**: the testing release of V3. Work this specification names as out of scope belongs to
 3.0 or later.
@@ -241,7 +241,7 @@ the operations.
   `<adapter>-<setting>` in lower case, with each `_` in the setting name changed to `-` (for
   example `netbox-token`, `aci-password`, `slurpitsync-api-key`). The Infrahub token's reference
   MUST be named `infrahub-token`, as in the shipped NetBox package
-  ([`package.yml`](../../../examples/netbox_to_infrahub/package.yml)).
+  ([`package.yml`](../../../../examples/netbox_to_infrahub/package.yml)).
 - **FR-007**: The command MUST NOT read, print or write a credential value.
 - **FR-008**: For each credential, the report MUST show the setting, where v2 got the value (a
   literal in `config.yml`, a `${VARIABLE}` placeholder, or a variable such as `NETBOX_TOKEN`), and
@@ -387,15 +387,15 @@ the operations.
 - **Credential variable names.** V3 accepts only environment variables that start with
   `INFRAHUB_SYNC_CREDENTIAL_`, so that a package cannot read the worker's own storage, database or
   Prefect settings
-  ([`credentials.py`](../../../infrahub_sync/configuration/credentials.py), added in commit
+  ([`credentials.py`](../../../../infrahub_sync/configuration/credentials.py), added in commit
   `5e30656f`).
 - **Destinations.** V3 declares every bundled adapter except `infrahub` as source-only
-  ([`capabilities.py`](../../../infrahub_sync/configuration/capabilities.py)), and its write path
+  ([`capabilities.py`](../../../../infrahub_sync/configuration/capabilities.py)), and its write path
   depends on the Infrahub adapter
-  ([ADR 0002](../../adr/0002-planned-write-destination-protocol.md)). No decision record says
+  ([ADR 0002](../../../adr/0002-planned-write-destination-protocol.md)). No decision record says
   this must stay so.
 - **Lineage.** The V3 Infrahub adapter accepts the `source` and `owner` settings as `{kind, name}`
-  ([spec 014](../archive/014-import-lineage/spec.md) FR-003). v2 protected every attribute it created;
+  ([spec 014](../014-import-lineage/spec.md) FR-003). v2 protected every attribute it created;
   V3 protects none unless the package sets `protect` (spec 014 D-4). Decided by the product owner
   on 2026-11-13: the conversion does not set `protect`, because protection is not the V3 default. Lineage and protection are not compared by a plan, so they are not
   expected to cause an update in the gate; the gate would show it if they did.
@@ -407,7 +407,7 @@ the operations.
 - **Dependencies.**
   - The Compose Sync worker must receive the credential variable of every bundled adapter. On
     2026-10-22 it receives three: the Infrahub, NetBox and Nautobot tokens
-    ([`docker-compose.yml`](../../../docker-compose.yml)). Without the others, SC-002 holds for
+    ([`docker-compose.yml`](../../../../docker-compose.yml)). Without the others, SC-002 holds for
     registration but a plan for those sources fails. It is not known whether briefing D covers
     this.
   - A documented way to install the V3 CLI outside Compose. It is listed as open for the release

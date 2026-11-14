@@ -57,7 +57,7 @@ uv run pytest tests/configuration/test_conversion_secrets.py -q
 ## 5. The gate (User Story 3, SC-001)
 
 Requires Docker, the pinned NetBox image and the preview stack, as in
-[the `from-netbox` example check](../../../docs/docs/development/guidelines/testing-tiers.md).
+[the `from-netbox` example check](../../../../docs/docs/development/guidelines/testing-tiers.md).
 
 ```bash
 uv run python .github/scripts/nightly_e2e.py suite v2-gate

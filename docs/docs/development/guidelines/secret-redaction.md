@@ -236,6 +236,12 @@ with `from None`. Preserve that summary instead of chaining Pydantic's raw detai
 For HTTP request validation, the API returns a fixed `request-invalid` message rather
 than the rejected body. See the [resolver][resolver-source] and [API handlers][api-source].
 
+The same applies to a parser. A YAML error message can quote the line that failed, and that
+line can hold a token. When a command reports a parse error in a file that can hold a
+credential, report only the position, as `configs convert` does: "error: config.yml is not
+valid YAML at line 12, column 3". Take the line and the column from the error's mark, and drop
+the message.
+
 ### Anti-patterns
 
 | Anti-pattern | Do instead |

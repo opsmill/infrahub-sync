@@ -118,6 +118,15 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0039 — Workers publish the names of their credential variables so validation can check them](0039-workers-publish-the-names-of-their-credential-variables.md)
   — why each worker writes the names of its credential variables to the product store, which
   workers count as live, and what grows in the `worker_environments` table.
+- [0040 — A v2 configuration converts to a package locally, by v2's own rules](0040-a-v2-configuration-converts-locally-by-v2-rules.md)
+  — why `configs convert` is a local command, why fixed tables reproduce v2's environment
+  variables and authentication methods, and why it never reads a credential value.
+- [0041 — An IP namespace that a uniqueness constraint needs and the file does not map converts to the `default` namespace](0041-an-unmapped-ip-namespace-converts-to-the-default-namespace.md)
+  — why `--live-schema` reads the destination schema and maps an unmapped IP namespace to
+  `default` as a peer that exists only in the destination.
+- [0042 — The v2 gate passes on no creates and no updates, and on reviewed lists for everything else](0042-the-v2-gate-passes-on-no-creates-and-reviewed-lists.md)
+  — why the nightly gate pins v2 2.0.1, what makes it pass, and how its lists of records left
+  out and deletes are kept.
 
 ## Related
 

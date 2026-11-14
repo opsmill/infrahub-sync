@@ -785,8 +785,11 @@ side effect, no volume is kept, and the container is removed when the command
 ends. `docker compose run --rm --no-deps -T cli --help` displays help for the
 CLI, and everything after `cli` is passed through as given.
 
-The CLI reaches the Sync API and nothing else. It gets no storage, Prefect,
-source, or destination credential, and no Docker socket.
+The `cli` service is given the address and the token of the Sync API and nothing
+else. It gets no storage, Prefect, source, or destination credential, and no
+Docker socket. Every command it runs calls only the Sync API, except
+`configs convert`: that command calls no service, and with `--live-schema` it reads
+the schema of the destination Infrahub without a token.
 
 ## Prepare a configuration
 
