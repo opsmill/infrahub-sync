@@ -1,0 +1,57 @@
+dev/adr/0042-the-v2-gate-passes-on-no-creates-and-reviewed-lists.md
+  s_82fe233503ea5c::t_dc7bb1ddd7bb8b 1-104
+dev/adr/0040-a-v2-configuration-converts-locally-by-v2-rules.md
+  s_82fe233503ea5c::t_caa2d5000741a4 1-102
+docs/docs/development/knowledge/v2-configuration-conversion.md
+  s_82fe233503ea5c::t_fc0d8d518d8031 1-99
+dev/specs/archive/012-v2-configuration-conversion/EXTRACTED.md
+  s_82fe233503ea5c::t_7eb8a40388a1e3 1-164
+dev/adr/0041-an-unmapped-ip-namespace-converts-to-the-default-namespace.md
+  s_82fe233503ea5c::t_1546cd275e179f 1-78
+dev/adr/README.md
+  s_d77b10226f2bc9::t_bc2a984bef32e0 121-129
+dev/specs/archive/012-v2-configuration-conversion/quickstart.md
+  s_d77b10226f2bc9::t_9d973aaf0b6c7b 60
+dev/specs/archive/012-v2-configuration-conversion/spec.md
+  s_d77b10226f2bc9::t_e85202cb111685 7,244,390,393,395,398,410
+docs/docs/compose-deployment.mdx
+  s_d77b10226f2bc9::t_7e990314721fa8 788-792
+docs/docs/development/adr-index.mdx
+  s_d77b10226f2bc9::t_436c447a9f7c39 46-48
+docs/docs/development/guidelines/secret-redaction.md
+  s_d77b10226f2bc9::t_5918e0207e7a79 239-244
+docs/docs/development/guidelines/testing-tiers.md
+  s_d77b10226f2bc9::t_0da1121ab776d5 458-461
+docs/docs/development/knowledge/index.md
+  s_d77b10226f2bc9::t_3ca8b4289d0a82 55-57
+docs/docs/development/knowledge/repository-tour.md
+  s_d77b10226f2bc9::t_c036b11300658c 32-37,42-43,62-63,76-79,392-397
+docs/docs/development/knowledge/schema-mapping.md
+  s_d77b10226f2bc9::t_204ac9208aee31 62-88,140-146
+docs/sidebars.ts
+  s_d77b10226f2bc9::t_db52d6a717d5e8 105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cc71a1dc8a023cd0f1c5815077cf46bee93f5561",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_d77b10226f2bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-awriter-d-e0f27483e86f438d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
