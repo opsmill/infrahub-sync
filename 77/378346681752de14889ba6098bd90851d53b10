@@ -1,0 +1,55 @@
+docs/docs/development/guidelines/index.md
+  s_82fe233503ea5c::t_1434b6c015dbff 31-32
+dev/specs/020-plan-problem-reporting/research.md
+  s_82fe233503ea5c::t_f30afbc9487672 400
+tests/test_task_inventory.py
+  s_82fe233503ea5c::t_fe8fbb25868f88 1
+dev/adr/0028-the-bundled-object-store-runs-from-the-silo-image.md
+  s_82fe233503ea5c::t_dfd8c71c0e7012 1-56
+dev/specs/archive/010-prefect-from-sync-image/plan.md
+  s_82fe233503ea5c::t_56b891e41ff3f1 1-202
+docs/docs/development/guidelines/invoke-tasks.md
+  s_82fe233503ea5c::t_b29582b6268913 1-38
+docs/sidebars.ts
+  s_82fe233503ea5c::t_f4fa8412508459 139
+tests/test_task_names_in_docs.py
+  s_82fe233503ea5c::t_8f598bad5b1fd2 3
+docs/docs/development/knowledge/repository-tour.md
+  s_82fe233503ea5c::t_28d3f624ae5f23 269-275
+  s_82fe233503ea5c::t_36047e42cf74c1 257-258
+dev/specs/archive/010-prefect-from-sync-image/spec.md
+  s_82fe233503ea5c::t_56b891e41ff3f1 96,157,195,349,351,449,455,492
+  s_82fe233503ea5c::t_f30afbc9487672 1-95,97-156,158-194,196-348,350,352-448,450-454,456-491,493-545
+dev/specs/archive/010-prefect-from-sync-image/quickstart.md
+  s_82fe233503ea5c::t_56b891e41ff3f1 1-96
+dev/specs/archive/010-prefect-from-sync-image/EXTRACTED.md
+  s_82fe233503ea5c::t_e7d3dd8565201c 1-94
+dev/adr/README.md
+  s_82fe233503ea5c::t_b1c3f53ff9e738 81-89
+dev/specs/021-compose-store-credentials-ca/spec.md
+  s_82fe233503ea5c::t_f30afbc9487672 11,30,593
+docs/docs/development/adr-index.mdx
+  s_82fe233503ea5c::t_b30fea0b45a4bd 32-34
+dev/adr/0029-the-development-stack-is-one-compose-file-with-profiles.md
+  s_82fe233503ea5c::t_36ee81fca85412 1-69
+dev/adr/0030-the-end-to-end-test-class-inherits-infrahubs.md
+  s_82fe233503ea5c::t_4fe03e5ccb13ea 1-62
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_82fe233503ea5c::t_846c0b32dd5061 297-305
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "77378346681752de14889ba6098bd90851d53b10",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
