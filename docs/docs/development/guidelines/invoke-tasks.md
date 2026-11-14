@@ -31,8 +31,10 @@ Rules for adding, renaming or removing an Invoke task in `tasks/`.
 
 - A development task reads a stack setting (project name, published port, bind address,
   token) from `docker compose config --format json`, through `dev_settings()` in
-  `tasks/dev.py`. Do not copy a default into a Python constant, and do not parse the Compose
-  YAML: both miss interpolation and shell overrides.
+  `tasks/dev.py`. A task that runs the stack under another project name or with other
+  profiles, as the benchmark runner does for its destination, reads the same output through
+  `resolved_compose()`. Do not copy a default into a Python constant, and do not parse the
+  Compose YAML: both miss interpolation and shell overrides.
 - A new setting is a `${NAME:-default}` interpolation in `development/docker-compose.yml`.
 - [ADR 0029](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0029-the-development-stack-is-one-compose-file-with-profiles.md)
   records why.
