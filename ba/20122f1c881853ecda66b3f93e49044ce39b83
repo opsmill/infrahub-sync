@@ -1,0 +1,31 @@
+dev/specs/archive/017-sync-run-events-logs/EXTRACTED.md
+  s_82fe233503ea5c::t_8e8998018afc05 95-98
+dev/adr/0033-an-event-is-saved-in-the-transaction-of-its-decision.md
+  s_b19fc81df24856::t_9926f5f2ec8a07 29-30,41-48,51-52,73-78
+docs/docs/development/guidelines/secret-redaction.md
+  s_b19fc81df24856::t_3f3254e84ba7d6 27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ba20122f1c881853ecda66b3f93e49044ce39b83",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_b19fc81df24856": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-awriter-b-891ab6aec388be04",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
