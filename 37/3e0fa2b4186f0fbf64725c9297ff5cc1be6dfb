@@ -1,0 +1,29 @@
+dev/adr/0040-a-v2-configuration-converts-locally-by-v2-rules.md
+  s_d77b10226f2bc9::t_180326cbc38339 89,91,93,96,98,101
+dev/adr/0041-an-unmapped-ip-namespace-converts-to-the-default-namespace.md
+  s_d77b10226f2bc9::t_d44a6b76aab2c3 18,63,65,67,69,72,75
+dev/adr/0042-the-v2-gate-passes-on-no-creates-and-reviewed-lists.md
+  s_d77b10226f2bc9::t_44d2c6dcfa1766 88-89,93,95,98-99,101,103
+dev/specs/archive/012-v2-configuration-conversion/EXTRACTED.md
+  s_d77b10226f2bc9::t_8b4b70455fa385 119-126
+docs/docs/development/knowledge/index.md
+  s_d77b10226f2bc9::t_1d8ec890e08348 55
+docs/docs/development/knowledge/v2-configuration-conversion.md
+  s_d77b10226f2bc9::t_bd315679643f98 2,5,77-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "373e0fa2b4186f0fbf64725c9297ff5cc1be6dfb",
+  "prompts": {},
+  "sessions": {
+    "s_d77b10226f2bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-awriter-d-e0f27483e86f438d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
