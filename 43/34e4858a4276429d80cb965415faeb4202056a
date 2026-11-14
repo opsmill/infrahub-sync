@@ -1,0 +1,38 @@
+dev/adr/README.md
+  s_82fe233503ea5c::t_81f508b3edc08c 90-93
+docs/docs/development/adr-index.mdx
+  s_82fe233503ea5c::t_3f54a4862e5ced 35
+dev/specs/012-v2-configuration-conversion/spec.md
+  s_82fe233503ea5c::t_b8f829a5daccdd 398
+docs/docs/development/knowledge/incremental-and-cache.md
+  s_82fe233503ea5c::t_29ada32f0f2b7a 151-153,156-161
+  s_82fe233503ea5c::t_b1cf1c79fb4bc2 154-155
+dev/adr/0031-an-import-writes-as-the-account-of-its-token.md
+  s_82fe233503ea5c::t_2b5053b04cff50 1-93
+dev/specs/archive/014-import-lineage/spec.md
+  s_82fe233503ea5c::t_0abeffa5d0558a 1-415
+dev/specs/archive/014-import-lineage/EXTRACTED.md
+  s_82fe233503ea5c::t_1b6e79dee1e83e 1-88
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_82fe233503ea5c::t_fe1c3c8ef4c973 242-278
+dev/specs/020-plan-problem-reporting/spec.md
+  s_82fe233503ea5c::t_b8f829a5daccdd 33
+dev/specs/021-compose-store-credentials-ca/spec.md
+  s_82fe233503ea5c::t_b8f829a5daccdd 32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4334e4858a4276429d80cb965415faeb4202056a",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
