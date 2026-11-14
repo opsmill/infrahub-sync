@@ -6,8 +6,8 @@
 ## ADRs Created
 
 - `dev/adr/0039-workers-publish-the-names-of-their-credential-variables.md` (from R15 and
-  `plan.md`, "Complexity Tracking"). Its status is Proposed: the product owner accepted ADRs 0020,
-  0021, 0022 and 0025 on 2026-11-12. Whether they accepted this one is not known.
+  `plan.md`, "Complexity Tracking"). Its status is Accepted: its decision is implemented and
+  merged with pull request #409.
 
 ADRs 0020, 0021, 0022 and 0025 were written while the spec was implemented. Their Source lines
 now name the archive path.

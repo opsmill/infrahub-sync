@@ -1,6 +1,6 @@
 # 39. Workers publish the names of their credential variables so validation can check them
 
-**Status**: Proposed
+**Status**: Accepted
 **Date**: 2026-11-14
 **Source**: `dev/specs/archive/020-plan-problem-reporting/research.md` (R15),
 `dev/specs/archive/020-plan-problem-reporting/plan.md` (Complexity Tracking)
