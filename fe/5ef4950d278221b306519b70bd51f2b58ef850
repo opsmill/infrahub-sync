@@ -1,0 +1,19 @@
+dev/adr/0032-run-and-configuration-lists-page-with-a-cursor.md
+  s_82fe233503ea5c::t_106b679f034eea 59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fe5ef4950d278221b306519b70bd51f2b58ef850",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
