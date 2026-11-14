@@ -68,6 +68,16 @@ not make a returned failure safe to display. The adapter rule still applies:
 Boundary redaction also replaces collected values in messages from dependencies that the
 adapter did not write.
 
+### Store only the error's class name in a progress document
+
+A document that the worker stores while a stage runs, such as the read state of a side
+(`prefect_executions.source_read` and `destination_read`), is stored as the worker built it: the
+store method takes no list of secrets to mask. The Sync API returns it in the run response. When
+such a document records a failure, store `type(exc).__name__` and nothing else from the
+exception: no message, no address, no traceback. Log the same failure by class name only. A
+class name is a fixed name in the code, so it holds no secret. The reason for the failure
+belongs in the run's failure record, which the rules above cover.
+
 ### Redact the whole cause chain
 
 A traceback can display both the wrapper message and the exception that caused it.

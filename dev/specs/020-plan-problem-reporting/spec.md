@@ -34,7 +34,7 @@ Sources:
   [015](../archive/015-run-discovery-api/spec.md),
   [016](../archive/016-prefect-run-observability/spec.md),
   [017](../archive/017-sync-run-events-logs/spec.md),
-  [018](../018-plan-read-progress/spec.md), and the decision records in [`dev/adr/`](../../adr/README.md).
+  [018](../archive/018-plan-read-progress/spec.md), and the decision records in [`dev/adr/`](../../adr/README.md).
 
 ## Background
 

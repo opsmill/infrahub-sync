@@ -79,6 +79,39 @@ configurations or external tools might change.
 For command examples, follow the [reviewed-run procedure](../../compose-deployment.mdx#the-operator-sequence).
 For the stage entrypoints, see [Prefect orchestration](orchestration-prefect.md#registered-service-integration).
 
+### Read state of each side of a plan
+
+While a `plan` or `sync` stage runs, the run response shows the state of the source read and of
+the destination read. [ADR 0035](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0035-the-engine-reports-each-sides-read-to-an-optional-observer.md)
+records why it works this way.
+
+- **The engine reports.** `Potenda._load_side` calls an optional `SideReadObserver`
+  (`infrahub_sync/potenda/read_progress.py`) when a side's read starts and when it ends. The end
+  report is a `SideReadReport`: for a read that succeeded, the read mode (`full` or
+  `incremental`) and the number of nodes of each kind, sorted by kind name; for a read that
+  failed, the class name of the error and nothing else. The engine also writes one log line when
+  a read ends, such as `Load: source read succeeded (full): 5 nodes; DcimDevice 3, LocationSite 2`
+  or `Load: destination read failed (ConnectionError)`.
+- **The caller chooses the observer.** `execute_run` takes the private keyword `_read_observer`
+  and sets `Potenda.read_observer` after it built the engine. Direct Python callers and the
+  direct Prefect flow pass none.
+- **The worker stores.** For a `plan` or `sync` stage, the worker first stores both sides as
+  `waiting` in one write (`record_waiting`), then passes a `StoreSideReadObserver`
+  (`infrahub_sync/service/read_progress.py`). The observer writes one JSON document for each side
+  through `record_side_reads`, into the `source_read` and `destination_read` columns of the
+  execution's row in `prefect_executions`. The update applies only while the execution has no
+  terminal verdict.
+- **The Sync API derives.** `stage_reads` in the same module builds `OrchestrationSummary.reads`
+  when the run is read. It returns a side stored as `waiting` as `not_started`, and a side stored
+  as `reading` as `interrupted`, once the execution ended without completing. It writes nothing.
+
+A report never changes the stage. When the observer raises, when the node count fails, or when
+the store write fails, the code logs a warning with the error's class name and the read
+continues. The stored documents are described in
+[Durable product records](../../reference/durable-product-records.mdx#record-and-identity-contract),
+and the returned states in
+[Read state of each side](../../reference/sync-http-api.mdx#read-state-of-each-side).
+
 ### Persistence and deployment limits
 
 Sync retains configuration versions, product runs and execution links in PostgreSQL.

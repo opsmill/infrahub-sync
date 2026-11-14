@@ -102,6 +102,10 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0034 — A run's log is read from Prefect through the Sync API and holds only the lines that Sync wrote](0034-a-run-log-is-read-from-prefect-through-the-sync-api.md)
   — why Sync keeps no copy of a run's log, how a line that Sync wrote is told from a line of
   Prefect's engine, and why a recognized failure ends the flow run with a returned `Failed` state.
+- [0035 — The engine reports each side's read to an optional observer, and the Sync API derives the read state it returns](0035-the-engine-reports-each-sides-read-to-an-optional-observer.md)
+  — why `Potenda._load_side` reports a read to an observer that only the worker sets, why each
+  side has its own column on the execution's row, and why the returned state is derived when the
+  run is read.
 
 ## Related
 

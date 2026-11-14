@@ -95,7 +95,7 @@ Two facts about it are often missed:
 [The configuration write guard](apply-guard.md) covers the advisory lock that serializes one
 configuration's writes.
 
-Five service modules carry what a run tells the operator:
+Six service modules carry what a run tells the operator:
 
 - `failure_cause.py` builds the stage failure record: it classifies the error into a
   `failure_type` and copies a fixed set of fields of typed errors (system, Infrahub error code,
@@ -104,6 +104,9 @@ Five service modules carry what a run tells the operator:
 - `run_artifact.py` builds the markdown artifact the worker publishes on each Prefect flow run,
   including the left-out and problem counts and the review commands of a plan that leaves out
   records.
+- `read_progress.py` stores the read state of the source and of the destination while a `plan`
+  or `sync` stage runs, and derives the `reads` field of the run response from the stored
+  documents. The engine side of the report is `infrahub_sync/potenda/read_progress.py`.
 - `events.py` builds the event of a request, a configuration change or a stage result, and its
   type (`infrahub_sync.run.accepted`, `infrahub_sync.run.planned` and the others). The store
   saves the event of an accepted request or a stage result in the transaction that saves the

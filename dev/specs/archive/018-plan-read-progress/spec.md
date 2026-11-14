@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-09
 
-**Status**: Draft
+**Status**: Extracted
 
 **Input**: The idea brief "Read state for each side of a Plan", grilled with the user on 2026-11-09. Every
 decision in the brief was confirmed by the user. The brief is compared with this specification in
@@ -173,7 +173,7 @@ information. Plans are more common than `sync` runs on the frontend team's run p
   confirmed the interval. SC-001 allows 5 seconds so that this interval and one stored write fit inside it.
 - Counting the nodes of each kind after a read costs little compared with the read itself.
 - The operator reads the run through the Sync API or the CLI. Prefect stays an internal component of Sync
-  ([ADR 0019](../../adr/0019-prefect-is-an-internal-component-of-sync.md)).
+  ([ADR 0019](../../../adr/0019-prefect-is-an-internal-component-of-sync.md)).
 - Implementation starts after pull request #402 (spec 017) and the spec 016 branch are merged into
   `feature/v3-develop`, because all three change the worker's flow, the run response and the run response
   model.

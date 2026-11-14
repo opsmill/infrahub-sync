@@ -4,7 +4,7 @@
 
 - The development profile: `uv sync --extra dev --extra prefect --extra service`.
 - For the live check: the preview stack and a registered configuration, as in
-  [testing tiers](../../../docs/docs/development/guidelines/testing-tiers.md).
+  [testing tiers](../../../../docs/docs/development/guidelines/testing-tiers.md).
 
 ## 1. Unit tier
 
