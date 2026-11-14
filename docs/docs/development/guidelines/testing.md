@@ -100,6 +100,21 @@ and an unbounded recursion in this repository were introduced by a remediation w
 passed, and were found only by a second pass scoped to the remediation diff. See
 [Secret redaction](../guidelines/secret-redaction.md).
 
+### Test a shared check on every path that runs it
+
+**When two stages must refuse for the same reasons, make them call one function, and prove it
+with a parity test.**
+
+`verify` reports whether an `apply` would be refused, so both call one gate
+(`Potenda.check_plan`). The parity cases in `tests/service/test_verify_destination.py` break one
+check at a time, run the real `verify` and `apply` stages on the same saved plan, and assert that
+both fail and both name the same check. `tests/test_potenda_check_plan.py` asserts that the gate
+proves no write ownership and dispatches nothing.
+
+When you add a pre-write check, add one case to the parity test. Do not copy a check into a second
+stage: a later change reaches one copy and not the other, and a plan then passes `verify` and is
+refused by `apply`.
+
 ### Conventions
 
 - Parametrize instead of looping; keep each test atomic and single-purpose.

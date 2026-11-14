@@ -29,7 +29,7 @@ Sources:
 - Merged specifications this one builds on:
   [010](../archive/010-prefect-from-sync-image/spec.md),
   [archive/007](../archive/007-harbor-image-publishing/spec.md),
-  [014](../archive/014-import-lineage/spec.md), [019](../019-plan-approval/spec.md), and the decision
+  [014](../archive/014-import-lineage/spec.md), [019](../archive/019-plan-approval/spec.md), and the decision
   records in [`dev/adr/`](../../adr/README.md), in particular
   [ADR 0016](../../adr/0016-the-compose-deployment-is-one-tag-pinned-file.md).
 - Specification 020 (plan problem reporting), which exists only on branch

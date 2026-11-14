@@ -61,16 +61,20 @@ Prefect execution IDs for the same product run.
 3. **Save the plan.** The engine compares the two datasets and records the proposed
    operations. The worker publishes an internal plan checkpoint and then the review
    artifact available through the API, so a reviewable plan also has the retained data needed for a later apply.
-4. **Review and apply.** You review the plan through the Sync API and approve its checksum.
+4. **Review and apply.** You review the plan through the Sync API and give its checksum to
+   `apply`. You can first record an approval of that checksum with `approve`; a site can
+   require it.
    The apply stage retrieves the checkpoint, verifies its binding and checksum, and checks
    the destination schema before writing. It uses the saved operations rather than
    extracting the source again.
 5. **Record the result.** The worker saves final evidence and updates the product run.
    The API returns the retained result alongside available Prefect execution information.
 
-Verification can also run as a separate stage; it checks the retained plan without
-constructing adapters. A confirmed `sync` combines planning, verification and apply in one
-service execution, publishing the plan before the first destination write.
+Verification can also run as a separate stage. It checks the retained plan files and, for a
+run of a registered configuration, then runs against the destination every check that an apply
+runs before its first write; it writes nothing and never reads the source. A confirmed `sync`
+combines planning, verification and apply in one service execution, publishing the plan before
+the first destination write.
 Both `sync` and saved-plan `apply` hold a PostgreSQL advisory lock for the configuration
 while they work. For `sync`, the lock covers planning, verification and apply. This serializes
 writes for that configuration; it is not a lock on every destination object that other
@@ -111,6 +115,33 @@ continues. The stored documents are described in
 [Durable product records](../../reference/durable-product-records.mdx#record-and-identity-contract),
 and the returned states in
 [Read state of each side](../../reference/sync-http-api.mdx#read-state-of-each-side).
+
+### Requests the Sync API answers without a flow run
+
+Two requests change a run and submit nothing to Prefect. The Sync API checks the request, then
+makes the change and completes the request's mutation receipt in one store transaction. That
+transaction first locks the run's row with the lock that write admission takes. A withdrawal
+therefore never succeeds together with an `apply` or an `approve` of the same run, and no approval
+is stored while an execution of the run is unfinished.
+
+- **Approve.** `RunService.approve_run` records that the reviewed plan is accepted, bound to its
+  checksum. `record_approval` stores `approved_by`, `approved_at`, `approved_checksum` and
+  `approval_reason` on the run, only when the run has no approval and no unfinished execution and
+  is in phase `planned` or resumable. Approval is not a phase and runs no destination check.
+  [ADR 0037](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0037-an-approval-is-a-record-on-the-run.md)
+  records why.
+- **Withdraw.** `RunService.cancel_run` withdraws a plan when the run is in phase `planned` and
+  has no active execution. `cancel_planned_run` sets the phase and the outcome to `cancelled`.
+  After that, `apply`, `approve` and `resume` refuse the run; a `verify` is still admitted. A run
+  with an active execution is cancelled through Prefect instead, as before.
+  [ADR 0038](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0038-cancelling-a-finished-plan-withdraws-it.md)
+  records why.
+
+`infrahub_sync/service/settings.py` reads `INFRAHUB_SYNC_REQUIRE_APPROVAL` for each request. When
+it is on, the Sync API refuses an `apply` or a `resume` of a run without an approval of the same
+checksum, and refuses a `sync` before the run record is created. The worker does not check the
+approval. A value that is not accepted stops the service at start-up. The request order and the
+error codes are in the [Sync HTTP API reference](../../reference/sync-http-api.mdx#approve-the-reviewed-plan).
 
 ### Persistence and deployment limits
 

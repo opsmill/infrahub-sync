@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-10
 
-**Status**: Draft
+**Status**: Extracted
 
 **Input**: The idea brief "Approve a plan without applying it, and a `verify` that checks the destination",
 grilled with the user on 2026-11-10. Every decision in the brief was confirmed by the user. The brief is compared

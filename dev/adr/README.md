@@ -106,6 +106,15 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why `Potenda._load_side` reports a read to an observer that only the worker sets, why each
   side has its own column on the execution's row, and why the returned state is derived when the
   run is read.
+- [0036 — `verify` runs every pre-write check of `apply` through one shared gate](0036-verify-runs-every-pre-write-check-of-apply-through-one-shared-gate.md)
+  — why `verify` contacts the destination, why `apply` and `verify` call `Potenda.check_plan`,
+  and which named checks a `verify` reports.
+- [0037 — An approval is a record on the run that the Sync API stores, and one service setting makes it required](0037-an-approval-is-a-record-on-the-run.md)
+  — why an approval is four columns of the run and not a phase, why the Sync API answers
+  `approve` without a flow run, and what `INFRAHUB_SYNC_REQUIRE_APPROVAL` refuses.
+- [0038 — Cancelling a finished plan withdraws it, and a cancelled run is never applied](0038-cancelling-a-finished-plan-withdraws-it.md)
+  — why `runs cancel` withdraws a plan that has nothing running, and why `apply`, `approve` and
+  `resume` refuse a run in phase `cancelled`.
 
 ## Related
 

@@ -1,7 +1,7 @@
 """`POST /runs/{run_id}/cancel` withdraws a finished plan; a cancelled run cannot be approved or applied.
 
 The cases follow User Story 4 of spec 019 and the cancel, approve and apply sections of its HTTP
-contract (``dev/specs/019-plan-approval/contracts/http-api.md``).
+contract (``dev/specs/archive/019-plan-approval/contracts/http-api.md``).
 """
 
 from __future__ import annotations

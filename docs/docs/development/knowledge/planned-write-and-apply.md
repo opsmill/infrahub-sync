@@ -455,6 +455,31 @@ account of what an apply did, a second source of truth is a state that can contr
 service boundary resolves the record once, from the failure it is describing, and reads its verdict and
 its evidence from that same record for the same reason.
 
+#### The pre-write gate
+
+Steps 3 to 4b of the list above, the check of every planned Infrahub field and the resolution of the
+import account are one method, `Potenda.check_plan`. `apply_plan` reads the plan once, calls the
+gate and then runs the loop on the parsed plan the gate returned. The gate proves no write
+ownership and calls no write method of the destination, so the service's `verify` stage calls the
+same gate to report whether the plan would apply now.
+[ADR 0036](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0036-verify-runs-every-pre-write-check-of-apply-through-one-shared-gate.md)
+records why.
+
+- `check_plan` returns a `PlanCheck`: the parsed plan and the names of the checks that passed. The
+  names come from `PreWriteCheck` in `infrahub_sync/plan/models.py`, which also fixes the order in
+  which they are reported.
+- A check that does not apply to the destination is left out of the result, not reported as
+  passed: `planned_fields` outside Infrahub, and `lineage` for a destination that records none.
+- `expected_checksum=None` skips only the comparison with the operator's checksum. `verify` passes
+  none; `apply` passes the checksum of the request.
+- `PlanApplier.check_plan` in `infrahub_sync/utils.py` checks the destination URL and branch the
+  plan recorded, then calls the engine's gate.
+- `apply_plan` checks the confirmation of left-out records after the gate, so `verify` does not
+  run that check.
+
+To add a pre-write check, add it to the gate and to `PreWriteCheck`. Both `verify` and `apply` then
+run it.
+
 #### The operational exception boundary
 
 Only an **operational** failure is reported as a destination refusal. `OPERATIONAL_APPLY_FAILURES`
