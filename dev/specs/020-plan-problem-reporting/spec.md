@@ -30,7 +30,7 @@ Sources:
 - The gap report of 2026-11-10, which compares old 009 with `feature/v3-develop` at `ea83a248`.
 - The V3 release scope page (009 section and its testing-release blockers).
 - Merged specifications this one builds on:
-  [014](../014-import-lineage/spec.md),
+  [014](../archive/014-import-lineage/spec.md),
   [015](../015-run-discovery-api/spec.md),
   [016](../archive/016-prefect-run-observability/spec.md),
   [017](../017-sync-run-events-logs/spec.md),

@@ -395,7 +395,7 @@ the operations.
   ([ADR 0002](../../adr/0002-planned-write-destination-protocol.md)). No decision record says
   this must stay so.
 - **Lineage.** The V3 Infrahub adapter accepts the `source` and `owner` settings as `{kind, name}`
-  ([spec 014](../014-import-lineage/spec.md) FR-003). v2 protected every attribute it created;
+  ([spec 014](../archive/014-import-lineage/spec.md) FR-003). v2 protected every attribute it created;
   V3 protects none unless the package sets `protect` (spec 014 D-4). Decided by the product owner
   on 2026-11-13: the conversion does not set `protect`, because protection is not the V3 default. Lineage and protection are not compared by a plan, so they are not
   expected to cause an update in the gate; the gate would show it if they did.

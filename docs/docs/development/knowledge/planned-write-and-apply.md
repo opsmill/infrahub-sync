@@ -239,6 +239,43 @@ zero mutation calls, and no later operation executes. Operations applied before 
 apply record reports them, and the refused operation is recorded as having written nothing rather than
 as a possible partial write.
 
+#### Source, owner and protection of a write
+
+Before the first write, the engine calls `InfrahubAdapter.resolve_lineage(saved_plan=manifest)`.
+It reads the import account, which is the account that owns the API token, and looks up the node
+that each `source` and `owner` setting names. It refuses the apply before any write when:
+
+- the saved plan records no import account (`PlanLineageMissingError`);
+- the import account differs from the one the plan recorded (`ImportAccountMismatchError`, which
+  names both accounts);
+- a named node does not exist (`NamedLineageNodeNotFoundError`).
+
+A planned write attempted before this call is refused (`LineageNotResolvedError`), so no value is
+written without a source.
+
+Each write then carries these properties on every attribute and relationship edge:
+
+| Property | Create | Update |
+|---|---|---|
+| `source` | The import account, or the named source | The same |
+| `owner` | The named owner, when the package names one | Not sent on attributes or on edges the node already has. Sent only on the edges the update adds |
+| `is_protected` | `true` when `protect` is on; otherwise the key is not sent | The same |
+
+To find the edges an update adds, `_set_owner_on_added_edges` calls `_current_peer_ids`: one
+`client.get` by the recorded `destination_id`, which includes the cardinality-many relationships
+the update writes and excludes every attribute and every other relationship. An edge is added when
+its peer is not among the node's current peers (cardinality many), or differs from the current
+peer (cardinality one). The read is made only when the package names an owner and the update
+writes relationships. When the node is not found, no edge gets the owner, and the upsert that
+follows is refused because its recorded id no longer exists.
+
+`clear_lineage_on_pool_edges` then removes all three properties from an edge whose input carries
+`from_pool`, so a resource pool stays the source of an edge it allocates. No current write path
+allocates from a pool.
+
+[ADR 0031](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0031-an-import-writes-as-the-account-of-its-token.md)
+records why.
+
 ### Peer resolution
 
 An apply cannot use the comparison store — that is exactly the dependency a saved-plan apply cannot

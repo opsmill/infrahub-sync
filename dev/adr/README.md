@@ -87,6 +87,10 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0030 — The end-to-end test class inherits Infrahub's, and the Prefect pins move together](0030-the-end-to-end-test-class-inherits-infrahubs.md)
   — why `TestInfrahubSyncDocker` inherits `TestInfrahubDocker`, and why the `prefect` and
   `prefect-client` pins must name one version.
+- [0031 — An import writes as the account of its token, and sets an owner only on values it creates](0031-an-import-writes-as-the-account-of-its-token.md)
+  — why the import account comes from the API token, why a missing named source or owner stops
+  the run, why an apply refuses a plan made with another account, and why an update sets the
+  owner only on the relationship edges it adds.
 
 ## Related
 

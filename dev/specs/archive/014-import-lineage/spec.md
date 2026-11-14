@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-22
 
-**Status**: Draft
+**Status**: Extracted
 
 **Input**: User description: idea brief D, "lineage of the data an import writes". The brief's
 decisions D-1 to D-8 are final product-owner decisions and are carried over below unchanged.
