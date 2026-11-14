@@ -1,0 +1,53 @@
+dev/specs/archive/021-compose-store-credentials-ca/EXTRACTED.md
+  s_82fe233503ea5c::t_9f85a3b0bcbe7b 1-37,39-63,66-189
+  s_82fe233503ea5c::t_2b8f9306002a16 38
+  s_82fe233503ea5c::t_40db402f5a9182 64-65
+dev/adr/0026-the-compose-deployment-takes-an-external-store-credentials-and-ca-from-env.md
+  s_d77b10226f2bc9::t_c40132d65dbf2c 5
+dev/specs/archive/021-compose-store-credentials-ca/spec.md
+  s_d77b10226f2bc9::t_aeda2886132dc7 7,11,30-34,593
+docs/docs/compose-deployment.mdx
+  s_d77b10226f2bc9::t_7a9f244e232ce4 420-422
+docs/docs/development/guidelines/secret-redaction.md
+  s_d77b10226f2bc9::t_30887fdd437f18 29
+docs/docs/development/guidelines/testing-tiers.md
+  s_d77b10226f2bc9::t_dd1a48afa6cbb4 618-632
+docs/docs/development/guidelines/testing.md
+  s_d77b10226f2bc9::t_ae58b4bd849dfd 93-110
+docs/docs/development/guidelines/writing-an-adapter.md
+  s_d77b10226f2bc9::t_28f90ba10482db 106-134
+docs/docs/development/knowledge/image-publishing.md
+  s_d77b10226f2bc9::t_fbf4a0b5780e45 76-85
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_d77b10226f2bc9::t_05deb4042c42ff 359-366
+docs/docs/development/knowledge/repository-tour.md
+  s_d77b10226f2bc9::t_ea8f9f1e51bc0b 82-84,136-163,361-365
+tests/compose/test_compose_contract.py
+  s_d77b10226f2bc9::t_23047438aa6a3b 111
+tests/compose/test_credential_leaks.py
+  s_d77b10226f2bc9::t_47189f2cd79aaa 15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "45a19cfe1291d0b6bdb081b3328e3c4e442c33ab",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_d77b10226f2bc9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-awriter-d-e0f27483e86f438d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
