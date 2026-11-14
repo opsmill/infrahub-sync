@@ -1,0 +1,50 @@
+dev/adr/0036-verify-runs-every-pre-write-check-of-apply-through-one-shared-gate.md
+  s_82fe233503ea5c::t_ebf75f74500350 1-78
+dev/specs/archive/019-plan-approval/spec.md
+  s_82fe233503ea5c::t_d1a49dadb9b6bb 1-293
+dev/adr/README.md
+  s_82fe233503ea5c::t_ef397bcf3894b1 109-117
+tests/service/test_approval_required.py
+  s_82fe233503ea5c::t_d1a49dadb9b6bb 3
+tests/service/test_cancel_planned_run.py
+  s_82fe233503ea5c::t_d1a49dadb9b6bb 4
+dev/specs/archive/019-plan-approval/EXTRACTED.md
+  s_82fe233503ea5c::t_ea9cafcf3d24ac 1-115
+tests/service/test_approval.py
+  s_82fe233503ea5c::t_d1a49dadb9b6bb 4
+docs/docs/reference/durable-product-records.mdx
+  s_82fe233503ea5c::t_e32e263c210f97 217-223
+docs/docs/development/knowledge/sync-architecture.md
+  s_82fe233503ea5c::t_e32e263c210f97 64-66,73-77,119-144
+  s_82fe233503ea5c::t_4919164befa10f 145
+docs/docs/development/guidelines/testing.md
+  s_82fe233503ea5c::t_e32e263c210f97 103-117
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_82fe233503ea5c::t_e32e263c210f97 458-482
+docs/docs/development/knowledge/execution-surface.md
+  s_82fe233503ea5c::t_e32e263c210f97 58-63
+dev/adr/0038-cancelling-a-finished-plan-withdraws-it.md
+  s_82fe233503ea5c::t_c527a0cc3685de 1-67
+dev/adr/0037-an-approval-is-a-record-on-the-run.md
+  s_82fe233503ea5c::t_6e32a0221b53d3 1-88
+docs/docs/development/adr-index.mdx
+  s_82fe233503ea5c::t_ef397bcf3894b1 42-44
+dev/specs/021-compose-store-credentials-ca/spec.md
+  s_82fe233503ea5c::t_d1a49dadb9b6bb 32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4b194e5fd4eeceeec9a2012725a2cc5014fe9fa9",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
