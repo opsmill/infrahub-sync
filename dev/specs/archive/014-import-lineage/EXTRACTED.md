@@ -69,9 +69,14 @@ record may hold is already in `docs/docs/development/guidelines/secret-redaction
 - In the NetBox run on Infrahub 1.11.9, Infrahub recorded 274 nodes of `IpamPrefix`,
   `IpamIPAddress` and `IpamAggregate` as created by `__system__`, although their attributes have
   the import's source, not tracked. The cause is not known.
-- Review findings deferred as later changes to the code, not tracked: the same shapes are
-  defined in the client, plan and adapter types; `kind: str` is used where a `Literal` type
-  exists; `infrahub_sync/potenda/__init__.py` is not split.
+- Review findings that `opsmill-implement-report.md` marks as deferred, not tracked:
+    - `infrahub_sync/potenda/__init__.py` carries `# pylint: disable=too-many-lines` and is not
+      split;
+    - the same shapes are defined in the client, plan and adapter types;
+    - `kind: str` is used where a `Literal` type exists;
+    - `LineageSettingsParse` does not check its own invariant;
+    - `updated_at` is not validated;
+    - SC-004 is tested with a single update.
 
 Statements of `research.md` that the code no longer matches:
 
