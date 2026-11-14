@@ -103,6 +103,35 @@ token = os.environ.get("NETBOX_TOKEN") or settings.get("token")
   the `# ty: ignore[unresolved-import]` comment, and document the install extra.
 - Resolve credentials from environment variables first, falling back to `settings`. Never
   hardcode, print, commit, or log a secret. Keep example configs sanitized.
+- An adapter that gains a credential setting needs a credential variable that the Compose
+  worker receives, because Compose passes only the variables the file names. Use the name the
+  adapter's documentation page and examples already use; otherwise `<ADAPTER>_<SETTING>`.
+  Change these places in one commit:
+    - the `sync-worker` environment of the root `docker-compose.yml`, as
+      `INFRAHUB_SYNC_CREDENTIAL_<NAME>: "${INFRAHUB_SYNC_CREDENTIAL_<NAME>:-}"`. Two tests read
+      it: `tests/configuration/test_conversion_worker_variables.py` compares its names and
+      their order with the constant below, and
+      `test_the_worker_holds_exactly_the_documented_credential_variables` in
+      `tests/compose/test_compose_contract.py` compares its names with
+      `ADAPTER_CREDENTIAL_NAMES` and with a fixed count, which changes too;
+    - the same place in `infrahub_sync/testcontainers/docker-compose.yml`.
+      `tests/testcontainers/test_packaging.py` fails when the copy is not byte-equal to the
+      root file;
+    - `COMPOSE_WORKER_CREDENTIAL_SUFFIXES` in `infrahub_sync/configuration/credentials.py`, in
+      the root file's order;
+    - `ADAPTER_CREDENTIAL_NAMES` in `tests/compose/test_compose_contract.py`.
+      `test_the_list_names_every_credential_setting_of_every_bundled_adapter` fails when a
+      credential setting of a bundled adapter has no name there;
+    - the table "Credential variables the worker receives" in
+      `docs/docs/compose-deployment.mdx`.
+      `test_the_page_documents_every_variable_the_compose_file_reads` in
+      `tests/compose/test_documentation.py` fails when the page does not name a variable that
+      the root file reads; it does not check in which table the name appears;
+    - the `sync-worker` environment of `development/docker-compose.yml`. No test compares this
+      list with the root file's, so change it by hand.
+
+  [Pin a code constant to the deployment file it mirrors](testing.md#pin-a-code-constant-to-the-deployment-file-it-mirrors)
+  is the rule behind the first test.
 
 <!-- Extracted from dev/specs/archive/001-plan-artifact-saved-apply on 2026-07-28 -->
 

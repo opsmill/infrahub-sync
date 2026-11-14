@@ -615,6 +615,21 @@ image you built, and tears it down. The nightly workflow runs the same command; 
 job runs it. Run it by hand when a change touches the Compose deployment. It keeps the
 ordinary Docker and platform skips, so confirm what ran before claiming it passed.
 
+The nightly workflow runs the Compose suite once on `linux/amd64` (`ubuntu-22.04`) and once on
+`linux/arm64` (`ubuntu-24.04-arm`) by default, each in its own job. To find out how often the
+suite fails at random, dispatch the workflow with a repeat count: `compose_repeat` (1 to 20)
+runs the suite that many times on each architecture, and `compose_architectures` (`both`,
+`amd64` or `arm64`) chooses where. Each run is its own job on a new runner, and one failed run
+does not stop the others:
+
+```bash
+gh workflow run workflow-nightly-e2e.yml --ref feature/v3-develop \
+  -f sha=<full-40-character-sha> -f compose_repeat=10 -f compose_architectures=both
+```
+
+Whether the suite passes 10 runs in a row on each architecture is not known yet; issue #420
+tracks that measurement.
+
 The suite includes `tests/compose/test_testcontainers_fixture.py`, which needs the
 `testcontainers` extra described below. Install it before you run the suite:
 `uv sync --extra dev --extra prefect --extra service --extra testcontainers`.

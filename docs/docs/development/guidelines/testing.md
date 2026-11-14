@@ -90,6 +90,24 @@ Prefer a `Protocol` over `Callable[..., X]` for an injected callable whose keywo
 matter: the call shape becomes part of the type, so a rename in the real implementation is a
 type error rather than a runtime `TypeError` inside the code you were protecting.
 
+### Pin a code constant to the deployment file it mirrors
+
+When code holds a copy of a value that a deployment file also declares, add a unit test that
+reads the file and compares it with the constant. The code reads the constant and not the
+file, so without the test nothing reports that one of the two changed without the other.
+
+For example, `tests/configuration/test_conversion_worker_variables.py` reads the `sync-worker`
+service of the root `docker-compose.yml` and asserts that its `INFRAHUB_SYNC_CREDENTIAL_*`
+variables equal `COMPOSE_WORKER_CREDENTIAL_VARIABLES`, in the file's order. `configs convert`
+uses that constant to warn about a variable the worker does not receive. The test parses the
+YAML file and needs no Docker, so it runs in the offline unit tier.
+
+Say in the comment of the constant which file it mirrors and which test compares them. When a
+second file holds the same value and no test reads it, name that file in the same comment or in
+the guideline that lists the places to change, so a contributor changes it by hand.
+[Handle optional dependencies and credentials](writing-an-adapter.md#handle-optional-dependencies-and-credentials)
+lists the places that hold the worker's credential variables and the test that checks each one.
+
 ### Review a remediation over its own diff
 
 **A fix written against a green suite is validated by nothing.**

@@ -108,7 +108,7 @@ ROUTED_SERVICES = {"sync-worker"}
 # this a statement of the contract instead of a restatement of the YAML.
 # Spec 021 FR-008: one documented name for each credential setting of each bundled adapter,
 # and every name the shipped examples and adapter pages use, so those packages run unedited.
-# The table is dev/specs/021-compose-store-credentials-ca/contracts/environment-variables.md.
+# The table is dev/specs/archive/021-compose-store-credentials-ca/contracts/environment-variables.md.
 CREDENTIAL_PREFIX = "INFRAHUB_SYNC_CREDENTIAL_"
 ADAPTER_CREDENTIAL_NAMES: dict[tuple[str, str], tuple[str, ...]] = {
     ("aci", "username"): ("CISCO_APIC_USERNAME",),

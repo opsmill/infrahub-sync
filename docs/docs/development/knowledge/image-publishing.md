@@ -73,6 +73,16 @@ and fails **Full qualification**.
 - `workflow-publish.yml` moves the image's `latest` tag only for a stable release that is
   GitHub's `releases/latest`. Only an HTTP 404 from that lookup counts as "no release yet";
   any other failure fails the job.
+- The GitHub Release exists before the image, so its body cannot name the image digest at
+  first. After `publish_docker_image`, the `record_image` job of `workflow-publish.yml` appends a
+  "Container image" section to the release body: the `docker pull` command by digest and the
+  `cosign verify` and SBOM commands, which accept only a signature that `ci-docker-image.yml`
+  made when it ran for a tag. The job runs only for a publishing run at a tag, and it changes
+  nothing when the body already has that section. It is the only job of the workflow that asks
+  for `contents: write`. A called workflow can only keep or narrow the caller's token, so the
+  `publish` job of `trigger-release.yml` grants `contents: write` and `id-token: write`.
+  `tests/test_workflow_contracts.py` checks that each caller grants what the workflow it calls
+  requests, and that `record_image` is the only job of `workflow-publish.yml` that writes.
 
 ### Known residual scan findings
 

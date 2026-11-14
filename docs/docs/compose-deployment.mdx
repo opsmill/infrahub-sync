@@ -417,8 +417,9 @@ next to the public roots of the image. Certificate checks stay on. A flow run th
 trusts the same certificates. At every start, each of the three services logs the number of
 certificates it loaded and the path of the bundle it wrote, or that the directory holds no
 certificate file. When a trust variable such as
-`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` or `INFRAHUB_TLS_CA_FILE` is already set,
-it wins, and the service logs a warning that names the variable and not its value.
+`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` or `INFRAHUB_TLS_CA_FILE` is already set
+to a value, it wins, and the service logs a warning that names the variable and not its value.
+A variable set to an empty value counts as unset: the service points it at the bundle.
 
 - The directory holds public certificates only. A service stops at start when a file in it holds
   a private key, and the error names the file and prints none of its content. A file that is not

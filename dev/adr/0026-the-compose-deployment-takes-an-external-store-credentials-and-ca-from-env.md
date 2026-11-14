@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-11-13
-**Source**: dev/specs/021-compose-store-credentials-ca/research.md (R1, R3, R4)
+**Source**: dev/specs/archive/021-compose-store-credentials-ca/research.md (R1, R3, R4)
 
 ## Context
 

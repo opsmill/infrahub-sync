@@ -79,7 +79,9 @@ credential references and the connection-free capability declaration in full.
 (`app.py`, `serve.py`, `config_routes.py`), authentication (`auth.py`), the Prefect worker and
 deployment (`worker.py`, `deploy.py`, `orchestration.py`, `flow.py`), liveness and checkpoint
 policy (`liveness.py`, `checkpoints.py`), per-stage scratch directories (`scratch.py`), the
-write guard (`apply_guard.py`) and artifact storage (`storage.py`). `prefect_server.py` holds
+write guard (`apply_guard.py`), artifact storage (`storage.py`), the one-shot start-up job of
+the Compose deployment (`bootstrap.py`) and the trust of the operator's CA certificates
+(`trust_store.py`). `prefect_server.py` holds
 `create_prefect_app`, the application factory that the root `docker-compose.yml`, the
 development stack's `development/docker-compose.yml` and the copy that
 `infrahub_sync.testcontainers` ships (`infrahub_sync/testcontainers/docker-compose.yml`) pass to uvicorn. These stacks run the Prefect server from the Sync image, so they need no
@@ -130,6 +132,34 @@ paging rules.
 
 Each worker publishes the names of its set credential variables to the `worker_environments`
 table on each poll, through `service.storage.service_product_projection`.
+
+How the Compose deployment reaches its object store and trusts a private CA:
+
+- `storage.s3_client_arguments` builds the arguments of every S3 client. `bootstrap.py` calls
+  it directly, and `sync-api` and `sync-worker` call it through
+  `storage.service_product_projection`. All three check the endpoint, the region and the
+  addressing style (`INFRAHUB_SYNC_S3_ADDRESSING_STYLE`, `path` or `virtual`) the same way,
+  before any client exists.
+- `bootstrap.py` checks that the endpoint and the bundled store agree: it refuses an endpoint
+  that names another store while the host name of the bundled store resolves, and an endpoint
+  that names the bundled store while that host name does not resolve. It reads no value of
+  `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE`; Compose reads that setting to leave the bundled store
+  out. It then checks for the bucket with `HeadBucket` and creates the bucket only when the
+  store reports it absent. Last, it writes one new check key create-only twice, to confirm that
+  the store accepts the first write and refuses the second, and deletes the key. Each failure
+  is one fixed name, printed as `refused: <name>`. The operator page lists the names
+  ([Use your own S3-compatible store](../../compose-deployment.mdx#use-your-own-s3-compatible-store)).
+- `bootstrap.main()`, `worker.main()` and `serve.build_app()` call
+  `trust_store.install_custom_ca_bundle()` before they build any client. When the directory
+  that `INFRAHUB_SYNC_CA_DIRECTORY` names holds `*.pem` or `*.crt` files, it writes one bundle,
+  the public roots of `certifi` followed by those files, to a new file in the process's
+  temporary directory, and points `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` and
+  `INFRAHUB_TLS_CA_FILE` at it. A variable that already holds a value is kept, and a warning
+  names it. An empty variable counts as unset. `tests/service/test_trust_store_entry_points.py`
+  checks the three calls.
+- The trust store refuses a file in the directory that holds a private key, whatever the file's
+  name, and a `*.pem` or `*.crt` file that does not load as a certificate. The error names the
+  file, never its content.
 
 ### Runtime schema
 
@@ -328,6 +358,11 @@ records the upstream commit and the local additions.
   the development stack in `development/docker-compose.yml` builds from the checkout instead.
   `infrahub_sync/testcontainers/docker-compose.yml` is a copy of it that a contract test keeps
   byte-equal.
+  With the default settings, every image other than the Sync image is named by its `sha256`
+  digest in the root file and in `development/docker-compose.yml`. Two tests of
+  `tests/compose/test_compose_contract.py`, one for each file, fail on an image named by tag
+  alone; the byte-equal test covers the copy. The Sync image itself is pinned by tag in the
+  root file (ADR 0016) and built from the checkout in the development stack.
   [Compose deployment](../../compose-deployment.mdx) is the operator page.
 - [`examples/`][src-examples] holds fifteen directories, and they are not uniform. Four —
   `aci_to_infrahub`, `custom_adapter`, `netbox_to_infrahub` and

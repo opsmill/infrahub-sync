@@ -356,6 +356,14 @@ parameter therefore never reaches the flow body.
   `prefect-client` install into the same `prefect/` directory, so `uv.lock` must resolve them
   to one version; `tests/test_release_pin.py` fails when they differ. See
   [ADR 0030](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0030-the-end-to-end-test-class-inherits-infrahubs.md).
+- **Importing Prefect configures the root logger.** In the service processes
+  (`sync-bootstrap`, `sync-api`, `sync-worker`), Prefect is imported before `main` runs, so a
+  later `logging.basicConfig` does nothing and the inherited level drops INFO lines.
+  `bootstrap.py` and `trust_store.py` set their own logger to INFO for that reason, and
+  `trust_store.py` adds a standard-error handler when no handler would print its lines (the
+  Sync API process configures none before uvicorn starts). Both use the standard `logging`
+  module, not `structlog`, so the handlers that Prefect configures and pytest's `caplog`
+  receive their lines.
 
 ### Optional imports
 
