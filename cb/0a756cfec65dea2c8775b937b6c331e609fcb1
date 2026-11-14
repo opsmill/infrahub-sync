@@ -1,0 +1,22 @@
+dev/specs/archive/006-mvp-interface-conformance/known-limitations-and-release-gaps.md
+  s_82fe233503ea5c::t_6ced1be7d0cbe8 29
+dev/specs/archive/006-mvp-interface-conformance/EXTRACTED.md
+  s_82fe233503ea5c::t_bf03ea621b650c 62-66
+  s_82fe233503ea5c::t_8efac5ee135fd5 1-61,67-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cb0a756cfec65dea2c8775b937b6c331e609fcb1",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
