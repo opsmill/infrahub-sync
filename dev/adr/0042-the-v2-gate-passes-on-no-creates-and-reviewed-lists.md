@@ -85,20 +85,20 @@ The reviewed lists are maintained as follows:
 - The gate depends on PyPI keeping `infrahub-sync==2.0.1`, and on the local NetBox and the
   development stack. It runs nightly, not in the default test tier.
 - The specification requires that a failure of the gate blocks the testing release (FR-026).
-  The nightly job is the only place that reports the failure: no release workflow reads its
-  result, so a person must check the nightly job before a release.
+  The gate fails the nightly job. No workflow in this repository reads the result of the nightly
+  job, and how a failure blocks the release is not known.
 - The migration page tells a team to read its own first V3 plan before it applies it, because
   its data can differ from the `demo` dataset.
 
-## Alternatives Considered
+## Alternatives considered
 
-- **Zero records left out and zero problems, as first specified**: rejected. The racks, VLANs
+- **Zero records left out and zero problems, as first specified.** Rejected: the racks, VLANs
   and devices above cannot be represented in the destination schema, so the gate could never
   pass, although no defect exists.
-- **Listing every record left out and every delete**: rejected by the product owner on
-  2026-11-13. The 828 dependent records and 828 deletes follow from the 39 listed records, so
+- **Listing every record left out and every delete.** Rejected by the product owner on
+  2026-11-13: The 828 dependent records and 828 deletes follow from the 39 listed records, so
   the gate accepts them through the listed records.
-- **Installing v2 from the `2.0.2` Git tag**: rejected. v1 and v2 were distributed only on
+- **Installing v2 from the `2.0.2` Git tag.** Rejected: v1 and v2 were distributed only on
   PyPI, so the gate installs v2 as a customer did.
-- **A pytest integration test**: rejected. The gate needs the same NetBox and stack as the
+- **A pytest integration test.** Rejected: the gate needs the same NetBox and stack as the
   `from-netbox` check, which is already a nightly suite.

@@ -116,6 +116,14 @@ right in each case:
 - `data-model.md` describes only the list of expected deletes, and has no section on
   `expected_left_out.yml`.
 
+Two more facts from section 7 of the report:
+
+- The October branch `012-v2-configuration-conversion` was deleted. Its 22 commits were moved
+  onto `feature/v3-develop` on 2026-11-13, and the conversion was then adapted to the lineage
+  rule of spec 014: a v2 group name becomes `{kind: CoreAccountGroup, name}`.
+- Decided on 2026-11-13: the conversion does not set `protect`, because `protect` is not the V3
+  default.
+
 ## Open at archive time
 
 `tasks.md` has no open task: all 40 tasks are ticked.

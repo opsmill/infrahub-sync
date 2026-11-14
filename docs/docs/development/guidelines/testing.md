@@ -102,9 +102,6 @@ variables equal `COMPOSE_WORKER_CREDENTIAL_VARIABLES`, in the file's order. `con
 uses that constant to warn about a variable the worker does not receive. The test parses the
 YAML file and needs no Docker, so it runs in the offline unit tier.
 
-Say in the comment of the constant which file it mirrors and which test compares them. When a
-second file holds the same value and no test reads it, name that file in the same comment or in
-the guideline that lists the places to change, so a contributor changes it by hand.
 [Handle optional dependencies and credentials](writing-an-adapter.md#handle-optional-dependencies-and-credentials)
 lists the places that hold the worker's credential variables and the test that checks each one.
 

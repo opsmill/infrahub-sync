@@ -86,17 +86,17 @@ the machine where it runs:
   that plan is
   [ADR 0042](0042-the-v2-gate-passes-on-no-creates-and-reviewed-lists.md).
 
-## Alternatives Considered
+## Alternatives considered
 
-- **A separate reader for v1 files**: rejected. The only difference is the `incremental` key,
+- **A separate reader for v1 files.** Rejected: the only difference is the `incremental` key,
   which v1 lacks.
-- **A reference for every credential setting the adapter declares**: rejected. V3 refuses a
+- **A reference for every credential setting the adapter declares.** Rejected: V3 refuses a
   referenced variable that is missing or empty, so a converted `genericrestapi`, `prometheus` or
   `slurpitsync` package would not run until the team set secrets that v2 never used.
-- **Expanding any `${NAME}` placeholder**: rejected. An input file could then make the command
+- **Expanding any `${NAME}` placeholder.** Rejected: an input file could then make the command
   read any variable, including a credential.
-- **Letting a placeholder move its variable to the front of the order**: rejected. With
+- **Letting a placeholder move its variable to the front of the order.** Rejected: with
   `url: ${NETBOX_URL}` and both variables set, it would pick `NETBOX_URL`, while v2 used
   `NETBOX_ADDRESS`.
-- **Refusing `*_env_vars` settings**: rejected. They say only where v2 looked for a value, and
+- **Refusing `*_env_vars` settings.** Rejected: they say only where v2 looked for a value, and
   the command already applies that; they are dropped and listed in the report.

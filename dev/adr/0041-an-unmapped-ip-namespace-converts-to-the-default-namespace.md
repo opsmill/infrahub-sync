@@ -15,7 +15,7 @@ of that constraint. The first V3 plan of a converted v2 NetBox configuration fai
 `UnwritableConvergenceIdentityError`.
 
 The first decision was that the team edits the converted package by hand. The two edits tried
-first did not plan (see Alternatives Considered), and no working edit was known. The edit that
+first did not plan (see Alternatives considered), and no working edit was known. The edit that
 works needs the fields of the uniqueness constraint, the concrete namespace kind and its name
 attribute, which only the destination schema gives.
 
@@ -59,20 +59,18 @@ and identified by the one attribute that is its human-friendly ID.
   the flag, or when the read fails, the team makes the same edit by hand.
 - The rule is limited to IP namespaces. Another peer that exists only in the destination and
   that a uniqueness constraint names is not filled.
-- With `--live-schema`, `configs convert` is the one CLI command that connects to a system other
-  than the Sync API.
 
-## Alternatives Considered
+## Alternatives considered
 
-- **A bare `static: default` with no `reference`**: rejected after a trial. The Infrahub side
+- **A bare `static: default` with no `reference`.** Rejected after a trial: the Infrahub side
   dropped the value, because the namespace kind was not mapped, and the plan failed.
-- **Keeping `vrf` in the identifiers**: rejected after a trial. A NetBox address with no VRF is
+- **Keeping `vrf` in the identifiers.** Rejected after a trial: a NetBox address with no VRF is
   refused with `identifier field 'vrf' cannot be None`.
-- **One namespace per NetBox VRF, as the V3 NetBox example does**: rejected. It puts prefixes and
+- **One namespace per NetBox VRF, as the V3 NetBox example does.** Rejected: it puts prefixes and
   addresses in other namespaces than v2 did, so the first plan would not match the data v2
   wrote.
-- **Asking the team to edit the package by hand**: decided first, then replaced. The working
+- **Asking the team to edit the package by hand.** Decided first, then replaced: the working
   edit depends on the destination schema, and it is the same for every v2 NetBox configuration,
   so the command makes it. A team without `--live-schema` can still make it by hand.
-- **Using the `optional` flag of the relationship**: rejected. Infrahub declares `ip_namespace`
+- **Using the `optional` flag of the relationship.** Rejected: Infrahub declares `ip_namespace`
   optional.

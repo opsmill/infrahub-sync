@@ -1,8 +1,8 @@
 ---
-title: "v2 configuration conversion"
+title: "V2 configuration conversion"
 ---
 
-## v2 configuration conversion
+## V2 configuration conversion
 
 `infrahub-sync configs convert` reads one v1 or v2 `config.yml` and writes one V3 configuration
 package. What the command does for each key, the order in which it reads variables, its refusals
@@ -74,8 +74,8 @@ Change a row only when a reading of the released v2 code shows it is wrong.
 ### The `--live-schema` fill
 
 `with_live_schema` runs on a result that holds a package. It removes the `token` setting of the
-destination from a copy of the package, reads the destination schema through the schema
-accessor of the destination adapter, and fills each unmapped IP namespace that a uniqueness
+destination from a copy of the package, reads the destination schema through the
+`destination_schema_accessor` of the destination adapter, and fills each unmapped IP namespace that a uniqueness
 constraint names. After a fill, it runs the registration checks again on the filled package. A
 failed read adds a note and returns the package unchanged. `cli.py` imports the module only
 when the flag is given.
