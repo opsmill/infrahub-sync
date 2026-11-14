@@ -134,7 +134,7 @@ dropdown values, on one record are both listed.
 The `from-netbox` example check ran on 2026-11-12 on the pinned `demo` dataset
 (`netbox-demo-v4.7.sql`, SHA-256
 `e9846c189c4c5055abfe52d2ca0b55ff089d815c9b0c20614faba94b9c8f5180`), following
-[The `from-netbox` example check](../../../docs/docs/development/guidelines/testing-tiers.md#the-from-netbox-example-check).
+[The `from-netbox` example check](../../../../docs/docs/development/guidelines/testing-tiers.md#the-from-netbox-example-check).
 Each side used a fresh preview stack with new volumes, the same NetBox and the same schema
 snapshot (`tests/data/nightly_schema/`, identical on both commits).
 

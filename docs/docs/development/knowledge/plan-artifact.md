@@ -11,8 +11,11 @@ title: "The saved plan artifact"
 A run records what it intends to change as a **plan artifact** under its cache run directory. The
 artifact is what `infrahub-sync runs plan` renders for review and what an apply executes, and it
 exists so that the set of changes an operator reads is the set that gets written. The format is owned
-by `infrahub_sync/plan/` and is versioned: `format_version` is `3`. A format `2` plan can still be
-read and reviewed, but `apply` refuses it, because its updates record no destination id. `1` is
+by `infrahub_sync/plan/` and is versioned: `format_version` is `4`. Plans of format `2` and `3` can
+still be read and reviewed, but `apply` refuses them: a format `2` plan's updates record no
+destination id, and neither format was checked for problems or records a count of left-out records
+to confirm
+([ADR 0022](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0022-saved-plan-format-4.md)). `1` is
 reserved for the pre-existing `plan.parquet` row format, which is still written for querying and
 never read by this path.
 
@@ -29,6 +32,7 @@ For *why* the format is shaped this way, see [ADR 0001](https://github.com/opsmi
 └── plan/                     # the artifact
     ├── operations.jsonl      # written FIRST
     ├── last_changes.jsonl    # written second, only when the destination is Infrahub
+    ├── report.jsonl          # written third (format 4): problems, left-out and kept records
     └── manifest.json         # written LAST — its presence is the commit point
 ```
 
@@ -41,6 +45,7 @@ load-bearing, and it is what makes the failure verdicts disjoint without any heu
 | `plan/` present, `manifest.json` absent or malformed | **Torn** |
 | `manifest.json` present, `operations.jsonl` absent | **Torn** |
 | `manifest.json` present, line count ≠ `operations_count` | **Torn** |
+| `manifest.json` present at format 4, `report` record or `report.jsonl` absent, or digest, size or counts differ | Refused (`PlanVerificationError`); the pre-apply check reports `report` |
 | `manifest.json` present, `format_version` unrecognized | Unrecognized version — worded distinctly from the v1 message |
 | Any path exists but cannot be read | Unreadable, naming the path |
 
@@ -162,7 +167,7 @@ The data model rejects a stored identifier that does not match its own triple.
 
 | Key | Meaning |
 |---|---|
-| `format_version` | `3` for every plan written now; `2` is accepted for review only |
+| `format_version` | `4` for every plan written now; `2` and `3` are accepted for review only |
 | `run_id` | The run the plan was produced under; excluded from the checksum, checked by equality |
 | `created_at` | ISO-8601 UTC; excluded from the checksum |
 | `config_version` | Opaque, non-empty printable ASCII; compared for equality, never parsed |
@@ -172,6 +177,8 @@ The data model rejects a stored identifier that does not match its own triple.
 | `destination_binding` | `{url, branch}` — the destination the plan was computed against, URL-normalized, **never the token**. A registered package takes the URL from its declared settings only; a local configuration directory lets `INFRAHUB_ADDRESS` or `INFRAHUB_URL` override it. Compared for equality at apply time. Additive: absent on plans written before it existed, and the check is skipped for them |
 | `lineage` | `{import_account: {name, id}, source: {kind, name}, owner: {kind, name} or null, protect}` — the import account the plan was computed with and the lineage its writes carry. `source` is `CoreAccount` and the import account's name when the package names no source; `owner` is `null` when it names none. An Infrahub apply refuses before any write when its own import account's `id` differs, and refuses a plan without this field, asking for a new plan. Additive: absent when the destination is not Infrahub and on plans written before it existed |
 | `last_changes` | `{path, sha256, count, metadata_read}` — the record of `last_changes.jsonl`. `path` is always `last_changes.jsonl`, relative to `plan/`; `sha256` is the digest of the file's bytes; `count` is its number of records; `metadata_read` is `false` when the plan did not ask Infrahub for `updated_by` and `updated_at`, because the server is older than 1.7.0, its version could not be parsed, or Infrahub refused the version query. Additive: absent when the destination is not Infrahub and on plans written before it existed; review then shows no last-change data |
+| `report` | Format 4: `{digest, size, problems, left_out, left_out_with_problem, left_out_dependent, kept}` — the SHA-256 digest and size of `report.jsonl` and its counts. A plan with no problem writes an empty file and zeros. Required at format 4; absent on format 2 and 3 plans |
+| `dropdown_values_checked` | Format 4: written only as `false`, when the run had no destination schema snapshot and the plan could not compare Dropdown values with their choices. Absent otherwise |
 | `plan_checksum` | Lowercase sha256 hex over the manifest body plus the operations bytes |
 | *(any other key)* | Tolerated on read, preserved, and included in the bytes the checksum covers |
 
@@ -234,6 +241,22 @@ The reader splits the file's checks in two:
 
 An update field with no record is accepted: the payload holds every source attribute, not only the
 changed ones, so the operations do not show which fields must have a record.
+
+### The report file
+
+`report.jsonl` holds what the problem pass found: one canonical JSON object per line, each with
+`entry` set to `problem`, `left_out` or `kept` and the fields of that entry. Problems come
+first, ordered by `problem_type`, `kind`, canonical identity and `source_id`; then the left-out
+records, by `kind`, identity and `source_id`; then the kept records, by `kind`, identity and
+`relationship`. Ties are broken by the entry's canonical bytes, so the order does not depend on
+the order in which the source was read.
+
+The checksum covers the file through the manifest's `report.digest`. Unlike
+`last_changes.jsonl`, the file is not display data: an apply checks the left-out count it
+records before it writes, so the reader and the pre-apply check refuse a plan whose file is
+absent or whose digest, size or counts differ from the manifest's record. The canonical plan
+fingerprint of ADR 0007 does not cover the report, because it hashes `plan.parquet`, which is
+written before the problem pass.
 
 ### Determinism
 

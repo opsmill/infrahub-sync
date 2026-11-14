@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-11
 
-**Status**: Draft
+**Status**: Extracted
 
 **Release**: the V3 testing release (named "MVP" on the release scope page). Work this
 specification names as out of scope belongs to 3.0 or 3.x.
@@ -30,11 +30,11 @@ Sources:
 - The gap report of 2026-11-10, which compares old 009 with `feature/v3-develop` at `ea83a248`.
 - The V3 release scope page (009 section and its testing-release blockers).
 - Merged specifications this one builds on:
-  [014](../archive/014-import-lineage/spec.md),
-  [015](../archive/015-run-discovery-api/spec.md),
-  [016](../archive/016-prefect-run-observability/spec.md),
-  [017](../archive/017-sync-run-events-logs/spec.md),
-  [018](../archive/018-plan-read-progress/spec.md), and the decision records in [`dev/adr/`](../../adr/README.md).
+  [014](../014-import-lineage/spec.md),
+  [015](../015-run-discovery-api/spec.md),
+  [016](../016-prefect-run-observability/spec.md),
+  [017](../017-sync-run-events-logs/spec.md),
+  [018](../018-plan-read-progress/spec.md), and the decision records in [`dev/adr/`](../../../adr/README.md).
 
 ## Background
 
@@ -66,13 +66,13 @@ specification keeps them and builds on them. They are not new requirements.
 
 | Old 009 item | Current behavior | Where |
 | --- | --- | --- |
-| FR-004: a plan does not write to Infrahub | Writes happen only through the apply of a saved plan | [ADR 0014](../../adr/0014-v3-writes-through-saved-plan-apply.md) |
+| FR-004: a plan does not write to Infrahub | Writes happen only through the apply of a saved plan | [ADR 0014](../../../adr/0014-v3-writes-through-saved-plan-apply.md) |
 | FR-013: an Infrahub rejection during apply stops the apply | `OperationApplyFailedError` stops the apply and carries the partial apply record | `infrahub_sync/plan/errors.py:480`, `infrahub_sync/plan/models.py:600-664` |
 | FR-014, FR-015: a failed run records a cause that the CLI and the run record show | Spec 017 FR-001: each failed stage stores `results.<stage>_failure` with `error_type`, `cause_type`, `cause`, `next_action` and, for a 401 or 403, `infrahub_error`. The CLI prints `<stage> failed: <ErrorType>`, then `cause:` and `hint:` | `infrahub_sync/service/flow.py:805-847`, `infrahub_sync/service/failure_cause.py`, `infrahub_sync/cli.py:832-866` |
 | FR-019: a cause is built from fixed templates | Lineage refusals, destination schema read failures and 401/403 classifications are recorded from fixed templates over recorded identifiers. Other errors record only class names | `infrahub_sync/service/failure_cause.py:30-83` |
 | FR-022: the plan of a stopped apply is not applied again | A run that admitted a write never admits another stage: HTTP 409 `run-execution-conflict`, "review the run and create a new plan or sync run" | `infrahub_sync/product_store/store.py:310-314`, `:2166-2177` |
 | Part of FR-020: a stopped apply shows what it wrote | The run summary records `applied_operations`, `failed_operation` (an operation ID), `failed_operation_wrote` and `may_have_partially_written` | `infrahub_sync/plan/models.py:649-664`, `infrahub_sync/service/flow.py:947-963` |
-| Part of FR-021: a new plan holds only what the destination does not match | The plan compares the source with the destination, so written nodes drop out ([ADR 0012](../../adr/0012-the-convergent-upsert-is-the-replace-set-write.md)). No test covers a stopped apply | Hivemind note of 2026-11-05: a second plan after a full apply held only one recorded delete |
+| Part of FR-021: a new plan holds only what the destination does not match | The plan compares the source with the destination, so written nodes drop out ([ADR 0012](../../../adr/0012-the-convergent-upsert-is-the-replace-set-write.md)). No test covers a stopped apply | Hivemind note of 2026-11-05: a second plan after a full apply held only one recorded delete |
 | The hook for a `sync` that stops after its plan | `result_next_action` reads `result["failure"]["next_action"]` from a successful stage result, and the last log line uses it. The CLI does not read it yet. Nothing writes that key today | `infrahub_sync/service/flow.py:888-897`, `docs/docs/development/knowledge/orchestration-prefect.md:110-113` |
 
 ### Decisions that change old specification 009
@@ -510,11 +510,11 @@ plan finishes and that each #374 case is written or listed.
   limited in length.
 - **FR-020**: A decision record in `dev/adr/` MUST replace the rule that a run's failure record
   holds an error class name and never a message (#369, comment at
-  `infrahub_sync/service/flow.py:834-836`; [ADR 0005](../../adr/0005-translate-run-failures-only-at-the-remote-boundary.md)
+  `infrahub_sync/service/flow.py:834-836`; [ADR 0005](../../../adr/0005-translate-run-failures-only-at-the-remote-boundary.md)
   places failure translation at the remote boundary). The new rule: the failure record holds
   the allowlisted fields of FR-019, which include Infrahub's own message, and never the text of
   other errors. The code comment and the
-  [secret redaction guideline](../../../docs/docs/development/guidelines/secret-redaction.md) MUST
+  [secret redaction guideline](../../../../docs/docs/development/guidelines/secret-redaction.md) MUST
   be updated to the new rule.
 
 #### A stopped apply and the next plan

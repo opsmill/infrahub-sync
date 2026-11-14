@@ -1,8 +1,8 @@
 # Quickstart: check plan problem reporting
 
-Setup and the shell commands are in [AGENTS.md](../../../AGENTS.md) ("Setup", "Required
+Setup and the shell commands are in [AGENTS.md](../../../../AGENTS.md) ("Setup", "Required
 Development Workflow"). The live checks use the `from-netbox` tier in
-[testing tiers](../../../docs/docs/development/guidelines/testing-tiers.md).
+[testing tiers](../../../../docs/docs/development/guidelines/testing-tiers.md).
 
 ## Offline checks
 

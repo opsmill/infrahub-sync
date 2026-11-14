@@ -184,6 +184,10 @@ apply compares the bound schema fingerprint, including attribute writability, be
 This changes the fingerprint for existing saved plans, so review and save a new plan after
 upgrading before you apply it.
 
+The fingerprint also covers the choices of each mapped Dropdown attribute, because the plan
+checks each mapped Dropdown value against them. A change to the choices in Infrahub after the
+plan makes apply refuse with `PlanSchemaChangedError`, and the team plans again.
+
 Several creates sharing a destination human-friendly ID, a unique attribute (including an
 inherited one), or a uniqueness constraint form an identity group. Since spec 020 the plan does
 not refuse the group: the problem pass records one `destination_identity_collision` problem and

@@ -115,6 +115,9 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0038 — Cancelling a finished plan withdraws it, and a cancelled run is never applied](0038-cancelling-a-finished-plan-withdraws-it.md)
   — why `runs cancel` withdraws a plan that has nothing running, and why `apply`, `approve` and
   `resume` refuse a run in phase `cancelled`.
+- [0039 — Workers publish the names of their credential variables so validation can check them](0039-workers-publish-the-names-of-their-credential-variables.md)
+  — why each worker writes the names of its credential variables to the product store, which
+  workers count as live, and what grows in the `worker_environments` table.
 
 ## Related
 

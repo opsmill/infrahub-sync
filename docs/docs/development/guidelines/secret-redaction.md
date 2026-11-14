@@ -68,6 +68,18 @@ not make a returned failure safe to display. The adapter rule still applies:
 Boundary redaction also replaces collected values in messages from dependencies that the
 adapter did not write.
 
+### Build a plan problem's reason from its template
+
+Each problem in a plan, and each line of `plan/report.jsonl`, has a `reason` that the team
+reads in `runs plan --problems` and in the Sync API. Render it from the fixed template of its
+problem type in `infrahub_sync/plan/problems.py` (`_REASON_TEMPLATES`), filled only with source
+values, kind, attribute and relationship names, source record IDs, identities and positions
+such as `transforms[0]`. Never fill it from the text of an exception, from connection settings,
+or from the expression of a transform or a filter. When you add a problem type, add its
+template, and extend `tests/plan/test_report_credentials_absent.py` so that a short credential
+and a credential that holds `"`, `\` and `,` appear in no file under `plan/` and in no report
+entry.
+
 ### Store only the error's class name in a progress document
 
 A document that the worker stores while a stage runs, such as the read state of a side
