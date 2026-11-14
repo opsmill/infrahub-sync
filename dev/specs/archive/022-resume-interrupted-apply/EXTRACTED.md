@@ -89,8 +89,6 @@ name the error class only are already required by
   the unit tests only.
 - `AGENTS.md` has no entry of its own for `infrahub-sync runs resume` in its list of CLI
   commands, not tracked. The command is named only inside the `approve` entry.
-- `docs/docs/development/adr-index.mdx` does not list ADR 0027, not tracked.
-  `dev/adr/README.md` lists it.
 - Deferred by the spec ("Out of Scope"), with no follow-up decided, not tracked:
     - an automatic resume when a worker restarts;
     - the recovery actions `replay-from-tier`, `re-extract`, `resolve-drift` and `escalate`;
