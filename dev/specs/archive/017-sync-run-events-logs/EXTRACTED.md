@@ -92,6 +92,10 @@ state. An issue under another title is possible.
   tracked: the run record of a new request, a new configuration version, and a refusal that the
   store decides inside a call. ADR 0033 lists them under Consequences. Whether to change them is
   not decided.
+- The liveness check ends two kinds of execution with no event, not tracked: an execution that
+  no worker claimed in time (`abandon_execution`), and a cancellation whose recovery deadline
+  passed (`expire_execution_cancellation`). ADR 0033 lists them under Consequences. Whether they
+  should have an event is not decided.
 - Whether Prefect stores an engine traceback for a flow run that ends with a returned `Failed`
   state was not checked, not tracked. It depends on the entry point the worker uses. Research R1
   did not check it either.

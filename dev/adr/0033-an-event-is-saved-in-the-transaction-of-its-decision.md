@@ -26,8 +26,8 @@ refused, and nothing else:
 ## Decision
 
 An event is a Sync audit record with a type. The event of an accepted request, of a stage result
-and of a stage that the liveness check ends is saved by the store call that saves the answer or
-the result it records, in the same database transaction.
+and of a claimed stage that the liveness check interrupts or cancels is saved by the store call
+that saves the answer or the result it records, in the same database transaction.
 
 - **One transaction.** The store methods that save an answer or a result take the event as an
   argument and insert it with the same cursor, before their commit. When the insert fails, the
@@ -38,13 +38,18 @@ the result it records, in the same database transaction.
       request's receipt;
     - `commit_claimed_execution`, which saves a stage result;
     - `cancel_execution` and `interrupt_execution`, which save the end of a stage that the
-      liveness check ends.
-- **Decisions whose event is written alone.** The event of a refused request, of a replayed
-  request and of a request that could not be confirmed is written by a call of its own,
-  `record_audit`.
+      liveness check cancels or interrupts.
+
+  `acknowledge_execution_cancellation` also takes the events of the two refusals it can store
+  when the stage ended before the cancellation was acknowledged, and inserts the one it stores
+  in the same transaction.
+- **Decisions whose event is written alone.** The event of a replayed request, of a request
+  that could not be confirmed, and of every other refused request is written by a call of its
+  own, `record_audit`.
 - **Who writes which event.** The Sync API writes the events of requests (accepted, refused,
   replayed, unavailable, cancelled) and of configuration changes. The worker writes the event of
-  each stage result. The liveness check writes the event of a stage that it ends.
+  each stage result. The liveness check writes the event of a claimed stage that it interrupts
+  or cancels.
 - **Type.** Each event has a type of the form `infrahub_sync.<run or config>.<action>`, built in
   `infrahub_sync/service/events.py` from the operation and the outcome. The Sync HTTP API
   reference lists the types.
@@ -65,9 +70,12 @@ the result it records, in the same database transaction.
 
 ## Consequences
 
-- The answer to an accepted request, a stage result and the end of a stage by the liveness check
-  are never stored without their event, and such an event is never stored when the answer or the
-  result was not saved.
+- The answer to an accepted request, a stage result, and the interruption or cancellation of a
+  claimed stage by the liveness check are never stored without their event, and such an event is
+  never stored when the answer or the result was not saved.
+- The liveness check ends two kinds of execution with no event, because the store methods take
+  none: an execution that no worker claimed in time (`abandon_execution`), and a cancellation
+  whose recovery deadline passed (`expire_execution_cancellation`).
 - A new store method that saves the answer to an accepted request or a stage result takes the
   event and inserts it before its commit. Code must not save the answer first and call
   `record_audit` afterwards.
