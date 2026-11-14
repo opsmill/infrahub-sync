@@ -32,7 +32,9 @@ be applied.
   with `409 run-not-resumable`. The store's write admission also refuses it under the row lock, so
   a cancel and an apply sent at the same time never both succeed.
 - **A withdrawn run keeps its phase.** A `verify` of a withdrawn run is still admitted, because it
-  writes nothing, and no end of that `verify` moves the run to another phase.
+  writes nothing. A `verify` that passes or fails adds its result to the run and sets no phase,
+  and the store does not change the phase of a cancelled run when that `verify` is abandoned or
+  interrupted.
 - **The approval is kept.** Withdrawing a plan does not clear its approval. The cancelled run
   shows who approved which checksum before it was withdrawn.
 - **Other phases.** A run with no active execution in phase `cancelled` is answered
@@ -44,8 +46,8 @@ be applied.
 
 - An operator has one command to stop a plan from being applied, at any stage: `runs cancel`. To
   try again, they create a new plan run.
-- A run in phase `cancelled` is never written. This changes one earlier behaviour: a run whose
-  `verify` execution was cancelled can no longer be applied.
+- `apply`, `approve` and `resume` refuse a run in phase `cancelled`. This changes one earlier
+  behaviour: a run whose `verify` execution was cancelled can no longer be applied.
 - One kind of run leaves phase `cancelled`. When the write of a run stopped part-way and a later
   `verify` or `resume` of that run is cancelled, the store sets the run back to phase
   `interrupted`, so that it stays resumable
