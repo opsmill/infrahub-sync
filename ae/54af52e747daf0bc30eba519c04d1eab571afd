@@ -1,0 +1,21 @@
+dev/adr/0026-the-compose-deployment-takes-an-external-store-credentials-and-ca-from-env.md
+  s_82fe233503ea5c::t_3985a1322aeeb6 3
+docs/docs/development/adr-index.mdx
+  s_82fe233503ea5c::t_cdcfdaa2eae5ca 25-27,29-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ae54af52e747daf0bc30eba519c04d1eab571afd",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
