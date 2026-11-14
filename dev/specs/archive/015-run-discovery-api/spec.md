@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-04
 
-**Status**: Draft
+**Status**: Extracted
 
 **Input**: Idea brief grilled with the product owner on 2026-11-04, based on the
 `feature/v3-develop` code and the `opsmill/infrahub-sync-process` product records (AD-1, AD-5,

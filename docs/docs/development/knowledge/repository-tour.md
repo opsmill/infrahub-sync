@@ -109,6 +109,15 @@ Three service modules carry what a run tells the operator:
   left_out_review_required`, and the store releases the run's write admission in the same
   commit (`release_write_admission` in `product_store/models.py`).
 
+`paging.py` holds the cursor that the three lists share: `GET /runs`, `GET /configs` and
+`GET /configs/{config_id}/versions`. A cursor is URL-safe base64 of a JSON object with two keys:
+`k`, the sort key of the last row returned, and `f`, the first 16 hexadecimal characters of the
+SHA-256 of the list's name and filters. `decode_cursor` raises `InvalidCursorError` for a value
+that does not decode, that is longer than 2,048 characters or nested too deeply, or whose digest
+differs from the request's; the HTTP layer returns `422 invalid-cursor`. `validate_limit` applies
+the limits in `client/models.py` (`DEFAULT_LIMIT` 50, `MAX_LIMIT` 200). ADR 0032 records the
+paging rules.
+
 Each worker publishes the names of its set credential variables to the `worker_environments`
 table on each poll, through `service.storage.service_product_projection`.
 
@@ -154,6 +163,35 @@ are the deep documents.
 `store.py` the durable projection, `models.py` the record types and `bundle.py` the artifact
 bundle. [Durable product records](../../reference/durable-product-records.mdx) documents what
 is kept.
+
+The store serves the lists from its own tables only. `list_runs`, `list_configuration_page` and
+`list_configuration_version_page` each read one page in a fixed order, newest first, and one row
+more to tell whether another page follows:
+
+- runs by `(started_at, run_id)`, without loading artifact references or execution links;
+- configurations by `(created_at, config_id)`, with an exact-match filter on `name`;
+- versions by `registry_version`. One more query for the page
+  (`_SELECT_LATEST_VERSION_RUNS`) finds each version's newest run by `started_at` and its most
+  recently applied run by `finished_at`. An apply updates the plan's run, so `started_at` is the
+  time the plan was created and `finished_at` is the time the apply finished.
+
+The columns a list filters on or shows are written with the row: `product_runs.destination_branch`
+when the run is created, `configuration_versions.registered_by` and `registration_reason` and
+`configurations.name` in the transaction that registers a version. Rows written before a column
+existed keep `NULL`, except `configurations.name`, which the start-up that adds the column fills
+from the latest version's package.
+
+Start-up creates the list indexes after it adds those columns, each with `CREATE INDEX IF NOT
+EXISTS` (`_RUN_LISTING_INDEXES` in `store.py`):
+
+| Index | Serves |
+|---|---|
+| `product_runs_started (started_at, run_id)` | The run list without a filter |
+| `product_runs_config_started (config_id, started_at, run_id)` | The run list of one configuration |
+| `product_runs_binding_started (config_id, registry_version, started_at, run_id)` | The run list of one version, and each version's newest run |
+| `product_runs_binding_applied (config_id, registry_version, finished_at, run_id) WHERE phase = 'applied'` | Each version's most recently applied run |
+| `configurations_name (name)` | The `name` filter of the configuration list |
+| `configurations_created (created_at, config_id)` | The order of the configuration list |
 
 ### Adapters
 

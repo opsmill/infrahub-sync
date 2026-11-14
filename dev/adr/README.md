@@ -91,6 +91,10 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why the import account comes from the API token, why a missing named source or owner stops
   the run, why an apply refuses a plan made with another account, and why an update sets the
   owner only on the relationship edges it adds.
+- [0032 — The run, configuration and version lists page with a cursor and read only the product store](0032-run-and-configuration-lists-page-with-a-cursor.md)
+  — why the three lists page by position in a fixed order and not by offset, why a cursor is
+  valid only for its list and filters, and why every value a list shows or filters on is stored
+  in a column.
 
 ## Related
 

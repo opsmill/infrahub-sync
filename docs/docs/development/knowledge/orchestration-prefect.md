@@ -87,6 +87,18 @@ name Prefect generates. The title follows the rule Infrahub applies to its own f
 it says what the run does and leaves out the branch and any ID, which the run's page
 already shows.
 
+The API also sets the run's tags when it creates the flow run. `PrefectOrchestration.submit`
+wraps the Prefect client in `_LabelledCreationClient`, which passes every call through and adds
+`name=` and `tags=` to `create_flow_run_from_deployment`. The vendored executor is built from the
+wrapper for each submission, so its code is unchanged. `run_tags` builds the tags from
+identifiers the run resource already publishes: `run:<run_id>`, `stage:<stage>`, and, for a run
+of a registered configuration, `config:<config_id>` and
+`config-version:<config_id>@<registry_version>`. It never uses the actor, the branch, the work
+pool or a secret. Prefect adds the deployment's tags to these, including a tag an operator added
+to the deployment. A retry with the same idempotency key returns the flow run Prefect created
+first, with the title and tags it was created with. Sync does not read or update tags after
+creation, so no tagging call can fail after Prefect accepted the run.
+
 Registered execution supplies all three configuration fields: `config_id`,
 `registry_version` and `package_checksum`. The worker checks them against the product run
 and registered package. A partial binding is refused. When all three fields are unset,

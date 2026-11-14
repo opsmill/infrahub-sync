@@ -31,7 +31,7 @@ Sources:
 - The V3 release scope page (009 section and its testing-release blockers).
 - Merged specifications this one builds on:
   [014](../archive/014-import-lineage/spec.md),
-  [015](../015-run-discovery-api/spec.md),
+  [015](../archive/015-run-discovery-api/spec.md),
   [016](../archive/016-prefect-run-observability/spec.md),
   [017](../017-sync-run-events-logs/spec.md),
   [018](../018-plan-read-progress/spec.md), and the decision records in [`dev/adr/`](../../adr/README.md).

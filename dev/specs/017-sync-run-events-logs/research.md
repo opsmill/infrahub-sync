@@ -155,7 +155,7 @@ The branch name comes from the run's resolved destination branch, which the run 
 
 **Finding**: Today the Sync API records an audit event with outcome `refused-authentication` for such a request
 (`infrahub_sync/service/app.py:98-102`, `service.py:1083-1091`). Spec 015 tested that behaviour
-(`dev/specs/015-run-discovery-api/tasks.md:100`).
+(`dev/specs/archive/015-run-discovery-api/tasks.md:100`).
 
 **Decision**: Keep the stored audit record, which spec 015 relies on as security evidence, but give it no event
 type and never return it from `GET /events` (FR-009). The brief's out-of-scope item "events for requests rejected
