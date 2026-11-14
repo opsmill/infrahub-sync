@@ -1,0 +1,44 @@
+docs/docs/development/adr-index.mdx
+  s_82fe233503ea5c::t_d7ed47bb13133f 38
+dev/specs/017-sync-run-events-logs/research.md
+  s_82fe233503ea5c::t_d6ea320f9f6650 158
+dev/specs/020-plan-problem-reporting/spec.md
+  s_82fe233503ea5c::t_d6ea320f9f6650 34
+dev/adr/README.md
+  s_82fe233503ea5c::t_d8457407f9ab91 94-97
+dev/adr/0032-run-and-configuration-lists-page-with-a-cursor.md
+  s_82fe233503ea5c::t_772a835e9ff42d 1-95
+docs/docs/development/knowledge/repository-tour.md
+  s_82fe233503ea5c::t_1bec2b1ff26870 167-195
+  s_82fe233503ea5c::t_a48852bf02d41a 112-120
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_82fe233503ea5c::t_58456e7736622b 90-101
+dev/specs/archive/015-run-discovery-api/spec.md
+  s_82fe233503ea5c::t_286316533ddc5d 1-341
+dev/specs/archive/015-run-discovery-api/EXTRACTED.md
+  s_b19fc81df24856::t_d5f8abd169a86b 1-124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c59ae3f59df68a1fa200bd83bcc85c2e939ddbf9",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_b19fc81df24856": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-awriter-b-891ab6aec388be04",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
