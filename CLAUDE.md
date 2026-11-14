@@ -3,7 +3,7 @@
 @AGENTS.md
 
 <!-- SPECKIT START -->
-Active spec: `dev/specs/022-resume-interrupted-apply/`. Read its `plan.md` for technologies, project
+Active spec: `dev/specs/021-compose-store-credentials-ca/`. Read its `plan.md` for technologies, project
 structure, and shell commands. Completed specs are archived under `dev/specs/archive/`; their
 durable output lives in `docs/docs/development/knowledge/`, `docs/docs/development/guidelines/`,
 `docs/docs/development/guides/`, and `dev/adr/`.

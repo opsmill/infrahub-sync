@@ -471,3 +471,26 @@ def test_the_prefect_ui_section_covers_merging_the_credential_and_closing_the_po
     assert "`INFRAHUB_SYNC_PREFECT_AUTH_STRING`" in body
     assert "\n### Close the Prefect UI again" in body
     assert "docker compose up -d" in shell_lines(body)
+
+
+# Spec 021 FR-017: no page tells an operator to run a command that prints interpolated
+# credential values. `docker compose config` prints them unless it runs with `--quiet` or
+# `--no-interpolate`; `docker inspect` prints a container's whole environment.
+OPERATOR_PAGES = sorted((REPO_ROOT / "docs" / "docs").glob("*.mdx")) + sorted(
+    (REPO_ROOT / "docs" / "docs" / "operations").glob("*.mdx")
+)
+COMMAND_LINE = re.compile(r"^\s*(?:\$\s*)?docker\s+(compose\b.*\bconfig\b.*|inspect\b.*)$")
+
+
+@pytest.mark.parametrize("path", OPERATOR_PAGES, ids=lambda path: path.name)
+def test_no_page_runs_a_command_that_prints_credentials(path: Path) -> None:
+    printing = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        found = COMMAND_LINE.match(line)
+        if found is None:
+            continue
+        command = found.group(1)
+        if command.startswith("inspect") or not re.search(r"--quiet|-q\b|--no-interpolate", command):
+            printing.append(f"{path.name}:{number}: {line.strip()}")
+
+    assert printing == []

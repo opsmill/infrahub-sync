@@ -763,10 +763,52 @@ def test_nightly_runs_the_compose_suite_against_an_image_it_builds() -> None:
     suite = next(
         index
         for index, run in enumerate(runs)
-        if run == "uv run --no-sync pytest -m compose tests/compose -x --compose-zero-skip"
+        if run == "uv run --no-sync pytest -m compose tests/compose --compose-zero-skip"
     )
     assert install < build < suite
     assert steps[suite]["env"] == {"INFRAHUB_SYNC_DOCKER_IMAGE": "infrahub-sync", "VERSION": "compose-test"}
+
+
+def test_the_compose_suite_runs_once_per_entry_of_its_matrix() -> None:
+    """Spec 021 FR-020: each architecture and repeat is its own job, and one failure stops none of the others."""
+    job = jobs(NIGHTLY_WORKFLOW)["compose-suite"]
+
+    assert job["needs"] == "compose-matrix"
+    assert job["runs-on"] == "${{ matrix.runner }}"
+    assert job["strategy"]["fail-fast"] is False
+    assert job["strategy"]["matrix"] == {
+        "runner": "${{ fromJSON(needs.compose-matrix.outputs.runners) }}",
+        "run": "${{ fromJSON(needs.compose-matrix.outputs.runs) }}",
+    }
+
+
+@pytest.mark.parametrize(
+    ("repeat", "architectures", "runners", "runs"),
+    [
+        ("1", "both", '["ubuntu-22.04", "ubuntu-24.04-arm"]', "[1]"),
+        ("10", "both", '["ubuntu-22.04", "ubuntu-24.04-arm"]', "[1,2,3,4,5,6,7,8,9,10]"),
+        ("3", "arm64", '["ubuntu-24.04-arm"]', "[1,2,3]"),
+        ("2", "amd64", '["ubuntu-22.04"]', "[1,2]"),
+    ],
+)
+def test_the_compose_matrix_step_plans_the_requested_runs(
+    repeat: str, architectures: str, runners: str, runs: str
+) -> None:
+    (step,) = jobs(NIGHTLY_WORKFLOW)["compose-matrix"]["steps"]
+
+    run = _run_step(str(step["run"]), {"REPEAT": repeat, "ARCHITECTURES": architectures})
+
+    assert run.returncode == 0, run.output
+    assert run.outputs == {"runners": runners, "runs": runs}
+
+
+@pytest.mark.parametrize(("repeat", "architectures"), [("0", "both"), ("21", "both"), ("two", "both"), ("1", "riscv")])
+def test_the_compose_matrix_step_refuses_a_bad_input(repeat: str, architectures: str) -> None:
+    (step,) = jobs(NIGHTLY_WORKFLOW)["compose-matrix"]["steps"]
+
+    run = _run_step(str(step["run"]), {"REPEAT": repeat, "ARCHITECTURES": architectures})
+
+    assert run.returncode != 0
 
 
 def develop_jobs() -> dict[str, dict]:
@@ -2099,3 +2141,94 @@ def test_the_version_guard_refuses_a_version_the_image_cannot_carry(version: str
     assert run.returncode != 0
     assert "::error::" in run.output
     assert "Traceback" not in run.output, run.output
+
+
+# ---------------------------------------------------------------------------
+# The release notes name the image by digest (spec 021 FR-021, FR-022)
+# ---------------------------------------------------------------------------
+
+RELEASE_IDENTITY = r"^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/tags/"
+CONTAINER_IMAGE_PAGE = Path(__file__).resolve().parents[1] / "docs" / "docs" / "container-image.mdx"
+STUB_GH = """#!/bin/sh
+case "$1 $2" in
+  "release view") cat "$STUB_BODY" ;;
+  "release edit") shift 2; while [ "$#" -gt 0 ]; do
+      if [ "$1" = "--notes-file" ]; then cp "$2" "$STUB_BODY"; fi; shift; done ;;
+  *) echo "unexpected gh call: $*" >&2; exit 2 ;;
+esac
+"""
+
+
+def test_only_the_record_image_job_of_the_publish_workflow_writes() -> None:
+    job = job_of(PUBLISH_WORKFLOW, "record_image")
+
+    assert job["needs"] == "publish_docker_image"
+    # A manual dispatch from a branch signs with the branch's identity, which the recorded
+    # `cosign` commands refuse, so only a run for a tag records the image.
+    assert job["if"] == "inputs.publish && inputs.version != '' && startsWith(github.ref, 'refs/tags/')"
+    assert job_permissions(PUBLISH_WORKFLOW, "record_image") == {"contents": "write"}
+    assert permissions(PUBLISH_WORKFLOW) == {"contents": "read"}
+    writers = [
+        name
+        for name in jobs(PUBLISH_WORKFLOW)
+        if (job_permissions(PUBLISH_WORKFLOW, name) or {}).get("contents") == "write"
+    ]
+    assert writers == ["record_image"]
+
+
+def test_the_release_trigger_grants_the_write_the_record_job_needs() -> None:
+    assert job_permissions(TRIGGER_RELEASE_WORKFLOW, "publish") == {"contents": "write", "id-token": "write"}
+
+
+def _record_image(tmp_path: Path, body: str, digest: str) -> subprocess.CompletedProcess[str]:
+    (step,) = job_of(PUBLISH_WORKFLOW, "record_image")["steps"]
+    bin_directory = tmp_path / "bin"
+    bin_directory.mkdir(exist_ok=True)
+    stub = bin_directory / "gh"
+    stub.write_text(STUB_GH, encoding="utf-8")
+    stub.chmod(0o755)
+    notes = tmp_path / "notes.md"
+    if not notes.exists():
+        notes.write_text(body, encoding="utf-8")
+    environment = {
+        "PATH": f"{bin_directory}{os.pathsep}{os.environ['PATH']}",
+        "STUB_BODY": str(notes),
+        "REPOSITORY": "opsmill/infrahub-sync",
+        "VERSION": "3.0.0",
+        "DIGEST": digest,
+    }
+    bash = shutil.which("bash")
+    assert bash is not None
+    return subprocess.run(  # noqa: S603 -- the workflow's own step, against a stub gh
+        [bash, "-c", step["run"]], cwd=tmp_path, env=environment, capture_output=True, text=True, check=False
+    )
+
+
+def test_the_record_step_appends_the_digest_and_the_release_identity_once(tmp_path: Path) -> None:
+    digest = "sha256:" + "a" * 64
+
+    first = _record_image(tmp_path, "## Changelog\n\n- one change\n", digest)
+    second = _record_image(tmp_path, "", digest)
+
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+    notes = (tmp_path / "notes.md").read_text(encoding="utf-8")
+    assert notes.startswith("## Changelog\n\n- one change\n")
+    assert notes.count("## Container image") == 1
+    assert f"docker pull registry.opsmill.io/opsmill/infrahub-sync:3.0.0@{digest}" in notes
+    assert notes.count(f"--certificate-identity-regexp '{RELEASE_IDENTITY}'") == 3
+    assert "verify-attestation --type spdxjson" in notes
+    assert "verify-attestation --type cyclonedx" in notes
+
+
+def test_the_record_step_refuses_a_missing_digest(tmp_path: Path) -> None:
+    refused = _record_image(tmp_path, "notes\n", "")
+
+    assert refused.returncode != 0
+    assert "no manifest digest" in refused.stdout + refused.stderr
+
+
+def test_the_documented_identity_is_the_release_notes_identity() -> None:
+    text = CONTAINER_IMAGE_PAGE.read_text(encoding="utf-8")
+
+    assert re.findall(r"--certificate-identity-regexp '([^']+)'", text) == [RELEASE_IDENTITY] * 3

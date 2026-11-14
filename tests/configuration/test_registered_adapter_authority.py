@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 import pytest
+import requests
 
 from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
 from infrahub_sync.utils import PlanApplier, get_potenda_from_instance
@@ -142,7 +143,7 @@ def _install_optional_sdk_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     pynetbox = cast("Any", types.ModuleType("pynetbox"))
     pynetbox.api = lambda *_args, **_kwargs: types.SimpleNamespace()
     pynautobot = cast("Any", types.ModuleType("pynautobot"))
-    pynautobot.api = lambda **_kwargs: types.SimpleNamespace()
+    pynautobot.api = lambda **_kwargs: types.SimpleNamespace(http_session=requests.Session())
     core = types.ModuleType("pynautobot.core")
     query = cast("Any", types.ModuleType("pynautobot.core.query"))
     query.RequestError = RuntimeError
@@ -211,7 +212,10 @@ def _capture_client(
                 get=lambda *_args, **_kwargs: None,
                 schema=types.SimpleNamespace(all=lambda **_kwargs: {}),
             )
-        return types.SimpleNamespace(get=lambda *_args, **_kwargs: types.SimpleNamespace(json=lambda: {"imdata": []}))
+        return types.SimpleNamespace(
+            get=lambda *_args, **_kwargs: types.SimpleNamespace(json=lambda: {"imdata": []}),
+            http_session=requests.Session(),
+        )
 
     if row.name == "aci":
         monkeypatch.setattr(dynamic_module, "AciApiClient", capture)

@@ -13,10 +13,12 @@ on:
 jobs:
   publish:
     # A called workflow can only keep or narrow this token: signing the image
-    # needs `id-token`. Harbor is reached with its own credentials, so nothing
-    # needs `packages`.
+    # needs `id-token`, and appending the image digest to the release notes needs
+    # `contents: write`, which only the `record_image` job of workflow-publish.yml
+    # asks for. Harbor is reached with its own credentials, so nothing needs
+    # `packages`.
     permissions:
-      contents: read
+      contents: write
       id-token: write
     uses: ./.github/workflows/workflow-publish.yml
     secrets: inherit

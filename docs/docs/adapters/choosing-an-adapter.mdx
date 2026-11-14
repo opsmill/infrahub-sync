@@ -39,9 +39,9 @@ For per-adapter details — connection parameters, supported models, known limit
 
 ## Credentials on a Compose deployment
 
-The Sync worker reads each credential from the environment variable that the package's `credentials` block names. On a Compose deployment, the worker receives only three of these variables: `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`, and `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN`. When you run from source, the development stack in `development/docker-compose.yml` passes the same three.
+The Sync worker reads each credential from the environment variable that the package's `credentials` block names. Compose passes only variables the file names, so on a Compose deployment, and on the development stack in `development/docker-compose.yml`, the worker receives a fixed list of credential variables: a name for each credential setting of each bundled adapter, and every name the adapter pages and shipped examples use. Use those names as the `env` identifiers of a package for that deployment; a name that is not on the list does not reach the worker. [Credential variables the worker receives](../compose-deployment.mdx#credential-variables-the-worker-receives) lists them by adapter.
 
-A source whose credentials need other variables, such as Cisco ACI, IP Fabric, Slurp’it, Peering Manager, or a Generic REST API source with authentication, cannot receive them on that worker in this release. A source that needs no credential, such as a public API with `auth_method: none`, is not affected. IP Fabric and Slurp’it also need an SDK that the Sync image does not include; see their pages.
+IP Fabric and Slurp’it also need an SDK that the Sync image does not include; see their pages.
 
 ## When to use the Generic REST API adapter
 

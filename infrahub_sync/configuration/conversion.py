@@ -30,7 +30,7 @@ from urllib.parse import urlsplit
 
 from .capabilities import BUILTIN_ADAPTER_CAPABILITIES, get_adapter_capabilities
 from .conversion_authentication import UnknownAuthenticationMethodError, UsedCredentials, used_credentials
-from .credentials import ENV_CREDENTIAL_PREFIX
+from .credentials import COMPOSE_WORKER_CREDENTIAL_SUFFIXES, ENV_CREDENTIAL_PREFIX
 from .models import ConfigurationPackageParseError, parse_configuration_package
 from .validation import collect_findings
 
@@ -124,7 +124,7 @@ For ``genericrestapi`` and ``peeringmanager`` the names are v2's defaults; a fil
 # Built from the prefix so that only ``credentials.py`` spells the namespace out
 # (``test_no_service_setting_uses_the_credential_namespace``); this module never reads them.
 COMPOSE_WORKER_CREDENTIAL_VARIABLES: tuple[str, ...] = tuple(
-    f"{ENV_CREDENTIAL_PREFIX}{suffix}" for suffix in ("INFRAHUB_API_TOKEN", "NETBOX_TOKEN", "NAUTOBOT_TOKEN")
+    f"{ENV_CREDENTIAL_PREFIX}{suffix}" for suffix in COMPOSE_WORKER_CREDENTIAL_SUFFIXES
 )
 """The credential variables the ``sync-worker`` service of ``docker-compose.yml`` passes through."""
 

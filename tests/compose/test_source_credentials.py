@@ -628,3 +628,60 @@ def test_a_missing_source_token_fails_the_run_inside_the_container(
     assert names_expected_identifier, "the refusal did not name the expected environment identifier"
     assert "CredentialConfigurationError" in result.output
     assert "PKG-R1-CONTAINER PASS" not in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Every bundled adapter's credentials reach the worker (spec 021, SC-003)
+# ---------------------------------------------------------------------------
+
+ACI_PACKAGE = Path(__file__).resolve().parents[2] / "examples" / "aci_to_infrahub" / "package.yml"
+ACI_DESTINATION_TOKEN = "spec021-infrahub-canary-77c2"  # noqa: S105 -- a test stand-in, not a credential
+ACI_TOKENS = {
+    "INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_USERNAME": "spec021-aci-username-canary-5e1d",
+    "INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_PASSWORD": "spec021-aci-password-canary-8b3f",
+}
+
+# Resolves the shipped ACI package's references with the real resolver, inside the worker
+# container, and prints only a verdict.
+ACI_PROBE = """
+import json, os, sys
+
+from infrahub_sync.configuration import parse_configuration_package
+from infrahub_sync.configuration.runtime import resolve_runtime_instance
+
+package = parse_configuration_package(json.loads(sys.argv[1]))
+instance = resolve_runtime_instance(package, directory="/tmp/infrahub-sync/spec021-aci")
+settings = instance.source.settings or {}
+checks = {
+    "username": settings.get("username") == os.environ["INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_USERNAME"],
+    "password": settings.get("password") == os.environ["INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_PASSWORD"],
+}
+print("SPEC021-ACI PASS" if all(checks.values()) else "SPEC021-ACI FAIL " + ",".join(k for k, v in checks.items() if not v))
+"""
+
+
+@pytest.mark.docker
+def test_the_worker_container_resolves_the_shipped_aci_package_credentials(
+    docker_daemon: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The two ACI variables reach the worker from `.env` alone, and the real resolver uses them."""
+    import json
+
+    import yaml
+
+    del docker_daemon
+    SECRETS.register(*ACI_TOKENS.values())
+    for name in ACI_TOKENS:
+        monkeypatch.delenv(name, raising=False)
+    package = yaml.safe_load(ACI_PACKAGE.read_text(encoding="utf-8"))
+    settings = operator_file(tmp_path, **ACI_TOKENS, INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=ACI_DESTINATION_TOKEN)
+
+    result = compose(
+        ["run", "--rm", "--no-deps", "-T", "sync-worker", "python", "-c", ACI_PROBE, json.dumps(package)],
+        environment=container_environment(),
+        env_files=(settings,),
+    )
+
+    assert result.returncode == 0, result.output
+    assert "SPEC021-ACI PASS" in result.stdout, result.output
+    assert SECRETS.leaked(result.unredacted(), ACI_TOKENS) == []

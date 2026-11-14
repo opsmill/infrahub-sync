@@ -133,7 +133,7 @@ Check the signature:
 
 ```bash
 cosign verify registry.opsmill.io/opsmill/infrahub-sync:<version> \
-  --certificate-identity-regexp 'https://github.com/opsmill/infrahub-sync/' \
+  --certificate-identity-regexp '^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
@@ -141,18 +141,19 @@ Check both bills of materials, with the same identity flags:
 
 ```bash
 cosign verify-attestation --type spdxjson \
-  --certificate-identity-regexp 'https://github.com/opsmill/infrahub-sync/' \
+  --certificate-identity-regexp '^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   registry.opsmill.io/opsmill/infrahub-sync:<version>
 
 cosign verify-attestation --type cyclonedx \
-  --certificate-identity-regexp 'https://github.com/opsmill/infrahub-sync/' \
+  --certificate-identity-regexp '^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   registry.opsmill.io/opsmill/infrahub-sync:<version>
 ```
 
 Each command exits non-zero when the signature or attestation is missing or was not
-issued to this repository's workflows. Until 3.0.0, run `docker login
+issued to this repository's image workflow at a release tag. The release notes of each release
+name the image by its digest and repeat these commands for it. Until 3.0.0, run `docker login
 registry.opsmill.io` first, because cosign reads the same private registry.
 
 ## Build the image locally

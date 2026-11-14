@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import boto3
 import psycopg
+from botocore.config import Config
 from botocore.exceptions import ClientError
 from psycopg import conninfo
 from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
@@ -29,6 +30,15 @@ S3_BUCKET_ENV = "INFRAHUB_SYNC_S3_BUCKET"
 S3_PREFIX_ENV = "INFRAHUB_SYNC_S3_PREFIX"
 S3_ENDPOINT_ENV = "INFRAHUB_SYNC_S3_ENDPOINT_URL"
 S3_REGION_ENV = "INFRAHUB_SYNC_S3_REGION"
+S3_ADDRESSING_STYLE_ENV = "INFRAHUB_SYNC_S3_ADDRESSING_STYLE"
+# `path` is what botocore uses with an endpoint URL unless told otherwise, and what the
+# bundled store answers; `virtual` puts the bucket in the host name.
+S3_ADDRESSING_STYLES = frozenset({"path", "virtual"})
+DEFAULT_S3_ADDRESSING_STYLE = "path"
+# With no endpoint URL the client reaches AWS S3, and botocore chooses the style itself, as
+# it did before the addressing style was a setting: forcing `path` there would change it.
+_SDK_ADDRESSING_STYLE = "auto"
+DEFAULT_S3_PREFIX = "infrahub-sync"
 _ENDPOINT_URL_ADAPTER = TypeAdapter(AnyHttpUrl)
 
 
@@ -190,19 +200,58 @@ def service_guard_secrets(*, environ: Mapping[str, str] | None = None) -> tuple[
     return dsn_secret_values(_database_url(values))
 
 
+class EndpointSettingError(ValueError):
+    """The S3 endpoint setting is refused; the message names the setting, never its value."""
+
+
 def _endpoint(values: Mapping[str, str]) -> str | None:
     """Validate the optional S3-compatible endpoint, passing the operator string to Boto3."""
-    endpoint = _optional_setting(values, S3_ENDPOINT_ENV)
+    try:
+        endpoint = _optional_setting(values, S3_ENDPOINT_ENV)
+    except ValueError as error:
+        raise EndpointSettingError(str(error)) from None
     if endpoint is None:
         return None
     msg = f"{S3_ENDPOINT_ENV} must be an absolute http or https URL without userinfo"
     try:
         parsed = _ENDPOINT_URL_ADAPTER.validate_python(endpoint)
     except ValidationError:
-        raise ValueError(msg) from None
+        raise EndpointSettingError(msg) from None
     if parsed.username is not None or parsed.password is not None:
-        raise ValueError(msg)
+        raise EndpointSettingError(msg)
     return endpoint
+
+
+def _addressing_style(values: Mapping[str, str], *, endpoint: str | None) -> str:
+    """Return the configured S3 addressing style; an unknown value is refused without its value."""
+    style = _optional_setting(values, S3_ADDRESSING_STYLE_ENV)
+    if style is None:
+        return DEFAULT_S3_ADDRESSING_STYLE if endpoint is not None else _SDK_ADDRESSING_STYLE
+    if style not in S3_ADDRESSING_STYLES:
+        msg = f"{S3_ADDRESSING_STYLE_ENV} must be path or virtual"
+        raise ValueError(msg)
+    return style
+
+
+def s3_client_arguments(values: Mapping[str, str]) -> dict[str, Any]:
+    """Validate the S3 settings and return the keyword arguments of `boto3.client("s3", ...)`.
+
+    The Sync API, the worker and bootstrap all build their client from these. Every check runs
+    before any client exists, so a refused endpoint, region or addressing style never reaches
+    the SDK, and no refusal reflects the setting's value.
+    """
+    endpoint = _endpoint(values)
+    region = _optional_setting(values, S3_REGION_ENV)
+    return {
+        "endpoint_url": endpoint,
+        "region_name": region,
+        "config": Config(s3={"addressing_style": _addressing_style(values, endpoint=endpoint)}),
+    }
+
+
+def s3_key_prefix(values: Mapping[str, str]) -> str:
+    """Return the object-key prefix without surrounding slashes; unset means `infrahub-sync`."""
+    return (_optional_setting(values, S3_PREFIX_ENV) or DEFAULT_S3_PREFIX).strip("/")
 
 
 def service_product_projection(
@@ -216,12 +265,11 @@ def service_product_projection(
     values: Mapping[str, str] = os.environ if environ is None else environ
     database_url = _database_url(values)
     bucket = _required_setting(values, S3_BUCKET_ENV)
-    prefix = (_optional_setting(values, S3_PREFIX_ENV) or "infrahub-sync").strip("/")
-    endpoint = _endpoint(values)
-    region = _optional_setting(values, S3_REGION_ENV)
+    prefix = s3_key_prefix(values)
+    arguments = s3_client_arguments(values)
     connect = database_connect or (lambda: PsycopgConnectionFactory()(database_url))
     try:
-        client = Boto3S3Client(s3_client_builder("s3", endpoint_url=endpoint, region_name=region))
+        client = Boto3S3Client(s3_client_builder("s3", **arguments))
     except Exception:  # noqa: BLE001  # SDK construction is one fixed startup boundary.
         raise ServiceStorageStartupError from None
     try:
