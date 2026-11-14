@@ -56,7 +56,7 @@ offset then shows a run twice or leaves one out.
   start-up that adds the column.
 
 This record covers these three lists only. Other paged routes of the Sync API were designed
-separately and do not use a cursor: `GET /runs/{run_id}/log`, the plan report routes
+separately and do not use a cursor: `GET /runs/{run_id}/logs`, the plan report routes
 (`/plan/problems`, `/plan/left-out`, `/plan/kept`) and `GET /events` page with `offset` and
 `limit`. A new list of rows that are added while a client pages through them should follow this
 record: the same page shape and limits, a fixed order with a unique last column, a cursor from
