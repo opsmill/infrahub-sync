@@ -1,0 +1,19 @@
+dev/adr/0038-cancelling-a-finished-plan-withdraws-it.md
+  s_82fe233503ea5c::t_a1b597c4629093 35-37,49-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2ba7bed1be17e7d24664cadd682602465754c4bb",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
