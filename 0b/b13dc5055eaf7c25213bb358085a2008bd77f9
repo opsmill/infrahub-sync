@@ -1,0 +1,24 @@
+dev/specs/archive/020-plan-problem-reporting/EXTRACTED.md
+  s_82fe233503ea5c::t_a1b597c4629093 10
+docs/docs/development/guidelines/secret-redaction.md
+  s_82fe233503ea5c::t_a1b597c4629093 76-78
+  s_82fe233503ea5c::t_cd53ff7c81023c 79-82
+docs/docs/development/knowledge/plan-artifact.md
+  s_82fe233503ea5c::t_a1b597c4629093 35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0bb13dc5055eaf7c25213bb358085a2008bd77f9",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
