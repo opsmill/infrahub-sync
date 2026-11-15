@@ -45,9 +45,9 @@ Prefect for each request, and returns only the lines that Sync's own code wrote.
   the route answers `410 log-expired`. When Prefect cannot be reached, it answers
   `503 log-unavailable`.
 - **Wording.** No message that the Sync API returns holds the word "Prefect", and no message or
-  served log line tells the person to open Prefect. One served log line holds the word: the
-  line of a refused execution claim, which states that a Prefect Retry is refused and that a
-  Sync run is not replayed from Prefect. Field names such as `prefect_executions`, and the
+  served log line tells the person to open Prefect. A served log line can hold the word:
+  the line of a refused execution claim states that a Prefect Retry is refused and that a Sync
+  run is not replayed from Prefect. Field names such as `prefect_executions`, and the
   `prefect_flow_run_url` link that an operator configures, are kept.
 - **Retention.** Sync deletes no flow run. How long a log can be read depends on the retention
   settings of Sync's Prefect server.
