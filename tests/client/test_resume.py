@@ -1,4 +1,4 @@
-"""The client's `resume` request and the run's progress view (spec 022 T023, contracts/http-api.md)."""
+"""The client's `resume` request and the run's progress view (spec 016 T023, contracts/http-api.md)."""
 
 from __future__ import annotations
 

@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-07-31
-**Source**: `dev/specs/archive/001-prefect-managed-remote-run/spec.md` (D001),
+**Source**: `dev/specs/archive/002-prefect-managed-remote-run/spec.md` (D001),
 `contracts/run-result-and-errors.md`
 
 ## Context

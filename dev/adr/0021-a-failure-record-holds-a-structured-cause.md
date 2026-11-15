@@ -2,9 +2,9 @@
 
 **Status**: Accepted
 **Date**: 2026-11-12
-**Source**: `dev/specs/archive/020-plan-problem-reporting/spec.md` (FR-014 to FR-020, FR-029, FR-030),
-`dev/specs/archive/020-plan-problem-reporting/research.md` (R12, R13, R14),
-`dev/specs/archive/020-plan-problem-reporting/data-model.md` ("Stage failure record additions")
+**Source**: `dev/specs/archive/007-plan-problem-reporting/spec.md` (FR-014 to FR-020, FR-029, FR-030),
+`dev/specs/archive/007-plan-problem-reporting/research.md` (R12, R13, R14),
+`dev/specs/archive/007-plan-problem-reporting/data-model.md` ("Stage failure record additions")
 
 This record replaces the rule "a class name, never a message" that a comment in
 `_failure_evidence` (`infrahub_sync/service/flow.py`) stated before this decision. It keeps
@@ -21,7 +21,7 @@ reports `failed` and points to `runs show`, and the store keeps the run nontermi
 reconciliation decides its outcome. Before this
 decision the comment in `_failure_evidence` said the record holds the class name of the error
 and of its immediate cause, and never a message, because a destination's text can hold
-anything. The code no longer matched the comment: spec 017 already recorded fixed-template
+anything. The code no longer matched the comment: spec 012 already recorded fixed-template
 texts for a lineage refusal and a destination schema read failure, and the permission or
 message Infrahub returns with a 403.
 
@@ -46,7 +46,7 @@ a structured cause built only from these fields (FR-014, FR-019):
 - the system involved: the role (`source` or `destination`) and the adapter name;
 - Infrahub's `extensions.code`, `extensions.data.node_kind`, `extensions.data.field_name` and
   `message`, for a write that Infrahub rejected;
-- the permission or message Infrahub returns with a 403, as spec 017 records it;
+- the permission or message Infrahub returns with a 403, as spec 012 records it;
 - the kind, the source record and the field that a typed Sync error names;
 - the operations written, the operation count of the plan, and the failed operation's action,
   kind and identity;

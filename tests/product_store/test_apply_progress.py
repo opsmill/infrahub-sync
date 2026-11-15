@@ -1,4 +1,4 @@
-"""The stored progress marker of a write execution (spec 022, research R2)."""
+"""The stored progress marker of a write execution (spec 016, research R2)."""
 
 from __future__ import annotations
 

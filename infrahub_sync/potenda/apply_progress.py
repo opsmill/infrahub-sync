@@ -2,7 +2,7 @@
 
 `Potenda.apply_plan` calls an optional `ApplyProgressObserver` as it works through the plan's
 operations in stored order. The engine imports nothing from the service: the Sync service's
-worker supplies the one observer that saves the progress marker (spec 022, research R3). The
+worker supplies the one observer that saves the progress marker (spec 016, research R3). The
 CLI-local and direct Prefect paths pass no observer.
 
 Every `index` is the operation's position in the saved plan's stored order, counting from 0
@@ -30,7 +30,7 @@ class ApplyProgressObserver(Protocol):
         """The destination call for the operation at `index` returned, and the apply recorded it.
 
         Never called for an operation whose destination call raised, nor for a recorded delete,
-        which is collected and never dispatched (spec 022 FR-002).
+        which is collected and never dispatched (spec 016 FR-002).
         """
 
     def kind_finished(self, index: int) -> None:
@@ -53,7 +53,7 @@ class ApplyProgressObserver(Protocol):
 
 
 class ApplyProgressLostError(RuntimeError):
-    """The apply stopped because its progress could no longer be saved (spec 022, research R4).
+    """The apply stopped because its progress could no longer be saved (spec 016, research R4).
 
     Raised before a dispatch, so the operation it stopped at was not written. Carries the
     partial `ApplyRecord` as `apply_record`, the attribute every apply failure carries, so the

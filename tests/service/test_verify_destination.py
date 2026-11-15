@@ -467,7 +467,7 @@ def test_an_unreachable_destination_fails_and_reports_no_destination_check(
     harness = _harness(tmp_path, monkeypatch)
     harness.schema_unavailable = True
 
-    # A recognized failure ends the flow run Failed with its cause, rather than raising (spec 017).
+    # A recognized failure ends the flow run Failed with its cause, rather than raising (spec 012).
     state = _verify(harness)
 
     assert isinstance(state, State)

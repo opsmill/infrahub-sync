@@ -1,17 +1,17 @@
 """The cause a failed run records for the operator, beside the error's class name.
 
 The service worker records a failure's class name and the class of its immediate cause, and,
-since spec 020, a structured cause (ADR 0021): a failure type from a fixed list, the system
+since spec 007, a structured cause (ADR 0021): a failure type from a fixed list, the system
 involved, Infrahub's error code, node kind, attribute name and message for a rejected write, the
 kind, record and field a typed Sync error names, and text from fixed templates filled with
 those values. `failure_record` builds those fields; `operator_cause` builds the cause and next
-action of spec 017.
+action of spec 012.
 
 Every value comes from a class name, an HTTP status code, a typed attribute this repository
 defines, or one of the four values Infrahub returns with a rejected write
 (`infrahub_sync.infrahub_errors.rejected_write`). No value is built from the text of an
 exception, from an address, a request header or a traceback, so no credential can enter the
-record (spec 020 FR-019, FR-029). Every value is stripped of control characters and capped, and
+record (spec 007 FR-019, FR-029). Every value is stripped of control characters and capped, and
 the cause, the next action and Infrahub's message are still redacted.
 """
 
@@ -62,7 +62,7 @@ if TYPE_CHECKING:
 # The adapter an apply writes through. A V3 apply writes only to Infrahub (ADR 0014).
 APPLY_DESTINATION_ADAPTER = "infrahub"
 
-# The keys `failure_record` adds to `<stage>_failure` (spec 020 data-model.md). Each one is set
+# The keys `failure_record` adds to `<stage>_failure` (spec 007 data-model.md). Each one is set
 # on every record the worker writes, `None` when the failure does not name it.
 FAILURE_RECORD_KEYS = (
     "failure_type",
@@ -165,7 +165,7 @@ def resumable_next_action(exc: BaseException, secrets: Sequence[str]) -> dict[st
     return {}
 
 
-# The classification table for connection, timeout and token failures (spec 020 plan.md, open
+# The classification table for connection, timeout and token failures (spec 007 plan.md, open
 # risk R12). It reads the exception type and the HTTP status code attribute only, never text.
 #
 # | Library and adapters | Exception type | Failure type |
@@ -351,14 +351,14 @@ def _record_load_template(fields: dict[str, Any], _where: str, _adapter: str) ->
 
 
 _PLAN_AGAIN = "then plan again."
-# The closing step on a run whose write stopped part-way (spec 022): it keeps its saved plan,
+# The closing step on a run whose write stopped part-way (spec 016): it keeps its saved plan,
 # and a resume needs a `verify` that passed after the latest write.
 _VERIFY_AND_RESUME = (
     "then run `infrahub-sync verify RUN_ID` again, then "
     "`infrahub-sync runs resume RUN_ID --expected-checksum CHECKSUM`."
 )
 # The next action of a write that stopped at an operation whose reach is unknown, on a run that
-# keeps its saved plan (spec 022). It replaces `OperationApplyFailedError.next_action`, which
+# keeps its saved plan (spec 016). It replaces `OperationApplyFailedError.next_action`, which
 # names a new plan because the CLI-local and direct Prefect paths have no resume.
 RESUMABLE_WRITE_NEXT_ACTION = (
     "Nothing was rolled back: the operations applied before this one stay written, and this one may have "
@@ -473,15 +473,15 @@ def failure_record(
     destination_adapter: str = APPLY_DESTINATION_ADAPTER,
     resumable: bool = False,
 ) -> dict[str, Any]:
-    """The spec 020 fields of a `<stage>_failure` record, and a template cause and next action.
+    """The spec 007 fields of a `<stage>_failure` record, and a template cause and next action.
 
     `resumable` is true when the run's write stopped part-way and the run keeps its saved plan
-    (spec 022): the next action then names `verify` and `runs resume`, not a new plan.
+    (spec 016): the next action then names `verify` and `runs resume`, not a new plan.
 
     Returns every key of `FAILURE_RECORD_KEYS`, `None` where the failure does not name it, and
     `cause` and `next_action` when a template exists for the failure type. The caller keeps the
     `cause` and `next_action` that `operator_cause` returns where it returns one, so the keys
-    spec 017 records keep their values (FR-014).
+    spec 012 records keep their values (FR-014).
 
     The failure type comes from the fixed table of research R12. The values come from typed
     attributes, HTTP status codes and Infrahub's own description of a rejected write, never from
@@ -544,7 +544,7 @@ def apply_progress(record: ApplyRecord | None) -> dict[str, Any]:
 
     The engine reads them from the plan (`Potenda.apply_plan`). `operations_written` counts the
     creates and updates of every execution of the run, through the position a resume started
-    after (spec 022 research R6). The identity is the source record identity the plan holds,
+    after (spec 016 research R6). The identity is the source record identity the plan holds,
     which FR-019 allows; each string is capped.
     """
     if record is None:

@@ -1,8 +1,8 @@
 """The cause a failed run records.
 
-- Spec 017 FR-001: a destination schema read failure records a cause and a next action the
+- Spec 012 FR-001: a destination schema read failure records a cause and a next action the
   reader acts on.
-- Spec 020 T046: each failure type records its `failure_type` and the fields of FR-014.
+- Spec 007 T046: each failure type records its `failure_type` and the fields of FR-014.
 """
 
 from __future__ import annotations
@@ -122,9 +122,9 @@ def test_an_unknown_reason_still_records_a_cause_and_a_next_action() -> None:
     assert recorded["next_action"]
 
 
-# Spec 020 T046 (FR-014 to FR-018, data-model.md "Stage failure record additions"): the record of
+# Spec 007 T046 (FR-014 to FR-018, data-model.md "Stage failure record additions"): the record of
 # each failure type. The record is built by `_failure_evidence`, the function the worker writes
-# `results.<stage>_failure` with; spec 020 T053 and T054 make it call `failure_record`.
+# `results.<stage>_failure` with; spec 007 T053 and T054 make it call `failure_record`.
 
 
 @pytest.fixture
@@ -160,7 +160,7 @@ def test_each_failure_type_records_its_type_and_fields(
 def test_each_failure_type_keeps_the_fields_it_records_today(
     failure_evidence: Callable[..., dict[str, Any]], case: FailureCase
 ) -> None:
-    """The keys of spec 017 keep their meaning next to the new fields (FR-014)."""
+    """The keys of spec 012 keep their meaning next to the new fields (FR-014)."""
     exc = case.build(NEUTRAL_TEXT)
     evidence = failure_evidence(case.stage, exc, outcome="failed", record=None, secrets=())
 
@@ -225,7 +225,7 @@ def test_a_stopped_apply_records_the_plan_size_and_the_failed_operation(
 def test_a_stopped_resume_records_the_operations_the_whole_run_wrote(
     failure_evidence: Callable[..., dict[str, Any]],
 ) -> None:
-    """Spec 022 research R6: the written count covers every execution of the run, not only this one."""
+    """Spec 016 research R6: the written count covers every execution of the run, not only this one."""
     record = ApplyRecord(
         applied_operations=(APPLIED_OPERATION,),
         failed_operation=FAILED_OPERATION,
@@ -398,7 +398,7 @@ def test_a_secret_in_infrahubs_rejection_message_is_masked_before_the_message_is
     ],
 )
 def test_an_unreachable_destination_names_the_next_step_of_the_run(resumable: bool, ending: str) -> None:  # noqa: FBT001
-    """Spec 022: a run that keeps its saved plan continues with `verify` and `runs resume`."""
+    """Spec 016: a run that keeps its saved plan continues with `verify` and `runs resume`."""
     recorded = failure_record(
         "verify", ServerNotReachableError(address="https://infrahub.example.test"), resumable=resumable
     )

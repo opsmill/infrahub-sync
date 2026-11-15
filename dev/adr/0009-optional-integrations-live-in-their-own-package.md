@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-07-31
-**Source**: `dev/specs/archive/001-prefect-managed-remote-run/research.md`
+**Source**: `dev/specs/archive/002-prefect-managed-remote-run/research.md`
 (non-probe research decisions), `contracts/prefect-flow.md` §6
 
 ## Context

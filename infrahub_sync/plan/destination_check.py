@@ -1,4 +1,4 @@
-"""Compare a planned create or update with the node the destination holds (spec 022, research R7).
+"""Compare a planned create or update with the node the destination holds (spec 016, research R7).
 
 `verify` reports, for each uncertain operation of an interrupted run, whether the destination
 already matches the plan, differs from it, or has no such node. The comparison is pure: the

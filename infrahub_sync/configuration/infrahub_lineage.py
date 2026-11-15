@@ -146,7 +146,7 @@ def parse_infrahub_lineage_settings(settings: Mapping[str, object] | None) -> Li
     )
 
 
-# The actions an import needs on each kind its mapping writes (spec 020 FR-036).
+# The actions an import needs on each kind its mapping writes (spec 007 FR-036).
 WRITE_ACTIONS: tuple[str, ...] = ("view", "create", "update")
 _SUPER_ADMIN = "super_admin"
 # Infrahub's global permission to change data on the default branch (`GlobalPermissions`), which

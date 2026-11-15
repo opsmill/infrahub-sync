@@ -129,7 +129,7 @@ _REGISTERED_VERSION_INVALID = "registered configuration version is invalid"
 _REGISTERED_CHECKSUM_MISMATCH = "registered configuration checksum does not match run binding"
 _REGISTERED_PLAN_BINDING_MISMATCH = "registered saved plan binding does not match run binding"
 _REGISTERED_PLAN_VERIFICATION_FAILED = "registered saved plan verification failed"
-# The outcome of a `sync` that stopped after a plan that leaves out records (spec 020 FR-012).
+# The outcome of a `sync` that stopped after a plan that leaves out records (spec 007 FR-012).
 LEFT_OUT_STOP_OUTCOME = "left-out-review-required"
 _REGISTERED_PLAN_CHECKSUM_MISMATCH = "registered saved plan checksum does not match the approved expected_checksum"
 _WORKER_BINDING_PARAMETERS_INVALID = "service worker configuration binding parameters must be all absent or all present"
@@ -168,12 +168,12 @@ _NO_CONFIGURATION_DIRECTORY = ""
 # about, so it keeps its own deliberate handling where the two differ.
 _WRITE_STAGES = ("apply", "sync", "resume")
 # The stages that apply a saved plan the run already holds, without planning: an apply, and a
-# resume of an interrupted one from the run's saved position (spec 022, FR-010). The resume of
+# resume of an interrupted one from the run's saved position (spec 016, FR-010). The resume of
 # an interrupted `sync` is the same stage: the `sync` saved its plan and checksum before its
 # apply part, so the resume never plans again or reads the source (FR-017, research R9).
 _SAVED_PLAN_WRITE_STAGES = ("apply", "resume")
 # Every stage the service worker runs. A `resume` applies the rest of an interrupted run's
-# saved plan (spec 022).
+# saved plan (spec 016).
 ServiceStage = Literal["plan", "verify", "apply", "sync", "resume"]
 
 
@@ -321,7 +321,7 @@ def _publish_plan(projection: ProductProjection, run_id: str, saved: SavedPlan, 
     data = document.model_dump_json().encode()
     if saved.report:
         # The plan report's lines travel in the same document, under a key `GET /runs/{run_id}/plan`
-        # does not return; the paged report routes read them (spec 020 contracts/sync-api.md). The
+        # does not return; the paged report routes read them (spec 007 contracts/sync-api.md). The
         # same serializer as `model_dump_json`, so secret redaction sees the same value text.
         data = to_json({**document.model_dump(mode="json"), PLAN_REPORT_KEY: list(saved.report)})
     projection.publish_artifact(
@@ -608,7 +608,7 @@ def _worker_execution_context(
     if registered.package_checksum != package_checksum or package.checksum() != package_checksum:
         raise ValueError(_REGISTERED_CHECKSUM_MISMATCH)
     # A saved-plan apply, a resume and a verify construct the destination only, so they
-    # resolve no source credential (spec 022 FR-010: a resume never reads the source).
+    # resolve no source credential (spec 016 FR-010: a resume never reads the source).
     instance = resolve_runtime_instance(
         package,
         directory=_NO_CONFIGURATION_DIRECTORY,
@@ -693,7 +693,7 @@ def _destination_report(
     operations: Sequence[PlannedOperation],
     destination: object,
 ) -> dict[str, Any]:
-    """The per-operation report of an interrupted run's `verify` (spec 022 FR-005 to FR-008).
+    """The per-operation report of an interrupted run's `verify` (spec 016 FR-005 to FR-008).
 
     Empty unless the run requires reconciliation and is not cancelled. The running `verify`
     itself is unfinished, so the store's resumable-run rule, which requires every execution
@@ -752,7 +752,7 @@ def resume_start_after(projection: ProductProjection, run_id: str) -> int | None
     """The position a resume starts after: the run's highest saved progress marker.
 
     `None` when no write execution of the run saved a marker, so the resume applies the plan
-    from its first operation (spec 022, critique E2, research R6).
+    from its first operation (spec 016, critique E2, research R6).
     """
     stored = projection.lookup_run(run_id).value
     if stored is None:
@@ -787,10 +787,10 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     before either read returns both sides as `not_started`. It then gives the engine an
     observer that stores each side's read on the execution `flow_run_id`. An `apply` or `sync`
     stage gives the engine an observer that saves its progress marker on the same execution
-    (spec 022, research R3).
+    (spec 016, research R3).
 
     A `sync` whose plan leaves out records stops after the plan is saved, before any write,
-    and gives back its write admission (spec 020 FR-012, research R11): see `_left_out_stop`.
+    and gives back its write admission (spec 007 FR-012, research R11): see `_left_out_stop`.
     """
     if stage in ("plan", "sync"):
         record_waiting(projection, run_id, flow_run_id)
@@ -893,7 +893,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         writeback = ExecutionMergeWriteback(results={"verification": result})
     elif stage in _SAVED_PLAN_WRITE_STAGES:
         # An apply, or a resume of an interrupted `apply` or `sync`: the same saved plan, the
-        # same checks in the same order, and never the plan stage or the source (spec 022
+        # same checks in the same order, and never the plan stage or the source (spec 016
         # FR-010, FR-011, FR-017).
         run_directory = scratch.run_directory(instance.name, run_id)
         # The plan this apply was approved for, resolved and validated whole before any
@@ -954,7 +954,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             # `applied` even when nothing was left to write after the saved position, and the
             # engine's counts, which become the run's summary, are the whole plan's, as for an
             # apply that was never interrupted. Each resume's own count is derived from its
-            # marker in the run's `resumes` (spec 022 FR-016, research R6).
+            # marker in the run's `resumes` (spec 016 FR-016, research R6).
             outcome = "applied"
             result = {**result, "operation": "resume", "outcome": outcome, "start_after": start_after}
         writeback = ExecutionFinishWriteback(
@@ -1065,7 +1065,7 @@ def _left_out_stop(
 
     The stage ends with phase `planned` and outcome `left-out-review-required`, and its
     result carries `failure`, whose next action the last log line, the run artifact and the
-    CLI show (spec 020 FR-012, data-model.md "Stage result `failure` for a stopped `sync`").
+    CLI show (spec 007 FR-012, data-model.md "Stage result `failure` for a stopped `sync`").
     The writeback asks the store to give back the run's write admission in the same commit,
     so the team can apply the reviewed plan once with the confirmation. It carries no
     baseline: nothing was written.
@@ -1110,7 +1110,7 @@ def _failure_evidence(
     """Describe one failure, with whatever is known about what it wrote.
 
     The failure's operator cause is recorded too, when it has one: see `operator_cause`. Every
-    record carries the spec 020 fields of `failure_record` (ADR 0021): the failure type, the
+    record carries the spec 007 fields of `failure_record` (ADR 0021): the failure type, the
     system involved and the allowlisted values the failure names. Where `operator_cause`
     records no cause or next action, the fixed template of the failure type supplies it.
 
@@ -1120,7 +1120,7 @@ def _failure_evidence(
     plan's operation count and the failed operation's action, kind and identity.
 
     `resumable` is true when the run's write stopped part-way and the run keeps its saved plan
-    (spec 022); a template's next action then names `verify` and `runs resume`.
+    (spec 016); a template's next action then names `verify` and `runs resume`.
     """
     evidence: dict[str, Any] = {
         "stage": stage,
@@ -1283,13 +1283,13 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
         terminal_state, terminal_outcome = ("interrupted", "ambiguous") if ambiguous else ("failed", "failed")
         # The run keeps its saved plan when this failure leaves it interrupted, or when it was
         # already interrupted, as for a failed `verify` or a resume that failed before its first
-        # write: the next step is `verify`, then `runs resume` (spec 022), not a new plan.
+        # write: the next step is `verify`, then `runs resume` (spec 016), not a new plan.
         resumable = stored.phase != "cancelled" and (ambiguous or stored.reconciliation_required)
         evidence = _failure_evidence(
             stage, exc, outcome=terminal_outcome, record=record, secrets=secrets, resumable=resumable
         )
         # The execution that wrote the record: results are merged, so a later execution of the
-        # same purpose that never records a failure leaves this record in place (spec 022,
+        # same purpose that never records a failure leaves this record in place (spec 016,
         # research R11). The progress view uses a record only when it names the latest write.
         evidence["flow_run_id"] = flow_run_id
         results: dict[str, Any] = {f"{stage}_failure": evidence}
@@ -1345,7 +1345,7 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
         return None
     next_action = evidence.get("next_action")
     # The worker's ERROR line and its returned `Failed` state repeat only a cause that
-    # `operator_cause` recorded (spec 017); a cause from a `failure_record` template stays in
+    # `operator_cause` recorded (spec 012); a cause from a `failure_record` template stays in
     # the record, and the failure keeps the sanitized raise.
     cause = operator_cause(exc, secrets).get("cause")
     return RecordedFailure(
@@ -1465,7 +1465,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     `configuration_name` is the configuration's readable name, used only for the run's
     title; the configuration is identified by `config_id`. `confirm_left_out` is the apply
     request's confirmation that the records the plan leaves out were reviewed; the engine
-    checks it again (spec 020 research R10).
+    checks it again (spec 007 research R10).
 
     A refused execution claim, and a failure whose recorded evidence has a cause, end the flow
     run with a returned `Failed` state, so no traceback passes through Prefect's engine; any
@@ -1583,7 +1583,7 @@ def _stage_event(  # pylint: disable=too-many-arguments,too-many-positional-argu
     outcome: str,
     run_logger: RunLogger,
 ) -> AuditEvent:
-    """Build the event of one stage result (spec 017 data model).
+    """Build the event of one stage result (spec 012 data model).
 
     The actor and reason are those of the request whose receipt holds this flow run ID, so an
     apply an administrator requested names the administrator; when no receipt holds it, the

@@ -2491,7 +2491,7 @@ def test_the_token_check_reports_whether_the_site_requires_approval(
     *,
     expected: bool,
 ) -> None:
-    """Spec 019 FR-017: `GET /me` reports `INFRAHUB_SYNC_REQUIRE_APPROVAL`, read per request."""
+    """Spec 014 FR-017: `GET /me` reports `INFRAHUB_SYNC_REQUIRE_APPROVAL`, read per request."""
     client, _projection, _orchestration = service_api
     monkeypatch.setenv("INFRAHUB_SYNC_REQUIRE_APPROVAL", value)
 
@@ -2731,7 +2731,7 @@ def test_an_unconfirmed_cancellation_names_the_orchestrator(
     assert "Prefect" not in message
 
 
-# --- spec 018 T014: each orchestration entry returns its read state ---------------------------
+# --- spec 013 T014: each orchestration entry returns its read state ---------------------------
 
 _READ_CANARY = "db.internal.example:5432 password=ZZ-HTTP-READ-CANARY"
 

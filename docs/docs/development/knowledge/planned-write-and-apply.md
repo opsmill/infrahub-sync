@@ -189,7 +189,7 @@ checks each mapped Dropdown value against them. A change to the choices in Infra
 plan makes apply refuse with `PlanSchemaChangedError`, and the team plans again.
 
 Several creates sharing a destination human-friendly ID, a unique attribute (including an
-inherited one), or a uniqueness constraint form an identity group. Since spec 020 the plan does
+inherited one), or a uniqueness constraint form an identity group. Since spec 007 the plan does
 not refuse the group: the problem pass records one `destination_identity_collision` problem and
 leaves every record of the group out of the plan (ADR 0020). The write surface still refuses
 such creates as `DestinationIdentityCollisionError`, naming the colliding rule. Applying those creates could converge distinct source
@@ -650,7 +650,7 @@ Storing the layout in the store when the write starts was rejected: it needs a c
 on both database backends and a write from the worker, for data the published plan already
 holds.
 
-<!-- Extracted from dev/specs/archive/022-resume-interrupted-apply on 2026-11-14 -->
+<!-- Extracted from dev/specs/archive/016-resume-interrupted-apply on 2026-11-14 -->
 
 ### Deletes are recorded, never executed
 

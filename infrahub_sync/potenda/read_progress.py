@@ -2,7 +2,7 @@
 
 `Potenda._load_side` calls an optional `SideReadObserver` when a side's read starts and when it
 ends. The engine imports nothing from the service: the Sync service's worker supplies the one
-observer that stores the reports (spec 018, research R2).
+observer that stores the reports (spec 013, research R2).
 """
 
 from __future__ import annotations

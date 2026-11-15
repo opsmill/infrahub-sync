@@ -137,7 +137,7 @@ def _report_limit(value: str | None) -> int:
 def plan_router(service: RunService, authenticate: Callable[..., Principal]) -> APIRouter:
     """Return the authenticated routes of a saved plan: its review and its problem, left-out and kept lists.
 
-    The three lists are spec 020's (contracts/sync-api.md).
+    The three lists are spec 007's (contracts/sync-api.md).
     """
     router = APIRouter()
 
@@ -155,7 +155,7 @@ def plan_router(service: RunService, authenticate: Callable[..., Principal]) -> 
         kind: Annotated[str | None, Query()] = None,
         expected_checksum: Annotated[str | None, Query()] = None,
     ) -> PlanReportPageResource:
-        """Return one page of the saved plan's problems (spec 020, contracts/sync-api.md)."""
+        """Return one page of the saved plan's problems (spec 007, contracts/sync-api.md)."""
         if problem_type is not None and problem_type not in PROBLEM_TYPES:
             raise ServiceAPIError(422, "request-invalid", "the request does not match the API schema")
         return service.get_plan_report(
@@ -177,7 +177,7 @@ def plan_router(service: RunService, authenticate: Callable[..., Principal]) -> 
         kind: Annotated[str | None, Query()] = None,
         expected_checksum: Annotated[str | None, Query()] = None,
     ) -> PlanReportPageResource:
-        """Return one page of the records the saved plan leaves out (spec 020)."""
+        """Return one page of the records the saved plan leaves out (spec 007)."""
         return service.get_plan_report(
             run_id,
             entry="left_out",
@@ -196,7 +196,7 @@ def plan_router(service: RunService, authenticate: Callable[..., Principal]) -> 
         kind: Annotated[str | None, Query()] = None,
         expected_checksum: Annotated[str | None, Query()] = None,
     ) -> PlanReportPageResource:
-        """Return one page of the records the saved plan keeps without one optional relationship (spec 020)."""
+        """Return one page of the records the saved plan keeps without one optional relationship (spec 007)."""
         return service.get_plan_report(
             run_id,
             entry="kept",
@@ -212,7 +212,7 @@ def plan_router(service: RunService, authenticate: Callable[..., Principal]) -> 
 def approve_router(
     service: RunService, authenticate: Callable[..., Principal], idempotency_key: Callable[..., str]
 ) -> APIRouter:
-    """Return the authenticated ``POST /runs/{run_id}/approve`` route (spec 019, contracts/http-api.md)."""
+    """Return the authenticated ``POST /runs/{run_id}/approve`` route (spec 014, contracts/http-api.md)."""
     router = APIRouter()
 
     @router.post(
@@ -232,7 +232,7 @@ def approve_router(
 
 
 def run_logs_router(service: RunService, authenticate: Callable[..., Principal]) -> APIRouter:
-    """Return the authenticated ``GET /runs/{run_id}/logs`` route (spec 017, contracts/logs-route.md)."""
+    """Return the authenticated ``GET /runs/{run_id}/logs`` route (spec 012, contracts/logs-route.md)."""
     router = APIRouter()
 
     @router.get("/runs/{run_id}/logs", responses=ERROR_RESPONSES)
@@ -252,7 +252,7 @@ def run_logs_router(service: RunService, authenticate: Callable[..., Principal])
 
 
 def events_router(service: RunService, authenticate: Callable[..., Principal]) -> APIRouter:
-    """Return the authenticated ``GET /events`` route (spec 017, contracts/events-route.md)."""
+    """Return the authenticated ``GET /events`` route (spec 012, contracts/events-route.md)."""
     router = APIRouter()
 
     @router.get("/events", responses=ERROR_RESPONSES)
@@ -509,7 +509,7 @@ def create_app(
         principal: Annotated[Principal, Depends(authenticate)],
         key: Annotated[str, Depends(idempotency_key)],
     ) -> JSONResponse:
-        """Resume an interrupted write from the run's saved position, after a `verify` passed (spec 022)."""
+        """Resume an interrupted write from the run's saved position, after a `verify` passed (spec 016)."""
         status, content = await service.resume_run(run_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
 

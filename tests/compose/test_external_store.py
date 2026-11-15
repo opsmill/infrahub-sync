@@ -1,6 +1,6 @@
 """The operator file against an S3-compatible store the team runs outside the deployment.
 
-Spec 021 user story 1. A Silo instance stands in for the team's store: it runs on its own
+Spec 015 user story 1. A Silo instance stands in for the team's store: it runs on its own
 Docker network, with the bucket created before the deployment starts, and the deployment
 leaves its bundled store out (`INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0`). A test-only override
 connects the three Sync services that use the store to that network; the shipped file is not
@@ -10,7 +10,7 @@ The proxy case puts a forwarding proxy in front of Silo that answers a repeated 
 write itself, the way a store that ignores `If-None-Match: *` would. The proxy forwards every
 other request unchanged, `Host` included, so the requests' signatures stay valid.
 
-The private CA cases (spec 021 user story 3, SC-004) serve the store, Infrahub and a NetBox
+The private CA cases (spec 015 user story 3, SC-004) serve the store, Infrahub and a NetBox
 stand-in over TLS with certificates from a test CA. A TLS front on the store's network answers
 as both `INFRAHUB_HOST`, which it forwards to the Infrahub fixture, and `NETBOX_HOST`, which it
 answers itself. The same front checks each bundled adapter's HTTP client inside the image.
@@ -569,7 +569,7 @@ def test_a_store_that_accepts_a_second_create_only_write_stops_bootstrap(
 
 
 # ---------------------------------------------------------------------------
-# A private certificate authority (spec 021 US3, SC-004)
+# A private certificate authority (spec 015 US3, SC-004)
 # ---------------------------------------------------------------------------
 
 
@@ -582,7 +582,7 @@ def write_test_pki(directory: Path) -> Path:
 
     now = datetime.datetime.now(datetime.timezone.utc)
     ca_key = ec.generate_private_key(ec.SECP256R1())
-    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Spec 021 test CA")])
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Spec 015 test CA")])
     ca = (
         x509.CertificateBuilder()
         .subject_name(ca_name)

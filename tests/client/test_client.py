@@ -855,7 +855,7 @@ def test_approve_refusal_is_a_typed_api_error() -> None:
 
 
 def test_cancel_run_accepts_the_200_of_a_withdrawn_plan() -> None:
-    """Withdrawing a finished plan is answered 200 with the run, not 202 (spec 019, User Story 4)."""
+    """Withdrawing a finished plan is answered 200 with the run, not 202 (spec 014, User Story 4)."""
     base = _run()
     run = base["run"]
     assert isinstance(run, dict)
@@ -1174,7 +1174,7 @@ def _report_page(entries: list[dict[str, object]], *, next_offset: int | None) -
 def test_the_plan_report_reads_send_paging_and_filters_and_parse_the_page(
     read: Callable[[SyncClient], object], route: str, query: str
 ) -> None:
-    """Spec 020 T030: one page of a saved plan's problems, left-out or kept records."""
+    """Spec 007 T030: one page of a saved plan's problems, left-out or kept records."""
     requests: list[httpx.Request] = []
     entry: dict[str, object] = {"record": {"kind": "DcimDevice", "identity": {"name": "rtr1"}, "source_id": "1"}}
 

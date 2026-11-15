@@ -1,7 +1,7 @@
 """`POST /runs/{run_id}/approve`: record approval of a run's saved plan without applying it.
 
-The cases follow the order of evaluation in the HTTP contract of spec 019
-(``dev/specs/archive/019-plan-approval/contracts/http-api.md``).
+The cases follow the order of evaluation in the HTTP contract of spec 014
+(``dev/specs/archive/014-plan-approval/contracts/http-api.md``).
 """
 
 from __future__ import annotations
@@ -234,7 +234,7 @@ def test_an_approval_and_its_accepted_event_carry_one_clock_reading(
 
 
 def test_an_approval_and_its_refusal_are_listed_as_typed_run_events(api: _Api) -> None:
-    """Spec 017's event list shows the approve request as `run.accepted`, a refused one as `run.refused`."""
+    """Spec 012's event list shows the approve request as `run.accepted`, a refused one as `run.refused`."""
     client, projection, _orchestration, version = api
     _stored_run(projection, version)
     assert _approve(client).status_code == 200

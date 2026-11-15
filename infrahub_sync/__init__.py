@@ -111,7 +111,7 @@ def new_transform_environment() -> SandboxedNativeEnvironment:
 
 
 class TransformError(ValueError):
-    """A configured transform failed for one record (spec 020 research R7).
+    """A configured transform failed for one record (spec 007 research R7).
 
     `field` is the field the transform writes and `position` the transform's position in the
     mapping entry's `transforms` list, or `None` when the transform was applied on its own.
@@ -337,7 +337,7 @@ NOT_IN_SOURCE_PLACEHOLDER_PREFIX = NOT_IN_SOURCE_VALUE_PREFIX
 def not_in_source_placeholder(peer_kind: str, peer_source_id: str) -> str:
     """Return the reference value that marks an optional peer as not in the source (research R5).
 
-    The problem pass (spec 020 T025, T026) removes it from the plan; it never reaches a write.
+    The problem pass (spec 007 T025, T026) removes it from the plan; it never reaches a write.
     """
     return f"{NOT_IN_SOURCE_PLACEHOLDER_PREFIX}{peer_kind}:{peer_source_id}"
 
@@ -348,7 +348,7 @@ def is_not_in_source_placeholder(value: object) -> bool:
 
 
 class PeerReferenceError(Exception):
-    """A source record refers to a peer that the read cannot resolve (spec 020 research R2, R5).
+    """A source record refers to a peer that the read cannot resolve (spec 007 research R2, R5).
 
     The message is built from the named attributes only, never from record values or from the
     text of another error.
@@ -482,7 +482,7 @@ def first_failing_filter(model: type[Any], record: Any, filters: list[SchemaMapp
 
 @dataclasses.dataclass
 class _ReadState:
-    """What the read loop of one adapter keeps between records (spec 020 research R2).
+    """What the read loop of one adapter keeps between records (spec 007 research R2).
 
     `peer_index` maps (kind, source record ID) to the unique ID of each stored record;
     `not_loaded` maps (kind, source record ID) to the load report entry of a record the read

@@ -1,4 +1,4 @@
-"""The run log reader keeps Sync's own lines, tags their stage and pages them (spec 017, FR-004, FR-005)."""
+"""The run log reader keeps Sync's own lines, tags their stage and pages them (spec 012, FR-004, FR-005)."""
 
 from __future__ import annotations
 

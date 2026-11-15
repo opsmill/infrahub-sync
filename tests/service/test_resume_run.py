@@ -1,4 +1,4 @@
-"""Resume an interrupted apply through the Sync API, the worker and the engine (spec 022 T022).
+"""Resume an interrupted apply through the Sync API, the worker and the engine (spec 016 T022).
 
 User story 1, acceptance scenarios 1 to 4:
 
@@ -504,7 +504,7 @@ def _approve(client: TestClient, run_id: str, key: str = "approve-after-interrup
 def test_an_interrupted_run_that_was_never_approved_is_approved_and_then_resumed(
     service_api: _API, monkeypatch: pytest.MonkeyPatch, operation: str
 ) -> None:
-    """Spec 022 FR-019: the approval-required refusal names `approve`, and `approve` accepts the run."""
+    """Spec 016 FR-019: the approval-required refusal names `approve`, and `approve` accepts the run."""
     client, projection, orchestration = service_api
     run_id = _interrupted_run(service_api) if operation == "apply" else _interrupted_sync_run(service_api)
     _verified(service_api, run_id)
@@ -848,7 +848,7 @@ def test_a_verify_of_a_sync_stopped_after_its_plan_still_reads_the_plan_first(
     client, projection, orchestration = service_api
     run_id, flow_run_id = _sync_run(service_api)
     _publish_plan(projection, run_id, total=3, left_out=1)
-    # What the worker records when the `sync` stops for its left-out records (spec 020 FR-012).
+    # What the worker records when the `sync` stops for its left-out records (spec 007 FR-012).
     assert projection.commit_claimed_execution(
         run_id,
         flow_run_id,
@@ -1233,7 +1233,7 @@ def _plan_with_deletes(run_directory: Path, run_id: str) -> list[tuple[str, str]
 
 
 def test_a_resume_counts_every_operation_the_run_wrote_not_only_its_own(tmp_path: Path) -> None:
-    """The record and the counts of a resume describe the whole run (spec 022 FR-016, research R6).
+    """The record and the counts of a resume describe the whole run (spec 016 FR-016, research R6).
 
     The resume starts after position 4. Positions 0, 2, 3 and 4 are creates an earlier execution
     committed; position 1 is a recorded delete, which is never written, so it is not counted.

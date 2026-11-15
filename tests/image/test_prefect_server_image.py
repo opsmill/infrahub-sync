@@ -1,4 +1,4 @@
-"""The Sync image serves the Prefect server under a read-only root filesystem (spec 021 FR-026).
+"""The Sync image serves the Prefect server under a read-only root filesystem (spec 015 FR-026).
 
 The Compose files run `prefect-server` from the Sync image, read-only over the image's
 scratch roots. This starts the same command in the image under test, with no database

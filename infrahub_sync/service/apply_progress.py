@@ -1,7 +1,7 @@
 """Save an apply's progress marker on its execution while the worker writes the saved plan.
 
 The worker gives Potenda a `StoreApplyProgressObserver`, which saves the position of the last
-committed operation to the execution's row (spec 022, research R2 and R3). It saves after 500
+committed operation to the execution's row (spec 016, research R2 and R3). It saves after 500
 commits, at the first commit after 30 seconds, when the apply stops and after the plan's last
 operation. It does not save at a change of kind, because the kinds of one tier interleave in
 the plan's order. A saved

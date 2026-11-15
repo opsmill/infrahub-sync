@@ -217,7 +217,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
 
         A peer that is not stored is a `peer_not_found_in_source` problem through a required
         relationship, and a placeholder with a load report entry through an optional one (spec
-        019 research R5); the adapter no longer drops the reference with a warning.
+        007 research R5); the adapter no longer drops the reference with a warning.
         """
         source_id = str(record.get("id"))
         data: dict[str, Any] = {"local_id": source_id}

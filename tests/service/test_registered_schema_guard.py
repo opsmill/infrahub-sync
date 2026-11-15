@@ -275,7 +275,7 @@ def _apply(harness: _Harness, *, expected_checksum: str | None = None) -> dict[s
 
 
 def _apply_ends_failed(harness: _Harness) -> str:
-    """Apply a known failure: the flow returns a `Failed` state; return its message (spec 017, T026)."""
+    """Apply a known failure: the flow returns a `Failed` state; return its message (spec 012, T026)."""
     state = _apply(harness)
     assert isinstance(state, State)
     assert state.is_failed()
@@ -642,7 +642,7 @@ def test_a_failed_schema_read_refuses_with_only_its_short_reason(
     )
 
     message = _apply_ends_failed(harness)
-    # The reason reaches the operator as its fixed cause (spec 017, FR-001).
+    # The reason reaches the operator as its fixed cause (spec 012, FR-001).
     assert "Infrahub refused the destination token" in message
     assert INFRAHUB_CANARY not in message
     assert "https://destination.invalid" not in message

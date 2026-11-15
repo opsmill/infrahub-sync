@@ -1,4 +1,4 @@
-"""`GET /runs/{run_id}/logs`: a run's Sync log lines, read through the Sync API (spec 017, FR-004 to FR-013)."""
+"""`GET /runs/{run_id}/logs`: a run's Sync log lines, read through the Sync API (spec 012, FR-004 to FR-013)."""
 
 from __future__ import annotations
 

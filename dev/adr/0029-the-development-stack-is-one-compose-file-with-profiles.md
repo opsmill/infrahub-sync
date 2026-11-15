@@ -2,8 +2,8 @@
 
 **Status**: Accepted
 **Date**: 2026-10-22
-**Source**: `dev/specs/archive/010-prefect-from-sync-image/research.md` (R5, R6, R7),
-`dev/specs/archive/010-prefect-from-sync-image/spec.md` (D-6, D-8, D-9, D-10, D-12)
+**Source**: `dev/specs/archive/008-prefect-from-sync-image/research.md` (R5, R6, R7),
+`dev/specs/archive/008-prefect-from-sync-image/spec.md` (D-6, D-8, D-9, D-10, D-12)
 
 ## Context
 

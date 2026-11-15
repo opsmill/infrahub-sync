@@ -243,7 +243,7 @@ _PREFECT_EXECUTION_LIVENESS_COLUMNS: tuple[tuple[str, str], ...] = (
     ("terminal_outcome", "TEXT"),
 )
 # The read state of each side of a plan or sync execution: one JSON document per side, so the
-# two read threads never write the same column (spec 018, research R3).
+# two read threads never write the same column (spec 013, research R3).
 _SIDE_READ_COLUMNS: dict[Side, str] = {"source": "source_read", "destination": "destination_read"}
 # The fields and values a side's read document may hold. The store checks them before it writes,
 # so a document cannot carry an exception message, an address, or a secret into the run record.
@@ -255,7 +255,7 @@ _SIDE_READ_ERROR_CLASS_MAX_LENGTH = 200
 _PREFECT_EXECUTION_READ_COLUMNS: tuple[tuple[str, str], ...] = tuple(
     (column, "TEXT") for column in _SIDE_READ_COLUMNS.values()
 )
-# The last progress marker of a write execution, one JSON document (spec 022, research R2).
+# The last progress marker of a write execution, one JSON document (spec 016, research R2).
 _PREFECT_EXECUTION_PROGRESS_COLUMNS: tuple[tuple[str, str], ...] = (("apply_progress", "TEXT"),)
 _CONFIGURATION_BINDING_CONSTRAINT = "product_runs_configuration_binding_consistent"
 _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
@@ -339,7 +339,7 @@ _CATALOG_NULLABILITY_ROW_WIDTH = 2
 _CATALOG_NULLABILITY_VALUES = frozenset({"YES", "NO"})
 # The stages one run's admission arbitrates against each other. Cancellation is
 # deliberately outside the set: it targets the execution a write already owns and never
-# reserves a stage of its own, so a claimed write stays cancellable. A resume (spec 022)
+# reserves a stage of its own, so a claimed write stays cancellable. A resume (spec 016)
 # reserves through `reserve_resume`, and its unresolved receipt blocks every other stage.
 _ARBITRATED_OPERATIONS = ("plan", "verify", "apply", "sync", "resume")
 # Another unresolved receipt of an arbitrated stage on the run. Built from the tuple above, so
@@ -352,13 +352,13 @@ _SELECT_UNRESOLVED_ARBITRATED_RECEIPT = (
 # the Python-side membership test for the same pair.
 _WRITE_OPERATIONS = ("apply", "sync")
 # Every execution purpose that reaches a destination: the two admitted writes, and a
-# `resume` of an interrupted one (spec 022). A resume holds a `resume_admissions` row, not
+# `resume` of an interrupted one (spec 016). A resume holds a `resume_admissions` row, not
 # the run's `write_admissions` row, so it is kept out of `_WRITE_OPERATIONS`. Public, so the
 # Sync API's run progress view tests the same set (`service/resume_view.py`).
 WRITE_PURPOSES: tuple[str, ...] = ("apply", "sync", "resume")
 # The artifact ID of a run's published plan review document. The plan stage and a `sync`
 # publish it before any write, so a run without it wrote nothing. Public, so the Sync API
-# reads the same plan the store's resumable-run rule tests (spec 022, research R14).
+# reads the same plan the store's resumable-run rule tests (spec 016, research R14).
 PLAN_ARTIFACT_ID = "plan-review"
 # Why a run whose write stage stopped before it published its plan is not resumable.
 NO_SAVED_PLAN_MESSAGE = (
@@ -565,7 +565,7 @@ _EVENT_HAS_RESOURCE = (
 )
 # Event IDs read per related-resource query, well under SQLite's bound-parameter limit.
 _EVENT_RESOURCE_BATCH = 500
-# The columns spec 017 adds to an audit event; all nullable, so a row written before the change stays valid.
+# The columns spec 012 adds to an audit event; all nullable, so a row written before the change stays valid.
 _AUDIT_EVENT_ADDED_COLUMNS = (
     ("event_type", "TEXT"),
     ("config_id", "TEXT"),
@@ -573,7 +573,7 @@ _AUDIT_EVENT_ADDED_COLUMNS = (
     ("branch", "TEXT"),
 )
 _CONFIGURATION_OPERATIONS = "('register-config', 'create-config-version')"
-# The type of an event recorded before spec 017, from its (operation, outcome) pair (data-model.md, "Event types").
+# The type of an event recorded before spec 012, from its (operation, outcome) pair (data-model.md, "Event types").
 # A request refused for a missing or invalid token keeps no type, so the event list never returns it (research R6).
 # Those rows are left out of the update: they stay NULL for good, and rewriting every one of them on
 # each start-up would cost more as refused requests accumulate.
@@ -588,7 +588,7 @@ WHEN outcome = 'replayed' THEN 'infrahub_sync.run.replayed'
 WHEN substr(outcome, 1, 8) = 'refused-' THEN 'infrahub_sync.run.refused'
 WHEN outcome = 'unavailable' THEN 'infrahub_sync.run.unavailable'
 END WHERE event_type IS NULL AND outcome <> 'refused-authentication'"""  # noqa: S608 - module-owned literals only.
-# The actor's account is the one related resource an event recorded before spec 017 can name.
+# The actor's account is the one related resource an event recorded before spec 012 can name.
 _BACKFILL_AUDIT_EVENT_ACCOUNTS = """INSERT INTO audit_event_resources (event_id, kind, resource_id)
 SELECT event_id, 'account', actor FROM audit_events WHERE NOT EXISTS (
 SELECT 1 FROM audit_event_resources AS resource
@@ -1067,7 +1067,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
     def _migrate_audit_events(self, cursor: _Cursor) -> None:
         """Bring legacy audit events up to the typed event, preserving every event in place.
 
-        Spec 017 adds the nullable ``event_type``, ``config_id``, ``registry_version`` and
+        Spec 012 adds the nullable ``event_type``, ``config_id``, ``registry_version`` and
         ``branch`` columns, fills ``event_type`` from each row's ``(operation, outcome)`` pair
         and writes one ``account`` resource per event. A legacy row names no configuration or
         branch, because the old record did not hold them.
@@ -1462,7 +1462,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         write append additionally requires the run's write-admission row to name this exact
         receipt and this exact operation: the admission is what one request won, and nothing
         else may spend it. A run holding a write admission accepts no read append, except the
-        ``verify`` a resumable run admitted (spec 022, research R5): its receipt must be a
+        ``verify`` a resumable run admitted (spec 016, research R5): its receipt must be a
         ``verify`` receipt, and the run must still be resumable under the lock the caller holds.
         A ``resume`` append requires a ``resume_admissions`` row naming this exact receipt.
         """
@@ -1634,7 +1634,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
         Returns `saved` when the row changed. A write that arrives after the execution ended,
         for example from a worker that kept running after liveness marked it interrupted,
-        changes nothing and returns `ended`, so the worker can stop at once (spec 022, research
+        changes nothing and returns `ended`, so the worker can stop at once (spec 016, research
         R2 and R4); a write to an execution the run does not have returns `unknown`. The
         document is validated again before any SQL runs, so a caller that bypassed the model's
         checks cannot store another shape.
@@ -1673,7 +1673,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             connection.close()
 
     def run_is_resumable(self, run_id: str) -> bool:
-        """Whether the run is resumable: see `_run_is_resumable` (spec 022 data-model.md "State rules")."""
+        """Whether the run is resumable: see `_run_is_resumable` (spec 016 data-model.md "State rules")."""
         connection = self._connect()
         try:
             cursor = connection.cursor()
@@ -1689,7 +1689,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
         A run is resumable when `reconciliation_required` is true, its phase is not
         `cancelled`, none of its executions is unfinished, and its plan is published (spec
-        022 data-model.md "State rules", research R1 and R14). A `sync` whose worker was
+        016 data-model.md "State rules", research R1 and R14). A `sync` whose worker was
         ended while it was still planning requires reconciliation, because a worker that
         liveness ended can still publish its plan and write; until that plan exists the run
         wrote nothing and there is nothing to resume.
@@ -1797,7 +1797,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         self._record_configuration_baseline(cursor, run_id, writeback.baseline, terminal_at)
                     # A `sync` that stopped after its plan, before any dispatch, gives back
                     # its write admission in this same transaction, so the team can apply
-                    # the reviewed plan once (spec 020 FR-012, ADR 0020).
+                    # the reviewed plan once (spec 007 FR-012, ADR 0020).
                     if _releases_write_admission(writeback, terminal_state, terminal_outcome):
                         cursor.execute(self._sql(_RELEASE_STOPPED_SYNC_ADMISSION), (run_id, run_id))
                 else:
@@ -1887,7 +1887,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         )
 
     def publish_worker_environment(self, environment: WorkerEnvironment) -> None:
-        """Replace one worker's published credential variable names (spec 020 FR-035)."""
+        """Replace one worker's published credential variable names (spec 007 FR-035)."""
         connection = self._connect()
         try:
             cursor = connection.cursor()
@@ -2325,11 +2325,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         """Keep a run whose write was interrupted in phase ``interrupted`` when a later execution ends.
 
         On a run that requires reconciliation, only a ``verify`` or a ``resume`` can still run
-        (spec 022, research R5). When one of them is cancelled or abandoned, the run's write
+        (spec 016, research R5). When one of them is cancelled or abandoned, the run's write
         is still interrupted and possibly partly applied, so the run keeps phase
         ``interrupted`` and outcome ``ambiguous``: it stays resumable, and the next resume
         requires a new ``verify``. ``reconciliation_required`` is never cleared here. Before
-        spec 022 no run that required reconciliation admitted another execution, so this
+        spec 016 no run that required reconciliation admitted another execution, so this
         changes nothing for an earlier run.
         """
         cursor.execute(
@@ -2346,7 +2346,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         """Clear ``reconciliation_required`` and set phase ``applied`` when a resume succeeded.
 
         A ``resume`` execution that ends ``completed`` / ``succeeded`` applied every operation
-        after the run's saved position, so the whole plan is applied (spec 022, research R8).
+        after the run's saved position, so the whole plan is applied (spec 016, research R8).
         Any other verdict leaves the run requiring reconciliation; an interrupted resume is
         recorded by `_record_write_ambiguity` like an interrupted apply.
         """
@@ -2506,7 +2506,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         A run that has admitted its one write never admits another stage of any kind, even
         after that write becomes terminal: terminal write evidence is immutable and the
         operator's next step is a new run. The one exception is a ``verify`` on a resumable
-        run (spec 022, research R5, critique E1): it reads the destination and writes nothing,
+        run (spec 016, research R5, critique E1): it reads the destination and writes nothing,
         and it is admitted only while no other receipt of the run is unresolved, so two
         ``verify`` requests never both win. A write additionally needs the run quiet — no
         other unresolved submission and no unfinished execution — so an apply cannot race
@@ -2554,7 +2554,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
 
         One transaction on the run's locked row (the write-first pattern every reservation
         uses) decides the request, so two concurrent resumes of one run never both win (spec
-        022, research R5). The resume is admitted when no other resume of the run is
+        016, research R5). The resume is admitted when no other resume of the run is
         unfinished, no other stage receipt is unresolved, the run is resumable, and the run's
         latest ``verify`` execution comes after its latest write execution and succeeded. A
         refused request is stored with its refusal, so replaying its client key replays the
@@ -2657,7 +2657,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
     def _verify_passed_after_latest_write(self, cursor: _Cursor, run_id: str) -> bool:
         """Whether the run's latest ``verify`` execution follows its latest write execution and succeeded.
 
-        Executions are ordered by their position in the run, never by time (spec 022 FR-012).
+        Executions are ordered by their position in the run, never by time (spec 016 FR-012).
         """
         cursor.execute(
             self._sql(
@@ -2726,7 +2726,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         withdrawal take, so the execution check and the update below see one state. The
         conditional update stores the approval only on a run that has none and no unfinished
         execution, and that is in phase ``planned`` or is resumable: its write stopped part-way,
-        so it requires reconciliation, and it is not cancelled (spec 022 FR-019). Of two
+        so it requires reconciliation, and it is not cancelled (spec 016 FR-019). Of two
         concurrent approvals exactly one stores, and no
         approval is stored while an execution such as an ``apply`` is running. A write admitted
         but not yet submitted does not block the approval: once approval is required, retrying
@@ -2735,7 +2735,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         a withdrawn run, or ``run-not-approvable`` when an execution is unfinished or the run is
         neither planned nor resumable. Either way a retry with the same key replays what this
         transaction stored. ``events`` are written only with a stored approval, in the same
-        transaction (spec 017, FR-014).
+        transaction (spec 012, FR-014).
 
         Returns:
             Whether this call stored the approval.
@@ -2801,7 +2801,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         with the matching refusal: ``run-execution-conflict`` when other work holds the run,
         ``run-already-cancelled`` for a cancelled run, ``execution-terminal`` for any other phase.
         A retry with the same key replays what this transaction stored. ``events`` are written
-        only with a withdrawal, in the same transaction (spec 017, FR-014).
+        only with a withdrawal, in the same transaction (spec 012, FR-014).
 
         Returns:
             Whether this call withdrew the run.
@@ -3969,7 +3969,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Store read documents, keyed by side, on a non-terminal execution; return whether it changed.
 
         Each document holds a state, times, a read mode, node counts and an error class name,
-        never an exception message (spec 018 data-model.md). An unknown side is refused.
+        never an exception message (spec 013 data-model.md). An unknown side is refused.
         """
         return self._records.record_side_reads(run_id, flow_run_id, documents)
 
@@ -3980,7 +3980,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         no such execution (`_RelationalRunStore.record_apply_progress`).
 
         The marker holds positions, an operation identifier and a time, never a value
-        (spec 022 data-model.md "Execution progress marker").
+        (spec 016 data-model.md "Execution progress marker").
         """
         return self._records.record_apply_progress(run_id, flow_run_id, document)
 
@@ -4206,7 +4206,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Reserve a ``resume`` request and, when the run admits it, its resume admission, atomically.
 
         A refused request is stored with its refusal (``run-execution-conflict``,
-        ``run-not-resumable`` or ``verify-required``) on its receipt (spec 022, research R5).
+        ``run-not-resumable`` or ``verify-required``) on its receipt (spec 016, research R5).
         """
         sanitized_receipt = MutationReceipt.model_validate(_redact_value(receipt.model_dump(mode="json"), secrets))
         return self._records.reserve_resume(run_id, sanitized_receipt)
@@ -4508,7 +4508,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
     def publish_worker_environment(
         self, worker_id: str, credential_names: Iterable[str], *, observed_at: datetime | None = None
     ) -> None:
-        """Record the credential variable NAMES one worker holds now; never a value (spec 020 FR-035).
+        """Record the credential variable NAMES one worker holds now; never a value (spec 007 FR-035).
 
         Each call replaces that worker's previous names, so the record follows the variables
         the worker holds at its latest poll.
@@ -4933,7 +4933,7 @@ def _run_execution_conflict_response(run_id: str, receipt_id: str) -> dict[str, 
 
 
 def _resume_refusal_response(code: str, message: str, run_id: str, receipt_id: str) -> dict[str, Any]:
-    """The refusal a ``resume`` reservation stores on its receipt (spec 022, contracts/http-api.md)."""
+    """The refusal a ``resume`` reservation stores on its receipt (spec 016, contracts/http-api.md)."""
     return {
         "error": {
             "code": code,
@@ -4950,7 +4950,7 @@ def run_apply_progress(run: ProductRun) -> ApplyProgress | None:
 
     A resume stopped before its first save has no marker of its own, so taking the latest
     write execution's marker would show no progress; the highest position over every
-    ``apply``, ``sync`` and ``resume`` execution is the run's position (spec 022, critique
+    ``apply``, ``sync`` and ``resume`` execution is the run's position (spec 016, critique
     E2). Position 0 is a real position. Returns ``None`` when no write execution saved one.
     """
     markers = [

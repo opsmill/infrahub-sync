@@ -73,7 +73,7 @@ if TYPE_CHECKING:
     from infrahub_sync.configuration import ConfigurationPackage
 
 # What a faked `_verify_registered_apply` returns: the stage reads only the plan's operation
-# count before the faked apply (spec 022, the apply progress observer's `total`).
+# count before the faked apply (spec 016, the apply progress observer's `total`).
 _UNCHECKED_MANIFEST = SimpleNamespace(operations_count=1)
 
 
@@ -552,7 +552,7 @@ def test_service_flow_redacts_worker_logs_exception_chain_and_failed_state(
         # the canary assertions above and below cover the whole stored document.
         "cause_type": "ConnectionError",
     }
-    # Spec 020 ADR 0021: the failure type and a fixed template cause, never the error's text.
+    # Spec 007 ADR 0021: the failure type and a fixed template cause, never the error's text.
     assert recorded["failure_type"] == "system_unreachable"
     assert recorded["system"] is None
     assert recorded["cause"] == "A system could not be reached"
@@ -609,10 +609,10 @@ def test_service_apply_failure_retains_partial_write_evidence(
         "cause_type": None,
         # A fixed next action, never the destination's message. The run is interrupted and keeps
         # its saved plan, so the worker names `verify` and `runs resume` instead of the class's
-        # own advice, a new plan (spec 022).
+        # own advice, a new plan (spec 016).
         "next_action": RESUMABLE_WRITE_NEXT_ACTION,
         **partial.as_summary_keys(),
-        # Spec 020 ADR 0021: an apply failure with no known cause is an internal error at the
+        # Spec 007 ADR 0021: an apply failure with no known cause is an internal error at the
         # destination, with no cause text.
         "failure_type": "internal_error",
         "system": {"role": "destination", "adapter": "infrahub"},
@@ -622,7 +622,7 @@ def test_service_apply_failure_retains_partial_write_evidence(
         "infrahub_message": None,
         "record": None,
         "field": None,
-        # The execution that wrote the record (spec 022, research R11).
+        # The execution that wrote the record (spec 016, research R11).
         "flow_run_id": stored.prefect_executions[0].flow_run_id,
     }
     assert stored.prefect_executions[0].terminal_state == "interrupted"
@@ -853,7 +853,7 @@ def test_service_verify_is_read_only_for_product_lifecycle(monkeypatch: pytest.M
     after = projection.lookup_run(run_id).value
     assert after is not None
     assert before is not None
-    # The verify result's event (spec 017, FR-012a) is evidence, not a lifecycle change.
+    # The verify result's event (spec 012, FR-012a) is evidence, not a lifecycle change.
     assert after.model_dump(exclude={"results", "prefect_executions", "audit_links"}) == before.model_dump(
         exclude={"results", "prefect_executions", "audit_links"}
     )

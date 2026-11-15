@@ -1,4 +1,4 @@
-"""`PrefectOrchestration.read_logs` reads a run's flow-run lines from Prefect (spec 017, FR-004, FR-010)."""
+"""`PrefectOrchestration.read_logs` reads a run's flow-run lines from Prefect (spec 012, FR-004, FR-010)."""
 
 from __future__ import annotations
 

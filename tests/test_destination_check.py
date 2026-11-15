@@ -1,4 +1,4 @@
-"""The destination check of an interrupted run's `verify` (spec 022, research R7), offline.
+"""The destination check of an interrupted run's `verify` (spec 016, research R7), offline.
 
 `compare_planned_operation` turns one planned create or update and the node read for it into
 `matches`, `differs` or `missing`. `InfrahubAdapter.read_planned_nodes` reads those nodes,

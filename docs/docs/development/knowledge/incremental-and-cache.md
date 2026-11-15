@@ -53,7 +53,7 @@ The extraction methods are layered on top of the full read, which `list_records`
 #### A warm source read reports the problems of a full read
 
 For a source that inherits `DiffSyncMixin`, `Potenda._load_source_kinds` reads each kind as
-follows (spec 020 research R22):
+follows (spec 007 research R22):
 
 1. The kind reads warm only when the adapter implements `list_changed_records`, the previous
    run's snapshot of the kind is marked complete, and no peer kind the kind references (the

@@ -40,7 +40,7 @@ _VALID_NAME_OPTION = re.compile(
     r"|^#+ `infrahub-sync configs list`\n(?:(?!#)[^\n]*\n)*",
     re.MULTILINE,
 )
-# `events --run-id` filters events by run (spec 017) and is a current option. The retired
+# `events --run-id` filters events by run (spec 012) and is a current option. The retired
 # `--run-id` of the earlier commands stays refused everywhere else.
 _VALID_RUN_ID_OPTION = re.compile(
     r"(?<![\w-])events\s[^\n]*?(?<![\w-])--run-id(?![\w-])|^#+ `infrahub-sync events`\n(?:(?!#)[^\n]*\n)*",

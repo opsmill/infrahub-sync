@@ -1,4 +1,4 @@
-"""`infrahub-sync runs resume` and the progress lines of `runs show` (spec 022 T023, contracts/cli.md).
+"""`infrahub-sync runs resume` and the progress lines of `runs show` (spec 016 T023, contracts/cli.md).
 
 - `runs resume` sends `confirm_writes=true` itself, the checksum, the left-out confirmation and
   the optional reason, and prints the run, the position it starts after and the new execution;
@@ -133,7 +133,7 @@ def test_a_verify_required_refusal_prints_the_hint_and_exits_1(client: MagicMock
 
 
 def test_an_approval_required_refusal_prints_the_approve_hint_and_exits_1(client: MagicMock) -> None:  # noqa: F811
-    """Spec 022 FR-019: a run that was never approved, a `sync` run for example, is approved with `approve`."""
+    """Spec 016 FR-019: a run that was never approved, a `sync` run for example, is approved with `approve`."""
     client.resume.side_effect = APIError(409, "approval-required", run_id=_RUN_ID, mutation_id="m-1")
 
     result = _invoke(client, *_resume_arguments())

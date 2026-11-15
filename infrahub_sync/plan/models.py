@@ -36,10 +36,10 @@ from infrahub_sync.plan.identity import OPERATION_ID_PATTERN, canonical_identity
 PLAN_FORMAT_VERSION = 4
 # Read and review accept all three. A format-2 plan's updates carry no recorded destination
 # id, so they cannot be keyed — reviewing such a plan is still useful, applying it is not safe
-# (see `PlanFormatApplyUnsupportedError`). Format 3 has no plan report (spec 020 research R9).
+# (see `PlanFormatApplyUnsupportedError`). Format 3 has no plan report (spec 007 research R9).
 SUPPORTED_FORMAT_VERSIONS = frozenset({2, 3, 4})
 
-# The format that introduced `plan/report.jsonl` and the manifest's `report` record (spec 020,
+# The format that introduced `plan/report.jsonl` and the manifest's `report` record (spec 007,
 # contracts/plan-artifact-format-4.md). A manifest of this format or later must carry it.
 REPORT_FORMAT_VERSION = 4
 REPORT_FILE_NAME = "report.jsonl"
@@ -469,7 +469,7 @@ class PlanLastChangesRecord(BaseModel):
 
 
 class PlanReportRecord(BaseModel):
-    """The manifest's record of `plan/report.jsonl` (spec 020, contracts/plan-artifact-format-4.md).
+    """The manifest's record of `plan/report.jsonl` (spec 007, contracts/plan-artifact-format-4.md).
 
     The plan checksum covers this record, and through `digest` the file's bytes. The counts
     are the report's: problem entries, left-out records (each once, split into those with a
@@ -526,11 +526,11 @@ class PlanManifest(BaseModel):
     # whose destination keeps no last changes, and on plans made before the field existed;
     # review then shows no last-change data.
     last_changes: PlanLastChangesRecord | None = None
-    # Format 4: the digest, size and counts of `plan/report.jsonl` (spec 020). Absent on a
+    # Format 4: the digest, size and counts of `plan/report.jsonl` (spec 007). Absent on a
     # format 2 or 3 plan; the reader refuses a format 4 manifest without it.
     report: PlanReportRecord | None = None
     # Format 4: `False` when the run had no destination schema snapshot, so the plan could not
-    # check Dropdown values; absent otherwise (spec 020 research R4).
+    # check Dropdown values; absent otherwise (spec 007 research R4).
     dropdown_values_checked: bool | None = None
 
     @field_validator("registry_version", mode="before")
@@ -628,7 +628,7 @@ class PlanSummary(BaseModel):
     `plan_checksum` are untouched. Without the first, a plan whose whole delete class was
     never computed is indistinguishable from one that has no deletes.
 
-    The counts of spec 020 FR-007 and FR-008 come from the plan report (data-model.md "Plan
+    The counts of spec 007 FR-007 and FR-008 come from the plan report (data-model.md "Plan
     summary additions"). A format 2 or 3 plan has no report: its counts are zeros and
     `dropdown_values_checked` is false.
     """
@@ -677,13 +677,13 @@ class ApplyRecord:
     # the case that cannot be known.
     failed_operation_wrote: bool | None = None
     # The plan's operation count, and the failed operation's action, kind and identity, read
-    # from the plan by the engine (spec 020 FR-014). The failure record of a stopped apply
+    # from the plan by the engine (spec 007 FR-014). The failure record of a stopped apply
     # holds them. Not summary keys, and not part of the record's equality: two records of
     # one apply compare equal whether or not they carry them.
     operations_total: int | None = dataclass_field(default=None, compare=False)
     # The creates and updates the whole run wrote, this execution's `applied_operations` and,
     # for a resume, every create and update at or before the position it started after (spec
-    # 022 research R6). Equal to `len(applied_operations)` for a first apply. Not a summary
+    # 016 research R6). Equal to `len(applied_operations)` for a first apply. Not a summary
     # key, and not part of the record's equality.
     operations_written: int | None = dataclass_field(default=None, compare=False)
     failed_operation_detail: Mapping[str, Any] | None = dataclass_field(default=None, compare=False)
@@ -794,7 +794,7 @@ class VerificationFailure(BaseModel):
     next_action: str = Field(min_length=1)
 
 
-# --- The plan report (spec 020 data-model.md) ----------------------------------------------
+# --- The plan report (spec 007 data-model.md) ----------------------------------------------
 #
 # The records the plan writes for source data it cannot plan. The problem pass
 # (`infrahub_sync/plan/problems.py`) builds them, and the plan writer writes them to the format 4
@@ -947,7 +947,7 @@ def _report_line(entry: str, record: BaseModel) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class PlanReport:
-    """The problems, left-out records and kept records of one plan (spec 020 data-model.md "Plan report").
+    """The problems, left-out records and kept records of one plan (spec 007 data-model.md "Plan report").
 
     `encode` returns the bytes of `plan/report.jsonl`: problems, then left-out records, then
     kept records, each group in the stable order of data-model.md, ties broken by the line's
@@ -959,7 +959,7 @@ class PlanReport:
     kept: tuple[KeptRecord, ...] = ()
     # Not written to the report: the (kind, identity) of each kept record whose source and
     # Infrahub values differ only in the relationships it is written without. The selection
-    # step plans no update for it, since that update would change nothing (spec 020 research R3).
+    # step plans no update for it, since that update would change nothing (spec 007 research R3).
     unchanged_without_kept_relationships: frozenset[tuple[str, bytes]] = frozenset()
 
     def lines(self) -> list[dict[str, Any]]:
@@ -1015,7 +1015,7 @@ class PlanReport:
     def deletes_withheld_by_kind(self) -> dict[str, int]:
         """Per kind, the left-out records without a known identity plus the ambiguous destination identities.
 
-        The plan computes no delete of these kinds (FR-008, spec 020 research R21).
+        The plan computes no delete of these kinds (FR-008, spec 007 research R21).
         """
         withheld: dict[str, int] = {}
         for item in self.left_out:
@@ -1066,7 +1066,7 @@ class PlanReport:
         }
 
 
-# --- A peer the source does not return (spec 020 research R5) ------------------------------
+# --- A peer the source does not return (spec 007 research R5) ------------------------------
 #
 # Plan derivation names a reference to a peer that the source does not return with this
 # placeholder identity instead of refusing the plan. The selection step of the problem pass

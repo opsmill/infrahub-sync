@@ -1,4 +1,4 @@
-"""The `verify` report of an interrupted run (spec 022 User Story 2, FR-005 to FR-008).
+"""The `verify` report of an interrupted run (spec 016 User Story 2, FR-005 to FR-008).
 
 For a run that requires reconciliation, `verify` reads from the destination the nodes of the
 uncertain operations and reports each as `matches`, `differs` or `missing`. The window is the

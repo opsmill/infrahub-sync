@@ -6,7 +6,7 @@ title: "CI workflows"
 
 > Part of: Develop > Guidelines | Related: [Image publishing](../knowledge/image-publishing.md)
 
-<!-- Extracted from specs/007-harbor-image-publishing on 2026-10-01 -->
+<!-- Extracted from specs/005-harbor-image-publishing on 2026-10-01 -->
 
 Rules for writing or changing GitHub Actions workflows under `.github/workflows/`. These rules
 come from review findings on the image publishing workflows. Each one prevents a failure that

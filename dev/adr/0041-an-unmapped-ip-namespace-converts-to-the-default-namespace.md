@@ -2,8 +2,8 @@
 
 **Status**: Accepted
 **Date**: 2026-11-14
-**Source**: `dev/specs/archive/012-v2-configuration-conversion/spec.md` (FR-002, FR-031),
-`dev/specs/archive/012-v2-configuration-conversion/opsmill-implement-report.md` (sections 8 and 9)
+**Source**: `dev/specs/archive/006-v2-configuration-conversion/spec.md` (FR-002, FR-031),
+`dev/specs/archive/006-v2-configuration-conversion/opsmill-implement-report.md` (sections 8 and 9)
 
 ## Context
 
