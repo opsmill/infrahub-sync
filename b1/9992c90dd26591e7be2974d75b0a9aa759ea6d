@@ -1,0 +1,27 @@
+dev/adr/0034-a-run-log-is-read-from-prefect-through-the-sync-api.md
+  s_82fe233503ea5c::t_721a20b7f06dfc 48-51
+  s_82fe233503ea5c::t_eb9cd6794f2678 41-43
+  s_82fe233503ea5c::t_27bd17e0d29a54 24-25
+dev/adr/0033-an-event-is-saved-in-the-transaction-of-its-decision.md
+  s_82fe233503ea5c::t_5a2fdbb50a0374 53-59
+dev/adr/0038-cancelling-a-finished-plan-withdraws-it.md
+  s_82fe233503ea5c::t_a914dd965e2ec3 36
+dev/adr/0029-the-development-stack-is-one-compose-file-with-profiles.md
+  s_82fe233503ea5c::t_a2dad4d4131f6d 31-32,35-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b19992c90dd26591e7be2974d75b0a9aa759ea6d",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
