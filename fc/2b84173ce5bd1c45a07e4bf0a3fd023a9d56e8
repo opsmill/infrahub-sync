@@ -1,0 +1,32 @@
+docs/docs/development/knowledge/repository-tour.md
+  s_82fe233503ea5c::t_5dde4317520802 358-360
+docs/docs/development/adr-index.mdx
+  s_82fe233503ea5c::t_6b98707d2af5ca 36
+docs/docs/development/knowledge/plan-artifact.md
+  s_82fe233503ea5c::t_609a43a08f06bc 48
+docs/docs/compose-deployment.mdx
+  s_82fe233503ea5c::t_c8e31cda86279b 792
+  s_82fe233503ea5c::t_0095bea49679b1 422-423
+docs/docs/development/guidelines/secret-redaction.md
+  s_82fe233503ea5c::t_3184a3708818a9 27
+docs/docs/development/knowledge/incremental-and-cache.md
+  s_82fe233503ea5c::t_12b902549280f7 151-153
+docs/docs/development/knowledge/sync-architecture.md
+  s_82fe233503ea5c::t_2000929ba90328 109-113
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fc2b84173ce5bd1c45a07e4bf0a3fd023a9d56e8",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
