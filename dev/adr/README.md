@@ -78,6 +78,55 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why an apply saves a progress marker, why `verify` is admitted on an interrupted run and
   reports each uncertain operation, and why a resume on the same run clears
   `reconciliation_required`. Partly supersedes 0010.
+- [0028 — The bundled object store runs from the Silo image](0028-the-bundled-object-store-runs-from-the-silo-image.md)
+  — why every Sync Compose stack runs the object store from a pinned `pgsty/silo` release, the
+  standard variant, and why the volume repair step stays.
+- [0029 — The development stack is one Compose file with profiles, run by one `dev` namespace](0029-the-development-stack-is-one-compose-file-with-profiles.md)
+  — why the preview stack was merged into one file with `sync` and `infrahub` profiles, why the
+  tasks read settings from the resolved Compose file, and when the image rebuilds.
+- [0030 — The end-to-end test class inherits Infrahub's, and the Prefect pins move together](0030-the-end-to-end-test-class-inherits-infrahubs.md)
+  — why `TestInfrahubSyncDocker` inherits `TestInfrahubDocker`, and why the `prefect` and
+  `prefect-client` pins must name one version.
+- [0031 — An import writes as the account of its token, and sets an owner only on values it creates](0031-an-import-writes-as-the-account-of-its-token.md)
+  — why the import account comes from the API token, why a missing named source or owner stops
+  the run, why an apply refuses a plan made with another account, and why an update sets the
+  owner only on the relationship edges it adds.
+- [0032 — The run, configuration and version lists page with a cursor and read only the product store](0032-run-and-configuration-lists-page-with-a-cursor.md)
+  — why the three lists page by position in a fixed order and not by offset, why a cursor is
+  valid only for its list and filters, and why every value a list shows or filters on is stored
+  in a column.
+- [0033 — An event is saved in the same transaction as the decision it records](0033-an-event-is-saved-in-the-transaction-of-its-decision.md)
+  — why the event of an accepted request or a stage result is saved by the store call that saves
+  the answer or the result, which events are saved by a call of their own, and how events are
+  typed, related to resources and paged.
+- [0034 — A run's log is read from Prefect through the Sync API and holds only the lines that Sync wrote](0034-a-run-log-is-read-from-prefect-through-the-sync-api.md)
+  — why Sync keeps no copy of a run's log, how a line that Sync wrote is told from a line of
+  Prefect's engine, and why a recognized failure ends the flow run with a returned `Failed` state.
+- [0035 — The engine reports each side's read to an optional observer, and the Sync API derives the read state it returns](0035-the-engine-reports-each-sides-read-to-an-optional-observer.md)
+  — why `Potenda._load_side` reports a read to an observer that only the worker sets, why each
+  side has its own column on the execution's row, and why the returned state is derived when the
+  run is read.
+- [0036 — `verify` runs every pre-write check of `apply` through one shared gate](0036-verify-runs-every-pre-write-check-of-apply-through-one-shared-gate.md)
+  — why `verify` contacts the destination, why `apply` and `verify` call `Potenda.check_plan`,
+  and which named checks a `verify` reports.
+- [0037 — An approval is a record on the run that the Sync API stores, and one service setting makes it required](0037-an-approval-is-a-record-on-the-run.md)
+  — why an approval is four columns of the run and not a phase, why the Sync API answers
+  `approve` without a flow run, and what `INFRAHUB_SYNC_REQUIRE_APPROVAL` refuses.
+- [0038 — Cancelling a finished plan withdraws it, and a cancelled run is never applied](0038-cancelling-a-finished-plan-withdraws-it.md)
+  — why `runs cancel` withdraws a plan that has nothing running, and why `apply`, `approve` and
+  `resume` refuse a run in phase `cancelled`.
+- [0039 — Workers publish the names of their credential variables so validation can check them](0039-workers-publish-the-names-of-their-credential-variables.md)
+  — why each worker writes the names of its credential variables to the product store, which
+  workers count as live, and what grows in the `worker_environments` table.
+- [0040 — A v2 configuration converts to a package locally, by v2's own rules](0040-a-v2-configuration-converts-locally-by-v2-rules.md)
+  — why `configs convert` is a local command, why fixed tables reproduce v2's environment
+  variables and authentication methods, and why it never reads a credential value.
+- [0041 — An IP namespace that a uniqueness constraint needs and the file does not map converts to the `default` namespace](0041-an-unmapped-ip-namespace-converts-to-the-default-namespace.md)
+  — why `--live-schema` reads the destination schema and maps an unmapped IP namespace to
+  `default` as a peer that exists only in the destination.
+- [0042 — The v2 gate passes on no creates and no updates, and on reviewed lists for everything else](0042-the-v2-gate-passes-on-no-creates-and-reviewed-lists.md)
+  — why the nightly gate pins v2 2.0.1, what makes it pass, and how its lists of records left
+  out and deletes are kept.
 
 ## Related
 

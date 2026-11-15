@@ -184,6 +184,10 @@ apply compares the bound schema fingerprint, including attribute writability, be
 This changes the fingerprint for existing saved plans, so review and save a new plan after
 upgrading before you apply it.
 
+The fingerprint also covers the choices of each mapped Dropdown attribute, because the plan
+checks each mapped Dropdown value against them. A change to the choices in Infrahub after the
+plan makes apply refuse with `PlanSchemaChangedError`, and the team plans again.
+
 Several creates sharing a destination human-friendly ID, a unique attribute (including an
 inherited one), or a uniqueness constraint form an identity group. Since spec 020 the plan does
 not refuse the group: the problem pass records one `destination_identity_collision` problem and
@@ -238,6 +242,43 @@ Apply is sequential, so the guarantee is stated per operation: a create refused 
 zero mutation calls, and no later operation executes. Operations applied before it stay written, the
 apply record reports them, and the refused operation is recorded as having written nothing rather than
 as a possible partial write.
+
+#### Source, owner and protection of a write
+
+Before the first write, the engine calls `InfrahubAdapter.resolve_lineage(saved_plan=manifest)`.
+It reads the import account, which is the account that owns the API token, and looks up the node
+that each `source` and `owner` setting names. It refuses the apply before any write when:
+
+- the saved plan records no import account (`PlanLineageMissingError`);
+- the import account differs from the one the plan recorded (`ImportAccountMismatchError`, which
+  names both accounts);
+- a named node does not exist (`NamedLineageNodeNotFoundError`).
+
+A planned write attempted before this call is refused (`LineageNotResolvedError`), so no value is
+written without a source.
+
+Each write then carries these properties on every attribute and relationship edge:
+
+| Property | Create | Update |
+|---|---|---|
+| `source` | The import account, or the named source | The same |
+| `owner` | The named owner, when the package names one | Not sent on attributes or on edges the node already has. Sent only on the edges the update adds |
+| `is_protected` | `true` when `protect` is on; otherwise the key is not sent | The same |
+
+To find the edges an update adds, `_set_owner_on_added_edges` calls `_current_peer_ids`: one
+`client.get` by the recorded `destination_id`, which includes the cardinality-many relationships
+the update writes and excludes every attribute and every other relationship. An edge is added when
+its peer is not among the node's current peers (cardinality many), or differs from the current
+peer (cardinality one). The read is made only when the package names an owner and the update
+writes relationships. When the node is not found, no edge gets the owner, and the upsert that
+follows is refused because its recorded id no longer exists.
+
+`clear_lineage_on_pool_edges` then removes all three properties from an edge whose input carries
+`from_pool`, so a resource pool stays the source of an edge it allocates. No current write path
+allocates from a pool.
+
+[ADR 0031](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0031-an-import-writes-as-the-account-of-its-token.md)
+records why.
 
 ### Peer resolution
 
@@ -418,6 +459,31 @@ account of what an apply did, a second source of truth is a state that can contr
 service boundary resolves the record once, from the failure it is describing, and reads its verdict and
 its evidence from that same record for the same reason.
 
+#### The pre-write gate
+
+Steps 3 to 4b of the list above, the check of every planned Infrahub field and the resolution of the
+import account are one method, `Potenda.check_plan`. `apply_plan` reads the plan once, calls the
+gate and then runs the loop on the parsed plan the gate returned. The gate proves no write
+ownership and calls no write method of the destination, so the service's `verify` stage calls the
+same gate to report whether the plan would apply now.
+[ADR 0036](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0036-verify-runs-every-pre-write-check-of-apply-through-one-shared-gate.md)
+records why.
+
+- `check_plan` returns a `PlanCheck`: the parsed plan and the names of the checks that passed. The
+  names come from `PreWriteCheck` in `infrahub_sync/plan/models.py`, which also fixes the order in
+  which they are reported.
+- A check that does not apply to the destination is left out of the result, not reported as
+  passed: `planned_fields` outside Infrahub, and `lineage` for a destination that records none.
+- `expected_checksum=None` skips only the comparison with the operator's checksum. `verify` passes
+  none; `apply` passes the checksum of the request.
+- `PlanApplier.check_plan` in `infrahub_sync/utils.py` checks the destination URL and branch the
+  plan recorded, then calls the engine's gate.
+- `apply_plan` checks the confirmation of left-out records after the gate, so `verify` does not
+  run that check.
+
+To add a pre-write check, add it to the gate and to `PreWriteCheck`. Both `verify` and `apply` then
+run it.
+
 #### The operational exception boundary
 
 Only an **operational** failure is reported as a destination refusal. `OPERATIONAL_APPLY_FAILURES`
@@ -486,11 +552,25 @@ logged as a warning with the run ID and the error class, and writing continues. 
 turns true 5 minutes after the first failed save since the last successful one, so a quiet period
 between scheduled saves is never counted.
 
+When `record_apply_progress` answers `ended`, because the liveness monitor ended the execution
+while the worker kept writing, the answer is final: the observer tries no further save,
+`should_stop()` returns true at once, and the engine raises `ApplyProgressLostError` before its
+next dispatch. A save that raises, or that names an unknown execution, keeps the 5-minute rule.
+
 A run is **resumable** when `reconciliation_required` is set, the run is not cancelled, none of
 its executions is unfinished, and its `plan-review` document is published
 (`run_is_resumable` in `infrahub_sync/service/resume_view.py`, `_plan_published` in the store). A
 `sync` whose worker was killed while it was still planning requires reconciliation but published
-no plan, so it is not resumable. On such a run:
+no plan, so it is not resumable.
+
+The column stays set for such a run: ending the execution does not stop the worker, which can
+still publish its plan and write afterwards, so the absence of a plan does not prove that
+nothing will be written. The rule is checked when a request arrives, so the run becomes resumable
+once its plan is published. Until then `runs resume` answers `409 run-not-resumable`, `verify`
+answers `409 run-execution-conflict` and `approve` answers `409 run-not-approvable`, each
+before reading the plan. The three refusals are recorded in the audit history.
+
+On a resumable run:
 
 - `_reserve_existing` admits a `verify`, the one exception to the refusal of every stage on a run
   that holds a `write_admissions` row. After the pre-write checks pass, the `verify` stage computes
@@ -513,9 +593,22 @@ no plan, so it is not resumable. On such a run:
   `matches`, `differs` or `missing` for each operation and never a value. A create is matched on
   its human-friendly ID components, or, for a kind with none, on the identity's direct values that
   are not null. When more than one destination node has the key, the create is reported as
-  `differs`, never `matches`. Above 2,000 operations it
-  stores `operations_truncated`. A failed read fails the `verify` with a fixed message, and the
-  original error stays the cause, so the failure record classifies it by its class.
+  `differs`, never `matches`. For a kind with a human-friendly ID, an attribute component is
+  filtered with `<attribute>__values` and a relationship component with `<relationship>__ids`, on
+  the IDs the plan's peers resolve to; the destination combines the filters with AND. For a kind
+  with none, creates are grouped by the set of attributes in their key, with one query for each
+  set. A kind with no human-friendly ID is not keyed on its uniqueness constraints, so a
+  constraint that includes a relationship, such as (device, name), is not part of the key: when
+  two destination nodes differ only on that relationship, a create with the key they share is
+  reported as `differs`. The relationship filters are covered by unit tests against the
+  in-memory client only. Above 2,000 operations it
+  stores `operations_truncated`. A read that fails with a destination library error, an HTTP
+  error or an operating-system error fails the `verify` with `DestinationReadError` and a fixed
+  message; the original error stays the cause, so the failure record classifies it by its class
+  (`infrahub_sync/service/flow.py`). A `ValueError`, `KeyError` or `AttributeError` raised while
+  the nodes are read is a defect in Sync or in the shape of the data, not an unreachable
+  destination: it is not mapped, the `verify` fails, and its failure record names the error class
+  only, never the message.
 - `approve` accepts the run as it accepts a run in phase `planned`, so a site that requires approval
   can resume a run that was never approved, such as a `sync` run. The service checks the run before
   it reads the plan, and the store checks it again in the conditional update that stores the
@@ -536,6 +629,28 @@ each create and update is a convergent upsert keyed by the recorded ID or the co
 ID ([ADR 0012](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0012-the-convergent-upsert-is-the-replace-set-write.md),
 [ADR 0013](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0013-writes-are-keyed-by-recorded-id-and-complete-hfid.md)).
 A destination whose writes are not safe to repeat must not be resumed this way.
+
+The progress view's per-kind counts need each operation's kind and action. A client that waits
+for a run (`--wait`) reads `GET /runs/{run_id}` repeatedly, and a tier L plan holds about 88,000
+operations, so the Sync API does not parse the plan on every request. `_PlanLayoutCache` in
+`infrahub_sync/service/service.py` keeps each plan's `(operation_id, kind, action)` entries, in
+stored order, keyed by the run ID and the plan artifact's digest:
+
+- A published plan never changes, so an entry is never stale, and each API process fills its own
+  cache with the same entries. Several API processes need no shared state and no invalidation.
+- A plan whose reference has passed its `expires_at` bypasses the cache, with the rule the
+  artifact store applies, so every process stops reporting per-kind counts at the same time.
+- A failed read, an expired plan included, is not cached. It is logged as a warning with the run
+  ID, the error class and the error code, never the message.
+- The cache holds at most 200,000 operations over all runs (`PLAN_LAYOUT_CACHE_OPERATIONS`), and
+  drops the least recently read run first. A larger plan is not cached. About 200 bytes per
+  operation (an estimate, not measured) keeps it under about 40 MB per API process.
+
+Storing the layout in the store when the write starts was rejected: it needs a column migration
+on both database backends and a write from the worker, for data the published plan already
+holds.
+
+<!-- Extracted from dev/specs/archive/022-resume-interrupted-apply on 2026-11-14 -->
 
 ### Deletes are recorded, never executed
 

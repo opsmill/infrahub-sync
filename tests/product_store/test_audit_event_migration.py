@@ -1,6 +1,6 @@
 """The stored event: its type and resources, the migration of older stores, and the event list.
 
-Spec 017 (`dev/specs/017-sync-run-events-logs/data-model.md`, "Event") adds a dotted type, a
+Spec 017 (`dev/specs/archive/017-sync-run-events-logs/data-model.md`, "Event") adds a dotted type, a
 configuration binding, a branch and related resources to the audit event. A store created
 before that change keeps its rows: opening it fills each row's type from its
 ``(operation, outcome)`` pair and writes one ``account`` resource for its actor. A request

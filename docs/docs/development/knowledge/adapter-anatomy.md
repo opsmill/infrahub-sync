@@ -89,6 +89,17 @@ Any other error is raised again as `RecordLoadError`, which names the kind, the 
 and, when known, the field, and fails the plan. On the destination side, `load_record` catches
 nothing.
 
+A reference to a record of the same kind gets no read order, so a record can come before the
+peer it names, for example a location before its `parent`. On the source side, `load_records`
+admits such a record again after the other records of the kind (`PeerNotAdmittedYetError`
+never leaves the read loop and is never recorded). It repeats the passes until one pass admits
+no more records. The records still waiting then refer to each other in a cycle: the first one
+listed is admitted without its reference to the cycle, the reference is recorded with
+`in_cycle` set, and the passes go on. Through a required relationship, that record is left out;
+through an optional one, it is kept without the relationship. The plan reports the reference as
+`peer_not_found_in_source`, with a reason that says the source returns the peer and that the
+records refer to each other in a cycle. No problem type of its own exists for this case.
+
 An adapter with its own read loop can still call `load_record` for each record. The Infrahub
 adapter does: it passes `store_item` to replace `self.add` and `after_add` to fill the SDK store.
 

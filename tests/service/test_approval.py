@@ -1,7 +1,7 @@
 """`POST /runs/{run_id}/approve`: record approval of a run's saved plan without applying it.
 
 The cases follow the order of evaluation in the HTTP contract of spec 019
-(``dev/specs/019-plan-approval/contracts/http-api.md``).
+(``dev/specs/archive/019-plan-approval/contracts/http-api.md``).
 """
 
 from __future__ import annotations

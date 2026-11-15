@@ -148,6 +148,19 @@ carries no `local_id` column, so the destination extracts that resource in full.
 missing mapped model refuses the load before any resource query; it cannot stand in
 for an empty source kind.
 
+The Infrahub adapter has a second reason to read the destination in full. This reason has an
+effect only when a direct caller enables incremental extraction, because the current entry
+points already extract every resource in full. From Infrahub 1.7.0, a
+plan reads who last changed each value and when, in the same read as the values
+(`include_metadata=True`). While `InfrahubAdapter.metadata_read` is true, `cursor_tier_for`
+returns `CursorTier.NONE` for every kind, so the engine reads each kind in full through
+`model_loader`. An incremental read would take the unchanged nodes from the previous
+snapshot, which holds no `updated_by` or `updated_at`, and the plan would then show `not recorded`
+for a value Infrahub holds. `metadata_read` is false on Infrahub before 1.7.0, when the version
+cannot be read or parsed, and during an apply. The metadata is kept in a map on the adapter, keyed
+by destination node ID and field name, and not in the DiffSync models: a model attribute that
+changes whenever a person edits a value would make every plan propose a change.
+
 When every source resource and every destination resource falls back to a full load, the
 saved plan computes delete proposals for destination-only objects and records
 `delete_operations_computed=true`. If either side uses a delta for any resource, delete

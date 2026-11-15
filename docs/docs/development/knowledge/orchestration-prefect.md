@@ -87,6 +87,18 @@ name Prefect generates. The title follows the rule Infrahub applies to its own f
 it says what the run does and leaves out the branch and any ID, which the run's page
 already shows.
 
+The API also sets the run's tags when it creates the flow run. `PrefectOrchestration.submit`
+wraps the Prefect client in `_LabelledCreationClient`, which passes every call through and adds
+`name=` and `tags=` to `create_flow_run_from_deployment`. The vendored executor is built from the
+wrapper for each submission, so its code is unchanged. `run_tags` builds the tags from
+identifiers the run resource already publishes: `run:<run_id>`, `stage:<stage>`, and, for a run
+of a registered configuration, `config:<config_id>` and
+`config-version:<config_id>@<registry_version>`. It never uses the actor, the branch, the work
+pool or a secret. Prefect adds the deployment's tags to these, including a tag an operator added
+to the deployment. A retry with the same idempotency key returns the flow run Prefect created
+first, with the title and tags it was created with. Sync does not read or update tags after
+creation, so no tagging call can fail after Prefect accepted the run.
+
 Registered execution supplies all three configuration fields: `config_id`,
 `registry_version` and `package_checksum`. The worker checks them against the product run
 and registered package. A partial binding is refused. When all three fields are unset,
@@ -128,6 +140,12 @@ stored that outcome in the run record
   such as a `sync` that stops on left-out records, uses `result["failure"]["next_action"]`,
   the field that the CLI prints. Without a next action, the next step is
   `infrahub-sync runs show <run_id>`.
+- **Failure exit.** `_failure_exit` ends a failed stage. When the recorded failure has a cause,
+  it writes one ERROR line, `<cause> Next step: <next step>`, and returns a `Failed` state with
+  the same text, so no traceback passes through Prefect's engine. For any other failure,
+  including one that was not recorded, the ERROR line holds only the class name of the error,
+  and the flow raises a sanitized copy of the error. The lines and the artifact are written
+  before the stage's secrets are cleared.
 - **Run summary artifact.** `infrahub_sync/service/run_artifact.py` publishes one markdown
   artifact for each stage, and only when the stage runs inside a real Prefect flow run (the
   `prefect_context` flag of `_run_logger`). The artifact always holds the run ID, the stage
@@ -148,7 +166,9 @@ stored that outcome in the run record
   waiting for, such as a Prefect Retry or a run started by hand from the deployment, it raises
   `ExecutionClaimRefusedError`. The message is built from fixed text and the run ID, and says
   that nothing was read or written and how to start a new Sync run. `service_sync_run` logs
-  the message at ERROR level in the flow run log, then raises the error again.
+  the message at ERROR level in the flow run log, then ends the flow run by returning a `Failed`
+  state with the same message. It does not raise the error again, so Prefect's engine does not
+  log the refusal a second time with a traceback.
 - **Reported state.** In the run response, an orchestration entry that has a recorded
   `terminal_state` reports that verdict as its `state`. Otherwise it reports the live
   observation when available, and the retained observation when not.
@@ -159,6 +179,39 @@ stored that outcome in the run record
   the setting but not the value. When the setting is set, each orchestration entry carries
   `prefect_flow_run_url`, `<base>/runs/flow-run/<flow_run_id>`, which is the route that
   Prefect 3.8.6 uses for its own UI links. `runs show` prints it.
+
+#### How the Sync API reads a run's log
+
+<!-- Extracted from dev/specs/archive/017-sync-run-events-logs on 2026-11-14 -->
+
+A person reads a run's log with `infrahub-sync runs logs <run_id>` or `GET /runs/{run_id}/logs`,
+without opening Prefect. The Sync API keeps no copy of the log. It reads the lines from Prefect
+for each request and returns only the lines that Sync wrote (ADR 0034).
+
+- **Reading.** `Orchestration.read_logs` (`infrahub_sync/service/orchestration.py`) takes the
+  flow run IDs of the run's executions. It first reads each flow run, to tell a flow run that
+  Prefect no longer holds from one that it holds. It then reads the log lines in pages of
+  `LOG_PAGE_SIZE` (200), oldest first, until a page is not full.
+- **Sync lines.** `sync_lines` (`infrahub_sync/service/run_log.py`) keeps a line when its message
+  matches `SYNC_LINE_PATTERN`: an `infrahub_sync` logger name, then ` | `. `RunLoggerBridge`
+  writes every forwarded line in this form, and `SyncFlowLines` (`infrahub_sync/service/flow.py`)
+  writes the service flow's own lines with the prefix `infrahub_sync.service.flow | `. Lines that
+  Prefect's engine writes do not match and are left out. A line of a flow run that the run record
+  does not name is left out too.
+- **Fields.** Each returned line holds the `stage` and `attempt` of its execution, the time, the
+  level name, the logger name as `source` and the text after the prefix as `message`.
+- **Order and paging.** Lines follow the order of the run's executions, then the time, then
+  Prefect's log ID. `offset` and `limit` apply to the kept lines, so a reader who polls sends the
+  number of lines it already holds.
+- **Redaction.** Each message is redacted with the Sync API's secrets, loses its control
+  characters other than line breaks and tabs, is redacted again, and is then cut at 4,096
+  characters.
+- **Errors.** The route answers `410 log-expired` when Prefect no longer holds a flow run that
+  the run record names, and `503 log-unavailable` when Prefect cannot be reached. The Sync API
+  logs the class of the error; the response text does not change.
+- **Wording and retention.** `tests/service/test_prefect_wording.py` fails when an API message
+  holds the word "Prefect", or when a module under `infrahub_sync/` calls a Prefect flow run
+  delete.
 
 ### Direct integration {#the-flow}
 
@@ -294,6 +347,23 @@ parameter therefore never reaches the flow body.
 - **Pinning the version is not optional here.** The extra pins `prefect==3.8.6` exactly,
   because the base dependency set and Prefect's transitive `redis` requirement interact —
   see [ADR 8](https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/dev/adr/0008-declare-redis-directly-instead-of-the-diffsync-extra.md).
+- **A Prefect upgrade moves three pins together.** The Prefect server runs from the Sync image
+  through `infrahub_sync.service.prefect_server:create_prefect_app`, so the `prefect` pin sets
+  both the server and the client version. `fastapi` is pinned at 0.141.1 in the `prefect` and
+  `service` extras because FastAPI 0.159 breaks `prefect.server.api.server.create_app` on
+  Prefect 3.8.6; check the server factory before you move it. The `testcontainers` extra pulls
+  in `prefect-client` through `infrahub-testcontainers`, which pins it exactly. `prefect` and
+  `prefect-client` install into the same `prefect/` directory, so `uv.lock` must resolve them
+  to one version; `tests/test_release_pin.py` fails when they differ. See
+  [ADR 0030](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0030-the-end-to-end-test-class-inherits-infrahubs.md).
+- **Importing Prefect configures the root logger.** In the service processes
+  (`sync-bootstrap`, `sync-api`, `sync-worker`), Prefect is imported before `main` runs, so a
+  later `logging.basicConfig` does nothing and the inherited level drops INFO lines.
+  `bootstrap.py` and `trust_store.py` set their own logger to INFO for that reason, and
+  `trust_store.py` adds a standard-error handler when no handler would print its lines (the
+  Sync API process configures none before uvicorn starts). Both use the standard `logging`
+  module, not `structlog`, so the handlers that Prefect configures and pytest's `caplog`
+  receive their lines.
 
 ### Optional imports
 

@@ -417,8 +417,10 @@ next to the public roots of the image. Certificate checks stay on. A flow run th
 trusts the same certificates. At every start, each of the three services logs the number of
 certificates it loaded and the path of the bundle it wrote, or that the directory holds no
 certificate file. When a trust variable such as
-`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` or `INFRAHUB_TLS_CA_FILE` is already set,
-it wins, and the service logs a warning that names the variable and not its value.
+`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` or `INFRAHUB_TLS_CA_FILE` is already set
+to a value, it wins, and the service logs a warning that names the variable and not its value.
+A variable set to an empty value counts as unset: when the service wrote a bundle, it points
+the variable at the bundle.
 
 - The directory holds public certificates only. A service stops at start when a file in it holds
   a private key, and the error names the file and prints none of its content. A file that is not
@@ -784,8 +786,11 @@ side effect, no volume is kept, and the container is removed when the command
 ends. `docker compose run --rm --no-deps -T cli --help` displays help for the
 CLI, and everything after `cli` is passed through as given.
 
-The CLI reaches the Sync API and nothing else. It gets no storage, Prefect,
-source, or destination credential, and no Docker socket.
+The `cli` service is given the address and the token of the Sync API and nothing
+else. It gets no storage, Prefect, source, or destination credential, and no
+Docker socket. Every command it runs calls only the Sync API, except
+`configs convert`: that command does not call the Sync API, and with `--live-schema` it reads
+the schema of the destination Infrahub without a token.
 
 ## Prepare a configuration
 

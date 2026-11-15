@@ -1,7 +1,7 @@
 """Resume an apply whose worker was killed, against a running stack (spec 022 T034, SC-001, SC-005).
 
-The operator path of `dev/specs/022-resume-interrupted-apply/quickstart.md`, end to end: apply
-the local NetBox `demo` import, kill the worker once the apply has saved a progress marker,
+The operator path of `dev/specs/archive/022-resume-interrupted-apply/quickstart.md`, end to end:
+apply the local NetBox `demo` import, kill the worker once the apply has saved a progress marker,
 wait for the run to end interrupted, then recover with `runs show`, `verify` and
 `runs resume` only. A new plan of the same configuration version on the same branch must then
 hold no create and no update.

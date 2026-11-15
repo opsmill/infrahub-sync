@@ -23,9 +23,10 @@ from the route you are changing:
 | Route | Failure handling and obligation |
 | --- | --- |
 | Registered CLI `plan`, `sync`, `apply` | The CLI calls `SyncClient` over HTTP. The client replaces transport failures with fixed errors and suppresses their causes. It constructs API errors from classification fields rather than returning the response's message text. Preserve those choices when adding client errors. |
-| Sync HTTP API | `service/app.py` formats error responses and handles unhandled request failures. `RunService` redacts provider observation text before returning run resources. Keep response and observation handling safe independently of worker exception handling. |
-| Registered service worker | `service_sync_run` calls `execute_run` for its stages. Its failure path records available evidence, then raises a sanitized exception to Prefect. Extend this worker boundary when adding stage failures. Build a worker log line or a Prefect artifact only from named run record fields and fixed templates, never from an exception's text, and pass the finished text through `redact`. The one exception is the ERROR line of a recognized failure, which repeats the `cause` that `operator_cause` recorded: redacted, stripped of control characters and capped. Any other failure's ERROR line, including a failure that was not recorded, holds only the exception's class name. The Prefect artifact never reads a failure's `cause`. A settings check that rejects a value names the setting and never repeats the value. |
+| Sync HTTP API | `service/app.py` formats error responses and handles unhandled request failures. `RunService` redacts provider observation text before returning run resources. Keep response and observation handling safe independently of worker exception handling. A route that returns text read from Prefect, such as the lines of `GET /runs/{run_id}/logs`, redacts each message with the Sync API's secrets, removes control characters other than line breaks and tabs, and caps the length after the redaction, so a cut cannot leave the start of a secret. |
+| Registered service worker | `service_sync_run` calls `execute_run` for its stages. Its failure path records available evidence. A recognized failure then ends the flow run with a returned `Failed` state whose message is the redacted ERROR line; any other failure raises a sanitized exception to Prefect. A refused execution claim also returns a `Failed` state; its message is fixed text and the run ID, and a run ID that is not of the product run ID form is replaced by the fixed placeholder `<run-id>`. Extend this worker boundary when adding stage failures. Build a worker log line or a Prefect artifact only from named run record fields and fixed templates, never from an exception's text, and pass the finished text through `redact`. Write every line of the service flow through `SyncFlowLines`, which redacts the line and starts it with the logger name `infrahub_sync.service.flow`, then a vertical bar between two spaces; `GET /runs/{run_id}/logs` leaves out a line that does not start this way. The one exception is the ERROR line of a recognized failure, which repeats the `cause` that `operator_cause` recorded: redacted, stripped of control characters and capped. Any other failure's ERROR line, including a failure that was not recorded, holds only the exception's class name. The Prefect artifact never reads a failure's `cause`. A settings check that rejects a value names the setting and never repeats the value. |
 | Direct Python and direct Prefect | `execute_run` preserves lifecycle exceptions; callers must sanitize them before exposing them remotely. The direct Prefect flow calls `run_remote_request`, which resolves a local configuration and wraps execution failures. This integration executes plans only. |
+| Compose start-up (`sync-bootstrap`, the CA trust store, the Compose file) | Keep credentials out of text by construction, not by masking. Pass each credential variable in `docker-compose.yml` only to the services that read it; a new credential goes to the service that reads it and to no other. `bootstrap.py` reports each failure as one fixed name (`refused: <name>`), and a settings check logs a fixed message that names the setting or the error class and never the value; add a new failure as a new fixed name, never as a provider message, an endpoint or a key. A trust store error names the file, and for a file it cannot read the error class, never the file's content. Documentation tells operators to run `docker compose config --quiet`, never a command that prints interpolated values; `tests/compose/test_documentation.py` fails on such a command in an operator page. |
 
 See the [CLI][cli-source], [HTTP client][client-source], [API handlers][api-source],
 [observation rendering][service-source] and [worker failure path][worker-source] for the
@@ -67,6 +68,29 @@ not make a returned failure safe to display. The adapter rule still applies:
 [never include credentials in logs or exceptions](writing-an-adapter.md#log-with-structlog-never-secrets).
 Boundary redaction also replaces collected values in messages from dependencies that the
 adapter did not write.
+
+### Build a plan problem's reason from its template
+
+Each problem in a plan, and each line of `plan/report.jsonl`, has a `reason` that the team
+reads in `runs plan --problems` and in the Sync API. Render it from the fixed template of its
+problem type in `infrahub_sync/plan/problems.py` (`_REASON_TEMPLATES`), filled only with source
+values, kind, attribute and relationship names, source record IDs, identities, the choices of a
+Dropdown attribute, a count of Infrahub nodes, and the position of a transform or a filter in
+its mapping entry, such as `transforms[0]`. Never fill it from the text of an exception, from
+connection settings, or from the expression of a transform or a filter. When you add a problem
+type, add its template, and extend `tests/plan/test_report_credentials_absent.py` so that a
+short credential and a credential that holds `"`, `\` and `,` appear in no file under `plan/`
+and in no report entry.
+
+### Store only the error's class name in a progress document
+
+A document that the worker stores while a stage runs, such as the read state of a side
+(`prefect_executions.source_read` and `destination_read`), is stored as the worker built it: the
+store method takes no list of secrets to mask. The Sync API returns it in the run response. When
+such a document records a failure, store `type(exc).__name__` and nothing else from the
+exception: no message, no address, no traceback. Log the same failure by class name only. A
+class name is a fixed name in the code, so it holds no secret. The reason for the failure
+belongs in the run's failure record, which the rules above cover.
 
 ### Redact the whole cause chain
 
@@ -211,6 +235,12 @@ and, for a matched invalid file, its path. It suppresses the original validation
 with `from None`. Preserve that summary instead of chaining Pydantic's raw detail.
 For HTTP request validation, the API returns a fixed `request-invalid` message rather
 than the rejected body. See the [resolver][resolver-source] and [API handlers][api-source].
+
+The same applies to a parser. A YAML error message can quote the line that failed, and that
+line can hold a token. When a command reports a parse error in a file that can hold a
+credential, report only the position, as `configs convert` does: "error: config.yml is not
+valid YAML at line 12, column 3". Take the line and the column from the error's mark, and drop
+the message.
 
 ### Anti-patterns
 

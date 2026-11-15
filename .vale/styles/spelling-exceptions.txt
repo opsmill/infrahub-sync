@@ -1,6 +1,8 @@
 agent
 Alibaba
+allowlisted
 Ansible
+API's
 APIs
 append_git_suffix
 artifact_definitions

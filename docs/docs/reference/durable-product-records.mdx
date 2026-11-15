@@ -101,7 +101,8 @@ network I/O, and never emits them. All nine carry an `error` severity.
 A successful opt-in read also returns `destination_schema_fingerprint`: the full SHA-256
 digest of the schema semantics this configuration consumes — each mapped kind, its
 DiffSync identifiers, its ordered human-friendly ID and uniqueness-constraint component
-paths, every mapped field's type and required/default/unique properties, and every
+paths, every mapped field's type and required/default/unique properties, the choices of each
+mapped Dropdown attribute, and every
 mandatory-without-default field on those kinds. Unmapped destination growth and
 differences in schema delivery order leave it unchanged. It is `null` whenever no
 snapshot was read — the default path, a non-declaring destination, or a failed read.
@@ -214,6 +215,13 @@ transition that clears it is a `resume` execution that ends `succeeded`: the sto
 A resume is admitted through its own `resume_admissions` row; the run's `write_admissions`
 row is kept.
 
+A run holds at most one approval: the actor who approved the plan, the time, the approved plan
+checksum and an optional reason (`approved_by`, `approved_at`, `approved_checksum` and
+`approval_reason`). The store writes it once, in the transaction that completes the `approve`
+request, and never changes it. Withdrawing the plan sets the run's phase to `cancelled` and keeps
+the approval. The run resource returns it as `approval`; see
+[Approve the reviewed plan](./sync-http-api.mdx#approve-the-reviewed-plan).
+
 Each `PrefectExecutionLink` records:
 
 - a distinct `flow_run_id`;
@@ -277,7 +285,11 @@ cancellable. A losing request never reaches Prefect; its receipt is stored alrea
 carrying `409 run-execution-conflict`, so replaying that client key replays the refusal. An
 accepted run receipt therefore carries a Prefect flow-run ID only when its stored response is
 a successful submission. `AuditEvent` records secret-safe actor, reason, operation, and outcome evidence
-for accepted mutations and refusals.
+for accepted mutations, refusals and stage results. It also holds an event type, the
+configuration, the configuration version, the branch and the related resources, which
+`GET /events` returns and filters on. The store methods that save the answer to an accepted
+request or a stage result take the event and save it in the same transaction; `record_audit`
+saves the event of a refusal, a replay or a request that could not be confirmed.
 
 `record_results` updates retained result evidence without changing product phase, outcome,
 or finish time. Service verification uses this operation because verification is read-only
