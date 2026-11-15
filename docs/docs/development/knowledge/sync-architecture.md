@@ -106,8 +106,11 @@ records why it works this way.
   execution's row in `prefect_executions`. The update applies only while the execution has no
   terminal verdict.
 - **The Sync API derives.** `stage_reads` in the same module builds `OrchestrationSummary.reads`
-  when the run is read. It returns a side stored as `waiting` as `not_started`, and a side stored
-  as `reading` as `interrupted`, once the execution ended without completing. It writes nothing.
+  when the run is read. `reads` is `null` when the execution stored no document for either
+  side: an execution recorded before the read state existed, an execution of a stage other than
+  `plan` or `sync`, or a `plan` or `sync` execution the worker has not started. Otherwise it
+  returns a side stored as `waiting` as `not_started`, and a side stored as `reading` as
+  `interrupted`, once the execution ended without completing. It writes nothing.
 
 A report never changes the stage. When the observer raises, when the node count fails, or when
 the store write fails, the code logs a warning with the error's class name and the read

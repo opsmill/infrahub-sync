@@ -419,7 +419,8 @@ certificates it loaded and the path of the bundle it wrote, or that the director
 certificate file. When a trust variable such as
 `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` or `INFRAHUB_TLS_CA_FILE` is already set
 to a value, it wins, and the service logs a warning that names the variable and not its value.
-A variable set to an empty value counts as unset: the service points it at the bundle.
+A variable set to an empty value counts as unset: when the service wrote a bundle, it points
+the variable at the bundle.
 
 - The directory holds public certificates only. A service stops at start when a file in it holds
   a private key, and the error names the file and prints none of its content. A file that is not
@@ -788,7 +789,7 @@ CLI, and everything after `cli` is passed through as given.
 The `cli` service is given the address and the token of the Sync API and nothing
 else. It gets no storage, Prefect, source, or destination credential, and no
 Docker socket. Every command it runs calls only the Sync API, except
-`configs convert`: that command calls no service, and with `--live-schema` it reads
+`configs convert`: that command does not call the Sync API, and with `--live-schema` it reads
 the schema of the destination Infrahub without a token.
 
 ## Prepare a configuration

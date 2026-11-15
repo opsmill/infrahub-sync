@@ -45,7 +45,7 @@ load-bearing, and it is what makes the failure verdicts disjoint without any heu
 | `plan/` present, `manifest.json` absent or malformed | **Torn** |
 | `manifest.json` present, `operations.jsonl` absent | **Torn** |
 | `manifest.json` present, line count ≠ `operations_count` | **Torn** |
-| `manifest.json` present at format 4, `report` record or `report.jsonl` absent, or digest, size or counts differ | Refused (`PlanVerificationError`); the pre-apply check reports `report` |
+| `manifest.json` present at format 4, `report` record absent or malformed, `report.jsonl` absent, its digest, size or counts differ, or one of its lines is not a valid report entry | Refused (`PlanVerificationError`); the pre-apply check reports `report` |
 | `manifest.json` present, `format_version` unrecognized | Unrecognized version — worded distinctly from the v1 message |
 | Any path exists but cannot be read | Unreadable, naming the path |
 
