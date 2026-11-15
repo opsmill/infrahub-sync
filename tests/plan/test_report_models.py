@@ -1,4 +1,4 @@
-"""The plan report records, the load report and the stage failure record (spec 020 T004, T005, T008)."""
+"""The plan report records, the load report and the stage failure record (spec 007 T004, T005, T008)."""
 
 from __future__ import annotations
 
@@ -122,7 +122,7 @@ def test_the_failure_type_names() -> None:
     assert "internal_error" in FAILURE_TYPES
 
 
-def test_a_stage_failure_record_written_before_spec_019_validates() -> None:
+def test_a_stage_failure_record_written_before_spec_007_validates() -> None:
     record = StageFailureResource.model_validate(
         {"stage": "plan", "outcome": "failed", "error_type": "ValueError", "cause_type": "ConnectionError"}
     )
@@ -131,7 +131,7 @@ def test_a_stage_failure_record_written_before_spec_019_validates() -> None:
     assert record.system is None
 
 
-def test_a_stage_failure_record_reads_the_spec_019_fields() -> None:
+def test_a_stage_failure_record_reads_the_spec_007_fields() -> None:
     record = StageFailureResource.model_validate(
         {
             "stage": "apply",

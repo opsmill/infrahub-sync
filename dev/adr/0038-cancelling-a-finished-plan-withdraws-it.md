@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-11-14
-**Source**: `dev/specs/archive/019-plan-approval/research.md` (R11)
+**Source**: `dev/specs/archive/014-plan-approval/research.md` (R11)
 
 ## Context
 

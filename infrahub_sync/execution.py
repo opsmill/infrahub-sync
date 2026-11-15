@@ -1178,10 +1178,10 @@ def execute_run(
 
     `confirm_left_out` is the person's confirmation that they reviewed the records the plan
     leaves out. An apply of a plan that leaves out records is refused without it, before any
-    write (spec 020 FR-010).
+    write (spec 007 FR-010).
 
     `_apply_progress` and `_start_after` are the Sync service worker's seams for an apply's
-    progress marker and for a resume (spec 022): the observer that saves the marker, and the
+    progress marker and for a resume (spec 016): the observer that saves the marker, and the
     position of the last operation an earlier execution committed. Both default to `None`, so
     the CLI-local and direct Prefect paths apply the whole plan and report nothing.
 

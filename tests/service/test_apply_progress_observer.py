@@ -1,4 +1,4 @@
-"""The worker's apply progress observer: when it saves, and when it asks the apply to stop (spec 022).
+"""The worker's apply progress observer: when it saves, and when it asks the apply to stop (spec 016).
 
 The observer is called directly, with an injected clock: the engine's own call wrapper
 swallows observer errors, so it cannot show what the observer logs.

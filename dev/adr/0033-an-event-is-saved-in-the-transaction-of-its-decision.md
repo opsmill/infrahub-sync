@@ -2,8 +2,8 @@
 
 **Status**: Accepted
 **Date**: 2026-11-14
-**Source**: `dev/specs/archive/017-sync-run-events-logs/research.md` (R2, R6, R10),
-`dev/specs/archive/017-sync-run-events-logs/data-model.md` ("Event")
+**Source**: `dev/specs/archive/012-sync-run-events-logs/research.md` (R2, R6, R10),
+`dev/specs/archive/012-sync-run-events-logs/data-model.md` ("Event")
 
 ## Context
 

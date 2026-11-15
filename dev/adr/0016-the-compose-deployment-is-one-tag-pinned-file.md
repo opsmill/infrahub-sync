@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-10-01
-**Source**: dev/specs/archive/007-harbor-image-publishing/research.md (R3, R6, R7); spec.md clarifications
+**Source**: dev/specs/archive/005-harbor-image-publishing/research.md (R3, R6, R7); spec.md clarifications
 
 ## Context
 

@@ -18,7 +18,7 @@ responsible for the final output.
 Keep failure translation at the boundary that exposes the message. Choose that boundary
 from the route you are changing:
 
-<!-- Extracted from dev/specs/archive/016-prefect-run-observability on 2026-11-09 (Registered service worker row) -->
+<!-- Extracted from dev/specs/archive/011-prefect-run-observability on 2026-11-09 (Registered service worker row) -->
 
 | Route | Failure handling and obligation |
 | --- | --- |

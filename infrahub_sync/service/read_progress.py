@@ -1,7 +1,7 @@
 """Store each side's read state of a stage execution, and derive what the run response shows.
 
 The worker gives Potenda a `StoreSideReadObserver`, which writes one JSON document per side
-to the execution's row (spec 018, research R10). The Sync API derives `StageReads` from the
+to the execution's row (spec 013, research R10). The Sync API derives `StageReads` from the
 stored documents and the execution's terminal state, without writing (research R6), so a
 worker that was killed leaves a state the response can still explain.
 
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SIDES: tuple[Side, ...] = ("source", "destination")
-# The fields a stored document may carry (spec 018 data-model.md); anything else is dropped.
+# The fields a stored document may carry (spec 013 data-model.md); anything else is dropped.
 _DOCUMENT_FIELDS = ("state", "started_at", "ended_at", "read_mode", "nodes_by_kind", "error_class")
 # The states the worker stores. `SideRead.state` accepts any string, so the client keeps reading
 # a run from a later release; the Sync API returns only the states it knows.

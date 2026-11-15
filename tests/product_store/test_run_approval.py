@@ -418,7 +418,7 @@ def _interrupted_run(store: SQLiteRunStore | PostgreSQLRunStore, phase: str) -> 
 
 @pytest.mark.parametrize("phase", ["interrupted", "failed"])
 def test_record_approval_stores_the_approval_of_a_resumable_run(backend: _Backend, phase: str) -> None:
-    """Spec 022 FR-019: a run whose write stopped part-way can be approved, so it can be resumed."""
+    """Spec 016 FR-019: a run whose write stopped part-way can be approved, so it can be resumed."""
     store = backend.make_store()
     _interrupted_run(store, phase)
     receipt = _reserved(store, 1)

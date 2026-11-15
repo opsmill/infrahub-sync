@@ -221,7 +221,7 @@ def _peer_pair(
     )
     placeholder = not_in_source_peer_pair(unique_id) if probed is None else None
     if placeholder is not None:
-        # A peer the source does not return (spec 020 research R5): named by a placeholder the
+        # A peer the source does not return (spec 007 research R5): named by a placeholder the
         # problem pass removes, instead of the absent refusal or a literal destination identity.
         # The store is probed first, so a stored peer whose unique ID starts like a
         # placeholder is still that peer.
@@ -819,7 +819,7 @@ def _warn_identity_finer_than_destination_key(
     separate unkeyed-write warning; the destination has nothing to distinguish there.
 
     Returns the groups of operations that the closest key merges and that hold a create
-    (`identities_merge_in_destination`, spec 020 research R6): an update already has its own
+    (`identities_merge_in_destination`, spec 007 research R6): an update already has its own
     node, so only a group with a create merges anything. Only a key made of identity fields
     groups records Infrahub stores as one node.
     """
@@ -921,7 +921,7 @@ def warn_missing_convergence_key(
 
     Infrahub creates require cached schemas; an unkeyed create is still refused before any
     write. Records the destination cannot tell apart are no longer refused: each group of
-    them is returned, once, for the problem pass to leave out (spec 020 research R6):
+    them is returned, once, for the problem pass to leave out (spec 007 research R6):
 
     - creates that share a destination uniqueness rule (`destination_identity_collision`)
     - creates that share their human-friendly ID with a distinct loaded source record, and

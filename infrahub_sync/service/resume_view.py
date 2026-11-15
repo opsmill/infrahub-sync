@@ -1,4 +1,4 @@
-"""Derive a run's apply progress view and its resume history (spec 022 data-model.md).
+"""Derive a run's apply progress view and its resume history (spec 016 data-model.md).
 
 Nothing here is stored: the view is derived from the run's executions, their saved progress
 markers, the failure record the latest write execution wrote, if any, and the saved plan's

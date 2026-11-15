@@ -1,4 +1,4 @@
-"""`GET /events`: the typed event list a frontend reads a run's timeline from (spec 017, FR-007 to FR-009)."""
+"""`GET /events`: the typed event list a frontend reads a run's timeline from (spec 012, FR-007 to FR-009)."""
 
 from __future__ import annotations
 
@@ -293,7 +293,7 @@ def test_the_event_list_requires_a_valid_token_and_never_lists_the_refusal(
     assert listed.status_code == 200
     assert listed.json()["items"] == []
     if authorization is not None:
-        # Spec 015 keeps the refusal on record; only the event list leaves it out.
+        # Spec 010 keeps the refusal on record; only the event list leaves it out.
         assert [event.outcome for event in projection.audit_events()] == ["refused-authentication"]
 
 

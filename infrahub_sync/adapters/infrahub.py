@@ -1338,7 +1338,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """Each mapped identity that two or more destination nodes hold, in the order they were read.
 
         Only the full read of a kind by `model_loader` records them; an incremental read
-        through the cache does not (spec 020, `destination_identity_ambiguous`).
+        through the cache does not (spec 007, `destination_identity_ambiguous`).
         """
         return [
             DestinationIdentityAmbiguity(kind=kind, unique_id=unique_id, identity=identity, node_ids=tuple(node_ids))
@@ -1987,7 +1987,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         return current
 
     def read_planned_nodes(self, operations: Sequence[PlannedOperation]) -> dict[str, PlannedNodeRead]:
-        """Read the destination node of each planned create and update, and write nothing (spec 022).
+        """Read the destination node of each planned create and update, and write nothing (spec 016).
 
         Grouped by kind: the updates of one kind in one query by their recorded ids, and the
         creates of one kind (with any update of a plan that recorded no destination id) in one

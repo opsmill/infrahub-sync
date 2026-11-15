@@ -312,7 +312,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         """Validate a configuration version and return one findings page.
 
         With ``branch``, the service also checks the mapping, the import account's permissions
-        and the workers' credential variables against that Infrahub branch (spec 020 FR-034).
+        and the workers' credential variables against that Infrahub branch (spec 007 FR-034).
         """
 
         config_id = self._identifier(config_id, "config_id")
@@ -526,7 +526,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         kind: str | None = None,
         expected_checksum: str | None = None,
     ) -> PlanReportPageResource:
-        """Return one page of a saved plan's problems, optionally of one problem type or kind (spec 020).
+        """Return one page of a saved plan's problems, optionally of one problem type or kind (spec 007).
 
         With `expected_checksum`, the Sync API refuses the read (409 `plan-changed`) when the
         saved plan has another checksum; the same holds for the left-out and kept lists.
@@ -552,7 +552,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         kind: str | None = None,
         expected_checksum: str | None = None,
     ) -> PlanReportPageResource:
-        """Return one page of the records a saved plan leaves out, optionally of one kind (spec 020)."""
+        """Return one page of the records a saved plan leaves out, optionally of one kind (spec 007)."""
 
         return self._plan_report_page(
             "get_plan_left_out",
@@ -573,7 +573,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         kind: str | None = None,
         expected_checksum: str | None = None,
     ) -> PlanReportPageResource:
-        """Return one page of the records a saved plan keeps without one optional relationship (spec 020)."""
+        """Return one page of the records a saved plan keeps without one optional relationship (spec 007)."""
 
         return self._plan_report_page(
             "get_plan_kept",
@@ -687,12 +687,12 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         return self.apply_run(run_id, request, idempotency_key)
 
     def resume_run(self, run_id: str, request: ResumeRunRequest, idempotency_key: str) -> RunResource:
-        """Resume an interrupted apply from the run's saved position, idempotently (spec 022)."""
+        """Resume an interrupted apply from the run's saved position, idempotently (spec 016)."""
 
         return self._run_mutation("resume_run", run_id, "resume", request=request, idempotency_key=idempotency_key)
 
     def resume(self, run_id: str, request: ResumeRunRequest, idempotency_key: str) -> RunResource:
-        """Resume an interrupted apply from the run's saved position, idempotently (spec 022)."""
+        """Resume an interrupted apply from the run's saved position, idempotently (spec 016)."""
 
         return self.resume_run(run_id, request, idempotency_key)
 

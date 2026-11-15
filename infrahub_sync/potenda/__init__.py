@@ -86,7 +86,7 @@ OPERATIONAL_APPLY_FAILURES: tuple[type[Exception], ...] = (
 
 
 class SideLoadError(ValueError):
-    """Reading one side of the sync failed (spec 020 research R12).
+    """Reading one side of the sync failed (spec 007 research R12).
 
     `role` is `source` or `destination`, and `adapter` the adapter name the sync configuration
     declares, else the adapter's type. The error that stopped the read is kept as `__cause__`.
@@ -228,7 +228,7 @@ def _require_applyable_format(manifest: PlanManifest, *, run_id: str) -> None:
     rendered for review, and refused at the write.
 
     A format-3 plan was never checked for problems and carries no count of left-out records,
-    so the person cannot confirm what it leaves out (spec 020 SC-006, research R9).
+    so the person cannot confirm what it leaves out (spec 007 SC-006, research R9).
     """
     if manifest.format_version >= REPORT_FORMAT_VERSION:
         return
@@ -246,7 +246,7 @@ def _require_applyable_format(manifest: PlanManifest, *, run_id: str) -> None:
 
 
 def _require_left_out_confirmation(manifest: PlanManifest, *, run_id: str, confirm_left_out: bool) -> None:
-    """Refuse a plan that leaves out records unless the apply confirms it (spec 020 FR-010).
+    """Refuse a plan that leaves out records unless the apply confirms it (spec 007 FR-010).
 
     The count is the manifest's, which the plan checksum binds, so it is the count of the plan
     this call applies. A plan that leaves out nothing accepts and ignores a confirmation.
@@ -320,7 +320,7 @@ def _failure_reach_and_remedy(exc: Exception, *, record: ApplyRecord) -> tuple[s
 def _report_progress(progress: ApplyProgressObserver | None, report: Callable[[ApplyProgressObserver], object]) -> bool:
     """Make one call on the apply's progress observer, and return its answer as a `bool`.
 
-    An observer that raises never changes the apply's result, as for spec 018's read observer:
+    An observer that raises never changes the apply's result, as for spec 013's read observer:
     its failure is logged once, by error class only, and the apply continues — so a failure
     in `stopped` cannot replace the error that stopped the apply, nor drop the partial record
     that error carries. A `should_stop` that raises counts as "do not stop". `None` reports
@@ -978,7 +978,7 @@ class Potenda:
         identity_groups = warn_missing_convergence_key(
             destination=self.destination, operations=operations, source_adapter=self.source, config=self.config
         )
-        # Spec 020 research R3: find every problem, then leave out the records that have one and
+        # Spec 007 research R3: find every problem, then leave out the records that have one and
         # the records that depend on them, before anything is written. The report and the
         # selected operations are the plan; no store and no derived operation is changed.
         result = run_problem_pass(
@@ -1097,10 +1097,10 @@ class Potenda:
                 substitute. `None` asks for no approval comparison at all.
             confirm_left_out: The person confirmed that they reviewed the records the plan
                 leaves out. Required when the plan's report leaves out any record, and
-                ignored otherwise (spec 020 FR-010, FR-011).
+                ignored otherwise (spec 007 FR-010, FR-011).
             progress: Receives each committed operation, each finished kind and the stop of
                 this apply, and is asked before every dispatch whether the apply must stop
-                (spec 022, research R3, R4). `committed` is called only after the destination
+                (spec 016, research R3, R4). `committed` is called only after the destination
                 call returned and the operation was recorded as applied, so a saved position
                 never runs ahead of a commit (FR-002). `None` reports nothing.
             start_after: For a resume, the position in stored order of the last operation an
@@ -1177,7 +1177,7 @@ class Potenda:
         peers = destination.new_peer_resolver()
 
         operations = loaded.operations
-        # Read from the plan for the failure record of a stopped apply (spec 020 FR-014).
+        # Read from the plan for the failure record of a stopped apply (spec 007 FR-014).
         operations_total = len(operations)
         if start_after is not None and not 0 <= start_after < operations_total:
             msg = (

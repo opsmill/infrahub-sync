@@ -6,7 +6,7 @@ title: "Image publishing"
 
 > Part of: Develop > Knowledge | Related: [Publishing an image](../guides/publishing-an-image.md)
 
-<!-- Extracted from specs/007-harbor-image-publishing on 2026-10-01 -->
+<!-- Extracted from specs/005-harbor-image-publishing on 2026-10-01 -->
 
 How the Sync container image is built, checked and published to the OpsMill Harbor registry,
 and what each workflow is responsible for. The decisions behind this layout are recorded in

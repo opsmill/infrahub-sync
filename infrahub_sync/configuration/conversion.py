@@ -687,7 +687,7 @@ def _convert_settings(  # pylint: disable=too-many-arguments,too-many-positional
 def _convert_lineage(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     role: AdapterRole, name: str, key: object, value: object, location: str, report: _Report
 ) -> object:
-    """Return an accepted setting, writing a v2 lineage group name as ``{kind, name}`` (spec 014 FR-003).
+    """Return an accepted setting, writing a v2 lineage group name as ``{kind, name}`` (spec 009 FR-003).
 
     v2 2.0.2 looked a bare name up as a ``CoreAccountGroup`` and fell back to an account; V3 has no fallback.
     """

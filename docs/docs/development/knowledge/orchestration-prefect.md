@@ -66,7 +66,7 @@ def service_sync_run(
 ```
 
 `confirm_left_out` is the person's confirmation that they reviewed the records a plan leaves
-out (spec 020). The API adds it to the flow parameters only when it is true, so an apply that
+out (spec 007). The API adds it to the flow parameters only when it is true, so an apply that
 confirms nothing keeps the parameters of earlier releases. The worker passes it to
 `Potenda.apply_plan`, which checks it again against the plan manifest's left-out count and
 raises `LeftOutConfirmationRequiredError` before any write when it is missing. Because the
@@ -113,7 +113,7 @@ planning, verification, approved writes and result persistence.
 
 #### What a stage leaves in Prefect
 
-<!-- Extracted from dev/specs/archive/016-prefect-run-observability on 2026-11-09 -->
+<!-- Extracted from dev/specs/archive/011-prefect-run-observability on 2026-11-09 -->
 
 An operator who opens a service flow run in the Prefect UI reads the stage's outcome and the
 next step there. The worker writes what Prefect shows about the outcome only after it has
@@ -182,7 +182,7 @@ stored that outcome in the run record
 
 #### How the Sync API reads a run's log
 
-<!-- Extracted from dev/specs/archive/017-sync-run-events-logs on 2026-11-14 -->
+<!-- Extracted from dev/specs/archive/012-sync-run-events-logs on 2026-11-14 -->
 
 A person reads a run's log with `infrahub-sync runs logs <run_id>` or `GET /runs/{run_id}/logs`,
 without opening Prefect. The Sync API keeps no copy of the log. It reads the lines from Prefect

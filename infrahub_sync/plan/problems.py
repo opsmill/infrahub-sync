@@ -1,4 +1,4 @@
-"""The plan problem pass, the dependency walk and the selection step (spec 020 research R3).
+"""The plan problem pass, the dependency walk and the selection step (spec 007 research R3).
 
 `find_problems` reads the source adapter's load report, the source store, the destination
 schema and the derived operations, and returns the plan report: the problems of the nine
@@ -94,7 +94,7 @@ _REASON_TEMPLATES: Mapping[ProblemType, str] = {
 
 
 # A reference within one kind that closes a cycle (`LoadReportEntry.in_cycle`): the source returns
-# the peer, and the read admitted the record without that reference. Spec 020 has no problem type
+# the peer, and the read admitted the record without that reference. Spec 007 has no problem type
 # for it, so it is a `peer_not_found_in_source` problem with this reason.
 _IN_CYCLE_REASON = (
     "{record}: the relationship {field} refers to {peer}, which the source returns, but which refers back "

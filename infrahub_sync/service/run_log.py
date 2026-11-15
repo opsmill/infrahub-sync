@@ -1,4 +1,4 @@
-"""Read a run's own log lines out of its flow runs' logs (spec 017, FR-004, FR-005; research R3, R9).
+"""Read a run's own log lines out of its flow runs' logs (spec 012, FR-004, FR-005; research R3, R9).
 
 A Sync line is a log line whose message starts with an ``infrahub_sync`` logger name and
 `` | ``: ``RunLoggerBridge`` writes every bridged worker line that way and the service flow

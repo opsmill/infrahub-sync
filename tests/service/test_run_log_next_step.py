@@ -746,7 +746,7 @@ def test_the_unpublished_artifact_warning_carries_the_sync_prefix(
     assert warnings[0].startswith(_PREFIX + "run summary artifact for run run-ok")
 
 
-# --- the next step of a run that keeps its saved plan (spec 022) ------------------------------
+# --- the next step of a run that keeps its saved plan (spec 016) ------------------------------
 
 _UNREACHABLE = ServerNotReachableError(address="https://infrahub.example.test")
 _VERIFY_AND_RESUME = (

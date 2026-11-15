@@ -12,7 +12,7 @@ on:
         description: "The full 40-character commit merged into feature/v3-develop"
         required: true
         type: string
-      # Spec 021 FR-019, FR-020: the Compose suite runs once per architecture by default.
+      # Spec 015 FR-019, FR-020: the Compose suite runs once per architecture by default.
       # A repeat count above 1 runs it that many times on each, every run its own job on a
       # fresh runner, to measure how often it fails at random.
       compose_repeat:

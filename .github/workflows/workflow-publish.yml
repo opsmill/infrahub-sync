@@ -191,7 +191,7 @@ jobs:
       labels: ${{ needs.docker_meta.outputs.labels }}
 
   # The release notes name the image by its pull address and digest, and the commands that
-  # verify its signature and SBOMs against the release workflow's identity (spec 021 FR-021,
+  # verify its signature and SBOMs against the release workflow's identity (spec 015 FR-021,
   # FR-022). The GitHub Release exists before the image does, so the section is appended here,
   # once the digest is known. The one job of this workflow that writes, so it alone asks for
   # `contents: write`; it handles no credential beyond the workflow's token.

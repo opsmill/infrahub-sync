@@ -1,6 +1,6 @@
 """`INFRAHUB_SYNC_REQUIRE_APPROVAL`: a site that requires an approved plan before `apply`, and refuses `sync`.
 
-The cases follow the HTTP contract of spec 019 (``dev/specs/archive/019-plan-approval/contracts/http-api.md``)
+The cases follow the HTTP contract of spec 014 (``dev/specs/archive/014-plan-approval/contracts/http-api.md``)
 and the setting's values in ``data-model.md``.
 """
 

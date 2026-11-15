@@ -267,7 +267,7 @@ class ConfigurationRoutes:
 
         With ``branch``, the destination checks run against that Infrahub branch and the
         package's credential references are compared with what the live workers hold (spec
-        019 FR-034 to FR-036). Without it, validation judges declared content only, as before.
+        007 FR-034 to FR-036). Without it, validation judges declared content only, as before.
         """
 
         options: dict[str, Any] = {}

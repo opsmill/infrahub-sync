@@ -2,8 +2,8 @@
 
 **Status**: Accepted
 **Date**: 2026-11-14
-**Source**: `dev/specs/archive/014-import-lineage/research.md` (R-3, R-4, R-6),
-`dev/specs/archive/014-import-lineage/spec.md` (Clarifications, D-3, D-4, D-8)
+**Source**: `dev/specs/archive/009-import-lineage/research.md` (R-3, R-4, R-6),
+`dev/specs/archive/009-import-lineage/spec.md` (Clarifications, D-3, D-4, D-8)
 
 ## Context
 

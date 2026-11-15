@@ -24,7 +24,7 @@ _INVALID_SERVICE_WORKER_ID = "service worker identity is invalid"
 # their accepted receipt stores a success response with no flow-run ID. The receipt's
 # ``operation`` column is plain text, so this set is the only place an operation is named.
 SERVICE_ANSWERED_OPERATIONS = frozenset({"approve"})
-# The status of a ``cancel`` receipt that withdrew a finished plan (spec 019, User Story 4).
+# The status of a ``cancel`` receipt that withdrew a finished plan (spec 014, User Story 4).
 WITHDRAWN_CANCEL_STATUS = 200
 _LEGAL_EXECUTION_VERDICTS = {
     ("completed", "succeeded"),
@@ -73,7 +73,7 @@ class ArtifactReference(BaseModel):
 
 
 class ApplyProgress(BaseModel):
-    """How far one write execution got through its saved plan (spec 022 data-model.md).
+    """How far one write execution got through its saved plan (spec 016 data-model.md).
 
     `position` is the index, in the saved plan's stored order, of the last operation this
     execution knows was committed at the destination; the worker never saves a position ahead
@@ -108,7 +108,7 @@ class ApplyProgress(BaseModel):
         return self
 
 
-# What the store answers when asked to save a progress marker (spec 022, research R2): `saved`
+# What the store answers when asked to save a progress marker (spec 016, research R2): `saved`
 # when the execution's row changed; `ended` when the execution exists but is terminal, which is
 # final, because a terminal execution never takes a marker again; `unknown` when the run has no
 # such execution.
@@ -137,12 +137,12 @@ class PrefectExecutionLink(BaseModel):
     terminal_at: datetime | None = None
     terminal_state: Literal["completed", "failed", "cancelled", "abandoned", "interrupted"] | None = None
     terminal_outcome: Literal["succeeded", "failed", "cancelled", "abandoned", "ambiguous"] | None = None
-    # Each side's stored read document (spec 018 data-model.md); `None` for an execution
+    # Each side's stored read document (spec 013 data-model.md); `None` for an execution
     # recorded before that feature, a stage that reads no side, or a `plan` or `sync`
     # execution that has not reached its planning step.
     source_read: dict[str, Any] | None = None
     destination_read: dict[str, Any] | None = None
-    # The last progress marker a write execution saved (spec 022, research R2); `None` for a
+    # The last progress marker a write execution saved (spec 016, research R2); `None` for a
     # read stage, an execution recorded before that feature, or a write that committed nothing.
     apply_progress: ApplyProgress | None = None
 
@@ -362,7 +362,7 @@ class ProductRun(BaseModel):
     destination_branch: str | None = None
     # The run's one approval of its published plan, or ``None`` when it was never approved.
     # Approval is not a phase: an approved run keeps its phase, ``planned`` or the phase of a
-    # run whose write stopped part-way and that is approved before its resume (spec 022).
+    # run whose write stopped part-way and that is approved before its resume (spec 016).
     approval: RunApproval | None = None
     artifact_refs: tuple[ArtifactReference, ...] = ()
     prefect_executions: tuple[PrefectExecutionLink, ...] = ()
@@ -432,7 +432,7 @@ class ConfigurationBaseline(BaseModel):
 
 
 class WorkerEnvironment(BaseModel):
-    """The credential variable names one worker held at its last poll (spec 020 FR-035).
+    """The credential variable names one worker held at its last poll (spec 007 FR-035).
 
     Names only, never values: each is a set, non-empty variable of the credential namespace.
     `worker_id` is the worker's name, the identity it has before Prefect resolves its record.
@@ -475,7 +475,7 @@ class ExecutionFinishWriteback(BaseModel):
     # become the next run's reference. Absent on every read stage.
     baseline: BaselineWriteback | None = None
     # Set only by a `sync` stage that stopped after its plan because the plan leaves out
-    # records (spec 020 FR-012). The store gives back the run's `sync` write admission in
+    # records (spec 007 FR-012). The store gives back the run's `sync` write admission in
     # the same transaction, and only when the run record shows no dispatched operation.
     release_write_admission: bool = False
 
@@ -702,7 +702,7 @@ class RunFilters(BaseModel):
 RunPage: TypeAlias = StorePage[ProductRun]
 
 
-# An event's dotted type, ``infrahub_sync.<resource>.<action>`` (spec 017, FR-012).
+# An event's dotted type, ``infrahub_sync.<resource>.<action>`` (spec 012, FR-012).
 EVENT_TYPE_PATTERN = r"^infrahub_sync\.(run|config)\.[a-z_]+$"
 # The kinds of resource an event names besides its primary resource, in the order an event lists them.
 RelatedResourceKind: TypeAlias = Literal["account", "config", "config_version", "branch"]

@@ -110,7 +110,7 @@ logger = logging.getLogger(__name__)
 # (research R14). A tier L plan has about 88,000 operations, and one cached operation takes
 # about 200 bytes, so the bound keeps the cache under about 40 MB in every API process.
 PLAN_LAYOUT_CACHE_OPERATIONS = 200_000
-# The key of the published review document that holds the plan report's lines (spec 020).
+# The key of the published review document that holds the plan report's lines (spec 007).
 # `GET /runs/{run_id}/plan` does not return it; the paged report routes do.
 PLAN_REPORT_KEY = "report"
 # The `entry` of a plan report line, one per report route.
@@ -559,7 +559,7 @@ class RunService:
                 run_id=run_id,
             )
         # After the checksum, so the count refers to the plan the person reviewed, and before
-        # the reservation, so a refusal takes no write admission (spec 020 FR-010, FR-011).
+        # the reservation, so a refusal takes no write admission (spec 007 FR-010, FR-011).
         left_out = plan.summary.left_out
         if left_out > 0 and not request.confirm_left_out:
             self._audit(
@@ -591,7 +591,7 @@ class RunService:
     async def resume_run(  # pylint: disable=too-many-locals
         self, run_id: str, request: ResumeRunRequest, principal: Principal, idempotency_key: str
     ) -> tuple[int, dict[str, Any]]:
-        """Accept a resume of an interrupted write from the run's saved position (spec 022).
+        """Accept a resume of an interrupted write from the run's saved position (spec 016).
 
         The checks are `apply`'s, in the same order: ownership, non-secret parameters,
         `confirm_writes`, a cancelled run, approval, the supported configuration, the checksum
@@ -835,7 +835,7 @@ class RunService:
             ),
         ).model_dump(mode="json")
         try:
-            # The accepted event is written in the approval's transaction (spec 017, FR-014).
+            # The accepted event is written in the approval's transaction (spec 012, FR-014).
             accepted = self._event(
                 run_id,
                 actor=principal.actor,
@@ -867,7 +867,7 @@ class RunService:
     def _require_approvable(self, run: ProductRun, principal: Principal, reason: str | None) -> None:
         """Refuse a run that is still running a stage, or that is neither planned nor resumable.
 
-        A resumable run is one whose write stopped part-way (spec 022): approving it lets a site
+        A resumable run is one whose write stopped part-way (spec 016): approving it lets a site
         that requires approval resume it, for example a `sync` run, which is never approved
         before its write (FR-019). Checked before the plan lookup, so a run still planning is
         not reported as a run whose plan is missing.
@@ -1198,7 +1198,7 @@ class RunService:
                 )
                 return self._stored_response(receipt)
         # The request's accepted event and the run's `run.cancelled` end event are written in
-        # the withdrawal's transaction (spec 017, FR-014). No Prefect acknowledgement follows a
+        # the withdrawal's transaction (spec 012, FR-014). No Prefect acknowledgement follows a
         # withdrawal, so the Sync API records the end event itself. The run ends after the
         # decision is taken, so the event list shows the request before the run's end.
         accepted = self._event(
@@ -1361,7 +1361,7 @@ class RunService:
         limit: int | None = None,
         offset: int = 0,
     ) -> EventPage:
-        """Return one page of typed events, oldest first (spec 017, contracts/events-route.md).
+        """Return one page of typed events, oldest first (spec 012, contracts/events-route.md).
 
         ``related`` holds ``<kind>:<id>`` values; an event must name every one of them. An
         unknown run or configuration matches no event rather than being refused.
@@ -1397,7 +1397,7 @@ class RunService:
         The lines of every flow run of the run, or of ``stage``'s flow runs, are read, the
         orchestration engine's lines are left out, and ``offset`` counts Sync lines only, so a
         poller that passes the number of lines it already holds receives only newer ones
-        (spec 017, FR-004, FR-005). ``stage``, ``limit`` and ``offset`` are already bounded by
+        (spec 012, FR-004, FR-005). ``stage``, ``limit`` and ``offset`` are already bounded by
         the route.
 
         Raises:
@@ -1453,7 +1453,7 @@ class RunService:
         kind: str | None = None,
         expected_checksum: str | None = None,
     ) -> PlanReportPageResource:
-        """Return one page of the problems, left-out records or kept records of the retained plan (spec 020).
+        """Return one page of the problems, left-out records or kept records of the retained plan (spec 007).
 
         The entries are the lines of the plan's `report.jsonl` whose `entry` is `entry`,
         without that key, in the report's order, filtered by `problem_type` and `kind`. A
@@ -1893,7 +1893,7 @@ class RunService:
         *,
         pending: tuple[str, MutationReceipt] | None = None,
     ) -> RunResource:
-        """Build the run resource, with its apply progress view and resume history (spec 022).
+        """Build the run resource, with its apply progress view and resume history (spec 016).
 
         `pending` is the flow run ID and receipt of a request whose execution was just added and
         whose receipt is not completed yet.

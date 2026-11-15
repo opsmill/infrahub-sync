@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-11-14
-**Source**: `dev/specs/archive/018-plan-read-progress/research.md` (R1, R2, R3, R4, R6, R8, R10)
+**Source**: `dev/specs/archive/013-plan-read-progress/research.md` (R1, R2, R3, R4, R6, R8, R10)
 
 ## Context
 
