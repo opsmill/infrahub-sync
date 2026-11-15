@@ -50,9 +50,13 @@ that saves the answer or the result it records, in the same database transaction
   replayed, unavailable, cancelled) and of configuration changes. The worker writes the event of
   each stage result. The liveness check writes the event of a claimed stage that it interrupts
   or cancels.
-- **Type.** Each event has a type of the form `infrahub_sync.<run or config>.<action>`, built in
-  `infrahub_sync/service/events.py` from the operation and the outcome. The Sync HTTP API
-  reference lists the types.
+- **Type.** Each event has a type of the form `infrahub_sync.<run or config>.<action>`.
+  `infrahub_sync/service/events.py` builds the type of a request decision from the outcome of
+  the request, and the type of a stage result from the stage and its outcome. An accepted
+  configuration request takes its type from what it created: `config.registered` for a new
+  configuration, `config.version_registered` for a new version, and `config.version_retrieved`
+  when the content matches an existing version and the Sync API returns that version. The Sync
+  HTTP API reference lists the types.
 - **Resources.** The `audit_events` table holds the type, the configuration ID, the configuration
   version and the branch. The table `audit_event_resources (event_id, kind, resource_id)` holds
   the resources an event relates to: the account, the configuration, the configuration version

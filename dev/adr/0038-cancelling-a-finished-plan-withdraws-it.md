@@ -33,7 +33,7 @@ be applied.
   a cancel and an apply sent at the same time never both succeed.
 - **A withdrawn run keeps its phase.** A `verify` of a withdrawn run is still admitted, because it
   writes nothing. A `verify` that passes or fails adds its result to the run and sets no phase,
-  and the store does not change the phase of a cancelled run when that `verify` is abandoned or
+  and the store does not change the phase of a withdrawn run when that `verify` is abandoned or
   interrupted.
 - **The approval is kept.** Withdrawing a plan does not clear its approval. The cancelled run
   shows who approved which checksum before it was withdrawn.

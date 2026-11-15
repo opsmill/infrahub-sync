@@ -148,7 +148,9 @@ carries no `local_id` column, so the destination extracts that resource in full.
 missing mapped model refuses the load before any resource query; it cannot stand in
 for an empty source kind.
 
-The Infrahub adapter has a second reason to read the destination in full. From Infrahub 1.7.0, a
+The Infrahub adapter has a second reason to read the destination in full. This reason has an
+effect only when a direct caller enables incremental extraction, because the current entry
+points already extract every resource in full. From Infrahub 1.7.0, a
 plan reads who last changed each value and when, in the same read as the values
 (`include_metadata=True`). While `InfrahubAdapter.metadata_read` is true, `cursor_tier_for`
 returns `CursorTier.NONE` for every kind, so the engine reads each kind in full through

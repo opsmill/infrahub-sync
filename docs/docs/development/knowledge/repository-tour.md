@@ -355,7 +355,9 @@ records the upstream commit and the local additions.
   as the override file of that include, which changes only their host ports.
   PostgreSQL, the object store and `prefect-server` have no profile; `sync-bootstrap`,
   `sync-api` and `sync-worker` have the `sync` profile; every included Infrahub service has the
-  `infrahub` profile. `dev.start` turns on both profiles and `dev.deps` only `infrahub`. The
+  `infrahub` profile. `dev.start` turns on both profiles and `dev.deps` only `infrahub`.
+  With an Infrahub network attached (`--infrahub-network`), `dev.start` turns on only `sync` and
+  `dev.deps` turns on no profile. The
   tasks read ports, the project name and the Infrahub admin token from
   `docker compose config --format json` (`dev_settings()` in `tasks/dev.py`), so a setting has
   one default, in the Compose file. ADR 0029 records why. Runtime state the

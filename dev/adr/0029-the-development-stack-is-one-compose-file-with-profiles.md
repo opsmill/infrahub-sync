@@ -28,11 +28,13 @@ with the Sync API and worker on the host, for a debugger.
   addresses and returns; `dev.api` and `dev.worker` then run the host processes in the
   foreground. No task writes a PID file or starts a background process.
 - **An Infrahub that already runs.** `--infrahub-network` or
-  `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` drops the `infrahub` profile and connects the Sync
-  services to that network. The Infrahub address then comes from
+  `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` drops the `infrahub` profile and connects the
+  `sync-worker` container to that network. The Infrahub address then comes from
   `INFRAHUB_SYNC_DEV_INFRAHUB_URL`, default `http://infrahub-server:8000`.
 - **The Compose file is the one source of settings.** Every setting is a `${NAME:-default}`
-  interpolation in the file. The tasks read the resolved values (project name, published ports,
+  interpolation in the file, except the approval setting, which is `${REQUIRE_APPROVAL-false}`:
+  its default applies only when the variable is not set, so an empty value is passed to the
+  services as it is. The tasks read the resolved values (project name, published ports,
   bind address, Infrahub admin token) from `docker compose config --format json`, through
   `dev_settings()` in `tasks/dev.py`. The benchmark runner reads its destination's Infrahub
   port and admin token from the same resolved output, through `resolved_compose()`.

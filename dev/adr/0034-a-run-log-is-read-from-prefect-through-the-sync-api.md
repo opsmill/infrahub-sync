@@ -21,8 +21,8 @@ tell a line that Sync wrote from a line that the engine wrote.
 The Sync API serves the log of a run from `GET /runs/{run_id}/logs`. It reads the lines from
 Prefect for each request, and returns only the lines that Sync's own code wrote.
 
-- **No log store in Sync.** Sync keeps no copy of the lines. The `Orchestration` protocol has a
-  `read_logs` method, which reads the lines of the flow runs that the run record names.
+- **No log store in Sync.** Sync keeps no copy of the lines. The `ServiceOrchestration` protocol
+  has a `read_logs` method, which reads the lines of the flow runs that the run record names.
 - **What a Sync line is.** A Sync line is a line whose message starts with an `infrahub_sync`
   logger name followed by ` | `. `RunLoggerBridge` gives this form to every line it forwards from
   the `infrahub_sync` logger tree. The service flow writes its own lines through `SyncFlowLines`,
@@ -38,13 +38,17 @@ Prefect for each request, and returns only the lines that Sync's own code wrote.
   service flow writes one ERROR line with the cause and the next step, and ends the flow run by
   returning a `Failed` state with the same text. It does not raise the error again. A refused
   execution claim ends the same way. Any other failure writes the class name of the error and
-  raises a sanitized copy.
+  raises a sanitized copy. When the worker could not store the failure, or could not store the
+  success of a `plan` or `verify` stage, the last line reports `outcome=failed` and the run
+  record gets no terminal outcome: reconciliation decides it later.
 - **Prefect cannot answer.** When Prefect no longer holds a flow run that the run record names,
   the route answers `410 log-expired`. When Prefect cannot be reached, it answers
   `503 log-unavailable`.
 - **Wording.** No message that the Sync API returns holds the word "Prefect", and no message or
-  served log line tells the person to open Prefect. Field names such as `prefect_executions`, and
-  the `prefect_flow_run_url` link that an operator configures, are kept.
+  served log line tells the person to open Prefect. A served log line can hold the word:
+  the line of a refused execution claim states that a Prefect Retry is refused and that a Sync
+  run is not replayed from Prefect. Field names such as `prefect_executions`, and the
+  `prefect_flow_run_url` link that an operator configures, are kept.
 - **Retention.** Sync deletes no flow run. How long a log can be read depends on the retention
   settings of Sync's Prefect server.
 
