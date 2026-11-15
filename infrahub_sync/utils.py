@@ -462,7 +462,7 @@ class PlanApplier:
         `ownership` travels with it, required and without a default, because this seam
         assembles the apply and an apply assembled without a write-ownership boundary is
         an unguarded write. `progress` and `start_after` travel to the engine unchanged
-        (spec 022); `None` for both applies the whole plan and reports nothing.
+        (spec 016); `None` for both applies the whole plan and reports nothing.
 
         Raises:
             PlanVerificationError: the plan was computed against a different destination

@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-11-14
-**Source**: `dev/specs/archive/015-run-discovery-api/research.md` (R1, R2, R4, R5, R6, R8)
+**Source**: `dev/specs/archive/010-run-discovery-api/research.md` (R1, R2, R4, R5, R6, R8)
 
 ## Context
 

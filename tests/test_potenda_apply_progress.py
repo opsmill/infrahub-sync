@@ -1,6 +1,6 @@
 """What `Potenda.apply_plan` reports to an `ApplyProgressObserver`, and where a resume starts.
 
-The ordering is the product rule (spec 022 FR-002): an operation is reported as committed
+The ordering is the product rule (spec 016 FR-002): an operation is reported as committed
 only after its destination call returned and the apply recorded it, so a saved position never
 runs ahead of a commit. These cases pass explicit fakes that record the exact interleaving of
 observer calls, proofs and dispatches.

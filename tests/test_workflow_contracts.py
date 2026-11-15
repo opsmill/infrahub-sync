@@ -770,7 +770,7 @@ def test_nightly_runs_the_compose_suite_against_an_image_it_builds() -> None:
 
 
 def test_the_compose_suite_runs_once_per_entry_of_its_matrix() -> None:
-    """Spec 021 FR-020: each architecture and repeat is its own job, and one failure stops none of the others."""
+    """Spec 015 FR-020: each architecture and repeat is its own job, and one failure stops none of the others."""
     job = jobs(NIGHTLY_WORKFLOW)["compose-suite"]
 
     assert job["needs"] == "compose-matrix"
@@ -2144,7 +2144,7 @@ def test_the_version_guard_refuses_a_version_the_image_cannot_carry(version: str
 
 
 # ---------------------------------------------------------------------------
-# The release notes name the image by digest (spec 021 FR-021, FR-022)
+# The release notes name the image by digest (spec 015 FR-021, FR-022)
 # ---------------------------------------------------------------------------
 
 RELEASE_IDENTITY = r"^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/tags/"

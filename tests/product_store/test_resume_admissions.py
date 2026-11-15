@@ -1,4 +1,4 @@
-"""Admissions on an interrupted run: `verify`, then `resume` (spec 022).
+"""Admissions on an interrupted run: `verify`, then `resume` (spec 016).
 
 Research R5 and critique E1: a run that admitted its one write refuses every later stage, so
 the `verify` that a resume requires would be refused on an interrupted run. The store admits
@@ -216,7 +216,7 @@ def test_every_other_stage_is_still_refused_on_a_resumable_run(projection: Produ
 
 
 def test_approve_is_accepted_on_a_resumable_run(projection: ProductProjection) -> None:
-    """Spec 022 FR-019: a run whose write stopped part-way can be approved, so a site that requires approval can resume it."""
+    """Spec 016 FR-019: a run whose write stopped part-way can be approved, so a site that requires approval can resume it."""
     run_id = _interrupted_run(projection, "approve")
     approve, _created = projection.reserve_mutation(_receipt("m-approve", run_id=run_id, operation="approve"))
     approval = RunApproval.model_validate(

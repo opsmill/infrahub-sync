@@ -1510,7 +1510,7 @@ def test_the_read_observer_seam_reaches_the_engine_without_changing_the_factory_
     config_dir: str,
     cache_root: Path,
 ) -> None:
-    """Spec 018 research R2: `_read_observer` is set on the built engine, not passed to the factory."""
+    """Spec 013 research R2: `_read_observer` is set on the built engine, not passed to the factory."""
     instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
     factory = _SpyFactory(cache_root=cache_root)
     observer = object()
@@ -1521,7 +1521,7 @@ def test_the_read_observer_seam_reaches_the_engine_without_changing_the_factory_
     assert getattr(factory.engine, "read_observer", None) is observer
     recorded = factory.calls[0]
     assert set(recorded) == set(inspect.signature(get_potenda_from_instance).parameters)
-    assert len(recorded) == 7  # spec 020 removed `continue_on_error`
+    assert len(recorded) == 7  # spec 007 removed `continue_on_error`
 
 
 def test_successful_plan_writes_the_diff_lifecycle(
@@ -1901,7 +1901,7 @@ class _RecordingApplier:
 
 
 def test_an_apply_is_accepted_on_the_run_a_sync_planned(config_dir: str, cache_root: Path) -> None:
-    """Spec 020 FR-012: the team applies a stopped `sync` run as it applies a `plan` run.
+    """Spec 007 FR-012: the team applies a stopped `sync` run as it applies a `plan` run.
 
     The run file a composed `sync` wrote has mode `sync`; nothing in the apply path refuses
     it, and the confirmation reaches the engine.
@@ -1935,7 +1935,7 @@ def test_an_apply_is_accepted_on_the_run_a_sync_planned(config_dir: str, cache_r
 def test_an_apply_passes_the_progress_observer_and_the_resume_position_to_the_applier(
     config_dir: str, cache_root: Path
 ) -> None:
-    """Spec 022: the worker's private seams reach `PlanApplier.apply_plan` unchanged."""
+    """Spec 016: the worker's private seams reach `PlanApplier.apply_plan` unchanged."""
     instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
     factory = _SpyFactory(cache_root=cache_root, rows=[_plan_row("create", "core01")])
     execute_run(instance, operation="plan", potenda_factory=factory)
@@ -1964,7 +1964,7 @@ def test_an_apply_passes_the_progress_observer_and_the_resume_position_to_the_ap
 def test_progress_lost_during_an_apply_records_the_partial_record_and_propagates(
     config_dir: str, cache_root: Path
 ) -> None:
-    """Spec 022: `ApplyProgressLostError` takes the ADR 0010 failure exit of `_run_apply_lifecycle`.
+    """Spec 016: `ApplyProgressLostError` takes the ADR 0010 failure exit of `_run_apply_lifecycle`.
 
     The run file is saved `failed` with the operations written before the stop, and the error
     reaches the caller with its partial record, so the service worker records the run as

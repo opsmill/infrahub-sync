@@ -1,4 +1,4 @@
-"""The stored read state of each side of a stage execution (spec 018, research R3, critique R2)."""
+"""The stored read state of each side of a stage execution (spec 013, research R3, critique R2)."""
 
 from __future__ import annotations
 

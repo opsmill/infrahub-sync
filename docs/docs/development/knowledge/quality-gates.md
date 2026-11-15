@@ -6,7 +6,7 @@ title: "Quality gates"
 
 > Part of: Develop > Knowledge | Related: [Testing](../guidelines/testing.md)
 
-<!-- Extracted from the archived prefect remote-run spec (dev/specs/archive/001, commit 33817cf) on 2026-07-31 -->
+<!-- Extracted from the archived prefect remote-run spec (dev/specs/archive/002, commit 33817cf) on 2026-07-31 -->
 
 What `invoke format` and `invoke lint` actually run, in what order, and what a passing result
 does and does not mean. Both aggregates are executable gates on a clean checkout; this page

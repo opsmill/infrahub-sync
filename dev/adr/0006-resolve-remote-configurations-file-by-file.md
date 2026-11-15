@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-07-31
-**Source**: `dev/specs/archive/001-prefect-managed-remote-run/critiques/collation-r1.md` (D010),
+**Source**: `dev/specs/archive/002-prefect-managed-remote-run/critiques/collation-r1.md` (D010),
 `contracts/execution-surface.md`
 
 ## Context

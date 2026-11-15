@@ -1,5 +1,5 @@
 ---
-# Records left out and problems that the v2-to-V3 plan gate accepts (spec 012 FR-023).
+# Records left out and problems that the v2-to-V3 plan gate accepts (spec 006 FR-023).
 #
 # Each entry is a record that the destination schema cannot represent: Infrahub identifies its
 # kind by fewer fields than NetBox, so several NetBox records map to one Infrahub node. Records
@@ -15,7 +15,7 @@
 #     reason: <why the record cannot be represented>
 #
 # Written from the first complete gate run on 2026-11-13: v2 2.0.1, the pinned NetBox demo
-# dataset, spec 020 at 602cabab.
+# dataset, spec 007 at 602cabab.
 - list: left_out
   type: has_problem
   kind: DcimDevice

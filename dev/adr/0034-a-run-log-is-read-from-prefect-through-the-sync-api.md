@@ -2,8 +2,8 @@
 
 **Status**: Accepted
 **Date**: 2026-11-14
-**Source**: `dev/specs/archive/017-sync-run-events-logs/research.md` (R1, R3, R4, R9),
-`dev/specs/archive/017-sync-run-events-logs/spec.md` (Out of Scope)
+**Source**: `dev/specs/archive/012-sync-run-events-logs/research.md` (R1, R3, R4, R9),
+`dev/specs/archive/012-sync-run-events-logs/spec.md` (Out of Scope)
 
 ## Context
 

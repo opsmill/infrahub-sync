@@ -319,7 +319,7 @@ def test_configuration_reads_and_validation_keep_machine_fields_and_finding_orde
 
 
 def test_configs_validate_passes_the_named_branch_to_the_service(client: MagicMock) -> None:
-    """Spec 020 FR-034 (T061): `--branch` is the only new option; the service receives the branch."""
+    """Spec 007 FR-034 (T061): `--branch` is the only new option; the service receives the branch."""
     validated = _invoke(client, "configs", "validate", "edge-sync", "1", "--branch", "review")
 
     # The exit code on an error finding is not pinned here: contracts/cli.md says 1, and the
@@ -1770,7 +1770,7 @@ def test_a_successful_verify_prints_one_line_per_check_that_passed(client: Magic
 def test_a_verify_of_an_interrupted_run_prints_each_operations_state_and_the_overwrite_note(
     client: MagicMock, truncated: int | None, truncation_lines: list[str]
 ) -> None:
-    """Spec 022 FR-006, contracts/cli.md: one line per uncertain operation, then the truncation and the note."""
+    """Spec 016 FR-006, contracts/cli.md: one line per uncertain operation, then the truncation and the note."""
     accepted = _run()
     verification: dict[str, Any] = {
         "checks": ["checkpoint"],

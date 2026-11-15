@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Date**: 2026-11-09
-**Source**: dev/specs/archive/016-prefect-run-observability/research.md (R1, R4, R7)
+**Source**: dev/specs/archive/011-prefect-run-observability/research.md (R1, R4, R7)
 
 ## Context
 

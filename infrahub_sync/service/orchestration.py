@@ -67,7 +67,7 @@ _RUN_NAMES: Final = {
     "sync": "Sync {configuration}",
     "resume": "Resume sync plan of {configuration}",
 }
-# Lines read per Prefect log request (spec 017, research R4). Prefect's own default page size;
+# Lines read per Prefect log request (spec 012, research R4). Prefect's own default page size;
 # a page shorter than this is the last one.
 LOG_PAGE_SIZE: Final = 200
 

@@ -76,7 +76,7 @@ INFRAHUB_PROFILE = ("--profile", "infrahub")
 PERSISTENT_VOLUMES = {"postgres-data", "object-store-data"}
 PERSISTENT_SERVICES = {"postgres", "object-store-init", "object-store"}
 
-# Spec 021 FR-011: the one shared, read-only mount -- the operator's CA directory -- on the
+# Spec 015 FR-011: the one shared, read-only mount -- the operator's CA directory -- on the
 # three services that make outgoing TLS connections. Unset, its source is an empty named
 # volume that nothing writes.
 CA_TARGET = "/etc/infrahub-sync/ca"
@@ -106,9 +106,9 @@ ROUTED_SERVICES = {"sync-worker"}
 # and only the worker runs one, so the worker is the only service that may be
 # given either. Naming them here rather than deriving them from the file keeps
 # this a statement of the contract instead of a restatement of the YAML.
-# Spec 021 FR-008: one documented name for each credential setting of each bundled adapter,
+# Spec 015 FR-008: one documented name for each credential setting of each bundled adapter,
 # and every name the shipped examples and adapter pages use, so those packages run unedited.
-# The table is dev/specs/archive/021-compose-store-credentials-ca/contracts/environment-variables.md.
+# The table is dev/specs/archive/015-compose-store-credentials-ca/contracts/environment-variables.md.
 CREDENTIAL_PREFIX = "INFRAHUB_SYNC_CREDENTIAL_"
 ADAPTER_CREDENTIAL_NAMES: dict[tuple[str, str], tuple[str, ...]] = {
     ("aci", "username"): ("CISCO_APIC_USERNAME",),
@@ -312,7 +312,7 @@ def test_no_service_mounts_a_host_path(cli_model: dict[str, Any]) -> None:
 
 
 def test_a_named_ca_directory_is_the_only_host_path_and_is_read_only(contract_environment: dict[str, str]) -> None:
-    """Spec 021: with INFRAHUB_SYNC_CA_CERTIFICATES set, the CA directory is bound read-only, and nothing else."""
+    """Spec 015: with INFRAHUB_SYNC_CA_CERTIFICATES set, the CA directory is bound read-only, and nothing else."""
     resolved = resolve({**contract_environment, "INFRAHUB_SYNC_CA_CERTIFICATES": "/srv/infrahub-sync/ca"})
     binds = {
         name: (mount.get("source"), mount.get("target"), mount.get("read_only"))
@@ -1141,7 +1141,7 @@ def test_a_declared_source_credential_reaches_only_the_worker(
 
 
 # ---------------------------------------------------------------------------
-# The team's own S3-compatible store (spec 021, FR-001, FR-002)
+# The team's own S3-compatible store (spec 015, FR-001, FR-002)
 # ---------------------------------------------------------------------------
 
 STORE_SERVICES = ("sync-bootstrap", "sync-api", "sync-worker")
@@ -1193,7 +1193,7 @@ def test_bootstrap_does_not_require_a_left_out_bundled_store(contract_environmen
 
 
 # ---------------------------------------------------------------------------
-# The credential variables of every bundled adapter (spec 021, FR-008)
+# The credential variables of every bundled adapter (spec 015, FR-008)
 # ---------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1238,7 +1238,7 @@ def test_each_credential_variable_is_optional_in_the_file(setting: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Image pins of the development stack (spec 021 FR-023, FR-024)
+# Image pins of the development stack (spec 015 FR-023, FR-024)
 # ---------------------------------------------------------------------------
 
 DEVELOPMENT_FILE = DEVELOPMENT_COMPOSE / "docker-compose.yml"

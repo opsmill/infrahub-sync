@@ -2,8 +2,8 @@
 
 **Status**: Accepted
 **Date**: 2026-11-14
-**Source**: `dev/specs/archive/012-v2-configuration-conversion/research.md` (R1 to R4, R6 to R9),
-`dev/specs/archive/012-v2-configuration-conversion/spec.md` (FR-006, FR-019, FR-020, FR-030)
+**Source**: `dev/specs/archive/006-v2-configuration-conversion/research.md` (R1 to R4, R6 to R9),
+`dev/specs/archive/006-v2-configuration-conversion/spec.md` (FR-006, FR-019, FR-020, FR-030)
 
 ## Context
 

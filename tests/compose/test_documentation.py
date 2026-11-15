@@ -473,7 +473,7 @@ def test_the_prefect_ui_section_covers_merging_the_credential_and_closing_the_po
     assert "docker compose up -d" in shell_lines(body)
 
 
-# Spec 021 FR-017: no page tells an operator to run a command that prints interpolated
+# Spec 015 FR-017: no page tells an operator to run a command that prints interpolated
 # credential values. `docker compose config` prints them unless it runs with `--quiet` or
 # `--no-interpolate`; `docker inspect` prints a container's whole environment.
 OPERATOR_PAGES = sorted((REPO_ROOT / "docs" / "docs").glob("*.mdx")) + sorted(

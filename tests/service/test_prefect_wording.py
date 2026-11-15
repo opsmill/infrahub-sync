@@ -1,4 +1,4 @@
-"""No Sync message points the operator at Prefect, and Sync deletes no flow run (spec 017, FR-006, FR-011).
+"""No Sync message points the operator at Prefect, and Sync deletes no flow run (spec 012, FR-006, FR-011).
 
 FR-006: a failed run (missing branch), an expired log and an unreachable orchestrator are served
 through the Sync API and printed by `runs show`, `runs logs` and `events`. No response message,

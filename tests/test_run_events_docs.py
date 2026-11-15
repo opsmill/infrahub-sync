@@ -1,4 +1,4 @@
-"""Operator pages describe run events, run logs and Prefect's retention (spec 017, FR-011, FR-017)."""
+"""Operator pages describe run events, run logs and Prefect's retention (spec 012, FR-011, FR-017)."""
 
 from pathlib import Path
 

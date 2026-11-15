@@ -631,7 +631,7 @@ def test_a_missing_source_token_fails_the_run_inside_the_container(
 
 
 # ---------------------------------------------------------------------------
-# Every bundled adapter's credentials reach the worker (spec 021, SC-003)
+# Every bundled adapter's credentials reach the worker (spec 015, SC-003)
 # ---------------------------------------------------------------------------
 
 ACI_PACKAGE = Path(__file__).resolve().parents[2] / "examples" / "aci_to_infrahub" / "package.yml"

@@ -1,6 +1,6 @@
 """The text lines ``configs convert`` prints for a ``ConversionResult``.
 
-The layout follows ``contracts/convert-command.md`` of spec 012: the report on standard output,
+The layout follows ``contracts/convert-command.md`` of spec 006: the report on standard output,
 the refusals on standard error, and the next steps after the write. These functions return
 lines and print nothing; the command escapes each line for the terminal and prints it. No line
 holds a credential value, because no report entry holds one.

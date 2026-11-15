@@ -1,4 +1,4 @@
-"""The operator's CA bundle is trusted next to the public roots, and refused when unsafe (spec 021 US3)."""
+"""The operator's CA bundle is trusted next to the public roots, and refused when unsafe (spec 015 US3)."""
 
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ def test_certificates_become_one_bundle_after_the_public_roots(
 ) -> None:
     directory = tmp_path / "ca"
     directory.mkdir()
-    first, second = _ca_certificate("Spec 021 Test CA one"), _ca_certificate("Spec 021 Test CA two")
+    first, second = _ca_certificate("Spec 015 Test CA one"), _ca_certificate("Spec 015 Test CA two")
     (directory / "one.pem").write_bytes(first)
     (directory / "two.crt").write_bytes(second)
     (directory / "notes.txt").write_text("not a certificate file", encoding="utf-8")
@@ -111,7 +111,7 @@ def test_an_already_set_trust_variable_is_kept_and_named(
 ) -> None:
     directory = tmp_path / "ca"
     directory.mkdir()
-    (directory / "ca.pem").write_bytes(_ca_certificate("Spec 021 Test CA"))
+    (directory / "ca.pem").write_bytes(_ca_certificate("Spec 015 Test CA"))
     monkeypatch.setenv("SSL_CERT_FILE", "/operator/value-canary.pem")
 
     with caplog.at_level(logging.INFO):
@@ -127,8 +127,8 @@ def test_an_already_set_trust_variable_is_kept_and_named(
 def test_a_file_holding_a_private_key_is_refused_by_name_only(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     directory = tmp_path / "ca"
     directory.mkdir()
-    (directory / "ca.pem").write_bytes(_ca_certificate("Spec 021 Test CA"))
-    (directory / "leaked.pem").write_bytes(_ca_certificate("Spec 021 Test CA") + _private_key())
+    (directory / "ca.pem").write_bytes(_ca_certificate("Spec 015 Test CA"))
+    (directory / "leaked.pem").write_bytes(_ca_certificate("Spec 015 Test CA") + _private_key())
 
     with caplog.at_level(logging.INFO), pytest.raises(TrustStoreError) as refusal:
         install_custom_ca_bundle(directory)
@@ -143,7 +143,7 @@ def test_a_private_key_under_any_file_name_is_refused(tmp_path: Path, name: str)
     """A key is refused even under a name the bundle never reads, because the mount still carries it."""
     directory = tmp_path / "ca"
     directory.mkdir()
-    (directory / "ca.pem").write_bytes(_ca_certificate("Spec 021 Test CA"))
+    (directory / "ca.pem").write_bytes(_ca_certificate("Spec 015 Test CA"))
     (directory / name).write_bytes(_private_key())
 
     with pytest.raises(TrustStoreError) as refusal:
@@ -158,7 +158,7 @@ def test_a_private_key_across_two_scanned_blocks_is_refused(tmp_path: Path, monk
     monkeypatch.setattr(trust_store, "_SCAN_BLOCK_BYTES", 64)
     directory = tmp_path / "ca"
     directory.mkdir()
-    (directory / "ca.pem").write_bytes(_ca_certificate("Spec 021 Test CA"))
+    (directory / "ca.pem").write_bytes(_ca_certificate("Spec 015 Test CA"))
     # The marker starts 5 bytes before the end of the first block.
     (directory / "notes.txt").write_bytes(b"x" * 59 + _private_key())
 
@@ -172,7 +172,7 @@ def test_a_file_the_bundle_does_not_trust_is_never_read_whole(tmp_path: Path, mo
     """Only certificate files are kept in memory, so a large file next to them does not fill the memory at start."""
     directory = tmp_path / "ca"
     directory.mkdir()
-    (directory / "ca.pem").write_bytes(_ca_certificate("Spec 021 Test CA"))
+    (directory / "ca.pem").write_bytes(_ca_certificate("Spec 015 Test CA"))
     (directory / "archive.tar").write_bytes(b"\0" * (3 * 1024 * 1024))
     read_whole: list[str] = []
     read_bytes = Path.read_bytes
@@ -214,7 +214,7 @@ def test_text_around_the_certificate_may_hold_utf8(tmp_path: Path) -> None:
     """OpenSSL skips the text around PEM blocks, such as the subject line `openssl x509` prints."""
     directory = tmp_path / "ca"
     directory.mkdir()
-    certificate = _ca_certificate("Spec 021 Test CA")
+    certificate = _ca_certificate("Spec 015 Test CA")
     (directory / "ca.pem").write_bytes("subject=CN = Société Test CA\n".encode() + certificate)
 
     bundle = install_custom_ca_bundle(directory)
@@ -227,7 +227,7 @@ def test_text_around_the_certificate_may_hold_utf8(tmp_path: Path) -> None:
 def test_a_der_certificate_is_refused(tmp_path: Path) -> None:
     directory = tmp_path / "ca"
     directory.mkdir()
-    pem = _ca_certificate("Spec 021 DER CA")
+    pem = _ca_certificate("Spec 015 DER CA")
     (directory / "ca.crt").write_bytes(x509.load_pem_x509_certificate(pem).public_bytes(serialization.Encoding.DER))
 
     with pytest.raises(TrustStoreError) as refusal:
@@ -239,7 +239,7 @@ def test_a_der_certificate_is_refused(tmp_path: Path) -> None:
 def test_the_directory_setting_is_read_from_the_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     directory = tmp_path / "ca"
     directory.mkdir()
-    (directory / "ca.pem").write_bytes(_ca_certificate("Spec 021 Test CA"))
+    (directory / "ca.pem").write_bytes(_ca_certificate("Spec 015 Test CA"))
     monkeypatch.setenv(trust_store.CA_DIRECTORY_ENV, str(directory))
 
     assert install_custom_ca_bundle() is not None

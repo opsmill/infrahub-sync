@@ -388,7 +388,7 @@ def compare_plan(  # noqa: PLR0913 -- the plan detail, its summary and the lists
 
     The gate passes only when the plan holds no create and no update, when records left out
     and problems were counted, when the detail lists as many operations as the total, when
-    deletes were computed, and when nothing else is unexpected (spec 012 FR-023):
+    deletes were computed, and when nothing else is unexpected (spec 006 FR-023):
     - a record left out because of a problem, and a problem, must be on the expected left-out
       list
     - a record left out because it depends on a left-out record is accepted when that record

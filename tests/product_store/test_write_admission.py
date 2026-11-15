@@ -685,7 +685,7 @@ def test_an_expired_cancellation_of_a_claimed_write_records_reconciliation(proje
     assert (stored.phase, stored.outcome) == ("interrupted", "ambiguous")
 
 
-# Withdrawing a finished plan (spec 019, User Story 4): ``cancel_planned_run`` takes the same
+# Withdrawing a finished plan (spec 014, User Story 4): ``cancel_planned_run`` takes the same
 # write-first row lock as a write admission, so a cancel and an apply never both succeed.
 
 _CANCELLED_AT = datetime(2026, 11, 10, 15, tzinfo=timezone.utc)

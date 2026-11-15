@@ -290,7 +290,7 @@ def test_a_registered_stage_reaches_execution_with_its_models_bound(
 
     monkeypatch.setattr(service_flow, "execute_run", _record)
     monkeypatch.setattr(service_flow, "_publish_plan", _skip)
-    # The stage reads only the plan's operation count, for the apply progress observer (spec 022).
+    # The stage reads only the plan's operation count, for the apply progress observer (spec 016).
     monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: SimpleNamespace(operations_count=1))
     monkeypatch.setattr(service_flow, "_require_planned_schema", _skip)
     # Checkpoint membership is asserted in tests/service/test_sync_checkpoint_order.py;

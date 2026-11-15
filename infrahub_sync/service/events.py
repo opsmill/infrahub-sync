@@ -1,4 +1,4 @@
-"""Build the typed event each Sync API decision and each stage result records (spec 017, FR-012).
+"""Build the typed event each Sync API decision and each stage result records (spec 012, FR-012).
 
 The event type follows the table in the spec's data model: a request's outcome names a run or
 configuration decision, and a stage's outcome names the stage result. A request refused for a
@@ -20,7 +20,7 @@ _STAGE_SUCCESS_TYPES = {
     "verify": f"{_RUN_PREFIX}verified",
     "apply": f"{_RUN_PREFIX}applied",
     "sync": f"{_RUN_PREFIX}synced",
-    # A resume of an interrupted apply (spec 022): the rest of the saved plan was applied.
+    # A resume of an interrupted apply (spec 016): the rest of the saved plan was applied.
     "resume": f"{_RUN_PREFIX}resumed",
 }
 RUN_CANCELLED = f"{_RUN_PREFIX}cancelled"
@@ -39,7 +39,7 @@ def _decision_action(outcome: str) -> str | None:
         return "refused"
     if outcome in {"accepted", "replayed", "unavailable"}:
         return outcome
-    # A cancel that withdraws a finished plan is an accepted request (spec 019).
+    # A cancel that withdraws a finished plan is an accepted request (spec 014).
     if outcome == "accepted-withdrawn":
         return "accepted"
     msg = f"no event type for the request outcome {outcome!r}"

@@ -1,4 +1,4 @@
-"""What the CLI prints for a stopped apply and for a second apply of its plan (spec 020 T059).
+"""What the CLI prints for a stopped apply and for a second apply of its plan (spec 007 T059).
 
 FR-021: `runs show` prints how many operations the stopped apply wrote out of the total, and the
 operation that failed with its action, kind and identity (contracts/cli.md "Cause of a failed or
@@ -7,7 +7,7 @@ stopped run").
 FR-023: a second apply on that run is refused by the Sync API with the existing
 `run-execution-conflict` code (spec decision 4). The CLI keeps the lines it prints for any API
 refusal and adds the next step: `verify` and `runs resume` for a run that can be resumed (spec
-022), otherwise create and review a new plan.
+016), otherwise create and review a new plan.
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ def test_a_second_apply_prints_the_conflict_refusal_and_the_next_step(client: Ma
     assert len(hints) == 1, result.output
     assert "create and review a new plan" in hints[0]
     assert "`infrahub-sync plan`" in hints[0]
-    # Spec 022: a run that can be resumed continues with `verify`, then `runs resume`.
+    # Spec 016: a run that can be resumed continues with `verify`, then `runs resume`.
     assert (
         "When it prints `resumable: yes`, run `infrahub-sync verify RUN_ID`, then `infrahub-sync runs resume RUN_ID"
         in hints[0]

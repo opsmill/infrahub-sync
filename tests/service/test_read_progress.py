@@ -1,4 +1,4 @@
-"""The worker stores each side's read state, and the run response derives it (spec 018, US1).
+"""The worker stores each side's read state, and the run response derives it (spec 013, US1).
 
 Covers the worker's observer (research R10), the response derivation (research R6) and the
 stage wiring (research R4, R9).
@@ -478,7 +478,7 @@ def test_an_apply_stage_records_no_read_and_passes_only_the_apply_progress_obser
 
     assert seen["operation"] == "apply"
     assert "_read_observer" not in seen
-    # The apply saves its progress marker instead (spec 022, T008).
+    # The apply saves its progress marker instead (spec 016, T008).
     assert isinstance(seen["_apply_progress"], StoreApplyProgressObserver)
     link = _stored_link(projection)
     assert (link.source_read, link.destination_read) == (None, None)
