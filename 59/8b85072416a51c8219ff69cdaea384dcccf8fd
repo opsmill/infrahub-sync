@@ -1,0 +1,19 @@
+dev/adr/0034-a-run-log-is-read-from-prefect-through-the-sync-api.md
+  s_82fe233503ea5c::t_f272416e5d6f3e 48-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "598b85072416a51c8219ff69cdaea384dcccf8fd",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
