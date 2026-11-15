@@ -29,14 +29,18 @@ behavior.
 
 ### The command-line client and its HTTP client
 
-- [`infrahub_sync/cli.py`][src-infrahub-sync-cli-py] — the Typer entry point. It is a client of the Sync HTTP API and
-  nothing else: it constructs no HTTP request itself and reads neither the source system nor a
-  local plan file.
+- [`infrahub_sync/cli.py`][src-infrahub-sync-cli-py] — the Typer entry point. It is a client of
+  the Sync HTTP API: it constructs no HTTP request itself and reads neither the source system
+  nor a local plan file. `configs convert` is the exception: it does not call the Sync API. It
+  reads a v1 or v2 `config.yml` and writes a package on the machine where it runs. With
+  `--live-schema` it reads the destination Infrahub schema without a token, through
+  `configuration/conversion_live_schema.py`; without the flag it opens no network connection.
 - [`infrahub_sync/client/`][src-infrahub-sync-client] — the only place that builds Sync API requests.
   `client.py` holds the synchronous client, `models.py` its typed request and response shapes,
   and `errors.py` its error taxonomy.
 
-The command surface is `configs`, `runs`, `plan`, `sync` and `apply`. See the
+The command surface is `configs` (including the local `configs convert`), `runs`, `plan`,
+`verify`, `approve`, `sync`, `apply`, `events` and `whoami`. See the
 [CLI reference](../../reference/cli.mdx) for every option.
 
 To trace a registered run from a CLI command to execution, follow these modules:
@@ -55,8 +59,8 @@ see [the registered-run lifecycle](sync-architecture.md#one-registered-run).
 ### Configuration admission
 
 `infrahub_sync/configuration/` decides what a registered package is allowed to declare. It
-performs no I/O against a source or destination unless a caller explicitly opts in to the
-destination-schema checks.
+performs no I/O against a source or destination unless a caller explicitly opts in: to the
+destination-schema checks, or to the schema read of `configs convert --live-schema`.
 
 | Module | Owns |
 |---|---|
@@ -69,6 +73,10 @@ destination-schema checks.
 | `schema_validation.py` | The opt-in destination-schema checks |
 | `warnings.py` | Intentional omissions and unqualified optional features |
 | `runtime.py` | Runtime resolution, including the effective destination branch |
+| `conversion.py` | `configs convert`: the pure conversion of a v1 or v2 `config.yml` into a package, the tables of what v2 read from the environment, and the worker's credential variables |
+| `conversion_authentication.py` | Which credential settings each v2 authentication method used, so a converted package references only those |
+| `conversion_live_schema.py` | `configs convert --live-schema`: the destination-schema read without a token, and the fill of an unmapped IP namespace with `default` |
+| `conversion_report.py` | The text of the conversion report, the refusals and the next steps |
 
 [Configuration foundation](configuration-foundation.md) explains the declared identity,
 credential references and the connection-free capability declaration in full.
@@ -79,7 +87,9 @@ credential references and the connection-free capability declaration in full.
 (`app.py`, `serve.py`, `config_routes.py`), authentication (`auth.py`), the Prefect worker and
 deployment (`worker.py`, `deploy.py`, `orchestration.py`, `flow.py`), liveness and checkpoint
 policy (`liveness.py`, `checkpoints.py`), per-stage scratch directories (`scratch.py`), the
-write guard (`apply_guard.py`) and artifact storage (`storage.py`). `prefect_server.py` holds
+write guard (`apply_guard.py`), artifact storage (`storage.py`), the one-shot start-up job of
+the Compose deployment (`bootstrap.py`) and the trust of the operator's CA certificates
+(`trust_store.py`). `prefect_server.py` holds
 `create_prefect_app`, the application factory that the root `docker-compose.yml`, the
 development stack's `development/docker-compose.yml` and the copy that
 `infrahub_sync.testcontainers` ships (`infrahub_sync/testcontainers/docker-compose.yml`) pass to uvicorn. These stacks run the Prefect server from the Sync image, so they need no
@@ -95,7 +105,7 @@ Two facts about it are often missed:
 [The configuration write guard](apply-guard.md) covers the advisory lock that serializes one
 configuration's writes.
 
-Three service modules carry what a run tells the operator:
+Six service modules carry what a run tells the operator:
 
 - `failure_cause.py` builds the stage failure record: it classifies the error into a
   `failure_type` and copies a fixed set of fields of typed errors (system, Infrahub error code,
@@ -104,13 +114,60 @@ Three service modules carry what a run tells the operator:
 - `run_artifact.py` builds the markdown artifact the worker publishes on each Prefect flow run,
   including the left-out and problem counts and the review commands of a plan that leaves out
   records.
+- `read_progress.py` stores the read state of the source and of the destination while a `plan`
+  or `sync` stage runs, and derives the `reads` field of the run response from the stored
+  documents. The engine side of the report is `infrahub_sync/potenda/read_progress.py`.
+- `events.py` builds the event of a request, a configuration change or a stage result, and its
+  type (`infrahub_sync.run.accepted`, `infrahub_sync.run.planned` and the others). The store
+  saves the event of an accepted request or a stage result in the transaction that saves the
+  answer or the result. ADR 0033 records why, and which events are saved by a call of their own.
+- `run_log.py` keeps the lines that Sync wrote out of a run's Prefect log, for
+  `GET /runs/{run_id}/logs`. [How the Sync API reads a run's log](orchestration-prefect.md#how-the-sync-api-reads-a-runs-log)
+  describes it.
 - `flow.py` also stops a `sync` whose plan leaves out records, after the plan checkpoint and
   before any write. The stage result carries a `failure` with `failure_type:
   left_out_review_required`, and the store releases the run's write admission in the same
   commit (`release_write_admission` in `product_store/models.py`).
 
+`paging.py` holds the cursor that the three lists share: `GET /runs`, `GET /configs` and
+`GET /configs/{config_id}/versions`. A cursor is URL-safe base64 of a JSON object with two keys:
+`k`, the sort key of the last row returned, and `f`, the first 16 hexadecimal characters of the
+SHA-256 of the list's name and filters. `decode_cursor` raises `InvalidCursorError` for a value
+that does not decode, that is longer than 2,048 characters or nested too deeply, or whose digest
+differs from the request's; the HTTP layer returns `422 invalid-cursor`. `validate_limit` applies
+the limits in `client/models.py` (`DEFAULT_LIMIT` 50, `MAX_LIMIT` 200). ADR 0032 records the
+paging rules.
+
 Each worker publishes the names of its set credential variables to the `worker_environments`
 table on each poll, through `service.storage.service_product_projection`.
+
+How the Compose deployment reaches its object store and trusts a private CA:
+
+- `storage.s3_client_arguments` builds the arguments of every S3 client. `bootstrap.py` calls
+  it directly, and `sync-api` and `sync-worker` call it through
+  `storage.service_product_projection`. All three check the endpoint, the region and the
+  addressing style (`INFRAHUB_SYNC_S3_ADDRESSING_STYLE`, `path` or `virtual`) the same way,
+  before any client exists.
+- `bootstrap.py` checks that the endpoint and the bundled store agree: it refuses an endpoint
+  that names another store while the host name of the bundled store resolves, and an endpoint
+  that names the bundled store while that host name does not resolve. It reads no value of
+  `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE`; Compose reads that setting to leave the bundled store
+  out. It then checks for the bucket with `HeadBucket` and creates the bucket only when the
+  store reports it absent. Last, it writes one new check key create-only twice, to confirm that
+  the store accepts the first write and refuses the second, and deletes the key. Each failure
+  is one fixed name, printed as `refused: <name>`. The operator page lists the names
+  ([Use your own S3-compatible store](../../compose-deployment.mdx#use-your-own-s3-compatible-store)).
+- `bootstrap.main()`, `worker.main()` and `serve.build_app()` call
+  `trust_store.install_custom_ca_bundle()` before they build any client. When the directory
+  that `INFRAHUB_SYNC_CA_DIRECTORY` names holds `*.pem` or `*.crt` files, it writes one bundle,
+  the public roots of `certifi` followed by those files, to a new file in the process's
+  temporary directory, and points `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` and
+  `INFRAHUB_TLS_CA_FILE` at it. A variable that already holds a value is kept, and a warning
+  names it. An empty variable counts as unset. `tests/service/test_trust_store_entry_points.py`
+  checks the three calls.
+- The trust store refuses a file in the directory that holds a private key, whatever the file's
+  name, and a `*.pem` or `*.crt` file that does not load as a certificate. The error names the
+  file, never its content.
 
 ### Runtime schema
 
@@ -154,6 +211,35 @@ are the deep documents.
 `store.py` the durable projection, `models.py` the record types and `bundle.py` the artifact
 bundle. [Durable product records](../../reference/durable-product-records.mdx) documents what
 is kept.
+
+The store serves the lists from its own tables only. `list_runs`, `list_configuration_page` and
+`list_configuration_version_page` each read one page in a fixed order, newest first, and one row
+more to tell whether another page follows:
+
+- runs by `(started_at, run_id)`, without loading artifact references or execution links;
+- configurations by `(created_at, config_id)`, with an exact-match filter on `name`;
+- versions by `registry_version`. One more query for the page
+  (`_SELECT_LATEST_VERSION_RUNS`) finds each version's newest run by `started_at` and its most
+  recently applied run by `finished_at`. An apply updates the plan's run, so `started_at` is the
+  time the plan was created and `finished_at` is the time the apply finished.
+
+The columns a list filters on or shows are written with the row: `product_runs.destination_branch`
+when the run is created, `configuration_versions.registered_by` and `registration_reason` and
+`configurations.name` in the transaction that registers a version. Rows written before a column
+existed keep `NULL`, except `configurations.name`, which the start-up that adds the column fills
+from the latest version's package.
+
+Start-up creates the list indexes after it adds those columns, each with `CREATE INDEX IF NOT
+EXISTS` (`_RUN_LISTING_INDEXES` in `store.py`):
+
+| Index | Serves |
+|---|---|
+| `product_runs_started (started_at, run_id)` | The run list without a filter |
+| `product_runs_config_started (config_id, started_at, run_id)` | The run list of one configuration |
+| `product_runs_binding_started (config_id, registry_version, started_at, run_id)` | The run list of one version, and each version's newest run |
+| `product_runs_binding_applied (config_id, registry_version, finished_at, run_id) WHERE phase = 'applied'` | Each version's most recently applied run |
+| `configurations_name (name)` | The `name` filter of the configuration list |
+| `configurations_created (created_at, config_id)` | The order of the configuration list |
 
 ### Adapters
 
@@ -254,6 +340,8 @@ records the upstream commit and the local additions.
 | `tests.py` | `tests.tests-unit`, `tests.tests-integration`, `tests.all` and `tests.check-310` |
 | `dev.py` | The local development stack: the `dev` namespace (`dev.start`, `dev.deps`, `dev.api`, `dev.worker`, `dev.restart`, `dev.smoke` and the rest) |
 | `smoke_dataset.py` | The smoke dataset that `dev.seed` and `dev.smoke` load; no task of its own |
+| `netbox.py` | The local NetBox for adapter work: the `netbox` namespace (`netbox.start`, `netbox.seed`, `netbox.destroy`, and dataset dump, restore and change tasks) |
+| `bench.py` | The NetBox benchmark runner: the `bench` namespace. It reads the Infrahub port and admin token of its destination through `resolved_compose()` in `dev.py` |
 | `release.py` | Keeping the image pin in `docker-compose.yml` in step with the package version |
 
 [Quality gates](quality-gates.md) explains what the aggregates really run, and
@@ -264,7 +352,15 @@ records the upstream commit and the local additions.
 - [`development/`][src-development] holds the local stacks. `docker-compose.yml` is the
   development stack the `dev` tasks run, formerly `docker-compose.dev.yml`; it includes the
   Infrahub services from `docker-compose.infrahub.yml`, with `docker-compose.infrahub-ports.yml`
-  as the override file of that include, which changes only their host ports. Runtime state the
+  as the override file of that include, which changes only their host ports.
+  PostgreSQL, the object store and `prefect-server` have no profile; `sync-bootstrap`,
+  `sync-api` and `sync-worker` have the `sync` profile; every included Infrahub service has the
+  `infrahub` profile. `dev.start` turns on both profiles and `dev.deps` only `infrahub`.
+  With an Infrahub network attached (`--infrahub-network`), `dev.start` turns on only `sync` and
+  `dev.deps` turns on no profile. The
+  tasks read ports, the project name and the Infrahub admin token from
+  `docker compose config --format json` (`dev_settings()` in `tasks/dev.py`), so a setting has
+  one default, in the Compose file. ADR 0029 records why. Runtime state the
   tasks and tests write lives under `.dev/`, which Git ignores.
   [Local development stack](../../development-stack.mdx) is the procedure.
 - The root `docker-compose.yml` is the operator deployment. It pulls the released image from
@@ -272,6 +368,11 @@ records the upstream commit and the local additions.
   the development stack in `development/docker-compose.yml` builds from the checkout instead.
   `infrahub_sync/testcontainers/docker-compose.yml` is a copy of it that a contract test keeps
   byte-equal.
+  With the default settings, every image other than the Sync image is named by its `sha256`
+  digest in the root file and in `development/docker-compose.yml`. Two tests of
+  `tests/compose/test_compose_contract.py`, one for each file, fail on an image named by tag
+  alone; the byte-equal test covers the copy. The Sync image itself is pinned by tag in the
+  root file (ADR 0016) and built from the checkout in the development stack.
   [Compose deployment](../../compose-deployment.mdx) is the operator page.
 - [`examples/`][src-examples] holds fifteen directories, and they are not uniform. Four —
   `aci_to_infrahub`, `custom_adapter`, `netbox_to_infrahub` and
@@ -289,6 +390,12 @@ records the upstream commit and the local additions.
 stack's tasks, Compose file and smoke suite (`dev_stack/smoke/`, whose `smoke`-marked tests are
 opt-in), the opt-in
 `integration/`, `image/` and `compose/` suites, and the frozen `vendored_prefect_extras/` copy.
+
+Two fixture directories serve the v1 and v2 conversion. `tests/data/v2_examples/` holds
+byte-for-byte copies of the example `config.yml` files of the `2.0.2` tag, and of the NetBox
+example of the `1.6.1` tag. Its README says not to edit them and how to copy them again from
+their tag. `tests/data/v2_gate/` holds the reviewed lists that the nightly `v2-gate` suite
+compares the first V3 plan with.
 
 Which of these the default gate runs, and which need something live, is
 [Testing tiers](../guidelines/testing-tiers.md).

@@ -59,6 +59,33 @@ References are how relationships are rebuilt on the destination. Because a refer
 at another model by its identifiers, the referenced model must also appear in
 `schema_mapping`, and it must be written first — which is what `order` controls.
 
+A `static` value with a `reference` names a peer that exists only in the destination, such as
+Infrahub's built-in `default` IP namespace. The source holds no such record, so the planner
+records the peer by its name (`infrahub_sync/plan/destination_only_peer.py`). This works only
+when the peer kind appears in `schema_mapping`, every entry for that kind identifies it by the
+same single field, and that field is the destination's human-friendly ID for the kind. An entry
+with no `mapping` meets the first condition and loads nothing from the source: the NetBox, ACI
+and generic REST adapters, for example, return no records for it. The plan then finds the
+destination node only in Infrahub and records a delete of it, which apply never executes. This
+is what `configs convert --live-schema` writes for an unmapped IP namespace:
+
+```yaml
+schema_mapping:
+  - name: IpamNamespace
+    identifiers: ["name"]
+    fields:
+      - name: name
+  - name: IpamPrefix
+    mapping: ipam.prefixes
+    identifiers: ["prefix", "ip_namespace"]
+    fields:
+      - name: prefix
+        mapping: prefix
+      - name: ip_namespace
+        static: default
+        reference: IpamNamespace
+```
+
 ### Identifiers, references, and write order
 
 `order` is the list of models in the sequence they are written to the destination. It is
@@ -110,10 +137,13 @@ second object and reports success. Planning therefore refuses a create it cannot
 A kind whose HFID crosses a relationship is **supported** — the server matches on the components in
 the payload, so no client-side `hfid` is needed and none is rendered.
 
-Two mappings in `examples/netbox_to_infrahub/config.yml` sit exactly on this line: `IpamPrefix`
-(`identifiers: [prefix, vrf]`) and `IpamIPAddress` (`identifiers: [address, vrf]`), whose destination
-kinds require `ip_namespace`. Their updates work; a fresh create under them is refused rather than
-silently duplicated, and they need a mapping or schema fix.
+Infrahub's uniqueness constraint for `IpamPrefix` and `IpamIPAddress` includes `ip_namespace`,
+so a mapping of these kinds must map the namespace and name it in `identifiers`.
+`examples/netbox_to_infrahub/config.yml` identifies them by `[prefix, ip_namespace]` and
+`[address, ip_namespace]` and maps each NetBox VRF to its own namespace. A v2 configuration
+that identified them by `vrf` instead is refused at `plan` with
+`UnwritableConvergenceIdentityError`; `configs convert --live-schema` maps its namespace to
+`default`, where v2 wrote it (see "Fields" above).
 
 Refusals happen at `plan` time, and the write surface repeats the same check; see
 [Planned writes and apply](planned-write-and-apply.md).

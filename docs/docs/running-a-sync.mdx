@@ -267,6 +267,16 @@ The problem types are:
   identity.
 - `transform_failed`: a configured transform failed for one record.
 
+Two cases to know when you read the list:
+
+- When records of one kind refer to each other in a cycle, for example two locations that each
+  name the other as `parent`, one reference of the cycle is listed as
+  `peer_not_found_in_source`. Its reason says that the source returns the peer and that the
+  records refer to each other in a cycle.
+- A record whose value has the wrong type, or whose transform fails, lists only that problem.
+  If the record also has a Dropdown value that is not one of the choices, that problem appears
+  in the next plan, after you fix the first one. The record is left out in both plans.
+
 Fix each problem in the source data or in the package, then create a new plan. When the plan
 leaves out records that you accept to leave out for now, apply it with the confirmation that
 [Apply the reviewed plan](#apply-the-reviewed-plan) describes.

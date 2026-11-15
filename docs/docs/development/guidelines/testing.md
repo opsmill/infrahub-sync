@@ -90,6 +90,21 @@ Prefer a `Protocol` over `Callable[..., X]` for an injected callable whose keywo
 matter: the call shape becomes part of the type, so a rename in the real implementation is a
 type error rather than a runtime `TypeError` inside the code you were protecting.
 
+### Pin a code constant to the deployment file it mirrors
+
+When code holds a copy of a value that a deployment file also declares, add a unit test that
+reads the file and compares it with the constant. The code reads the constant and not the
+file, so without the test nothing reports that one of the two changed without the other.
+
+For example, `tests/configuration/test_conversion_worker_variables.py` reads the `sync-worker`
+service of the root `docker-compose.yml` and asserts that its `INFRAHUB_SYNC_CREDENTIAL_*`
+variables equal `COMPOSE_WORKER_CREDENTIAL_VARIABLES`, in the file's order. `configs convert`
+uses that constant to warn about a variable the worker does not receive. The test parses the
+YAML file and needs no Docker, so it runs in the offline unit tier.
+
+[Handle optional dependencies and credentials](writing-an-adapter.md#handle-optional-dependencies-and-credentials)
+lists the places that hold the worker's credential variables and the test that checks each one.
+
 ### Review a remediation over its own diff
 
 **A fix written against a green suite is validated by nothing.**
@@ -99,6 +114,21 @@ an error path is a new change and is owed a review over *its own* diff. Two cred
 and an unbounded recursion in this repository were introduced by a remediation whose tests all
 passed, and were found only by a second pass scoped to the remediation diff. See
 [Secret redaction](../guidelines/secret-redaction.md).
+
+### Test a shared check on every path that runs it
+
+**When two stages must refuse for the same reasons, make them call one function, and prove it
+with a parity test.**
+
+`verify` reports whether an `apply` would be refused, so both call one gate
+(`Potenda.check_plan`). The parity cases in `tests/service/test_verify_destination.py` break one
+check at a time, run the real `verify` and `apply` stages on the same saved plan, and assert that
+both fail and both name the same check. `tests/test_potenda_check_plan.py` asserts that the gate
+proves no write ownership and dispatches nothing.
+
+When you add a pre-write check, add one case to the parity test. Do not copy a check into a second
+stage: a later change reaches one copy and not the other, and a plan then passes `verify` and is
+refused by `apply`.
 
 ### Conventions
 

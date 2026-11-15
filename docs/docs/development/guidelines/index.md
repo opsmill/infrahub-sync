@@ -28,6 +28,8 @@ testing, and secret redaction. For how the system works, see
   process boundary: where to sanitize, what to collect, and how over-collection fails.
 - [CI workflows](ci-workflows.md) — shell strictness, secret and input handling, pinning,
   concurrency, and how workflow behaviour is tested.
+- [Invoke task names](invoke-tasks.md) — one name per task, the two top-level tasks, how to
+  rename or remove a task and its callers, and where development tasks read their settings.
 
 ### Related
 

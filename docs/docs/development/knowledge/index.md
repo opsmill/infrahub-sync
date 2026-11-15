@@ -52,6 +52,9 @@ rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
 
 - [Configuration foundation](configuration-foundation.md) — declared package identity,
   runtime credential references, and the connection-free adapter capability declaration.
+- [V2 configuration conversion](v2-configuration-conversion.md) — how `configs convert` is
+  built: the pure conversion, the fixed tables of v2 behaviour, the live-schema fill, and how
+  the file is written.
 - [The shared execution surface](execution-surface.md) — service and direct Python
   callers, plan/verify/apply inputs and return types, failure handling and filesystem locks.
 - [Prefect orchestration](orchestration-prefect.md) — registered service execution and

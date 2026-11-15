@@ -55,6 +55,12 @@ notes. The service sets `_require_verified=True` to run the full saved-plan veri
 raise `PlanVerificationError` if checks fail. A returned `SavedPlan` from an ordinary
 review call is therefore not proof that the artifact passed every apply check.
 
+`execute_run(operation="verify")` checks the plan files only. The service's `verify` stage calls
+it first and, for a run of a registered configuration, then runs `_check_destination` in
+`infrahub_sync/service/flow.py`: the configuration binding, one read of the live destination
+schema, the destination adapter, and `PlanApplier.check_plan`. The stage result lists the checks
+that passed by name. See [The pre-write gate](planned-write-and-apply.md#the-pre-write-gate).
+
 For apply, `ownership` implements `WriteOwnership`: it proves the caller's right to write
 before each dispatched destination operation and after the final operation.
 `record_applied` receives the completed `ApplyRecord` before saving the applied run state.

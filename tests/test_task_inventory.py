@@ -1,4 +1,4 @@
-"""The Invoke task names follow `dev/specs/010-prefect-from-sync-image/contracts/invoke-tasks.md`."""
+"""The Invoke task names follow `dev/specs/archive/010-prefect-from-sync-image/contracts/invoke-tasks.md`."""
 
 from __future__ import annotations
 

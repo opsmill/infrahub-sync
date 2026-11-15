@@ -12,7 +12,7 @@ are searched for those values, and only the names found are reported:
 - the output of the commands the operator documentation tells an operator to run
 - every container's log
 - every service's environment, against the receiver list of
-  `dev/specs/021-compose-store-credentials-ca/contracts/environment-variables.md`
+  `dev/specs/archive/021-compose-store-credentials-ca/contracts/environment-variables.md`
 
 Boundary (spec 021 decision 2): the worker container log and the Prefect log mask a credential
 only when it is six characters or longer. Every value here is longer, so the log check holds for

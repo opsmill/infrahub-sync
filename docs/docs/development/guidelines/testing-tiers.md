@@ -455,7 +455,10 @@ write. When the suite cannot read the node or the field, `v2` holds `<not read>`
 unexpected entry as a defect in V3 or in the conversion.
 
 Add an entry to either list, with its reason, only in a pull request where a reviewer accepts
-the reason. A failure of this suite fails the nightly job.
+the reason. List only records that the destination schema cannot represent: the records that
+depend on them, and the deletes of their kinds, are accepted without entries. Review both lists
+when the pinned `demo` dataset, the NetBox example in `tests/data/v2_examples/` or the way a plan
+reports records left out and problems changes. A failure of this suite fails the nightly job.
 
 Run it from the repository root, with Docker running and no other development stack or NetBox
 in use, because the suite resets both:
@@ -614,6 +617,21 @@ The Compose suite brings up the root `docker-compose.yml` through a Docker daemo
 image you built, and tears it down. The nightly workflow runs the same command; no pull request
 job runs it. Run it by hand when a change touches the Compose deployment. It keeps the
 ordinary Docker and platform skips, so confirm what ran before claiming it passed.
+
+The nightly workflow runs the Compose suite once on `linux/amd64` (`ubuntu-22.04`) and once on
+`linux/arm64` (`ubuntu-24.04-arm`) by default, each in its own job. To find out how often the
+suite fails at random, dispatch the workflow with a repeat count: `compose_repeat` (1 to 20)
+runs the suite that many times on each architecture, and `compose_architectures` (`both`,
+`amd64` or `arm64`) chooses where. Each run is its own job on a new runner, and one failed run
+does not stop the others:
+
+```bash
+gh workflow run workflow-nightly-e2e.yml --ref feature/v3-develop \
+  -f sha=<full-40-character-sha> -f compose_repeat=10 -f compose_architectures=both
+```
+
+Whether the suite passes 10 runs in a row on each architecture is not known yet; issue #420
+tracks that measurement.
 
 The suite includes `tests/compose/test_testcontainers_fixture.py`, which needs the
 `testcontainers` extra described below. Install it before you run the suite:
