@@ -1,0 +1,840 @@
+dev/specs/archive/010-run-discovery-api/plan.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-135
+dev/specs/archive/012-sync-run-events-logs/plan.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-205
+dev/specs/archive/011-prefect-run-observability/research.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-142
+dev/specs/archive/016-resume-interrupted-apply/plan.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-135
+dev/specs/archive/014-plan-approval/opsmill-implement-report.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-173
+dev/specs/archive/011-prefect-run-observability/spec.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-44,46-358
+  s_82fe233503ea5c::t_61e18c953ca011 45
+dev/specs/archive/015-compose-store-credentials-ca/plan.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-190
+dev/specs/archive/009-import-lineage/quickstart.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-328
+dev/adr/0025-a-warm-source-read-admits-changed-records.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5
+dev/specs/archive/002-prefect-managed-remote-run/contracts/execution-surface.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-528
+dev/specs/archive/009-import-lineage/tasks.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-239
+dev/specs/archive/010-run-discovery-api/alignment-check.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-52
+dev/specs/archive/016-resume-interrupted-apply/research.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-341
+dev/adr/0024-prefect-surfaces-follow-the-stored-run-record.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5
+dev/specs/archive/002-prefect-managed-remote-run/critiques/engineering-r2.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-290
+dev/specs/archive/002-prefect-managed-remote-run/critiques/fidelity-r2.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-136
+dev/specs/archive/002-prefect-managed-remote-run/sessions/session-2026-07-31-1055.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-76
+dev/specs/archive/005-harbor-image-publishing/contracts/ci-docker-image.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-64
+dev/specs/archive/013-plan-read-progress/tasks.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-154
+dev/adr/0031-an-import-writes-as-the-account-of-its-token.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5-6
+dev/specs/archive/010-run-discovery-api/EXTRACTED.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-124
+dev/specs/archive/012-sync-run-events-logs/data-model.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-76
+dev/adr/0007-canonical-plan-fingerprint-as-equivalence-oracle.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5
+dev/adr/0028-the-bundled-object-store-runs-from-the-silo-image.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5-6
+dev/specs/archive/005-harbor-image-publishing/plan.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-195
+docs/docs/development/guidelines/testing.md
+  s_82fe233503ea5c::t_c10c08942ae55a 9
+docs/docs/development/guidelines/ci-workflows.md
+  s_82fe233503ea5c::t_c10c08942ae55a 9
+dev/adr/0035-the-engine-reports-each-sides-read-to-an-optional-observer.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5
+dev/specs/archive/006-v2-configuration-conversion/quickstart.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-68
+dev/specs/archive/014-plan-approval/spec.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-293
+dev/adr/0037-an-approval-is-a-record-on-the-run.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5
+dev/specs/archive/006-v2-configuration-conversion/tasks.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-120,122-200
+  s_82fe233503ea5c::t_79e5973d0cc02c 121
+dev/specs/archive/015-compose-store-credentials-ca/tasks.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-209
+dev/specs/archive/005-harbor-image-publishing/notes/operator-guidance.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-213
+dev/specs/archive/002-prefect-managed-remote-run/checklists/safety.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-101
+dev/specs/archive/016-resume-interrupted-apply/EXTRACTED.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-108
+dev/specs/archive/007-plan-problem-reporting/alignment-check.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-39
+dev/specs/archive/005-harbor-image-publishing/tasks.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-427
+dev/specs/archive/008-prefect-from-sync-image/contracts/compose-services.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-56
+dev/specs/archive/002-prefect-managed-remote-run/checklists/traceability.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-84
+dev/specs/archive/011-prefect-run-observability/quickstart.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-62
+dev/specs/archive/010-run-discovery-api/tasks.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-169
+dev/specs/archive/002-prefect-managed-remote-run/quickstart.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-199
+dev/specs/archive/003-cli-core-migration/provenance.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-23
+dev/adr/0041-an-unmapped-ip-namespace-converts-to-the-default-namespace.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5-6
+dev/specs/archive/006-v2-configuration-conversion/critiques/critique-20261022.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-118
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_82fe233503ea5c::t_c10c08942ae55a 69,116,185
+dev/specs/archive/008-prefect-from-sync-image/opsmill-implement-report.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-119
+dev/specs/archive/011-prefect-run-observability/contracts/prefect-surfaces.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-51
+dev/specs/archive/002-prefect-managed-remote-run/tasks.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-376
+dev/specs/archive/011-prefect-run-observability/alignment-check.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-50
+dev/specs/archive/README.md
+  s_82fe233503ea5c::t_29b3d9aac8d8c2 36-38
+  s_82fe233503ea5c::t_0ac531ce9e998e 33-35
+  s_82fe233503ea5c::t_73bf6ffbb5cfca 39-41
+  s_82fe233503ea5c::t_645e33dd0811df 1-32,42
+changelog/+netbox-device-status.changed.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1
+dev/specs/archive/002-prefect-managed-remote-run/plan.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-276
+dev/specs/archive/005-harbor-image-publishing/contracts/release-pin-tasks.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-40
+dev/specs/archive/005-harbor-image-publishing/EXTRACTED.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-41
+dev/specs/archive/005-harbor-image-publishing/contracts/docker-compose-env.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-48
+dev/specs/archive/016-resume-interrupted-apply/critiques/critique.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-66
+dev/adr/0026-the-compose-deployment-takes-an-external-store-credentials-and-ca-from-env.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5
+changelog/+sync-left-out-stop.changed.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-3
+dev/specs/archive/015-compose-store-credentials-ca/opsmill-implement-report.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-131
+changelog/+plan-leaves-out-records.changed.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1
+dev/specs/archive/006-v2-configuration-conversion/checklists/requirements.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-42
+dev/specs/archive/014-plan-approval/EXTRACTED.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-115
+.github/workflows/workflow-nightly-e2e.yml
+  s_82fe233503ea5c::t_c10c08942ae55a 15
+dev/specs/archive/012-sync-run-events-logs/contracts/cli-output.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-38
+dev/adr/0020-records-with-problems-are-left-out-of-a-plan.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5-6
+dev/specs/archive/010-run-discovery-api/checklists/requirements.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-43
+dev/specs/archive/013-plan-read-progress/contracts/run-response.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-53
+dev/specs/archive/005-harbor-image-publishing/spec.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-337
+dev/specs/archive/014-plan-approval/quickstart.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-97
+dev/specs/archive/016-resume-interrupted-apply/opsmill-implement-report.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-93
+dev/specs/archive/016-resume-interrupted-apply/spec.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-287
+dev/specs/archive/014-plan-approval/plan.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-174
+dev/specs/archive/005-harbor-image-publishing/data-model.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-71
+dev/specs/archive/016-resume-interrupted-apply/alignment-check.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-39
+dev/specs/archive/014-plan-approval/checklists/requirements.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-38
+dev/specs/archive/015-compose-store-credentials-ca/research.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-453
+dev/specs/archive/008-prefect-from-sync-image/EXTRACTED.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-94
+dev/specs/archive/008-prefect-from-sync-image/contracts/testcontainers-api.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-28,30-87
+  s_82fe233503ea5c::t_d6f32c5d3dc16a 29
+dev/specs/archive/004-mvp-interface-conformance/evidence-report.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-371
+changelog/+upgrade-steps.changed.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1
+dev/specs/archive/014-plan-approval/contracts/cli.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-53
+dev/specs/archive/014-plan-approval/data-model.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-90
+dev/specs/archive/010-run-discovery-api/quickstart.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-189
+dev/adr/0030-the-end-to-end-test-class-inherits-infrahubs.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5-6
+dev/specs/archive/004-mvp-interface-conformance/EXTRACTED.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-71
+dev/specs/archive/016-resume-interrupted-apply/quickstart.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-43
+dev/specs/archive/016-resume-interrupted-apply/tasks.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-205
+dev/specs/archive/002-prefect-managed-remote-run/opsmill-implement-report.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-219
+dev/specs/archive/006-v2-configuration-conversion/contracts/convert-command.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-85
+dev/specs/archive/002-prefect-managed-remote-run/critiques/fidelity-r1.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-103
+dev/specs/archive/011-prefect-run-observability/tasks.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-228
+dev/specs/archive/014-plan-approval/alignment-check.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-31
+dev/specs/archive/012-sync-run-events-logs/contracts/logs-route.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-47
+infrahub_sync/__init__.py
+  s_82fe233503ea5c::t_c10c08942ae55a 114,340,351,485
+dev/specs/archive/015-compose-store-credentials-ca/data-model.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-41
+dev/adr/0008-declare-redis-directly-instead-of-the-diffsync-extra.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5
+dev/adr/0016-the-compose-deployment-is-one-tag-pinned-file.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5
+dev/specs/archive/005-harbor-image-publishing/checklists/requirements.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-45
+dev/specs/archive/004-mvp-interface-conformance/change-to-case-ledger.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-28
+dev/specs/archive/012-sync-run-events-logs/opsmill-implement-report.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-268
+infrahub_sync/adapters/infrahub.py
+  s_82fe233503ea5c::t_c10c08942ae55a 1341,1990
+dev/specs/archive/016-resume-interrupted-apply/data-model.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-87
+dev/specs/archive/011-prefect-run-observability/plan.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-157
+dev/specs/archive/002-prefect-managed-remote-run/retrospective.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-124
+dev/specs/archive/005-harbor-image-publishing/pr-notes.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-97
+dev/specs/archive/007-plan-problem-reporting/review-findings.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-104
+dev/specs/archive/008-prefect-from-sync-image/spec.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-545
+dev/specs/archive/010-run-discovery-api/contracts/http-api.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-97
+changelog/+validate-branch.added.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1
+dev/specs/archive/011-prefect-run-observability/opsmill-implement-report.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-198
+dev/specs/archive/004-mvp-interface-conformance/known-limitations-and-release-gaps.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-54
+dev/specs/archive/011-prefect-run-observability/checklists/requirements.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-37
+dev/specs/archive/002-prefect-managed-remote-run/checklists/interfaces.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-123
+dev/specs/archive/011-prefect-run-observability/EXTRACTED.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-31
+dev/specs/archive/008-prefect-from-sync-image/data-model.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-108
+dev/specs/archive/002-prefect-managed-remote-run/checklists/requirements.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-44
+dev/specs/archive/011-prefect-run-observability/contracts/run-response.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-30
+dev/specs/archive/013-plan-read-progress/contracts/cli-output.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-29
+changelog/+apply-conflict-hint.changed.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1
+dev/specs/archive/005-harbor-image-publishing/quickstart.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-169
+dev/specs/archive/012-sync-run-events-logs/contracts/events-route.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-52
+changelog/+failure-cause.added.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1
+dev/adr/0039-workers-publish-the-names-of-their-credential-variables.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5-6
+dev/specs/archive/012-sync-run-events-logs/tasks.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-212
+dev/specs/archive/006-v2-configuration-conversion/quickstart-results.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-37
+dev/specs/archive/015-compose-store-credentials-ca/contracts/bootstrap-and-startup.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-46
+dev/adr/0006-resolve-remote-configurations-file-by-file.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5
+dev/specs/archive/006-v2-configuration-conversion/research.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-227
+dev/specs/archive/011-prefect-run-observability/data-model.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-39
+dev/specs/archive/016-resume-interrupted-apply/checklists/requirements.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-35,37
+  s_82fe233503ea5c::t_930241a5e36820 36
+dev/adr/0029-the-development-stack-is-one-compose-file-with-profiles.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5-6
+dev/specs/archive/009-import-lineage/research.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-800
+dev/adr/0033-an-event-is-saved-in-the-transaction-of-its-decision.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5-6
+dev/specs/archive/007-plan-problem-reporting/EXTRACTED.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-193
+dev/specs/archive/009-import-lineage/EXTRACTED.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-93
+dev/adr/0009-optional-integrations-live-in-their-own-package.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5
+dev/specs/archive/009-import-lineage/data-model.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-104
+dev/specs/archive/010-run-discovery-api/research.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-237
+dev/specs/archive/014-plan-approval/research.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-213
+changelog/+continue-on-error.removed.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1
+dev/adr/0015-images-publish-to-harbor-through-one-reusable-workflow.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5
+dev/adr/0021-a-failure-record-holds-a-structured-cause.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5-7,24,49
+dev/specs/archive/002-prefect-managed-remote-run/critiques/ergonomics-r2.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-217
+dev/specs/archive/007-plan-problem-reporting/checklists/requirements.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-42
+dev/specs/archive/016-resume-interrupted-apply/contracts/http-api.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-106
+dev/specs/archive/008-prefect-from-sync-image/plan.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-193,195-202
+  s_82fe233503ea5c::t_95758aa26dc651 194
+dev/specs/archive/008-prefect-from-sync-image/research.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-452
+dev/specs/archive/006-v2-configuration-conversion/spec.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-424
+dev/specs/archive/013-plan-read-progress/EXTRACTED.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-100
+docs/docs/development/guidelines/secret-redaction.md
+  s_82fe233503ea5c::t_c10c08942ae55a 21
+dev/specs/archive/004-mvp-interface-conformance/conformance-report.json
+  s_82fe233503ea5c::t_c10c08942ae55a 1-84
+dev/specs/archive/010-run-discovery-api/opsmill-implement-report.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-215
+dev/specs/archive/012-sync-run-events-logs/EXTRACTED.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-116
+dev/specs/archive/015-compose-store-credentials-ca/contracts/environment-variables.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-70
+dev/adr/0032-run-and-configuration-lists-page-with-a-cursor.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5
+dev/specs/archive/013-plan-read-progress/opsmill-implement-report.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-270
+dev/adr/0038-cancelling-a-finished-plan-withdraws-it.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5
+dev/specs/archive/012-sync-run-events-logs/spec.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-279
+dev/specs/archive/002-prefect-managed-remote-run/research.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-275
+dev/specs/archive/013-plan-read-progress/spec.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-192
+dev/specs/archive/008-prefect-from-sync-image/quickstart.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-96
+docs/docs/development/knowledge/quality-gates.md
+  s_82fe233503ea5c::t_c10c08942ae55a 9
+dev/specs/archive/010-run-discovery-api/critiques/critique-20261104.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-126
+dev/adr/0036-verify-runs-every-pre-write-check-of-apply-through-one-shared-gate.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5
+dev/specs/archive/009-import-lineage/contracts/infrahub-destination-settings.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-53
+dev/specs/archive/009-import-lineage/opsmill-implement-report.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-140
+dev/specs/archive/006-v2-configuration-conversion/EXTRACTED.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-172
+dev/specs/archive/006-v2-configuration-conversion/alignment-check.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-30
+changelog/+plan-report-lists.added.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1
+dev/specs/archive/015-compose-store-credentials-ca/EXTRACTED.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-189
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_82fe233503ea5c::t_c10c08942ae55a 192,653
+dev/specs/archive/008-prefect-from-sync-image/contracts/invoke-tasks.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-68
+dev/specs/archive/007-plan-problem-reporting/critiques/critique-20261111.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-128
+dev/specs/archive/002-prefect-managed-remote-run/data-model.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-191
+changelog/+register-response.changed.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1
+dev/specs/archive/008-prefect-from-sync-image/tasks.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-363
+dev/specs/archive/015-compose-store-credentials-ca/checklists/requirements.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-40
+dev/specs/archive/012-sync-run-events-logs/quickstart.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-42
+dev/specs/archive/007-plan-problem-reporting/research.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-490
+dev/specs/archive/010-run-discovery-api/data-model.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-124
+dev/adr/0040-a-v2-configuration-converts-locally-by-v2-rules.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5-6
+dev/specs/archive/013-plan-read-progress/checklists/requirements.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-40
+dev/specs/archive/009-import-lineage/spec.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-415
+.github/scripts/nightly_e2e.py
+  s_82fe233503ea5c::t_c10c08942ae55a 391
+dev/specs/archive/014-plan-approval/critiques/critique-20261110.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-111
+dev/specs/archive/009-import-lineage/plan.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-187
+dev/specs/archive/007-plan-problem-reporting/plan.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-202
+dev/specs/archive/012-sync-run-events-logs/checklists/requirements.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-36
+dev/specs/archive/010-run-discovery-api/contracts/cli.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-59
+dev/specs/archive/007-plan-problem-reporting/quickstart.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-61
+dev/specs/archive/007-plan-problem-reporting/contracts/sync-api.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-147
+dev/specs/archive/015-compose-store-credentials-ca/critiques/critique-20261112.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-113
+dev/specs/archive/002-prefect-managed-remote-run/contracts/run-result-and-errors.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-235
+dev/specs/archive/004-mvp-interface-conformance/canonical-field-map.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-64
+dev/specs/archive/004-mvp-interface-conformance/reviewer-setup.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-66
+dev/adr/0034-a-run-log-is-read-from-prefect-through-the-sync-api.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5-6
+dev/specs/archive/006-v2-configuration-conversion/plan.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-150
+dev/specs/archive/007-plan-problem-reporting/tasks.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-224
+dev/specs/archive/006-v2-configuration-conversion/data-model.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-97
+dev/specs/archive/007-plan-problem-reporting/data-model.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-177
+dev/specs/archive/013-plan-read-progress/alignment-check.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-30
+dev/specs/archive/015-compose-store-credentials-ca/spec.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-652
+dev/specs/archive/015-compose-store-credentials-ca/reviews/review-run-20261113.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-96
+dev/adr/0027-an-interrupted-apply-resumes-from-its-saved-position.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5
+dev/specs/archive/002-prefect-managed-remote-run/critiques/collation-r2.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-92
+dev/specs/archive/012-sync-run-events-logs/alignment-check.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-40
+dev/specs/archive/009-import-lineage/checklists/requirements.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-45
+dev/specs/archive/002-prefect-managed-remote-run/critiques/collation-r1.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-85
+dev/specs/archive/008-prefect-from-sync-image/checklists/requirements.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-44
+dev/specs/archive/007-plan-problem-reporting/spec.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-798
+dev/specs/archive/009-import-lineage/contracts/run-errors.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-17
+changelog/+validate-identifiers.changed.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1
+dev/specs/archive/002-prefect-managed-remote-run/contracts/prefect-flow.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-256
+dev/specs/archive/002-prefect-managed-remote-run/run-report.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-2114
+dev/specs/archive/013-plan-read-progress/plan.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-152
+dev/specs/archive/007-plan-problem-reporting/contracts/plan-artifact-format-4.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-45
+dev/specs/archive/011-prefect-run-observability/critiques/critique-20261105.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-133
+dev/specs/archive/006-v2-configuration-conversion/opsmill-implement-report.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-105,107-341
+  s_82fe233503ea5c::t_bb2af966c7b618 106
+dev/specs/archive/002-prefect-managed-remote-run/critiques/engineering-r1.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-170
+dev/specs/archive/002-prefect-managed-remote-run/EXTRACTED.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-64
+.github/workflows/workflow-publish.yml
+  s_82fe233503ea5c::t_c10c08942ae55a 194
+dev/specs/archive/011-prefect-run-observability/contracts/cli-output.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-32
+dev/specs/archive/012-sync-run-events-logs/critiques/critique-20261106.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-116
+dev/specs/archive/012-sync-run-events-logs/research.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-205
+docs/docs/development/knowledge/image-publishing.md
+  s_82fe233503ea5c::t_c10c08942ae55a 9
+dev/specs/archive/013-plan-read-progress/research.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-210
+dev/specs/archive/005-harbor-image-publishing/opsmill-implement-report.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-102
+dev/adr/0005-translate-run-failures-only-at-the-remote-boundary.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5
+dev/specs/archive/016-resume-interrupted-apply/contracts/cli.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-66
+dev/specs/archive/015-compose-store-credentials-ca/alignment-check.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-38
+dev/specs/archive/014-plan-approval/contracts/http-api.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-97
+dev/specs/archive/014-plan-approval/tasks.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-191
+dev/specs/archive/009-import-lineage/contracts/plan-last-changes.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-57
+dev/specs/archive/013-plan-read-progress/critiques/critique-20261109.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-127
+dev/specs/archive/002-prefect-managed-remote-run/spec.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-261
+dev/specs/archive/007-plan-problem-reporting/contracts/cli.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-93
+dev/specs/archive/010-run-discovery-api/spec.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-341
+dev/specs/archive/007-plan-problem-reporting/opsmill-implement-report.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-488
+dev/specs/archive/015-compose-store-credentials-ca/quickstart.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-92
+dev/specs/archive/013-plan-read-progress/data-model.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-77
+dev/adr/0042-the-v2-gate-passes-on-no-creates-and-reviewed-lists.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5-6
+docs/docs/development/knowledge/incremental-and-cache.md
+  s_82fe233503ea5c::t_c10c08942ae55a 56
+changelog/+left-out-confirmation.added.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1
+dev/specs/archive/002-prefect-managed-remote-run/critiques/ergonomics-r1.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-425
+dev/specs/archive/013-plan-read-progress/quickstart.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-45
+dev/adr/0022-saved-plan-format-4.md
+  s_82fe233503ea5c::t_c10c08942ae55a 5-6
+dev/specs/archive/005-harbor-image-publishing/research.md
+  s_82fe233503ea5c::t_c10c08942ae55a 1-345
+infrahub_sync/adapters/nautobot.py
+  s_82fe233503ea5c::t_7c627601201e2a 220
+infrahub_sync/adapters/references.py
+  s_82fe233503ea5c::t_84b74fe75ac8eb 1
+infrahub_sync/cli.py
+  s_82fe233503ea5c::t_c4e5f4778203f2 478,649,930,1148,1245,1260,1275,1287,1289,1333,1341,1345,1358,1557,1613,1622,1716,1965,2035
+infrahub_sync/client/client.py
+  s_82fe233503ea5c::t_8112e0ad4b7ae9 315,529,555,576,690,695
+infrahub_sync/client/models.py
+  s_82fe233503ea5c::t_8af9e299659066 55,60,143,177,490,538,660,676,794,828-829,856,996,1065
+infrahub_sync/configuration/capabilities.py
+  s_82fe233503ea5c::t_e25fb362e1a3d1 75,257,319,334,438,567
+infrahub_sync/configuration/conversion.py
+  s_82fe233503ea5c::t_97b73fe6ad9cf7 690
+infrahub_sync/configuration/conversion_report.py
+  s_82fe233503ea5c::t_1460e5dbf87062 3
+infrahub_sync/configuration/infrahub_lineage.py
+  s_82fe233503ea5c::t_d1839932cce333 149
+infrahub_sync/configuration/schema_validation.py
+  s_82fe233503ea5c::t_35c462efaa0e17 23,25,73,75,90,203,242,274,335
+infrahub_sync/configuration/worker_credentials.py
+  s_82fe233503ea5c::t_7575b766acca8a 1
+infrahub_sync/execution.py
+  s_82fe233503ea5c::t_1fe1057c7bd886 1181,1184
+infrahub_sync/infrahub_errors.py
+  s_82fe233503ea5c::t_e2a4a135ff65ea 218
+infrahub_sync/load_report.py
+  s_82fe233503ea5c::t_ca4203444feb25 1
+infrahub_sync/plan/derive.py
+  s_82fe233503ea5c::t_657647435e6910 224,822,924
+infrahub_sync/plan/destination_check.py
+  s_82fe233503ea5c::t_053be764a35f6b 1
+infrahub_sync/plan/errors.py
+  s_82fe233503ea5c::t_d8b429b113f4fe 133,305,323,436,701
+infrahub_sync/plan/keying.py
+  s_82fe233503ea5c::t_d3c9b7ecec559f 73,654,725
+infrahub_sync/plan/last_changes.py
+  s_82fe233503ea5c::t_f491bd9d5df83c 105
+infrahub_sync/plan/models.py
+  s_82fe233503ea5c::t_2a0c0642b93a07 39,42,472,529,533,631,680,686,797,950,962,1018,1069
+infrahub_sync/plan/problems.py
+  s_82fe233503ea5c::t_a2598dd8b79326 1,97
+infrahub_sync/plan/reader.py
+  s_82fe233503ea5c::t_5ff50f9f76f00a 23,111,160,236,743
+infrahub_sync/plan/review.py
+  s_82fe233503ea5c::t_67a8bf854abec6 82,127
+infrahub_sync/plan/verify.py
+  s_82fe233503ea5c::t_60880963049ad9 245
+infrahub_sync/plan/writer.py
+  s_82fe233503ea5c::t_d3218cdbd8abd7 4,163,275
+infrahub_sync/potenda/__init__.py
+  s_82fe233503ea5c::t_a8a1d5c5bf3dc2 89,231,249,323,981,1100,1103,1180
+infrahub_sync/potenda/apply_progress.py
+  s_82fe233503ea5c::t_fe64ea1de5a7da 5,33,56
+infrahub_sync/potenda/read_progress.py
+  s_82fe233503ea5c::t_df32ff7523254f 5
+infrahub_sync/product_store/configs.py
+  s_82fe233503ea5c::t_31e1b257f1b9b3 892,957
+infrahub_sync/product_store/models.py
+  s_82fe233503ea5c::t_1cfed438d252bf 27,76,111,140,145,365,435,478,705
+infrahub_sync/product_store/store.py
+  s_82fe233503ea5c::t_efa1ae45540b7e 246,258,342,355,361,568,576,591,1070,1465,1637,1676,1692,1800,1890,2328,2332,2349,2509,2557,2660,2729,2738,2804,3972,3983,4209,4511,4936,4953
+infrahub_sync/runtime_schema/domain.py
+  s_82fe233503ea5c::t_5d0d02e0b8b7be 44
+infrahub_sync/runtime_schema/projection.py
+  s_82fe233503ea5c::t_20aa9b0e4a944f 51
+infrahub_sync/runtime_schema/worker.py
+  s_82fe233503ea5c::t_2f866fa7c16643 84,108
+infrahub_sync/service/app.py
+  s_82fe233503ea5c::t_78d5ba0a960786 140,158,180,199,215,235,255,512
+infrahub_sync/service/apply_progress.py
+  s_82fe233503ea5c::t_26cb6c4d6aa68a 4
+infrahub_sync/service/checkpoints.py
+  s_82fe233503ea5c::t_e3968759daf2d4 73
+infrahub_sync/service/config_routes.py
+  s_82fe233503ea5c::t_4847c0748748dc 270
+infrahub_sync/service/events.py
+  s_82fe233503ea5c::t_a7590ed954bf14 1,23,42
+infrahub_sync/service/failure_cause.py
+  s_82fe233503ea5c::t_8330142290b497 4,8,14,65,168,354,361,476,479,484,547
+infrahub_sync/service/flow.py
+  s_82fe233503ea5c::t_97aa15187c5aed 132,171,176,324,611,696,755,790,793,896,957,1068,1113,1123,1286,1292,1348,1468,1586
+infrahub_sync/service/orchestration.py
+  s_82fe233503ea5c::t_357b7190483817 70
+infrahub_sync/service/read_progress.py
+  s_82fe233503ea5c::t_9ad090c8565982 4,32
+infrahub_sync/service/resume_view.py
+  s_82fe233503ea5c::t_d52f11b91c422f 1
+infrahub_sync/service/run_artifact.py
+  s_82fe233503ea5c::t_74500f3aa409ad 90
+infrahub_sync/service/run_log.py
+  s_82fe233503ea5c::t_bfc27acbfd5134 1
+infrahub_sync/service/service.py
+  s_82fe233503ea5c::t_55d79520287e83 113,562,594,838,870,1201,1364,1400,1456,1896
+infrahub_sync/service/worker.py
+  s_82fe233503ea5c::t_621e02de831950 428
+infrahub_sync/utils.py
+  s_82fe233503ea5c::t_9faff86e35958d 465
+infrahub_sync/warm_read.py
+  s_82fe233503ea5c::t_dac2ed4eb9e0d7 1
+tests/adapters/test_aci_reference_conversion.py
+  s_82fe233503ea5c::t_68df0ea388a2ad 86,88
+tests/adapters/test_infrahub_peer_identifier.py
+  s_82fe233503ea5c::t_ac45cf82e4b2f2 7
+tests/adapters/test_infrahub_read_loop.py
+  s_82fe233503ea5c::t_0b37965f33933f 1
+tests/adapters/test_netbox_filtered_references.py
+  s_82fe233503ea5c::t_96137c818ca6f0 3
+tests/adapters/test_netbox_namespace_identity.py
+  s_82fe233503ea5c::t_e5e640872bab75 243
+tests/adapters/test_peer_not_found_in_source.py
+  s_82fe233503ea5c::t_3eaea3fbba23dd 1,13,193
+tests/adapters/test_reference_conversion.py
+  s_82fe233503ea5c::t_c831020cf7c87e 5,10
+tests/adapters/test_same_type_sync_filter_role.py
+  s_82fe233503ea5c::t_2a73ac0424ecae 10
+tests/cache/test_apply_plan.py
+  s_82fe233503ea5c::t_3ea1fabfa6e8d9 491,586
+tests/cli/test_apply_confirm_left_out.py
+  s_82fe233503ea5c::t_6f7a03da369bd1 1
+tests/cli/test_client_commands.py
+  s_82fe233503ea5c::t_e35f196455bfc9 322,1773
+tests/cli/test_failure_output.py
+  s_82fe233503ea5c::t_f0b2af3671deb9 1
+tests/cli/test_parity_and_closure.py
+  s_82fe233503ea5c::t_55d9cffc6e17dc 43
+tests/cli/test_plan_problem_output.py
+  s_82fe233503ea5c::t_179d54cbe133f1 1,13,21
+tests/cli/test_runs_resume.py
+  s_82fe233503ea5c::t_c3a2f1b4615839 1,136
+tests/cli/test_stopped_apply_output.py
+  s_82fe233503ea5c::t_78018876ad2d54 1,10,92
+tests/client/test_client.py
+  s_82fe233503ea5c::t_0cf189f37b42b0 858,1177
+tests/client/test_resume.py
+  s_82fe233503ea5c::t_9ca6961b8b0d7e 1
+tests/compose/test_compose_contract.py
+  s_82fe233503ea5c::t_958ba80f4c7a73 79,109,111,315,1144,1196,1241
+tests/compose/test_credential_leaks.py
+  s_82fe233503ea5c::t_89008a340f65df 1,15,17
+tests/compose/test_documentation.py
+  s_82fe233503ea5c::t_29ad2270baf262 476
+tests/compose/test_external_store.py
+  s_82fe233503ea5c::t_7f7b4eddcdcb86 3,13,572,585
+tests/compose/test_source_credentials.py
+  s_82fe233503ea5c::t_fb2597fdb0a3be 634
+tests/configuration/test_schema_validation.py
+  s_82fe233503ea5c::t_fe49e92ee81cd3 532,534,613,1034
+tests/configuration/test_validate_permissions.py
+  s_82fe233503ea5c::t_0d389b8ba4d9a6 1,5-6,335
+tests/data/v2_gate/expected_left_out.yml
+  s_82fe233503ea5c::t_406ebe1716e185 2,18
+tests/dev_stack/smoke/test_resume_interrupted_apply.py
+  s_82fe233503ea5c::t_288cdec0656952 1,3
+tests/image/test_prefect_server_image.py
+  s_82fe233503ea5c::t_f9fea1b531a663 1
+tests/integration/test_destination_schema_live_read.py
+  s_82fe233503ea5c::t_940ca883653e60 82
+tests/integration/test_infrahub_keyed_write_integration.py
+  s_82fe233503ea5c::t_7a25e05b9f00e0 521
+tests/plan/artifact_fixtures.py
+  s_82fe233503ea5c::t_f03d17d3568e10 144
+tests/plan/conftest.py
+  s_82fe233503ea5c::t_c9503f5e6aa84d 1,7,40
+tests/plan/problem_plan.py
+  s_82fe233503ea5c::t_e868acc0bc93a6 1,9
+tests/plan/test_apply_gate.py
+  s_82fe233503ea5c::t_55cbc3e9a8e9c4 3
+tests/plan/test_format_4.py
+  s_82fe233503ea5c::t_967d2695922b04 1,14
+tests/plan/test_keyed_create_refusal.py
+  s_82fe233503ea5c::t_666c360380d83b 249
+tests/plan/test_last_changes.py
+  s_82fe233503ea5c::t_54cf9f1f506249 215
+tests/plan/test_left_out_walk.py
+  s_82fe233503ea5c::t_6568311ad2cd66 1,13
+tests/plan/test_lineage_manifest.py
+  s_82fe233503ea5c::t_3d83a5acb7f330 103
+tests/plan/test_models.py
+  s_82fe233503ea5c::t_81ddbe6ad47ae4 708,819
+tests/plan/test_netbox_device_status.py
+  s_82fe233503ea5c::t_ade293e31a4865 1
+tests/plan/test_plan_format_3.py
+  s_82fe233503ea5c::t_dc3cbf37777494 93
+tests/plan/test_plan_writes_nothing.py
+  s_82fe233503ea5c::t_8c7d7cf97d5859 1,7
+tests/plan/test_problem_baseline.py
+  s_82fe233503ea5c::t_75790c4500c694 1,3,65,90,115
+tests/plan/test_problem_pass.py
+  s_82fe233503ea5c::t_56db0ffd7805f8 1
+tests/plan/test_problems.py
+  s_82fe233503ea5c::t_be43c3aad2a054 1,9,12
+tests/plan/test_replan_after_stopped_apply.py
+  s_82fe233503ea5c::t_a46a2b9a9b059f 1
+tests/plan/test_report_credentials_absent.py
+  s_82fe233503ea5c::t_ee9a44e833bb9e 1
+tests/plan/test_report_models.py
+  s_82fe233503ea5c::t_d1c4ce3bb3d3bc 1,125,134
+tests/plan/test_source_identity_collision.py
+  s_82fe233503ea5c::t_a1384926118f3a 192,194
+tests/plan/test_stores_unchanged.py
+  s_82fe233503ea5c::t_ba269c157cd9a6 1,8
+tests/plan/test_valid_plan_unchanged.py
+  s_82fe233503ea5c::t_4dfdc8dba96341 1,3,8,90
+tests/plan/test_warm_read_problems.py
+  s_82fe233503ea5c::t_1c4f93b8658769 1
+tests/plan/test_writer.py
+  s_82fe233503ea5c::t_1c6ede4a97be80 66
+tests/product_store/test_apply_progress.py
+  s_82fe233503ea5c::t_79330901b76836 1
+tests/product_store/test_audit_event_migration.py
+  s_82fe233503ea5c::t_a71623224251b7 3
+tests/product_store/test_resume_admissions.py
+  s_82fe233503ea5c::t_82d6640c87b460 1,219
+tests/product_store/test_run_approval.py
+  s_82fe233503ea5c::t_4ae64ece5e80c2 421
+tests/product_store/test_side_read_columns.py
+  s_82fe233503ea5c::t_80e977c279f21d 1
+tests/product_store/test_stopped_sync_admission.py
+  s_82fe233503ea5c::t_bb2f93fd8fb410 3
+tests/product_store/test_validate_destination_schema.py
+  s_82fe233503ea5c::t_6f6f088cf30f64 81
+tests/product_store/test_worker_environments.py
+  s_82fe233503ea5c::t_e3e929d95fad2f 1
+tests/product_store/test_write_admission.py
+  s_82fe233503ea5c::t_5ea16f046fa01f 688
+tests/runtime_schema/test_accessor_snapshot.py
+  s_82fe233503ea5c::t_e2c17a00f86bc2 73
+tests/runtime_schema/test_dropdown_choices.py
+  s_82fe233503ea5c::t_d3bce7b31bba86 1,107
+tests/runtime_schema/test_worker_path.py
+  s_82fe233503ea5c::t_802a9ca0a78650 293
+tests/service/failure_cases.py
+  s_82fe233503ea5c::t_103ad5e811f068 1,119
+tests/service/test_apply_left_out_confirmation.py
+  s_82fe233503ea5c::t_5a14dffe878b5d 1
+tests/service/test_apply_progress_observer.py
+  s_82fe233503ea5c::t_7434a091f285dc 1
+tests/service/test_approval.py
+  s_82fe233503ea5c::t_9077e27095d18c 3-4,237
+tests/service/test_approval_required.py
+  s_82fe233503ea5c::t_e799c1e5454ebc 3
+tests/service/test_cancel_planned_run.py
+  s_82fe233503ea5c::t_4799a69a022f4a 3-4
+tests/service/test_config_routes.py
+  s_82fe233503ea5c::t_91d100a2cef0e4 1684
+tests/service/test_events_route.py
+  s_82fe233503ea5c::t_104b7b1f7d571e 1,296
+tests/service/test_failure_cause.py
+  s_82fe233503ea5c::t_bafea444b0f2c6 3,5,125,127,163,228,401
+tests/service/test_failure_cause_credentials.py
+  s_82fe233503ea5c::t_cf4c5a30ff5235 1
+tests/service/test_failure_record_compat.py
+  s_82fe233503ea5c::t_0f66009c935a0f 1,3,6-7,98,118
+tests/service/test_flow_and_prefect.py
+  s_82fe233503ea5c::t_620f6f5af5151b 76,555,612,615,625,856
+tests/service/test_http_api.py
+  s_82fe233503ea5c::t_e9227f614fefef 2494,2734
+tests/service/test_orchestration_logs.py
+  s_82fe233503ea5c::t_3c97992fe2cff3 1
+tests/service/test_plan_checkpoint.py
+  s_82fe233503ea5c::t_fb9af3267c20f2 200
+tests/service/test_plan_report_routes.py
+  s_82fe233503ea5c::t_686af5a1f11b4f 1,14
+tests/service/test_prefect_wording.py
+  s_82fe233503ea5c::t_d3bc6c17b33ad7 1
+tests/service/test_read_progress.py
+  s_82fe233503ea5c::t_30a695c4f2ef3f 1,481
+tests/service/test_registered_schema_guard.py
+  s_82fe233503ea5c::t_c90d43c8f2962b 278,645
+tests/service/test_resume_run.py
+  s_82fe233503ea5c::t_23bd1ae019a2c0 1,507,851,1236
+tests/service/test_run_artifact.py
+  s_82fe233503ea5c::t_7b058d225e3839 154
+tests/service/test_run_log.py
+  s_82fe233503ea5c::t_7b77bf0d47657d 1
+tests/service/test_run_log_next_step.py
+  s_82fe233503ea5c::t_84ca157a112d4c 749
+tests/service/test_run_logs_route.py
+  s_82fe233503ea5c::t_0251617aca3e7e 1
+tests/service/test_sync_left_out_stop.py
+  s_82fe233503ea5c::t_78f1ff9553ac28 1
+tests/service/test_trust_store.py
+  s_82fe233503ea5c::t_052fe0c8c6f614 1,89,114,130-131,146,161,175,217,230,242
+tests/service/test_verify_destination.py
+  s_82fe233503ea5c::t_bb4b8a81c34f90 470
+tests/service/test_verify_destination_report.py
+  s_82fe233503ea5c::t_8acfe6c0266135 1
+tests/service/test_worker_environment.py
+  s_82fe233503ea5c::t_50855d5508caf1 1
+tests/test_custom_adapter_example.py
+  s_82fe233503ea5c::t_9df9cf8a5c0070 4
+tests/test_destination_check.py
+  s_82fe233503ea5c::t_c41ebc96fd6c94 1
+tests/test_execution_surface.py
+  s_82fe233503ea5c::t_fb4862b4b397ea 1513,1524,1904,1938,1967
+tests/test_load_record.py
+  s_82fe233503ea5c::t_d46cc4f1096bc0 1,22
+tests/test_potenda_apply_progress.py
+  s_82fe233503ea5c::t_9f2f765aebd8da 3
+tests/test_potenda_plan_artifact.py
+  s_82fe233503ea5c::t_aacf054b3f6925 85,88
+tests/test_potenda_read_progress.py
+  s_82fe233503ea5c::t_19c5a673a9c9b6 1,308
+tests/test_run_events_docs.py
+  s_82fe233503ea5c::t_5c28155b59276f 1
+tests/test_schema_mapping_transforms.py
+  s_82fe233503ea5c::t_03d0679a533a6a 268
+tests/test_task_inventory.py
+  s_82fe233503ea5c::t_4857ff7a84b15c 1
+tests/test_task_names_in_docs.py
+  s_82fe233503ea5c::t_692259754d1238 3
+tests/test_workflow_contracts.py
+  s_82fe233503ea5c::t_52012c27add91f 773,2147
+tests/test_writable_convergence_identity.py
+  s_82fe233503ea5c::t_555460c7d33a0b 186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1044b0d9a6ecd67238779ca5ed5c26c96886ddf7",
+  "prompts": {},
+  "sessions": {
+    "s_82fe233503ea5c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f957e97a-a20e-4d29-aa28-c19b19da4edc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
