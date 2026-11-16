@@ -1,0 +1,21 @@
+dev/specs/017-serve-web-interface/opsmill-implement-report.md
+  s_c4f9bd3d1fabe8::t_ad49eabbf0b15c 128-144
+docs/docs/development/guidelines/testing-tiers.md
+  s_c4f9bd3d1fabe8::t_b9507740ec3a02 602
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ae023d3b78f0226ef16292b509b8c8a752b21651",
+  "prompts": {},
+  "sessions": {
+    "s_c4f9bd3d1fabe8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f7bf5003-b7b7-444d-a7c2-d1ecbcb55ad7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
