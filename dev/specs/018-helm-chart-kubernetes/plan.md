@@ -127,7 +127,7 @@ infrahub-sync/  (this repository)
 ├── docs/docs/kubernetes-deployment.mdx
 ├── docs/sidebars.ts                         # entry after 'compose-deployment'
 ├── docs/docs/compose-deployment.mdx         # one link to the new page; "What this topology does not do"
-├── dev/adr/0043-…md                         # the start order of the Kubernetes deployment
+├── dev/adr/0045-…md                         # the start order of the Kubernetes deployment
 └── changelog/422.added.md
 ```
 

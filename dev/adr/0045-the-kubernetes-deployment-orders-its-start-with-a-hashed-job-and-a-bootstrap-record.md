@@ -1,4 +1,4 @@
-# 43. The Kubernetes deployment orders its start with a hashed Job and a bootstrap record
+# 45. The Kubernetes deployment orders its start with a hashed Job and a bootstrap record
 
 **Status**: Accepted
 **Date**: 2026-11-16

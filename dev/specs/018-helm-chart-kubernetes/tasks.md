@@ -495,7 +495,7 @@ These tasks implement FR-007b and the FR-029 change from the clarification sessi
 - [X] T048 [US2] Update the design and operator documents for the record and the removed gate:
   - [research.md](research.md) R-2, [data-model.md](data-model.md) and
     [quickstart.md](quickstart.md) step 4
-  - ADR `S/dev/adr/0043-the-kubernetes-deployment-orders-its-start-with-a-hashed-job-and-a-bootstrap-record.md`, renamed from `…-and-gates.md`
+  - ADR `S/dev/adr/0045-the-kubernetes-deployment-orders-its-start-with-a-hashed-job-and-a-bootstrap-record.md`, renamed from `…-and-gates.md`
     (rename it if "gates" no longer fits, and update the index in `S/dev/adr/README.md`). State
     that the record covers the version and the work pool name, and not other bootstrap settings.
   - `S/docs/docs/kubernetes-deployment.mdx`: the start order, the restarts an operator sees during
