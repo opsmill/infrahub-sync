@@ -1747,16 +1747,40 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """Find reviewed direct values the SDK would leave out of its mutation input."""
         payload = operation.payload or {}
         data = self.client.schema.generate_payload_create(schema=node_schema, data=payload)
-        node = self.client.create(kind=operation.kind, data=data)
-        if operation.action == "update":
-            node.id = operation.destination_id
-        self._set_reviewed_null_attributes(node=node, operation=operation, node_schema=node_schema)
+        node = self._planned_write_node(operation=operation, node_schema=node_schema, create_data=data)
         rendered_data = node._generate_input_data(exclude_hfid=True)["data"]["data"]
         return {
             field
             for field in self._reviewed_direct_fields(operation=operation, node_schema=node_schema)
             if field not in rendered_data
-        }
+        } | _emptied_render_faults(operation=operation, node_schema=node_schema, rendered_data=rendered_data)
+
+    def _planned_write_node(
+        self, *, operation: PlannedOperation, node_schema: NodeSchemaAPI, create_data: dict[str, Any]
+    ) -> InfrahubNodeSync:
+        """Build the SDK node a planned create or update renders its Upsert from.
+
+        An update that empties a one-peer relationship, and only such an update, gets its
+        destination id in the create data, so the SDK builds the node as an existing one; the
+        SDK renders a relationship set to `None` as `null` only for an existing node
+        (research R8). Every other operation is built as a new node, as before plan format 5,
+        so its rendered input does not change.
+        """
+        emptied = _emptied_one_peer_fields(operation)
+        if emptied:
+            create_data = {**create_data, "id": operation.destination_id}
+        node = self.client.create(kind=operation.kind, data=create_data)
+        if operation.action == "update":
+            # The recorded id, set on the node rather than put into `data`. The SDK renders
+            # `data["id"] = self.id` when the node carries one and only otherwise considers
+            # `hfid` (`infrahub_sdk/node/node.py:295-298`), so this is what makes the upsert
+            # a keyed update of that exact object. Putting `id` into the payload `data` instead
+            # would render it as the attribute-shaped `id: {}` and key nothing.
+            node.id = operation.destination_id
+        for field in emptied:
+            setattr(node, field, None)
+        self._set_reviewed_null_attributes(node=node, operation=operation, node_schema=node_schema)
+        return node
 
     @staticmethod
     def _set_reviewed_null_attributes(
@@ -1866,10 +1890,12 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 "does not declare them as writable attributes. No write was made for this operation."
             )
             raise ReviewedPayloadFieldMissingError(msg)
+        emptied = set(_emptied_one_peer_fields(operation))
         null_to_one_relationships = [
             relationship
             for relationship in node_schema.relationships
-            if relationship.cardinality == "one" and relationship.name in payload and payload[relationship.name] is None
+            if relationship.cardinality == "one"
+            and ((relationship.name in payload and payload[relationship.name] is None) or relationship.name in emptied)
         ]
         mandatory_null_fields = sorted(
             relationship.name for relationship in null_to_one_relationships if not relationship.optional
@@ -1887,6 +1913,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         references = list(operation.relationships or ())
         _refuse_partial_key_peer_filter(operation, self.schema)
         for reference in references:
+            if reference.empties_one_peer:
+                # Written as `null` on the node below, never as an entry in the data.
+                continue
             peer_ids = [
                 peers.resolve(
                     peer_kind=reference.peer_kind,
@@ -1938,24 +1967,18 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             owner=owner_id if operation.action == "create" else None,
             is_protected=is_protected,
         )
-        if operation.action == "update" and owner_id is not None and references:
+        # An emptied relationship adds no edge, so it needs no read of the current peers.
+        written_references = [reference for reference in references if not reference.empties_one_peer]
+        if operation.action == "update" and owner_id is not None and written_references:
             self._set_owner_on_added_edges(
                 create_data=create_data,
                 operation=operation,
                 node_schema=node_schema,
-                references=references,
+                references=written_references,
                 owner_id=owner_id,
             )
         clear_lineage_on_pool_edges(create_data, node_schema)
-        node = self.client.create(kind=operation.kind, data=create_data)
-        if operation.action == "update":
-            # The recorded id, set on the node rather than put into `data`. The SDK renders
-            # `data["id"] = self.id` when the node carries one and only otherwise considers
-            # `hfid` (`infrahub_sdk/node/node.py:295-298`), so this is what makes the upsert
-            # a keyed update of that exact object. Putting `id` into `data` instead would
-            # render it as the attribute-shaped `id: {}` and key nothing.
-            node.id = operation.destination_id
-        self._set_reviewed_null_attributes(node=node, operation=operation, node_schema=node_schema)
+        node = self._planned_write_node(operation=operation, node_schema=node_schema, create_data=create_data)
         # generate_payload_create retains unknown keys as empty dictionaries. The node
         # drops them while building the input to the mutation, so check that final input.
         rendered_data = node._generate_input_data(exclude_hfid=True)["data"]["data"]
@@ -1970,6 +1993,18 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} "
                 f"would omit reviewed direct payload field(s) {fields} from the SDK mutation. "
                 "No write was made for this operation."
+            )
+            raise ReviewedPayloadFieldMissingError(msg)
+        render_faults = _emptied_render_faults(
+            operation=operation, node_schema=node_schema, rendered_data=rendered_data
+        )
+        if render_faults:
+            fields = ", ".join(repr(field) for field in sorted(render_faults))
+            msg = (
+                f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} empties a "
+                f"one-peer relationship, but the SDK mutation renders relationship field(s) {fields} as "
+                "something other than the reviewed change: an emptied field must render as null, and no "
+                "relationship the operation does not name may render. No write was made for this operation."
             )
             raise ReviewedPayloadFieldMissingError(msg)
         try:
@@ -2194,6 +2229,30 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             "unkeyed and every re-apply would duplicate the object."
         )
         raise UnaccountedIdentityComponentError(msg)
+
+
+def _emptied_one_peer_fields(operation: PlannedOperation) -> list[str]:
+    """The one-peer relationships an update empties (plan format 5), sorted by name."""
+    return sorted(reference.field for reference in operation.relationships or () if reference.empties_one_peer)
+
+
+def _emptied_render_faults(
+    *, operation: PlannedOperation, node_schema: NodeSchemaAPI, rendered_data: Mapping[str, Any]
+) -> set[str]:
+    """The relationship fields whose render differs from what an emptying update reviewed.
+
+    Empty for an operation that empties no relationship, whose render is checked as before.
+    Otherwise an emptied field that does not render as `null`, and a relationship the
+    operation does not name that renders at all: an SDK in the allowed range renders `null`
+    for every uninitialized optional one-peer relationship of an existing node (research R8).
+    """
+    emptied = _emptied_one_peer_fields(operation)
+    if not emptied:
+        return set()
+    named = {reference.field for reference in operation.relationships or ()} | set(operation.payload or {})
+    faults = {field for field in emptied if field not in rendered_data or rendered_data[field] is not None}
+    faults.update(name for name in node_schema.relationship_names if name in rendered_data and name not in named)
+    return faults
 
 
 def _keyed_by_identity(operation: PlannedOperation) -> bool:

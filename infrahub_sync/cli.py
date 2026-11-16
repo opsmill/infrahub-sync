@@ -1090,6 +1090,10 @@ def _operation_detail(operation: PlanOperationResource, last_changes: Sequence[P
     relationships = operation.relationships
     if relationships:
         typer.echo(f"  relationships: {json.dumps(relationships, sort_keys=True, separators=(',', ':'))}")
+        # Plan format 5: a one-peer reference with no peer empties that relationship (FR-009).
+        for reference in relationships:
+            if reference.get("cardinality") == "one" and not reference.get("peers"):
+                typer.echo(_display(f"  {reference.get('field')}: becomes empty"))
     for record in last_changes:
         typer.echo(_last_change_line(record))
 

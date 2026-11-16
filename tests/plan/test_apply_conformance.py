@@ -39,7 +39,11 @@ from infrahub_sync.adapters.infrahub import (
     ResolvedLineage,
     ResolvedLineageNode,
 )
-from infrahub_sync.plan.errors import UnaccountedIdentityComponentError
+from infrahub_sync.plan.errors import (
+    NullRelationshipValueError,
+    ReviewedPayloadFieldMissingError,
+    UnaccountedIdentityComponentError,
+)
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 
@@ -79,7 +83,8 @@ UNMAPPED_FIELD_MESSAGE = (
     "afterwards. So either the library's render behaviour has changed, or a render now runs after the "
     "upsert. FR-013 — the payload is authoritative for the fields it carries and touches no other — "
     "depends on this, and so does the emptied peer set surviving as `[]`. Re-derive both against the new "
-    "SDK before changing this test."
+    "SDK before changing this test. (An update that empties a one-peer relationship is built as an existing "
+    "node on purpose, and assertion 6 checks its render.)"
 )
 
 
@@ -664,3 +669,246 @@ def test_applying_the_same_operation_twice_renders_byte_identical_inputs(
             f"the repeated render of this {kind} create is unkeyed: "
             f"human-friendly-ID component(s) {missing} are absent from {sorted(data)}"
         )
+
+
+# ---------------------------------------------------------------------------------------
+# Assertion 6 — an emptied one-peer relationship (spec 019 FR-006, research R8)
+# ---------------------------------------------------------------------------------------
+
+# What every operation below renders for its `source`: the import account of `make_adapter`.
+_SOURCE = {"source": IMPORT_ACCOUNT_ID}
+_EDGE_SOURCE = {"_relation__source": IMPORT_ACCOUNT_ID}
+
+
+def _team_update(*, members: list[str] | None, owner: list[dict[str, Any]] | None) -> PlannedOperation:
+    """A `ConfTeam` update that writes `members` and `owner` when given, and no reference otherwise."""
+    references: list[RelationshipReference] = []
+    if members is not None:
+        references.append(
+            RelationshipReference(
+                field=REPLACED_RELATIONSHIP,
+                peer_kind=TAG_KIND,
+                cardinality="many",
+                peers=[{"name": name} for name in members],
+            )
+        )
+    if owner is not None:
+        references.append(
+            RelationshipReference(field=UNMAPPED_RELATIONSHIP, peer_kind=SITE_KIND, cardinality="one", peers=owner)
+        )
+    return make_operation(
+        kind=TEAM_KIND,
+        action="update",
+        identity={"name": "team-a"},
+        payload={"name": "team-a"},
+        relationships=references,
+    )
+
+
+@contextmanager
+def record_create_data(client: ConformanceClient) -> Iterator[list[dict[str, Any]]]:
+    """Record the `data` each `client.create` call receives, which is where the SDK reads `id` from."""
+    calls: list[dict[str, Any]] = []
+    real = client.create
+
+    def spy(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        calls.append(dict(kwargs["data"]))
+        return real(*args, **kwargs)
+
+    with patch.object(client, "create", spy):
+        yield calls
+
+
+# The input each update without an emptied relationship rendered before spec 019, recorded from
+# this harness on infrahub-sdk 1.23.2. An emptied relationship must leave every one of them alone.
+UNCHANGED_UPDATES: tuple[tuple[str, PlannedOperation, dict[str, Any]], ...] = (
+    (
+        "an attribute update",
+        make_operation(
+            kind=SITE_KIND,
+            action="update",
+            identity={"name": "site-b"},
+            payload={"name": "site-b", "description": "recorded"},
+        ),
+        {
+            "name": {"value": "site-b", **_SOURCE},
+            "description": {"value": "recorded", **_SOURCE},
+            "id": CONFORMANCE_DESTINATION_ID,
+        },
+    ),
+    (
+        "a many relationship",
+        _team_update(members=["tag-a", "tag-b"], owner=None),
+        {
+            "name": {"value": "team-a", **_SOURCE},
+            "members": [{"id": "conf-tag-id-1", **_EDGE_SOURCE}, {"id": "conf-tag-id-2", **_EDGE_SOURCE}],
+            "id": CONFORMANCE_DESTINATION_ID,
+        },
+    ),
+    (
+        "an emptied many relationship",
+        _team_update(members=[], owner=None),
+        {"name": {"value": "team-a", **_SOURCE}, "members": [], "id": CONFORMANCE_DESTINATION_ID},
+    ),
+    (
+        "a one-peer relationship that holds a peer",
+        _team_update(members=["tag-a"], owner=[{"name": "site-a"}]),
+        {
+            "name": {"value": "team-a", **_SOURCE},
+            "members": [{"id": "conf-tag-id-1", **_EDGE_SOURCE}],
+            "owner": {"id": "conf-site-id-1", **_EDGE_SOURCE},
+            "id": CONFORMANCE_DESTINATION_ID,
+        },
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("description", "operation", "expected"),
+    UNCHANGED_UPDATES,
+    ids=[description for description, _, _ in UNCHANGED_UPDATES],
+)
+def test_an_update_without_an_emptied_relationship_renders_the_input_it_rendered_before(
+    description: str, operation: PlannedOperation, expected: dict[str, Any]
+) -> None:
+    """Only an operation that empties a one-peer relationship takes the new write path (plan.md).
+
+    The node is still built as a new one, with no `id` in the create data, and the recorded id
+    is set on it afterwards; the rendered input is the one recorded above.
+    """
+    _ = description
+    client, adapter, peers = seeded_adapter(members=[])
+
+    with record_rendered_inputs() as rendered, record_create_data(client) as created:
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert [data for _kind, data in rendered] == [expected, expected]
+    assert all("id" not in data for data in created), created
+    assert client.mutation_names == [f"{operation.kind}Upsert"]
+
+
+def test_an_emptied_one_peer_relationship_renders_null_in_the_one_upsert() -> None:
+    """R8: the emptied field renders as `null` in the operation's only write, keyed by its id."""
+    client, adapter, peers = seeded_adapter(members=[])
+
+    with record_rendered_inputs() as rendered:
+        adapter.apply_planned_operation(operation=_team_update(members=["tag-a"], owner=[]), peers=peers)
+
+    assert [data for _kind, data in rendered][-1] == {
+        "name": {"value": "team-a", **_SOURCE},
+        "members": [{"id": "conf-tag-id-1", **_EDGE_SOURCE}],
+        UNMAPPED_RELATIONSHIP: None,
+        "id": CONFORMANCE_DESTINATION_ID,
+    }
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert"], "The Upsert stays the only write (ADR 0010, ADR 0012)."
+    _, upsert = client.mutations[0]
+    assert re.search(rf"^ {{12}}{UNMAPPED_RELATIONSHIP}: null$", upsert, flags=re.MULTILINE), upsert
+    assert top_level_scalar_id(upsert) == CONFORMANCE_DESTINATION_ID
+    assert sorted(mutation_input_fields(upsert)) == sorted(["name", REPLACED_RELATIONSHIP, UNMAPPED_RELATIONSHIP, "id"])
+    assert issued_reads(client) == []
+
+
+def test_an_emptied_relationship_changes_nothing_else_in_the_rendered_input() -> None:
+    """Building the node as an existing one must not change its attributes or its other edges."""
+    renders: list[dict[str, Any]] = []
+    for owner in (None, []):
+        _client, adapter, peers = seeded_adapter(members=[])
+        with record_rendered_inputs() as rendered:
+            adapter.apply_planned_operation(
+                operation=_team_update(members=["tag-a", "tag-b"], owner=owner), peers=peers
+            )
+        renders.append(rendered[-1][1])
+
+    without, with_emptied = renders
+    assert with_emptied == {**without, UNMAPPED_RELATIONSHIP: None}
+
+
+def test_an_emptied_relationship_with_an_owner_reads_no_destination_node() -> None:
+    """No edge is added when the only reference is emptied, so no current peer set is read."""
+    client, adapter, peers = seeded_adapter(members=[])
+    lineage = adapter.lineage
+    assert lineage is not None
+    adapter.lineage = ResolvedLineage(
+        import_account=lineage.import_account,
+        source=lineage.source,
+        owner=ResolvedLineageNode(kind="CoreAccount", name="owner-account", id="owner-account-1"),
+        protect=False,
+    )
+
+    adapter.apply_planned_operation(operation=_team_update(members=None, owner=[]), peers=peers)
+
+    assert issued_reads(client) == []
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert"]
+
+
+def _render_with(change: Any) -> Any:  # noqa: ANN401
+    """Wrap the SDK render so it returns what `change` makes of the mutation input."""
+    real = InfrahubNodeSync._generate_input_data
+
+    def render(self: InfrahubNodeSync, *args: Any, **kwargs: Any) -> dict[str, dict]:  # noqa: ANN401
+        result = real(self, *args, **kwargs)
+        change(result["data"]["data"])
+        return result
+
+    return patch.object(InfrahubNodeSync, "_generate_input_data", render)
+
+
+@pytest.mark.parametrize(
+    ("change", "field"),
+    [
+        (lambda data: data.__setitem__(REPLACED_RELATIONSHIP, []), REPLACED_RELATIONSHIP),
+        (lambda data: data.pop(UNMAPPED_RELATIONSHIP, None), UNMAPPED_RELATIONSHIP),
+        (lambda data: data.__setitem__(UNMAPPED_RELATIONSHIP, {"id": "conf-site-id-1"}), UNMAPPED_RELATIONSHIP),
+    ],
+    ids=["another relationship renders", "the emptied field is left out", "the emptied field holds a peer"],
+)
+def test_the_write_is_refused_when_the_render_holds_anything_but_the_emptied_null(
+    change: Any,  # noqa: ANN401
+    field: str,
+) -> None:
+    """R8: an SDK in the allowed range that renders differently is refused before the write."""
+    client, adapter, peers = seeded_adapter(members=[])
+
+    with _render_with(change), pytest.raises(ReviewedPayloadFieldMissingError, match=repr(field)):
+        adapter.apply_planned_operation(operation=_team_update(members=None, owner=[]), peers=peers)
+
+    assert client.mutations == []
+
+
+def test_an_emptied_relationship_the_destination_requires_is_refused_before_rendering() -> None:
+    """The live schema made `owner` mandatory after the plan: the write is refused, as a null would be."""
+    client, adapter, peers = seeded_adapter(members=[])
+    team = SCHEMAS[TEAM_KIND]
+    required = team.model_copy(
+        update={
+            "relationships": [
+                relationship.model_copy(update={"optional": False})
+                if relationship.name == UNMAPPED_RELATIONSHIP
+                else relationship
+                for relationship in team.relationships
+            ]
+        }
+    )
+    client.live_schema = BranchSchema(hash="required-owner", nodes={**SCHEMAS, TEAM_KIND: required})
+    client.schema.set_cache(client.live_schema)
+    adapter.schema[TEAM_KIND] = required
+
+    with pytest.raises(NullRelationshipValueError, match=repr(UNMAPPED_RELATIONSHIP)):
+        adapter.apply_planned_operation(operation=_team_update(members=None, owner=[]), peers=peers)
+
+    assert client.mutations == []
+
+
+def test_the_pre_write_checks_refuse_an_emptied_relationship_the_sdk_would_not_render() -> None:
+    """FR-013: `verify` and the checks of `apply` and `runs resume` see the same refusal before any write."""
+    client, adapter, _peers = seeded_adapter(members=[])
+    operation = _team_update(members=None, owner=[])
+
+    adapter.validate_planned_payload_fields([operation])
+
+    with (
+        _render_with(lambda data: data.pop(UNMAPPED_RELATIONSHIP, None)),
+        pytest.raises(ReviewedPayloadFieldMissingError, match=repr(UNMAPPED_RELATIONSHIP)),
+    ):
+        adapter.validate_planned_payload_fields([operation])
+    assert client.mutations == []

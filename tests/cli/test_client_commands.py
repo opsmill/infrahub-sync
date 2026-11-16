@@ -2649,3 +2649,75 @@ def test_events_follow_prints_each_new_event_once(client: MagicMock, monkeypatch
     ]
     assert polls == [2.0, 2.0]
     client.iter_events.assert_not_called()
+
+
+def _lag_update(peers: list[dict[str, Any]], *, cardinality: str = "one") -> PlanOperationResource:
+    """An interface update whose `lag` reference holds `peers`."""
+    return PlanOperationResource(
+        operation_id="op-update",
+        action="update",
+        kind="InterfacePhysical",
+        identity={"device": "edge-01", "name": "et-0/0/1"},
+        tier=0,
+        payload={},
+        relationships=({"field": "lag", "peer_kind": "InterfaceLag", "cardinality": cardinality, "peers": peers},),
+        destination_id="dest-1",
+    )
+
+
+def _plan_of(operation: PlanOperationResource) -> PlanResource:
+    plan = _plan()
+    summary = plan.summary.model_copy(
+        update={
+            "by_action": {"update": 1},
+            "by_kind": {"InterfacePhysical": 1},
+            "total": 1,
+            "deletes_not_executed": 0,
+        }
+    )
+    return plan.model_copy(update={"operations": (operation,), "summary": summary})
+
+
+def test_runs_plan_detail_states_that_an_emptied_one_peer_relationship_becomes_empty(client: MagicMock) -> None:
+    """FR-009: the detail names the relationship and states that it becomes empty."""
+    client.get_plan.return_value = _plan_of(_lag_update([]))
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.split("\n")
+    assert "op-update update InterfacePhysical device=edge-01 name=et-0/0/1" in lines
+    assert "  lag: becomes empty" in lines
+    assert "by_action: update=1" in lines
+    assert "operations: 1" in lines
+
+
+@pytest.mark.parametrize(
+    ("peers", "cardinality"),
+    [([{"name": "ae0"}], "one"), ([], "many")],
+    ids=["a one-peer relationship that holds a peer", "an emptied many relationship"],
+)
+def test_runs_plan_detail_states_becomes_empty_only_for_an_emptied_one_peer_relationship(
+    client: MagicMock, peers: list[dict[str, Any]], cardinality: str
+) -> None:
+    client.get_plan.return_value = _plan_of(_lag_update(peers, cardinality=cardinality))
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert "becomes empty" not in result.output
+
+
+def test_runs_plan_detail_escapes_the_name_of_an_emptied_relationship(client: MagicMock) -> None:
+    operation = _lag_update([])
+    forged = operation.model_copy(
+        update={
+            "relationships": ({"field": "lag\x1b[2K", "peer_kind": "InterfaceLag", "cardinality": "one", "peers": []},)
+        }
+    )
+    client.get_plan.return_value = _plan_of(forged)
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert "  lag\\x1b[2K: becomes empty" in result.output.split("\n")

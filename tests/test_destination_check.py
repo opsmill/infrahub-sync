@@ -535,3 +535,58 @@ def test_a_create_keyed_on_an_attribute_and_a_peer_is_filtered_on_both() -> None
     [query] = client.node_reads(DEVICE_KIND)
     assert query["name__values"] == ["dev"]
     assert query["site__ids"] == ["site-a-id"]
+
+
+# ======================================================================================
+# An emptied one-peer relationship (spec 019 FR-013)
+# ======================================================================================
+
+
+def _owner_emptied() -> PlannedOperation:
+    """A team update that empties its one-peer `owner` relationship (plan format 5)."""
+    return make_operation(
+        kind=TEAM_KIND,
+        action="update",
+        identity={"name": "team-a"},
+        payload={"name": "team-a"},
+        relationships=[RelationshipReference(field="owner", peer_kind=TAG_KIND, cardinality="one", peers=[])],
+    )
+
+
+@pytest.mark.parametrize(
+    ("destination_owner", "expected"),
+    [(frozenset(), "matches"), (frozenset({"tag-a-id"}), "differs")],
+    ids=["an empty destination relationship", "a destination that holds a peer"],
+)
+def test_a_planned_empty_one_peer_set_is_compared_like_any_peer_set(
+    destination_owner: frozenset[str], expected: str
+) -> None:
+    operation = _owner_emptied()
+    node = DestinationNode(attributes={"name": "team-a"}, peers={"owner": destination_owner})
+
+    read = PlannedNodeRead(node, planned_peers={"owner": frozenset()})
+
+    assert compare_planned_operation(operation, read) == expected
+
+
+@pytest.mark.parametrize(
+    ("owner", "expected"),
+    [(None, "matches"), ({"id": "tag-a-id", "__typename": TAG_KIND}, "differs")],
+    ids=["an empty destination relationship", "a destination that holds a peer"],
+)
+def test_the_read_of_an_emptied_one_peer_relationship_matches_only_an_empty_destination(
+    owner: dict[str, Any] | None, expected: str
+) -> None:
+    team: dict[str, Any] = {"id": DEFAULT_DESTINATION_ID, "name": {"value": "team-a"}}
+    if owner is not None:
+        team["owner"] = owner
+    client = DestinationClient({TAG_KIND: [_tag("tag-a-id", "tag-a")], TEAM_KIND: [team]})
+    operation = _owner_emptied()
+
+    reads = make_adapter(client).read_planned_nodes([operation])
+
+    read = reads[operation.operation_id]
+    assert read.planned_peers == {"owner": frozenset()}
+    assert compare_planned_operation(operation, read) == expected
+    [query] = client.node_reads(TEAM_KIND)
+    assert "owner" not in query["exclude"]
