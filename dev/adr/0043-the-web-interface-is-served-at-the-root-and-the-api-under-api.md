@@ -29,8 +29,10 @@ address cannot answer both a browser that opens the page and a client that calls
    - a "not found" error in the Sync API's error format, stating that the Sync API is served under
      `/api`, for any other client and for a missing file under `assets/`.
 2. `INFRAHUB_SYNC_WEB_DIRECTORY` names the built web interface. The image sets it to
-   `/opt/infrahub-sync/web`. Without it, the Sync API still starts under `/api`, and the root
-   address answers that the web interface is not included in this install.
+   `/opt/infrahub-sync/web`. Without it, the Sync API still starts under `/api`. A browser (a
+   client that accepts HTML) that opens the root address receives an answer that the web
+   interface is not included in this install; any other client receives the "not found" error in
+   the Sync API's error format.
 3. A person enters a Sync API token in the web interface. The web interface checks it with
    `GET /api/me`, keeps it in the session storage of the browser tab, and sends it as a bearer
    header with every request. A 401 removes the token and returns to the token screen, and the

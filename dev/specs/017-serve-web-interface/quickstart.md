@@ -10,7 +10,7 @@ git submodule update --init frontend/vendor/infrahub
 (cd frontend && pnpm install --frozen-lockfile)
 ```
 
-Docker with Buildx for scenarios 4 and 5.
+Docker with Buildx for scenarios 5 and 6.
 
 ## 1. Unit tier
 
@@ -56,7 +56,7 @@ With the development address (default `http://127.0.0.1:8001`):
 
 In a browser, with the developer console open (no Content-Security-Policy violation may appear on
 any page): open `$ADDR/`, confirm the token entry screen; enter a wrong token (refused); enter a
-configured token (list of runs); open `$ADDR/runs/<run_id>` in a new tab (token asked again, then
+configured token (the configurations page); open `$ADDR/runs/<run_id>` in a new tab (token asked again, then
 the run page); choose "Remove token" (token entry screen).
 
 ## 4. CLI against the service
@@ -69,8 +69,10 @@ uv run infrahub-sync runs list
 INFRAHUB_SYNC_API_URL=$ADDR/api uv run infrahub-sync whoami   # same result, no /api/api
 ```
 
-Expected: every command succeeds. Pointing the CLI at a server that answers HTML (for example the
-Vite development server on port 3000) prints `error: not-a-sync-api` with the address and the hint.
+Expected: every command succeeds. The commands also succeed against the Vite development server on
+port 3000, because it forwards `/api` to the Sync service. Pointing the CLI at an address that
+answers HTML at `/api/version`, for example `http://localhost:3000/sync` against the Vite
+development server, prints `error: not-a-sync-api` with the address and the hint.
 
 ## 5. Image
 

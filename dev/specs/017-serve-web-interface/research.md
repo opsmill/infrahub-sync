@@ -104,7 +104,7 @@ not needed.
 
 ```text
 Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-<inline script>'...;
-  style-src 'self'; font-src 'self' https://rsms.me; img-src 'self' data:; connect-src 'self';
+  style-src 'self' 'unsafe-inline'; font-src 'self' https://rsms.me; img-src 'self' data:; connect-src 'self';
   object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
 X-Content-Type-Options: nosniff
 X-Frame-Options: DENY
@@ -123,9 +123,10 @@ sheet loads `https://rsms.me/inter/font-files/InterVariable.woff2` (measured in 
 `dangerouslySetInnerHTML` or `style="..."` attribute exists in `frontend/src`. React sets style
 properties through the DOM, which `style-src` does not block.
 
-**To verify in a browser** (quickstart scenario 3): no CSP violation in the console on every page
-and in the token entry screen. If a violation appears for styles, the fallback is
-`style-src 'self' 'unsafe-inline'`, recorded in the implementation report.
+**Browser check** (quickstart scenario 3): the first policy used `style-src 'self'`. During the
+browser check on 2026-11-16, Chrome blocked a `<style>` element that the press handling of
+React Aria inserts into the page at run time. The policy therefore uses
+`style-src 'self' 'unsafe-inline'`. Scripts stay limited to `'self'` and the hashed inline scripts.
 
 **Alternatives considered**: moving the theme script to a file under `public/` changes
 `frontend/`; `'unsafe-inline'` for scripts defeats the purpose.
