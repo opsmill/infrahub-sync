@@ -73,7 +73,7 @@ Rules for every task:
 **Purpose**: values, helpers, validation, Secrets and the render test harness. Every user story
 depends on this phase.
 
-- [ ] T004 Write `C/values.yaml` exactly as [contracts/values.md](contracts/values.md) specifies.
+- [X] T004 Write `C/values.yaml` exactly as [contracts/values.md](contracts/values.md) specifies.
   - Describe every value with a `# --` comment, the helm-docs format of
     `H/charts/infrahub-mcp/values.yaml`.
   - Take the PostgreSQL image from `S/docker-compose.yml:76` and the Silo image from
@@ -85,7 +85,7 @@ depends on this phase.
     `seccompProfile: RuntimeDefault`.
   - Set `securityContext` to `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false` and
     `capabilities.drop: [ALL]`.
-- [ ] T005 Write `C/templates/_helpers.tpl`.
+- [X] T005 Write `C/templates/_helpers.tpl`.
   - **Naming, labels and image**: `infrahub-sync.name`, `.fullname`, `.chart`, `.labels`,
     `.selectorLabels` and `.serviceAccountName`, as in infrahub-mcp. Add a component argument;
     the label is `app.kubernetes.io/component`. The `.image` helper gives
@@ -129,14 +129,14 @@ depends on this phase.
   - **`infrahub-sync.bootstrapHash`**: the first 8 characters of a sha256 over the image
     reference, the bootstrap's environment values that are not credentials, and the checksums
     (research R-2, RR-34).
-- [ ] T006 Write `C/templates/_validation.tpl` with one `fail` per refusal of
+- [X] T006 Write `C/templates/_validation.tpl` with one `fail` per refusal of
   [data-model.md](data-model.md) "Validation rules" and RR-40 to RR-45.
   - Each message names the value.
   - Without an existing Secret, use `required` for each credential of FR-012. With the bundled
     PostgreSQL that is the three PostgreSQL passwords; with an external one, the two connection
     strings.
   - Include the template from every workload template, so `helm template` runs it.
-- [ ] T007 [P] Write the Secret, ConfigMap and service account templates:
+- [X] T007 [P] Write the Secret, ConfigMap and service account templates:
   - `C/templates/secret.yaml`, rendered when `credentials.existingSecret` is empty. Its keys are
     the names in [data-model.md](data-model.md) "Keys of the credentials Secret", and it holds
     only the keys that are set.
@@ -144,7 +144,7 @@ depends on this phase.
   - `C/templates/ca-configmap.yaml`, rendered when `caCertificates.certificates` is not empty.
   - `C/templates/serviceaccount.yaml`, copied from infrahub-mcp, with
     `automountServiceAccountToken: false`.
-- [ ] T008 [P] Create the render test harness and the lint values:
+- [X] T008 [P] Create the render test harness and the lint values:
   - `H/tests/unit/test_infrahub_sync_chart.py` with a helper `render(values: dict, *, expect_failure: bool = False) -> list[dict]`.
     It writes the values to a temporary file, runs `helm template sync charts/infrahub-sync -f <file>`,
     and parses the documents with `yaml.safe_load_all`. On failure it returns the error text.
