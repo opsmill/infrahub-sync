@@ -1,0 +1,44 @@
+tests/cli/test_client_commands.py
+  s_4c94b159df7a98::t_ebb22e598490d0 46-47
+  s_4c94b159df7a98::t_99bac545f13bf9 935-979,981-1012
+  s_4c94b159df7a98::t_33e94b1ba5b101 980
+docs/docs/running-a-sync.mdx
+  s_4c94b159df7a98::t_6191f70f851a7a 178-200
+infrahub_sync/cli.py
+  s_4c94b159df7a98::t_0316be48ecc801 926-942,1957-1961
+  s_4c94b159df7a98::t_ebb22e598490d0 84
+infrahub_sync/client/__init__.py
+  s_4c94b159df7a98::t_45f42c3192a855 48-49,112-113
+infrahub_sync/service/service.py
+  s_4c94b159df7a98::t_e095889cd5c864 22,110-127,129,1952,1956,1977-1978
+  s_4c94b159df7a98::t_ebb22e598490d0 89,128
+infrahub_sync/client/models.py
+  s_4c94b159df7a98::t_32c17795d8bbdc 429-431
+  s_4c94b159df7a98::t_4f7870c8e31069 374-405
+docs/docs/reference/sync-http-api.mdx
+  s_4c94b159df7a98::t_d8d3ccd7e34cec 380-438
+dev/specs/019-second-plan-real-changes/tasks.md
+  s_4c94b159df7a98::t_ebb22e598490d0 112-113,120-123
+tests/service/test_http_api.py
+  s_4c94b159df7a98::t_81a1136b3f4b26 38,79,2850-2873,2877-2896,2910-2946
+  s_4c94b159df7a98::t_b181e68c71ff86 2897-2909
+  s_4c94b159df7a98::t_ebb22e598490d0 2874-2876
+changelog/+plan-step-timings.added.md
+  s_4c94b159df7a98::t_73985ddd5bf0af 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ee46e6046eacf7a9becf257f4240c6ce111204d2",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
