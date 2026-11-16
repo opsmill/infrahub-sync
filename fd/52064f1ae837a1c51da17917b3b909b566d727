@@ -1,0 +1,90 @@
+infrahub_sync/product_store/models.py
+  s_4c94b159df7a98::t_121305ff29a912 148-151
+infrahub_sync/product_store/store.py
+  s_4c94b159df7a98::t_b2fce9f4e04cc7 4755
+  s_4c94b159df7a98::t_83fb22a40949e3 1554
+  s_4c94b159df7a98::t_fddb84c90cccfc 4738-4754,4756-4795
+  s_4c94b159df7a98::t_9d26c8f65ad37e 544-545
+  s_4c94b159df7a98::t_bf231dfec63bd9 4872-4885,4892-4893,4901-4902
+  s_4c94b159df7a98::t_c45c977c9acf68 4961
+  s_4c94b159df7a98::t_c3679b45054e69 1646-1658
+  s_4c94b159df7a98::t_e0e08f33e97e76 4014-4021
+  s_4c94b159df7a98::t_28f2930a6a75da 106
+  s_4c94b159df7a98::t_9d2c218f667426 550
+  s_4c94b159df7a98::t_b1fbeac526a15e 1020,1026
+  s_4c94b159df7a98::t_98f8046d6a928b 261-269
+  s_4c94b159df7a98::t_1676151fff1574 712-713
+infrahub_sync/execution.py
+  s_4c94b159df7a98::t_f75987549ca81c 1168
+  s_4c94b159df7a98::t_cf1282e5dba66b 1190-1193
+  s_4c94b159df7a98::t_bf167893f423b2 1275
+  s_4c94b159df7a98::t_35f027bf784aa6 81
+tests/service/test_plan_step.py
+  s_4c94b159df7a98::t_aa28809971bcb0 175-181,183,185
+  s_4c94b159df7a98::t_337f78c64ea3f7 712
+  s_4c94b159df7a98::t_2463fe65f50f6d 1-8,10-34,36-81,84-104,106-174,182,184,186-342,344-645,648-711,713-716
+  s_4c94b159df7a98::t_64d1f83fd4cd87 35
+  s_4c94b159df7a98::t_52af503b3b89ea 105
+  s_4c94b159df7a98::t_5684f643f3d872 646-647
+  s_4c94b159df7a98::t_35c30c3fb45335 9
+  s_4c94b159df7a98::t_3afa1ab7ebc821 82-83
+  s_4c94b159df7a98::t_31d14238e88e46 343
+tests/test_execution_surface.py
+  s_4c94b159df7a98::t_948844418b74db 1527-1543
+infrahub_sync/service/flow.py
+  s_4c94b159df7a98::t_b4a411e6152798 810-811
+  s_4c94b159df7a98::t_c7597ff5d8d416 369
+  s_4c94b159df7a98::t_03ad33bc94d100 1006
+  s_4c94b159df7a98::t_4242d1f0941932 1569-1571
+  s_4c94b159df7a98::t_c103bafdca730e 791,798-801
+  s_4c94b159df7a98::t_62666dc68f48fc 1513-1514
+  s_4c94b159df7a98::t_90970d8d41d33a 118
+  s_4c94b159df7a98::t_2dd1472a7aea28 356
+  s_4c94b159df7a98::t_d930b985c6c55d 1515
+  s_4c94b159df7a98::t_4087418065f13d 1572
+  s_d46d8358a649e8::t_302ca9b339bb93 768-773,845,857,1018,1540
+infrahub_sync/potenda/plan_step.py
+  s_4c94b159df7a98::t_c61b6a9d2b3609 1-31
+tests/product_store/test_plan_step_column.py
+  s_4c94b159df7a98::t_1c1db9a843690f 1-251
+infrahub_sync/service/plan_step.py
+  s_4c94b159df7a98::t_02c12c1f144d6b 238-259
+  s_4c94b159df7a98::t_9cd8afb586092a 188,190,193
+  s_4c94b159df7a98::t_0b1b7b7826bb29 284
+  s_4c94b159df7a98::t_3580dfa728dd1b 23
+  s_4c94b159df7a98::t_1c2b1bf07204a7 1-22,24-187,189,191-192,194-237,260-283,285-303
+infrahub_sync/potenda/__init__.py
+  s_4c94b159df7a98::t_17dfff74e77549 1050-1052
+  s_4c94b159df7a98::t_d1779efa221c71 847-863,865-866
+  s_4c94b159df7a98::t_f0c9441375a55d 1009-1012
+  s_4c94b159df7a98::t_d300f06249b5d3 1021
+  s_4c94b159df7a98::t_4e2534bcfbabb8 140
+  s_4c94b159df7a98::t_6b301bcde5dbcc 440-442
+  s_4c94b159df7a98::t_41f847216b2e45 1031
+dev/specs/019-second-plan-real-changes/tasks.md
+  s_4c94b159df7a98::t_82b224985cce9c 109-111,117-119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fd52064f1ae837a1c51da17917b3b909b566d727",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_d46d8358a649e8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aedc1aa7b17ea3b5d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
