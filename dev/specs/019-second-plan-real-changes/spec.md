@@ -75,6 +75,20 @@ Sources:
 - **Benchmark machine**: a machine with 8 CPUs and 16 GB of memory that runs no other work during
   a measurement.
 
+## Clarifications
+
+### Session 2026-11-16
+
+- Q: Which plans does this release save in the new plan format 5? → A: Every plan it creates,
+  whether or not the plan records an emptied relationship. An earlier worker refuses every plan
+  of this release, so the Sync API and the worker are upgraded together.
+- Q: What does a plan do when the source empties a one-peer relationship that the destination
+  schema requires? → A: A new problem type reports the record and the relationship in the plan
+  report, and the plan holds no update for that record.
+- Q: Is this feature complete when the benchmark machine is not available? → A: Yes. The record
+  fields and the empty-plan check ship; the measurement of tiers S and M (FR-031 to FR-036) moves
+  to a GitHub issue.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - A second plan on unchanged data is empty (Priority: P1)
@@ -244,8 +258,9 @@ tier M.
   plan still holds a delete for it. Only nodes that Infrahub creates itself are left out of
   deletes.
 - A one-peer relationship is required by the destination schema and the source record has no
-  peer. The plan does not record an emptied relationship that the destination would refuse; it
-  reports the record through the plan report, as plan format 4 does for a record it cannot write.
+  peer. The plan does not record an emptied relationship that the destination would refuse. It
+  holds no update for that record, and its plan report holds a problem that names the record and
+  the relationship (FR-013a).
 - A one-peer relationship is empty on both sides. The plan holds no operation for it.
 - The peer of a one-peer relationship was left out of the plan. The existing rule for kept
   records applies, and the plan does not record the relationship as emptied.
@@ -294,9 +309,10 @@ tier M.
 - **FR-009**: The plan summary, `runs plan` and `runs plan --detail` MUST show an emptied
   relationship as a changed field of its update, and `runs plan --detail` MUST name the
   relationship and state that it becomes empty.
-- **FR-010**: A plan that records an emptied relationship MUST be saved in a new plan format
-  version. A plan in this format MUST be covered by the plan checksum in full, as plan format 4
-  is.
+- **FR-010**: Every plan that this release creates MUST be saved in a new plan format version,
+  whether or not it records an emptied relationship. A plan in this format MUST be covered by the
+  plan checksum in full, as plan format 4 is. The Sync API and the worker are upgraded together,
+  because an earlier worker refuses every plan of this release (FR-011).
 - **FR-011**: Every command and service that reads a saved plan MUST refuse a plan format that it
   cannot apply, before it reads any operation, with a message that names the format of the plan
   and the formats that the release supports.
@@ -305,6 +321,10 @@ tier M.
 - **FR-013**: The checks that run before a write (`verify`, and the pre-write checks of `apply`
   and `runs resume`) MUST cover an emptied relationship in the same way as any other changed
   field of an update.
+- **FR-013a**: When the source record holds no peer for a one-peer relationship that the
+  destination schema requires, and the destination node holds a peer, the plan MUST hold no update
+  for that record. The plan report MUST hold a problem of a new type that names the record and the
+  relationship. The plan step MUST NOT write a warning for it in the log instead.
 
 #### Timings of the plan step
 
@@ -408,8 +428,8 @@ tier M.
   to record that a one-peer relationship becomes empty.
 - **Plan format version**: the number that states how a saved plan is written. This feature adds
   one version after plan format 4.
-- **Plan report**: the problems, records left out and kept records of a saved plan. Unchanged by
-  this feature.
+- **Plan report**: the problems, records left out and kept records of a saved plan. This feature
+  adds one problem type: a required one-peer relationship that the source empties (FR-013a).
 - **Plan step timing**: for one execution, the start and the end of one of the seven parts of
   FR-014.
 - **Benchmark record**: the result of one benchmark run. It gains the timings by part, the read
@@ -451,9 +471,10 @@ tier M.
 - "Plan time" in FR-034 is the duration of the plan step from the submission of the execution to
   the moment the run shows its plan. This is the value that the benchmark records today as the
   plan duration.
-- The benchmark machine is available to a maintainer during this feature. User Stories 1, 2 and 3
-  do not need it. If it is not available, User Stories 4 and 5 keep their code changes (the
-  record fields and the check on an empty plan) and the measurement stays open.
+- Whether the benchmark machine is available during this feature is not known. User Stories 1, 2
+  and 3 do not need it. If it is not available, the feature is complete without the measurement:
+  User Story 4 ships its code changes (the record fields and the check on an empty plan), and a
+  GitHub issue tracks FR-031 to FR-036 and SC-007 to SC-009.
 - Apply does not execute deletes today, and this feature does not change that.
 - Whether the current code still fails on a second plan with LAG member interfaces (#167) is not
   known. The test of FR-022 decides it: if the test fails, the defect is fixed in this feature.
@@ -485,8 +506,6 @@ tier M.
 
 ## Open Questions
 
-- It is not known whether the benchmark machine is available during this feature. See
-  "Assumptions".
 - It is not known whether pull request [#177](https://github.com/opsmill/infrahub-sync/pull/177),
   which is open against `main` for release 2, applies to the current code. The test of FR-022
   for LAG member interfaces answers it.

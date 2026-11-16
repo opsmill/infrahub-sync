@@ -65,7 +65,8 @@ that Infrahub creates itself, and the write of an emptied one-peer relationship 
 - The API stays `v3-unstable`; all response changes are additive. Old runs load (FR-019).
 - An Upsert stays the only destination write of an operation (ADR 0010, ADR 0012).
 - Apply still executes no delete (ADR 0004).
-- The plan report does not change: no new problem type, no new kept record.
+- The plan report gains one problem type, for a required one-peer relationship that the source
+  empties (spec FR-013a). No new kept record.
 - No error message or data value in a timing field (FR-021, `secret-redaction.md`).
 - The vendored `opsmill_prefect_extras` stays byte-identical.
 
