@@ -296,8 +296,6 @@ export interface Explanation {
   short: string;
   note?: string;
   noteMono?: boolean;
-  /** The actor that started a running run. */
-  by?: string;
   at?: { iso: string; prefix: string };
   action?: { label: string; primary: boolean; target: "run" | "plan" };
 }
@@ -328,7 +326,6 @@ export function explain(run: Run | undefined, ctx: ExplainContext): Explanation 
   if (state === "running") {
     return {
       short: `${phaseLabel(run, ctx)}…`,
-      by: run.actor ?? undefined,
       at: { iso: run.started_at, prefix: "Started " },
       action: { label: "View run", primary: false, target: "run" },
     };
@@ -373,7 +370,6 @@ export function explain(run: Run | undefined, ctx: ExplainContext): Explanation 
   if (run.phase === "cancelled") {
     return {
       short: "Latest run cancelled",
-      note: run.actor ? `Started by ${run.actor}` : undefined,
       at: { iso: ended, prefix: "Cancelled " },
       action: { label: "Plan again", primary: false, target: "plan" },
     };
