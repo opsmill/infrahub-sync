@@ -42,7 +42,7 @@ Rules for every task:
 
 **Purpose**: chart skeleton, registration in `infrahub-helm`, and the test image.
 
-- [ ] T001 Create the chart skeleton in `C/`:
+- [X] T001 Create the chart skeleton in `C/`:
   - `Chart.yaml`, modelled on `H/charts/infrahub-mcp/Chart.yaml`, with `name: infrahub-sync`,
     `version: 0.1.0` and `appVersion: "3.0.0a5"` (the `version` of `S/pyproject.toml`). Use the
     description "A Helm chart to deploy Infrahub Sync on Kubernetes", `sources` pointing at
@@ -53,7 +53,7 @@ Rules for every task:
   - `changelog/.gitignore`, copied.
   - `CHANGELOG.md`, holding a `# Changelog` heading and the `<!-- towncrier release notes start -->`
     line that `towncrier.toml` sets as `start_string`.
-- [ ] T002 [P] Register the chart everywhere `infrahub-helm` lists charts by hand:
+- [X] T002 [P] Register the chart everywhere `infrahub-helm` lists charts by hand:
   - Add the marker `"sync: tests for the infrahub-sync chart"` to `H/pyproject.toml`
     `[tool.pytest.ini_options].markers`.
   - Add a row for `infrahub-sync` and `sync` to the chart table in `H/tests/README.md`.
