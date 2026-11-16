@@ -1,0 +1,21 @@
+frontend/src/features/runs/RunActions.tsx
+  s_c4f9bd3d1fabe8::t_bdf4c5da67e6ed 296-297
+frontend/src/api/types.generated.ts
+  s_c4f9bd3d1fabe8::t_73b507f30795f3 56,190-209,320-339,380-456,461-507,511-514,524-528,534-575,749-754,993-1019,1065-1106,1112-1115,1122-1126,1203,1231-1301,1388-1390,1396-1401,1908,1925,1993,2010,2078,2084,2096,2164,2167-2169,2175-2179,2182,2187,2255,2268,2346,2359,2454-2462,2744,2775-2865,2983-3338
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f38a8b1e4ed52975fe0fd2fcb847af07a43e65e5",
+  "prompts": {},
+  "sessions": {
+    "s_c4f9bd3d1fabe8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f7bf5003-b7b7-444d-a7c2-d1ecbcb55ad7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
