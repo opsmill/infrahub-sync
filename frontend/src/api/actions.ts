@@ -39,6 +39,11 @@ export function useApplyRun() {
   return $api.useMutation("post", "/runs/{run_id}/apply", { onSuccess: invalidate });
 }
 
+export function useResumeRun() {
+  const invalidate = useInvalidate();
+  return $api.useMutation("post", "/runs/{run_id}/resume", { onSuccess: invalidate });
+}
+
 export function useCancelRun() {
   const invalidate = useInvalidate();
   return $api.useMutation("post", "/runs/{run_id}/cancel", { onSuccess: invalidate });

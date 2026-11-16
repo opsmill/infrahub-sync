@@ -169,6 +169,26 @@ export const runQuery = (runId: string) =>
     }
   );
 
+/** The most left-out records a dialog lists; the count of the rest is shown instead. */
+export const LEFT_OUT_SHOWN = 20;
+
+/**
+ * The first records the saved plan leaves out, for the plan with this checksum. A saved plan never
+ * changes, so the answer is kept for the session; a 409 means the run holds another plan.
+ */
+export const planLeftOutQuery = (runId: string, checksum: string) =>
+  $api.queryOptions(
+    "get",
+    "/runs/{run_id}/plan/left-out",
+    {
+      params: {
+        path: { run_id: runId },
+        query: { expected_checksum: checksum, limit: String(LEFT_OUT_SHOWN) },
+      },
+    },
+    { staleTime: Number.POSITIVE_INFINITY }
+  );
+
 /** A step in progress asks for the new lines of its log on this interval. */
 export const LOG_REFRESH_MS = 2_000;
 /** The most lines the Sync API returns in one page of a log. */

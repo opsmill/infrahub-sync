@@ -1,0 +1,1 @@
+The web interface can resume an interrupted apply or sync from its saved position. The run page asks for a check of the plan after the interruption, then for approval when the Sync API requires it, then offers "Resume the apply", which shows the saved progress and asks for the destination branch to confirm.

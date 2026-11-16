@@ -4,6 +4,7 @@ type Schemas = components["schemas"];
 
 export type Run = Schemas["PublicRunResource"];
 export type RunResource = Schemas["RunResource"];
+export type ApplyProgress = Schemas["ApplyProgressResource"];
 export type Orchestration = Schemas["OrchestrationSummary"];
 export type ConfigurationSummary = Schemas["ConfigurationSummaryResource"];
 export type VersionSummary = Schemas["ConfigurationVersionSummaryResource"];

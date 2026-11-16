@@ -79,6 +79,7 @@ export function FailureNotice({
   plan,
   source,
   destination,
+  resumable = false,
 }: {
   run: Run;
   f: FailureDetail;
@@ -86,6 +87,8 @@ export function FailureNotice({
   plan?: Plan;
   source?: System;
   destination?: System;
+  /** The interrupted write can continue from its saved position. */
+  resumable?: boolean;
 }) {
   const failedExec = [...orchestration]
     .reverse()
@@ -138,7 +141,9 @@ export function FailureNotice({
                 <span className={LABEL}>Command-line instruction recorded by the Sync service</span>
                 <InlineCode text={f.nextAction} />
               </p>
-              <p>To continue here, create a new plan, review it, then apply that plan.</p>
+              {!resumable && (
+                <p>To continue here, create a new plan, review it, then apply that plan.</p>
+              )}
             </>
           )
         )}
@@ -178,7 +183,20 @@ export function FailureNotice({
                   : "The Sync service did not record which of them failed."}
           </p>
         )}
-        {cut?.mayHaveWritten && (
+        {cut?.mayHaveWritten && resumable && (
+          <p>
+            The Sync service could not confirm everything that was written. You can resume the
+            write: the worker continues the saved plan after the last position it saved. Check the
+            plan first. You can also inspect{" "}
+            {run.destination_branch ? (
+              <>
+                <BranchBadge branch={run.destination_branch} /> in{" "}
+              </>
+            ) : null}
+            {destination?.label ?? "the destination"} and create a new plan instead.
+          </p>
+        )}
+        {cut?.mayHaveWritten && !resumable && (
           <p>
             The Sync service could not confirm what was written. Inspect{" "}
             {run.destination_branch ? (

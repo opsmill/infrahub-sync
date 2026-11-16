@@ -9,6 +9,7 @@ import {
   useApproveRun,
   useCancelRun,
   useIdempotencyKey,
+  useResumeRun,
   useVerifyRun,
 } from "#/api/actions";
 import { configQuery, configVersionQuery, meQuery, runQuery, runsQuery } from "#/api/queries";
@@ -29,6 +30,7 @@ import {
   ReasonField,
   resendHint,
 } from "./form";
+import { LeftOutReview, leftOutDisabledReason, useLeftOutConfirmation } from "./left-out";
 import { DownloadProgress, usePlanDownload } from "./plan-download";
 
 const changes = (n: number) => `${fmt(n)} ${n === 1 ? "change" : "changes"}`;
@@ -174,6 +176,7 @@ export function ApplyDialog({
   const written = create + update;
   const notRun = plan.summary.deletes_not_executed;
   const checksumRefused = plan.checksum_ok === false;
+  const leftOut = useLeftOutConfirmation(plan);
 
   const destination = version.data
     ? describeSystem(version.data.declared_content.configuration.destination)
@@ -281,10 +284,12 @@ export function ApplyDialog({
       submitVariant="warning"
       pendingLabel="Requesting the apply"
       isPending={apply.isPending}
-      isDisabled={checksumRefused || !matches}
+      isDisabled={checksumRefused || !matches || (leftOut.required && !leftOut.confirmed)}
       disabledReason={
         checksumRefused ? (
           "The Sync service refuses to apply this plan."
+        ) : leftOutDisabledReason(leftOut.required, leftOut.confirmed) && matches ? (
+          leftOutDisabledReason(leftOut.required, leftOut.confirmed)
         ) : branch ? (
           <>
             Type <BranchBadge branch={branch} /> to continue.
@@ -299,8 +304,7 @@ export function ApplyDialog({
             body: {
               expected_checksum: plan.checksum,
               confirm_writes: true,
-              // The dialog does not list left-out records yet, so it never confirms them.
-              confirm_left_out: false,
+              confirm_left_out: leftOut.confirmed,
               branch: requested,
               reason: reason.trim() || null,
             },
@@ -459,6 +463,19 @@ export function ApplyDialog({
           {matches ? `The text matches ${branch}. ${submitLabel} is available.` : ""}
         </span>
       </Field>
+      {leftOut.required && (
+        <LeftOutReview
+          runId={run.run_id}
+          plan={plan}
+          confirmed={leftOut.confirmed}
+          onConfirmedChange={(value) => {
+            leftOut.setConfirmed(value);
+            renew();
+            apply.reset();
+          }}
+          verb="Apply"
+        />
+      )}
       <ReasonField
         id="apply-reason"
         value={reason}
@@ -602,42 +619,6 @@ export function ApproveDialog({
   );
 }
 
-/** The Approve dialog. Approval is bound to the plan checksum, which only the downloaded plan carries. */
-export function ApproveWithPlan({
-  run,
-  onClose,
-  onDone,
-}: {
-  run: Run;
-  onClose: () => void;
-  onDone?: () => void;
-}) {
-  const download = usePlanDownload(run, { start: true });
-  if (download.plan)
-    return <ApproveDialog run={run} plan={download.plan} onClose={onClose} onDone={onDone} />;
-  return (
-    <DialogFrame
-      isOpen
-      onOpenChange={(open) => !open && onClose()}
-      title="Approve the plan"
-      ariaLabel="Approve the plan"
-      description="Approval is bound to the plan checksum, which comes with the plan."
-      submitLabel="Approve the plan"
-      pendingLabel="Recording the approval"
-      isPending={false}
-      isDisabled
-      disabledReason={
-        download.status === "error" ? undefined : "You can approve once the plan has downloaded."
-      }
-      onSubmit={() => {}}
-    >
-      <div className="flex flex-col gap-2 rounded-lg border bg-content-muted p-3">
-        <DownloadProgress state={download} retry={download.start} />
-      </div>
-    </DialogFrame>
-  );
-}
-
 const STAGE_NOUN: Record<string, string> = {
   plan: "plan",
   verify: "verification",
@@ -759,42 +740,309 @@ export function CancelDialog({
 }
 
 /**
- * The Apply dialog. Apply confirms the plan by its checksum, which only the downloaded plan
- * carries, so the dialog opens at once and shows the download until the plan is there.
+ * The dialog shown while the saved plan downloads. Apply, approve and resume all name the plan by
+ * its checksum, which only the downloaded plan carries, so each dialog opens at once and shows the
+ * download until the plan is there.
  */
-export function ApplyWithPlan({
-  run,
+function PlanDownloadDialog({
+  download,
+  title,
+  description,
+  submitLabel,
+  pendingLabel,
+  waitReason,
   onClose,
-  onDone,
 }: {
-  run: Run;
+  download: ReturnType<typeof usePlanDownload>;
+  title: string;
+  description: string;
+  submitLabel: string;
+  pendingLabel: string;
+  waitReason: string;
   onClose: () => void;
-  onDone?: () => void;
 }) {
-  const download = usePlanDownload(run, { start: true });
-  if (download.plan)
-    return <ApplyDialog run={run} plan={download.plan} onClose={onClose} onDone={onDone} />;
-  const total = executableCount(run) ?? 0;
-  const words = `${fmt(total)} ${total === 1 ? "change" : "changes"}`;
   return (
     <DialogFrame
       isOpen
       onOpenChange={(open) => !open && onClose()}
-      title={`Apply ${words}`}
-      ariaLabel={`Apply ${words}`}
-      description="Apply confirms the plan by its checksum, which comes with the plan."
-      submitLabel={`Apply ${words}`}
-      pendingLabel="Applying"
+      title={title}
+      ariaLabel={title}
+      description={description}
+      submitLabel={submitLabel}
+      pendingLabel={pendingLabel}
       isPending={false}
       isDisabled
-      disabledReason={
-        download.status === "error" ? undefined : "You can apply once the plan has downloaded."
-      }
+      disabledReason={download.status === "error" ? undefined : waitReason}
       onSubmit={() => {}}
     >
       <div className="flex flex-col gap-2 rounded-lg border bg-content-muted p-3">
         <DownloadProgress state={download} retry={download.start} />
       </div>
+    </DialogFrame>
+  );
+}
+
+type DialogProps = { run: Run; onClose: () => void; onDone?: () => void };
+
+/** The Apply dialog, once the saved plan has downloaded. */
+export function ApplyWithPlan({ run, onClose, onDone }: DialogProps) {
+  const download = usePlanDownload(run, { start: true });
+  if (download.plan)
+    return <ApplyDialog run={run} plan={download.plan} onClose={onClose} onDone={onDone} />;
+  const words = changes(executableCount(run) ?? 0);
+  return (
+    <PlanDownloadDialog
+      download={download}
+      title={`Apply ${words}`}
+      description="Apply confirms the plan by its checksum, which comes with the plan."
+      submitLabel={`Apply ${words}`}
+      pendingLabel="Applying"
+      waitReason="You can apply once the plan has downloaded."
+      onClose={onClose}
+    />
+  );
+}
+
+/** The Approve dialog, once the saved plan has downloaded. */
+export function ApproveWithPlan({ run, onClose, onDone }: DialogProps) {
+  const download = usePlanDownload(run, { start: true });
+  if (download.plan)
+    return <ApproveDialog run={run} plan={download.plan} onClose={onClose} onDone={onDone} />;
+  return (
+    <PlanDownloadDialog
+      download={download}
+      title="Approve the plan"
+      description="Approval is bound to the plan checksum, which comes with the plan."
+      submitLabel="Approve the plan"
+      pendingLabel="Recording the approval"
+      waitReason="You can approve once the plan has downloaded."
+      onClose={onClose}
+    />
+  );
+}
+
+/** What a resume continues: the apply of the saved plan, or the write part of a sync. */
+export const resumeLabel = (run: Run) =>
+  run.operation === "sync" ? "Resume the sync" : "Resume the apply";
+
+/** The Resume dialog, once the saved plan has downloaded. */
+export function ResumeWithPlan({ run, onClose, onDone }: DialogProps) {
+  const download = usePlanDownload(run, { start: true });
+  if (download.plan)
+    return <ResumeDialog run={run} plan={download.plan} onClose={onClose} onDone={onDone} />;
+  return (
+    <PlanDownloadDialog
+      download={download}
+      title={resumeLabel(run)}
+      description="A resume confirms the plan by its checksum, which comes with the plan."
+      submitLabel={resumeLabel(run)}
+      pendingLabel="Requesting the resume"
+      waitReason="You can resume once the plan has downloaded."
+      onClose={onClose}
+    />
+  );
+}
+
+export function ResumeDialog({
+  run,
+  plan,
+  onClose,
+  onDone,
+}: {
+  run: Run;
+  plan: Plan;
+  onClose: () => void;
+  onDone?: () => void;
+}) {
+  const resume = useResumeRun();
+  const [key, renew] = useIdempotencyKey();
+  const [reason, setReason] = useState("");
+  const [typed, setTyped] = useState("");
+  const leftOut = useLeftOutConfirmation(plan);
+  const progress = useQuery(runQuery(run.run_id)).data?.apply_progress;
+
+  const by = plan.summary.by_action;
+  const written = (by.create ?? 0) + (by.update ?? 0);
+  const checksumRefused = plan.checksum_ok === false;
+  const branch = run.destination_branch ?? plan.destination_branch ?? undefined;
+  const matches = branch === undefined || typed.trim() === branch;
+  const label = resumeLabel(run);
+  const position = progress?.position;
+  const counts = progress?.by_kind.length
+    ? progress.by_kind.reduce(
+        (sum, k) => ({
+          committed: sum.committed + k.committed,
+          uncertain: sum.uncertain + k.uncertain,
+          notReached: sum.notReached + k.not_reached,
+        }),
+        { committed: 0, uncertain: 0, notReached: 0 }
+      )
+    : undefined;
+
+  return (
+    <DialogFrame
+      isOpen
+      onOpenChange={(open) => !open && onClose()}
+      title={
+        <>
+          {label}
+          {branch && (
+            <>
+              {" "}
+              to{" "}
+              <span className="font-normal">
+                <BranchBadge branch={branch} />
+              </span>
+            </>
+          )}
+        </>
+      }
+      ariaLabel={`${label}${branch ? ` to ${branch}` : ""}`}
+      description="The worker continues the saved plan after the last position it saved, so the changes written before the interruption are not written again. Before its first write, it checks the plan against the checksum below."
+      notice={
+        checksumRefused ? (
+          <Notice tone="danger" role="alert">
+            <p>
+              The saved plan does not match its checksum. The Sync service refuses to resume it.
+            </p>
+          </Notice>
+        ) : undefined
+      }
+      error={
+        resume.error ? (
+          <MutationError
+            error={resume.error}
+            currentRunId={run.run_id}
+            retryHint={resendHint(label)}
+          />
+        ) : undefined
+      }
+      submitLabel={label}
+      submitVariant="warning"
+      pendingLabel="Requesting the resume"
+      isPending={resume.isPending}
+      isDisabled={checksumRefused || !matches || (leftOut.required && !leftOut.confirmed)}
+      disabledReason={
+        checksumRefused ? (
+          "The Sync service refuses to resume this plan."
+        ) : !matches && branch ? (
+          <>
+            Type <BranchBadge branch={branch} /> to continue.
+          </>
+        ) : (
+          leftOutDisabledReason(leftOut.required, leftOut.confirmed)
+        )
+      }
+      onSubmit={() =>
+        resume.mutate(
+          {
+            params: { path: { run_id: run.run_id }, header: { "Idempotency-Key": key } },
+            body: {
+              expected_checksum: plan.checksum,
+              confirm_writes: true,
+              confirm_left_out: leftOut.confirmed,
+              reason: reason.trim() || null,
+            },
+          },
+          {
+            onSuccess: () => {
+              onClose();
+              onDone?.();
+            },
+          }
+        )
+      }
+    >
+      <div className="flex flex-col gap-2.5 rounded-xl bg-content-muted px-4 py-2.5 text-sm">
+        <dl className="grid grid-cols-1 sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-1.5 [&>dd]:max-sm:mb-2 [&>dd:last-child]:max-sm:mb-0">
+          <dt className="text-subtle">Last saved</dt>
+          <dd className="min-w-0 text-pretty tabular-nums">
+            {position != null ? (
+              <>
+                Operation {fmt(position + 1)} of {fmt(plan.operations.length)}
+                {progress?.saved_at && (
+                  <>
+                    , <When iso={progress.saved_at} />
+                  </>
+                )}
+                .
+              </>
+            ) : (
+              "Nothing. The worker saved no position, so the resume starts at the first operation of the plan."
+            )}
+          </dd>
+          {counts && (
+            <>
+              <dt className="text-subtle">Progress</dt>
+              <dd className="min-w-0 text-pretty tabular-nums">
+                {fmt(counts.committed)} written, {fmt(counts.uncertain)} not confirmed,{" "}
+                {fmt(counts.notReached)} not reached.
+              </dd>
+            </>
+          )}
+          {run.approval && (
+            <>
+              <dt className="text-subtle">Approved</dt>
+              <dd className="min-w-0 text-pretty">
+                Yes, <When iso={run.approval.approved_at} />.
+              </dd>
+            </>
+          )}
+          <dt className="text-subtle">Plan checksum</dt>
+          <ChecksumValue checksum={plan.checksum} />
+        </dl>
+        <p className="text-pretty border-t pt-2.5 text-subtle text-xs">
+          The plan holds {changes(written)}. Deletes are not run.
+        </p>
+      </div>
+      {branch && (
+        <Field
+          id="resume-confirm"
+          label={
+            <>
+              Type <BranchBadge branch={branch} /> to confirm
+            </>
+          }
+        >
+          <input
+            id="resume-confirm"
+            className={cn(INPUT, "font-mono", typed.trim() === branch && "border-success")}
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            disabled={checksumRefused}
+            autoComplete="off"
+            spellCheck={false}
+            autoCapitalize="none"
+            autoCorrect="off"
+            data-1p-ignore=""
+            data-lpignore="true"
+            // biome-ignore lint/a11y/noAutofocus: only with a fine pointer, inside a modal that just opened.
+            autoFocus={finePointer()}
+          />
+        </Field>
+      )}
+      {leftOut.required && (
+        <LeftOutReview
+          runId={run.run_id}
+          plan={plan}
+          confirmed={leftOut.confirmed}
+          onConfirmedChange={(value) => {
+            leftOut.setConfirmed(value);
+            renew();
+            resume.reset();
+          }}
+          verb="Resume"
+        />
+      )}
+      <ReasonField
+        id="resume-reason"
+        value={reason}
+        onChange={(v) => {
+          setReason(v);
+          renew();
+          resume.reset();
+        }}
+      />
     </DialogFrame>
   );
 }
