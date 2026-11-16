@@ -353,7 +353,7 @@ else.
 
 **Purpose**: FR-028 to FR-033.
 
-- [ ] T027 [P] Write `C/README.md.gotmpl`, modelled on infrahub-mcp. Cover:
+- [X] T027 [P] Write `C/README.md.gotmpl`, modelled on infrahub-mcp. Cover:
   - what the chart deploys
   - the required Secret, with its keys
   - an install example with `credentials.existingSecret`
@@ -362,12 +362,12 @@ else.
 
   Then generate `C/README.md` with `helm-docs --chart-search-root=charts/infrahub-sync`. Run it
   in `H/`.
-- [ ] T028 [P] In `H/`, add the chart to the root `README.md` list, in the format of the existing
+- [X] T028 [P] In `H/`, add the chart to the root `README.md` list, in the format of the existing
   entries. Add the fragment `C/changelog/+infrahub-sync-chart.added.md`, created with
   `uvx towncrier create --config charts/infrahub-sync/towncrier.toml +infrahub-sync-chart.added.md`.
   Its text: "Add the `infrahub-sync` chart, which deploys Infrahub Sync 3.x with its Prefect
   server, PostgreSQL and object store."
-- [ ] T029 [P] CI in `H/`.
+- [X] T029 [P] CI in `H/`.
   - In `.github/workflows/ci.yml`:
     - Add a `sync` output and path filter (`charts/infrahub-sync/**`) to the `changes` job.
     - Add a `helm-lint-sync` job that runs
