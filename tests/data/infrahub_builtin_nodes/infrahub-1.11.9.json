@@ -1,0 +1,55 @@
+{
+  "control_node_created_through_api": {
+    "created_at": "2026-11-16T15:00:46.046157+00:00",
+    "created_by": {
+      "display_label": "Admin",
+      "id": "18e88e5e-c94b-077e-3002-c51fcfc7e457",
+      "kind": "CoreAccount"
+    },
+    "display_label": "probe-control-builtin-probe-fc4b193a",
+    "hfid": [
+      "probe-control-builtin-probe-fc4b193a"
+    ],
+    "id": "18e88e9a-8e04-b26d-3008-c513ad436ec0",
+    "kind": "BuiltinTag",
+    "updated_at": "2026-11-16T15:00:46.046157+00:00",
+    "updated_by": {
+      "display_label": "Admin",
+      "id": "18e88e5e-c94b-077e-3002-c51fcfc7e457",
+      "kind": "CoreAccount"
+    }
+  },
+  "excluded_kind_prefixes": [
+    "Core",
+    "Internal"
+  ],
+  "infrahub_version": "1.11.9",
+  "nodes_by_kind": {
+    "IpamNamespace": [
+      {
+        "created_at": "2026-11-16T14:56:32.438810+00:00",
+        "created_by": {
+          "display_label": "[Infrahub System]",
+          "id": "__system__",
+          "kind": "CoreAccount"
+        },
+        "default": true,
+        "display_label": "default",
+        "hfid": [
+          "default"
+        ],
+        "id": "18e88e5f-869e-781e-3001-c51633a2abd5",
+        "updated_at": "2026-11-16T14:56:32.438810+00:00",
+        "updated_by": {
+          "display_label": "[Infrahub System]",
+          "id": "__system__",
+          "kind": "CoreAccount"
+        }
+      }
+    ]
+  },
+  "probed_kinds": [
+    "BuiltinTag",
+    "IpamNamespace"
+  ]
+}

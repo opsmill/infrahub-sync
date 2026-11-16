@@ -47,6 +47,26 @@ The probe result is committed as a fixture and recorded in the decision record. 
 read only for the kinds that can carry it, and the destination read part is measured on tier S
 before and after the change.
 
+**Probe result (T001, T002, 2026-11-16)**: The node-level mark is chosen. A node that Infrahub
+creates itself carries the creator `__system__` (display label `[Infrahub System]`) in its node
+metadata, and the adapter reads `node_metadata.created_by.id == "__system__"`.
+
+- The probe ran on a newly initialised Infrahub 1.11.9 of the development stack, with the core
+  schema only. It read two node kinds outside `Core*` and `Internal*`: `BuiltinTag` and
+  `IpamNamespace`. Fixture: `tests/data/infrahub_builtin_nodes/infrahub-1.11.9.json`, written
+  by `tests/integration/test_infrahub_builtin_nodes_integration.py`.
+- It found one built-in node: the `IpamNamespace` named `default`. Its creator is `__system__`
+  and its `default` attribute is `true`, so both marks agree on it. No built-in node of another
+  mappable kind exists, so the spec is not amended.
+- A control `BuiltinTag` that the API token created on the same branch carries the creator
+  `Admin`, the account of the token.
+- A separate check, run after the fixture was written: a `BuiltinTag` created on a branch and
+  merged into `main` keeps the creator `Admin` on `main`. A node that an import writes on a
+  branch therefore does not take the mark when the branch is merged.
+- Not known: whether Infrahub records `__system__` as the creator of other nodes it writes, for
+  example during a migration, a generator run or a resource pool allocation. The probe covered
+  only a new instance.
+
 **Rationale**: The rule must not depend on a name or on a list kept in the package (FR-002).
 The mark must come from Infrahub, the only system that knows which nodes it created.
 
@@ -198,8 +218,10 @@ source does not.
 **Rationale**: The Upsert stays the only destination write of an operation (ADR 0010, ADR 0012).
 A second SDK `update()` call would add a write and move the resume position.
 
-**Not known**: Whether Infrahub 1.11.9 removes the edge on `rel: null` in an Upsert. The live
-test decides; if it fails, the implementation stops and the plan is amended.
+**Live result (T003, 2026-11-16)**: Infrahub 1.11.9 removes the edge on `rel: null` in an
+Upsert. `tests/integration/test_infrahub_one_peer_clear_integration.py` renders exactly
+`{"id": <destination id>, "name": {"value": ...}, "lead": null}` with SDK 1.23.2, saves it with
+`allow_upsert=True` and reads the node back with no `lead` peer.
 
 ## R9. The second-plan tests
 
