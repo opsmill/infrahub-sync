@@ -1,0 +1,21 @@
+dev/specs/017-serve-web-interface/checklists/requirements.md
+  s_c4f9bd3d1fabe8::t_6e3f67bbaf7838 1-43
+dev/specs/017-serve-web-interface/spec.md
+  s_c4f9bd3d1fabe8::t_62577cb8dabd01 1-363
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ebb540887d72d45425372f3398feb366d60b9dcf",
+  "prompts": {},
+  "sessions": {
+    "s_c4f9bd3d1fabe8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f7bf5003-b7b7-444d-a7c2-d1ecbcb55ad7",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
