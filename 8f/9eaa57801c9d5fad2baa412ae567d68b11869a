@@ -1,0 +1,19 @@
+dev/specs/019-second-plan-real-changes/alignment-check.md
+  s_4c94b159df7a98::t_6cef87a6153ff8 1-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8f9eaa57801c9d5fad2baa412ae567d68b11869a",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
