@@ -371,6 +371,38 @@ class StageReads(_ResourceModel):
     destination: SideRead | None = None
 
 
+class PlanStepPart(_ResourceModel):
+    """The times of one part of the plan step of a `plan` or `sync` execution.
+
+    `ended_at` is set once the part ended. `stopped_at` is set for the part that was running
+    when the plan step failed, was cancelled or was interrupted: the time of that verdict. A part
+    that runs has `started_at` only. No field holds an error message or a data value.
+    """
+
+    started_at: datetime
+    ended_at: datetime | None = None
+    stopped_at: datetime | None = None
+
+    @field_validator("started_at", "ended_at", "stopped_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        return _timezone(value, _EXECUTION_TIME_MESSAGE)
+
+
+class PlanStepTimings(_ResourceModel):
+    """The timings of the plan step of one `plan` or `sync` execution; subject to change.
+
+    `parts` maps a part name to its times, in the order the plan step runs them: `waiting`,
+    `preparing`, `comparing`, `checking` and `saving` today. A part that did not start has no
+    entry. `running` names the part that runs, or is `None`. Part names are plain strings, so a
+    part a later Sync API adds does not fail the whole run response. The two reads keep their
+    times in `OrchestrationSummary.reads`.
+    """
+
+    running: str | None = None
+    parts: dict[str, PlanStepPart] = Field(default_factory=dict)
+
+
 class OrchestrationSummary(_ResourceModel):
     """Summarize one orchestration attempt and its terminal verdict."""
 
@@ -394,6 +426,9 @@ class OrchestrationSummary(_ResourceModel):
     # Each side's read for a `plan` or `sync` execution; `None` for a `verify` or `apply`
     # execution, one recorded before the read state, or a Sync API that predates it.
     reads: StageReads | None = None
+    # The timings of the plan step of a `plan` or `sync` execution; `None` for a `verify` or
+    # `apply` execution, one recorded before the timings, or a Sync API that predates them.
+    plan_step: PlanStepTimings | None = None
 
     @field_validator(
         "submitted_at",

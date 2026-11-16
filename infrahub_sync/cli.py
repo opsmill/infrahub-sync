@@ -81,6 +81,7 @@ if TYPE_CHECKING:
         PlanLastChangeResource,
         PlanOperationResource,
         PlanReportPageResource,
+        PlanStepPart,
         PublicRunResource,
         RecoveryAction,
         RunLogLine,
@@ -922,6 +923,23 @@ def _echo_reads(resource: RunResource) -> None:
                 ("destination_read", _side_read_text(reading.reads.destination)),
             )
         )
+    if reading is not None and reading.plan_step is not None:
+        running = reading.plan_step.running
+        _echo_fields(
+            tuple(
+                (f"plan_{_display(name)}", _plan_part_text(part, running=name == running))
+                for name, part in reading.plan_step.parts.items()
+            )
+        )
+
+
+def _plan_part_text(part: PlanStepPart, *, running: bool) -> str:
+    """Render one part of the plan step: its duration, `running`, or how it stopped (spec 019)."""
+    if part.ended_at is not None:
+        return f"{(part.ended_at - part.started_at).total_seconds():.1f}s"
+    if part.stopped_at is not None:
+        return f"stopped after {(part.stopped_at - part.started_at).total_seconds():.1f}s"
+    return "running" if running else "stopped"
 
 
 def _echo_apply_progress(resource: RunResource) -> None:
@@ -1936,6 +1954,11 @@ def runs_show(
     keys that have no value. A side with no read state to return reads <none>. Neither line is printed when that
     execution has no read state: a run recorded before the read state, a stage the worker has not started, or a
     stage whose read state the worker could not store.
+    After them, one `plan_<part>` line per part of that execution's plan step that started: `plan_waiting`,
+    `plan_preparing`, `plan_comparing`, `plan_checking` and `plan_saving`. A part that ended shows its duration in
+    seconds, the part that runs shows `running`, and a part that was running when the stage failed, was cancelled or
+    was interrupted shows `stopped after <seconds>s`, or `stopped` when no stop time exists. No plan line is printed
+    for a run recorded before these timings. The plan step lines are subject to change in a later release.
     A failed stage adds its error type and, when the run recorded them, a `cause:` and a `hint:` line.
     A `sync` that stopped after a plan that leaves out records adds a `sync stopped:` and a `hint:` line.
     A run with a write adds a `progress:` line, a `resumable:` line, one `kind` line per kind with its committed,

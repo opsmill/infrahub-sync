@@ -35,6 +35,7 @@ from prefect.states import Cancelled, Cancelling, Running
 from pydantic import BaseModel
 
 from infrahub_sync.adapters.infrahub import resolved_endpoint
+from infrahub_sync.client import PlanStepTimings
 from infrahub_sync.configuration import ConfigurationPackage
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.validation import credential_namespace_finding
@@ -75,6 +76,7 @@ from infrahub_sync.service.orchestration import (
     RunLogRead,
     Submission,
 )
+from infrahub_sync.service.plan_step import StorePlanStepObserver
 from infrahub_sync.service.read_progress import StoreSideReadObserver, record_waiting
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService, ServiceAPIError
 from tests.service.execution_fixtures import append_execution
@@ -2845,3 +2847,100 @@ def test_an_execution_recorded_before_the_read_state_returns_reads_null(
     run_id = _create(client).json()["run"]["run_id"]
 
     assert _reads(client, run_id) is None
+
+
+def _plan_step(client: TestClient, run_id: str) -> dict[str, Any] | None:
+    response = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {OWNER_TOKEN}"})
+    assert response.status_code == 200
+    return response.json()["orchestration"][0]["plan_step"]
+
+
+@pytest.mark.parametrize("operation", ["plan", "sync"])
+def test_run_response_returns_the_plan_step_timings_of_a_new_execution(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration], operation: str
+) -> None:
+    """FR-014, FR-017: the parts that started, with the running part named; a part not started has no entry."""
+    client, projection, _orchestration = service_api
+    version = client.app.state.run_binding
+    body: dict[str, object] = {
+        "operation": operation,
+        "config_id": version.config_id,
+        "registry_version": version.registry_version,
+        "reason": "plan step timings",
+    }
+    if operation == "sync":
+        body["confirm_writes"] = True
+    created = client.post(
+        "/runs",
+        headers={"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": f"plan-step-{operation}"},
+        json=body,
+    )
+    assert created.status_code == 202, created.text
+    run_id = created.json()["run"]["run_id"]
+    flow_run_id = created.json()["orchestration"][0]["flow_run_id"]
+    assert projection.claim_execution(run_id, flow_run_id, worker_id=_PLAN_WORKER_ID)
+    claimed_at = datetime.fromisoformat(_reads_claimed_at(client, run_id))
+    record_waiting(projection, run_id, flow_run_id)
+    ticks = iter(claimed_at + timedelta(seconds=seconds) for seconds in (5, 30, 30))
+    observer = StorePlanStepObserver(projection, run_id, flow_run_id, clock=lambda: next(ticks))
+    observer.begin()
+    observer.part_started("comparing")
+    observer.part_ended("comparing")
+    observer.part_started("checking")
+
+    plan_step = _plan_step(client, run_id)
+
+    assert plan_step is not None
+    assert plan_step["running"] == "checking"
+    assert set(plan_step["parts"]) == {"waiting", "preparing", "comparing", "checking"}
+    assert plan_step["parts"]["waiting"]["ended_at"] is not None
+    assert _part_times(plan_step["parts"]["comparing"]) == (
+        claimed_at + timedelta(seconds=5),
+        claimed_at + timedelta(seconds=30),
+        None,
+    )
+    assert _part_times(plan_step["parts"]["checking"]) == (claimed_at + timedelta(seconds=30), None, None)
+
+
+def _part_times(part: dict[str, str | None]) -> tuple[datetime | None, ...]:
+    return tuple(
+        None if part[key] is None else datetime.fromisoformat(cast("str", part[key]))
+        for key in ("started_at", "ended_at", "stopped_at")
+    )
+
+
+def _reads_claimed_at(client: TestClient, run_id: str) -> str:
+    response = client.get(f"/runs/{run_id}", headers={"Authorization": f"Bearer {OWNER_TOKEN}"})
+    claimed_at = response.json()["orchestration"][0]["claimed_at"]
+    assert claimed_at is not None
+    return claimed_at
+
+
+def test_an_execution_recorded_before_the_plan_step_timings_returns_plan_step_null(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    """FR-019: an execution with no stored plan step document is returned without an error."""
+    client, _projection, _orchestration = service_api
+    run_id = _create(client).json()["run"]["run_id"]
+
+    assert _plan_step(client, run_id) is None
+
+
+def test_the_client_keeps_a_plan_step_part_and_field_from_a_newer_server() -> None:
+    """A part or a field a later Sync API adds does not fail an older client (research R14)."""
+    started_at = datetime(2026, 11, 16, 10, 0, tzinfo=timezone.utc)
+    payload = {
+        "running": "publishing",
+        "parts": {
+            "comparing": {"started_at": started_at.isoformat(), "field_from_a_newer_server": "readable"},
+            "publishing": {"started_at": started_at.isoformat()},
+        },
+        "field_from_a_newer_server": 1,
+    }
+
+    parsed = PlanStepTimings.model_validate(payload)
+
+    assert parsed.running == "publishing"
+    assert set(parsed.parts) == {"comparing", "publishing"}
+    assert parsed.parts["comparing"].model_extra == {"field_from_a_newer_server": "readable"}
+    assert parsed.model_extra == {"field_from_a_newer_server": 1}
