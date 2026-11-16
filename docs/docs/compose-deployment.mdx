@@ -19,7 +19,7 @@ flow, and for the configuration and reviewed-run procedure that follows it.
 
 ## Related operator pages
 
-[Operate a Compose deployment](operations/day-2-operations) · [Compose operator troubleshooting](operations/compose-troubleshooting) · [Supported platforms and limits](operations/supported-platforms-and-limits)
+[Operate a Compose deployment](operations/day-2-operations) · [Compose operator troubleshooting](operations/compose-troubleshooting) · [Supported platforms and limits](operations/supported-platforms-and-limits) · [Kubernetes deployment](kubernetes-deployment)
 
 ## Prerequisites
 
@@ -1250,7 +1250,8 @@ writing is an ordinary failed run, and needs only a new plan.
 
 ## What this topology does not do
 
-- It runs on one host. There is no multi-host deployment and no clustering.
+- It runs on one host, with no clustering. To run Infrahub Sync on the nodes of a Kubernetes
+  cluster, use the [Kubernetes deployment](./kubernetes-deployment.mdx).
 - It has no public ingress and no TLS. Both published surfaces bind to
   `127.0.0.1` by default.
 - It has no in-place state migration, and no backup or restore.
