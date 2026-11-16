@@ -262,8 +262,8 @@ web interface and confirm the API answers under `/api`.
 - **FR-017**: The files the Sync service sends to the browser MUST NOT contain a token. The
   service MUST NOT read a token from its environment to give to the browser.
 - **FR-018**: The Sync service MUST NOT set a cookie and MUST NOT keep a browser session.
-- **FR-019**: The web interface MUST NOT name a user. It does not display the name of the token's
-  actor on the token entry screen or after it.
+- **FR-019**: The screens and messages this feature adds MUST NOT name a user. The token entry
+  screen does not display the name of the token's actor, before or after the token is checked.
 - **FR-020**: The development server of the web interface MUST stop adding a token to forwarded
   requests, so that development and a deployment authenticate the same way.
 
@@ -342,6 +342,12 @@ web interface and confirm the API answers under `/api`.
 - The web interface in `frontend/` is owned by another maintainer. This feature changes it only
   where the need requires it: the token entry screen, the bearer header, the handling of 401,
   the development server's forwarding, and the README.
+- The header of the web interface already displays the actor of the token ("Requests sent as",
+  `frontend/src/routes/__root.tsx`). That conflicts with the repository rule never to name a user
+  in the interface, but it is existing code owned by the maintainer of `frontend/`, so this
+  feature leaves it unchanged and records the conflict for that maintainer.
+- A file that the web interface offers for download (a plan or a run artifact) is fetched with the
+  token and saved from the browser, because a plain link cannot send a bearer header.
 - The permissions of a token are unchanged. A person who enters a token in the web interface can
   do what that token can do through the CLI, including verify, apply and cancel. Approval rules
   (`INFRAHUB_SYNC_REQUIRE_APPROVAL`) apply in the same way.
