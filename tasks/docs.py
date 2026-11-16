@@ -55,8 +55,9 @@ _AUTHENTICATION_INTRO = (
     "`error: client-input` and `argument: service_url` or `argument: token` on standard error,\n"
     "then a `hint:` line. An address is invalid when it does not use `http` or `https`, has no\n"
     "host, or carries a user name, a password, a query string or a fragment. For the address,\n"
-    "set `INFRAHUB_SYNC_API_URL` or pass `--api-url` with the absolute URL of the Sync API; for\n"
-    "the token, set `INFRAHUB_SYNC_API_TOKEN`. Other `client-input` errors print no `hint:` line.\n"
+    "set `INFRAHUB_SYNC_API_URL` or pass `--api-url` with the address of the Sync service, for\n"
+    "example `http://127.0.0.1:8001`; the client adds `/api`. For the token, set\n"
+    "`INFRAHUB_SYNC_API_TOKEN`. Other `client-input` errors print no `hint:` line.\n"
 )
 
 

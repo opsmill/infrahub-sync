@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 
@@ -2375,8 +2376,32 @@ def test_runs_show_prints_no_approval_lines_for_an_unapproved_run(client: MagicM
 
 # `_client_errors` in `infrahub_sync/cli.py` exits with 2 for every `client-input` error.
 CLIENT_INPUT_EXIT = 2
-SERVICE_URL_HINT = "hint: set INFRAHUB_SYNC_API_URL or pass --api-url to an absolute http or https URL of the Sync API"
+SERVICE_URL_HINT = (
+    "hint: set INFRAHUB_SYNC_API_URL or pass --api-url to the address of the Sync service, "
+    "for example http://127.0.0.1:8001. The client adds /api."
+)
 BEARER_HINT = "hint: set INFRAHUB_SYNC_API_TOKEN to a Sync API bearer token"
+
+
+def test_an_address_that_answers_a_web_page_prints_not_a_sync_api() -> None:
+    marker = "page-body-never-printed"
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=f"<html><body>{marker}</body></html>", headers={"Content-Type": "text/html"})
+
+    sync_client = SyncClient("http://127.0.0.1:8001", "token-1", transport=httpx.MockTransport(handler))
+    result = RUNNER.invoke(app, ["configs", "list"], obj={"client": sync_client})
+
+    assert result.exit_code == 1
+    assert result.output.splitlines() == [
+        "error: not-a-sync-api",
+        "operation: get_version",
+        "address: http://127.0.0.1:8001/api/version",
+        "status: 200",
+        "hint: Check INFRAHUB_SYNC_API_URL. It holds the address of the Sync service, without /api. "
+        "The Sync service and the CLI must come from the same release.",
+    ]
+    assert marker not in result.output
 
 
 @pytest.mark.parametrize(

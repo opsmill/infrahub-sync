@@ -160,8 +160,8 @@ def test_an_apply_refuses_a_plan_whose_destination_schema_changed(  # noqa: PLR0
         (record["method"], record["path"], record["status"]) for record in map(json.loads, captured.splitlines())
     }
     assert exchanges >= {
-        ("GET", f"/runs/{run_id}", 200),
-        ("GET", f"/runs/{run_id}/results", 200),
+        ("GET", f"/api/runs/{run_id}", 200),
+        ("GET", f"/api/runs/{run_id}/results", 200),
     }
     artifacts.update(
         {

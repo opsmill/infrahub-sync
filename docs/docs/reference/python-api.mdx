@@ -12,8 +12,11 @@ Psycopg, and Boto3 remain optional service dependencies.
 
 ## Connect
 
-Construct a client with an absolute HTTP or HTTPS service URL, a bearer token, and a positive
-request timeout. TLS verification is enabled and redirects are refused.
+Construct a client with the address of the Sync service, a bearer token, and a positive request
+timeout. The address is an HTTP or HTTPS URL, for example `http://127.0.0.1:8001`. The client adds
+`/api` to every request; an address that already ends in `/api` is used as it is.
+`SyncClient.service_url` returns the address without `/api`. TLS verification is enabled and
+redirects are refused.
 
 HTTP provides no transport encryption for bearer credentials. Use HTTP only when the service
 connection stays inside a network you trust; use HTTPS across networks you do not trust.
@@ -128,6 +131,10 @@ cancel the remote run.
 Catch `SyncClientError` for all client-owned failures. More specific types are available for input,
 compatibility, transport, protocol, API refusal, configuration API refusal, wait timeout, and
 terminal run failures.
+
+`NotSyncAPIError` reports an address that does not answer as a Sync API, for example a web page,
+a proxy error page, or an older Sync service that does not serve `/api`. Its `operation`, `url`
+(without query string) and `status` fields name the request; the response body is not kept.
 
 ```python
 from infrahub_sync.client import ConfigsAPIError, SyncClientError
