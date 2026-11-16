@@ -24,8 +24,9 @@ this page use that release name, in the namespace `infrahub-sync`.
 | `infrahub-sync-api` | Deployment, Service | The Sync API. The CLI sends its requests here. |
 | `infrahub-sync-worker` | Deployment | The Sync worker, which runs plans and applies. |
 | `infrahub-sync-prefect-server` | Deployment, Service | The Prefect API, from the Sync image. It hands runs to the worker and serves no UI. |
-| `infrahub-sync-bootstrap-<hash>` | Job | Creates the bucket, the Prefect work pool, the Prefect deployment and the product schema. |
-| `infrahub-sync-postgresql` | StatefulSet, Service, ConfigMap | PostgreSQL, with the product database and the Prefect database. The ConfigMap holds the script that creates both databases and their roles. |
+| `infrahub-sync-bootstrap-<hash>` | Job | Creates the bucket, the Prefect work pool, the Prefect deployment and the product schema, then writes the bootstrap record: the Sync version and the work pool name it set up. |
+| `infrahub-sync-postgresql` | StatefulSet, Service | PostgreSQL, with the product database and the Prefect database. |
+| `infrahub-sync-postgresql-init` | ConfigMap | The script that creates both PostgreSQL databases and their roles. |
 | `infrahub-sync-object-store` | StatefulSet, Service | The object store for plans and run files, on the Silo image. |
 | `infrahub-sync` | Secret | The credentials, when you set them as values instead of naming your own Secret. |
 | `infrahub-sync-worker-credentials` | Secret | Source credentials set in `worker.credentials`. Only the worker reads it. |
@@ -224,20 +225,22 @@ infrahub-sync whoami
 port forward ends when the Sync API pod is replaced, for example by an upgrade; start it again.
 
 From inside the cluster, run the CLI from the Sync image in a pod that is deleted when the command
-ends:
+ends. The command takes the token from the variable that `read -rs` set:
 
 ```bash
+read -rs INFRAHUB_SYNC_API_TOKEN && export INFRAHUB_SYNC_API_TOKEN
 kubectl -n infrahub-sync run infrahub-sync-cli --rm -it --restart=Never \
   --image=registry.opsmill.io/opsmill/infrahub-sync:<version> \
   --overrides='{"apiVersion":"v1","spec":{"enableServiceLinks":false,"imagePullSecrets":[{"name":"opsmill-registry"}]}}' \
   --env=INFRAHUB_SYNC_API_URL=http://infrahub-sync-api:8000 \
-  --env=INFRAHUB_SYNC_API_TOKEN='<your API token>' \
+  --env=INFRAHUB_SYNC_API_TOKEN="$INFRAHUB_SYNC_API_TOKEN" \
   --command -- infrahub-sync whoami
 ```
 
-`helm install` prints both commands for your release, with its names and image. In the second
-form the token is part of the pod definition and of your shell history, so prefer the port
-forward for a shared cluster.
+The notes that `helm install` prints hold both forms for your release, with its names and
+image, and a `kubectl wait` command for the bootstrap Job with a timeout of 10 minutes. In the
+second form the token is part of the pod definition, so prefer the port forward for a shared
+cluster.
 
 The `infrahub-sync` commands in
 [Prepare the destination schema](./compose-deployment.mdx#prepare-the-destination-schema) and
