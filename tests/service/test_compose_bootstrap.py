@@ -11,8 +11,9 @@ empty and an operator registers through the API.
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -23,7 +24,12 @@ import httpx
 from botocore.exceptions import ClientError
 from prefect.exceptions import ObjectNotFound
 
-from infrahub_sync.product_store import DuplicateArtifactError, configs, local_product_projection
+from infrahub_sync.product_store import (
+    DuplicateArtifactError,
+    configs,
+    local_product_projection,
+    read_bootstrap_record,
+)
 from infrahub_sync.service import bootstrap
 from infrahub_sync.service.bootstrap import (
     PROCESS_POOL_TYPE,
@@ -33,6 +39,7 @@ from infrahub_sync.service.bootstrap import (
     converge_bucket,
     converge_work_pool,
 )
+from infrahub_sync.service.compatibility import installed_server_version
 from tests.configuration.validation_packages import package_data
 
 if TYPE_CHECKING:
@@ -41,7 +48,7 @@ if TYPE_CHECKING:
 
     from prefect.client.schemas.actions import WorkPoolCreate
 
-    from infrahub_sync.product_store import ProductProjection
+    from infrahub_sync.product_store import BootstrapRecord, DBAPIConnection, ProductProjection
 
 _REQUEST = httpx.Request("GET", "http://prefect-server:4200/api/work_pools/infrahub-sync")
 _RESPONSE = httpx.Response(404, request=_REQUEST)
@@ -446,6 +453,103 @@ def test_a_repeated_bootstrap_changes_nothing_an_operator_registered(
     assert [version.package_checksum for version in versions] == [registered.version.package_checksum]
     assert len(projection.list_configurations()) == 1
     assert len(projection.audit_events()) == 0
+
+
+# ---------------------------------------------------------------------------
+# The bootstrap record (spec 018 FR-007b)
+# ---------------------------------------------------------------------------
+
+
+def _record(tmp_path: Path) -> BootstrapRecord | None:
+    """Read the record the way the start check does: a plain connection, no schema step."""
+    connection = sqlite3.connect(tmp_path / "product" / "product-records.sqlite3")
+    try:
+        return read_bootstrap_record(cast("DBAPIConnection", connection))
+    finally:
+        connection.close()
+
+
+def test_a_completed_bootstrap_records_its_version_and_work_pool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _converged(monkeypatch, _projection(tmp_path))
+    monkeypatch.setattr(bootstrap, "installed_server_version", lambda: "3.0.0a5")
+
+    with caplog.at_level("INFO"):
+        assert bootstrap.main() == 0
+
+    record = _record(tmp_path)
+    assert record is not None
+    assert (record.sync_version, record.work_pool) == ("3.0.0a5", "present")
+    assert "bootstrap recorded for Sync version 3.0.0a5 and work pool present" in caplog.text
+
+
+def test_the_record_names_the_installed_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The same function the Sync API reports its version with, so the start check compares like with like."""
+    _converged(monkeypatch, _projection(tmp_path))
+
+    assert bootstrap.main() == 0
+
+    record = _record(tmp_path)
+    assert record is not None
+    assert record.sync_version == installed_server_version()
+
+
+def test_a_repeated_bootstrap_replaces_the_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _converged(monkeypatch, _projection(tmp_path))
+    monkeypatch.setattr(bootstrap, "installed_server_version", lambda: "3.0.0a5")
+    assert bootstrap.main() == 0
+    monkeypatch.setattr(bootstrap, "installed_server_version", lambda: "3.0.0a6")
+    assert bootstrap.main() == 0
+
+    record = _record(tmp_path)
+    assert record is not None
+    assert record.sync_version == "3.0.0a6"
+
+
+def test_a_bootstrap_that_fails_before_the_last_step_writes_no_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _converged(monkeypatch, _projection(tmp_path))
+    monkeypatch.setattr(bootstrap, "apply_deployment", lambda: 1)
+
+    assert bootstrap.main() == 1
+    assert _record(tmp_path) is None
+
+
+def test_a_record_that_cannot_be_written_is_a_bootstrap_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    projection = _projection(tmp_path)
+    _converged(monkeypatch, projection)
+
+    def refuse(*_arguments: object, **_settings: object) -> NoReturn:
+        raise RuntimeError(PROVIDER_CANARY)
+
+    monkeypatch.setattr(projection, "write_bootstrap_record", refuse)
+
+    with caplog.at_level("ERROR"):
+        assert bootstrap.main() == 1
+
+    assert "refused: bootstrap-record-failed" in caplog.text
+    assert PROVIDER_CANARY not in caplog.text
+
+
+def test_an_unknown_installed_version_is_a_bootstrap_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _converged(monkeypatch, _projection(tmp_path))
+
+    def unknown() -> NoReturn:
+        raise RuntimeError(PROVIDER_CANARY)
+
+    monkeypatch.setattr(bootstrap, "installed_server_version", unknown)
+
+    with caplog.at_level("ERROR"):
+        assert bootstrap.main() == 1
+
+    assert "refused: bootstrap-record-failed" in caplog.text
+    assert _record(tmp_path) is None
 
 
 def test_no_registration_path_is_retained_for_a_configured_deployment() -> None:

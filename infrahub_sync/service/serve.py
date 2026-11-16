@@ -24,6 +24,7 @@ from .orchestration import (
 )
 from .prefect_ui import prefect_ui_url_from_environment
 from .service import RunService
+from .start_check import StartRefusedError, check_bootstrap_record
 from .storage import service_product_projection
 from .trust_store import TrustStoreError, install_custom_ca_bundle
 
@@ -64,19 +65,28 @@ def build_app(
     run_service_factory: Any = RunService,
     configuration_routes_factory: Any = ConfigurationRoutes,
     app_factory: Any = create_app,
+    start_check: Any = check_bootstrap_record,
 ) -> FastAPI:
     """Construct the service app from its environment-owned durable storage profile.
 
     The CA bundle is installed here, before any client exists, so `main()` and an ASGI server
     that calls this factory (`uvicorn --factory`, as `dev.api` does) trust the same certificates.
 
+    The bootstrap record is checked here too, before the projection initializes the product
+    schema, so a refused start, through `main()` or through `uvicorn --factory`, changes
+    nothing in the database (spec 018 FR-007b).
+
     Raises:
         TrustStoreError: when the CA directory holds a private key or an unreadable certificate.
+        StartRefusedError: when the bootstrap record is missing or names another Sync version
+            or work pool, or cannot be read.
     """
     install_custom_ca_bundle()
     policy = LivenessPolicy.from_environment(worker_query_seconds=os.environ.get("PREFECT_WORKER_QUERY_SECONDS", "10"))
     # Validated before any dependency is built, so a bad address stops start-up with no side effect.
     prefect_ui_url = prefect_ui_url_from_environment()
+    work_pool = os.environ.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "default")
+    start_check(work_pool)
     projection = projection_factory()
     resolver = resolver_factory()
     # The configuration diagnostics quote declared keys, so this surface needs the ordinary
@@ -95,7 +105,7 @@ def build_app(
         projection,
         orchestration,
         policy,
-        os.environ.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "default"),
+        work_pool,
     )
     return app_factory(service, resolver, configuration_routes, reconciler)
 
@@ -104,7 +114,7 @@ def main() -> None:
     """Serve the Sync API; Prefect workers and deployments are separate."""
     try:
         app = build_app()
-    except TrustStoreError as error:
+    except (TrustStoreError, StartRefusedError) as error:
         raise SystemExit(str(error)) from None
     uvicorn.run(app, host=os.environ.get("INFRAHUB_SYNC_SERVICE_HOST", "127.0.0.1"), port=8000)
 

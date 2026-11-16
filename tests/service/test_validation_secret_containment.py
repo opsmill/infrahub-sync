@@ -281,7 +281,7 @@ def _validate(
 ) -> dict[str, Any]:
     """Drive the real serialized validation response for the one registered version."""
     monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": BEARER, "administrator": True}}))
-    app = serve.build_app(projection_factory=lambda: projection)
+    app = serve.build_app(projection_factory=lambda: projection, start_check=lambda _pool: None)
     response = TestClient(app).post(
         f"/configs/{version.config_id}/versions/{version.registry_version}/validate",
         headers={"Authorization": f"Bearer {BEARER}"},

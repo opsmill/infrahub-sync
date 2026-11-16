@@ -460,6 +460,26 @@ class WorkerEnvironment(BaseModel):
         return tuple(sorted(set(value)))
 
 
+class BootstrapRecord(BaseModel):
+    """The Sync version and work pool the service bootstrap last set up (spec 018 FR-007b).
+
+    The database holds one such record at most. The Sync API and the worker compare it with
+    their own version and work pool when they start, and refuse to start on a difference.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    sync_version: str = Field(min_length=1, max_length=256)
+    work_pool: str = Field(min_length=1, max_length=256)
+    completed_at: datetime
+
+    @field_validator("completed_at")
+    @classmethod
+    def _aware(cls, value: datetime) -> datetime:
+        """Read a time without a zone as UTC."""
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
 class ExecutionFinishWriteback(BaseModel):
     """Complete business writeback committed with one claimed execution verdict."""
 

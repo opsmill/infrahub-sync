@@ -29,12 +29,13 @@ from pydantic import PrivateAttr
 from infrahub_sync.configuration.worker_credentials import held_credential_names
 
 from .orchestration import SERVICE_DEFINITION
+from .start_check import StartRefusedError, check_bootstrap_record
 from .storage import service_product_projection
 from .trust_store import TrustStoreError, install_custom_ca_bundle
 
 if TYPE_CHECKING:
     import logging
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
     from anyio.abc import TaskStatus
     from prefect.client.schemas.objects import Flow as APIFlow
@@ -551,14 +552,29 @@ def neutral_working_directory() -> Iterator[Path]:
         rmtree(root, ignore_errors=True)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Start one fail-closed service process worker."""
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    start_check: Callable[[str], None] | None = None,
+) -> int:
+    """Start one fail-closed service process worker.
+
+    The bootstrap record is checked before the worker is built: a worker whose version or
+    work pool the bootstrap has not set up exits 1 (spec 018 FR-007b). `start_check`
+    replaces that check, for tests; unset, `check_bootstrap_record` is looked up when
+    `main` runs.
+    """
     try:
         install_custom_ca_bundle()
     except TrustStoreError as error:
         sys.stderr.write(f"{error}\n")
         return 1
     pool = _pool_argument(argv)
+    try:
+        (start_check or check_bootstrap_record)(pool)
+    except StartRefusedError as error:
+        sys.stderr.write(f"{error}\n")
+        return 1
     # Entered before the worker exists, so nothing this parent imports later -- the
     # runner, its crash hooks, or an adapter -- can resolve out of a source tree.
     with neutral_working_directory():

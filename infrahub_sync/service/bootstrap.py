@@ -3,7 +3,11 @@
 This is the one-off job a Compose deployment runs before its API and its worker
 start: the product schema, the artifact bucket, the Prefect process work pool,
 and the installed deployment. Everything here is safe to repeat — a second run
-observes what the first created and writes nothing.
+observes what the first created and writes nothing but the bootstrap record.
+
+The bootstrap record is the last step: the Sync version and the work pool this run
+set up. The API and the worker read it when they start and refuse to start when it
+is missing or names another version or pool (`start_check`).
 
 The configuration registry is not one of those objects. A deployment converges
 infrastructure and starts empty; which package it runs is a decision an operator
@@ -36,6 +40,7 @@ from prefect.workers.process import ProcessWorker
 
 from infrahub_sync.product_store import DuplicateArtifactError
 
+from .compatibility import installed_server_version
 from .deploy import WORK_POOL_ENV
 from .deploy import main as apply_deployment
 from .storage import (
@@ -91,6 +96,7 @@ OBJECT_STORE_ENDPOINT_NOT_SET = "object-store-endpoint-not-set"
 OBJECT_STORE_ACCESS_REFUSED = "object-store-access-refused"
 OBJECT_STORE_UNSUPPORTED = "object-store-unsupported"
 OBJECT_STORE_SETTING_INVALID = "object-store-setting-invalid"
+BOOTSTRAP_RECORD_FAILED = "bootstrap-record-failed"
 
 
 class BootstrapError(RuntimeError):
@@ -325,8 +331,9 @@ def _converge() -> None:
     created_bucket = converge_bucket(client, bucket, arguments["region_name"])
     check_create_only(Boto3S3Client(client), bucket, prefix)
 
+    work_pool = _required(WORK_POOL_ENV)
     try:
-        created_pool = asyncio.run(_converge_pool(_required(WORK_POOL_ENV)))
+        created_pool = asyncio.run(_converge_pool(work_pool))
     except BootstrapError:
         raise
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
@@ -340,17 +347,25 @@ def _converge() -> None:
         raise BootstrapError(DEPLOYMENT_FAILED)
 
     # Building the projection is what converges the product schema, so this call
-    # is the schema step even though nothing here reads a record afterwards.
+    # is the schema step; the projection then writes the bootstrap record.
     try:
-        service_product_projection()
+        projection = service_product_projection()
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         raise BootstrapError(PRODUCT_STORE_UNAVAILABLE) from None
+
+    # Last, so a record exists only once every step above has completed. The Sync API and the
+    # worker refuse to start until it names their own version and work pool (spec 018 FR-007b).
+    try:
+        record = projection.write_bootstrap_record(installed_server_version(), work_pool)
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        raise BootstrapError(BOOTSTRAP_RECORD_FAILED) from None
 
     logger.info("bucket %s", "created" if created_bucket else "present")
     logger.info("object store refuses a second create-only write")
     logger.info("work pool %s", "created" if created_pool else "present")
     logger.info("deployment applied")
     logger.info("product schema converged; the configuration registry is the operator's to fill")
+    logger.info("bootstrap recorded for Sync version %s and work pool %s", record.sync_version, record.work_pool)
 
 
 def _configure_logging() -> None:
