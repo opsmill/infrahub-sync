@@ -212,8 +212,8 @@ created, that it points at the Sync API, and that no other service is exposed.
 - **An upgrade starts the new Sync API or worker before the new bootstrap has completed.** The
   new process finds a record for the previous version and exits non-zero. Kubernetes restarts it
   until the bootstrap Job writes the record for the new version. The previous Sync API pod keeps
-  serving until the new one is ready. The restart backoff can delay the new pod by up to about
-  40 seconds after the Job completes.
+  serving until the new one is ready. The restart backoff can delay the new pod after the Job
+  completes; `verification.md` records the delay measured on a test cluster.
 - **The operator uninstalls the release.** The documentation states whether the volumes of
   PostgreSQL and of the object store are kept or deleted, and how to delete them.
 - **A PostgreSQL role password is changed in the values after the first install.** The role
@@ -268,10 +268,13 @@ created, that it points at the Sync API, and that no other service is exposed.
   databases) MUST complete before the Prefect server and the service bootstrap connect. It runs
   when PostgreSQL first initializes its volume.
 - **FR-007b**: Infrahub Sync MUST record, when the service bootstrap completes, the Sync version
-  it converged the deployment for. When the Sync API or the worker starts, it MUST read that
-  record. When the record is missing or names a version other than its own, the process MUST
-  log which version it found and which it expected, without any credential, and exit non-zero.
-  This check applies to every deployment of 3.x, the Compose deployment included.
+  and the work pool name it converged the deployment for. When the Sync API or the worker starts,
+  it MUST read that record before it changes anything in the database. When the record is
+  missing or names another version or another work pool, the process MUST log what it found and
+  what it expected, without any credential, and exit non-zero. This check applies to every
+  deployment of 3.x, the Compose deployment included. A change to another bootstrap setting at
+  the same version (for example the bucket) is not covered by the record; the bootstrap Job
+  still runs again for it (FR-007).
 - **FR-008**: A restart of the Sync API, the worker or the Prefect server MUST NOT run the
   bootstrap work again.
 - **FR-009**: `helm upgrade` on an installed release MUST complete without a manual step, such

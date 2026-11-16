@@ -422,6 +422,90 @@ else.
 
 ---
 
+## Phase 9: Bootstrap record and start check (clarification of 2026-11-16)
+
+These tasks implement FR-007b and the FR-029 change from the clarification session of
+2026-11-16 in [spec.md](spec.md). They come before Phase 8, which runs last.
+
+### Chunk 9a: Infrahub Sync (`S/`)
+
+- [ ] T038 [US2] In the product store (`S/infrahub_sync/product_store/store.py` and its models),
+  add a single-row table for the bootstrap record: the Sync version, the work pool name and the
+  completion time. Add a write that replaces the row, and a read that works on a plain
+  connection and does not run the schema initialization or the column migration. A read on a
+  database where the table does not exist returns "no record", not an error. Unit tests in
+  `S/tests/` next to the existing product store tests.
+- [ ] T039 [US2] In `S/infrahub_sync/service/bootstrap.py`, write the record as the last step of
+  `_converge()`, after the product schema step, with `installed_server_version()` from
+  `S/infrahub_sync/service/compatibility.py` and the work pool name. A failure to write it is a
+  bootstrap failure with a fixed family. Unit tests in `S/tests/service/test_compose_bootstrap.py`.
+- [ ] T040 [US2] Add the start check, in one function shared by the Sync API and the worker:
+  - In `build_app` in `S/infrahub_sync/service/serve.py`, run it before `projection_factory()`,
+    so a refused start changes nothing in the database. It must refuse both through `main()` and
+    through `uvicorn --factory`.
+  - In `main` in `S/infrahub_sync/service/worker.py`, run it before the worker is built, with the
+    pool from `_pool_argument`.
+  - On a missing or different record: log the version and pool found and the ones expected,
+    never a credential or the connection string, and exit non-zero.
+  - Make the check injectable (a parameter with a default), so the existing `S/tests/service`
+    tests keep passing without a database.
+  - Unit tests: record matches, record missing, table missing, other version, other pool, and
+    the database cannot be reached.
+- [ ] T041 [US2] Run one Compose lifecycle test from `S/tests/compose` locally to show that the
+  Compose deployment still starts with the check (its `depends_on` order runs the bootstrap
+  first). If it cannot run locally, say why and give the command.
+- [ ] T042 [P] [US2] Add the changelog fragment `S/changelog/+bootstrap-record.added.md`: the
+  bootstrap records the version and work pool it set up, and the Sync API and the worker refuse
+  to start when the record is missing or different.
+
+### Chunk 9b: the chart (`H/`)
+
+- [ ] T043 [US2] Remove the `waitForBootstrap` init container from the Sync API and the worker
+  in `C/templates/` and `_helpers.tpl`. Keep `waitForPostgresql` and `waitForPrefect`. Remove any
+  value that only the bootstrap wait reads from `C/values.yaml`, regenerate `C/README.md` with
+  helm-docs, and add a chart changelog fragment.
+- [ ] T044 [US2] Update the render tests in `H/tests/unit/test_infrahub_sync_chart.py` and
+  RR-19 in [contracts/rendered-release.md](contracts/rendered-release.md) (and
+  [contracts/values.md](contracts/values.md) for removed values): the Sync API and the worker
+  have no init container that waits for the bootstrap, and the bootstrap is not an init
+  container of any pod.
+- [ ] T045 [P] [US2] In `H/.github/workflows/ci.yml`, when the `e2e-infrahub-sync` job has no
+  registry login, write a warning annotation (`::warning::`) and a line to
+  `$GITHUB_STEP_SUMMARY` that say the end-to-end test did not run because the Sync image needs a
+  registry login until release 3.0.0 (FR-029).
+
+### Chunk 9c: verification on the cluster
+
+- [ ] T046 [US2] Rebuild the image from `S/` as `infrahub-sync:chart-test-r1` and load it into
+  minikube profile `sync-chart`. Then build a second image whose package reports another version
+  (a throwaway version change that is not committed) as `infrahub-sync:chart-test-r2`, and load
+  it. Use new tags; do not reuse a tag that minikube already holds.
+- [ ] T047 [US2] On the cluster, with the chart of T043:
+  - Install a fresh release with `chart-test-r1`. Record the restart count of the Sync API and the
+    worker and the time from the Job's completion to their readiness.
+  - Upgrade to `chart-test-r2`. Show that the new Sync API pod logs the version mismatch and exits
+    non-zero, that the previous pod keeps serving `/version` meanwhile, and that the new pod
+    becomes ready after the new Job completes.
+  - Run the end-to-end test `H/tests/e2e/test_infrahub_sync.py` again in its vcluster, and check
+    that nothing in it or its harness asserts zero restarts.
+  - Record everything in `verification.md`.
+
+### Chunk 9d: documentation
+
+- [ ] T048 [US2] Update the design and operator documents for the record and the removed gate:
+  - [research.md](research.md) R-2, [data-model.md](data-model.md) and
+    [quickstart.md](quickstart.md) step 4
+  - ADR `S/dev/adr/0043-the-kubernetes-deployment-orders-its-start-with-a-hashed-job-and-gates.md`
+    (rename it if "gates" no longer fits, and update the index in `S/dev/adr/README.md`). State
+    that the record covers the version and the work pool name, and not other bootstrap settings.
+  - `S/docs/docs/kubernetes-deployment.mdx`: the start order, the restarts an operator sees during
+    an install or an upgrade, and the minimum Sync version.
+  - `S/docs/docs/compose-deployment.mdx`, if it describes the start order.
+  - `S/docs/docs/operations/supported-platforms-and-limits.mdx:42`, which still says that the
+    deployment runs on one host.
+
+---
+
 ## Phase 8: Verification and finish
 
 - [ ] T034 Run the checks in `H/`:

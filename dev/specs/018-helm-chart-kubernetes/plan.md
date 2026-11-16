@@ -44,8 +44,9 @@ repositories.
 **Performance Goals**: a default install is ready within 10 minutes on a single-node test
 cluster (SC-001).
 
-**Constraints**: no credential in the default values; no Kubernetes API access from the pods; no
-change to the Sync image; the properties of
+**Constraints**: no credential in the default values; no Kubernetes API access from the pods; one
+change to the Sync image, the bootstrap record and its start check (FR-007b, Phase 9 of
+[tasks.md](tasks.md)); the properties of
 [contracts/rendered-release.md](contracts/rendered-release.md).
 
 **Scale/Scope**: one chart of about 15 templates, about 40 render tests, one end-to-end test, one
@@ -152,11 +153,13 @@ Points an implementer must not miss:
    endpoints, as the `x-sync-storage` anchor does in Compose. Define the password variable before
    the connection string that expands it with `$(VAR)`.
 2. **Sync API**: `INFRAHUB_SYNC_SERVICE_HOST=0.0.0.0`; container port 8000.
-3. **The gate init container** runs a short Python script in the Sync image. It calls
-   `prefect.client.orchestration.get_client()` and `read_deployment_by_name("infrahub-sync-service/run")`
-   until the deployment exists with `work_pool_name` equal to the pool, or until
-   `waitTimeoutSeconds`, and then exits 1. It prints the pool name and the wait time, never the
-   credential (research R-2).
+3. **The bootstrap record** (FR-007b, clarification of 2026-11-16) replaces the gate init
+   container. The bootstrap writes the Sync version and the work pool name to the product
+   database as its last step. The Sync API and the worker read it first at start, before the
+   product schema initialization, and exit non-zero on a missing or different record, so
+   Kubernetes restarts them until the Job has written it. The `waitForPostgresql` and
+   `waitForPrefect` init containers stay, so the restart backoff only starts once those
+   services answer.
 4. **PostgreSQL**: `PGDATA` is a subdirectory of the mount, because a new volume can hold
    `lost+found`. The init script is the one in `docker-compose.yml:390-424` with `$$` written
    `$`. It reads its values from the container environment and binds each one as a `psql`
@@ -195,9 +198,10 @@ done.
 
 1. Merge the documentation and the decision record of this repository.
 2. Merge the chart into `infrahub-helm`. It is not published yet.
-3. After the first Sync release that contains the Prefect server in the image is in the
-   registry, a maintainer sets `appVersion` to it and runs the publish workflow for
-   `infrahub-sync`.
+3. After the first Sync release that contains the Prefect server in the image and the bootstrap
+   record check (FR-007b) is in the registry, a maintainer sets `appVersion` to it and runs the
+   publish workflow for `infrahub-sync`. The chart has no start ordering of its own for an image
+   without that check, so the chart documents that release as the minimum Sync version.
 
 ## Complexity Tracking
 
