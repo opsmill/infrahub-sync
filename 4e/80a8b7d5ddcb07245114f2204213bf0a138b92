@@ -1,0 +1,44 @@
+docs/docs/development/knowledge/plan-artifact.md
+  s_4c94b159df7a98::t_e35dc4e52140f2 14-24
+  s_4c94b159df7a98::t_0f3c020a92507e 217
+  s_4c94b159df7a98::t_c8e9a3d5089744 227-228
+  s_4c94b159df7a98::t_d219d80d528ca3 103-150
+  s_4c94b159df7a98::t_129cdeb0bf6b84 344
+  s_4c94b159df7a98::t_dab07ae0278045 41
+  s_4c94b159df7a98::t_cbe01d6bb14faa 54
+changelog/387.fixed.md
+  s_4c94b159df7a98::t_d6dfb69049abfd 1
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_4c94b159df7a98::t_d59b65019a1e48 335-342
+dev/adr/0044-saved-plan-format-5-records-an-emptied-one-peer-relationship.md
+  s_4c94b159df7a98::t_fc0c91db718fad 1-77
+tests/plan/test_second_plan.py
+  s_4c94b159df7a98::t_a96f8a11ab4588 13-15
+  s_4c94b159df7a98::t_098c8c1726aa06 43-44,165,171,184,196,209,227
+  s_4c94b159df7a98::t_038ac23b5a7521 169-170,188-190,213-214
+  s_4c94b159df7a98::t_1e758919dcf353 1
+  s_4c94b159df7a98::t_516b7b44b81acf 45,215,220
+  s_4c94b159df7a98::t_7df48a8d118e8b 138-164,166-168,172-183,185-187,191-195,197-208,210-212,216-219,221-226,228
+dev/adr/README.md
+  s_4c94b159df7a98::t_374b63119c2a14 133-135
+docs/docs/compose-deployment.mdx
+  s_4c94b159df7a98::t_029e8f1abc0272 888-898
+dev/specs/019-second-plan-real-changes/tasks.md
+  s_4c94b159df7a98::t_3f2e439bbd6708 81,93-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4e80a8b7d5ddcb07245114f2204213bf0a138b92",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
