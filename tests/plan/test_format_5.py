@@ -293,6 +293,8 @@ def test_a_format_4_plan_is_still_approved_by_checksum(tmp_path: Path, monkeypat
     """The Sync API approves a format 4 plan by the checksum of its saved plan (FR-012)."""
     pytest.importorskip("prefect")
     pytest.importorskip("fastapi")
+    # The Sync service's apply guard imports psycopg, which the Python 3.10 profile does not install.
+    pytest.importorskip("psycopg")
     from fastapi.testclient import TestClient
 
     from infrahub_sync.product_store import local_product_projection
