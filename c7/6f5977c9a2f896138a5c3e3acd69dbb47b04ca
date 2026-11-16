@@ -1,0 +1,28 @@
+dev/specs/018-helm-chart-kubernetes/spec.md
+  s_d989f93fc3b8fb::t_459a9630a116a7 245-246
+  s_d989f93fc3b8fb::t_85894a5d56b9df 343-345
+  s_d989f93fc3b8fb::t_ee549bfef99f13 69-73
+  s_d989f93fc3b8fb::t_8b22ed46ad2425 409-410
+  s_d989f93fc3b8fb::t_8b1fc2c3267844 56-63,77
+  s_d989f93fc3b8fb::t_e4a1d71aea8b67 64-68
+  s_d989f93fc3b8fb::t_80eae277b59a9d 264-266
+  s_d989f93fc3b8fb::t_f419dfe127b028 270-274
+  s_d989f93fc3b8fb::t_42ae0bf4793673 212-216
+  s_d989f93fc3b8fb::t_f5508ea4303aef 74-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c76f5977c9a2f896138a5c3e3acd69dbb47b04ca",
+  "prompts": {},
+  "sessions": {
+    "s_d989f93fc3b8fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b53e9e82-fcbd-48f8-ae99-61f94c0060c7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
