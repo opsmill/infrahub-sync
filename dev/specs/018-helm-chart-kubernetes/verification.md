@@ -559,3 +559,168 @@ Releases `extpg`, `ext` and `store` were uninstalled between 11:58:08Z and 11:58
 claims and the namespaces `sync-ext-pg`, `sync-ext` and `sync-store` were deleted. The release
 `sync` (revision 4) and its two volume claims are left running in namespace `sync`. The
 port-forwards are stopped.
+
+## T046 and T047: the start check on the cluster
+
+Result: on a fresh install, the Sync API and the worker exit non-zero until the bootstrap Job
+writes the bootstrap record, then start without a manual step. On an upgrade to an image that
+reports another version, the new Sync API pod refuses to start until the new Job completes,
+while the previous pod keeps serving `/version`. The end-to-end test passes again, and neither
+the test nor its harness asserts zero restarts.
+
+### Environment
+
+- Cluster: minikube profile and kube context `sync-chart` (as in T018), Helm v4.2.4.
+- `S` at commit `74149fb7`, which contains the start check (`infrahub_sync/service/start_check.py`).
+- `H` at commit `61c968c`, whose chart has no init container that waits for the bootstrap (T043).
+  The Sync API and the worker have no init container at all; the bootstrap Job keeps
+  `wait-for-prefect`.
+
+### Images (T046)
+
+| Tag | Built from | Image ID | Version reported by the package |
+| --- | --- | --- | --- |
+| `infrahub-sync:chart-test-r1` | `S` at `74149fb7` | `sha256:840beb1dbdb5127ed5b9456408e5607826ac2e296fa2cce04ffca4d4076cffde` | `3.0.0a5` |
+| `infrahub-sync:chart-test-r2` | a temporary copy of `S` at `74149fb7` | `sha256:d623526000e2b0090e2dfbba7378ea213ec5f6e27a8f599989c6d53cd49de7bd` | `3.0.0a6` |
+
+For `chart-test-r2`, `git archive HEAD` exported `S` into a scratch folder outside every
+repository. In that copy only, the `version` of `pyproject.toml` and the `infrahub-sync` entry
+of `uv.lock` changed from `3.0.0a5` to `3.0.0a6`. The image was built from the copy, and the
+copy was then deleted. `S` was not modified. Each version was read with
+`docker run --rm <image> python -c "import importlib.metadata as m; print(m.version('infrahub-sync'))"`.
+Both tags were new to minikube and were loaded with `minikube -p sync-chart image load`.
+
+### Fresh install on `chart-test-r1`
+
+The release `sync` of T018 to T024 (revision 4, image `chart-test`, no `bootstrap_record` table)
+was uninstalled, and its two volume claims were deleted with `kubectl -n sync delete pvc --all`.
+The Secret `infrahub-sync` was kept. The release was then installed again in namespace `sync`:
+
+```bash
+helm --kube-context sync-chart install sync H/charts/infrahub-sync -n sync \
+  --set credentials.existingSecret=infrahub-sync \
+  --set image.repository=infrahub-sync --set image.tag=chart-test-r1 --set image.pullPolicy=Never \
+  --wait --wait-for-jobs --timeout 10m
+```
+
+`helm install` ran from 15:37:37Z to 15:38:29Z and returned `STATUS: deployed`, revision 1.
+Times are UTC, read from `kubectl get pods -o json` and a `kubectl get pods -w -o json` capture.
+
+| Time | Event |
+| --- | --- |
+| 15:37:38Z | Job and pods created |
+| 15:37:40Z | Sync API and worker containers start for the first time |
+| 15:37:44Z | both exit with code 1; the worker logs that the product database cannot be reached |
+| 15:37:47Z | both exit with code 1 again (second attempt) |
+| 15:37:58Z | Prefect server pod ready |
+| 15:38:00Z | Sync API exits with code 1: `no bootstrap record found; expected Sync version 3.0.0a5 and work pool infrahub-sync` |
+| 15:38:01Z | bootstrap container starts (after `wait-for-prefect`) |
+| 15:38:02Z | worker starts its third attempt, which stays running; the pod is `Ready` (the worker has no readiness probe) |
+| 15:38:03Z | bootstrap logs `bootstrap recorded for Sync version 3.0.0a5 and work pool infrahub-sync` and exits with code 0 |
+| 15:38:06Z | Job `completionTime` |
+| 15:38:24Z | Sync API starts its fourth attempt, after a 20-second back-off |
+| 15:38:29Z | Sync API pod `Ready` |
+
+| Workload | Restarts | Delay from the Job's `completionTime` to `Ready` |
+| --- | --- | --- |
+| Sync API | 3 | 23 s |
+| worker | 2 | -4 s (`Ready` before `completionTime`; see below) |
+
+The worker became `Ready` four seconds before the Job's `completionTime`, because it has no
+readiness probe: `Ready` means its container is running. Its third attempt started at
+15:38:02Z and its start check passed, so the check read the record after the bootstrap wrote it
+at 15:38:03Z and before Kubernetes set the Job's `completionTime`. `/status` through the Sync API
+then reported `"service":"ready"`, worker `state` `ready`, `live_workers` 1. Most of the Sync API
+delay is the 20-second `CrashLoopBackOff` back-off after its third failure.
+
+### Upgrade to `chart-test-r2`
+
+Before the upgrade, a pod `version-poller` on `chart-test-r1` in namespace `sync` requested
+`http://sync-infrahub-sync-api:8000/version` every 2 seconds through the Service. A
+`kubectl port-forward` to the Service was not used because it binds to one pod and ends with that
+pod. The upgrade did not wait:
+
+```bash
+helm --kube-context sync-chart upgrade sync H/charts/infrahub-sync -n sync \
+  --reuse-values --set image.tag=chart-test-r2
+```
+
+It returned `STATUS: deployed`, revision 2, at 15:39:28Z. The Sync API Deployment uses
+`RollingUpdate` and the worker Deployment uses `Recreate`.
+
+| Time | Event |
+| --- | --- |
+| 15:39:28Z | new bootstrap Job and new Sync API pod (`chart-test-r2`) created; old worker pod deleted |
+| 15:39:30Z | new Sync API pod exits with code 1 (first attempt) |
+| 15:39:31Z | new Sync API pod logs the mismatch below, then exits with code 1 at 15:39:32Z |
+| 15:39:39Z | new bootstrap container starts |
+| 15:39:41Z | bootstrap logs `bootstrap recorded for Sync version 3.0.0a6 and work pool infrahub-sync` |
+| 15:39:42Z | new Sync API pod starts its third attempt, which stays running |
+| 15:39:43Z | new Job `completionTime` |
+| 15:39:47.502Z | last poll answered with `"server_version":"3.0.0a5"` (previous pod) |
+| 15:39:48Z | new Sync API pod `Ready` |
+| 15:39:49.505Z | first poll answered with `"server_version":"3.0.0a6"` (new pod) |
+| 15:39:49Z | previous Sync API pod exits with code 0 |
+| 15:39:58Z | previous worker exits with code 137 at the end of its 30-second grace period; new worker starts and is `Ready` |
+
+The log of the new Sync API pod from its failed attempt, read with `kubectl logs --previous`,
+has two lines:
+
+```text
+refusing to start: the bootstrap record names Sync version 3.0.0a5 and work pool infrahub-sync; expected Sync version 3.0.0a6 and work pool infrahub-sync. Run the bootstrap for this version.
+the service bootstrap for this Sync version and work pool has not completed
+```
+
+It names the version and work pool found and the ones expected. A case-insensitive search of
+that log for `password`, `secret`, `postgresql://`, `bearer`, `token` and `aws_` found nothing.
+
+The poller ran 36 requests from 15:39:21Z to 15:40:25Z with no error. Every answer up to
+15:39:47.502Z named `3.0.0a5`, and every answer from 15:39:49.505Z named `3.0.0a6`.
+
+| Workload | Restarts | Delay from the new Job's `completionTime` to `Ready` |
+| --- | --- | --- |
+| Sync API (new pod) | 2 | 5 s |
+| worker (new pod) | 0 | 15 s |
+
+The new worker did not restart, because `Recreate` started it only after the previous worker had
+stopped, which was after the Job completed. The previous worker did not stop on `SIGTERM` within
+its 30-second grace period, and was killed (exit code 137).
+
+### End-to-end test
+
+From 2026-11-16T15:40:45Z to 15:42:53Z:
+
+```bash
+cd H && INFRAHUB_SYNC_E2E_IMAGE=infrahub-sync:chart-test-r1 \
+  uv run pytest -v -rs -m sync tests/e2e --basetemp=<scratch folder>/e2e-basetemp
+```
+
+- `tests/e2e/test_infrahub_sync.py::test_sync_installs_and_upgrades PASSED`
+- `1 passed, 28 deselected, 2 warnings in 126.01s (0:02:06)`. The two warnings are from kr8s,
+  which does not list Kubernetes v1.36.0 as supported.
+- The harness created its own vcluster `pytest-caedbea43a56` (vcluster 0.36.1, docker driver,
+  Kubernetes v1.36.0), with the kubeconfig `<scratch folder>/e2e-basetemp/vcluster0/kubeconfig`.
+  It does not run on the minikube context `sync-chart`. The harness imported the local image
+  `chart-test-r1` into the vcluster node, and deleted the vcluster at the end.
+- Pods sampled every 5 seconds in the vcluster: on the install, the Sync API restarted 3 times
+  and the worker 3 times; their logs were not read. After the test's upgrade, which
+  changes only `s3.prefix` at the same version, the new Sync API and worker pods restarted
+  0 times.
+- A search of `tests/e2e/test_infrahub_sync.py`, `tests/e2e/conftest.py`, `tests/conftest.py`
+  and `tests/helpers/` for `restart`, `CrashLoop`, `BackOff`, `exitCode` and `terminated`
+  found no assertion on restarts. The only matches in the Sync path are in `tests/conftest.py`
+  (lines 124 and 152), where the failure dump also reads the logs of the previous container.
+  `wait_for_workloads` waits for the `Available` condition of each Deployment, and the test
+  waits with `kubectl rollout status`; neither checks restart counts. The matches in
+  `tests/helpers/ha.py` and the HA tests belong to the Infrahub HA charts.
+
+### Defects found on the cluster
+
+None. No template or code changed.
+
+### State left for the next task
+
+Release `sync` (revision 2, image `chart-test-r2`, version `3.0.0a6`) runs in namespace `sync`
+with new volume claims. The pod `version-poller` was deleted. The images `chart-test-r1` and
+`chart-test-r2` stay in minikube and in the local Docker store. The minikube profile `sync-chart`
+is running.

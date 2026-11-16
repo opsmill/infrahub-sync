@@ -476,11 +476,11 @@ These tasks implement FR-007b and the FR-029 change from the clarification sessi
 
 ### Chunk 9c: verification on the cluster
 
-- [ ] T046 [US2] Rebuild the image from `S/` as `infrahub-sync:chart-test-r1` and load it into
+- [X] T046 [US2] Rebuild the image from `S/` as `infrahub-sync:chart-test-r1` and load it into
   minikube profile `sync-chart`. Then build a second image whose package reports another version
   (a throwaway version change that is not committed) as `infrahub-sync:chart-test-r2`, and load
   it. Use new tags; do not reuse a tag that minikube already holds.
-- [ ] T047 [US2] On the cluster, with the chart of T043:
+- [X] T047 [US2] On the cluster, with the chart of T043:
   - Install a fresh release with `chart-test-r1`. Record the restart count of the Sync API and the
     worker and the time from the Job's completion to their readiness.
   - Upgrade to `chart-test-r2`. Show that the new Sync API pod logs the version mismatch and exits
