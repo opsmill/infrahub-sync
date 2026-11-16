@@ -97,9 +97,9 @@ def _reference(
 
 def test_declared_constants() -> None:
     """The constants nine later outcomes read are exactly as the data model fixes them."""
-    assert PLAN_FORMAT_VERSION == 4
-    # Formats 2 and 3 stay readable and reviewable; only `apply` narrows to the current version.
-    assert frozenset({2, 3, 4}) == SUPPORTED_FORMAT_VERSIONS
+    assert PLAN_FORMAT_VERSION == 5
+    # Formats 2 and 3 stay readable and reviewable; `apply` accepts formats 4 and 5.
+    assert frozenset({2, 3, 4, 5}) == SUPPORTED_FORMAT_VERSIONS
     assert ACTIONS == ("create", "update", "delete")
     assert CHECKSUM_EXCLUDED_FIELDS == ("plan_checksum", "run_id", "created_at")
     assert SC006_MASKED_FIELDS == ("run_id", "created_at")
@@ -588,12 +588,24 @@ def test_an_action_outside_the_vocabulary_raises_the_named_error(action: str) ->
 # ======================================================================================
 
 
-@pytest.mark.parametrize("peer_count", [0, 2, 3])
-def test_cardinality_one_requires_exactly_one_peer(peer_count: int) -> None:
-    """A `one` reference naming zero or several peers is a corrupt record."""
+@pytest.mark.parametrize("peer_count", [2, 3])
+def test_cardinality_one_refuses_several_peers(peer_count: int) -> None:
+    """A `one` reference naming several peers is a corrupt record."""
     peers = [{"name": f"dc{index}"} for index in range(peer_count)]
     with pytest.raises(ValidationError):
         RelationshipReference(**_reference(cardinality="one", peers=peers))
+
+
+def test_cardinality_one_requires_one_peer_before_format_5() -> None:
+    """Before plan format 5, a `one` reference naming no peer is a corrupt record."""
+    with pytest.raises(ValidationError):
+        RelationshipReference.model_validate(_reference(cardinality="one", peers=[]), context={"format_version": 4})
+
+
+def test_cardinality_one_accepts_no_peer_from_format_5() -> None:
+    """From plan format 5 on, a `one` reference naming no peer empties the relationship (spec 019 R4)."""
+    reference = RelationshipReference(**_reference(cardinality="one", peers=[]))
+    assert reference.peers == []
 
 
 def test_cardinality_one_accepts_exactly_one_peer() -> None:

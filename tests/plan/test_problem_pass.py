@@ -328,7 +328,7 @@ def test_the_written_report_is_read_back_and_checked(plan_problems: PlanProblemF
     _write(tmp_path, result)
 
     loaded = load_plan_artifact(tmp_path)
-    assert loaded.manifest.format_version == 4
+    assert loaded.manifest.format_version == 5
     assert loaded.manifest.report is not None
     assert loaded.manifest.report.problems == len(result.report.problems) == 10
     assert len(loaded.report) == len(result.report.problems) + len(result.report.left_out) + len(result.report.kept)
