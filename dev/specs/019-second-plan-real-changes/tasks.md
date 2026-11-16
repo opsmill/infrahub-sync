@@ -78,7 +78,7 @@ unchanged data holds zero operations.
 - [X] T023 [P] [US2] Test derivation: an update gains an empty one-peer reference when the destination holds a peer and the source holds none; no reference when both are empty; when the field is required, no update for the record and a problem of the new type `required_relationship_empty_in_source` that names the record and the field (FR-013a); no reference when the peer was left out (kept record), or when a configured filter removed the peer (`tests/adapters/test_netbox_filtered_references.py:297-341` stays true); no warning is logged (FR-005, FR-008; research R6, R7), in `tests/plan/test_emptied_relationship.py`
 - [X] T024 [P] [US2] Test apply against rendered SDK input: an emptied relationship renders `<field>: null` in the one Upsert; an update without an emptied relationship renders the same input as before this feature; the write is refused when another relationship renders (FR-006; research R8), in `tests/plan/test_apply_conformance.py`
 - [X] T025 [P] [US2] Test verify: a planned empty one-peer set matches an empty destination relationship and is reported as a difference against a destination that holds a peer (FR-013), in `tests/plan/test_destination_check.py`
-- [ ] T026 [US2] Write the change second-plan tests: one changed attribute gives one update; an interface that leaves its LAG gives one update, and after apply the next plan is empty; a peer `B` replaced by `C` in a many relationship gives the right peers after apply and an empty next plan (FR-022; SC-002), in `tests/plan/test_second_plan.py`
+- [X] T026 [US2] Write the change second-plan tests: one changed attribute gives one update; an interface that leaves its LAG gives one update, and after apply the next plan is empty; a peer `B` replaced by `C` in a many relationship gives the right peers after apply and an empty next plan (FR-022; SC-002), in `tests/plan/test_second_plan.py`
 - [X] T027 [P] [US2] Test that `runs plan --detail` prints `<field>: becomes empty` for an emptied one-peer relationship and that the summary counts the update once (FR-009; `contracts/cli.md`), in `tests/cli/test_client_commands.py`
 
 ### Implementation for User Story 2
@@ -90,9 +90,9 @@ unchanged data holds zero operations.
 - [X] T031a [US2] Add the problem type `required_relationship_empty_in_source` to `ProblemType` and `_REASON_TEMPLATES`, raise it when the source holds no peer for a required one-peer relationship, and leave the record out of the plan with its destination node kept, as `required_peer_excluded_by_filter` does (FR-013a; research R6, last paragraph). First test what the current code does for that case, in `infrahub_sync/plan/models.py`, `infrahub_sync/plan/problems.py` and the source-read path that raises `required_peer_excluded_by_filter`
 - [X] T032 [US2] Write an emptied one-peer relationship in `apply_planned_operation`: no entry in the create data for it, the destination id in the create data for that operation only, the field set to `None`, and the rendered-input guard extended, in `infrahub_sync/adapters/infrahub.py:1852-1937`
 - [X] T033 [US2] Print `<field>: becomes empty` in `_operation_detail`, in `infrahub_sync/cli.py:1075-1094`
-- [ ] T034 [P] [US2] Describe format 5 and the emptied one-peer reference in `docs/docs/development/knowledge/plan-artifact.md`
-- [ ] T035 [P] [US2] Write ADR 0044 "Saved plan format 5 records an emptied one-peer relationship" in `dev/adr/0044-saved-plan-format-5-records-an-emptied-one-peer-relationship.md` and list it in `dev/adr/README.md`
-- [ ] T036 [P] [US2] Add the news fragment `changelog/387.fixed.md`: a plan now records and apply now writes an emptied one-peer relationship; plans are saved in format 5; upgrade the API and the worker together
+- [X] T034 [P] [US2] Describe format 5 and the emptied one-peer reference in `docs/docs/development/knowledge/plan-artifact.md`
+- [X] T035 [P] [US2] Write ADR 0044 "Saved plan format 5 records an emptied one-peer relationship" in `dev/adr/0044-saved-plan-format-5-records-an-emptied-one-peer-relationship.md` and list it in `dev/adr/README.md`
+- [X] T036 [P] [US2] Add the news fragment `changelog/387.fixed.md`: a plan now records and apply now writes an emptied one-peer relationship; plans are saved in format 5; upgrade the API and the worker together
 
 **Checkpoint**: A second plan holds every real change.
 

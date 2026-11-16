@@ -1,4 +1,4 @@
-"""A second plan on unchanged data is empty (spec 019 User Story 1, T010 and T011).
+"""A second plan holds every real change, and only those (spec 019 T010, T011 and T026).
 
 Each test plans, applies the plan with `ApplyingDestination` (`tests/plan/second_plan.py`), and
 plans again over what the apply wrote. The second plan therefore compares the source with the
@@ -10,6 +10,9 @@ destination the apply produced, not with the source records.
 - T011 (FR-025, FR-026): a first plan whose report holds problems, records left out and kept
   records (`Variant.ALL` of `tests/data/plan_problems/`) gives a second plan with zero
   operations and the same plan report.
+- T026 (FR-022, SC-002, User Story 2): a changed attribute, an interface that leaves its LAG
+  (an emptied one-peer relationship) and a peer replaced in a many relationship each give one
+  update; after the apply, the next plan has zero operations.
 """
 
 from __future__ import annotations
@@ -37,6 +40,9 @@ if TYPE_CHECKING:
 
 FIRST_RUN_ID = "20261116T120000-01900010"
 BEFORE_RUN_IDS = ("20261116T130000-01900010", "20261116T140000-01900010", "20261116T150000-01900010")
+SECOND_RUN_ID = "20261116T190000-01900026"
+THIRD_RUN_ID = "20261116T200000-01900026"
+ORACLE_RUN_ID = "20261116T210000-01900026"
 AFTER_RUN_IDS = ("20261116T160000-01900010", "20261116T170000-01900010", "20261116T180000-01900010")
 
 # The edge cases of FR-022, each planned with the devices its records refer to.
@@ -129,3 +135,94 @@ def test_a_first_plan_with_left_out_and_kept_records_gives_an_empty_second_plan(
 
     assert [kinds_of(planned.operations) for planned in second] == [[], [], []]
     assert {planned.report_bytes for planned in second} == {first.report_bytes}
+
+
+def _applied_first_plan(fixture: PlanProblemFixture, groups: tuple[str, ...]) -> dict[str, list[dict[str, Any]]]:
+    """Plan `groups` over the destination before the first plan, apply it, return what it wrote."""
+    first = plan_fixture(
+        fixture,
+        records=second_plan_records(fixture, *groups),
+        destination=second_plan_destination(fixture),
+        run_id=FIRST_RUN_ID,
+    )
+    return _apply(first, second_plan_destination(fixture))
+
+
+def _source_record(records: dict[str, list[dict[str, Any]]], kind: str, source_id: int) -> dict[str, Any]:
+    """The raw source record of `kind` whose NetBox `id` is `source_id`."""
+    return next(record for record in records[kind] if record["id"] == source_id)
+
+
+@pytest.mark.usefixtures("cache_dir")
+def test_a_changed_attribute_gives_one_update_and_an_empty_next_plan() -> None:
+    """T026 (FR-022, SC-002): the description of `leaf-1` changes in the source."""
+    fixture = load_second_plan_fixture()
+    groups = ("devices", "lag")
+    destination = _applied_first_plan(fixture, groups)
+    records = second_plan_records(fixture, *groups)
+    _source_record(records, "DcimDevice", 1)["description"] = "first leaf, moved to rack 2"
+
+    second = plan_fixture(fixture, records=records, destination=destination, run_id=SECOND_RUN_ID)
+
+    assert kinds_of(second.operations) == [("update", "DcimDevice")]
+    (update,) = second.operations
+    # An update carries every mapped attribute of the node, so the payload holds the unchanged name too.
+    assert update.payload == {"name": "leaf-1", "description": "first leaf, moved to rack 2"}
+    third = plan_fixture(fixture, records=records, destination=_apply(second, destination), run_id=THIRD_RUN_ID)
+    assert kinds_of(third.operations) == []
+
+
+@pytest.mark.usefixtures("cache_dir")
+def test_an_interface_that_leaves_its_lag_gives_one_update_and_an_empty_next_plan() -> None:
+    """T026 (FR-005, FR-006, FR-022): `eth0` of `leaf-1` leaves `ae0`; its `bundle` becomes empty."""
+    fixture = load_second_plan_fixture()
+    groups = ("devices", "lag")
+    destination = _applied_first_plan(fixture, groups)
+    records = second_plan_records(fixture, *groups)
+    _source_record(records, "InterfacePhysical", 20)["lag"] = None
+
+    second = plan_fixture(fixture, records=records, destination=destination, run_id=SECOND_RUN_ID)
+
+    assert kinds_of(second.operations) == [("update", "InterfacePhysical")]
+    (update,) = second.operations
+    assert update.payload == {"name": "eth0", "description": "ae0 member"}
+    references = {ref.field: ref for ref in update.relationships or ()}
+    assert (references["bundle"].cardinality, references["bundle"].peers) == ("one", [])
+    assert second.report == []
+
+    applied = _apply(second, destination)
+    (member,) = [row for row in applied["InterfacePhysical"] if row["local_id"] == update.destination_id]
+    assert member["bundle"] is None
+    third = plan_fixture(fixture, records=records, destination=applied, run_id=THIRD_RUN_ID)
+    assert kinds_of(third.operations) == []
+
+
+@pytest.mark.usefixtures("cache_dir")
+def test_a_replaced_peer_in_a_many_relationship_gives_the_new_peers_and_an_empty_next_plan() -> None:
+    """T026 (FR-022, SC-002): the trunk `eth0` of `leaf-2` carries VLANs 100 and 300 instead of 100 and 200."""
+    fixture = load_second_plan_fixture()
+    groups = ("devices", "tagged_vlans")
+    destination = _applied_first_plan(fixture, groups)
+    records = second_plan_records(fixture, *groups)
+    _source_record(records, "InterfacePhysical", 23)["tagged_vlans"] = [{"id": 30}, {"id": 32}]
+
+    second = plan_fixture(fixture, records=records, destination=destination, run_id=SECOND_RUN_ID)
+
+    assert kinds_of(second.operations) == [("update", "InterfacePhysical")]
+    (update,) = second.operations
+    reference = {ref.field: ref for ref in update.relationships or ()}["tagged_vlan"]
+    assert reference.cardinality == "many"
+    assert sorted(peer["vlan_id"] for peer in reference.peers) == [100, 300]
+
+    applied = _apply(second, destination)
+    # The peers a first plan of the changed source writes are the peers the apply must hold.
+    expected = _apply(
+        plan_fixture(fixture, records=records, destination=second_plan_destination(fixture), run_id=ORACLE_RUN_ID),
+        second_plan_destination(fixture),
+    )
+    (trunk,) = [row for row in applied["InterfacePhysical"] if row["local_id"] == update.destination_id]
+    (expected_trunk,) = [row for row in expected["InterfacePhysical"] if row["description"] == "trunk"]
+    assert trunk["tagged_vlan"] == expected_trunk["tagged_vlan"]
+    assert len(trunk["tagged_vlan"]) == 2
+    third = plan_fixture(fixture, records=records, destination=applied, run_id=THIRD_RUN_ID)
+    assert kinds_of(third.operations) == []

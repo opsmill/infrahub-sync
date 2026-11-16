@@ -885,12 +885,17 @@ On a new deployment, `configs list` prints no command output and exits zero;
 any `Container … Creating/Created` lines are Compose progress. `plan` creates a
 run and persists product records, even though it does not write to the
 destination. The plan output does not repeat its branch: apply must use the same
-`--branch` supplied to `plan`. This release writes saved-plan format 3; it can
-review format 2 but refuses to apply it, and does not support older formats.
+`--branch` supplied to `plan`. This release writes saved-plan format 5. It
+applies format 4 too, reviews formats 2 and 3 but refuses to apply them, and
+does not support older formats. A release earlier than this one refuses a
+format 5 plan, so upgrade the Sync API and the worker together.
 
-A null optional cardinality-one relationship in an update does not clear the
-destination field. The plan format cannot distinguish an absent relationship
-from an intended clear, so it is omitted and the worker logs a warning.
+When the source holds no peer for an optional one-peer relationship and the
+destination node holds one, for example an interface that leaves its LAG, the
+plan records that the relationship becomes empty and apply removes the peer.
+`runs plan --detail` prints `<field>: becomes empty` for it. When the
+relationship is required, the plan reports the problem
+`required_relationship_empty_in_source` and leaves the record out.
 
 `runs show` keeps `operation: plan`; `phase: applied` and
 `execution_state: completed` confirm completion. Result counts come from the

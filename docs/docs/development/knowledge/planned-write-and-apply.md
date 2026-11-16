@@ -332,14 +332,14 @@ reachable only through an optional edge dropped to break a cycle, and any refere
 `order:`, which yields no tiers at all — may leave a peer unresolved at apply, where the zero-match arm
 governs. The qualification is safe precisely because the miss is loud.
 
-### Cardinality-one nulls in plan format v1
+### Cardinality-one nulls
 
-Plan format v1 does not encode whether a null optional cardinality-one relationship means
-"the source supplied no relationship" or "clear the destination relationship." Planned apply
-therefore omits that field. On a create this preserves absence; on an update it is a no-op and emits a
-warning naming the operation, kind, and field so the run does not silently claim that a requested clear
-converged. Clear the relationship directly at the destination, or use a future plan format that
-represents clears explicitly, when a clear is intended.
+A create omits a null optional cardinality-one relationship, so the node is created without a
+peer. On an update, plan format 5 records an emptied relationship as a one-peer reference with no
+peer, when the destination node holds a peer and the source holds none
+([The saved plan artifact](plan-artifact.md#an-emptied-one-peer-relationship)). Planned apply writes
+it as `<field>: null` in the one Upsert of the operation, and no warning is logged. A plan of
+format 4 cannot record an emptied relationship, so applying it leaves that relationship as it is.
 
 A null mandatory cardinality-one relationship is never meaningful. Planned apply refuses it with
 `NullRelationshipValueError` before SDK rendering or any destination mutation, rather than allowing the
