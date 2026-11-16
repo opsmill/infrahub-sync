@@ -1,0 +1,39 @@
+frontend/src/features/runs/run-notices.tsx
+  s_c4f9bd3d1fabe8::t_1effb0cc88b754 82,90-91,144-146,186-199
+frontend/src/api/actions.ts
+  s_c4f9bd3d1fabe8::t_c894ef0d7a7401 42-46
+frontend/src/features/runs/RunActions.tsx
+  s_c4f9bd3d1fabe8::t_77355545eaaf22 12,743-745,747-753,756-761,768-795,800-870,881-924,926-953,956-957,959-961,963-964,966-970,972-973,983-996,998-1045
+  s_c4f9bd3d1fabe8::t_5e16e494ac8297 33,179,287,291-292,307,466-478
+  s_c4f9bd3d1fabe8::t_fbaaf7219dc575 871-880,958,962,965,971,974-982
+frontend/src/api/queries.ts
+  s_c4f9bd3d1fabe8::t_0c0b381b1d1985 172-191
+frontend/src/features/runs/left-out.tsx
+  s_c4f9bd3d1fabe8::t_6e097bb3cf1356 4
+  s_c4f9bd3d1fabe8::t_be8aeb8ca75788 1-3,5-71,74-113
+  s_c4f9bd3d1fabe8::t_77355545eaaf22 72-73,114-116
+frontend/src/features/runs/RunPage.tsx
+  s_c4f9bd3d1fabe8::t_1effb0cc88b754 53-54,273,456-463,469,471,484-486,522,580-587,593-597,599-603,607,617-619,633-635,678
+frontend/src/api/types.ts
+  s_c4f9bd3d1fabe8::t_9f1bec670fd206 7
+changelog/+web-interface-left-out.fixed.md
+  s_c4f9bd3d1fabe8::t_a1213e368bd250 1
+changelog/+web-interface-resume.added.md
+  s_c4f9bd3d1fabe8::t_71ec43a690517f 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bfed39c4276f702e6cdb444b59732e77a1e301e9",
+  "prompts": {},
+  "sessions": {
+    "s_c4f9bd3d1fabe8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f7bf5003-b7b7-444d-a7c2-d1ecbcb55ad7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
