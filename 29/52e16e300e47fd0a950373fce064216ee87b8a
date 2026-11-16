@@ -1,0 +1,19 @@
+dev/specs/019-second-plan-real-changes/tasks.md
+  s_4c94b159df7a98::t_1dd33c027e3a2c 1-222
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2952e16e300e47fd0a950373fce064216ee87b8a",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
