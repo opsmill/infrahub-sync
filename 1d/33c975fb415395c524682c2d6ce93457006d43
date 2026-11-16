@@ -1,0 +1,28 @@
+docs/docs/development-stack.mdx
+  s_c4f9bd3d1fabe8::t_457dcbe549cbc3 191,497
+dev/adr/0043-the-web-interface-is-served-at-the-root-and-the-api-under-api.md
+  s_c4f9bd3d1fabe8::t_457dcbe549cbc3 34-35
+  s_c4f9bd3d1fabe8::t_e48c6310f8ea9e 32-33
+dev/specs/017-serve-web-interface/research.md
+  s_c4f9bd3d1fabe8::t_496e03d47f2069 107,126-129
+changelog/421.added.md
+  s_c4f9bd3d1fabe8::t_457dcbe549cbc3 1
+dev/specs/017-serve-web-interface/quickstart.md
+  s_c4f9bd3d1fabe8::t_9e4df7cf8bad19 13,59,72-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1d33c975fb415395c524682c2d6ce93457006d43",
+  "prompts": {},
+  "sessions": {
+    "s_c4f9bd3d1fabe8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f7bf5003-b7b7-444d-a7c2-d1ecbcb55ad7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
