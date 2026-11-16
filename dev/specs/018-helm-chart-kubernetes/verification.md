@@ -741,3 +741,78 @@ Release `sync` (revision 2, image `chart-test-r2`, version `3.0.0a6`) runs in na
 with new volume claims. The pod `version-poller` was deleted. The images `chart-test-r1` and
 `chart-test-r2` stay in minikube and in the local Docker store. The minikube profile `sync-chart`
 is running.
+
+## Review fixes
+
+Result: the end-to-end upgrade now changes the work pool, so the bootstrap record does not match
+the new pods, and the test checks the start check's refusal in the cluster. The test passes with
+an image that contains the start check and fails with an image that does not.
+
+### Environment
+
+- `H` at commit `b17405d`, which follows `3f8b53b` (chart fixes) and `b41fa3a` (registry login
+  message).
+- The harness created a vcluster on the docker driver (vcluster 0.36.1, Kubernetes v1.36.0) for
+  each run, imported the local image, and deleted the vcluster at the end. Each run used a basetemp
+  folder in a scratch directory, deleted afterwards.
+- Images: `infrahub-sync:chart-test-r1` (with the start check, version `3.0.0a5`) and
+  `infrahub-sync:chart-test` (without it: `import infrahub_sync.service.start_check` fails with
+  `ModuleNotFoundError`).
+
+### Why the test compares against the record time
+
+A first version compared each pod's `Ready` time with the Job's `completionTime`. With
+`chart-test-r1` it failed: the bootstrap logged `bootstrap recorded ... work pool
+infrahub-sync-e2e-upgrade` at 16:31:36.378Z, the new Sync API pod was `Ready` at 16:31:38Z, and
+the Job's `completionTime` was 16:31:39Z. The start check reads the record, not the Job status,
+so a pod can start correctly between the two. The test now compares with the time of that log
+line, truncated to the second.
+
+A second version, with no hold of the Job, passed with `chart-test` too (run from
+2026-11-16T16:35:08Z): the bootstrap container finished at 16:36:27Z and the Sync API pod of that
+image became `Ready` at 16:36:30Z. With `chart-test-r1`, the one refused run of the Sync API ended
+in the same second as the record write (16:42:31Z and 16:42:31.69Z), so a check of the refusal
+alone would depend on timing.
+
+### The test as committed
+
+The upgrade sets `s3.prefix`, `settings.workPool` and a CPU request of 1000 in
+`bootstrap.resources`, which no node meets, so the new Job's pod stays `Pending`. While it is
+held, the test fails if the new Sync API pod becomes `Ready`, and waits for its previous run to
+log the start check's refusal. A second upgrade sets the request to `10m`; the Job gets a new name
+again and completes. Then the new Sync API pod must be `Ready` at or after the record time, and
+the worker, which has no readiness probe, at most 5 seconds before it. No assertion counts
+restarts.
+
+```bash
+cd H && INFRAHUB_SYNC_E2E_IMAGE=infrahub-sync:chart-test-r1 \
+  uv run pytest -v -rs -s -m sync tests/e2e --basetemp=<scratch folder>/e2e-basetemp-2
+```
+
+From 2026-11-16T16:46:38Z to 16:48:47Z:
+
+- `tests/e2e/test_infrahub_sync.py::test_sync_installs_and_upgrades PASSED`
+- `1 passed, 28 deselected, 2 warnings in 128.01s (0:02:08)`
+- While the Job was held, the refused run of the Sync API ended at 16:48:10Z with
+  `refusing to start: the bootstrap record names Sync version 3.0.0a5 and work pool infrahub-sync; expected Sync version 3.0.0a5 and work pool infrahub-sync-e2e-upgrade. Run the bootstrap for this version.`
+- After the release: record written at 16:48:14.925Z, Job `completionTime` 16:48:17Z, Sync API
+  pod `Ready` at 16:48:29Z (2 restarts), worker pod `Ready` at 16:48:38Z (0 restarts).
+
+The same command with `INFRAHUB_SYNC_E2E_IMAGE=infrahub-sync:chart-test`, from
+2026-11-16T16:48:55Z to 16:50:43Z, passed the install and failed during the hold:
+
+- `AssertionError: the Sync API pod sync-infrahub-sync-api-7f9df89bd6-mwgrl became Ready while the bootstrap Job sync-infrahub-sync-bootstrap-a5c0f112 was Pending and the record named the previous work pool`
+- `1 failed, 28 deselected, 1 warning in 107.20s (0:01:47)`
+
+After these runs, only the module docstring of the test changed, and `tests/README.md`.
+
+### Other review fixes
+
+- The chart refuses an image tag that is not a string. Helm reads an unquoted number in a values
+  file as a floating-point number, so `toString` alone rendered `3.0` as `3` and `20261018` as
+  `2.0261018e+07`. A quoted tag renders as written.
+- The chart refuses `ingress.enabled` without `ingress.hostname`. The `infrahub-mcp` chart has no
+  such refusal and does not say that it accepts an empty host on purpose.
+- The install notes read the token with `read -rs`, use it in the in-cluster command from the
+  variable, and wait for the Job for 10 minutes, like the documented `helm install`.
+- The RR-34 render tests cover `s3.bucket` and `settings.workPool`.
