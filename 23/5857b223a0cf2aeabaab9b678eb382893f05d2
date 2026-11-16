@@ -1,0 +1,32 @@
+Dockerfile
+  s_d989f93fc3b8fb::t_8c46471642bf17 103-112
+  s_d989f93fc3b8fb::t_d20d4c3f676809 126-129
+changelog/+image-tini.changed.md
+  s_d989f93fc3b8fb::t_db2a21a39ed950 1
+infrahub_sync/testcontainers/docker-compose.yml
+  s_d989f93fc3b8fb::t_0e3c6a0a70421e 367-368,373
+tests/image/conftest.py
+  s_d989f93fc3b8fb::t_348fbf1906ffef 255-276,280
+tests/image/test_image_artifact.py
+  s_d989f93fc3b8fb::t_3c3f1888f047d6 121-137
+tests/compose/test_compose_contract.py
+  s_d989f93fc3b8fb::t_bfc136cbc09e0e 1070,1076
+docker-compose.yml
+  s_d989f93fc3b8fb::t_0e3c6a0a70421e 367-368,373
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "235857b223a0cf2aeabaab9b678eb382893f05d2",
+  "prompts": {},
+  "sessions": {
+    "s_d989f93fc3b8fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b53e9e82-fcbd-48f8-ae99-61f94c0060c7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
