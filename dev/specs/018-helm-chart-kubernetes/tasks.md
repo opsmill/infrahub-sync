@@ -341,10 +341,10 @@ else.
 
 **Independent test**: render tests RR-18 and RR-33.
 
-- [ ] T025 [P] [US4] Copy `ingress.yaml`, `httproute.yaml` and `gateway.yaml` from
+- [X] T025 [P] [US4] Copy `ingress.yaml`, `httproute.yaml` and `gateway.yaml` from
   `H/charts/infrahub-mcp/templates/` to `C/templates/`. Rename the helpers, and point every
   backend at `<fullname>-api` and `api.service.port`.
-- [ ] T026 [US4] Add the render tests RR-18 and RR-33 to `H/tests/unit/test_infrahub_sync_chart.py`,
+- [X] T026 [US4] Add the render tests RR-18 and RR-33 to `H/tests/unit/test_infrahub_sync_chart.py`,
   and make them pass.
 
 ---
