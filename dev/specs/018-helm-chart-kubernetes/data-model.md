@@ -14,7 +14,7 @@ Kubernetes resources those values produce. The values are specified in
 | `<fullname>-api` | Deployment, Service | `sync-api` | Sync | no |
 | `<fullname>-worker` | Deployment | `sync-worker` | Sync | no |
 | `<fullname>-prefect-server` | Deployment, Service | `prefect-server` | Sync | no |
-| `<fullname>-bootstrap-<revision>` | Job | `sync-bootstrap` | Sync | no |
+| `<fullname>-bootstrap-<hash>` | Job | `sync-bootstrap` | Sync | no |
 | `<fullname>-postgresql` | StatefulSet, Service, ConfigMap (init script) | `postgres`, `db-bootstrap` | PostgreSQL | yes |
 | `<fullname>-object-store` | StatefulSet, Service | `object-store`, `object-store-init` | Silo | yes |
 | `<fullname>` | Secret | the `.env` file | n/a | n/a |
@@ -60,7 +60,10 @@ object store ──────────────────────�
 
 - Prefect server: init container waits for PostgreSQL (bundled only).
 - Bootstrap Job: init container waits for the Prefect server; the Job retries on failure.
-- Sync API and worker: init container waits until a deployment exists in the work pool.
+- Sync API and worker: init container waits until the deployment `infrahub-sync-service/run`
+  exists in the work pool.
+- `<hash>`: the first 8 characters of a SHA-256 over the image reference, the bootstrap's
+  settings and the checksums of the Secret and ConfigMaps the chart creates.
 
 ## Validation rules (render time)
 

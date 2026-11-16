@@ -96,7 +96,8 @@ infrahub-helm/
 │   ├── values.yaml                    # every value with a `# --` comment
 │   ├── README.md.gotmpl, README.md    # README.md generated with helm-docs
 │   ├── CHANGELOG.md, towncrier.toml, changelog/
-│   ├── .helmignore
+│   ├── .helmignore                    # excludes ci/
+│   ├── ci/lint-values.yaml            # values for helm lint
 │   └── templates/
 │       ├── _helpers.tpl               # names, labels, image, env blocks, init containers
 │       ├── _validation.tpl            # the render-time refusals
@@ -116,6 +117,7 @@ infrahub-helm/
 ├── tests/e2e/test_infrahub_sync.py          # marker `sync`
 ├── tests/e2e/conftest.py, tests/README.md, pyproject.toml   # register the chart and the marker
 ├── .github/workflows/ci.yml                 # filter, lint job, e2e job
+├── Makefile                                 # lint loop passes ci/lint-values.yaml
 ├── .github/workflows/update-infrahub-sync.yml
 └── AGENTS.md, README.md                     # name the new chart
 
@@ -150,17 +152,29 @@ Points an implementer must not miss:
    endpoints, as the `x-sync-storage` anchor does in Compose. Define the password variable before
    the connection string that expands it with `$(VAR)`.
 2. **Sync API**: `INFRAHUB_SYNC_SERVICE_HOST=0.0.0.0`; container port 8000.
-3. **The gate init container** uses only the Prefect HTTP API and `httpx` from the Sync image. It
-   reads `PREFECT_API_URL`, `PREFECT_API_AUTH_STRING` and the pool name from its environment, and
-   never prints the credential.
+3. **The gate init container** runs a short Python script in the Sync image. It calls
+   `prefect.client.orchestration.get_client()` and `read_deployment_by_name("infrahub-sync-service/run")`
+   until the deployment exists with `work_pool_name` equal to the pool, or until
+   `waitTimeoutSeconds`, and then exits 1. It prints the pool name and the wait time, never the
+   credential (research R-2).
 4. **PostgreSQL**: `PGDATA` is a subdirectory of the mount, because a new volume can hold
-   `lost+found`. The init script reads its values from the container environment and binds each
-   as a `psql` variable, as in Compose.
-5. **Object store**: `MINIO_BROWSER=off`, command `server /data`, user 65532.
-6. **Checksum annotations** on the pod templates for the Secret and ConfigMaps the chart
+   `lost+found`. The init script is the one in `docker-compose.yml:390-424` with `$$` written
+   `$`. It reads its values from the container environment and binds each one as a `psql`
+   variable. It is mounted with mode `0555`, and the container sets `PGUSER` and `PGDATABASE` but
+   not `PGHOST` (research R-2, "Details of the init script").
+5. **Object store**: `MINIO_BROWSER=off`, command `server /data`, user 65532 with `fsGroup`
+   65532, readiness on the Silo health endpoint `/minio/health/ready`.
+6. **The Job name** ends with the hash of research R-2. The Secret and ConfigMap checksums used
+   in the hash are the same values as the checksum annotations of point 7.
+7. **Checksum annotations** on the pod templates for the Secret and ConfigMaps the chart
    creates, so that a changed value restarts the pods.
-7. **NOTES.txt** prints how to reach the Sync API with a port-forward and how to run the CLI in a
-   pod, and nothing that is a credential.
+8. **Every pod** sets `enableServiceLinks: false` and `automountServiceAccountToken: false`. The
+   Prefect server and the worker use the `Recreate` strategy (research R-2).
+9. **Lint**: `charts/infrahub-sync/ci/lint-values.yaml` names an existing Secret. `.helmignore`
+   excludes `ci/`. The Makefile `lint` loop and the new CI lint job pass the file when it exists
+   (research R-7).
+10. **NOTES.txt** prints how to reach the Sync API with a port-forward and how to run the CLI in a
+    pod, and nothing that is a credential.
 
 ## Verification
 
@@ -172,7 +186,18 @@ Points an implementer must not miss:
 4. In this repository: `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`,
    `uv run invoke docs.docusaurus`, and the unit tier.
 
-If the Sync image cannot be pulled or built, step 3 is reported as not done.
+The image for step 3 is built from this repository's `Dockerfile` and loaded into the cluster.
+The default `appVersion` image was not in the registry on 2026-11-16 (research R-6), so pulling
+it is not part of this verification. If the image cannot be built, step 3 is reported as not
+done.
+
+## Release order
+
+1. Merge the documentation and the decision record of this repository.
+2. Merge the chart into `infrahub-helm`. It is not published yet.
+3. After the first Sync release that contains the Prefect server in the image is in the
+   registry, a maintainer sets `appVersion` to it and runs the publish workflow for
+   `infrahub-sync`.
 
 ## Complexity Tracking
 

@@ -8,7 +8,7 @@ bootstrap Job.
 ## Default release
 
 - **RR-01**: The release holds exactly these workloads: Deployments `api`, `worker` and
-  `prefect-server`; StatefulSets `postgresql` and `object-store`; one Job `bootstrap-<revision>`.
+  `prefect-server`; StatefulSets `postgresql` and `object-store`; one Job `bootstrap-<hash>`.
 - **RR-02**: Three image repositories appear: Sync, PostgreSQL and Silo. Every Sync container,
   init containers included, uses `image.repository` with `image.tag`, or `appVersion` when the
   tag is empty. No Prefect image appears.
@@ -49,6 +49,13 @@ bootstrap Job.
   worker and the bootstrap Job, and only when a CA value is set.
 - **RR-22**: An optional setting that is not set is absent from the pod environment; it is not
   passed as an empty string.
+- **RR-23**: Every pod sets `enableServiceLinks: false`.
+- **RR-24**: The Prefect server and the worker Deployments use the `Recreate` strategy; the Sync
+  API uses `RollingUpdate`.
+- **RR-25**: The PostgreSQL init script is mounted at `/docker-entrypoint-initdb.d` with mode
+  `0555`, and the PostgreSQL container sets `PGUSER` and `PGDATABASE` and does not set `PGHOST`.
+- **RR-26**: In every container environment, a variable that is referenced with `$(NAME)` is
+  defined earlier in the same list.
 
 ## Variants
 
@@ -59,7 +66,9 @@ bootstrap Job.
 - **RR-32**: With both off: zero `volumeClaimTemplate`.
 - **RR-33**: With the Ingress on: one Ingress, whose only backend is the Sync API Service. With
   the HTTPRoute on: the same for the route.
-- **RR-34**: Two renders with different release revisions give different Job names.
+- **RR-34**: The Job name changes when the image tag, a bootstrap setting or a credential value
+  changes, and does not change when only the release revision or a setting the bootstrap does not
+  read (for example `api.resources`) changes.
 
 ## Refusals
 

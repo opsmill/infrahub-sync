@@ -54,13 +54,32 @@ Expected: the version of the image; `worker.state` is `ready`; `whoami` reports 
 
 ## 4. Upgrade
 
+First an upgrade that changes a setting the bootstrap does not read. The Job keeps its name
+(RR-34):
+
 ```bash
 helm upgrade sync charts/infrahub-sync -n sync --reuse-values --set settings.runAdmissionTtlSeconds=301 --wait --timeout 10m
+kubectl -n sync get jobs
 ```
 
-Expected: the upgrade completes; the bootstrap Job of revision 2 is complete and the Job of
-revision 1 is gone; step 3 gives the same answers. A pod restart
-(`kubectl -n sync rollout restart deployment/sync-infrahub-sync-api`) creates no Job.
+Then an upgrade that changes the image tag, which the bootstrap does read. Rebuild the image under
+a second tag first (`docker tag infrahub-sync:chart-test infrahub-sync:chart-test-2`, then
+`minikube image load infrahub-sync:chart-test-2`):
+
+```bash
+helm upgrade sync charts/infrahub-sync -n sync --reuse-values --set image.tag=chart-test-2 --wait --timeout 10m
+kubectl -n sync wait --for=condition=complete job -l app.kubernetes.io/component=bootstrap --timeout=10m
+kubectl -n sync get jobs
+```
+
+Expected:
+
+- Both upgrades complete without a manual step.
+- After the second upgrade, one bootstrap Job is listed. It has a new name, it is complete, and
+  the previous Job is gone.
+- Step 3 gives the same answers, and the package registered before the upgrade is still listed.
+- A pod restart (`kubectl -n sync rollout restart deployment/sync-infrahub-sync-api`) creates no
+  Job.
 
 ## 5. Refusals and the external variant
 

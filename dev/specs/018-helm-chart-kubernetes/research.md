@@ -32,16 +32,23 @@ Consequence: nothing in the image orders the start. The chart has to.
    `docker-compose.yml:390-424`, with the shell `$$` written `$`. The PostgreSQL pod is not ready
    until the script has run.
 2. **Service bootstrap**: a plain Kubernetes Job (not a Helm hook) named
-   `<fullname>-bootstrap-<release revision>`. Each `helm upgrade` has a new revision, so it
-   creates a new Job and Helm deletes the Job of the previous revision. No Job is ever patched.
-   The Job has `restartPolicy: OnFailure` and a `backoffLimit`, and one init container that waits
-   for the Prefect server's `/api/health`.
+   `<fullname>-bootstrap-<hash>`. The hash is the first 8 characters of a SHA-256 over what the
+   bootstrap reads: the image reference, the settings it receives, and the checksums of the
+   Secret and the ConfigMaps the chart creates. A change of any of them gives a new name, so the
+   upgrade creates a new Job, and Helm deletes the Job of the previous name because it is no
+   longer in the manifest. No Job is ever patched. An upgrade that changes none of them keeps the
+   completed Job, which is equivalent to running it again because the bootstrap changes nothing
+   on a converged deployment (R-1). The Job has `restartPolicy: OnFailure` and a `backoffLimit`,
+   and one init container that waits for the Prefect server's `/api/health`.
 3. **Gate on the Sync API and the worker**: each has an init container, from the Sync image, that
-   polls the Prefect API until a deployment exists in the work pool
-   (`POST /api/deployments/filter`). The deployment is created after the bucket and the work pool
-   (R-1), so its presence means those three steps completed. The product schema is the step after
-   it; the Sync API and the worker each create the schema themselves at start (R-1), so they do
-   not need to wait for it.
+   uses the Prefect client (`prefect.client.orchestration.get_client()`, which applies
+   `PREFECT_API_URL` and the Basic authentication of `PREFECT_API_AUTH_STRING`) to read the
+   deployment `infrahub-sync-service/run` with `read_deployment_by_name`, the call
+   `service/deploy.py:33` makes, and waits until it exists with `work_pool_name` equal to the
+   configured pool. The deployment is created after the bucket and the work pool (R-1), so its
+   presence means those three steps completed. The product schema is the step after it; the Sync
+   API and the worker each create the schema themselves at start (R-1), so they do not need to
+   wait for it.
 
 The Prefect server has an init container that waits for the bundled PostgreSQL with `pg_isready`,
 from the PostgreSQL image.
@@ -52,6 +59,10 @@ from the PostgreSQL image.
   (FR-008).
 - A plain Job is created with the other resources of the release, so it works when PostgreSQL is
   part of the release.
+- A name from a hash of the Job's inputs, rather than from `.Release.Revision`, also works for a
+  tool that applies `helm template` output: such a tool renders the revision as 1 every time, so
+  a revision-named Job would keep its name, get a new pod template after an image change, and be
+  refused because a Job's template is immutable.
 - Nothing needs access to the Kubernetes API, so the chart creates no Role.
 
 **Limit**: on an upgrade, the deployment of the previous release already exists, so the gate
@@ -74,6 +85,25 @@ has no such check today. This is recorded as a follow-up, not built here.
 - **Database bootstrap as a Job**, as in Compose. Rejected: the Prefect server would need a
   second gate. The cost of the init script is that it runs only on an empty volume; the
   documentation states it.
+- **Job named after `.Release.Revision`**. Rejected for the reason above.
+
+**Details of the init script**: the PostgreSQL entrypoint runs an executable `*.sh` file from
+`/docker-entrypoint-initdb.d` and *sources* one that is not executable
+(`docker-entrypoint.sh:180-187` in `postgres:16-alpine`), so the script is mounted with mode
+`0555`. During initialization the server listens only on its local socket
+(`docker-entrypoint.sh:297`), so the container sets `PGUSER` and `PGDATABASE` to the
+administrator role and does not set `PGHOST`.
+
+**Update strategies**: the Prefect server runs its database migration when it starts
+(`service/prefect_server.py:36-37`), so its Deployment uses `Recreate` and two servers never run
+at once. The worker also uses `Recreate`, to keep the one worker that is the only tested value.
+The Sync API uses `RollingUpdate`; its schema initialization runs under an advisory lock
+(`product_store/store.py:417`).
+
+**Service links**: every pod sets `enableServiceLinks: false`. Otherwise Kubernetes adds
+`<SERVICE>_PORT` and `<SERVICE>_SERVICE_HOST` variables for each Service of the namespace, which
+gives `INFRAHUB_SYNC_API_*` variables for a release named `infrahub-sync`, and `PREFECT_SERVER_*`
+variables when a Prefect Service named `prefect-server` shares the namespace.
 
 ## R-3. The bundled object store and the bootstrap's own check
 
@@ -134,8 +164,15 @@ adds a registry pull to every lint.
 
 ## R-6. Versions
 
-- The chart `version` starts at `0.1.0`. `appVersion` is the Sync release, `3.0.0a5` today. A
+- The chart `version` starts at `0.1.0`. `appVersion` is the Sync release, `3.0.0a5` today: the
+  package version in `pyproject.toml`, which is also the pin of the Compose file (ADR 16). A
   chart version must be SemVer and `3.0.0a5` is not, so the two cannot be the same string.
+- On 2026-11-16 the registry answered "artifact opsmill/infrahub-sync:3.0.0a5 not found" for this
+  machine's login, while `registry.opsmill.io/opsmill/infrahub:1.11.12` resolved. The Prefect
+  server moved into the Sync image after `3.0.0a5` was cut
+  (`changelog/+prefect-from-sync-image.changed.md`), so an older image would not run this chart
+  either. **The chart is therefore verified with an image built from this repository, and it is
+  published only after the first Sync release that contains this code is in the registry.**
 - `infrahub-helm/scripts/bump_chart.py app-version` sets `appVersion`, bumps the chart version and
   adds a changelog fragment. It accepts only final `MAJOR.MINOR.PATCH` versions.
   `infrahub-helm/.github/workflows/update-infrahub-mcp.yml` runs it when `opsmill/infrahub-mcp`
@@ -162,12 +199,21 @@ The documentation tells the operator to read the Sync release from the chart's `
 - **Render tests** (no cluster): pytest tests that run `helm template` and assert the contract in
   [contracts/rendered-release.md](contracts/rendered-release.md). They run in CI for every change
   to the chart.
-- **End-to-end test** with marker `sync`: install, wait, call `/version` and `/whoami`, read the
-  worker state from `/status`, upgrade, check again. The test takes the image from
-  `INFRAHUB_SYNC_E2E_IMAGE` when set, and registry credentials from `INFRAHUB_SYNC_REGISTRY_USERNAME`
-  and `INFRAHUB_SYNC_REGISTRY_PASSWORD` when set. When the image cannot be pulled and no
-  credential is given, the test is skipped with a message that says why. The CI job exists from
-  the start and reports a skip until the image is public or the repository has the credentials.
+- **End-to-end test** with marker `sync`: install, wait for the bootstrap Job with
+  `kubectl wait --for=condition=complete`, call `/version` and `/whoami`, read the worker state
+  from `/status`, upgrade with a changed setting, wait for the new Job, check again. The test
+  takes the image from `INFRAHUB_SYNC_E2E_IMAGE` when set, and registry credentials from
+  `INFRAHUB_SYNC_REGISTRY_USERNAME` and `INFRAHUB_SYNC_REGISTRY_PASSWORD` when set. Before it
+  installs, it checks that the image can be resolved. When it cannot and no credential is given,
+  the test is skipped with a message that says why. Once the image resolves, a pod that does not
+  become ready fails the test; it is never a skip. The CI job exists from the start and reports a
+  skip until the image is public or the repository has the credentials.
+- **Lint**: `helm lint` with no values fails on the required credentials, and both
+  `infrahub-helm/Makefile:23-28` and the `helm-lint-*` CI jobs lint with no values. The chart
+  holds `ci/lint-values.yaml`, which names an existing Secret; `.helmignore` keeps `ci/` out of
+  the package; the Makefile loop and the CI job pass the file when it exists. It is not named
+  `values.<x>.yaml` at the chart root, because `package-helm-chart.yml:94` publishes each such
+  file as a chart flavor.
 - **Local verification** for this specification: install on a local cluster with the image
   pulled with this machine's registry login, or built from this repository's `Dockerfile`.
 

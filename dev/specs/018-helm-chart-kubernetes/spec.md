@@ -91,8 +91,13 @@ set. Wait for the release to be ready. Call the version endpoint of the Sync API
 ### User Story 2 - Upgrade to a new release of Infrahub Sync (Priority: P1)
 
 An operator follows the releases of Infrahub Sync. For each one they run `helm upgrade` with the
-new chart version. The data in PostgreSQL and in the object store is kept, the bootstrap work runs
-again for the new version, and the Sync API and the worker restart on the new image.
+new chart version. The volumes of PostgreSQL and of the object store are kept, the bootstrap work
+runs again for the new version, and the Sync API and the worker restart on the new image.
+
+Whether the records in those volumes can be read by a new version of Infrahub Sync is decided by
+that release, not by the chart. During the alpha, Infrahub Sync promises no in-place state
+migration (Compose deployment page, "Resetting this alpha to a fresh deployment"); each release's
+notes say whether it needs a fresh deployment.
 
 **Why this priority**: the need in issue #422 is to "follow each release without keeping their own
 Kubernetes manifests". A chart that installs once and cannot be upgraded does not meet it.
@@ -106,10 +111,12 @@ Kubernetes manifests". A chart that installs once and cannot be upgraded does no
 1. **Given** an installed release, **When** the operator runs `helm upgrade` with the same
    values, **Then** the upgrade completes without an error and the release is ready.
 2. **Given** an installed release that holds a registered configuration package, **When** the
-   operator upgrades, **Then** the package and its runs are still listed.
+   operator runs `helm upgrade` without changing the Sync version, **Then** the package and its
+   runs are still listed.
 3. **Given** a new release of Infrahub Sync, **When** the operator upgrades to the chart version
-   for that release, **Then** every Sync pod runs the image of that release, and the bootstrap
-   work has run with that image before the Sync API and the worker serve.
+   for that release, **Then** every Sync pod runs the image of that release, the bootstrap work
+   has run with that image, and the volumes of PostgreSQL and the object store are the same
+   volumes as before.
 4. **Given** an operator who wants a Sync version other than the chart's default, **When** they
    set the image tag, **Then** every Sync pod runs that tag.
 
@@ -194,6 +201,12 @@ created, that it points at the Sync API, and that no other service is exposed.
   the chart runs there is not known and is not tested by this specification.
 - **A source credential is not set.** The release still starts. A run that selects the missing
   credential fails that run, as in the Compose deployment.
+- **A run is in progress during an upgrade.** Replacing the worker pod ends the run it is
+  executing. The documentation tells the operator to check the runs in progress before an
+  upgrade, and how to read the outcome of an interrupted write.
+- **The chart is rendered by a tool rather than installed by Helm** (for example a GitOps tool
+  that applies `helm template` output). An image change still runs the bootstrap again, and no
+  resource has to be deleted by hand.
 
 ## Requirements *(mandatory)*
 
@@ -218,9 +231,11 @@ created, that it points at the Sync API, and that no other service is exposed.
 **Order of start**
 
 - **FR-007**: The service bootstrap (the product schema, the artifact bucket, the work pool and
-  the deployment in it) MUST run on install and on each upgrade. On install it MUST complete
-  before the Sync API and the worker serve. On upgrade it MUST complete without a manual step;
-  the plan states how close to "before the new pods serve" the chart gets, and why.
+  the deployment in it) MUST run on install, and on each upgrade that changes the image or a
+  setting the bootstrap reads. An upgrade that changes neither MAY leave the completed bootstrap
+  in place, because the bootstrap changes nothing on a converged deployment. On install it MUST
+  complete before the Sync API and the worker serve. On upgrade it MUST complete without a
+  manual step; the plan states how close to "before the new pods serve" the chart gets, and why.
 - **FR-007a**: With the bundled PostgreSQL, the database bootstrap (the two roles and the two
   databases) MUST complete before the Prefect server and the service bootstrap connect. It runs
   when PostgreSQL first initializes its volume.
@@ -299,7 +314,8 @@ created, that it points at the Sync API, and that no other service is exposed.
 
 - **FR-031**: The Infrahub Sync documentation MUST have a page for the Kubernetes deployment. It
   covers: what the release contains, the required credentials, the install, how to call the CLI,
-  the upgrade, an external PostgreSQL and object store, CA certificates, exposing the Sync API,
+  the upgrade (including what happens to a run in progress and to the stored records across Sync
+  versions), an external PostgreSQL and object store, CA certificates, exposing the Sync API,
   and the uninstall with what happens to the data.
 - **FR-032**: The page MUST state what is not supported or not known: the web interface
   (issue #421), more than one replica of the Sync API or of the worker unless the product
@@ -328,8 +344,9 @@ created, that it points at the Sync API, and that no other service is exposed.
   single-node test cluster.
 - **SC-002**: After the install, `infrahub-sync whoami` succeeds on the first call, and one live
   worker is listed.
-- **SC-003**: `helm upgrade` on an installed release succeeds with no manual step, and 100% of
-  the configuration packages and runs that were listed before the upgrade are listed after it.
+- **SC-003**: `helm upgrade` on an installed release succeeds with no manual step. When the Sync
+  version does not change, 100% of the configuration packages and runs that were listed before
+  the upgrade are listed after it.
 - **SC-004**: With the bundled PostgreSQL and object store turned off, the release contains zero
   PostgreSQL pods, zero object store pods and zero volume claims.
 - **SC-005**: When the chart creates the Secret, an install with a missing required credential
