@@ -258,7 +258,7 @@ answers `/version` and `whoami`.
   placeholder, never a value. Last, it prints the command to wait for the bootstrap Job.
 - [X] T017 [US1] Make every test of T009 pass: `cd H && uv run pytest -v tests/unit/test_infrahub_sync_chart.py`.
   Then run `helm lint C/ -f C/ci/lint-values.yaml`.
-- [ ] T018 [US1] Verify the install on a local cluster with [quickstart.md](quickstart.md)
+- [X] T018 [US1] Verify the install on a local cluster with [quickstart.md](quickstart.md)
   steps 2 and 3. Use the image of T003 (`minikube image load infrahub-sync:chart-test`,
   `--set image.repository=infrahub-sync --set image.tag=chart-test --set image.pullPolicy=Never`).
   Record in `S/dev/specs/018-helm-chart-kubernetes/verification.md` the commands, the pod list, the
