@@ -429,17 +429,17 @@ These tasks implement FR-007b and the FR-029 change from the clarification sessi
 
 ### Chunk 9a: Infrahub Sync (`S/`)
 
-- [ ] T038 [US2] In the product store (`S/infrahub_sync/product_store/store.py` and its models),
+- [X] T038 [US2] In the product store (`S/infrahub_sync/product_store/store.py` and its models),
   add a single-row table for the bootstrap record: the Sync version, the work pool name and the
   completion time. Add a write that replaces the row, and a read that works on a plain
   connection and does not run the schema initialization or the column migration. A read on a
   database where the table does not exist returns "no record", not an error. Unit tests in
   `S/tests/` next to the existing product store tests.
-- [ ] T039 [US2] In `S/infrahub_sync/service/bootstrap.py`, write the record as the last step of
+- [X] T039 [US2] In `S/infrahub_sync/service/bootstrap.py`, write the record as the last step of
   `_converge()`, after the product schema step, with `installed_server_version()` from
   `S/infrahub_sync/service/compatibility.py` and the work pool name. A failure to write it is a
   bootstrap failure with a fixed family. Unit tests in `S/tests/service/test_compose_bootstrap.py`.
-- [ ] T040 [US2] Add the start check, in one function shared by the Sync API and the worker:
+- [X] T040 [US2] Add the start check, in one function shared by the Sync API and the worker:
   - In `build_app` in `S/infrahub_sync/service/serve.py`, run it before `projection_factory()`,
     so a refused start changes nothing in the database. It must refuse both through `main()` and
     through `uvicorn --factory`.
@@ -451,10 +451,10 @@ These tasks implement FR-007b and the FR-029 change from the clarification sessi
     tests keep passing without a database.
   - Unit tests: record matches, record missing, table missing, other version, other pool, and
     the database cannot be reached.
-- [ ] T041 [US2] Run one Compose lifecycle test from `S/tests/compose` locally to show that the
+- [X] T041 [US2] Run one Compose lifecycle test from `S/tests/compose` locally to show that the
   Compose deployment still starts with the check (its `depends_on` order runs the bootstrap
   first). If it cannot run locally, say why and give the command.
-- [ ] T042 [P] [US2] Add the changelog fragment `S/changelog/+bootstrap-record.added.md`: the
+- [X] T042 [P] [US2] Add the changelog fragment `S/changelog/+bootstrap-record.added.md`: the
   bootstrap records the version and work pool it set up, and the Sync API and the worker refuse
   to start when the record is missing or different.
 
