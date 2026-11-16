@@ -59,7 +59,7 @@ run the bootstrap.
 A refused start logs a line such as:
 
 ```text
-refusing to start: the bootstrap record names Sync version 3.0.0a5 and work pool infrahub-sync; expected Sync version 3.0.0a6 and work pool infrahub-sync. Run the bootstrap for this version.
+refusing to start: the bootstrap record names Sync version <previous version> and work pool infrahub-sync; expected Sync version <new version> and work pool infrahub-sync. Run the bootstrap for this version.
 ```
 
 Read it in the log of the previous attempt:
@@ -76,8 +76,8 @@ bootstrap Job again, as [Run the upgrade](#run-the-upgrade) describes.
 
 The chart needs a Sync release that contains the bootstrap record and its start check. With an
 earlier image, nothing makes the Sync API and the worker wait for the bootstrap. No release
-contains the check yet, so the minimum Sync version is not known yet. The chart's `appVersion`,
-`3.0.0a5`, does not contain it.
+contains the check yet, so the minimum Sync version is not known yet. The chart's current
+`appVersion` does not contain it.
 
 ## Prerequisites
 
@@ -186,7 +186,7 @@ ready and not for the bootstrap Job to complete. With `--wait-for-jobs`, `helm i
 after the Job is complete.
 
 During a first install, the Sync API and the worker exit and restart until the bootstrap Job has
-written the bootstrap record, and while PostgreSQL starts. Their pods show `Error` or
+written the bootstrap record, and while PostgreSQL starts. Their pods can show
 `CrashLoopBackOff` for a short time, and a restart count above 0 afterwards. On a test cluster,
 `helm install` returned after 52 seconds; the Sync API restarted 3 times and was ready 23 seconds
 after the Job completed, and the worker restarted 2 times. These numbers come from one install.
