@@ -110,6 +110,8 @@ was Critical.
 | Low | S `product_store/store.py:4561-4578` | `write_bootstrap_record` returns the requested record, not the stored one, on a repeat | Deferred: no caller reads the time |
 | Low | H render tests (RR-40, RR-43, RR-19) | Three assertions are weaker than the contract | Deferred |
 | Low | H `tests/e2e/test_infrahub_sync.py` | The test holds the bootstrap Job with a CPU request of 1000 cores, so that it stays Pending | Recorded: works on any cluster, but is unusual |
+| Low | H `tests/e2e/test_infrahub_sync.py` | The worker may be ready up to 5 s before the record is written; this allowance passed in one run only | Recorded as a possible cause of intermittent failures |
+| Low | S `+bootstrap-record` fragments, H `changelog/+bootstrap-record.changed.md` | The chart fragment describes removing an init container that no release shipped | Deferred: fold it into the `.added` fragment before release |
 
 ## 6. Autonomous decisions
 
@@ -140,8 +142,11 @@ was Critical.
 
 ## 7. Suggested next steps
 
-1. Confirm or rename the two registry secrets of the `e2e-infrahub-sync` job, and add them to
-   `infrahub-helm` if the end-to-end test should run in CI before release 3.0.0.
+1. Confirm or rename the two registry secrets of the `e2e-infrahub-sync` job. Add them to
+   `infrahub-helm` only once `appVersion` names a Sync image that the registry serves and that
+   contains the start check. With a login set, the test fails on today's default (`3.0.0a5`):
+   the registry does not serve that image, and it has no start check. `H/tests/README.md` says
+   this too.
 2. Resolve the ADR number 0043, which branch `017-serve-web-interface` also uses.
 3. Investigate why the worker does not stop on SIGTERM during an upgrade.
 4. Decide on the deferred findings in section 5.
