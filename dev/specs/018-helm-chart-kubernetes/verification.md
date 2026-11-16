@@ -306,16 +306,32 @@ while it stopped, and a failed startup probe on the new Sync API pod while its p
 
 ### Whether `--wait --wait-for-jobs` waited for the new Job on upgrade
 
-Helm returned at 11:47:12Z, 17 seconds after the new Job completed at 11:46:55Z. So Helm returned
-after the Job completed. This run does not show that Helm waited for the Job itself: the last
-event before Helm returned is the worker pod becoming ready, and Helm waits for that pod with
-`--wait` alone. The isolated test in T018 is the evidence that `--wait-for-jobs` makes Helm wait
-for a Job.
+In upgrade 2, Helm returned at 11:47:12Z, 17 seconds after the new Job completed at 11:46:55Z.
+That run does not show that Helm waited for the Job itself: the last event before Helm returned
+is the worker pod becoming ready, and Helm waits for that pod with `--wait` alone.
 
-The Sync API pod became ready at the same second the new Job completed, so on this cluster the
-Sync API pod of an upgrade does not answer before the bootstrap of the new image has run. This is
-a timing of this run, not a guarantee: on upgrade, the `wait-for-bootstrap` gate passes as soon as
-the Prefect server answers, because the deployment already exists in the work pool.
+A third upgrade isolated the Job. It changes only a pod annotation of the bootstrap Job; a
+`helm template` with and without the value differs only in the Job's name and annotation:
+
+```bash
+helm --kube-context sync-chart upgrade sync H/charts/infrahub-sync -n sync --reuse-values \
+  --set bootstrap.podAnnotations.t021=wait --wait --wait-for-jobs --timeout 10m
+```
+
+| Time | Event |
+| --- | --- |
+| 2026-11-16T11:53:18Z | `helm upgrade` starts |
+| 2026-11-16T11:53:19Z | the Job `sync-infrahub-sync-bootstrap-024fcf91` is created and starts |
+| 2026-11-16T11:53:24Z | the Job completes (`completionTime`); `helm upgrade` returns `STATUS: deployed`, revision 4 |
+
+No other pod was created. Helm returned in the second the Job completed, so on upgrade
+`--wait --wait-for-jobs` waits for the new bootstrap Job.
+
+In upgrade 2 the new Sync API pod became ready in the same second as the new Job completed. That
+is the timing of this run only. On upgrade the `wait-for-bootstrap` gate passes as soon as the
+Prefect server answers, because the deployment already exists in the work pool, so a Sync API pod
+of the new revision can be ready before the new Job completes. This run does not show whether
+that happens.
 
 ### Sync API answers after the upgrades
 
@@ -339,7 +355,8 @@ kubectl --context sync-chart -n sync rollout status deployment/sync-infrahub-syn
 The restart started at 2026-11-16T11:47:32Z and the rollout finished at 11:47:38Z. Afterwards
 one Job is listed, the same object as after upgrade 2 (`sync-infrahub-sync-bootstrap-895f48df`,
 UID `36ba4bad-ee8e-4410-9243-d6b0c145b4a5`, `completionTime` 11:46:55Z), with its one completed
-pod. `helm history` still ends at revision 3.
+pod. `helm history` still ended at revision 3. The third upgrade, described above, ran later, at
+11:53:18Z.
 
 ### Defects found on the cluster
 
@@ -357,7 +374,10 @@ None. No chart template changed.
   `1 passed, 28 deselected, 2 warnings in 110.96s`. The harness created its own vcluster
   (vcluster 0.36.1, docker driver, Kubernetes v1.36.0), not the minikube context `sync-chart`;
   the local image was imported into the vcluster node with `docker save`. The two warnings are
-  from kr8s, which does not list Kubernetes v1.36.0 as supported.
+  from kr8s, which does not list Kubernetes v1.36.0 as supported. The test checks the principal
+  with `GET /me`, the route that `infrahub-sync whoami` calls. The paths that use
+  `INFRAHUB_SYNC_REGISTRY_USERNAME` and `INFRAHUB_SYNC_REGISTRY_PASSWORD` (registry login and
+  image pull Secret) were not run, because no registry login was available.
 - Without a local image and without a registry login
   (`INFRAHUB_SYNC_E2E_IMAGE=infrahub-sync:does-not-exist`), the test is skipped before any
   vcluster is created, with the message that names the image and the two ways to provide it.
@@ -375,6 +395,6 @@ workflow then finds the update done and skips it.
 
 ### State left for the next task
 
-The release `sync` (revision 3, image `infrahub-sync:chart-test-2`) and the minikube profile
-`sync-chart` are left running. The configuration `20261116T1145-7bf7fab1` stays registered. The
+The release `sync` (revision 4, image `infrahub-sync:chart-test-2`, with the bootstrap pod
+annotation `t021: wait`) and the minikube profile `sync-chart` are left running. The configuration `20261116T1145-7bf7fab1` stays registered. The
 port-forward is stopped.
