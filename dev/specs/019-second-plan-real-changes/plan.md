@@ -180,6 +180,10 @@ owns the behavior today; three new modules (`plan/digest.py`, `potenda/plan_step
   `test_problems.py:80`, `test_format_4.py:112, 310`.
 - **`runs show` order.** The part lines come after the two read lines
   (`tests/cli/test_client_commands.py:876-890`).
+- **Apply path.** Only an operation that holds an emptied one-peer relationship takes the new
+  write path (research R8). Every other operation renders the same input as today.
+- **Upgrade note.** The news fragment states that the API and the worker are upgraded together,
+  because an earlier worker refuses a plan in format 5.
 - **Benchmark machine.** User Stories 4 and 5 need it for their measurement only. Their code
   changes (record fields, empty-plan check) are unit-tested.
 

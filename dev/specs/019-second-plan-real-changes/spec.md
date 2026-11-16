@@ -308,8 +308,9 @@ tier M.
 
 #### Timings of the plan step
 
-- **FR-014**: For every `plan` execution, and for the plan step of a `sync` execution, the Sync
-  service MUST record the start and the end of each of these seven parts:
+- **FR-014**: For every `plan` execution, and for the plan step of a `sync` execution, the start
+  and the end of each of these seven parts MUST be available in the run response, either stored
+  or derived from stored times:
   - waiting for a worker: from the submission of the execution to the moment a worker takes it;
   - preparing: from that moment to the start of the first read;
   - reading the source;
@@ -322,7 +323,8 @@ tier M.
   name.
 - **FR-016**: When the plan step fails, is cancelled or is interrupted, the Sync service MUST
   keep the timings of the parts that ended. It MUST record the part that was running, with its
-  start and with the time at which it stopped.
+  start. The time at which it stopped is the time of the run's verdict (failure, cancellation or
+  interruption); it is absent until that verdict exists.
 - **FR-017**: The run response MUST hold, for each execution that has a plan step, the timings of
   FR-014. A part that did not run MUST be absent or empty; it MUST NOT hold a zero duration.
 - **FR-018**: `infrahub-sync runs show` MUST print the duration of each part that has one, and
@@ -394,7 +396,9 @@ tier M.
   data, measured as in FR-031.
 - **FR-035**: When FR-034 is not met and the measurement names one part of the plan step that
   accounts for the difference, that part MUST be changed until FR-034 is met. The operations
-  digests after the change MUST be equal to those recorded before it.
+  digests after the change MUST be equal to those recorded before it. When the change needs work
+  beyond this feature, the results page MUST state it and a GitHub issue MUST track it, as in
+  FR-036.
 - **FR-036**: When FR-034 is not met and no single part accounts for the difference, the results
   page MUST state this, and a GitHub issue MUST track the target with a link to the results.
 
@@ -454,8 +458,14 @@ tier M.
 - Whether the current code still fails on a second plan with LAG member interfaces (#167) is not
   known. The test of FR-022 decides it: if the test fails, the defect is fixed in this feature.
 - How Infrahub marks a node that it creates itself, and which nodes other than the `default` IP
-  namespace it creates, is not known at the time of writing. The plan phase finds it. If
-  Infrahub exposes no such mark, the plan phase chooses another rule that meets FR-002.
+  namespace it creates, is not known at the time of writing. A probe of a new Infrahub 1.11.9
+  branch, the first task of the implementation, finds it. If Infrahub exposes no mark on every
+  node it creates, the rule covers the IP namespace that Infrahub creates itself, recognized by
+  the read-only `default` attribute that its schema declares. If the probe finds built-in nodes
+  of other kinds that a configuration can map, this specification is amended before the
+  implementation continues.
+- The timings of the plan step serve the measurements of User Stories 4 and 5 first, and an
+  operator who waits for a plan second.
 - A team that upgrades keeps its saved plans in plan format 4 and can apply them (FR-012). No
   saved plan is converted.
 - An earlier release of the CLI or worker already refuses a plan format it does not know. FR-011

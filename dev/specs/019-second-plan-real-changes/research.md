@@ -43,7 +43,9 @@ task of the implementation:
    it covers IP namespaces only. If the probe finds built-in nodes of other mappable kinds,
    the implementation stops and the spec is amended.
 
-The probe result is committed as a fixture and recorded in the decision record.
+The probe result is committed as a fixture and recorded in the decision record. The mark is
+read only for the kinds that can carry it, and the destination read part is measured on tier S
+before and after the change.
 
 **Rationale**: The rule must not depend on a name or on a list kept in the package (FR-002).
 The mark must come from Infrahub, the only system that knows which nodes it created.
@@ -165,8 +167,11 @@ source does not.
 
 - An empty one-peer reference adds no entry to the create data (today `peer_ids[0]` would
   raise `IndexError`).
-- The destination id is put in the create data before `client.create`, which marks the node
-  as existing through the public SDK interface; then the field is set to `None`. With SDK
+- For an operation that holds an emptied one-peer reference, and only for it, the destination
+  id is put in the create data before `client.create`, which marks the node as existing
+  through the public SDK interface; then the field is set to `None`. Every other operation
+  keeps today's path, and a conformance test proves that the rendered input of an update
+  without an emptied relationship does not change. With SDK
   1.23.2 this renders `owner: null` in the Upsert input. Without the assignment, the SDK does
   not render the relationship for an existing node (`infrahub_sdk/node/node.py:474-481`).
 - The rendered-input guard (`infrahub_sync/adapters/infrahub.py:1924-1937`) is extended: the
