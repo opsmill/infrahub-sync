@@ -4,8 +4,14 @@ import { Link } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { cn } from "tailwind-variants";
 
-import { useApplyRun, useCancelRun, useIdempotencyKey, useVerifyRun } from "#/api/actions";
-import { configQuery, configVersionQuery, runQuery, runsQuery } from "#/api/queries";
+import {
+  useApplyRun,
+  useApproveRun,
+  useCancelRun,
+  useIdempotencyKey,
+  useVerifyRun,
+} from "#/api/actions";
+import { configQuery, configVersionQuery, meQuery, runQuery, runsQuery } from "#/api/queries";
 import type { Plan, Run } from "#/api/types";
 import { CheckIcon, PlayIcon, StateIcon } from "#/components/icons";
 import { CopyButton, Notice } from "#/components/page";
@@ -369,16 +375,19 @@ export function ApplyDialog({
               </>
             )}
           </dd>
+          {run.approval && (
+            <>
+              <dt className="text-subtle">Approved</dt>
+              <dd className="flex min-w-0 items-start gap-1.5">
+                <StateIcon state="insync" className="mt-0.5 size-3.5 shrink-0 text-success" />
+                <span className="text-pretty">
+                  Yes, <When iso={run.approval.approved_at} />.
+                </span>
+              </dd>
+            </>
+          )}
           <dt className="text-subtle">Plan checksum</dt>
-          <dd className="flex min-w-0 items-center gap-1.5">
-            <code
-              className="truncate font-mono text-foreground-muted text-xs"
-              title={plan.checksum}
-            >
-              {`${plan.checksum.slice(0, 12)}…${plan.checksum.slice(-8)}`}
-            </code>
-            <CopyButton value={plan.checksum} label="Copy plan checksum" />
-          </dd>
+          <ChecksumValue checksum={plan.checksum} />
         </dl>
         <div className="border-t pt-2.5">
           <ul className="flex flex-col gap-1 tabular-nums">
@@ -459,6 +468,172 @@ export function ApplyDialog({
           apply.reset();
         }}
       />
+    </DialogFrame>
+  );
+}
+
+/** The plan checksum, shortened, with a button that copies it in full. */
+function ChecksumValue({ checksum }: { checksum: string }) {
+  return (
+    <dd className="flex min-w-0 items-center gap-1.5">
+      <code className="truncate font-mono text-foreground-muted text-xs" title={checksum}>
+        {`${checksum.slice(0, 12)}…${checksum.slice(-8)}`}
+      </code>
+      <CopyButton value={checksum} label="Copy plan checksum" />
+    </dd>
+  );
+}
+
+export function ApproveDialog({
+  run,
+  plan,
+  onClose,
+  onDone,
+}: {
+  run: Run;
+  plan: Plan;
+  onClose: () => void;
+  onDone?: () => void;
+}) {
+  const approve = useApproveRun();
+  const [key, renew] = useIdempotencyKey();
+  const [reason, setReason] = useState("");
+  const required = useQuery(meQuery()).data?.approval_required;
+
+  const by = plan.summary.by_action;
+  const create = by.create ?? 0;
+  const update = by.update ?? 0;
+  const notRun = plan.summary.deletes_not_executed;
+  const checksumRefused = plan.checksum_ok === false;
+  const submitLabel = "Approve the plan";
+
+  return (
+    <DialogFrame
+      isOpen
+      onOpenChange={(open) => !open && onClose()}
+      title="Approve the plan"
+      ariaLabel="Approve the plan"
+      description={
+        <>
+          <p>
+            Records that you reviewed this plan, bound to the checksum below. Approving writes
+            nothing to the destination and does not start the apply.
+          </p>
+          <p className="mt-1 text-subtle text-xs">
+            {required === true
+              ? "This Sync service applies a plan only after it is approved, and only with the approved checksum."
+              : required === false
+                ? "This Sync service does not require approval before apply."
+                : undefined}{" "}
+            A plan can be approved once.
+          </p>
+        </>
+      }
+      notice={
+        checksumRefused ? (
+          <Notice tone="danger" role="alert">
+            <p>
+              The saved plan does not match its checksum. The Sync service refuses to approve it.
+              Plan again.
+            </p>
+          </Notice>
+        ) : undefined
+      }
+      error={
+        approve.error ? (
+          <MutationError
+            error={approve.error}
+            currentRunId={run.run_id}
+            retryHint={resendHint(submitLabel)}
+          />
+        ) : undefined
+      }
+      submitLabel={submitLabel}
+      pendingLabel="Recording the approval"
+      isPending={approve.isPending}
+      isDisabled={checksumRefused}
+      disabledReason={
+        checksumRefused ? "The Sync service refuses to approve this plan." : undefined
+      }
+      onSubmit={() =>
+        approve.mutate(
+          {
+            params: { path: { run_id: run.run_id }, header: { "Idempotency-Key": key } },
+            body: { expected_checksum: plan.checksum, reason: reason.trim() || null },
+          },
+          {
+            onSuccess: () => {
+              onClose();
+              onDone?.();
+            },
+          }
+        )
+      }
+    >
+      <div className="flex flex-col gap-2.5 rounded-xl bg-content-muted px-4 py-2.5 text-sm">
+        <ul className="flex flex-col gap-1 tabular-nums">
+          {create > 0 && <ChangeLine tone="create">{fmt(create)} to create</ChangeLine>}
+          {update > 0 && <ChangeLine tone="update">{fmt(update)} to update</ChangeLine>}
+          {notRun > 0 && (
+            <ChangeLine tone="delete">
+              <span className="text-subtle">
+                {fmt(notRun)} {notRun === 1 ? "delete" : "deletes"} listed, not applied. Apply does
+                not run deletes.
+              </span>
+            </ChangeLine>
+          )}
+        </ul>
+        <dl className="grid grid-cols-1 border-t pt-2.5 sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-x-4">
+          <dt className="text-subtle">Plan checksum</dt>
+          <ChecksumValue checksum={plan.checksum} />
+        </dl>
+      </div>
+      <ReasonField
+        id="approve-reason"
+        value={reason}
+        onChange={(v) => {
+          setReason(v);
+          renew();
+          approve.reset();
+        }}
+        autoFocus={finePointer()}
+      />
+    </DialogFrame>
+  );
+}
+
+/** The Approve dialog. Approval is bound to the plan checksum, which only the downloaded plan carries. */
+export function ApproveWithPlan({
+  run,
+  onClose,
+  onDone,
+}: {
+  run: Run;
+  onClose: () => void;
+  onDone?: () => void;
+}) {
+  const download = usePlanDownload(run, { start: true });
+  if (download.plan)
+    return <ApproveDialog run={run} plan={download.plan} onClose={onClose} onDone={onDone} />;
+  return (
+    <DialogFrame
+      isOpen
+      onOpenChange={(open) => !open && onClose()}
+      title="Approve the plan"
+      ariaLabel="Approve the plan"
+      description="Approval is bound to the plan checksum, which comes with the plan."
+      submitLabel="Approve the plan"
+      pendingLabel="Recording the approval"
+      isPending={false}
+      isDisabled
+      disabledReason={
+        download.status === "error" ? undefined : "You can approve once the plan has downloaded."
+      }
+      onSubmit={() => {}}
+    >
+      <div className="flex flex-col gap-2 rounded-lg border bg-content-muted p-3">
+        <DownloadProgress state={download} retry={download.start} />
+      </div>
     </DialogFrame>
   );
 }
