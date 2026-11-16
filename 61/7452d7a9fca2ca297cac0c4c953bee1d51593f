@@ -1,0 +1,25 @@
+docs/docs/development/knowledge/plan-artifact.md
+  s_4c94b159df7a98::t_cab9b5c2255aea 126,134-135,147-148
+tests/plan/test_second_plan.py
+  s_4c94b159df7a98::t_cab9b5c2255aea 177
+  s_4c94b159df7a98::t_de13be8bce7aeb 176
+  s_4c94b159df7a98::t_10eb9cdcad156f 178
+dev/adr/0044-saved-plan-format-5-records-an-emptied-one-peer-relationship.md
+  s_4c94b159df7a98::t_cab9b5c2255aea 39,42-43,61-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "617452d7a9fca2ca297cac0c4c953bee1d51593f",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
