@@ -55,13 +55,14 @@ not run the bootstrap.
 
 - A Kubernetes cluster where you can create a namespace, and a default storage class or a storage
   class you name in the values. The chart was checked on Kubernetes 1.36 and 1.37.
-- Helm 4. The commands on this page were checked with Helm 4.2.4.
+- Helm 4. OpsMill installed and upgraded the chart with Helm 4.2.4, from a checkout of the chart;
+  no other Helm version was tested.
 - `kubectl` with access to the namespace.
-- The `infrahub-sync` CLI on your workstation, to call the Sync API through a port forward. See
+- The `infrahub-sync` CLI on your workstation, to call the Sync API through a port forward. Read
   [Install the CLI](./installation.mdx#install-the-cli). You can also run the CLI in the cluster
-  from the Sync image; see [Call the Sync API](#call-the-sync-api).
+  from the Sync image, as [Call the Sync API](#call-the-sync-api) describes.
 - Until the 3.0.0 release, a registry login. The registry serves the Sync image only to invited
-  testers until then; see [Run the container image](./installation.mdx#run-the-container-image).
+  testers until then; read [Run the container image](./installation.mdx#run-the-container-image).
   Kubernetes pulls the image with an image pull Secret that holds that login:
 
   ```bash
@@ -94,7 +95,9 @@ kubectl -n infrahub-sync create secret generic infrahub-sync --from-env-file=.en
 ```
 
 Each container reads only the keys it needs, so other lines of the file, such as
-`INFRAHUB_SYNC_API_TOKEN` or `VERSION`, are stored in the Secret and not read. To write a new
+`INFRAHUB_SYNC_API_TOKEN` or `VERSION`, are stored in the Secret and not read. This includes source
+credentials such as `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`: the worker reads them only from the
+Secrets described in [Settings](#settings), so put them there. To write a new
 `.env` file with random values, follow [The `.env` file](./compose-deployment.mdx#configuration-prerequisites)
 of the Compose deployment page, and keep the file at mode 0600, out of version control.
 
@@ -126,7 +129,7 @@ pod's events.
 
 You can instead set each credential as a value (`credentials.bearerTokens`,
 `credentials.prefectAuthString` and the others in `values.yaml`), and the chart creates the
-Secret. The values then live in your values file and in the Helm release record in the cluster,
+Secret. The values are then stored in your values file and in the Helm release record in the cluster,
 so a Secret you create yourself keeps them in fewer places.
 
 ## Install
@@ -204,10 +207,11 @@ kubectl -n infrahub-sync run infrahub-sync-cli --rm -it --restart=Never \
 form the token is part of the pod definition and of your shell history, so prefer the port
 forward for a shared cluster.
 
-Every CLI call on the Compose deployment page works the same way once `INFRAHUB_SYNC_API_URL`
-and `INFRAHUB_SYNC_API_TOKEN` are set. Continue with
+The `infrahub-sync` commands in
 [Prepare the destination schema](./compose-deployment.mdx#prepare-the-destination-schema) and
-[Prepare a configuration](./compose-deployment.mdx#prepare-a-configuration).
+[Prepare a configuration](./compose-deployment.mdx#prepare-a-configuration) read the same two
+variables. Their `docker compose run` forms do not apply to this deployment. On a test cluster,
+OpsMill ran `whoami`, `configs register` and `configs list` through a port forward.
 
 ## Settings
 
@@ -233,10 +237,12 @@ Source credentials go to the worker only:
   `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`. The chart creates a Secret from the map. It refuses a
   name that does not match `^INFRAHUB_SYNC_CREDENTIAL_[A-Za-z0-9_]+$`.
 - `worker.credentialsExistingSecrets` lists Secrets you create. Each key of each Secret becomes a
-  variable of the worker, so name the keys `INFRAHUB_SYNC_CREDENTIAL_<NAME>`.
+  variable of the worker, so name the keys `INFRAHUB_SYNC_CREDENTIAL_<NAME>`. Do not list the
+  credentials Secret here: the worker would then receive every key of it, including the
+  PostgreSQL passwords.
 
-A package references these variables by name; see
-[Credentials in a package](./compose-deployment.mdx#credentials-in-a-package). The destination
+A package references these variables by name, as
+[Credentials in a package](./compose-deployment.mdx#credentials-in-a-package) describes. The destination
 token `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` is a key of the credentials Secret, and the
 Sync API and the worker both read it.
 
@@ -371,8 +377,9 @@ the image.
   the pods as in [Settings](#settings).
 
 The other requirements on the certificates, and what each service logs, are the same as for the
-Compose deployment; see
-[Trust a private certificate authority](./compose-deployment.mdx#trust-a-private-certificate-authority).
+Compose deployment, and
+[Trust a private certificate authority](./compose-deployment.mdx#trust-a-private-certificate-authority)
+describes them.
 
 ## Reach the Sync API from outside the cluster
 
@@ -455,15 +462,15 @@ the previous release, so the wait ends at once. Do not send requests to the Sync
 
 ### Stored records across Sync releases
 
-PostgreSQL and the object store keep the registered configurations, the runs, the plans and the
-run files across an upgrade. On a test cluster, a registered package was still listed after
-upgrades that kept the same Sync release.
+An upgrade keeps the volume claims of PostgreSQL and the object store. On a test cluster, a
+registered package was still listed after upgrades that kept the same Sync release.
 
-Whether a new Sync release can read the records of an earlier one is decided by that release, not
-by the chart. During the alpha, Infrahub Sync promises no in-place state migration. Each
-release's notes say whether it needs a fresh deployment. For a fresh deployment, uninstall the
-release, delete its volume claims as described in [Uninstall](#uninstall), and install again. As
-on the Compose deployment, nothing in the old volumes survives that; see
+The chart does not convert stored records. Whether a new Sync release reads the records of an
+earlier one depends on that release. During the alpha, Infrahub Sync promises no in-place state
+migration, and each release's notes say whether it needs a fresh deployment. For a fresh
+deployment, uninstall the release, delete its volume claims as described in
+[Uninstall](#uninstall), and install again. As on the Compose deployment, nothing in the old
+volumes survives that; read
 [Resetting this alpha to a fresh deployment](./compose-deployment.mdx#resetting-this-alpha-to-a-fresh-deployment).
 
 ## Uninstall

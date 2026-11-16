@@ -24,7 +24,7 @@ guarantees:
 - An upgrade that changes what the bootstrap reads runs it again, without a manual step.
 - An upgrade works when a tool applies the output of `helm template` instead of Helm itself.
 
-The bootstrap also decides whether the bundled object store runs by resolving the absolute DNS
+The bootstrap also checks whether the bundled object store runs by resolving the absolute DNS
 name `object-store.` (`infrahub_sync/service/bootstrap.py`). That name never resolves in
 Kubernetes.
 
