@@ -293,6 +293,8 @@ export function ApplyDialog({
             body: {
               expected_checksum: plan.checksum,
               confirm_writes: true,
+              // The dialog does not list left-out records yet, so it never confirms them.
+              confirm_left_out: false,
               branch: requested,
               reason: reason.trim() || null,
             },
