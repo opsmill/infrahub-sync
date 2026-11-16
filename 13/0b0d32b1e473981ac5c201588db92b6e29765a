@@ -1,0 +1,42 @@
+tests/plan/test_builtin_deletes.py
+  s_4c94b159df7a98::t_d6b154b8619e2a 168-170
+  s_4c94b159df7a98::t_1356f2a06761ed 39-40
+  s_4c94b159df7a98::t_29a59e0630a8b8 9-10
+  s_4c94b159df7a98::t_566fd745311404 124-128
+  s_4c94b159df7a98::t_5987911acfff73 91-123,129-130,132-137,145
+tests/adapters/test_infrahub_builtin_nodes.py
+  s_4c94b159df7a98::t_1dc3bb7488cf12 4-5
+  s_4c94b159df7a98::t_5c355f6c00ec8a 27-32
+  s_4c94b159df7a98::t_f3de5d301bc5dd 196-210
+dev/adr/README.md
+  s_4c94b159df7a98::t_c750a970ae3a8c 131-133
+infrahub_sync/adapters/infrahub.py
+  s_4c94b159df7a98::t_7c688da3cf5ac2 1050-1051
+  s_4c94b159df7a98::t_52c1ad60cdd3bb 99-112
+  s_4c94b159df7a98::t_6726349cce4633 1679-1682,1684-1685
+tests/plan/second_plan.py
+  s_4c94b159df7a98::t_009c4b797fa142 42
+  s_4c94b159df7a98::t_2c6d6c81d74660 152-153,157-158
+  s_4c94b159df7a98::t_9c29a3bddc74dc 25-26
+dev/adr/0043-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md
+  s_4c94b159df7a98::t_e2074200a67df2 4,84-85,92-121
+  s_4c94b159df7a98::t_c750a970ae3a8c 46-47
+dev/specs/019-second-plan-real-changes/research.md
+  s_4c94b159df7a98::t_c750a970ae3a8c 73-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "130b0d32b1e473981ac5c201588db92b6e29765a",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
