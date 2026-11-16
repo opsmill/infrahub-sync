@@ -1,0 +1,34 @@
+dev/specs/018-helm-chart-kubernetes/research.md
+  s_d989f93fc3b8fb::t_70f56a4391ced3 1-180
+dev/specs/018-helm-chart-kubernetes/data-model.md
+  s_d989f93fc3b8fb::t_26a61e8f8e6b5d 1-75
+dev/specs/018-helm-chart-kubernetes/contracts/values.md
+  s_d989f93fc3b8fb::t_9b0dee6db680c0 1-104
+dev/specs/018-helm-chart-kubernetes/spec.md
+  s_d989f93fc3b8fb::t_082c3b67757aec 220-226
+  s_d989f93fc3b8fb::t_9db460973b0aa8 239-244
+  s_d989f93fc3b8fb::t_99b8a0d4913eba 83-85
+  s_d989f93fc3b8fb::t_788f808cb76728 335-337
+dev/specs/018-helm-chart-kubernetes/contracts/rendered-release.md
+  s_d989f93fc3b8fb::t_28e35fb60997a2 1-74
+dev/specs/018-helm-chart-kubernetes/quickstart.md
+  s_d989f93fc3b8fb::t_1f39213700b78c 1-82
+dev/specs/018-helm-chart-kubernetes/plan.md
+  s_d989f93fc3b8fb::t_87d20904a092e3 1-179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "27c19e046a720901abc94d24e63fc79f8a8ba4b2",
+  "prompts": {},
+  "sessions": {
+    "s_d989f93fc3b8fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b53e9e82-fcbd-48f8-ae99-61f94c0060c7",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
