@@ -199,3 +199,182 @@ At 2026-11-16T11:36:22Z, `cd H && uv run pytest -q tests/unit/test_infrahub_sync
 
 The release `sync` (revision 1) and the minikube profile `sync-chart` are left running for the
 upgrade of T021. The port-forward is stopped.
+
+## T021: upgrade the release
+
+Result: every check of [quickstart.md](quickstart.md) step 4 passed. Neither upgrade needed a
+manual step, the configuration package registered before the upgrades is still listed after
+them, and the chart templates did not change.
+
+### Environment
+
+The cluster, Helm version and chart are the same as in T018: kube context `sync-chart`,
+namespace `sync`, Helm v4.2.4, `H/charts/infrahub-sync` at commit `e06ee6d` of `H` (the chart
+templates are unchanged by this task). All times are UTC.
+
+The second image tag is the same image under a new name, so the second upgrade changes only the
+image reference:
+
+```bash
+docker tag infrahub-sync:chart-test infrahub-sync:chart-test-2
+minikube -p sync-chart image load infrahub-sync:chart-test-2
+```
+
+### Configuration package registered before the upgrades
+
+The Sync API was reached through `kubectl port-forward svc/sync-infrahub-sync-api 8001:8000`,
+opened again after each upgrade because each upgrade replaces the Sync API pod. The token was
+read from a file into `INFRAHUB_SYNC_API_TOKEN` and never printed.
+
+At 2026-11-16T11:45:36Z:
+
+```bash
+uv run --directory S infrahub-sync configs register S/examples/aci_to_infrahub/package.yml \
+  --reason 'T021: package that must survive the chart upgrades'
+```
+
+```text
+config_id: 20261116T1145-7bf7fab1
+name: from-cisco-aci
+latest_version: 1
+registry_version: 1
+package_checksum: c05bce4a2250b96f5353b1fa6ab3f72084ba50bf2f6c2b4b0b660dacc84198b6
+created_at: 2026-11-16T11:45:37.101118+00:00
+```
+
+`infrahub-sync configs list` returned the same `config_id`, `name`, `latest_version: 1` and
+`created_at` at 11:45:38Z, after the first upgrade at 11:46:24Z, and after the second upgrade at
+11:47:28Z.
+
+### Upgrade 1: a setting the bootstrap does not read
+
+```bash
+helm --kube-context sync-chart upgrade sync H/charts/infrahub-sync -n sync --reuse-values \
+  --set settings.runAdmissionTtlSeconds=301 --wait --wait-for-jobs --timeout 10m
+```
+
+| Time | Event |
+| --- | --- |
+| 2026-11-16T11:45:42Z | `helm upgrade` starts |
+| 2026-11-16T11:45:43Z | new Sync API pod created; ready at 11:45:49Z |
+| 2026-11-16T11:46:13Z | new worker pod created; ready at 11:46:14Z |
+| 2026-11-16T11:46:14Z | `helm upgrade` returns `STATUS: deployed`, revision 2 |
+
+The bootstrap Job is the same object before and after: `sync-infrahub-sync-bootstrap-56dccc4a`,
+UID `789b1a06-4193-4558-b59f-e64f657f6f7d`, `completionTime` 2026-11-16T11:33:31Z. No Job was
+created. The Sync API and worker pods were replaced because both receive
+`INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS`.
+
+### Upgrade 2: the image tag, which the bootstrap reads
+
+```bash
+helm --kube-context sync-chart upgrade sync H/charts/infrahub-sync -n sync --reuse-values \
+  --set image.tag=chart-test-2 --wait --wait-for-jobs --timeout 10m
+```
+
+| Time | Event |
+| --- | --- |
+| 2026-11-16T11:46:40Z | `helm upgrade` starts; the Job `sync-infrahub-sync-bootstrap-895f48df` is created and starts; the new Sync API pod is created |
+| 2026-11-16T11:46:42Z | new Prefect server pod created (it runs the Sync image too) |
+| 2026-11-16T11:46:52Z | bootstrap container logs its last line |
+| 2026-11-16T11:46:55Z | new bootstrap Job complete (`completionTime`); new Sync API pod ready |
+| 2026-11-16T11:47:10Z | new worker pod created; ready at 11:47:12Z |
+| 2026-11-16T11:47:12Z | `helm upgrade` returns `STATUS: deployed`, revision 3 |
+
+After the upgrade, one bootstrap Job is listed: `sync-infrahub-sync-bootstrap-895f48df`, UID
+`36ba4bad-ee8e-4410-9243-d6b0c145b4a5`, complete. The Job of revision 1
+(`sync-infrahub-sync-bootstrap-56dccc4a`) is gone. Every pod that runs the Sync image runs
+`infrahub-sync:chart-test-2`, with no restart.
+
+Last lines of the new bootstrap container. On the converged deployment it found the bucket and
+the work pool present and applied the deployment again:
+
+```text
+11:46:52.622 | INFO    | __main__ - bucket present
+11:46:52.623 | INFO    | __main__ - object store refuses a second create-only write
+11:46:52.623 | INFO    | __main__ - work pool present
+11:46:52.623 | INFO    | __main__ - deployment applied
+11:46:52.623 | INFO    | __main__ - product schema converged; the configuration registry is the operator's to fill
+```
+
+The `wait-for-bootstrap` init container of the new Sync API pod logged
+`the deployment is in the work pool infrahub-sync after 8s`. The Prefect server pod was being
+replaced during those 8 seconds.
+
+The only warning events of the upgrade are a failed readiness probe on the old Prefect server pod
+while it stopped, and a failed startup probe on the new Sync API pod while its process started.
+
+### Whether `--wait --wait-for-jobs` waited for the new Job on upgrade
+
+Helm returned at 11:47:12Z, 17 seconds after the new Job completed at 11:46:55Z. So Helm returned
+after the Job completed. This run does not show that Helm waited for the Job itself: the last
+event before Helm returned is the worker pod becoming ready, and Helm waits for that pod with
+`--wait` alone. The isolated test in T018 is the evidence that `--wait-for-jobs` makes Helm wait
+for a Job.
+
+The Sync API pod became ready at the same second the new Job completed, so on this cluster the
+Sync API pod of an upgrade does not answer before the bootstrap of the new image has run. This is
+a timing of this run, not a guarantee: on upgrade, the `wait-for-bootstrap` gate passes as soon as
+the Prefect server answers, because the deployment already exists in the work pool.
+
+### Sync API answers after the upgrades
+
+At 2026-11-16T11:46:22Z (after upgrade 1) and 2026-11-16T11:47:27Z (after upgrade 2), through a
+new port-forward each time, the answers were the same as in T018:
+
+- `/version`: `{"server_version":"3.0.0a5","api_versions":["v3-unstable"],"stability":"unstable"}`
+- `/status`: `"service":"ready"`, `worker.state` `ready`. `live_workers` was 2 at both times,
+  because the heartbeat of the replaced worker had not expired yet.
+- `/me` without a token: HTTP 401. With the operator token:
+  `{"actor":"operator","administrator":true,"approval_required":false}`.
+- `infrahub-sync whoami`: `actor: operator`, `administrator: true`, `approval_required: false`.
+
+### A pod restart creates no Job
+
+```bash
+kubectl --context sync-chart -n sync rollout restart deployment/sync-infrahub-sync-api
+kubectl --context sync-chart -n sync rollout status deployment/sync-infrahub-sync-api --timeout=5m
+```
+
+The restart started at 2026-11-16T11:47:32Z and the rollout finished at 11:47:38Z. Afterwards
+one Job is listed, the same object as after upgrade 2 (`sync-infrahub-sync-bootstrap-895f48df`,
+UID `36ba4bad-ee8e-4410-9243-d6b0c145b4a5`, `completionTime` 11:46:55Z), with its one completed
+pod. `helm history` still ends at revision 3.
+
+### Defects found on the cluster
+
+None. No chart template changed.
+
+### Tests of User Story 2 in `H`
+
+- Render tests (T019), at 2026-11-16T11:48:29Z, `cd H && uv run pytest -v tests/unit/test_infrahub_sync_chart.py`:
+  `78 passed in 3.99s`, including the six RR-34 cases. `helm template` of Helm v4.2.4 has no
+  `--revision` flag, so the revision case checks that no template reads `.Release.Revision`
+  and that a render with `--is-upgrade` gives the same Job name.
+- End-to-end test (T020), from 2026-11-16T11:48:24Z to 11:50:16Z,
+  `cd H && INFRAHUB_SYNC_E2E_IMAGE=infrahub-sync:chart-test uv run pytest -v -rs -m sync tests/e2e`:
+  `tests/e2e/test_infrahub_sync.py::test_sync_installs_and_upgrades PASSED`,
+  `1 passed, 28 deselected, 2 warnings in 110.96s`. The harness created its own vcluster
+  (vcluster 0.36.1, docker driver, Kubernetes v1.36.0), not the minikube context `sync-chart`;
+  the local image was imported into the vcluster node with `docker save`. The two warnings are
+  from kr8s, which does not list Kubernetes v1.36.0 as supported.
+- Without a local image and without a registry login
+  (`INFRAHUB_SYNC_E2E_IMAGE=infrahub-sync:does-not-exist`), the test is skipped before any
+  vcluster is created, with the message that names the image and the two ways to provide it.
+
+### Finding for the release workflow (T022)
+
+`scripts/bump_chart.py app-version` reads the current `appVersion` with the same check as the
+new one, which accepts only `MAJOR.MINOR.PATCH`. The chart's `appVersion` is `3.0.0a5`, so the
+first run of `update-infrahub-sync.yml` for `3.0.0` fails. On a copy of `scripts/` and
+`charts/infrahub-sync`, `python3 scripts/bump_chart.py app-version infrahub-sync 3.0.0` exited
+with `Not a final MAJOR.MINOR.PATCH version: '3.0.0a5'`. The script is shared with the other
+charts and was not changed. Until it accepts a pre-release as the current value, a maintainer
+sets `appVersion: "3.0.0"` by hand, as research R-6 plans for the versions before 3.0.0; the
+workflow then finds the update done and skips it.
+
+### State left for the next task
+
+The release `sync` (revision 3, image `infrahub-sync:chart-test-2`) and the minikube profile
+`sync-chart` are left running. The configuration `20261116T1145-7bf7fab1` stays registered. The
+port-forward is stopped.

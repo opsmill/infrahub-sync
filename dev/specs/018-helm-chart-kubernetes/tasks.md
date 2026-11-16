@@ -277,12 +277,12 @@ or one of the bootstrap's settings changes, and it keeps the data.
 
 **Independent test**: [quickstart.md](quickstart.md) step 4.
 
-- [ ] T019 [US2] Add the render tests of RR-34 to `H/tests/unit/test_infrahub_sync_chart.py`.
+- [X] T019 [US2] Add the render tests of RR-34 to `H/tests/unit/test_infrahub_sync_chart.py`.
   - The Job name changes with `image.tag`, with `s3.prefix` and with a credential value.
   - It does not change with `api.resources` or with `--set` of a revision. Use
     `helm template --revision` if it is available; otherwise compare two renders, because the
     revision does not enter the hash.
-- [ ] T020 [US2] Write the end-to-end test `H/tests/e2e/test_infrahub_sync.py` with marker
+- [X] T020 [US2] Write the end-to-end test `H/tests/e2e/test_infrahub_sync.py` with marker
   `sync`. Follow the structure and fixtures of `H/tests/e2e/test_infrahub_mcp.py`.
   1. Create the credentials Secret, with a generated token and passwords.
   2. When `INFRAHUB_SYNC_REGISTRY_USERNAME` and `INFRAHUB_SYNC_REGISTRY_PASSWORD` are set, create
@@ -294,14 +294,14 @@ or one of the bootstrap's settings changes, and it keeps the data.
   7. Upgrade with a changed `s3.prefix`, wait for the new Job, and assert again.
 
   After the image resolves, a pod that is not ready fails the test (research R-7).
-- [ ] T021 [US2] Verify the upgrade on the local cluster with [quickstart.md](quickstart.md)
+- [X] T021 [US2] Verify the upgrade on the local cluster with [quickstart.md](quickstart.md)
   step 4: both upgrades, and the rollout restart that creates no Job.
   - Before the upgrades, register a configuration package with `infrahub-sync configs register`.
     Use a small package from `S/examples/` and read `S/docs/docs/compose-deployment.mdx`
     "Registering a package" for the command.
   - Check that the package is still listed afterwards.
   - Record the result in `verification.md`.
-- [ ] T022 [P] [US2] Add `H/.github/workflows/update-infrahub-sync.yml`, a copy of
+- [X] T022 [P] [US2] Add `H/.github/workflows/update-infrahub-sync.yml`, a copy of
   `H/.github/workflows/update-infrahub-mcp.yml`:
   - Change the event to `infrahub-sync-released`, and the source repository and image to
     `opsmill/infrahub-sync`.
