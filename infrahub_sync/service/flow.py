@@ -115,6 +115,7 @@ from .failure_cause import (
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME, run_name
+from .plan_step import StorePlanStepObserver
 from .read_progress import StoreSideReadObserver, record_waiting
 from .resume_view import uncertain_positions
 from .run_artifact import publish_run_artifact
@@ -352,6 +353,7 @@ def _plan(
     composed_sync: bool,
     base_directory: Path | None = None,
     observer: StoreSideReadObserver | None = None,
+    plan_step: StorePlanStepObserver | None = None,
 ) -> SavedPlan:
     saved = execute_run(
         instance,
@@ -364,6 +366,7 @@ def _plan(
         _run_file_mode="sync" if composed_sync else None,
         _return_saved_plan=True,
         _read_observer=observer,
+        _plan_step_observer=plan_step,
     )
     assert isinstance(saved, SavedPlan)
     return saved
@@ -762,6 +765,12 @@ def resume_start_after(projection: ProductProjection, run_id: str) -> int | None
     return None if marker is None else marker.position
 
 
+def _end_saving(plan_step: StorePlanStepObserver | None) -> None:
+    """End the `saving` part of the plan step once the plan is published (spec 019, research R10)."""
+    if plan_step is not None:
+        plan_step.close_saving()
+
+
 def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-statements
     run_id: str,
     stage: ServiceStage,
@@ -779,13 +788,17 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     scratch: StageScratch,
     flow_run_id: str,
     confirm_left_out: bool = False,
+    plan_step: StorePlanStepObserver | None = None,
 ) -> tuple[dict[str, Any], ExecutionWriteback]:
     """Resolve and execute one service stage within the sanitized worker boundary.
 
     A `plan` or `sync` stage records both sides as `waiting` as soon as it starts, before the
     live schema read and before a `sync` waits for its write guard, so a stage that fails
     before either read returns both sides as `not_started`. It then gives the engine an
-    observer that stores each side's read on the execution `flow_run_id`. An `apply` or `sync`
+    observer that stores each side's read on the execution `flow_run_id`. It also writes an
+    empty plan step document at the start, gives the engine `plan_step` (one is made when the
+    caller passes none), and ends the `saving` part once the plan is published (spec 019,
+    research R10 and R12). An `apply` or `sync`
     stage gives the engine an observer that saves its progress marker on the same execution
     (spec 016, research R3).
 
@@ -794,6 +807,8 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     """
     if stage in ("plan", "sync"):
         record_waiting(projection, run_id, flow_run_id)
+        plan_step = plan_step or StorePlanStepObserver(projection, run_id, flow_run_id)
+        plan_step.begin()
     parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
     if stage in _WRITE_STAGES:
         if not confirm_writes:
@@ -827,6 +842,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             composed_sync=False,
             base_directory=scratch.root,
             observer=StoreSideReadObserver(projection, run_id, flow_run_id),
+            plan_step=plan_step,
         )
         # The internal handoff first: a plan that is publicly reviewable but has no
         # durable checkpoint would invite an apply on another worker that cannot read it.
@@ -838,6 +854,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             secrets=secrets,
         )
         _publish_plan(projection, run_id, saved, secrets)
+        _end_saving(plan_step)
         summary = saved.summary()
         outcome = "no-change" if summary.total == 0 else "planned"
         result = {"run_id": run_id, "stage": stage, "outcome": outcome, "summary": summary.model_dump(mode="json")}
@@ -986,6 +1003,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 composed_sync=True,
                 base_directory=scratch.root,
                 observer=StoreSideReadObserver(projection, run_id, flow_run_id),
+                plan_step=plan_step,
             )
             # Durable before the first destination operation: a sync interrupted
             # mid-write leaves the plan an operator reconciles what happened against.
@@ -997,6 +1015,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 secrets=secrets,
             )
             _publish_plan(projection, run_id, saved, secrets)
+            _end_saving(plan_step)
             # After the plan is durable and reviewable, before the verification and the
             # write: the team reviews the records left out and applies this run itself.
             stop = _left_out_stop(run_id, saved, sync_name)
@@ -1491,6 +1510,9 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     # Owned here rather than by the stage, so the failure boundary can read it however the
     # stage ended.
     tracker = WriteDispatchTracker()
+    # Owned here, as `tracker` is, so the failure boundary can store the part that was running
+    # before it commits the verdict, after which the store refuses the write (research R13).
+    plan_step = StorePlanStepObserver(projection, run_id, flow_run_id) if stage in ("plan", "sync") else None
     try:
         # One new private root per stage, released before this worker reports anything.
         # Everything the stage needs from its predecessor arrives through product
@@ -1515,6 +1537,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 scratch=scratch,
                 flow_run_id=flow_run_id,
                 confirm_left_out=confirm_left_out,
+                plan_step=plan_step,
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         failure = exc
@@ -1543,6 +1566,10 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
         # product commit that did not store its success — so all of them commit the same
         # ambiguous verdict, the same evidence, the record the scope kept, and
         # `reconciliation_required` together.
+        if plan_step is not None:
+            # Before the verdict: the part that was running stays the running part, and the
+            # run response returns it stopped at the verdict time (spec 019 FR-016).
+            plan_step.stopped()
         recorded = None
         if record_terminal:
             recorded = _record_failure(

@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS prefect_executions (
     cancellation_recovery_deadline_at TEXT, cancellation_receipt_id TEXT, cancellation_acknowledged_at TEXT,
     terminal_at TEXT, terminal_state TEXT, terminal_outcome TEXT, position INTEGER NOT NULL,
     mutation_receipt_id TEXT UNIQUE, source_read TEXT, destination_read TEXT, apply_progress TEXT,
+    plan_step TEXT,
     PRIMARY KEY (run_id, flow_run_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id),
     FOREIGN KEY (mutation_receipt_id) REFERENCES mutation_receipts(receipt_id)
 );
@@ -257,6 +258,15 @@ _PREFECT_EXECUTION_READ_COLUMNS: tuple[tuple[str, str], ...] = tuple(
 )
 # The last progress marker of a write execution, one JSON document (spec 016, research R2).
 _PREFECT_EXECUTION_PROGRESS_COLUMNS: tuple[tuple[str, str], ...] = (("apply_progress", "TEXT"),)
+# The parts of the plan step of a `plan` or `sync` execution, one JSON document (spec 019,
+# research R11). The two reads keep their own columns and waiting is derived from the
+# execution's times, so neither is a stored part (FR-015). `preparing` is derived today and
+# accepted so that a later release can store it. The store checks the keys and values before it
+# writes, so the document cannot carry an exception message or a data value (FR-021).
+_PREFECT_EXECUTION_PLAN_STEP_COLUMNS: tuple[tuple[str, str], ...] = (("plan_step", "TEXT"),)
+_PLAN_STEP_FIELDS = frozenset({"running", "parts"})
+_PLAN_STEP_PARTS = frozenset({"preparing", "comparing", "checking", "saving"})
+_PLAN_STEP_PART_FIELDS = frozenset({"started_at", "ended_at"})
 _CONFIGURATION_BINDING_CONSTRAINT = "product_runs_configuration_binding_consistent"
 _CONFIGURATION_BINDING_CHECK_EXPRESSION = (
     "(config_id IS NULL AND registry_version IS NULL AND package_checksum IS NULL) "
@@ -531,13 +541,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _SELECT_PREFECT_EXECUTIONS = """SELECT run_id, flow_run_id, deployment_id, purpose, attempt, last_observed_state,
 last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at, cancellation_requested_at,
 cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at, terminal_at, terminal_state,
-terminal_outcome, position, source_read, destination_read, apply_progress FROM prefect_executions WHERE run_id = ?
-ORDER BY position"""
+terminal_outcome, position, source_read, destination_read, apply_progress, plan_step FROM prefect_executions
+WHERE run_id = ? ORDER BY position"""
 _INSERT_PREFECT_EXECUTION = """INSERT INTO prefect_executions (run_id, flow_run_id, deployment_id, purpose, attempt,
 last_observed_state, last_observed_at, submitted_at, claimed_at, claiming_worker_id, stalled_at,
 cancellation_requested_at, cancellation_recovery_deadline_at, cancellation_receipt_id, cancellation_acknowledged_at,
 terminal_at, terminal_state, terminal_outcome, position, mutation_receipt_id, source_read, destination_read,
-apply_progress) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+apply_progress, plan_step) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _INSERT_MUTATION_RECEIPT = """INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation,
 target_run_id, request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, state, response_status, response_body,
 flow_run_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
@@ -698,6 +708,8 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def record_side_reads(self, run_id: str, flow_run_id: str, documents: Mapping[Side, Mapping[str, Any]]) -> bool: ...
 
     def record_apply_progress(self, run_id: str, flow_run_id: str, document: ApplyProgress) -> ApplyProgressSave: ...
+
+    def record_plan_step(self, run_id: str, flow_run_id: str, document: Mapping[str, Any]) -> bool: ...
 
     def run_is_resumable(self, run_id: str) -> bool: ...
 
@@ -1005,12 +1017,13 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             cursor.execute(statement)
 
     def _migrate_prefect_execution_columns(self, cursor: _Cursor) -> None:
-        """Add liveness, read-state and apply-progress columns without fabricating values for legacy links."""
+        """Add liveness, read-state, apply-progress and plan-step columns without fabricating values for legacy links."""
         existing = self._read_table_columns(cursor, "prefect_executions")
         for column, sql_type in (
             *_PREFECT_EXECUTION_LIVENESS_COLUMNS,
             *_PREFECT_EXECUTION_READ_COLUMNS,
             *_PREFECT_EXECUTION_PROGRESS_COLUMNS,
+            *_PREFECT_EXECUTION_PLAN_STEP_COLUMNS,
         ):
             if column not in existing:
                 cursor.execute(f"ALTER TABLE prefect_executions ADD COLUMN {column} {sql_type}")
@@ -1538,6 +1551,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 None if link.source_read is None else _json(link.source_read),
                 None if link.destination_read is None else _json(link.destination_read),
                 None if link.apply_progress is None else _json(link.apply_progress.model_dump(mode="json")),
+                None if link.plan_step is None else _json(link.plan_step),
             ),
         )
 
@@ -1627,6 +1641,19 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             f"UPDATE prefect_executions SET {assignments} "  # noqa: S608 - columns from a fixed two-name map
             "WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL",
             (*(_json(dict(document)) for document in documents.values()), run_id, flow_run_id),
+        )
+
+    def record_plan_step(self, run_id: str, flow_run_id: str, document: Mapping[str, Any]) -> bool:
+        """Replace the plan step document of an execution while the execution is not terminal.
+
+        Returns whether a row changed. A write that arrives after the execution's verdict, or
+        for an execution the run does not have, changes nothing. The document is checked
+        before any SQL runs (`_check_plan_step_document`).
+        """
+        _check_plan_step_document(document)
+        return self._execution_update(
+            "UPDATE prefect_executions SET plan_step = ? WHERE run_id = ? AND flow_run_id = ? AND terminal_at IS NULL",
+            (_json(dict(document)), run_id, flow_run_id),
         )
 
     def record_apply_progress(self, run_id: str, flow_run_id: str, document: ApplyProgress) -> ApplyProgressSave:
@@ -3984,6 +4011,14 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """
         return self._records.record_apply_progress(run_id, flow_run_id, document)
 
+    def record_plan_step(self, run_id: str, flow_run_id: str, document: Mapping[str, Any]) -> bool:
+        """Store the plan step document on a non-terminal execution; return whether it changed.
+
+        The document names the parts of the plan step with their start and end times, and the
+        part that runs; never an error message or a data value (spec 019 data-model.md).
+        """
+        return self._records.record_plan_step(run_id, flow_run_id, document)
+
     def run_is_resumable(self, run_id: str) -> bool:
         """Whether the run's write was interrupted, the run is not cancelled, and no execution is unfinished."""
         return self._records.run_is_resumable(run_id)
@@ -4700,6 +4735,64 @@ def _side_read_value_allowed(key: str, value: Any) -> bool:
     return _is_iso_timestamp(value)
 
 
+def _check_plan_step_document(document: Mapping[str, Any]) -> None:
+    """Refuse a plan step document that holds a key or a value the plan step does not allow.
+
+    The document holds `parts`, a mapping of part names to `started_at` and an optional
+    `ended_at`, each an ISO 8601 time with a time zone, and an optional `running` that names a
+    part that started and has not ended. The error names the key, never the value, because a
+    refused value may be an exception message or a secret (FR-021).
+    """
+    if not isinstance(document, Mapping):
+        msg = "the plan step document is not a mapping"
+        raise ValueError(msg)  # noqa: TRY004 - one error type for every refused document
+    if any(not isinstance(key, str) or key not in _PLAN_STEP_FIELDS for key in document):
+        msg = "the plan step document holds a key that is not allowed"
+        raise ValueError(msg)
+    parts = document.get("parts")
+    if not isinstance(parts, Mapping):
+        msg = "the plan step document has no 'parts' mapping"
+        raise ValueError(msg)  # noqa: TRY004 - one error type for every refused document
+    for name, part in parts.items():
+        if not isinstance(name, str) or name not in _PLAN_STEP_PARTS:
+            msg = "the plan step document names a part that is not allowed"
+            raise ValueError(msg)
+        _check_plan_step_part(name, part)
+    if "running" in document:
+        running = document["running"]
+        if not isinstance(running, str) or running not in _PLAN_STEP_PARTS:
+            msg = "the plan step document has a value for 'running' that is not allowed"
+            raise ValueError(msg)
+        if running not in parts or "ended_at" in parts[running]:
+            msg = f"the plan step document names {running!r} as running, but that part did not start or has ended"
+            raise ValueError(msg)
+
+
+def _check_plan_step_part(name: str, part: Any) -> None:
+    """Refuse one part entry of a plan step document; the error names the part, never a value."""
+    if not isinstance(part, Mapping):
+        msg = f"the plan step document has a {name!r} part that is not a mapping"
+        raise ValueError(msg)  # noqa: TRY004 - one error type for every refused document
+    if any(not isinstance(key, str) or key not in _PLAN_STEP_PART_FIELDS for key in part):
+        msg = f"the plan step document has a {name!r} part that holds a key that is not allowed"
+        raise ValueError(msg)
+    if "started_at" not in part:
+        msg = f"the plan step document has a {name!r} part with no 'started_at'"
+        raise ValueError(msg)
+    for key, value in part.items():
+        if not isinstance(value, str) or not _is_aware_iso_timestamp(value):
+            msg = f"the plan step document has a value for {name!r} {key!r} that is not allowed"
+            raise ValueError(msg)
+
+
+def _is_aware_iso_timestamp(value: str) -> bool:
+    """Whether `value` is an ISO 8601 timestamp with a time zone."""
+    try:
+        return datetime.fromisoformat(value).utcoffset() is not None
+    except ValueError:
+        return False
+
+
 def _is_iso_timestamp(value: str) -> bool:
     """Whether `value` is an ISO 8601 timestamp, the form of `started_at` and `ended_at`."""
     try:
@@ -4776,13 +4869,28 @@ def _stored_side_read(value: str | None, *, run_id: str, column: str) -> dict[st
     A side's read state is a progress report, so a damaged value must not stop a run from being
     read. The warning names the run, the column and the error class, never the stored text.
     """
+    return _stored_json_object(value, run_id=run_id, column=column, label="side-read")
+
+
+def _stored_plan_step(value: str | None, *, run_id: str) -> dict[str, Any] | None:
+    """Parse the stored plan step column; a value that is not a JSON object reads as ``None``.
+
+    The timings are a progress report, so a damaged value must not stop a run from being read
+    (FR-019). The response derivation checks each key again before it returns a part.
+    """
+    return _stored_json_object(value, run_id=run_id, column="plan_step", label="plan-step")
+
+
+def _stored_json_object(value: str | None, *, run_id: str, column: str, label: str) -> dict[str, Any] | None:
+    """Parse one stored JSON-object column; the warning names the run, the column and the error class only."""
     if value is None:
         return None
     try:
         document = json.loads(value)
     except (json.JSONDecodeError, TypeError) as exc:
         logger.warning(
-            "Ignoring an unreadable side-read column: run_id=%s column=%s error=%s",
+            "Ignoring an unreadable %s column: run_id=%s column=%s error=%s",
+            label,
             run_id,
             column,
             type(exc).__name__,
@@ -4790,7 +4898,8 @@ def _stored_side_read(value: str | None, *, run_id: str, column: str) -> dict[st
         return None
     if not isinstance(document, dict):
         logger.warning(
-            "Ignoring a side-read column that is not a JSON object: run_id=%s column=%s type=%s",
+            "Ignoring a %s column that is not a JSON object: run_id=%s column=%s type=%s",
+            label,
             run_id,
             column,
             type(document).__name__,
@@ -4849,6 +4958,7 @@ def _run_from_rows(
                     "source_read": _stored_side_read(item[19], run_id=row[0], column="source_read"),
                     "destination_read": _stored_side_read(item[20], run_id=row[0], column="destination_read"),
                     "apply_progress": _stored_apply_progress(item[21], run_id=row[0]),
+                    "plan_step": _stored_plan_step(item[22], run_id=row[0]),
                 }
                 for item in links
             ],

@@ -145,6 +145,10 @@ class PrefectExecutionLink(BaseModel):
     # The last progress marker a write execution saved (spec 016, research R2); `None` for a
     # read stage, an execution recorded before that feature, or a write that committed nothing.
     apply_progress: ApplyProgress | None = None
+    # The plan step document of a `plan` or `sync` execution (spec 019 data-model.md): the
+    # parts after the reads, with their times, and the part that runs. `None` for an execution
+    # recorded before that feature, or for a stage that has no plan step.
+    plan_step: dict[str, Any] | None = None
 
     @field_validator(
         "last_observed_at",

@@ -1524,6 +1524,23 @@ def test_the_read_observer_seam_reaches_the_engine_without_changing_the_factory_
     assert len(recorded) == 7  # spec 007 removed `continue_on_error`
 
 
+def test_the_plan_step_observer_seam_reaches_the_engine_without_changing_the_factory_call(
+    config_dir: str,
+    cache_root: Path,
+) -> None:
+    """Spec 019 research R12: `_plan_step_observer` is set on the built engine, not passed to the factory."""
+    instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
+    factory = _SpyFactory(cache_root=cache_root)
+    observer = object()
+
+    execute_run(instance, operation="plan", potenda_factory=factory, _plan_step_observer=observer)
+
+    assert factory.engine is not None
+    assert getattr(factory.engine, "plan_step_observer", None) is observer
+    assert getattr(factory.engine, "read_observer", None) is None
+    assert set(factory.calls[0]) == set(inspect.signature(get_potenda_from_instance).parameters)
+
+
 def test_successful_plan_writes_the_diff_lifecycle(
     config_dir: str,
     cache_root: Path,

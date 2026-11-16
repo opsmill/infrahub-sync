@@ -137,6 +137,7 @@ if TYPE_CHECKING:
     from infrahub_sync.plan.ownership import WriteOwnership
     from infrahub_sync.plan.reader import LoadedPlan, RawPlanArtifact
     from infrahub_sync.potenda.apply_progress import ApplyProgressObserver
+    from infrahub_sync.potenda.plan_step import PlanStepObserver, PlanStepPartName
     from infrahub_sync.potenda.read_progress import Side, SideReadObserver
 
 
@@ -436,6 +437,9 @@ class Potenda:
         # Receives the start and the end of each side's read; set by the caller after
         # construction, as `force_full_extract` is. `None` reports nothing.
         self.read_observer: SideReadObserver | None = None
+        # Receives the start and the end of comparing, checking and saving (spec 019,
+        # research R12); set by the caller after construction. `None` reports nothing.
+        self.plan_step_observer: PlanStepObserver | None = None
 
         self.config = config
 
@@ -840,7 +844,26 @@ class Potenda:
             msg = f"An error occurred while loading the sync: {exc!s}"
             raise ValueError(msg) from exc
 
+    def _notify_plan_step(self, part: PlanStepPartName, *, ended: bool) -> None:
+        """Report the start, or the end when `ended`, of one part of the plan step.
+
+        An observer that raises never changes the plan: its failure is logged by error class
+        only, and the plan step continues (spec 019, research R12).
+        """
+        observer = self.plan_step_observer
+        if observer is None:
+            return
+        try:
+            if ended:
+                observer.part_ended(part)
+            else:
+                observer.part_started(part)
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught  # an observer never fails a plan
+            logger.warning("Plan: the plan step observer failed for %s (%s)", part, type(exc).__name__)
+
     def diff(self) -> Diff:
+        """Compare both loaded sides; this starts the `comparing` part of the plan step."""
+        self._notify_plan_step("comparing", ended=False)
         logger.info("Diff: Comparing data from %s to %s", self.source, self.destination)
         self.progress_bar = None
         return self.destination.diff_from(self.source, flags=self.flags, callback=self._print_callback)
@@ -983,6 +1006,10 @@ class Potenda:
         # Spec 007 research R3: find every problem, then leave out the records that have one and
         # the records that depend on them, before anything is written. The report and the
         # selected operations are the plan; no store and no derived operation is changed.
+        # Comparing ends here and checking the plan starts (spec 019, research R10). A part
+        # that raises is not reported as ended, so it stays the running part (FR-016).
+        self._notify_plan_step("comparing", ended=True)
+        self._notify_plan_step("checking", ended=False)
         result = run_problem_pass(
             source=self.source,
             destination=self.destination,
@@ -991,6 +1018,7 @@ class Potenda:
             identity_groups=identity_groups,
             dropdown_choices=planned_dropdown_choices(self.config),
         )
+        self._notify_plan_step("checking", ended=True)
         operations = result.operations
         action_counts: dict[str, int] = dict.fromkeys(ACTIONS, 0)
         for operation in operations:
@@ -1000,6 +1028,7 @@ class Potenda:
             logger.debug("Plan artifact: skipped after the problem pass, this run has no run_dir/run_id")
             return None
 
+        self._notify_plan_step("saving", ended=False)
         manifest = write_artifact(
             run_dir=self.run_dir,
             run_id=self.run_id,
@@ -1018,6 +1047,9 @@ class Potenda:
             report=result.report,
             dropdown_values_checked=result.dropdown_values_checked,
         )
+        # The engine's part of saving ends here; the Sync service worker's observer keeps the
+        # part open until the plan is published (research R10).
+        self._notify_plan_step("saving", ended=True)
         logger.info(
             "Plan artifact: wrote %d operation(s) to %s (deletes computed: %s)",
             manifest.operations_count,
