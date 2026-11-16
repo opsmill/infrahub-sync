@@ -220,6 +220,13 @@ infrahub-sync runs plan RUN_ID --detail --kind <destination-kind>
 `--kind` limits the list to one destination kind. A kind that matches no operation is an
 input error.
 
+The `operations` line counts only creates, updates and deletes. A plan with `operations: 0`
+writes nothing, but its `left_out`, `problems` and `kept_without_relationship` counts can still
+be above zero. Records left out, problems and kept records are part of the plan report, not
+operations. When `left_out` is above zero, the plan does not import those records, and the next
+plan on the same source data lists them again. See
+[Review the problems and the left-out records](#review-the-problems-and-the-left-out-records).
+
 The review prints control characters and invisible characters in source values as visible
 escapes, such as `\x1b` or `\u202e`, so a value cannot hide or rewrite a line. Only the
 printed review changes: the saved plan and JSON output keep the real values. A value that

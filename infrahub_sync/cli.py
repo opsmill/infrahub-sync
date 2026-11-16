@@ -2032,7 +2032,11 @@ def runs_plan(
         None, "--type", help="List only the problems of this problem type; requires --problems."
     ),
 ) -> None:
-    """Review a saved plan summary, checksum, and operations, or list its problems, left-out or kept records."""
+    """Review a saved plan summary, checksum, and operations, or list its problems, left-out or kept records.
+
+    The operations count holds only creates, updates and deletes.
+    A plan with 0 operations can still leave out records: problems, left-out and kept records are not operations.
+    """
     with _client_errors():
         lists = [name for name, chosen in (("problems", problems), ("left_out", left_out), ("kept", kept)) if chosen]
         if len(lists) > 1 or (lists and detail):
