@@ -11,8 +11,9 @@ Add a chart `infrahub-sync` to `opsmill/infrahub-helm`. It deploys what the root
 image), PostgreSQL and the Silo object store. PostgreSQL and the object store can each be turned
 off for a service the team already runs.
 
-The chart orders the start with a PostgreSQL init script, a bootstrap Job named after the release
-revision, and init containers that wait ([research.md](research.md), R-2). Credentials live in one
+The chart orders the start with a PostgreSQL init script, a bootstrap Job named after a hash of
+its inputs, init containers that wait for PostgreSQL and the Prefect server, and the bootstrap
+record that the Sync API and the worker check when they start ([research.md](research.md), R-2). Credentials live in one
 Secret whose keys are the names of the Compose `.env` file (R-4).
 
 This repository gets the operator page for the Kubernetes deployment, a decision record and a
@@ -157,9 +158,12 @@ Points an implementer must not miss:
    container. The bootstrap writes the Sync version and the work pool name to the product
    database as its last step. The Sync API and the worker read it first at start, before the
    product schema initialization, and exit non-zero on a missing or different record, so
-   Kubernetes restarts them until the Job has written it. The `waitForPostgresql` and
-   `waitForPrefect` init containers stay, so the restart backoff only starts once those
-   services answer.
+   Kubernetes restarts them until the Job has written it. The Sync API and the worker have no
+   init container. `waitForPostgresql` is an init container of the Prefect server, and
+   `waitForPrefect` an init container of the bootstrap Job. Nothing makes the Sync API or the
+   worker wait for PostgreSQL, so on a fresh install their restarts also include failures to
+   reach the product database while PostgreSQL starts ([verification.md](verification.md),
+   T046 and T047).
 4. **PostgreSQL**: `PGDATA` is a subdirectory of the mount, because a new volume can hold
    `lost+found`. The init script is the one in `docker-compose.yml:390-424` with `$$` written
    `$`. It reads its values from the container environment and binds each one as a `psql`
