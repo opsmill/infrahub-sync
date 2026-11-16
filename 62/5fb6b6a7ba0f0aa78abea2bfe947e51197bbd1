@@ -1,0 +1,41 @@
+tests/service/test_web_site.py
+  s_c4f9bd3d1fabe8::t_971a92b3326f43 287-320,328-335
+  s_c4f9bd3d1fabe8::t_5978d69e21dbaf 321-327
+  s_c4f9bd3d1fabe8::t_508ec9e4ac42cd 12
+  s_c4f9bd3d1fabe8::t_c2a50e9b3f7f4f 1
+  s_c4f9bd3d1fabe8::t_752b6098e9c6a6 232-240
+  s_c4f9bd3d1fabe8::t_a6b0ad11787dbf 125-142
+infrahub_sync/service/web.py
+  s_c4f9bd3d1fabe8::t_aaa613beab5159 155-167
+  s_c4f9bd3d1fabe8::t_fc14470eabfceb 4-5
+  s_c4f9bd3d1fabe8::t_47de37b61c470c 28,31,38,43
+  s_c4f9bd3d1fabe8::t_03271b67e2824c 50-51
+  s_c4f9bd3d1fabe8::t_1c806d1383542a 117-141
+  s_c4f9bd3d1fabe8::t_63faf5921076f8 198
+  s_c4f9bd3d1fabe8::t_1b5c79fdc5fd49 228
+tests/service/test_environment_names.py
+  s_c4f9bd3d1fabe8::t_f14b343eaf23b9 74
+infrahub_sync/service/serve.py
+  s_c4f9bd3d1fabe8::t_7009f614968b56 106-113,116,122-129
+tests/service/test_serve_site.py
+  s_c4f9bd3d1fabe8::t_4187e1201313a6 62-83
+tests/service/test_http_errors.py
+  s_c4f9bd3d1fabe8::t_1d6cad45a8516e 13
+  s_c4f9bd3d1fabe8::t_697d1697dd551f 54-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "625fb6b6a7ba0f0aa78abea2bfe947e51197bbd1",
+  "prompts": {},
+  "sessions": {
+    "s_c4f9bd3d1fabe8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f7bf5003-b7b7-444d-a7c2-d1ecbcb55ad7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
