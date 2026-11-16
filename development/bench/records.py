@@ -242,7 +242,6 @@ class ResultRecord:
     machine: dict[str, Any] = field(default_factory=dict)
     actions: Actions = field(default_factory=dict)
     skipped_deletes: dict[str, int] = field(default_factory=dict)
-    builtin_deletes: dict[str, int] = field(default_factory=dict)
     action_evidence: str | None = None
     error: str | None = None
     run_id: str | None = None

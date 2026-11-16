@@ -149,9 +149,7 @@ Each measured repetition appends one JSON object to the git-ignored
   virtual, and LAG interfaces split and both VRF projections counted.
 - `machine` records CPU model/count, physical memory, OS, and architecture.
   `actions`, `action_evidence`, `run_id`, and `error` explain validation evidence.
-  `skipped_deletes` records other plan deletions that v3 apply did not dispatch.
-  `builtin_deletes` separately records deletions of Infrahub's built-in default
-  `IpamNamespace` (`name=default`), which apply also did not dispatch.
+  `skipped_deletes` records, by kind, every plan deletion that v3 apply did not dispatch.
 
 NetBox totals must match the tier, including foundation and skipped rows. After source
 changes, its totals also account for every create and delete in the change file.
@@ -159,15 +157,14 @@ Cold and warm Infrahub counts must match the mapped tier, including Infrahub's p
 IP namespace. A warm cell must also show zero applied actions. Changed cells compare
 per-kind actions against `.netbox/changes/<tier>.expected.json`, translating
 prefix VRF moves into deletes and creates. v2 must execute the expected deletes.
-v3 checks its saved plan against the apply summary. It records the built-in default
-`IpamNamespace` deletion in `builtin_deletes` and excludes only that deletion from the
-change comparison. Every other recorded delete must match the expected change file
-exactly and is recorded as not executed in `skipped_deletes`, following [ADR 0004](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0004-deletes-are-recorded-but-never-executed.md).
+v3 checks its saved plan against the apply summary. Every recorded delete must match the
+expected change file exactly and is recorded as not executed in `skipped_deletes`, following [ADR 0004](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0004-deletes-are-recorded-but-never-executed.md).
+A plan leaves out the deletes of nodes that Infrahub creates itself, such as the default
+`IpamNamespace`, so the runner excludes no delete by name ([ADR 0043](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0043-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md)).
 It must apply the expected creates and updates, with zero executed deletes. Missing or
-extra non-builtin recorded deletes fail validation. Destination counts include the retained objects
+extra recorded deletes fail validation. Destination counts include the retained objects
 for v3; v2 counts subtract executed deletes. A valid v3 changed cell keeps its time and
-records the deletions under `skipped_deletes`. A warm v3 plan can contain the same built-in default IP namespace
-deletion; the runner records it in `builtin_deletes` and checks zero executed actions.
+records the deletions under `skipped_deletes`.
 v2 parses complete per-kind summaries or successful per-object action
 status lines from a finished sync. For a parallel no-op, all mapped tier logs and the
 completed release footer establish zero writes. The runner otherwise records count

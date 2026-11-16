@@ -127,6 +127,9 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0042 — The v2 gate passes on no creates and no updates, and on reviewed lists for everything else](0042-the-v2-gate-passes-on-no-creates-and-reviewed-lists.md)
   — why the nightly gate pins v2 2.0.1, what makes it pass, and how its lists of records left
   out and deletes are kept.
+- [0043 — A plan leaves out the deletes of nodes that Infrahub creates itself](0043-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md)
+  — why a plan reads the creator `__system__` from node metadata to leave out these deletes, and
+  why no file accepts the delete of the `default` namespace by name.
 
 ## Related
 

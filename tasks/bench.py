@@ -477,19 +477,7 @@ def v3_sync(stack: CellStack, registered: tuple[str, int], record: ResultRecord,
             raise BenchmarkError(msg)
         # The current apply summary counts saved operations, including undispatched deletes.
         # Use the plan's explicit disclosure to report only executed actions.
-        record.builtin_deletes = {}
-        for operation in plan.operations:
-            if (
-                operation.action == "delete"
-                and operation.kind == "IpamNamespace"
-                and operation.identity == {"name": "default"}
-            ):
-                record.builtin_deletes[operation.kind] = record.builtin_deletes.get(operation.kind, 0) + 1
-        record.skipped_deletes = {
-            kind: count - record.builtin_deletes.get(kind, 0)
-            for kind, count in actions["delete"].items()
-            if count - record.builtin_deletes.get(kind, 0)
-        }
+        record.skipped_deletes = dict(actions["delete"])
         actions["delete"] = {}
         record.actions = actions
         record.action_evidence = "run-plan-and-apply-summary"

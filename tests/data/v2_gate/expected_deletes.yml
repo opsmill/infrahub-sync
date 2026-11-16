@@ -13,9 +13,7 @@
 #
 # Add an entry only together with a reason that a reviewer accepts in the pull request that
 # adds it.
-- kind: IpamNamespace
-  identity: name=default
-  reason: >-
-    configs convert --live-schema adds an IpamNamespace mapping with no source endpoint, so the
-    plan finds no source record for Infrahub's built-in default namespace. Apply never executes a
-    delete.
+#
+# The list is empty: a plan leaves out the delete of a node that Infrahub creates itself, such
+# as the default IpamNamespace (dev/adr/0043).
+[]

@@ -121,13 +121,14 @@ How these statements are verified:
   their group or site name, and skips patch panels (devices whose name contains `PP:`).
   The [NetBox demo tutorial](../../docs/docs/tutorials/netbox-demo-to-infrahub.mdx#verify-the-imported-data)
   explains these rules.
-- A plan records one delete of Infrahub's built-in `default` IP namespace when no NetBox
-  VRF has that name. Apply never executes it.
 
 On 2026-09-29, against a local NetBox with the official v4.7 demo data, a plan held
-1,687 creates across 20 kinds and the one recorded delete. After apply, every kind's
-object count on the branch matched the plan, and a second plan held only the recorded
-delete.
+1,687 creates across 20 kinds and one delete of the `default` IP namespace, which
+Infrahub creates itself. After apply, every kind's node count on the branch matched the
+plan, and a second plan held only that delete. A plan now leaves out the deletes of nodes
+that Infrahub creates itself, as
+[ADR 0043](../../dev/adr/0043-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md)
+describes.
 
 The bounded live acceptance test in
 `tests/integration/test_saved_plan_apply_integration.py` exercises the internal worker

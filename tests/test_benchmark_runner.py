@@ -170,9 +170,9 @@ def test_jsonl_contract_and_invalid_times(tmp_path, status) -> None:
         "machine",
         "harness_commit",
         "mapping_sha256",
-        "builtin_deletes",
         "skipped_deletes",
     } <= rows[0].keys()
+    assert "builtin_deletes" not in rows[0]
     assert rows[0]["wall_seconds"] == (3 if status == "ok" else None)
     assert rows[0]["plan_seconds"] == (1 if status == "ok" else None)
     assert rows[0]["apply_seconds"] == (2 if status == "ok" else None)
@@ -415,7 +415,6 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0913, PLR091
             if record.scenario == "changed"
             else {action: {} for action in ("create", "update", "delete")}
         )
-        record.builtin_deletes = {"IpamNamespace": 1}
         if record.scenario == "changed":
             counts["InterfacePhysical"] += 1
             record.skipped_deletes = {"InterfacePhysical": {"exact": 1, "missing": 0, "extra": 2}[delete_evidence]}
@@ -480,7 +479,6 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0913, PLR091
     else:
         assert all(row["wall_seconds"] == 1 for row in rows)
     if scenario == "changed" and line == "v3":
-        assert all(row["builtin_deletes"] == {"IpamNamespace": 1} for row in rows)
         assert all(
             row["skipped_deletes"]["InterfacePhysical"] == {"exact": 1, "missing": 0, "extra": 2}[delete_evidence]
             for row in rows
@@ -611,10 +609,9 @@ def test_v3_uses_api_plan_and_apply_evidence(monkeypatch, applied_updates, names
     if applied_updates:
         bench.v3_sync(stack, ("config", 1), record, 10)
         assert record.actions == {"create": {}, "update": {"InterfaceVirtual": 1}, "delete": {}}
-        assert record.builtin_deletes == ({"IpamNamespace": 1} if namespace == "default" else {})
-        assert record.skipped_deletes == (
-            {"InterfacePhysical": 1} if namespace == "default" else {"InterfacePhysical": 1, "IpamNamespace": 1}
-        )
+        # The runner counts every planned delete by kind; it no longer excludes any node by name.
+        assert record.skipped_deletes == {"InterfacePhysical": 1, "IpamNamespace": 1}
+        assert not hasattr(record, "builtin_deletes")
         assert (record.plan_seconds, record.apply_seconds) == (2, 2)
         assert record.peak_rss_mb == 12
     else:
