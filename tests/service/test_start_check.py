@@ -8,6 +8,7 @@ real entry points with the check injected or refusing.
 from __future__ import annotations
 
 import sqlite3
+import traceback
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
@@ -120,7 +121,8 @@ def test_a_database_that_cannot_be_reached_refuses_without_the_connection_string
     assert f"the product database ({DATABASE_URL_ENV}) cannot be reached" in caplog.text
     assert refused.value.__cause__ is None
     assert refused.value.__suppress_context__
-    for text in (caplog.text, str(refused.value)):
+    rendered = "".join(traceback.format_exception(refused.value))
+    for text in (caplog.text, str(refused.value), rendered):
         assert PASSWORD_CANARY not in text
         assert "127.0.0.1:1" not in text
 

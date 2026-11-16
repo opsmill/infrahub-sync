@@ -495,7 +495,21 @@ def test_the_record_names_the_installed_version(tmp_path: Path, monkeypatch: pyt
     assert record.sync_version == installed_server_version()
 
 
-def test_a_repeated_bootstrap_replaces_the_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_repeated_bootstrap_of_the_same_version_keeps_the_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A second run on a converged deployment changes nothing, the record included (FR-010)."""
+    _converged(monkeypatch, _projection(tmp_path))
+    assert bootstrap.main() == 0
+    first = _record(tmp_path)
+
+    assert bootstrap.main() == 0
+
+    assert first is not None
+    assert _record(tmp_path) == first
+
+
+def test_a_bootstrap_of_another_version_replaces_the_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _converged(monkeypatch, _projection(tmp_path))
     monkeypatch.setattr(bootstrap, "installed_server_version", lambda: "3.0.0a5")
     assert bootstrap.main() == 0

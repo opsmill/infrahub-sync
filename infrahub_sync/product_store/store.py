@@ -526,11 +526,14 @@ ON CONFLICT (worker_id) DO UPDATE SET credential_names = EXCLUDED.credential_nam
 observed_at = EXCLUDED.observed_at"""
 _SELECT_WORKER_ENVIRONMENTS = """SELECT worker_id, credential_names, observed_at FROM worker_environments
 ORDER BY worker_id"""
-# The table holds one row at most: `record_id` is always 1, so a second write replaces the first.
+# The table holds one row at most: `record_id` is always 1, so a write for another version or
+# work pool replaces the first. A write for the same version and work pool changes nothing, so
+# a repeated bootstrap on a converged deployment leaves the database as it was (spec 018 FR-010).
 _UPSERT_BOOTSTRAP_RECORD = """INSERT INTO bootstrap_record (record_id, sync_version, work_pool, completed_at)
 VALUES (1, ?, ?, ?)
 ON CONFLICT (record_id) DO UPDATE SET sync_version = EXCLUDED.sync_version,
-work_pool = EXCLUDED.work_pool, completed_at = EXCLUDED.completed_at"""
+work_pool = EXCLUDED.work_pool, completed_at = EXCLUDED.completed_at
+WHERE bootstrap_record.sync_version <> EXCLUDED.sync_version OR bootstrap_record.work_pool <> EXCLUDED.work_pool"""
 _SELECT_BOOTSTRAP_RECORD = "SELECT sync_version, work_pool, completed_at FROM bootstrap_record WHERE record_id = 1"
 # PostgreSQL's `undefined_table`: the bootstrap has never created the product schema here.
 _POSTGRESQL_UNDEFINED_TABLE_CODE = "42P01"
@@ -1925,7 +1928,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             connection.close()
 
     def write_bootstrap_record(self, record: BootstrapRecord) -> None:
-        """Replace the one bootstrap record (spec 018 FR-007b)."""
+        """Replace the one bootstrap record when it names another version or work pool (spec 018 FR-007b)."""
         connection = self._connect()
         try:
             cursor = connection.cursor()
@@ -4558,10 +4561,13 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
     def write_bootstrap_record(
         self, sync_version: str, work_pool: str, *, completed_at: datetime | None = None
     ) -> BootstrapRecord:
-        """Record the Sync version and work pool the bootstrap set up, replacing any earlier record.
+        """Record the Sync version and work pool the bootstrap set up, replacing a record of another one.
 
         The bootstrap calls this as its last step. The Sync API and the worker read the record
-        with `read_bootstrap_record` before they start (spec 018 FR-007b).
+        with `read_bootstrap_record` before they start (spec 018 FR-007b). A record that already
+        names this version and work pool is left as it is, with its first completion time, so
+        a repeated bootstrap changes nothing (FR-010). Returns the record as this call asked it
+        to be written.
         """
         record = BootstrapRecord(
             sync_version=sync_version,

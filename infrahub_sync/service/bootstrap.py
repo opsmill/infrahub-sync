@@ -3,11 +3,12 @@
 This is the one-off job a Compose deployment runs before its API and its worker
 start: the product schema, the artifact bucket, the Prefect process work pool,
 and the installed deployment. Everything here is safe to repeat — a second run
-observes what the first created and writes nothing but the bootstrap record.
+observes what the first created and writes nothing.
 
 The bootstrap record is the last step: the Sync version and the work pool this run
 set up. The API and the worker read it when they start and refuse to start when it
-is missing or names another version or pool (`start_check`).
+is missing or names another version or pool (`start_check`). A repeated run for the
+same version and pool leaves the record as it is.
 
 The configuration registry is not one of those objects. A deployment converges
 infrastructure and starts empty; which package it runs is a decision an operator

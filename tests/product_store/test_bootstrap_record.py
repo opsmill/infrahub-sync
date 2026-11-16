@@ -142,6 +142,24 @@ def test_a_second_write_replaces_the_one_row(profile: _Profile) -> None:
     assert _count(profile, "SELECT COUNT(*) FROM bootstrap_record") == 1
 
 
+def test_a_repeated_write_for_the_same_version_and_pool_changes_nothing(profile: _Profile) -> None:
+    """A repeated bootstrap on a converged deployment keeps the first completion time (FR-010)."""
+    projection = profile.projection()
+    projection.write_bootstrap_record("3.0.0a5", "infrahub-sync", completed_at=_FIRST)
+    projection.write_bootstrap_record("3.0.0a5", "infrahub-sync", completed_at=_SECOND)
+
+    assert _read(profile) == BootstrapRecord(sync_version="3.0.0a5", work_pool="infrahub-sync", completed_at=_FIRST)
+
+
+@pytest.mark.parametrize(("version", "pool"), [("3.0.0a6", "infrahub-sync"), ("3.0.0a5", "other-pool")])
+def test_a_write_for_another_version_or_pool_replaces_the_record(profile: _Profile, version: str, pool: str) -> None:
+    projection = profile.projection()
+    projection.write_bootstrap_record("3.0.0a5", "infrahub-sync", completed_at=_FIRST)
+    projection.write_bootstrap_record(version, pool, completed_at=_SECOND)
+
+    assert _read(profile) == BootstrapRecord(sync_version=version, work_pool=pool, completed_at=_SECOND)
+
+
 def test_a_record_survives_a_later_schema_initialization(profile: _Profile) -> None:
     profile.projection().write_bootstrap_record("3.0.0a5", "infrahub-sync", completed_at=_FIRST)
 
