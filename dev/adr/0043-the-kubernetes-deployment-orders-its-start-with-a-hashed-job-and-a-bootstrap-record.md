@@ -1,8 +1,9 @@
-# 43. The Kubernetes deployment orders its start with a hashed Job and gates
+# 43. The Kubernetes deployment orders its start with a hashed Job and a bootstrap record
 
 **Status**: Accepted
 **Date**: 2026-11-16
-**Source**: dev/specs/018-helm-chart-kubernetes/research.md (R-2, R-3); verification.md (T018, T021)
+**Source**: dev/specs/018-helm-chart-kubernetes/spec.md (FR-007, FR-007b); research.md (R-2, R-3);
+verification.md (T018, T021, T046 and T047)
 
 ## Context
 
@@ -18,8 +19,8 @@ write" (`docker-compose.yml`).
 Kubernetes has no start dependency between resources, and the chart has to give the same
 guarantees:
 
-- The Sync API and the worker do not serve before the bootstrap has created the Prefect
-  deployment.
+- The Sync API and the worker of a Sync version do not serve before the bootstrap has run for that
+  version, on an install and on an upgrade.
 - A pod restart does not run the bootstrap.
 - An upgrade that changes what the bootstrap reads runs it again, without a manual step.
 - An upgrade works when a tool applies the output of `helm template` instead of Helm itself.
@@ -30,7 +31,8 @@ Kubernetes.
 
 ## Decision
 
-The chart orders the start with the first three mechanisms below. The fourth keeps the
+The start is ordered by the first three mechanisms below. The third is in Infrahub Sync itself
+and applies to every 3.x deployment, the Compose deployment included. The fourth keeps the
 bootstrap's object store check correct. None of them needs access to the Kubernetes API.
 
 - **Database bootstrap.** The bundled PostgreSQL runs the role and database script of the Compose
@@ -50,12 +52,17 @@ bootstrap's object store check correct. None of them needs access to the Kuberne
   Job of the previous name. No Job is ever patched. An upgrade that changes no input keeps the
   completed Job; on a converged deployment the bootstrap would change nothing. The Job waits for
   the Prefect server's `/api/health` in an init container and retries on failure.
-- **Gate on the Sync API and the worker.** Each has an init container, from the Sync image, that
-  reads the Prefect deployment `infrahub-sync-service/run` with the Prefect client and waits until
-  it exists in the configured work pool. The bootstrap creates that deployment after the bucket
-  and the work pool, so its presence means those steps completed. The Sync API and the worker
-  create the product schema themselves at start, so they do not wait for that step. A pod restart
-  runs the init container again, which only reads.
+- **Bootstrap record and start check.** As its last step, the bootstrap writes a one-row table
+  `bootstrap_record` in the product database with the Sync version and the work pool name it set
+  up. A repeat for the same version and pool writes nothing. The Sync API and the worker read the
+  record when they start, before the product schema step. When it is missing or names another
+  version or pool, they log what they found and what they expected, without any credential, and
+  exit with code 1. Kubernetes restarts them with back-off until the Job has written the record.
+  The Sync API and the worker have no init container. A pod restart runs the check again, which
+  only reads.
+- **What the record does not cover.** The record covers the Sync version and the work pool name,
+  and no other bootstrap setting, such as the bucket. A change to such a setting at the same
+  version gives the Job a new name, so the Job runs again, but the start check already passes.
 - **Object store name.** The bundled object store's Service is named `<fullname>-object-store`,
   never `object-store`. The chart enforces at render time, with `fail`, that `s3.endpointUrl` is
   empty when `objectStore.enabled` is true and set when it is false, because the bootstrap's own
@@ -63,16 +70,22 @@ bootstrap's object store check correct. None of them needs access to the Kuberne
 
 ## Consequences
 
-- **Install.** On a first install the Sync API and the worker are not ready until the bootstrap
-  has created the Prefect deployment. With Helm 4.2.4, `helm install --wait` alone does not wait
-  for a Job; the documentation tells operators to pass `--wait --wait-for-jobs`, which returns
-  after the Job completes.
-- **Upgrade gap.** On an upgrade the Prefect deployment of the previous release already exists,
-  so the gate passes at once. The Sync API and the worker of the new release can start before the
-  new bootstrap Job completes. The Job still completes without a manual step, and
-  `helm upgrade --wait --wait-for-jobs` returns only after it does. An exact gate needs the Sync
-  image to report that the bootstrap of its own version has run; the image has no such check, so
-  this is a follow-up.
+- **Restarts are expected.** On a first install the Sync API and the worker exit and restart until
+  the Job has written the record. Nothing makes them wait for PostgreSQL, so their restarts also
+  include failures to reach the product database while PostgreSQL starts. Measured once on
+  minikube: the Sync API restarted 3 times and was ready 23 seconds after the Job completed; the
+  worker restarted 2 times. With Helm 4.2.4, `helm install --wait` alone does not wait for a Job;
+  the documentation tells operators to pass `--wait --wait-for-jobs`, which returns after the Job
+  completes.
+- **Upgrade to another Sync version.** The new Sync API pod refuses to start until the new Job has
+  written the record, and the previous pod keeps serving meanwhile. Measured once on minikube: the
+  new pod restarted 2 times and was ready 5 seconds after the new Job completed.
+- **Upgrade at the same version.** When an upgrade changes a bootstrap setting other than the
+  version and the work pool, the new pods can start before the new Job completes. The Job still
+  completes without a manual step, and `helm upgrade --wait --wait-for-jobs` returns only after it
+  does.
+- **Minimum Sync version.** The chart has no start ordering of its own for the Sync API and the
+  worker, so it needs a Sync release that contains the start check.
 - **Rendered output.** Because the name does not use `.Release.Revision`, a tool that applies
   `helm template` output still gets a new Job for a changed image, and no Job has to be deleted by
   hand.
@@ -98,6 +111,10 @@ bootstrap's object store check correct. None of them needs access to the Kuberne
 - **The database bootstrap as a Job, as in Compose.** Rejected: the Prefect server would need a
   second gate. The cost of the init script is that it runs only on an empty volume, which the
   documentation states.
+- **An init container on the Sync API and the worker that waits for the Prefect deployment**
+  `infrahub-sync-service/run` in the configured work pool. Rejected after it was first built: on
+  an upgrade the deployment of the previous release already exists, so the wait ends at once and
+  the new pods can start before the new Job completes.
 - **A Job named after `.Release.Revision`.** Rejected. A tool that applies `helm template` output
   renders the revision as 1 every time, so the Job would keep its name, receive a new pod template
   after an image change, and be refused because a Job's pod template cannot be changed.

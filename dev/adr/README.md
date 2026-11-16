@@ -127,7 +127,7 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0042 — The v2 gate passes on no creates and no updates, and on reviewed lists for everything else](0042-the-v2-gate-passes-on-no-creates-and-reviewed-lists.md)
   — why the nightly gate pins v2 2.0.1, what makes it pass, and how its lists of records left
   out and deletes are kept.
-- [0043 — The Kubernetes deployment orders its start with a hashed Job and gates](0043-the-kubernetes-deployment-orders-its-start-with-a-hashed-job-and-gates.md)
+- [0043 — The Kubernetes deployment orders its start with a hashed Job and a bootstrap record](0043-the-kubernetes-deployment-orders-its-start-with-a-hashed-job-and-a-bootstrap-record.md)
   — why the Helm chart runs the bootstrap as a plain Job named after a hash of its inputs, why the
   Sync API and the worker wait for the Prefect deployment, and why an upgrade can start them
   before the new Job completes.

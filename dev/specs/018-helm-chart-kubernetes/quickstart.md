@@ -62,14 +62,21 @@ helm upgrade sync charts/infrahub-sync -n sync --reuse-values --set settings.run
 kubectl -n sync get jobs
 ```
 
-Then an upgrade that changes the image tag, which the bootstrap does read. Rebuild the image under
-a second tag first (`docker tag infrahub-sync:chart-test infrahub-sync:chart-test-2`, then
-`minikube image load infrahub-sync:chart-test-2`):
+Then an upgrade that changes the image tag, which the bootstrap does read. The image must report
+another Sync version, or the bootstrap record already matches and the start check passes at once.
+A `docker tag` of the same image keeps the version. Build the second image as T046 did: export
+the repository with `git archive HEAD` into a scratch folder, change the `version` in
+`pyproject.toml` and the `infrahub-sync` entry of `uv.lock` in that copy only, build it as
+`infrahub-sync:chart-test-2`, and load it with `minikube image load infrahub-sync:chart-test-2`.
+Check the version with
+`docker run --rm infrahub-sync:chart-test-2 python -c "import importlib.metadata as m; print(m.version('infrahub-sync'))"`.
 
 ```bash
 helm upgrade sync charts/infrahub-sync -n sync --reuse-values --set image.tag=chart-test-2 --wait --timeout 10m
 kubectl -n sync wait --for=condition=complete job -l app.kubernetes.io/component=bootstrap --timeout=10m
 kubectl -n sync get jobs
+kubectl -n sync get pods
+kubectl -n sync logs <new Sync API pod> --previous
 ```
 
 Expected:
@@ -77,9 +84,17 @@ Expected:
 - Both upgrades complete without a manual step.
 - After the second upgrade, one bootstrap Job is listed. It has a new name, it is complete, and
   the previous Job is gone.
+- The new Sync API pod shows restarts. On minikube it restarted 2 times and was ready 5 s after
+  the new Job completed ([verification.md](verification.md), T046 and T047). `logs --previous`
+  shows a line that starts with `refusing to start: the bootstrap record names Sync version` and
+  names the version and work pool found and the ones expected.
+- The previous Sync API pod keeps answering `/version` until the new pod is ready.
 - Step 3 gives the same answers, and the package registered before the upgrade is still listed.
 - A pod restart (`kubectl -n sync rollout restart deployment/sync-infrahub-sync-api`) creates no
   Job.
+
+On the fresh install of step 2, the Sync API and the worker also restart before the Job has
+written the record. On minikube the Sync API restarted 3 times and the worker 2 times.
 
 ## 5. Refusals and the external variant
 

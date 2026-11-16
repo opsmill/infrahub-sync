@@ -60,10 +60,32 @@ object store ──────────────────────�
 
 - Prefect server: init container waits for PostgreSQL (bundled only).
 - Bootstrap Job: init container waits for the Prefect server; the Job retries on failure.
-- Sync API and worker: init container waits until the deployment `infrahub-sync-service/run`
-  exists in the work pool.
+- Bootstrap Job: its last step writes the bootstrap record (below).
+- Sync API and worker: no init container. Each reads the bootstrap record when it starts, before
+  the product schema step, and exits with code 1 when the record is missing or names another Sync
+  version or work pool. Kubernetes restarts it with back-off until the Job has written the
+  record. Nothing makes them wait for PostgreSQL, so a fresh install also shows restarts while
+  PostgreSQL starts.
 - `<hash>`: the first 8 characters of a SHA-256 over the image reference, the bootstrap's
   settings and the checksums of the Secret and ConfigMaps the chart creates.
+
+## Bootstrap record (product database)
+
+Table `bootstrap_record` in the product database, written by the bootstrap (FR-007b;
+`infrahub_sync/product_store/store.py`):
+
+| Column | Content |
+| --- | --- |
+| `record_id` | Always 1, so the table holds one row |
+| `sync_version` | The Sync version the bootstrap ran for |
+| `work_pool` | The work pool name the bootstrap set up |
+| `completed_at` | When the bootstrap completed |
+
+- The bootstrap replaces the row when the version or the pool differs. A repeat for the same
+  version and pool writes nothing.
+- A read on a database without the table returns no record, and the start check refuses.
+- The record covers the Sync version and the work pool name only. Other bootstrap settings, such
+  as the bucket, are not in it; the Job still runs again for them, because its name hashes them.
 
 ## Validation rules (render time)
 

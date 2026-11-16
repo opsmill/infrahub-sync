@@ -23,6 +23,10 @@ Findings, from the code:
 
 Consequence: nothing in the image orders the start. The chart has to.
 
+Update of 2026-11-16: since commits `adfbeef9` and `dfe60856`, the image takes part in the order.
+The bootstrap writes a bootstrap record as its last step, and the Sync API and the worker check
+it when they start (R-2, mechanism 3).
+
 ## R-2. How the chart orders the start
 
 **Decision**: three mechanisms.
@@ -40,23 +44,33 @@ Consequence: nothing in the image orders the start. The chart has to.
    completed Job, which is equivalent to running it again because the bootstrap changes nothing
    on a converged deployment (R-1). The Job has `restartPolicy: OnFailure` and a `backoffLimit`,
    and one init container that waits for the Prefect server's `/api/health`.
-3. **Gate on the Sync API and the worker**: each has an init container, from the Sync image, that
-   uses the Prefect client (`prefect.client.orchestration.get_client()`, which applies
-   `PREFECT_API_URL` and the Basic authentication of `PREFECT_API_AUTH_STRING`) to read the
-   deployment `infrahub-sync-service/run` with `read_deployment_by_name`, the call
-   `service/deploy.py:33` makes, and waits until it exists with `work_pool_name` equal to the
-   configured pool. The deployment is created after the bucket and the work pool (R-1), so its
-   presence means those three steps completed. The product schema is the step after it; the Sync
-   API and the worker each create the schema themselves at start (R-1), so they do not need to
-   wait for it.
+3. **Bootstrap record and start check** (FR-007b, clarification of 2026-11-16). As its last
+   step, after the product schema, the bootstrap writes a one-row table `bootstrap_record` in the
+   product database with the Sync version, the work pool name and the completion time
+   (`infrahub_sync/service/bootstrap.py`, `product_store/store.py`). A repeat for the same version
+   and pool writes nothing. The Sync API and the worker read the record when they start, before
+   the product schema step (`infrahub_sync/service/start_check.py`). When it is missing or names
+   another version or pool, they log what they found and what they expected and exit with code 1,
+   for example:
+
+   ```text
+   refusing to start: the bootstrap record names Sync version 3.0.0a5 and work pool infrahub-sync; expected Sync version 3.0.0a6 and work pool infrahub-sync. Run the bootstrap for this version.
+   ```
+
+   Kubernetes restarts them with back-off until the Job has written the record. The Sync API and
+   the worker have no init container.
 
 The Prefect server has an init container that waits for the bundled PostgreSQL with `pg_isready`,
-from the PostgreSQL image.
+from the PostgreSQL image. Nothing makes the Sync API or the worker wait for PostgreSQL, so on a
+fresh install their restarts also include failures to reach the product database while
+PostgreSQL starts.
 
 **Rationale**:
 
-- A pod restart runs the init container again, which only reads. It does not run the bootstrap
+- A pod restart runs the start check again, which only reads. It does not run the bootstrap
   (FR-008).
+- The record names the version, so the check is exact on an upgrade to another Sync version,
+  where a wait for the Prefect deployment passes at once because the previous release created it.
 - A plain Job is created with the other resources of the release, so it works when PostgreSQL is
   part of the release.
 - A name from a hash of the Job's inputs, rather than from `.Release.Revision`, also works for a
@@ -65,11 +79,22 @@ from the PostgreSQL image.
   refused because a Job's template is immutable.
 - Nothing needs access to the Kubernetes API, so the chart creates no Role.
 
-**Limit**: on an upgrade, the deployment of the previous release already exists, so the gate
-passes at once. The new Sync API and worker pods can start a few seconds before the bootstrap Job
-of the new release completes. The Job still completes without a manual step. A gate that is exact
-for an upgrade needs the Sync image to report "the bootstrap of this version has run"; the image
-has no such check today. This is recorded as a follow-up, not built here.
+**Limit**: the record covers the Sync version and the work pool name, and no other bootstrap
+setting, such as the bucket. On an upgrade that changes another setting at the same version, the
+Job gets a new name and runs again, but the record already matches, so the new Sync API and worker
+pods can start before that Job completes. The end-to-end test measured this: after its upgrade,
+which changes only `s3.prefix`, the new pods restarted 0 times ([verification.md](verification.md),
+T046 and T047).
+
+**Measured on minikube** ([verification.md](verification.md), T046 and T047), one run each:
+
+- Fresh install: the Sync API restarted 3 times and was ready 23 s after the Job completed; the
+  worker restarted 2 times. One of the worker's failures was an unreachable product database.
+- Upgrade to an image of another version: the new Sync API pod restarted 2 times and was ready
+  5 s after the new Job completed. The previous pod answered `/version` throughout.
+- The end-to-end test passed in 126 s.
+- Observed and not investigated: on the upgrade, the previous worker did not stop on `SIGTERM` and
+  was killed at the end of its 30-second grace period.
 
 **Alternatives considered**:
 
@@ -86,6 +111,12 @@ has no such check today. This is recorded as a follow-up, not built here.
   second gate. The cost of the init script is that it runs only on an empty volume; the
   documentation states it.
 - **Job named after `.Release.Revision`**. Rejected for the reason above.
+- **Init container on the Sync API and the worker that waits for the Prefect deployment**
+  `infrahub-sync-service/run` in the configured work pool, read with the Prefect client. This was
+  the first design, and the chart had it until commit `e2e19ed` of `infrahub-helm`. Replaced by
+  the bootstrap record: on an upgrade, the deployment of the previous release already exists, so
+  the wait ended at once and the new pods could start before the new Job completed (clarification
+  of 2026-11-16).
 
 **Details of the init script**: the PostgreSQL entrypoint runs an executable `*.sh` file from
 `/docker-entrypoint-initdb.d` and *sources* one that is not executable
