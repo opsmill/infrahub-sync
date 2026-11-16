@@ -1,0 +1,25 @@
+docs/docs/reference/config.mdx
+  s_27d223724ad8fc::t_6004317ce808a3 119-120
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_27d223724ad8fc::t_81239dc66a0e22 106-107
+dev/adr/0044-the-base-install-declares-no-redis-client.md
+  s_27d223724ad8fc::t_6b69970e51a3c2 39-41
+docs/docs/development/knowledge/configuration-foundation.md
+  s_27d223724ad8fc::t_5efe42bd680aab 83-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ca05db78462926178a6d023659ee1b83864c2924",
+  "prompts": {},
+  "sessions": {
+    "s_27d223724ad8fc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fa11550-a8be-43f6-bac6-a9407114c794",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
