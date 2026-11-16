@@ -1,0 +1,1 @@
+The service worker now stops when Kubernetes or Docker sends it SIGTERM, and exits 0. Before, the worker ignored SIGTERM as the first process of its container, so each stop waited for the grace period and then killed it.

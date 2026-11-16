@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import signal
 import sqlite3
 import sys
 import threading
@@ -35,7 +36,7 @@ from .trust_store import TrustStoreError, install_custom_ca_bundle
 
 if TYPE_CHECKING:
     import logging
-    from collections.abc import Callable, Iterator, Sequence
+    from collections.abc import Awaitable, Callable, Iterator, Sequence
 
     from anyio.abc import TaskStatus
     from prefect.client.schemas.objects import Flow as APIFlow
@@ -552,6 +553,37 @@ def neutral_working_directory() -> Iterator[Path]:
         rmtree(root, ignore_errors=True)
 
 
+async def run_until_terminated(start: Callable[[], Awaitable[object]]) -> None:
+    """Run `start()` and stop it when the process receives SIGTERM.
+
+    Kubernetes and Docker stop a container with SIGTERM. The worker is the container's
+    first process (PID 1), and the kernel delivers no signal to PID 1 that the process
+    has no handler for. Python installs no SIGTERM handler, and neither does Prefect's
+    worker, so without this handler the worker ran until the grace period ended and was
+    killed. The handler cancels the worker task, so the worker's own exit steps run, and
+    the process exits 0.
+    """
+    loop = asyncio.get_running_loop()
+    task = asyncio.current_task()
+    if task is None:  # pragma: no cover -- a coroutine run by asyncio always has a task
+        msg = "run_until_terminated must run inside an asyncio task"
+        raise RuntimeError(msg)
+    terminated = asyncio.Event()
+
+    def terminate() -> None:
+        terminated.set()
+        task.cancel()
+
+    loop.add_signal_handler(signal.SIGTERM, terminate)
+    try:
+        await start()
+    except asyncio.CancelledError:
+        if not terminated.is_set():
+            raise
+    finally:
+        loop.remove_signal_handler(signal.SIGTERM)
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -583,7 +615,7 @@ def main(
             name=service_worker_name(),
             create_pool_if_not_found=False,
         )
-        asyncio.run(worker.start())
+        asyncio.run(run_until_terminated(worker.start))
     return 0
 
 

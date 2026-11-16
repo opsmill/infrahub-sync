@@ -55,13 +55,14 @@
   Sync API and the worker have no init container.
 - On an upgrade, the new Sync API pod refused to start with a line that names both versions and no
   credential. `/version` answered throughout and changed from the old version to the new one.
-- The old worker did not stop on SIGTERM and was killed after its 30 s grace period. This was not
-  investigated.
+- The old worker did not stop on SIGTERM and was killed after its 30 s grace period. Fixed after
+  the run: see "Worker stop on SIGTERM" in [verification.md](verification.md).
 
 **Chunk 9d**
-- ADR 0043 was renamed to
-  `0043-the-kubernetes-deployment-orders-its-start-with-a-hashed-job-and-a-bootstrap-record.md`.
-- Branch `017-serve-web-interface` also adds an ADR numbered 0043. Neither was renumbered.
+- ADR 0045 (first numbered 0043) was renamed to
+  `0045-the-kubernetes-deployment-orders-its-start-with-a-hashed-job-and-a-bootstrap-record.md`.
+- Branch `017-serve-web-interface` also adds an ADR numbered 0043, and branch
+  `019-second-plan-real-changes` adds 0043 and 0044, so this ADR is now 0045.
 
 ## 3. Tasks not completed
 
@@ -98,7 +99,7 @@ was Critical.
 | Medium | H `templates/_helpers.tpl:104,112` | A numeric image tag rendered `%!s(float64=17)` | Fixed: `toString`, and a tag that is not a string is refused |
 | Medium | H `tests/unit/test_infrahub_sync_chart.py` (RR-34) | Only `s3.prefix` was tested as a bootstrap setting | Fixed: `s3.bucket` and `settings.workPool` added |
 | Medium | H `NOTES.txt`, `README.md.gotmpl` | Said the pods restart until the Job completes, which the 3.0.0a5 image does not do | Fixed |
-| Medium | S ADR 0043 | The count of mechanisms did not match the list | Fixed |
+| Medium | S ADR 0045 | The count of mechanisms did not match the list | Fixed |
 | Low | H `README.md.gotmpl` | The publication condition left out the start check | Fixed |
 | Low | H `NOTES.txt`, S `kubernetes-deployment.mdx:238` | NOTES put the token in shell history and used another timeout | Fixed |
 | Low | S `kubernetes-deployment.mdx:27-28` | The init script ConfigMap and the record write were missing from the table | Fixed |
@@ -147,10 +148,10 @@ was Critical.
    contains the start check. With a login set, the test fails on today's default (`3.0.0a5`):
    the registry does not serve that image, and it has no start check. `H/tests/README.md` says
    this too.
-2. Resolve the ADR number 0043, which branch `017-serve-web-interface` also uses.
-3. Investigate why the worker does not stop on SIGTERM during an upgrade.
-4. Decide on the deferred findings in section 5.
-5. Release an Infrahub Sync version that contains the start check. Then set the chart's
+2. Decide whether the worker should wait for runs in progress before it exits on SIGTERM
+   (verification.md, "Worker stop on SIGTERM").
+3. Decide on the deferred findings in section 5.
+4. Release an Infrahub Sync version that contains the start check. Then set the chart's
    `appVersion` to it and publish the chart, as described in the plan's "Release order".
 6. Open the pull requests when ready: one in `infrahub-sync` into `feature/v3-develop` and one in
    `infrahub-helm` into `stable`.

@@ -828,3 +828,47 @@ documentation states:
 
 `minikube delete --profile sync-chart` then printed `Removed all traces of the "sync-chart"
 cluster.`
+
+## Worker stop on SIGTERM
+
+Result: the worker now stops within 1 second of `SIGTERM` and exits 0. Before, it ran until the end
+of the grace period and was killed with exit code 137.
+
+### Cause
+
+The worker container runs `python -m infrahub_sync.service.worker` as its first process (PID 1),
+with no init process. The Linux kernel delivers a signal to PID 1 only when the process has a
+handler for it. Python installs no `SIGTERM` handler, and Prefect's worker installs none either,
+so the `SIGTERM` that Kubernetes and Docker send to stop a container was ignored. A check with a
+plain Python process as PID 1 (`time.sleep`) took the full 15-second `docker stop` timeout. The
+Sync API and the Prefect server run under uvicorn, which installs its own handler, so only the
+worker was affected. Compose had the same problem with Docker's 10-second default.
+
+### Change
+
+`infrahub_sync/service/worker.py` adds `run_until_terminated`. `main` runs the worker inside it.
+On `SIGTERM` it cancels the worker task, so the worker's own exit steps run, and the process exits
+0. A cancellation that does not come from `SIGTERM` is not absorbed.
+
+### Checks
+
+| Check | Command or setup | Result |
+| --- | --- | --- |
+| New unit tests `tests/service/test_worker_termination.py` (5) and `tests/service/test_start_check.py` | `uv run pytest tests/service/test_worker_termination.py tests/service/test_start_check.py -q` | `23 passed in 2.31s` (2026-11-16T23:04:34Z) |
+| Full unit tier, with the five new tests | `uv run invoke tests.tests-unit` | `8561 passed, 4 skipped, 377 deselected, 2 xfailed, 15 warnings in 335.53s` (2026-11-16T23:10:26Z) |
+| Format, lint and Ruff | `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .` | Ruff: `All checks passed!`; no new ty diagnostic in the changed files |
+| Worker of the new image, as PID 1 in the root Compose stack (project `sigterm`, no init process) | image `infrahub-sync:sigterm-check`, built from this branch; worker logged `Worker '…' started!`; `docker stop -t 30` | stopped in 1 s, exit code 0, no error in the log |
+| The same with the previous image `infrahub-sync:chart-test-r1` | the same stack and work pool; `docker stop -t 30` | stopped in 30 s, exit code 137 |
+
+Both images report version 3.0.0a5, so the previous image passed the start check against the same
+bootstrap record. The Sync API of that stack could not start because port 8001 was in use by
+another stack; the worker does not need it. The stack and its volumes were removed afterwards.
+
+### Not tested: a run in progress
+
+No run was in progress when the worker was stopped. A run executes in a child process of the
+worker. When the first process of a container exits, the kernel stops every other process in the
+container. Before this change such a child was killed at the end of the grace period; now it is
+killed when the worker exits, about 1 second after `SIGTERM`. A run that would have finished within
+the grace period is now interrupted instead. Whether the worker should wait for runs in progress
+before it exits is not decided.
