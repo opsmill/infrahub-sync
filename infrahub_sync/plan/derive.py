@@ -712,8 +712,15 @@ def derive_deletes(  # pylint: disable=redefined-outer-name
     config: SyncConfig | None,
     tier_of: Callable[[str], int],
     destination_full_extract: bool,
+    builtin_node_ids: frozenset[str] = frozenset(),
 ) -> list[PlannedOperation]:
     """Derive the deletes a plan records, or none at all (FR-015, FR-016, AD049).
+
+    `builtin_node_ids` holds the destination node ids that Infrahub created itself (spec 019
+    FR-001). An unmatched destination node whose `local_id` is in it gets no delete and no
+    report entry; one `info` line gives the count. A node of that set that a source record
+    matches is compared like any other node (FR-003), because the skip applies only to
+    unmatched nodes.
 
     Per kind: the destination store's identities minus the source store's, enumerated the
     way `Potenda._write_side_snapshot` already enumerates a side. Derived **only** when the
@@ -743,10 +750,14 @@ def derive_deletes(  # pylint: disable=redefined-outer-name
 
     store = destination_adapter.store
     operations: list[PlannedOperation] = []
+    builtin_skipped = 0
     for kind in kinds:
         source_unique_ids = {record.get_unique_id() for record in source_adapter.get_all(kind)}
         for record in destination_adapter.get_all(kind):
             if record.get_unique_id() in source_unique_ids:
+                continue
+            if getattr(record, "local_id", None) in builtin_node_ids:
+                builtin_skipped += 1
                 continue
             keys: Mapping[str, Any] = record.get_identifiers()
             resolved = _resolve_references(
@@ -766,6 +777,11 @@ def derive_deletes(  # pylint: disable=redefined-outer-name
                     tier=tier_of(kind),
                 )
             )
+    if builtin_skipped:
+        logger.info(
+            "Plan: %d destination node(s) that Infrahub created itself and no source record matches get no delete",
+            builtin_skipped,
+        )
     return operations
 
 

@@ -92,6 +92,10 @@ def resolved_endpoint(settings: Mapping[str, Any], branch: str | None) -> tuple[
 # Adjust if the server renames this field.
 _TIMESTAMP_FILTER_KW = "node_metadata__updated_at__after"
 
+# The creator Infrahub records in the node metadata of a node it creates itself, such as the
+# `IpamNamespace` named `default` of every branch (spec 019 research R2, probe of T001).
+INFRAHUB_SYSTEM_ACCOUNT_ID = "__system__"
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, MutableMapping, Sequence
 
@@ -939,6 +943,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     # plans over the same values give the same operations. Set by `__init__` and reset by
     # `resolve_lineage`; read and written through `last_changes`.
     _last_changes: dict[tuple[str, str], LastChange] | None = None
+    # The ids of the destination nodes this plan read that Infrahub created itself (spec 019
+    # FR-001, research R2). Filled by `model_loader` from the node metadata that a read with
+    # metadata returns; reset by `resolve_lineage`; read through `builtin_node_ids`.
+    _builtin_node_ids: set[str] | None = None
     # Cache state: absent means hydration has not been attempted; None means
     # one attempt was exhausted; a string is the resolved DiffSync identity.
     _peer_unique_ids: dict[tuple[str, str], str | None]
@@ -1020,6 +1028,16 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     def last_changes(self, value: dict[tuple[str, str], LastChange]) -> None:
         self._last_changes = value
 
+    @property
+    def builtin_node_ids(self) -> frozenset[str]:
+        """The ids of the destination nodes this plan read that Infrahub created itself.
+
+        The member of `BuiltinNodeReadingDestination`. A node is in the set when its node
+        metadata names the creator `__system__` (research R2). Empty when the plan read no
+        metadata (`metadata_read` is false), so every unmatched node then becomes a delete.
+        """
+        return frozenset(self._builtin_node_ids or ())
+
     def resolve_lineage(self, *, saved_plan: PlanManifest | None = None) -> ResolvedLineage:
         """Resolve the import account, the source and the owner this run writes, and keep them.
 
@@ -1071,6 +1089,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         )
         self.metadata_read = False
         self.last_changes = {}
+        self._builtin_node_ids = set()
         return self.lineage
 
     def resolve_metadata_read(self) -> None:
@@ -1268,6 +1287,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         if self.metadata_read:
             for node in nodes:
                 self._record_last_changes(node, mapped=mapped)
+                if self.target == "destination":
+                    self._record_builtin_node(node)
         total = len(node_dict_pairs)
         records = [pair[1] for pair in node_dict_pairs]
 
@@ -1635,6 +1656,22 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             else:
                 continue
             last_changes[node_id, rel_schema.name] = change
+
+    def _record_builtin_node(self, node: InfrahubNodeSync) -> None:
+        """Keep the id of a node read with metadata when Infrahub created it itself (research R2).
+
+        Infrahub 1.11.9 names the creator `__system__` in the node metadata of a node it creates
+        itself (`tests/data/infrahub_builtin_nodes/infrahub-1.11.9.json`). The mark is node-level,
+        so it is read for every kind, from the read that already returns the metadata; no
+        request is added. Nothing here reaches the DiffSync models.
+        """
+        metadata = node.get_node_metadata()
+        creator = None if metadata is None else metadata.created_by
+        if creator is None or creator.id != INFRAHUB_SYSTEM_ACCOUNT_ID:
+            return
+        if self._builtin_node_ids is None:
+            self._builtin_node_ids = set()
+        self._builtin_node_ids.add(str(node.id))
 
     def new_peer_resolver(self) -> PeerResolver:
         """Build the peer resolver for one apply (FR-014, AD086).

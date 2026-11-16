@@ -2,7 +2,14 @@
   "IpamNamespace": [
     {
       "local_id": "18d52a8a-0000-0000-0019-000000000001",
-      "name": "default"
+      "name": "default",
+      "node_metadata": {
+        "created_by": {
+          "__typename": "CoreAccount",
+          "display_label": "[Infrahub System]",
+          "id": "__system__"
+        }
+      }
     }
   ]
 }

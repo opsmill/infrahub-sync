@@ -1,10 +1,9 @@
 """The stand-in destination and the second-plan fixture (spec 019 T006, T007).
 
-These tests check the helpers of `tests/plan/second_plan.py` on what the code does before
-User Story 1: the first plan of the fixture creates every source record and deletes the
-`default` namespace, the apply writes the creates, and the second plan holds only that delete,
-because `Potenda.apply_plan` does not write a delete. User Story 1 removes the delete; its tests
-in `tests/plan/test_second_plan.py` then require an empty second plan.
+These tests check the helpers of `tests/plan/second_plan.py`: the first plan of the fixture
+creates every source record and holds no delete of the `default` namespace, which Infrahub
+created itself (spec 019 FR-001); the apply writes the creates; and the second plan is empty.
+The second-plan cases by edge case are in `tests/plan/test_second_plan.py`.
 """
 
 from __future__ import annotations
@@ -33,8 +32,6 @@ if TYPE_CHECKING:
 
 FIRST_RUN_ID = "20261116T100000-01900006"
 SECOND_RUN_ID = "20261116T110000-01900006"
-
-DEFAULT_NAMESPACE_DELETE = ("delete", "IpamNamespace")
 
 
 @pytest.fixture
@@ -67,19 +64,17 @@ def update_of(kind: str, identity: dict[str, Any], **values: Any) -> PlannedOper
     )
 
 
-def test_the_first_plan_creates_every_source_record_and_deletes_the_default_namespace(
+def test_the_first_plan_creates_every_source_record_and_keeps_the_default_namespace(
     second_plan: PlanProblemFixture, first_plan: PlannedFixture
 ) -> None:
     records = second_plan_records(second_plan)
     creates = sorted(("create", kind) for kind, rows in records.items() for _ in rows)
 
     assert first_plan.report == []
-    assert kinds_of(first_plan.operations) == sorted([*creates, DEFAULT_NAMESPACE_DELETE])
+    assert kinds_of(first_plan.operations) == creates
 
 
-def test_a_second_plan_after_the_apply_holds_only_the_default_namespace_delete(
-    second_plan: PlanProblemFixture, first_plan: PlannedFixture
-) -> None:
+def test_a_second_plan_after_the_apply_is_empty(second_plan: PlanProblemFixture, first_plan: PlannedFixture) -> None:
     """Every create matches what the apply wrote: LAG members, prefixes and addresses, tagged VLANs."""
     applying = ApplyingDestination.for_plan(first_plan, second_plan_destination(second_plan))
     destination = applying.apply(first_plan)
@@ -88,11 +83,20 @@ def test_a_second_plan_after_the_apply_holds_only_the_default_namespace_delete(
         second_plan, records=second_plan_records(second_plan), destination=destination, run_id=SECOND_RUN_ID
     )
 
-    assert len(applying.applied) == len(first_plan.operations) - 1
+    assert len(applying.applied) == len(first_plan.operations)
     assert second.report == []
-    assert kinds_of(second.operations) == [DEFAULT_NAMESPACE_DELETE]
-    (delete,) = second.operations
-    assert delete.identity == {"name": "default"}
+    assert second.operations == []
+
+
+def test_the_stand_in_exposes_the_default_namespace_as_built_in(
+    second_plan: PlanProblemFixture, first_plan: PlannedFixture
+) -> None:
+    applying = ApplyingDestination.for_plan(first_plan, second_plan_destination(second_plan))
+    applying.apply(first_plan)
+    (namespace,) = applying.destination_data()["IpamNamespace"]
+
+    assert applying.builtin_node_ids == frozenset({namespace["local_id"]})
+    assert first_plan.destination.builtin_node_ids == frozenset({namespace["local_id"]})
 
 
 def test_the_apply_writes_peers_as_unique_ids(second_plan: PlanProblemFixture, first_plan: PlannedFixture) -> None:

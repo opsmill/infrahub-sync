@@ -39,6 +39,7 @@ from infrahub_sync.plan.models import (
 from infrahub_sync.plan.write_surface import (
     LineageResolvingDestination,
     PlannedWriteDestination,
+    destination_builtin_node_ids,
     destination_last_changes,
     destination_lineage_record,
     resolve_destination_lineage,
@@ -973,6 +974,7 @@ class Potenda:
                 config=self.config,
                 tier_of=resolve_tier,
                 destination_full_extract=deletes_computed,
+                builtin_node_ids=destination_builtin_node_ids(self.destination),  # spec 019 FR-001
             )
         )
         identity_groups = warn_missing_convergence_key(

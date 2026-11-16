@@ -19,7 +19,10 @@ edge case it is about:
   `tagged_vlan`: two peers, three peers listed in reverse order, and none.
 
 The destination holds one node before the first plan: the `IpamNamespace` named `default`,
-which Infrahub creates itself in every branch (`tests/data/infrahub_builtin_nodes/`).
+which Infrahub creates itself in every branch (`tests/data/infrahub_builtin_nodes/`). Its row
+carries the node metadata Infrahub returns for it (creator `__system__`) in a `node_metadata`
+key; the stand-in client turns that key into node metadata, so it is not model data, and the
+plan's destination counts the node as built-in by its id (spec 019 research R2).
 
 `ApplyingDestination` takes the place of the Infrahub adapter during `Potenda.apply_plan`. It
 writes each planned operation into model data by kind, and `destination_data` returns that data
@@ -35,6 +38,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from infrahub_sync.adapters.infrahub import INFRAHUB_SYSTEM_ACCOUNT_ID
 from tests.plan.conftest import PlanProblemFixture
 from tests.plan.ownership_fixtures import granted_ownership
 
@@ -124,15 +128,34 @@ class ApplyingDestination:
         models = {kind: getattr(planned.destination, kind) for kind in planned.potenda.top_level}
         return cls(models=models, nodes=nodes)
 
-    def apply(self, planned: PlannedFixture) -> dict[str, list[dict[str, Any]]]:
-        """Apply the saved plan of `planned` through `Potenda.apply_plan`; return `destination_data()`."""
+    def apply(self, planned: PlannedFixture, *, confirm_left_out: bool = False) -> dict[str, list[dict[str, Any]]]:
+        """Apply the saved plan of `planned` through `Potenda.apply_plan`; return `destination_data()`.
+
+        `confirm_left_out` confirms that the records the plan leaves out were reviewed, which
+        `Potenda.apply_plan` requires before it writes a plan that leaves records out.
+        """
         planned.potenda.destination = self  # ty: ignore[invalid-assignment]
-        planned.potenda.apply_plan(ownership=granted_ownership())
+        planned.potenda.apply_plan(ownership=granted_ownership(), confirm_left_out=confirm_left_out)
         return self.destination_data()
 
     def destination_data(self) -> dict[str, list[dict[str, Any]]]:
         """The nodes held, by kind, for the `destination` argument of the next `plan_fixture` call."""
         return {kind: copy.deepcopy(rows) for kind, rows in self._nodes.items() if rows}
+
+    @property
+    def builtin_node_ids(self) -> frozenset[str]:
+        """The ids of the held nodes that Infrahub created itself (`BuiltinNodeReadingDestination`).
+
+        A held node carries the mark as Infrahub returns it, in its `node_metadata` key; the
+        stand-in client of `tests/plan/problem_plan.py` reads that key as node metadata, so the
+        next plan's destination finds the same set.
+        """
+        return frozenset(
+            str(row["local_id"])
+            for rows in self._nodes.values()
+            for row in rows
+            if (row.get("node_metadata") or {}).get("created_by", {}).get("id") == INFRAHUB_SYSTEM_ACCOUNT_ID
+        )
 
     def new_peer_resolver(self) -> ApplyingDestination:
         """The per-apply resolver: the stand-in resolves peers against the nodes it holds."""
