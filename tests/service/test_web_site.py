@@ -193,6 +193,15 @@ def test_a_matching_etag_answers_304(site: TestClient) -> None:
     _assert_security_headers(response)
 
 
+def test_a_matching_modification_date_answers_304(site: TestClient) -> None:
+    last_modified = site.get("/index.html").headers["last-modified"]
+
+    response = site.get("/index.html", headers={"If-Modified-Since": last_modified})
+
+    assert response.status_code == 304
+    _assert_security_headers(response)
+
+
 # Row 4: a path under assets/ that names no file.
 def test_a_missing_asset_answers_with_the_envelope_even_for_a_browser(site: TestClient) -> None:
     response = site.get("/assets/missing.js", headers=HTML)
