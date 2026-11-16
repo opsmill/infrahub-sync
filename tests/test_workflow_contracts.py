@@ -668,6 +668,7 @@ def test_nightly_route_is_dispatch_only_and_requires_an_exact_merged_commit() ->
         "ref": f"${{{{ inputs.{SHA_INPUT} }}}}",
         "fetch-depth": 0,
         "persist-credentials": False,
+        "submodules": True,
     }
     guard_step = next(step for step in steps if step.get("id") == "sha_guard")
     guard = guard_step["run"]
@@ -748,6 +749,7 @@ def test_nightly_runs_the_compose_suite_against_an_image_it_builds() -> None:
         "ref": f"${{{{ inputs.{SHA_INPUT} }}}}",
         "fetch-depth": 0,
         "persist-credentials": False,
+        "submodules": True,
     }
     guard = next(step for step in steps if step.get("id") == "sha_guard")["run"]
     assert ANCESTRY_CHECK in guard
@@ -976,6 +978,15 @@ def docker_image_job(name: str) -> dict:
 def docker_image_build_steps() -> list[dict]:
     """Return the steps of the per-platform build job, in order."""
     return docker_image_job("build")["steps"]
+
+
+def test_the_image_build_checkout_fetches_the_frontend_submodule() -> None:
+    """The Dockerfile's web stage builds from `frontend/vendor/infrahub`, a submodule."""
+    checkout = next(
+        step for step in docker_image_build_steps() if str(step.get("uses", "")).startswith(CHECKOUT_ACTION)
+    )
+
+    assert checkout["with"] == {"ref": "${{ inputs.ref }}", "persist-credentials": False, "submodules": True}
 
 
 def _uses(step: dict, action: str) -> bool:
@@ -2048,9 +2059,17 @@ def build_context_inputs() -> set[str]:
         arguments = [part for part in parts[1:] if not part.startswith("--")]
         if any(part.startswith("--from=") for part in parts[1:]) or len(arguments) < 2:
             continue
-        # `COPY dir/ ./` and `COPY dir ./` copy the same tree.
-        found.update(argument.rstrip("/") for argument in arguments[:-1])
+        # `COPY dir/ ./` and `COPY dir ./` copy the same tree, and a one-character class
+        # such as `fronten[d]` (it lets a missing submodule reach the Dockerfile's own
+        # message) names the same path as the character it holds.
+        found.update(re.sub(r"\[(.)\]", r"\1", argument).rstrip("/") for argument in arguments[:-1])
     return found
+
+
+def _named_by(path: str, patterns: set[str]) -> bool:
+    """Whether a filter pattern names `path` exactly or as `<directory>/**` of a parent."""
+    parts = path.split("/")
+    return path in patterns or any(f"{'/'.join(parts[:length])}/**" in patterns for length in range(1, len(parts) + 1))
 
 
 def test_the_image_filter_covers_every_input_the_dockerfile_copies() -> None:
@@ -2063,7 +2082,7 @@ def test_the_image_filter_covers_every_input_the_dockerfile_copies() -> None:
     inputs = build_context_inputs()
 
     assert inputs, "no COPY line in the Dockerfile reads from the build context"
-    uncovered = sorted(name for name in inputs if name not in patterns and f"{name}/**" not in patterns)
+    uncovered = sorted(name for name in inputs if not _named_by(name, patterns))
     assert not uncovered, f"the image is built from {uncovered}, which {IMAGE_INPUTS_FILTER} does not name"
 
 

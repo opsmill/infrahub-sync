@@ -78,7 +78,8 @@ documentation_all:
 
 # What the image gate (`ci-docker-image.yml`) rebuilds for: every build-context
 # input the Dockerfile copies (README.md and LICENSE.txt go into the wheel's
-# metadata), the dependency set it installs, the root Compose file, and the smoke
+# metadata; `frontend/**` covers the web interface and its submodule, whose
+# address `.gitmodules` sets), the dependency set it installs, the root Compose file, and the smoke
 # suite with the helper that names its image. The last three entries are the
 # gate's own declarations, so re-aiming it faces the gate it aims.
 image_inputs:
@@ -90,6 +91,8 @@ image_inputs:
   - "LICENSE.txt"
   - "infrahub_sync/**"
   - "opsmill_prefect_extras/**"
+  - "frontend/**"
+  - ".gitmodules"
   - "docker-compose.yml"
   - "tests/image/**"
   - "tests/docker_image.py"
