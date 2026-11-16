@@ -158,6 +158,7 @@ def test_constructor_closes_connection_inputs(url: str, token: str, timeout: obj
         ("http://sync-api:8000/api", "http://sync-api:8000", "http://sync-api:8000/api/version"),
         ("http://sync-api:8000/api/", "http://sync-api:8000", "http://sync-api:8000/api/version"),
         ("https://proxy.example/sync", "https://proxy.example/sync", "https://proxy.example/sync/api/version"),
+        ("https://proxy/sync/api", "https://proxy/sync", "https://proxy/sync/api/version"),
         # Only a whole trailing `api` path segment is removed: not a host named `api`, not `myapi`.
         ("http://api", "http://api", "http://api/api/version"),
         ("http://host/myapi", "http://host/myapi", "http://host/myapi/api/version"),

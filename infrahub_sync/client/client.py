@@ -162,10 +162,10 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         if authority_invalid or carries_credentials:
             raise ClientInputError(_SERVICE_URL_ARG)
         # The value is the Sync service's address; one trailing `api` path segment is the Sync
-        # API's own prefix, which the client adds itself (spec 017 D-3).
+        # API's own prefix, which the client adds itself (ADR 0043, decision 4).
         path = url.path.rstrip("/")
         if path.endswith("/api"):
-            path = path.removesuffix("api").rstrip("/")
+            path = path.removesuffix("/api").rstrip("/")
         return str(url.copy_with(path=path or "/")).rstrip("/")
 
     @property
@@ -198,7 +198,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         operation = "get_version"
         response = self._send(operation, "GET", "/version", authenticated=False)
         self._require_json(response, operation)
-        if response.status_code == 404 and not self._is_error_envelope(response):
+        if response.status_code == 404 and not self._is_error_envelope(response, operation):
             # A route that does not exist on a Sync API: an older service without `/api`, or
             # another application at this address.
             raise self._not_sync_api(response, operation)
@@ -217,7 +217,10 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         self._require_json(response, operation)
         if response.status_code != 200:
             raise ProtocolError(operation, response.status_code)
-        return self._success(response, operation, ServiceStatusResource, {200})
+        try:
+            return ServiceStatusResource.model_validate(self._json(response, operation))
+        except (ValidationError, TypeError, ValueError):
+            raise ProtocolError(operation, response.status_code) from None
 
     def register_config(self, request: ConfigMutationRequest, idempotency_key: str) -> RegisteredConfigurationResource:
         """Register a configuration package idempotently."""
@@ -996,9 +999,9 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             raise cls._not_sync_api(response, operation)
 
     @classmethod
-    def _is_error_envelope(cls, response: httpx.Response) -> bool:
+    def _is_error_envelope(cls, response: httpx.Response, operation: str) -> bool:
         try:
-            ErrorEnvelope.model_validate(cls._json(response, "get_version"))
+            ErrorEnvelope.model_validate(cls._json(response, operation))
         except (ValidationError, ProtocolError):
             return False
         return True
