@@ -7,7 +7,7 @@ means "the relationship becomes empty". Every plan this release writes is saved 
   on a field that is part of the operation identity.
 - In a format 4 plan a one-peer reference still holds exactly one peer.
 - The plan checksum covers the emptied reference and the format version.
-- Format 4 plans are still read, verified and applied (FR-012).
+- Format 4 plans are still read, verified, approved by checksum, applied and resumed (FR-012).
 - A format 6 plan is refused by `runs plan`, `verify`, apply and resume before any operation is
   read, with a message that names the version found and the supported versions (FR-011).
 """
@@ -287,6 +287,54 @@ def test_a_format_4_plan_is_still_verified(tmp_path: Path) -> None:
     failures = verify_plan(artifact=read_plan_artifact_bytes(directory), run_id=RUN_ID, config_version=CONFIG_VERSION)
 
     assert failures == []
+
+
+def test_a_format_4_plan_is_still_approved_by_checksum(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Sync API approves a format 4 plan by the checksum of its saved plan (FR-012)."""
+    pytest.importorskip("prefect")
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from infrahub_sync.product_store import local_product_projection
+    from infrahub_sync.service import flow as service_flow
+    from infrahub_sync.service.app import create_app
+    from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
+    from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
+    from tests.service import test_approval
+
+    _format_4_plan(tmp_path)
+    saved = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, base_directory=tmp_path)
+    assert saved.manifest.format_version == 4
+    assert saved.checksum_ok is True
+    checksum = saved.manifest.plan_checksum
+
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": test_approval.OWNER_TOKEN}}))
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    projection = local_product_projection((tmp_path / "service").resolve())
+    version = projection.create_configuration(test_approval._registered_package())
+    test_approval._stored_run(projection, version, publish=False)
+    projection.publish_artifact(
+        test_approval.RUN_ID,
+        artifact_id=PLAN_ARTIFACT_ID,
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=service_flow._review_document(test_approval.RUN_ID, saved).model_dump_json().encode(),
+    )
+    service = RunService(projection, test_approval._RecordingOrchestration(), secrets=resolver.secret_values)
+    client = TestClient(create_app(service, resolver))
+
+    response = client.post(
+        f"/runs/{test_approval.RUN_ID}/approve",
+        headers={"Authorization": f"Bearer {test_approval.OWNER_TOKEN}", "Idempotency-Key": "approve-format-4"},
+        json={"expected_checksum": checksum, "reason": "reviewed format 4 plan"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["run"]["approval"]["plan_checksum"] == checksum
+    stored = projection.lookup_run(test_approval.RUN_ID).value
+    assert stored is not None
+    assert stored.approval is not None
+    assert stored.approval.plan_checksum == checksum
 
 
 @pytest.mark.parametrize("start_after", [None, 0], ids=["apply", "resume"])

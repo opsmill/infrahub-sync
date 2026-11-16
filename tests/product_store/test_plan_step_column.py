@@ -249,3 +249,33 @@ def test_a_document_that_is_not_a_mapping_is_refused(tmp_path: Path, profile: st
         projection.record_plan_step("run-001", _FLOW_RUN_ID, [_CANARY])  # ty: ignore[invalid-argument-type]
 
     assert _link(projection).plan_step is None
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        pytest.param({**_COMPARING, "message": _CANARY}, id="extra-key"),
+        pytest.param({"parts": {"comparing": {"started_at": _STARTED, "error": _CANARY}}}, id="part-with-a-message"),
+    ],
+)
+def test_a_link_inserted_with_a_document_that_is_not_allowed_is_refused(
+    tmp_path: Path, profile: str, document: dict[str, object]
+) -> None:
+    """FR-021: inserting an execution link runs the same check as `record_plan_step`, and stores nothing."""
+    projection = _projection(tmp_path, profile)
+    link = PrefectExecutionLink(flow_run_id=_FLOW_RUN_ID, purpose="plan", attempt=1, plan_step=document)
+
+    with pytest.raises(ValueError, match="plan step document") as refused:
+        projection.create_run(_run().model_copy(update={"prefect_executions": (link,)}))
+
+    assert _CANARY not in str(refused.value)
+    assert projection.lookup_run("run-001").value is None
+
+
+def test_a_link_inserted_with_an_allowed_document_is_stored(tmp_path: Path, profile: str) -> None:
+    projection = _projection(tmp_path, profile)
+    link = PrefectExecutionLink(flow_run_id=_FLOW_RUN_ID, purpose="plan", attempt=1, plan_step=_SAVED)
+
+    projection.create_run(_run().model_copy(update={"prefect_executions": (link,)}))
+
+    assert _link(projection).plan_step == _SAVED

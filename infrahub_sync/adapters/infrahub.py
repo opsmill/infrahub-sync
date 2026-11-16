@@ -1694,27 +1694,35 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             return
         schemas = self.client.schema.all(refresh=True)
         missing_by_kind: dict[str, set[str]] = {}
+        faults_by_kind: dict[str, set[str]] = {}
         for operation in operations:
             if operation.action == "delete":
                 continue
             schema = schemas.get(operation.kind)
+            faults: set[str] = set()
             if isinstance(schema, NodeSchemaAPI):
                 missing = self._unwritable_reviewed_fields(operation=operation, node_schema=schema)
                 if not missing:
-                    missing = self._omitted_rendered_fields(operation=operation, node_schema=schema)
+                    missing, faults = self._omitted_rendered_fields(operation=operation, node_schema=schema)
             else:
                 missing = set(operation.payload or {})
             if missing:
                 missing_by_kind.setdefault(operation.kind, set()).update(missing)
+            if faults:
+                faults_by_kind.setdefault(operation.kind, set()).update(faults)
         if missing_by_kind:
-            details = "; ".join(
-                f"{kind!r}: {', '.join(repr(field) for field in sorted(fields))}"
-                for kind, fields in sorted(missing_by_kind.items())
-            )
             msg = (
                 f"The live destination schema cannot represent reviewed direct payload field(s) for "
-                f"destination kind(s) {details}. The whole plan was refused before its first write; "
-                "no destination write was attempted."
+                f"destination kind(s) {_fields_by_kind(missing_by_kind)}. The whole plan was refused before its "
+                "first write; no destination write was attempted."
+            )
+            raise ReviewedPayloadFieldMissingError(msg)
+        if faults_by_kind:
+            msg = (
+                "An update empties a one-peer relationship, but the SDK mutation renders relationship field(s) "
+                f"of destination kind(s) {_fields_by_kind(faults_by_kind)} as something other than the reviewed "
+                "change: an emptied field must render as null, and no relationship the operation does not name "
+                "may render. The whole plan was refused before its first write; no destination write was attempted."
             )
             raise ReviewedPayloadFieldMissingError(msg)
         refuse_destination_identity_collisions(schema=schemas, operations=operations)
@@ -1743,17 +1751,27 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         writable = {attribute.name for attribute in node_schema.attributes if not attribute.read_only}
         return cls._reviewed_direct_fields(operation=operation, node_schema=node_schema) - writable
 
-    def _omitted_rendered_fields(self, *, operation: PlannedOperation, node_schema: NodeSchemaAPI) -> set[str]:
-        """Find reviewed direct values the SDK would leave out of its mutation input."""
+    def _omitted_rendered_fields(
+        self, *, operation: PlannedOperation, node_schema: NodeSchemaAPI
+    ) -> tuple[set[str], set[str]]:
+        """Find what the SDK would render differently from the reviewed operation.
+
+        Returns the reviewed direct values the SDK would leave out of its mutation input, and
+        the relationship fields whose render differs from an emptying update's reviewed change
+        (`_emptied_render_faults`).
+        """
         payload = operation.payload or {}
         data = self.client.schema.generate_payload_create(schema=node_schema, data=payload)
         node = self._planned_write_node(operation=operation, node_schema=node_schema, create_data=data)
         rendered_data = node._generate_input_data(exclude_hfid=True)["data"]["data"]
-        return {
+        omitted = {
             field
             for field in self._reviewed_direct_fields(operation=operation, node_schema=node_schema)
             if field not in rendered_data
-        } | _emptied_render_faults(operation=operation, node_schema=node_schema, rendered_data=rendered_data)
+        }
+        return omitted, _emptied_render_faults(
+            operation=operation, node_schema=node_schema, rendered_data=rendered_data
+        )
 
     def _planned_write_node(
         self, *, operation: PlannedOperation, node_schema: NodeSchemaAPI, create_data: dict[str, Any]
@@ -2234,6 +2252,14 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 def _emptied_one_peer_fields(operation: PlannedOperation) -> list[str]:
     """The one-peer relationships an update empties (plan format 5), sorted by name."""
     return sorted(reference.field for reference in operation.relationships or () if reference.empties_one_peer)
+
+
+def _fields_by_kind(fields_by_kind: Mapping[str, set[str]]) -> str:
+    """Name each kind and its fields for a refusal message, in a fixed order."""
+    return "; ".join(
+        f"{kind!r}: {', '.join(repr(field) for field in sorted(fields))}"
+        for kind, fields in sorted(fields_by_kind.items())
+    )
 
 
 def _emptied_render_faults(

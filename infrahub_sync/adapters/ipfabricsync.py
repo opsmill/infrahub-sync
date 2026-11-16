@@ -132,6 +132,9 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
                     matching_nodes = [item for item in nodes if str(item) == node_id]
                     if len(matching_nodes) == 0:
                         data[field.name] = None
+                        # The source names a peer that its read did not store, so the plan
+                        # does not record the relationship as emptied (spec 019 research R7).
+                        self.record_filtered_reference(mapping.name, data["local_id"], field.name)
                     else:
                         node = matching_nodes[0]
                         data[field.name] = node.get_unique_id()

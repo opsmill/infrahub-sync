@@ -70,6 +70,10 @@ STATE = netbox.STATE_DIR / "bench"
 RESULTS = netbox.STATE_DIR / "benchmarks" / "results.jsonl"
 INFRAHUB_VERSION = "1.11.9"
 INFRAHUB_IMAGE = "registry.opsmill.io/opsmill/infrahub"
+# The outcome of a `sync` that completed and stopped for review of the records its plan
+# leaves out (`infrahub_sync.service.flow.LEFT_OUT_STOP_OUTCOME`; the service extra is not
+# imported here).
+LEFT_OUT_STOP_OUTCOME = "left-out-review-required"
 # Fixed outside any checkout: every runner mutates the same Docker projects.
 # The pinned destination's Compose project, apart from the development stack's own.
 DESTINATION_PROJECT = "infrahub-sync-benchmark"
@@ -508,13 +512,17 @@ def record_plan_actions(client: SyncClient, record: ResultRecord, run: PublicRun
             msg = "apply summary differs from the saved plan"
             raise BenchmarkError(msg)
         record.action_evidence = "run-plan-and-apply-summary"
-    elif summary.left_out:
-        # The sync stopped at `planned` for review of the records left out: nothing was
-        # written, and its results summary is the plan summary, not an apply summary (FR-029).
+    elif summary.left_out and run.phase == "planned" and run.outcome == LEFT_OUT_STOP_OUTCOME:
+        # The sync completed and stopped at `planned` for review of the records left out:
+        # nothing was written, and its results summary is the plan summary, not an apply
+        # summary (FR-029). A run that failed or was cancelled has another outcome.
         actions["create"], actions["update"] = {}, {}
         record.action_evidence = "run-plan-left-out-stop"
     else:
-        msg = f"sync stopped before its apply in phase {run.phase} without leaving records out"
+        msg = (
+            f"sync stopped before its apply in phase {run.phase} with outcome {run.outcome}, "
+            "not as a completed stop for records left out"
+        )
         raise BenchmarkError(msg)
     # The current apply summary counts saved operations, including undispatched deletes.
     # Use the plan's explicit disclosure to report only executed actions.

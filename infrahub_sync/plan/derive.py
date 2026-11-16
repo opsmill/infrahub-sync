@@ -589,12 +589,23 @@ def destination_requires(destination_schema: Any, kind: str, field_name: str) ->
     return None
 
 
-def _owner_source_id(store: Any, kind: str, unique_id: str) -> str | None:
-    """The source record ID of the stored source record `unique_id` of `kind`, or `None`."""
+class _OwnerNotFound:
+    """The source store does not hold the record an update is derived for."""
+
+
+_OWNER_NOT_FOUND = _OwnerNotFound()
+
+
+def _owner_source_id(store: Any, kind: str, unique_id: str) -> str | _OwnerNotFound | None:
+    """The source record ID of the stored source record `unique_id` of `kind`.
+
+    `None` when the record has no source record ID, and `_OWNER_NOT_FOUND` when the store does
+    not hold the record.
+    """
     try:
         item = store.get(model=kind, identifier=unique_id)
     except ObjectNotFound:
-        return None
+        return _OWNER_NOT_FOUND
     return source_record_id(getattr(item, "local_id", None))
 
 
@@ -620,9 +631,11 @@ def _emptied_one_peer_fields(  # pylint: disable=too-many-arguments  # the parts
     - the destination schema does not require it;
     - the source adapter did not leave the peer out through a configured filter (research R7).
 
-    A required one-peer relationship that the source empties never reaches this point: the
-    source read leaves its record out with a `required_relationship_empty_in_source` problem
-    (FR-013a).
+    A required one-peer relationship that the source empties is never recorded as emptied
+    (FR-013a). When the source model requires it, the source read leaves the record out. When
+    only the destination schema requires it, the problem pass (`plan.problems.find_problems`)
+    gives the record a `required_relationship_empty_in_source` problem, and the selection step
+    removes its update.
     """
     diffs = element.get_attrs_diffs() if hasattr(element, "get_attrs_diffs") else {}
     source_side = (diffs or {}).get("+") or {}
@@ -645,8 +658,20 @@ def _emptied_one_peer_fields(  # pylint: disable=too-many-arguments  # the parts
             continue
         if destination_requires(destination_schema, kind, field):
             continue
-        if filtered and (kind, _owner_source_id(source_adapter.store, kind, element.name), field) in filtered:
-            continue
+        if filtered:
+            owner = _owner_source_id(source_adapter.store, kind, element.name)
+            if isinstance(owner, _OwnerNotFound):
+                # Whether a configured filter removed the peer is not known, so the
+                # relationship is left as it is.
+                logger.warning(
+                    "Plan: the %s relationship %s is not recorded as emptied: the source record it belongs to "
+                    "was not found, so whether a configured filter removed its peer is not known",
+                    kind,
+                    field,
+                )
+                continue
+            if (kind, owner, field) in filtered:
+                continue
         emptied.append(field)
     return emptied
 

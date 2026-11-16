@@ -115,6 +115,7 @@ one the apply leaves alone. The data model refuses an empty one-peer reference w
 in these cases:
 
 - on a create, because a node created without a peer holds no entry for the relationship;
+- on a delete;
 - on a field that is part of the operation identity;
 - in a plan of format 4 or earlier, where a one-peer reference names exactly one peer.
 
@@ -126,15 +127,24 @@ hold:
 - the destination schema does not require the field;
 - the source adapter did not remove the peer through a configured filter. The shared reference
   helper records each such field in the adapter's `filtered_peer_fields`, and derivation leaves
-  that relationship alone.
+  that relationship alone. The IP Fabric adapter records a field in the same set when the source
+  names a peer that its read did not store.
+
+When the adapter recorded filtered fields but the source store does not hold the record that the
+update belongs to, derivation cannot tell whether a filter removed the peer. It leaves the
+relationship alone and logs one warning that names the kind and the field.
 
 A peer that the problem pass leaves out of the plan removes the reference from the update, so a
 kept record does not record an emptied relationship.
 
-When the source mapping model does not accept `None` for the field and the source record holds no
-peer, the source read reports a problem of type `required_relationship_empty_in_source` that names the record
-and the field. The record is left out of the plan and its destination node is kept, as for
-`required_peer_excluded_by_filter`.
+A required one-peer relationship that the source empties gives a problem of type
+`required_relationship_empty_in_source` that names the record and the field. The record is left
+out of the plan and its destination node is kept, as for `required_peer_excluded_by_filter`. Two
+steps report it:
+
+- the source read, when the source mapping model does not accept `None` for the field;
+- the problem pass (`infrahub_sync/plan/problems.py`), when the source mapping model accepts
+  `None`, the destination schema requires the field, and the destination node holds a peer.
 
 Apply writes the emptied relationship as `<field>: null` in the one Upsert of the operation. The
 write is refused before it is sent when the rendered input holds anything else for that field, or
@@ -142,12 +152,8 @@ renders a relationship that the operation does not name. The pre-write checks co
 planned peer set with the destination peer set like any other relationship, and
 `runs plan --detail` prints `<field>: becomes empty`.
 
-Two cases are not covered:
-
-- a field that the source mapping model accepts as `None` but the destination schema requires gets
-  no reference, because derivation skips it, and no problem, because the source read accepts it;
-- a record with no source ID whose peer a configured filter removed is not recorded in
-  `filtered_peer_fields`, so the plan empties that relationship.
+One case is not covered: a record with no source ID whose peer a configured filter removed is not
+recorded in `filtered_peer_fields`, so the plan empties that relationship.
 
 #### The payload carries the identity
 

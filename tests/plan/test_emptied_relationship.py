@@ -2,10 +2,11 @@
 
 FR-005: an update gains a one-peer reference with no peer when the destination node holds a peer
 and the source record holds none. FR-007: never on a create. FR-008: the plan step writes no
-warning for it. FR-013a: a required one-peer relationship that the source empties leaves the
-record out with a `required_relationship_empty_in_source` problem, and keeps its destination
-node. Research R6 and R7 give the conditions: no reference when both sides are empty, when the
-peer was left out of the plan (a kept record), or when a configured filter removed the peer.
+warning for it. FR-013a: a one-peer relationship that the source model or the destination schema
+requires, and that the source empties, leaves the record out with a
+`required_relationship_empty_in_source` problem, and keeps its destination node. Research R6 and
+R7 give the conditions: no reference when both sides are empty, when the peer was left out of the
+plan (a kept record), or when a configured filter removed the peer.
 
 Before this feature, a source record with no peer for a required one-peer relationship gave one
 of two results, depending on how the adapter wrote it. A field left out of the record data
@@ -311,26 +312,89 @@ def test_a_kind_that_refers_to_a_filtered_peer_reads_cold(monkeypatch: pytest.Mo
     assert source.filtered_peer_fields == frozenset()
 
 
-def test_no_reference_when_the_destination_schema_requires_the_relationship(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A field the source model marks optional and the destination schema requires gets no reference and no problem.
-
-    The source read decides FR-013a from the source model, so this case gives no update for the
-    relationship, as before this feature.
-    """
-    source = _source(monkeypatch, OptionalOne, None)
-    destination = _destination(source, OptionalOne, "kept")
+def _require_peer_in_destination(destination: NetboxAdapter) -> None:
     destination.schema = {  # ty: ignore[unresolved-attribute] -- the destination schema the plan step reads
         "Example": SimpleNamespace(human_friendly_id=None, relationships=[SimpleNamespace(name="peer", optional=False)])
     }
 
-    operations = operations_from_diff(
+
+def test_a_relationship_only_the_destination_schema_requires_leaves_the_record_out(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """FR-013a: the source model marks the field optional and the destination schema requires it.
+
+    Derivation records no emptied relationship, and the problem pass gives the record a
+    `required_relationship_empty_in_source` problem, so the plan holds no operation for it and
+    keeps its destination node.
+    """
+    source = _source(monkeypatch, OptionalOne, None)
+    destination = _destination(source, OptionalOne, "kept")
+    _require_peer_in_destination(destination)
+
+    derived = operations_from_diff(
         destination.diff_from(source),
         config=source.config,
         tier_of=lambda _kind: 0,
         source_adapter=source,
         destination_adapter=destination,
     )
+    with caplog.at_level(logging.WARNING, logger=DERIVE_LOGGER):
+        operations, report = _plan(source, destination)
+
+    assert [(operation.action, operation.relationships) for operation in _example_operations(derived)] == [
+        ("update", None)
+    ]
+    assert _example_operations(operations) == []
+    problems = [problem for problem in report.problems if problem.record.kind == "Example"]
+    assert [(problem.problem_type, problem.record.source_id, problem.field) for problem in problems] == [
+        ("required_relationship_empty_in_source", "1", "peer")
+    ]
+    left_out = [(item.record.identity, item.cause) for item in report.left_out if item.record.kind == "Example"]
+    assert left_out == [({"name": "owner"}, "has_problem")]
+    assert [record for record in caplog.records if record.name == DERIVE_LOGGER] == []
+
+
+def test_no_problem_when_the_destination_requires_the_relationship_and_holds_no_peer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both sides are empty: the plan changes nothing for the relationship and reports no problem."""
+    source = _source(monkeypatch, OptionalOne, None)
+    destination = _destination(source, OptionalOne, None)
+    _require_peer_in_destination(destination)
+
+    operations, report = _plan(source, destination)
+
+    assert _example_operations(operations) == []
+    assert [problem for problem in report.problems if problem.record.kind == "Example"] == []
+
+
+def test_no_reference_when_the_owner_record_is_not_in_the_source_store(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Whether a filter removed the peer is not known, so the relationship is not emptied, and one warning is logged.
+
+    The source adapter recorded a filtered peer for another record, and the source store no longer
+    holds the record of the update when derivation looks up its source ID.
+    """
+    source = _source(monkeypatch, OptionalOne, None)
+    destination = _destination(source, OptionalOne, "kept")
+    diff = destination.diff_from(source)
+    monkeypatch.setattr(_Adapter, "filtered_peer_fields", frozenset({("Example", "9", "peer")}))
+    source.remove(source.get(OptionalOne, "owner"))
+
+    with caplog.at_level(logging.WARNING, logger=DERIVE_LOGGER):
+        operations = operations_from_diff(
+            diff,
+            config=source.config,
+            tier_of=lambda _kind: 0,
+            source_adapter=source,
+            destination_adapter=destination,
+        )
 
     assert [(operation.action, operation.relationships) for operation in _example_operations(operations)] == [
         ("update", None)
     ]
+    warnings = [record.getMessage() for record in caplog.records if record.name == DERIVE_LOGGER]
+    assert len(warnings) == 1
+    assert "Example relationship peer" in warnings[0]
+    assert "owner" not in warnings[0]

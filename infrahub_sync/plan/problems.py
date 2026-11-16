@@ -485,6 +485,89 @@ def _dropdown_problems(
                 findings.add(problem, [record.key])
 
 
+def _destination_required_empty_problems(  # pylint: disable=too-many-arguments  # the check's inputs, keyword-only
+    *,
+    source: Any,
+    destination: Any,
+    view: _SourceView,
+    load_report: Sequence[LoadReportEntry],
+    config: SyncConfig | None,
+    findings: _Findings,
+) -> None:
+    """Leave out a stored record that empties a one-peer relationship the destination requires (FR-013a).
+
+    The source read leaves out a record whose source model requires the peer. This check
+    covers a relationship that the source model marks optional and the destination schema
+    requires: the source record holds no peer and the destination node holds one. The record
+    gets a `required_relationship_empty_in_source` problem, so the plan holds no operation for
+    it and keeps its destination node.
+
+    A field the load report already describes for the record (a peer the read could not
+    build), and a field whose peer a configured filter removed (research R7), are not checked
+    here: the source names a peer for them.
+    """
+    destination_schema = getattr(destination, "schema", None)
+    destination_store = getattr(destination, "store", None)
+    if destination_schema is None or destination_store is None:
+        return
+    reported: set[tuple[_RecordKey, str]] = set()
+    for index, entry in enumerate(load_report):
+        key = view.by_entry.get(index)
+        if key is not None and entry.field is not None:
+            reported.add((key, entry.field))
+    filtered = getattr(source, "filtered_peer_fields", None) or frozenset()
+    for kind in getattr(source, "top_level", ()) or ():
+        fields = _destination_required_one_peer_fields(
+            source, kind, config=config, destination_schema=destination_schema
+        )
+        for item in source.get_all(kind) if fields else ():
+            record = view.records.get(_item_key(kind, item))
+            if record is None:
+                continue
+            emptied = [
+                name
+                for name in fields
+                if getattr(item, name, None) is None
+                and (record.key, name) not in reported
+                and (kind, record.source_id, name) not in filtered
+            ]
+            for field_name in _held_by_destination(destination_store, kind, item.get_unique_id(), emptied):
+                problem = _problem("required_relationship_empty_in_source", record.reference(), field_name=field_name)
+                findings.add(problem, [record.key])
+
+
+def _destination_required_one_peer_fields(
+    source: Any, kind: str, *, config: SyncConfig | None, destination_schema: Any
+) -> list[str]:
+    """The one-peer reference fields of `kind` that the destination schema requires, identifiers aside."""
+    model = getattr(source, kind, None)
+    identifiers = getattr(model, "_identifiers", None) or ()
+    model_fields = getattr(model, "model_fields", None) or {}
+    return [
+        name
+        for name, peer_kinds in sorted(reference_candidates(config, kind).items())
+        if peer_kinds
+        and name not in identifiers
+        and not (name in model_fields and isinstance(model_fields[name].default, list))
+        and destination_requires(destination_schema, kind, name) is True
+    ]
+
+
+def _held_by_destination(destination_store: Any, kind: str, unique_id: str, fields: Sequence[str]) -> list[str]:
+    """The fields of `fields` for which the destination node `unique_id` of `kind` holds one peer."""
+    if not fields:
+        return []
+    try:
+        held = destination_store.get(model=kind, identifier=unique_id)
+    except ObjectNotFound:
+        return []
+    return [
+        name
+        for name in fields
+        if getattr(held, name, None) is not None and not isinstance(getattr(held, name, None), (list, tuple))
+    ]
+
+
 def _identity_group_problems(groups: Sequence[IdentityGroup], view: _SourceView, findings: _Findings) -> None:
     """One problem per group of records the destination cannot tell apart (research R6)."""
     seen: set[frozenset[_RecordKey]] = set()
@@ -709,6 +792,9 @@ def find_problems(
         logger.warning("Plan: Dropdown values were not checked: this run has no destination schema snapshot")
     else:
         _dropdown_problems(source=source, view=view, dropdown_choices=dropdown_choices, findings=findings)
+    _destination_required_empty_problems(
+        source=source, destination=destination, view=view, load_report=load_report, config=config, findings=findings
+    )
     _identity_group_problems(identity_groups, view, findings)
     _destination_ambiguity_problems(destination=destination, view=view, config=config, findings=findings)
     left, kept = _walk(

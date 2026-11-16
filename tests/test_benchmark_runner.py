@@ -787,6 +787,24 @@ def test_v3_plan_that_leaves_records_out_records_the_report_counts_without_an_ap
     assert record.apply_seconds is None
 
 
+@pytest.mark.parametrize(("phase", "outcome"), [("planned", "failed"), ("planned", "cancelled"), ("failed", "failed")])
+def test_v3_plan_that_leaves_records_out_is_not_a_stop_when_the_run_did_not_complete(
+    monkeypatch, phase: str, outcome: str
+) -> None:
+    """Only a completed stop for records left out is recorded; a failed or cancelled sync is an error."""
+    start = datetime.now(timezone.utc)
+    client = FakeSyncClient(
+        run=sync_run(start, phase=phase, outcome=outcome),
+        entry=sync_entry(start),
+        plan=SimpleNamespace(
+            operations=(plan_operation("create", "IpamVLAN", "10"),),
+            summary=plan_summary(total=1, left_out=3),
+        ),
+    )
+    with pytest.raises(BenchmarkError, match=f"outcome {outcome}, not as a completed stop for records left out"):
+        run_v3(monkeypatch, client)
+
+
 def test_v3_plan_that_leaves_records_out_compares_the_apply_summary_when_an_apply_ran(monkeypatch) -> None:
     start = datetime.now(timezone.utc)
     client = FakeSyncClient(

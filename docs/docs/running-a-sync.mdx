@@ -188,8 +188,8 @@ plan_saving: running
 
 `plan_waiting` is the time the execution waited for a worker, and `plan_preparing` the time
 from the moment a worker took it to the start of the first read. `plan_comparing` covers
-deriving the operations and the plan report, `plan_checking` the checks on the derived plan,
-and `plan_saving` writing and publishing the plan. A part that ended shows its duration in
+deriving the operations, `plan_checking` the checks on the derived plan, which build the plan
+report, and `plan_saving` writing and publishing the plan. A part that ended shows its duration in
 seconds, and the part that runs shows `running`. A part that was running when the stage
 failed, was cancelled or was interrupted shows `stopped after <seconds>s`, or `stopped`
 when the service has not recorded the stage's verdict yet. A part that did not start prints no

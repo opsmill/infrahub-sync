@@ -900,7 +900,11 @@ def test_an_emptied_relationship_the_destination_requires_is_refused_before_rend
 
 
 def test_the_pre_write_checks_refuse_an_emptied_relationship_the_sdk_would_not_render() -> None:
-    """FR-013: `verify` and the checks of `apply` and `runs resume` see the same refusal before any write."""
+    """FR-013: `verify` and the checks of `apply` and `runs resume` see the same refusal before any write.
+
+    The refusal names the render of the emptied relationship as the cause, not a schema that
+    cannot represent a reviewed field.
+    """
     client, adapter, _peers = seeded_adapter(members=[])
     operation = _team_update(members=None, owner=[])
 
@@ -908,7 +912,11 @@ def test_the_pre_write_checks_refuse_an_emptied_relationship_the_sdk_would_not_r
 
     with (
         _render_with(lambda data: data.pop(UNMAPPED_RELATIONSHIP, None)),
-        pytest.raises(ReviewedPayloadFieldMissingError, match=repr(UNMAPPED_RELATIONSHIP)),
+        pytest.raises(ReviewedPayloadFieldMissingError) as refused,
     ):
         adapter.validate_planned_payload_fields([operation])
+    message = str(refused.value)
+    assert f"{TEAM_KIND!r}: {UNMAPPED_RELATIONSHIP!r}" in message
+    assert message.startswith("An update empties a one-peer relationship, but the SDK mutation renders")
+    assert "cannot represent" not in message
     assert client.mutations == []

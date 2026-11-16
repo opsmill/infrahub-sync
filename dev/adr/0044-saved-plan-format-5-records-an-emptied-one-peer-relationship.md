@@ -29,8 +29,8 @@ A one-peer reference with an empty peer list on an update means that the relatio
 empty. Plans that hold it are saved in format 5.
 
 - `RelationshipReference(cardinality="one", peers=[])` is accepted from format 5 on. The data
-  model refuses it on a create, on a field that is part of the operation identity, and in a plan
-  of format 4 or earlier. No new field is added to the operation.
+  model refuses it on a create, on a delete, on a field that is part of the operation identity,
+  and in a plan of format 4 or earlier. No new field is added to the operation.
 - Every plan is saved in format 5, whether or not it holds an emptied relationship. Format 4
   plans are still read, verified, approved, applied and resumed. The checksum covers
   `operations.jsonl` in full, as in format 4.
@@ -38,11 +38,17 @@ empty. Plans that hold it are saved in format 5.
   of the mapping and not an identifier, the source value is `None`, the destination node holds a
   peer, the destination schema does not require the field, and no configured filter removed the
   peer. The shared reference helper records a peer that a filter removes, so that derivation
-  leaves that relationship alone. The warning of the previous behavior is removed.
-- When the source mapping model does not accept `None` for the field and the source record holds
-  no peer, the source read reports a problem of the new type `required_relationship_empty_in_source`. The
-  record is left out of the plan and its destination node is kept, as for
-  `required_peer_excluded_by_filter` ([ADR 0020](0020-records-with-problems-are-left-out-of-a-plan.md)).
+  leaves that relationship alone. The IP Fabric adapter records a peer that the source names and
+  its read did not store in the same way. When the source store does not hold the record of the
+  update, derivation leaves the relationship alone and logs a warning. The warning of the
+  previous behavior is removed.
+- When the source record holds no peer for a one-peer relationship that is required, the plan
+  reports a problem of the new type `required_relationship_empty_in_source`. The source read
+  reports it when the source mapping model does not accept `None`. The problem pass reports it
+  when the source mapping model accepts `None`, the destination schema requires the field and the
+  destination node holds a peer. The record is left out of the plan and its destination node is
+  kept, as for `required_peer_excluded_by_filter`
+  ([ADR 0020](0020-records-with-problems-are-left-out-of-a-plan.md)).
 - Apply writes the emptied relationship as `<field>: null` in the one Upsert of the operation. The
   write is refused before it is sent when the rendered input holds anything else for that field,
   or renders a relationship that the operation does not name.
@@ -58,8 +64,6 @@ empty. Plans that hold it are saved in format 5.
 - Saved plans in format 4 are not converted. Applying one leaves an emptied relationship as it is,
   as before.
 - The operation stays one Upsert, so the resume position does not move.
-- A field that the source mapping model accepts as `None` but the destination schema requires gets
-  no reference and no problem, so the destination keeps the old peer.
 - A record with no source ID whose peer a configured filter removed is not recorded as filtered,
   so the plan empties that relationship.
 

@@ -419,13 +419,22 @@ def test_a_store_failure_is_logged_by_class_and_never_raises(caplog: pytest.LogC
     assert all(_CANARY not in message for message in messages)
 
 
-def test_a_write_the_store_refuses_is_logged() -> None:
+def test_a_write_the_store_refuses_is_logged(caplog: pytest.LogCaptureFixture) -> None:
     projection = _RecordingProjection(stored=False)
     observer = _observer(projection)
 
-    observer.begin()
+    with caplog.at_level(logging.WARNING, logger=_SERVICE_LOGGER):
+        observer.begin()
 
     assert projection.writes == [{"parts": {}}]
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == _SERVICE_LOGGER and record.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
+    assert "were not stored" in warnings[0]
+    assert "is ended or unknown" in warnings[0]
 
 
 # --- T039: the engine calls the observer around comparing, checking and saving -----------------

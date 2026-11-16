@@ -1525,6 +1525,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         *,
         mutation_receipt_id: str | None,
     ) -> None:
+        if link.plan_step is not None:
+            # The same check as `record_plan_step`, before any SQL runs (FR-021).
+            _check_plan_step_document(link.plan_step)
         cursor.execute(
             self._sql(_INSERT_PREFECT_EXECUTION),
             (

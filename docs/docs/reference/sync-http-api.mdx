@@ -405,8 +405,8 @@ time, or which part was running when a plan stopped. The routes that return `rea
 | --- | --- |
 | `waiting` | From the submission of the execution (`submitted_at`) to the moment a worker takes it (`claimed_at`). Subject to change. |
 | `preparing` | From `claimed_at` to the start of the earlier of the two reads. Subject to change. |
-| `comparing` | Deriving the operations and the plan report from the two reads. Subject to change. |
-| `checking` | The checks that run on the derived plan before it is saved. Subject to change. |
+| `comparing` | Deriving the operations from the two reads. Subject to change. |
+| `checking` | The checks that run on the derived plan before it is saved, which build the plan report. Subject to change. |
 | `saving` | Writing the plan and publishing it, up to the moment the run returns its plan. Subject to change. |
 
 The two reads run between `preparing` and `comparing`. Their times stay in `reads` and are not
