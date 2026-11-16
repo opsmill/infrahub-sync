@@ -37,8 +37,9 @@ empty. Plans that hold it are saved in format 5.
 - Derivation adds the empty reference to an update when the field is a one-peer reference field
   of the mapping and not an identifier, the source value is `None`, the destination node holds a
   peer, the destination schema does not require the field, and no configured filter removed the
-  peer. The shared reference helper records a peer that a filter removes, so that derivation
-  leaves that relationship alone. The IP Fabric adapter records a peer that the source names and
+  peer. The shared reference helper records a peer that a filter removes, keyed by the source ID
+  of the record, so that derivation leaves that relationship alone. This holds only for a record
+  that has a source ID; see Consequences. The IP Fabric adapter records a peer that the source names and
   its read did not store in the same way. When the source store does not hold the record of the
   update, derivation leaves the relationship alone and logs a warning. The warning of the
   previous behavior is removed.
@@ -64,8 +65,9 @@ empty. Plans that hold it are saved in format 5.
 - Saved plans in format 4 are not converted. Applying one leaves an emptied relationship as it is,
   as before.
 - The operation stays one Upsert, so the resume position does not move.
-- A record with no source ID whose peer a configured filter removed is not recorded as filtered,
-  so the plan empties that relationship.
+- Accepted limitation: a record with no source ID whose peer a configured filter removed is not
+  recorded as filtered, so the plan empties that relationship. The filtered peers are keyed by
+  (kind, source ID, field), and a record with no source ID has no such key.
 
 ## Alternatives considered
 

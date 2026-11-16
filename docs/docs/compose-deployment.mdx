@@ -893,7 +893,9 @@ format 5 plan, so upgrade the Sync API and the worker together.
 When the source holds no peer for an optional one-peer relationship and the
 destination node holds one, for example an interface that leaves its LAG, the
 plan records that the relationship becomes empty and apply removes the peer.
-`runs plan --detail` prints `<field>: becomes empty` for it. When the
+`runs plan --detail` prints `<field>: becomes empty` for it. When a configured
+filter removed the peer of a source record that has a source ID, the plan leaves
+that relationship as it is in the destination. When the
 relationship is required, the plan reports the problem
 `required_relationship_empty_in_source` and leaves the record out.
 

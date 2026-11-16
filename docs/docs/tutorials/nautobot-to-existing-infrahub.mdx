@@ -387,7 +387,8 @@ the deletes of nodes that Infrahub creates itself, such as `default`, as
 [ADR 0043](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0043-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md)
 describes, so a plan of this configuration no longer records that delete.
 
-This follows the saved-plan contract: destination-only objects are recorded as
-deletes, but apply never executes them. Review each identity and verify the
-destination; do not treat an unexpected delete or a remaining create/update as
-acceptable merely because this example includes one recorded delete.
+Under the saved-plan contract, other destination-only objects are still recorded
+as deletes, and apply never executes them. Review the identity of each recorded
+delete and verify the destination. A plan of this configuration is expected to hold
+no delete, so treat any recorded delete, create or update on a second plan as a
+change to investigate.

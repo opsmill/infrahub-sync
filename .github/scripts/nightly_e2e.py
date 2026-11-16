@@ -210,7 +210,8 @@ def check_import_counts(run_id: str, env: dict[str, str]) -> None:
 
     The branch also holds the nodes that Infrahub creates itself, which the plan holds no
     operation for (ADR 0043), so `INFRAHUB_CREATED_NODES` is added to the planned count of
-    their kind before the comparison.
+    their kind before the comparison. A kind it lists is compared even when the plan holds no
+    operation of that kind.
     """
     from infrahub_sdk import Config, InfrahubClientSync  # noqa: PLC0415 -- live-suite dependency
 
@@ -219,7 +220,10 @@ def check_import_counts(run_id: str, env: dict[str, str]) -> None:
     if not planned or sum(planned.values()) != EXPECTED_DEMO_OPERATIONS:
         msg = f"the local demo plan has {sum(planned.values())} operations, expected {EXPECTED_DEMO_OPERATIONS}"
         raise RuntimeError(msg)
-    expected = {kind: count + INFRAHUB_CREATED_NODES.get(kind, 0) for kind, count in planned.items()}
+    expected = {
+        kind: planned.get(kind, 0) + INFRAHUB_CREATED_NODES.get(kind, 0)
+        for kind in planned.keys() | INFRAHUB_CREATED_NODES.keys()
+    }
     client = InfrahubClientSync(config=Config(address=env["INFRAHUB_ADDRESS"], api_token=env["INFRAHUB_API_TOKEN"]))
     actual = {kind: client.count(kind=kind, branch="netbox-import") for kind in expected}
     if actual != expected:

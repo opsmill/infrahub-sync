@@ -336,7 +336,8 @@ governs. The qualification is safe precisely because the miss is loud.
 
 A create omits a null optional cardinality-one relationship, so the node is created without a
 peer. On an update, plan format 5 records an emptied relationship as a one-peer reference with no
-peer, when the destination node holds a peer and the source holds none
+peer when the destination node holds a peer, the source holds none, the destination schema does
+not require the field, and no configured filter removed the source's peer
 ([The saved plan artifact](plan-artifact.md#an-emptied-one-peer-relationship)). Planned apply writes
 it as `<field>: null` in the one Upsert of the operation, and no warning is logged. A plan of
 format 4 cannot record an emptied relationship, so applying it leaves that relationship as it is.

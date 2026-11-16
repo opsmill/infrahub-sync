@@ -291,7 +291,8 @@ The problem types are:
 - `required_peer_excluded_by_filter`: a configured filter removed the peer of a required
   relationship.
 - `required_relationship_empty_in_source`: a source record holds no peer for a required one-peer
-  relationship. The plan does not change the record, and does not delete its Infrahub node.
+  relationship. The plan leaves the record out and counts it in `left_out`, and its Infrahub
+  node is kept as it is.
 - `identities_merge_in_destination`: two or more source records with different identities
   would be stored as one Infrahub node.
 - `peer_not_found_in_source`: a record refers to a peer that the source does not return.

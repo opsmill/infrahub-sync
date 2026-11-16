@@ -167,7 +167,8 @@ def destination_builtin_node_ids(destination: object) -> frozenset[str]:
     """The ids of the destination nodes that Infrahub created itself, or an empty set (spec 019 FR-001).
 
     Empty when the destination does not implement `BuiltinNodeReadingDestination`, or when the
-    value it returns is not a set of strings, so `derive_deletes` keeps every delete.
+    value it returns is not a `set` or `frozenset`, so `derive_deletes` keeps every delete.
+    From a set, only the string members are kept; any other member is dropped.
     """
     if not isinstance(destination, BuiltinNodeReadingDestination):
         return frozenset()

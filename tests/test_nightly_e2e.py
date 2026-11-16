@@ -170,6 +170,40 @@ def test_import_counts_match_planned_operations(runner: ModuleType, monkeypatch:
     runner.check_import_counts("plan-1", {"INFRAHUB_ADDRESS": "unused", "INFRAHUB_API_TOKEN": "unused"})
 
 
+@pytest.mark.parametrize(("namespaces", "matches"), [(1, True), (0, False)], ids=["default-held", "default-missing"])
+def test_import_counts_check_a_listed_kind_the_plan_does_not_name(
+    runner: ModuleType, monkeypatch: pytest.MonkeyPatch, namespaces: int, *, matches: bool
+) -> None:
+    """`INFRAHUB_CREATED_NODES` is compared even when the plan holds no `IpamNamespace` operation."""
+    plan = "operations: 1687\nby_action: create=1687\nby_kind: DcimDevice=1687\n0 delete operations are recorded.\n"
+    monkeypatch.setattr(runner, "run", lambda *_args, **_kwargs: plan)
+    sdk = ModuleType("infrahub_sdk")
+    monkeypatch.setattr(sdk, "Config", lambda **_kwargs: object(), raising=False)
+    counted: list[str] = []
+
+    class Client:
+        """Return the branch counts of one import, with or without the default namespace."""
+
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        @staticmethod
+        def count(*, kind: str, branch: str) -> int:
+            assert branch == "netbox-import"
+            counted.append(kind)
+            return {"DcimDevice": 1687, "IpamNamespace": namespaces}[kind]
+
+    monkeypatch.setattr(sdk, "InfrahubClientSync", Client, raising=False)
+    monkeypatch.setitem(sys.modules, "infrahub_sdk", sdk)
+    env = {"INFRAHUB_ADDRESS": "unused", "INFRAHUB_API_TOKEN": "unused"}
+    if matches:
+        runner.check_import_counts("plan-1", env)
+    else:
+        with pytest.raises(RuntimeError, match="IpamNamespace"):
+            runner.check_import_counts("plan-1", env)
+    assert sorted(counted) == ["DcimDevice", "IpamNamespace"]
+
+
 def test_schema_loads_the_pinned_bundle(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     """Both NetBox suites use the bundled schema without a Marketplace request."""
     path = runner.ROOT / "tests" / "data" / "nightly_schema"
