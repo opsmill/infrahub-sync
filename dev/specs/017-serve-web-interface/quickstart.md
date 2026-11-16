@@ -54,7 +54,8 @@ With the development address (default `http://127.0.0.1:8001`):
 | `curl -s -o /dev/null -w '%{http_code}' $ADDR/assets/missing.js` | 404 |
 | `curl -s $ADDR/api/openapi.json \| jq .servers` | `[{"url": "/api"}]` |
 
-In a browser: open `$ADDR/`, confirm the token entry screen; enter a wrong token (refused); enter a
+In a browser, with the developer console open (no Content-Security-Policy violation may appear on
+any page): open `$ADDR/`, confirm the token entry screen; enter a wrong token (refused); enter a
 configured token (list of runs); open `$ADDR/runs/<run_id>` in a new tab (token asked again, then
 the run page); choose "Remove token" (token entry screen).
 

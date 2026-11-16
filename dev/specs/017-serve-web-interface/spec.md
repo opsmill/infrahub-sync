@@ -266,6 +266,11 @@ web interface and confirm the API answers under `/api`.
   screen does not display the name of the token's actor, before or after the token is checked.
 - **FR-020**: The development server of the web interface MUST stop adding a token to forwarded
   requests, so that development and a deployment authenticate the same way.
+- **FR-034**: Every answer the Sync service sends outside `/api` MUST tell the browser to run only
+  scripts from the Sync service itself (and the inline scripts of the built entry page, identified
+  by their content), to send requests only to the Sync service, to load fonts only from the Sync
+  service and the font host the web interface uses today, and never to display the web interface
+  inside a frame of another page.
 
 #### Existing clients
 
@@ -277,7 +282,8 @@ web interface and confirm the API answers under `/api`.
 - **FR-023**: When a CLI receives an answer that is not in the Sync API's format (for example a
   page of the web interface, from a service older or newer than the CLI expects), it MUST fail
   with a message that states the address did not answer as a Sync API and that names the address
-  it called. It MUST NOT print the body of the answer.
+  it called. It MUST NOT print the body of the answer. A successful artifact download, whose
+  content is not JSON by design, is not such an answer.
 
 #### Build and install
 
@@ -300,10 +306,12 @@ web interface and confirm the API answers under `/api`.
 #### Records
 
 - **FR-031**: The user documentation MUST describe how an operator opens the web interface, how
-  a person enters and removes a token, and the new address of the Sync API, including what a
-  script that calls the API has to change.
-- **FR-032**: A changelog fragment MUST state that the address of every Sync API route changed
-  and that the CLI and the service must be upgraded together.
+  an operator gives each person their own Sync API token (through the service's configured list
+  of bearer tokens), how a person enters and removes a token, and the new address of the Sync
+  API, including what a script that calls the API has to change.
+- **FR-032**: A changelog fragment MUST state that the address of every Sync API route changed,
+  that the CLI and the service must be upgraded and rolled back together, and the error an older
+  CLI prints against the new service (`error: compatibility` with no server version).
 - **FR-033**: A decision record MUST state why the API moved under `/api`, why the browser holds
   a token for the tab, and why the CLI adds `/api`.
 
@@ -354,6 +362,9 @@ web interface and confirm the API answers under `/api`.
 - A script in the page can read a token kept for the tab. The web interface loads no script from
   another origin, and the token is not kept after the tab closes. This risk was accepted with
   decision D-2.
+- The token entry screen does not limit the number of attempts. This matches the Sync API today:
+  each refused token is recorded by the service, and configured tokens have at least 16
+  characters.
 - An operator who exposes the Sync service beyond a trusted network terminates TLS in front of
   it, as for the API today. This feature does not add TLS to the service.
 - The service and the CLI are upgraded together. A CLI from before this feature does not work

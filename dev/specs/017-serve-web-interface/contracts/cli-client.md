@@ -21,8 +21,14 @@ http://127.0.0.1:8001. The client adds /api."
 
 Raised as `NotSyncAPIError` (attributes `operation`, `url`, `status`) when:
 
-- the `Content-Type` of an answer is not `application/json` or a `+json` type; or
+- an operation that expects a JSON document receives an answer whose `Content-Type` is not
+  `application/json` or a `+json` type;
+- any operation, including `get_artifact`, receives an error status (4xx, 5xx or a redirect) whose
+  `Content-Type` is not JSON; or
 - `GET /api/version` answers 404 with a body that is not an error envelope.
+
+Not raised for a 200 answer of `get_artifact`: artifact content has any media type by design and
+is checked against its `Digest` header, as today.
 
 The CLI prints, on standard error, and exits 1:
 

@@ -143,6 +143,12 @@ application that the unit tests use with unprefixed paths.
   R-3; answers are fixed in [contracts/http-routing.md](contracts/http-routing.md).
 - The 404 envelope outside `/api` uses the existing `ErrorEnvelope` with code `not-found` and the
   message "the Sync API is served under /api".
+- Every answer of the catch-all route carries the security headers of research R-3a. The
+  `Content-Security-Policy` is computed once in `create_site` from the inline scripts of the built
+  `index.html` (FR-034, critique E3).
+- A test asserts that the liveness reconciler task starts and stops through `build_service()`
+  (critique E1), and a test asserts the policy contains the hash of an inline script of a test
+  `index.html`.
 - `build_service()` in `serve.py` = `create_site(build_app(), web_directory())`; `main()` runs it;
   `tasks/dev.py` `API_FACTORY` points at it.
 - The `HTTPException` handler on the API application (R-2) keeps the exception headers.
@@ -166,6 +172,11 @@ application that the unit tests use with unprefixed paths.
 
 - [contracts/web-token.md](contracts/web-token.md) and R-12. Keep every change local to the listed
   files and follow `biome.json`.
+- Keep the token rules (trim, store, clear only for a 401 on the held token) in small pure
+  functions in `token.ts` and `client.ts`. `frontend/` has no test runner, so the browser steps of
+  quickstart scenario 3 are required evidence in the implementation report (critique E6).
+- The Node version of the `web` stage and of `.github/workflows/workflow-linter.yml` change
+  together (critique E8).
 - The existing header line "Requests sent as" is left unchanged (spec Assumptions).
 
 ### Records
@@ -174,8 +185,11 @@ application that the unit tests use with unprefixed paths.
   the token for the tab, the client adding `/api`. No internal links.
 - `changelog/421.added.md`: the web interface is served by the Sync service; a person enters a
   token. `changelog/421.changed.md`: every Sync API route moved under `/api`; the CLI and the
-  service must be upgraded together; scripts that call the API add `/api`; the operation recorded
-  for a refused token now carries `/api`.
+  service must be upgraded and rolled back together; an older CLI prints `error: compatibility`
+  with no server version; scripts that call the API add `/api`; the operation recorded for a
+  refused token now carries `/api`.
+- The "Open the web interface" section states that an operator gives each person their own token
+  through `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` (FR-031, critique P2).
 - User docs per R-11; `docs/docs/development-stack.mdx` "Run the web interface" no longer sets a
   token.
 

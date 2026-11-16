@@ -98,6 +98,38 @@ the file and refused `GET /favicon.ico` with `Accept: image/*`; step 3 before st
 No new dependency: Starlette 1.9.0 file responses use `anyio`, already installed; `aiofiles` is
 not needed.
 
+## R-3a Security headers for the web interface
+
+**Decision** (critique finding E3): every answer of the catch-all route carries
+
+```text
+Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-<inline script>'...;
+  style-src 'self'; font-src 'self' https://rsms.me; img-src 'self' data:; connect-src 'self';
+  object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+```
+
+`create_site` reads the built `index.html` once, finds every `<script>` element without a `src`
+attribute, and adds the base64 SHA-256 of its exact content to `script-src`. Today there is one
+(the theme script in `frontend/index.html`, which reads `localStorage` before the first frame).
+Computing the hash from the built file keeps `frontend/` unchanged and keeps working when the
+script changes. The answers under `/api` are JSON and are not changed.
+
+**Evidence**: `frontend/index.html` has one inline script and a `data:` icon; the built style
+sheet loads `https://rsms.me/inter/font-files/InterVariable.woff2` (measured in the built
+`dist/assets/*.css`); `index.html` also preloads that font. No `eval`, `new Function`,
+`dangerouslySetInnerHTML` or `style="..."` attribute exists in `frontend/src`. React sets style
+properties through the DOM, which `style-src` does not block.
+
+**To verify in a browser** (quickstart scenario 3): no CSP violation in the console on every page
+and in the token entry screen. If a violation appears for styles, the fallback is
+`style-src 'self' 'unsafe-inline'`, recorded in the implementation report.
+
+**Alternatives considered**: moving the theme script to a file under `public/` changes
+`frontend/`; `'unsafe-inline'` for scripts defeats the purpose.
+
 ## R-4 Where the outer application is built
 
 **Decision**: A new factory `build_service()` in `infrahub_sync/service/serve.py` returns
@@ -143,10 +175,12 @@ in decision D-3 of the specification: every Compose file, environment and docume
 ## R-7 A readable failure when the address is not a Sync API
 
 **Decision**: A new exception `NotSyncAPIError(SyncClientError)` with the attributes `operation`,
-`url` (the full address called) and `status`. The client raises it when a response to any call has
-a `Content-Type` that is not JSON (for example HTML from a newer service's web interface, or from a
-proxy), or when `/version` answers 404 with a body that is not an envelope (an older service
-without `/api`). The CLI prints `error: not-a-sync-api`, `operation:`, `address:`, `status:`, and a
+`url` (the full address called) and `status`. The client raises it when an operation that expects
+JSON receives a `Content-Type` that is not JSON (for example HTML from a newer service's web
+interface, or from a proxy), when any operation receives an error status with a non-JSON body, or
+when `/version` answers 404 with a body that is not an envelope (an older service without `/api`).
+A 200 answer of `get_artifact` (`client.py:645-667`) is excluded: artifact content has any media
+type by design and is checked against its `Digest` header (critique finding E2). The CLI prints `error: not-a-sync-api`, `operation:`, `address:`, `status:`, and a
 hint: "Check INFRAHUB_SYNC_API_URL. It holds the address of the Sync service, without /api. The
 Sync service and the CLI must come from the same release." The body is never printed or stored.
 

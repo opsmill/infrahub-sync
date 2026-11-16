@@ -45,6 +45,12 @@ with `Content-Type: application/json`.
 Never sent: a file whose resolved path is outside the built directory, whatever the encoding of
 `..` or `/` in the request.
 
+## Security headers outside `/api`
+
+Every answer of rows 1 to 6 carries the headers of [../research.md](../research.md) R-3a:
+`Content-Security-Policy` (with the SHA-256 of each inline script of the built `index.html`),
+`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`.
+
 ## Not set
 
 - No cookie, no session (FR-018).

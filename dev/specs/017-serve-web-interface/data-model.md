@@ -74,5 +74,7 @@ Subclass of the client's base error (`SyncClientError`).
 | `url` | the full address called, without query string |
 | `status` | the HTTP status received |
 
-Raised when an answer to any call has a `Content-Type` that is not JSON, or when `/version`
-answers 404 with a body that is not an error envelope. The response body is never kept.
+Raised under the conditions of [contracts/cli-client.md](contracts/cli-client.md): a non-JSON
+answer to an operation that expects JSON, a non-JSON error answer to any operation, or a 404 from
+`/version` that is not an error envelope. A 200 answer of `get_artifact` is excluded. The response
+body is never kept.
