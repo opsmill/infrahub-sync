@@ -272,7 +272,18 @@ def test_the_csp_holds_the_hash_of_the_inline_script(site: TestClient) -> None:
     assert "default-src 'self'" in policy
     assert "font-src 'self' https://rsms.me" in policy
     assert "connect-src 'self'" in policy
-    assert "unsafe-inline" not in policy
+
+
+def test_the_csp_allows_inline_styles_but_never_inline_scripts(site: TestClient) -> None:
+    # React Aria inserts a `<style>` element at run time, so styles need 'unsafe-inline'
+    # (the fallback of research R-3a, seen in a browser); scripts are allowed by hash only.
+    directives = dict(
+        directive.strip().split(" ", 1)
+        for directive in site.get("/", headers=HTML).headers["content-security-policy"].split(";")
+    )
+
+    assert directives["style-src"] == "'self' 'unsafe-inline'"
+    assert "unsafe-inline" not in directives["script-src"]
 
 
 def test_the_api_answers_are_not_given_the_web_headers(site: TestClient) -> None:

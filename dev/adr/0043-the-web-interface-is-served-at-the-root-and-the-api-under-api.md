@@ -44,8 +44,9 @@ address cannot answer both a browser that opens the page and a client that calls
    and the status, and never prints the body.
 5. Every answer outside `/api` carries `Content-Security-Policy`, `X-Content-Type-Options`,
    `X-Frame-Options` and `Referrer-Policy` headers. The policy allows scripts only from the Sync
-   service and the inline scripts of the built entry page, identified by their SHA-256 hash; it
-   allows requests only to the Sync service, fonts only from the Sync service and
+   service and the inline scripts of the built entry page, identified by their SHA-256 hash. It
+   allows inline styles, because the component library inserts a `<style>` element when the page
+   runs. It allows requests only to the Sync service, fonts only from the Sync service and
    `https://rsms.me`, and no display inside a frame. Answers under `/api` are unchanged.
 
 ## Consequences

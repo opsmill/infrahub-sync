@@ -81,10 +81,16 @@ def _inline_script_hashes(index_html: str) -> tuple[str, ...]:
 
 
 def content_security_policy(script_hashes: tuple[str, ...]) -> str:
-    """Return the ``Content-Security-Policy`` of the web interface, allowing the given inline scripts."""
+    """Return the ``Content-Security-Policy`` of the web interface, allowing the given inline scripts.
+
+    ``style-src`` allows inline styles: React Aria's press handling inserts a ``<style>`` element
+    into the page head at run time, which ``style-src 'self'`` blocks. Scripts stay limited to the
+    service and the hashed inline scripts.
+    """
     script_src = " ".join(("'self'", *script_hashes))
     return (
-        f"default-src 'self'; script-src {script_src}; style-src 'self'; font-src 'self' https://rsms.me; "
+        f"default-src 'self'; script-src {script_src}; style-src 'self' 'unsafe-inline'; "
+        "font-src 'self' https://rsms.me; "
         "img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; "
         "form-action 'self'; frame-ancestors 'none'"
     )
