@@ -1,0 +1,34 @@
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_4c94b159df7a98::t_c1a0ae302150df 385-388
+docs/docs/v2-to-v3.mdx
+  s_4c94b159df7a98::t_86cc5e8629a1dd 296-299
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_4c94b159df7a98::t_64826cf5ebe00a 321-322
+.github/scripts/nightly_e2e.py
+  s_4c94b159df7a98::t_6944731c535189 271-275
+  s_4c94b159df7a98::t_260784babceb13 23-27
+  s_4c94b159df7a98::t_7a3d6cbc2495f3 209-214,218-220,222
+tests/test_nightly_e2e.py
+  s_4c94b159df7a98::t_7298b2251a6322 134
+  s_4c94b159df7a98::t_56f41b657f3870 116
+  s_4c94b159df7a98::t_251436ea46e087 148,150-151
+docs/docs/development-stack.mdx
+  s_4c94b159df7a98::t_5cfb7b584e4425 443-445
+  s_4c94b159df7a98::t_2808b8ae46f4f6 459-460
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a3ce4db0e58a552f9586294fcca8ee29985c6781",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
