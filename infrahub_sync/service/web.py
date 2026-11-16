@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import re
 import stat
 from contextlib import asynccontextmanager
 from html.parser import HTMLParser
@@ -117,10 +118,10 @@ def _relative_path(path: str) -> str:
 def _under_assets(raw_path: str, relative: str) -> bool:
     """Return whether a request path is under ``assets/``, before or after ``..`` and ``.`` are folded.
 
-    Empty segments are dropped first, so ``//assets/x`` counts. The unfolded form keeps
-    ``assets/../../x`` under ``assets/``, so a browser gets the envelope rather than the entry page.
+    Repeated slashes are collapsed first, so ``//assets/x`` and ``assets/`` count. The unfolded form
+    keeps ``assets/../../x`` under ``assets/``, so a browser gets the envelope rather than the entry page.
     """
-    collapsed = "/".join(part for part in raw_path.split("/") if part)
+    collapsed = re.sub(r"/+", "/", raw_path).lstrip("/")
     return collapsed.startswith("assets/") or relative.startswith("assets/")
 
 

@@ -1,4 +1,4 @@
-"""The service answers the HTTP routing contract of ADR 0043: the API under /api, the web interface elsewhere."""
+"""The service answers the HTTP routing contract of spec 017: the API under /api, the web interface elsewhere."""
 
 from __future__ import annotations
 
@@ -229,7 +229,10 @@ def test_a_missing_asset_answers_with_the_envelope_even_for_a_browser(site: Test
     _assert_security_headers(response)
 
 
-@pytest.mark.parametrize("path", ["//assets/missing.js", "/./assets/missing.js", "/runs/../assets/missing.js"])
+@pytest.mark.parametrize(
+    "path",
+    ["/assets/", "//assets/", "//assets/missing.js", "/./assets/missing.js", "/runs/../assets/missing.js"],
+)
 def test_a_missing_asset_behind_extra_path_segments_answers_with_the_envelope(site: TestClient, path: str) -> None:
     # The absolute form keeps httpx from reading `//assets` as a host name.
     response = site.get(f"http://testserver{path}", headers=HTML)
