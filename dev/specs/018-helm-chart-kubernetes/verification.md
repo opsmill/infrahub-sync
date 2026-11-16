@@ -573,8 +573,11 @@ the test nor its harness asserts zero restarts.
 - Cluster: minikube profile and kube context `sync-chart` (as in T018), Helm v4.2.4.
 - `S` at commit `74149fb7`, which contains the start check (`infrahub_sync/service/start_check.py`).
 - `H` at commit `61c968c`, whose chart has no init container that waits for the bootstrap (T043).
-  The Sync API and the worker have no init container at all; the bootstrap Job keeps
-  `wait-for-prefect`.
+  The Sync API and the worker have no init container at all. Before `e2e19ed`, their only init
+  container was `wait-for-bootstrap`; `wait-for-postgresql` belongs to the Prefect server and
+  `wait-for-prefect` to the bootstrap Job, and both are unchanged. So nothing in the chart makes
+  the Sync API or the worker wait for PostgreSQL, and the restart counts below include failures
+  that are not about the record.
 
 ### Images (T046)
 
@@ -610,8 +613,8 @@ Times are UTC, read from `kubectl get pods -o json` and a `kubectl get pods -w -
 | --- | --- |
 | 15:37:38Z | Job and pods created |
 | 15:37:40Z | Sync API and worker containers start for the first time |
-| 15:37:44Z | both exit with code 1; the worker logs that the product database cannot be reached |
-| 15:37:47Z | both exit with code 1 again (second attempt) |
+| 15:37:44Z | both exit with code 1 (first attempt; these logs were not read) |
+| 15:37:47Z | both exit with code 1 again (second attempt); the worker logs `refusing to start: the product database (INFRAHUB_SYNC_DATABASE_URL) cannot be reached`. The Sync API log of this attempt was not read |
 | 15:37:58Z | Prefect server pod ready |
 | 15:38:00Z | Sync API exits with code 1: `no bootstrap record found; expected Sync version 3.0.0a5 and work pool infrahub-sync` |
 | 15:38:01Z | bootstrap container starts (after `wait-for-prefect`) |
@@ -628,7 +631,9 @@ Times are UTC, read from `kubectl get pods -o json` and a `kubectl get pods -w -
 
 The worker became `Ready` four seconds before the Job's `completionTime`, because it has no
 readiness probe: `Ready` means its container is running. Its third attempt started at
-15:38:02Z and its start check passed, so the check read the record after the bootstrap wrote it
+15:38:02Z and printed no log line, so the outcome of its start check is inferred, not logged.
+It kept running and the worker registered, so the check passed. The previous attempt took 2 s
+from container start to its refusal, which puts this check after the bootstrap wrote the record
 at 15:38:03Z and before Kubernetes set the Job's `completionTime`. `/status` through the Sync API
 then reported `"service":"ready"`, worker `state` `ready`, `live_workers` 1. Most of the Sync API
 delay is the 20-second `CrashLoopBackOff` back-off after its third failure.
@@ -674,7 +679,8 @@ the service bootstrap for this Sync version and work pool has not completed
 It names the version and work pool found and the ones expected. A case-insensitive search of
 that log for `password`, `secret`, `postgresql://`, `bearer`, `token` and `aws_` found nothing.
 
-The poller ran 36 requests from 15:39:21Z to 15:40:25Z with no error. Every answer up to
+The poller log, read at about 15:40:25Z, held 36 requests from 15:39:21Z to 15:40:25Z, none of
+them an error. Requests after that read were not checked. Every answer up to
 15:39:47.502Z named `3.0.0a5`, and every answer from 15:39:49.505Z named `3.0.0a6`.
 
 | Workload | Restarts | Delay from the new Job's `completionTime` to `Ready` |
@@ -685,6 +691,10 @@ The poller ran 36 requests from 15:39:21Z to 15:40:25Z with no error. Every answ
 The new worker did not restart, because `Recreate` started it only after the previous worker had
 stopped, which was after the Job completed. The previous worker did not stop on `SIGTERM` within
 its 30-second grace period, and was killed (exit code 137).
+
+At 2026-11-16T15:45:49Z, `/version` answered `"server_version":"3.0.0a6"` and `/status` reported
+`"service":"ready"`, worker `state` `ready`, `live_workers` 1. The Sync API pod still had
+2 restarts and the worker pod 0.
 
 ### End-to-end test
 
@@ -714,9 +724,16 @@ cd H && INFRAHUB_SYNC_E2E_IMAGE=infrahub-sync:chart-test-r1 \
   waits with `kubectl rollout status`; neither checks restart counts. The matches in
   `tests/helpers/ha.py` and the HA tests belong to the Infrahub HA charts.
 
-### Defects found on the cluster
+### Observations not investigated
 
-None. No template or code changed.
+No template or code changed. Two observations were not investigated:
+
+- The previous worker does not stop on `SIGTERM` within 30 seconds. It was killed with exit code
+  137 on minikube, and in the vcluster the old worker pod went from `Terminating` to `Error`. The
+  earlier sections of this file do not record worker exit codes, so it is not known whether this
+  started with the start check.
+- The Sync API and the worker have no init container that waits for PostgreSQL. On the fresh
+  install, the worker's second failure was an unreachable product database, not a missing record.
 
 ### State left for the next task
 
