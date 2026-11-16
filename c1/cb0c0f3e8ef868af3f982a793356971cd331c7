@@ -1,0 +1,55 @@
+tests/plan/test_report_models.py
+  s_4c94b159df7a98::t_73e07f31f2d21a 22,33
+infrahub_sync/load_report.py
+  s_4c94b159df7a98::t_73e07f31f2d21a 25,30-32
+infrahub_sync/__init__.py
+  s_4c94b159df7a98::t_4deb51554536c1 877
+  s_4c94b159df7a98::t_59f0d20f2530e7 468-469
+  s_4c94b159df7a98::t_251da846dce218 9,459-467,470-479,513-515,523,589-603,966,971,976,978-982,984-985,991-996,999
+  s_4c94b159df7a98::t_9c0d33707c9815 604
+infrahub_sync/plan/derive.py
+  s_4c94b159df7a98::t_987549ff906d6f 58,576-601,603,605,607-625,627-651,719-730
+infrahub_sync/warm_read.py
+  s_4c94b159df7a98::t_dc2b8d1a4cd89c 99-104,106-110,124
+  s_4c94b159df7a98::t_2944ebc4d12ca4 89-91
+dev/specs/019-second-plan-real-changes/tasks.md
+  s_4c94b159df7a98::t_4deb51554536c1 78,88-90
+infrahub_sync/plan/models.py
+  s_4c94b159df7a98::t_73e07f31f2d21a 864
+infrahub_sync/plan/problems.py
+  s_4c94b159df7a98::t_987549ff906d6f 29-34,342-344
+  s_4c94b159df7a98::t_59f0d20f2530e7 23,390,439-442
+  s_4c94b159df7a98::t_ddd0d70017d65b 4,97-100
+  s_4c94b159df7a98::t_99c65dee459fe4 389,391-392
+infrahub_sync/plan/last_changes.py
+  s_4c94b159df7a98::t_e378bb54f6da80 86-87
+tests/plan/test_destination_id_capture.py
+  s_4c94b159df7a98::t_287653ce2bfc7d 146,149,160,168-170,172
+infrahub_sync/adapters/references.py
+  s_4c94b159df7a98::t_8aefa624d9bd34 16-18,66,70-73,157-159
+  s_4c94b159df7a98::t_6a59c3a3e21142 108-110
+tests/plan/test_emptied_relationship.py
+  s_4c94b159df7a98::t_b5fcd693feea80 1-106,108-171,173-208,214,217-218,220-222,225-248,250-280,286-320
+  s_4c94b159df7a98::t_f60bfae1c3de09 107
+  s_4c94b159df7a98::t_ec83d44953b4d5 223-224
+  s_4c94b159df7a98::t_4deb51554536c1 249
+  s_4c94b159df7a98::t_e997b26398ee6e 172,209-213,215-216,219,281-285
+docs/docs/running-a-sync.mdx
+  s_4c94b159df7a98::t_d66fbf5ffdbba3 263-264
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c1cb0c0f3e8ef868af3f982a793356971cd331c7",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
