@@ -1,0 +1,84 @@
+tests/dev_stack/test_dev_tasks.py
+  s_d989f93fc3b8fb::t_d3fa05320c691f 10,420,432-457
+frontend/vite.config.ts
+  s_d989f93fc3b8fb::t_d3fa05320c691f 7
+.github/workflows/workflow-nightly-e2e.yml
+  s_d989f93fc3b8fb::t_d3fa05320c691f 53-54,279-280
+tests/test_workflow_contracts.py
+  s_d989f93fc3b8fb::t_d3fa05320c691f 671,752,983-991,2062-2065,2069-2074,2085
+tasks/dev.py
+  s_c4f9bd3d1fabe8::t_bbf778828300cb 407-427,429-434,438-444
+  s_c4f9bd3d1fabe8::t_2c0b407d8fc2f3 956
+  s_c4f9bd3d1fabe8::t_48d226f9010837 91-107
+  s_c4f9bd3d1fabe8::t_b049890c02daa6 32-34
+  s_c4f9bd3d1fabe8::t_df9f34a7e18a5e 954-955
+  s_47a61f77899bd7::t_4cd79d0550cb8a 959,966
+.github/file-filters.yml
+  s_c4f9bd3d1fabe8::t_dbd2f1982feb5c 81-82
+  s_7b3768d2f560ea::t_3fa24f29b0c148 94-95
+dev/specs/017-serve-web-interface/tasks.md
+  s_d989f93fc3b8fb::t_d3fa05320c691f 113-117
+frontend/package.json
+  s_d989f93fc3b8fb::t_d3fa05320c691f 12
+tests/dev_stack/test_build_inputs.py
+  s_c4f9bd3d1fabe8::t_a2037d19babb7e 63,70-137
+  s_c4f9bd3d1fabe8::t_2dc569a3ec6034 3-5
+  s_c4f9bd3d1fabe8::t_5353e9ae8ceb08 138-139
+frontend/README.md
+  s_c4f9bd3d1fabe8::t_6f4f041bdd8cd6 111
+  s_c4f9bd3d1fabe8::t_b293ad675c72eb 107-108
+  s_c4f9bd3d1fabe8::t_f5c74b9483ac56 105-106
+  s_c4f9bd3d1fabe8::t_40717344763e48 109-110
+  s_c4f9bd3d1fabe8::t_1c40468b3e3c90 112-113
+  s_780c9509d169ea::t_2221c017308971 21-23,46-48,50-54,57,83-85
+.github/workflows/ci-docker-image.yml
+  s_d989f93fc3b8fb::t_d3fa05320c691f 151-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0a3d415c003a22e76ba0de08b4a00e4b933c4379",
+  "prompts": {},
+  "sessions": {
+    "s_47a61f77899bd7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aunbound-runs-afec3d0aecfdc4fc",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_780c9509d169ea": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a56236af262b002e2",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_7b3768d2f560ea": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-acb2fca4288812ebb",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_c4f9bd3d1fabe8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f7bf5003-b7b7-444d-a7c2-d1ecbcb55ad7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_d989f93fc3b8fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b53e9e82-fcbd-48f8-ae99-61f94c0060c7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
