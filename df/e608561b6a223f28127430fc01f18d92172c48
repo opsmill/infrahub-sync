@@ -1,0 +1,27 @@
+tests/product_store/test_bootstrap_record.py
+  s_d989f93fc3b8fb::t_5c516084b890c6 145-162
+infrahub_sync/service/bootstrap.py
+  s_d989f93fc3b8fb::t_5c516084b890c6 6,10-11
+tests/service/test_start_check.py
+  s_d989f93fc3b8fb::t_5c516084b890c6 11,124-125
+tests/service/test_compose_bootstrap.py
+  s_d989f93fc3b8fb::t_e8876bdd44eef0 498-512
+infrahub_sync/product_store/store.py
+  s_d989f93fc3b8fb::t_5c516084b890c6 529-531,535-536,1931,4564,4567-4570
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dfe608561b6a223f28127430fc01f18d92172c48",
+  "prompts": {},
+  "sessions": {
+    "s_d989f93fc3b8fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b53e9e82-fcbd-48f8-ae99-61f94c0060c7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
