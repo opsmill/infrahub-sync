@@ -354,9 +354,7 @@ export function describeError(error: unknown): DescribedError {
       return {
         ...base,
         title: "The Sync API refused the token",
-        detail: import.meta.env.DEV
-          ? "Set INFRAHUB_SYNC_API_TOKEN to a bearer token the Sync API accepts, then restart the development server."
-          : "The Sync API did not accept the token sent with requests from this page.",
+        detail: "The Sync API refused the token. Enter a token again.",
         retryable: false,
         notFound: false,
       };

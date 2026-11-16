@@ -2,8 +2,10 @@ import { Button } from "@infrahub/ui";
 import { useEffect, useSyncExternalStore } from "react";
 import { cn } from "tailwind-variants";
 
+import { handleUnauthorized } from "#/api/client";
 import { isEnvelope, SyncApiUnavailable } from "#/api/errors";
 import { describeError } from "#/api/queries";
+import { bearer, getToken, onTokenCleared } from "#/api/token";
 import type { Plan, Run } from "#/api/types";
 import { PLAN_ARTIFACT_ID } from "#/domain/run-steps";
 
@@ -61,8 +63,13 @@ class PlanDownload {
 
   private async run(signal: AbortSignal) {
     try {
-      const response = await fetch(`/api/runs/${encodeURIComponent(this.runId)}/plan`, { signal });
+      const token = getToken();
+      const request = new Request(`/api/runs/${encodeURIComponent(this.runId)}/plan`, {
+        headers: token ? { Authorization: bearer(token) } : undefined,
+      });
+      const response = await fetch(request, { signal });
       if (!response.ok) {
+        handleUnauthorized(request, response);
         let body: unknown;
         try {
           body = await response.json();
@@ -112,6 +119,9 @@ class PlanDownload {
 }
 
 const downloads = new Map<string, PlanDownload>();
+
+// A plan downloaded with a removed token is not shown to the person who enters the next one.
+onTokenCleared(() => downloads.clear());
 
 const NONE = new PlanDownload("", 0);
 
