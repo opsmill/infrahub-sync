@@ -1,0 +1,131 @@
+infrahub_sync/client/errors.py
+  s_c4f9bd3d1fabe8::t_10c3aeae8cdf42 51-64
+infrahub_sync/client/client.py
+  s_c4f9bd3d1fabe8::t_715d510d4197f5 127,129
+  s_c4f9bd3d1fabe8::t_e921c34c3bcf17 167
+  s_c4f9bd3d1fabe8::t_67a67758d91be5 985-1005,1007-1008
+  s_c4f9bd3d1fabe8::t_385078ad137b5b 164-166,168-174
+  s_c4f9bd3d1fabe8::t_144b8402b85f9d 198-204
+  s_c4f9bd3d1fabe8::t_04568dd8890f57 910
+  s_c4f9bd3d1fabe8::t_83e39f386e73bd 24
+  s_c4f9bd3d1fabe8::t_20738b6912655b 217
+tests/client/test_public_surface.py
+  s_c4f9bd3d1fabe8::t_e7352fbddc8882 87
+tests/service/test_prefect_wording.py
+  s_c4f9bd3d1fabe8::t_44006bfc6c2619 208
+  s_c4f9bd3d1fabe8::t_f458cbade6b704 46
+  s_878e7b07536f6e::t_e3d120494c3092 223,231-233,235
+tests/cli/test_client_commands.py
+  s_c4f9bd3d1fabe8::t_97cde9c1330e69 15
+  s_c4f9bd3d1fabe8::t_0fa484c3007105 2379-2382,2386-2404
+  s_4c94b159df7a98::t_aab8aaa7419bbd 2405-2406
+tests/client/test_not_sync_api.py
+  s_c4f9bd3d1fabe8::t_3747d321c226a4 1-115
+tasks/docs.py
+  s_c4f9bd3d1fabe8::t_2cfba10b6216ca 58-60
+tests/client/test_client.py
+  s_c4f9bd3d1fabe8::t_ec19f26fdb2c33 31
+  s_c4f9bd3d1fabe8::t_e4cbe198641062 203
+  s_c4f9bd3d1fabe8::t_ea74a9d69e55a0 419-420
+  s_c4f9bd3d1fabe8::t_00cf62c9f2e59a 153-179
+  s_4c94b159df7a98::t_11c3401d693791 185,193,219,246,250-256,268-270,274-278,283,308,328-333,341-345,351,357,383,457,493,513,531,549,600,618,638,656,742,749,764,798,837,847,860,893,895,923,961,1061,1087,1211,1218
+docs/docs/reference/python-api.mdx
+  s_c4f9bd3d1fabe8::t_e20184c9f871f5 135-138
+  s_c4f9bd3d1fabe8::t_b529584968e287 15-19
+infrahub_sync/client/__init__.py
+  s_c4f9bd3d1fabe8::t_155889f51ac9d9 102
+  s_c4f9bd3d1fabe8::t_6ba0dd87d8ad6e 10
+infrahub_sync/cli.py
+  s_c4f9bd3d1fabe8::t_db174e1e56847b 229-232,235-238
+  s_c4f9bd3d1fabe8::t_23e340112abf7b 37
+  s_c4f9bd3d1fabe8::t_4108f43e03db89 152-155
+  s_c4f9bd3d1fabe8::t_66350561682437 298-307
+docs/docs/reference/cli.mdx
+  s_c214a6d9a6b4dd::t_b3f30b21f98cb0 14-16,26
+tests/cli/test_apply_confirm_left_out.py
+  s_27d223724ad8fc::t_f04b86cbcbb0e7 134
+tests/client/test_resume.py
+  s_27d223724ad8fc::t_c01797f8c4a05a 43,52,70,83
+tests/client/test_wait.py
+  s_27d223724ad8fc::t_3736888c5ae714 88,145,164,179,290
+tests/compose/lifecycle.py
+  s_6060dfd7fec1fd::t_09920cc828cfa2 207,231,244
+tests/compose/test_lifecycle.py
+  s_6060dfd7fec1fd::t_6467cd3a0141b9 122,355
+tests/compose/test_testcontainers_fixture.py
+  s_6060dfd7fec1fd::t_0d3552e89872d7 164,266
+tests/dev_stack/smoke/conftest.py
+  s_6060dfd7fec1fd::t_55b21a776fd485 112
+tests/dev_stack/smoke/test_config_lifecycle.py
+  s_6060dfd7fec1fd::t_ed565b3e283b43 317-327
+tests/dev_stack/smoke/test_netbox_package.py
+  s_6060dfd7fec1fd::t_bfe9ff954f77eb 233,302-305,342-343
+tests/dev_stack/smoke/test_run_completion.py
+  s_6060dfd7fec1fd::t_8e3c2600468b56 217,356
+tests/dev_stack/smoke/test_run_review.py
+  s_6060dfd7fec1fd::t_9a60f0c36ebb43 349-352
+tests/dev_stack/smoke/test_schema_drift.py
+  s_6060dfd7fec1fd::t_d380523580ddd7 163-164
+tests/dev_stack/smoke/test_service_api.py
+  s_6060dfd7fec1fd::t_d4f55c43e44387 149,336-341
+tests/integration/test_managed_write_guard_live.py
+  s_6060dfd7fec1fd::t_25057dba6b1c10 123,156
+dev/specs/017-serve-web-interface/tasks.md
+  s_c4f9bd3d1fabe8::t_d8d2516f5029fe 96-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "17ab14e2f6e0098c8959f4dff8439673f53622c6",
+  "prompts": {},
+  "sessions": {
+    "s_27d223724ad8fc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3fa11550-a8be-43f6-bac6-a9407114c794",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_6060dfd7fec1fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a97d8b39e046efdfc",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_878e7b07536f6e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ae0a854d70400fba4",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_c214a6d9a6b4dd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-astore-migrations-ab27ec180c829d74",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_c4f9bd3d1fabe8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f7bf5003-b7b7-444d-a7c2-d1ecbcb55ad7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
