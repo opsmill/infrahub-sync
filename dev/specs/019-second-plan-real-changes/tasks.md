@@ -168,7 +168,7 @@ tiers S and M.
 - [X] T059 Regenerate `docs/docs/reference/cli.mdx` with `uv run invoke docs.generate`
 - [X] T060 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .` and `uv run invoke tests.tests-unit`, and fix every finding
 - [X] T061 Run the CLI sanity commands: `uv run infrahub-sync --help`, `uv run infrahub-sync configs --help`, `uv run infrahub-sync runs --help`
-- [ ] T062 Run the `from-netbox` example check twice (`quickstart.md` section 3) and confirm the second plan holds 0 operations (SC-001)
+- [X] T062 Run the `from-netbox` example check twice (`quickstart.md` section 3) and confirm the second plan holds 0 operations (SC-001)
 
 ---
 
