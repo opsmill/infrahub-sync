@@ -1,0 +1,35 @@
+dev/specs/017-serve-web-interface/research.md
+  s_c4f9bd3d1fabe8::t_397ee9edf06973 1-300
+dev/specs/017-serve-web-interface/contracts/cli-client.md
+  s_c4f9bd3d1fabe8::t_6af2f9a2bd14f2 1-43
+dev/specs/017-serve-web-interface/plan.md
+  s_c4f9bd3d1fabe8::t_8d43da11eb62ce 1,3,5-6,10-17,21-22,24-26,28-29,31-34,36,38,40-41,43,45-49,51-52,55-56,58-67,69,71-73,79-90,96-106,109-129,132-195,199
+  s_c4f9bd3d1fabe8::t_c1429d155d8f33 2,4,7-9,18-20,23,27,30,35,37,39,42,44,50,53-54,57,68,70,74-78,91-95,107-108,130-131,196-198
+dev/specs/017-serve-web-interface/contracts/http-routing.md
+  s_c4f9bd3d1fabe8::t_a559506bddc840 1-56
+dev/specs/017-serve-web-interface/contracts/web-token.md
+  s_c4f9bd3d1fabe8::t_32602a57d6f298 1-49
+dev/specs/017-serve-web-interface/quickstart.md
+  s_c4f9bd3d1fabe8::t_e6d27ae06efa2a 1-91
+dev/specs/017-serve-web-interface/data-model.md
+  s_c4f9bd3d1fabe8::t_01b793d1bc403c 1-78
+dev/specs/017-serve-web-interface/spec.md
+  s_c4f9bd3d1fabe8::t_a2b1ccd1bec472 345-350
+  s_c4f9bd3d1fabe8::t_8f0796cedd19a7 265-266
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4ab7f82387598b63ff8fef2a05c5bda0f04e78c5",
+  "prompts": {},
+  "sessions": {
+    "s_c4f9bd3d1fabe8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f7bf5003-b7b7-444d-a7c2-d1ecbcb55ad7",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
