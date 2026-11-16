@@ -398,3 +398,157 @@ workflow then finds the update done and skips it.
 The release `sync` (revision 4, image `infrahub-sync:chart-test-2`, with the bootstrap pod
 annotation `t021: wait`) and the minikube profile `sync-chart` are left running. The configuration `20261116T1145-7bf7fab1` stays registered. The
 port-forward is stopped.
+
+## T023 and T024: external PostgreSQL and object store
+
+Result: every refusal and render check of [quickstart.md](quickstart.md) step 5 behaves as
+written. On the local cluster, a release with `objectStore.enabled=false` that uses the object
+store of a second release completed its bootstrap and its Sync API reported a ready worker. A
+release with both `objectStore.enabled=false` and `postgresql.enabled=false` did the same. No
+chart template changed.
+
+### Environment
+
+Kube context `sync-chart` (minikube, Kubernetes v1.37.0, arm64), Helm v4.2.4, image
+`infrahub-sync:chart-test-2` with `image.pullPolicy=Never`, `H/charts/infrahub-sync` at commit
+`8702d11` of `H`. All times are UTC. Each release read its credentials from a Secret
+`infrahub-sync` created in its namespace with `kubectl create secret generic --from-env-file`; no
+credential value was printed.
+
+### Render tests (T023)
+
+At 2026-11-16T11:55:32Z, `cd H && uv run pytest -q tests/unit/test_infrahub_sync_chart.py`:
+`88 passed in 4.23s` (Python 3.11.8).
+
+At 2026-11-16T11:55:41Z, `uv run pytest -v -k "rr30 or rr31 or rr32 or rr41 or rr42 or rr44"`:
+
+```text
+tests/unit/test_infrahub_sync_chart.py::test_rr41_endpoint_with_bundled_object_store_is_refused PASSED
+tests/unit/test_infrahub_sync_chart.py::test_rr30_external_postgresql_renders_no_postgresql PASSED
+tests/unit/test_infrahub_sync_chart.py::test_rr30_connection_strings_come_from_the_secret[False] PASSED
+tests/unit/test_infrahub_sync_chart.py::test_rr30_connection_strings_come_from_the_secret[True] PASSED
+tests/unit/test_infrahub_sync_chart.py::test_rr31_external_object_store_uses_the_values_given[-None] PASSED
+tests/unit/test_infrahub_sync_chart.py::test_rr31_external_object_store_uses_the_values_given[path-path] PASSED
+tests/unit/test_infrahub_sync_chart.py::test_rr31_external_object_store_uses_the_values_given[virtual-virtual] PASSED
+tests/unit/test_infrahub_sync_chart.py::test_rr32_both_external_claim_no_volume PASSED
+tests/unit/test_infrahub_sync_chart.py::test_rr42_external_object_store_without_endpoint_is_refused PASSED
+tests/unit/test_infrahub_sync_chart.py::test_rr44_external_postgresql_without_connection_string_is_refused[databaseUrl] PASSED
+tests/unit/test_infrahub_sync_chart.py::test_rr44_external_postgresql_without_connection_string_is_refused[prefectDatabaseUrl] PASSED
+11 passed, 77 deselected in 0.43s
+```
+
+RR-21 was already covered by `test_rr21_ca_only_in_api_worker_and_bootstrap`. RR-41 was already
+covered by a refusal test, renamed `test_rr41_endpoint_with_bundled_object_store_is_refused`.
+`helm lint charts/infrahub-sync -f charts/infrahub-sync/ci/lint-values.yaml`: `1 chart(s) linted,
+0 chart(s) failed`.
+
+### Quickstart step 5
+
+At 2026-11-16T11:56:13Z, from `H`:
+
+| Command | Output |
+| --- | --- |
+| `helm template sync charts/infrahub-sync` | exit 1, `credentials.bearerTokens is required when credentials.existingSecret is empty` |
+| `... --set credentials.existingSecret=s --set objectStore.enabled=false` | exit 1, `s3.endpointUrl is required when objectStore.enabled is false` |
+| `... --set objectStore.enabled=false --set s3.endpointUrl=https://s3.example.com --set postgresql.enabled=false \| grep -c 'kind: StatefulSet'` | `0` |
+
+### A release that uses another release's object store
+
+The second release `store`, in namespace `sync-store`, is a default install whose object store
+the third release uses:
+
+```bash
+helm --kube-context sync-chart -n sync-store install store H/charts/infrahub-sync \
+  --set credentials.existingSecret=infrahub-sync --set image.repository=infrahub-sync \
+  --set image.tag=chart-test-2 --set image.pullPolicy=Never
+```
+
+Installed at 11:56:28Z; its bootstrap Job completed by 11:56:49Z.
+
+The release `ext`, in namespace `sync-ext`, has its own Secret created from the same env file, so
+it has the same S3 access key and secret key as `store`. It uses its own `s3.prefix` so that it
+does not share stored objects with `store`:
+
+```bash
+helm --kube-context sync-chart -n sync-ext install ext H/charts/infrahub-sync \
+  --set credentials.existingSecret=infrahub-sync --set image.repository=infrahub-sync \
+  --set image.tag=chart-test-2 --set image.pullPolicy=Never \
+  --set objectStore.enabled=false \
+  --set s3.endpointUrl=http://store-infrahub-sync-object-store.sync-store.svc.cluster.local:9000 \
+  --set s3.prefix=ext
+```
+
+| Time | Event |
+| --- | --- |
+| 2026-11-16T11:57:01Z | `helm install` returns `STATUS: deployed`, revision 1 |
+| 2026-11-16T11:57:17Z | Job `ext-infrahub-sync-bootstrap-58861813`: `Complete   1/1   16s` (`completionTime` 11:57:17Z) |
+| 2026-11-16T11:57:22Z | the Sync API, Prefect server and worker Deployments are available |
+
+`kubectl get pods,svc,statefulset,pvc -n sync-ext` lists the Sync API, bootstrap, Prefect server,
+worker and PostgreSQL pods; no object store pod; Services for the Sync API, Prefect server and
+PostgreSQL only; one StatefulSet (`ext-infrahub-sync-postgresql`); and one volume claim
+(`data-ext-infrahub-sync-postgresql-0`), no object store claim. The Sync API and worker
+Deployments set `INFRAHUB_SYNC_S3_ENDPOINT_URL` to the endpoint above and no
+`INFRAHUB_SYNC_S3_ADDRESSING_STYLE`.
+
+Last lines of the bootstrap container. `bucket present` shows that it reached the bucket in the
+object store of `store`:
+
+```text
+11:57:14.530 | INFO    | __main__ - bucket present
+11:57:14.531 | INFO    | __main__ - object store refuses a second create-only write
+11:57:14.531 | INFO    | __main__ - work pool created
+11:57:14.531 | INFO    | __main__ - deployment applied
+11:57:14.531 | INFO    | __main__ - product schema converged; the configuration registry is the operator's to fill
+```
+
+Through `kubectl port-forward svc/ext-infrahub-sync-api 8011:8000`, at 2026-11-16T11:57:33Z:
+
+- `/version`: `{"server_version":"3.0.0a5","api_versions":["v3-unstable"],"stability":"unstable"}`
+- `/status`: `{"service":"ready","worker":{"state":"ready","detail_available":true,"live_workers":1,"queue_depth":0,"observed_at":"2026-11-16T11:57:33.133407Z"}}`
+
+### A release that uses another release's PostgreSQL and object store
+
+The release `extpg`, in namespace `sync-ext-pg`, turns off both bundled services. Its Secret
+holds the four credentials that do not concern PostgreSQL, from the same env file, and the two
+connection strings to the databases of `store`
+(`store-infrahub-sync-postgresql.sync-store.svc.cluster.local:5432`, databases `infrahub_sync`
+and `prefect`, with the roles and passwords of `store`). The env file for that Secret was written
+to the scratchpad by a script, used, and deleted. `extpg` uses its own `s3.prefix` and its own
+work pool:
+
+```bash
+helm --kube-context sync-chart -n sync-ext-pg install extpg H/charts/infrahub-sync \
+  --set credentials.existingSecret=infrahub-sync --set image.repository=infrahub-sync \
+  --set image.tag=chart-test-2 --set image.pullPolicy=Never \
+  --set objectStore.enabled=false --set postgresql.enabled=false \
+  --set s3.endpointUrl=http://store-infrahub-sync-object-store.sync-store.svc.cluster.local:9000 \
+  --set s3.prefix=extpg --set settings.workPool=extpg
+```
+
+| Time | Event |
+| --- | --- |
+| 2026-11-16T11:57:47Z | `helm install` returns `STATUS: deployed`, revision 1 |
+| 2026-11-16T11:57:59Z | Job `extpg-infrahub-sync-bootstrap-8aafbe84`: `Complete   1/1   11s` |
+
+The namespace holds the Sync API, bootstrap, Prefect server and worker pods only, Services for the
+Sync API and the Prefect server only, no StatefulSet and no volume claim. The bootstrap logged
+`bucket present`, `work pool created` and `product schema converged`. Through a port-forward at
+2026-11-16T11:58:02Z, `/version` gave the same answer as above and `/status` gave
+`"service":"ready"`, `worker.state` `ready`, `live_workers` 1.
+
+`extpg` shares the product database and the Prefect database of `store`, so both releases wrote
+to the same Prefect deployment. This setup checks only that the chart connects to an external
+PostgreSQL. It is not a supported way to run two releases, and it was removed right after the
+check.
+
+### Defects found on the cluster
+
+None. No chart template changed.
+
+### State left for the next task
+
+Releases `extpg`, `ext` and `store` were uninstalled between 11:58:08Z and 11:58:53Z. Their volume
+claims and the namespaces `sync-ext-pg`, `sync-ext` and `sync-store` were deleted. The release
+`sync` (revision 4) and its two volume claims are left running in namespace `sync`. The
+port-forwards are stopped.

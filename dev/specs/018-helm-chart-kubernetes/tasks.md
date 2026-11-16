@@ -320,9 +320,9 @@ or one of the bootstrap's settings changes, and it keeps the data.
 
 **Independent test**: the render tests below and [quickstart.md](quickstart.md) step 5.
 
-- [ ] T023 [US3] Add the render tests RR-21, RR-30, RR-31, RR-32, RR-41, RR-42 and RR-44 to
+- [X] T023 [US3] Add the render tests RR-21, RR-30, RR-31, RR-32, RR-41, RR-42 and RR-44 to
   `H/tests/unit/test_infrahub_sync_chart.py`, and make them pass.
-- [ ] T024 [US3] Run [quickstart.md](quickstart.md) step 5 and record the output in
+- [X] T024 [US3] Run [quickstart.md](quickstart.md) step 5 and record the output in
   `verification.md`.
   - Then install the variant `objectStore.enabled=false` on the local cluster. Point it at a Silo
     StatefulSet from a second release of the chart, in another namespace, with only
