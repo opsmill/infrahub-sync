@@ -1,0 +1,47 @@
+dev/specs/018-helm-chart-kubernetes/data-model.md
+  s_d989f93fc3b8fb::t_40af83a439693a 17
+  s_d989f93fc3b8fb::t_1695ab2c538f8f 63-66
+dev/specs/018-helm-chart-kubernetes/research.md
+  s_d989f93fc3b8fb::t_2d51fadb649033 202-216
+  s_d989f93fc3b8fb::t_e611d02f9c7110 88-106
+  s_d989f93fc3b8fb::t_396c5c4158477e 35-42,44-51
+  s_d989f93fc3b8fb::t_a249ebb503ce71 62-65
+  s_d989f93fc3b8fb::t_96301440ae0dfe 167-168,170-175
+dev/specs/018-helm-chart-kubernetes/plan.md
+  s_d989f93fc3b8fb::t_9eba59c47e9ac7 189-200
+  s_d989f93fc3b8fb::t_ad294fa19a9a0d 120
+  s_d989f93fc3b8fb::t_1a910942496683 155-159,161-169,171-177
+  s_d989f93fc3b8fb::t_8d0e5068278a35 99-100
+dev/specs/018-helm-chart-kubernetes/critiques/critique-2026-11-16.md
+  s_d989f93fc3b8fb::t_15124fbcdb61f2 1-141
+dev/specs/018-helm-chart-kubernetes/contracts/rendered-release.md
+  s_d989f93fc3b8fb::t_17a5a316ea2504 69-71
+  s_d989f93fc3b8fb::t_70f01db39a7bdf 11
+  s_d989f93fc3b8fb::t_9b57d4f7384753 52-58
+dev/specs/018-helm-chart-kubernetes/spec.md
+  s_d989f93fc3b8fb::t_a85833c870d57b 234-238
+  s_d989f93fc3b8fb::t_dd113884b3d9b5 317-318
+  s_d989f93fc3b8fb::t_0a5b37c9d40c0e 204-209
+  s_d989f93fc3b8fb::t_db98811331fbb5 94-100
+  s_d989f93fc3b8fb::t_ae357e36c8bc42 347-349
+  s_d989f93fc3b8fb::t_09444aba28b9b6 114-115,117-119
+dev/specs/018-helm-chart-kubernetes/quickstart.md
+  s_d989f93fc3b8fb::t_d6f71856e11a94 57-59,62,65-70,72-75,77-82
+  s_d989f93fc3b8fb::t_c404a4240c7135 71,76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "506edb302712b142d94fdcab140bb13debf010c6",
+  "prompts": {},
+  "sessions": {
+    "s_d989f93fc3b8fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b53e9e82-fcbd-48f8-ae99-61f94c0060c7",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
