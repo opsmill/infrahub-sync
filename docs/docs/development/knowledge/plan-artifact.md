@@ -123,7 +123,7 @@ hold:
 
 - the field is a one-peer reference field of the mapping, and not an identifier;
 - the source value is `None` and the destination node holds a peer, so the field is a difference;
-- the source mapping model marks the field optional;
+- the destination schema does not require the field;
 - the source adapter did not remove the peer through a configured filter. The shared reference
   helper records each such field in the adapter's `filtered_peer_fields`, and derivation leaves
   that relationship alone.
@@ -131,8 +131,8 @@ hold:
 A peer that the problem pass leaves out of the plan removes the reference from the update, so a
 kept record does not record an emptied relationship.
 
-When the source mapping model marks the field required and the source record holds no peer, the
-source read reports a problem of type `required_relationship_empty_in_source` that names the record
+When the source mapping model does not accept `None` for the field and the source record holds no
+peer, the source read reports a problem of type `required_relationship_empty_in_source` that names the record
 and the field. The record is left out of the plan and its destination node is kept, as for
 `required_peer_excluded_by_filter`.
 
@@ -144,8 +144,8 @@ planned peer set with the destination peer set like any other relationship, and
 
 Two cases are not covered:
 
-- a field that the source mapping model marks optional but the destination schema requires gets no
-  reference and no problem;
+- a field that the source mapping model accepts as `None` but the destination schema requires gets
+  no reference, because derivation skips it, and no problem, because the source read accepts it;
 - a record with no source ID whose peer a configured filter removed is not recorded in
   `filtered_peer_fields`, so the plan empties that relationship.
 

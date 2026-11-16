@@ -36,11 +36,11 @@ empty. Plans that hold it are saved in format 5.
   `operations.jsonl` in full, as in format 4.
 - Derivation adds the empty reference to an update when the field is a one-peer reference field
   of the mapping and not an identifier, the source value is `None`, the destination node holds a
-  peer, the source mapping model marks the field optional, and no configured filter removed the
+  peer, the destination schema does not require the field, and no configured filter removed the
   peer. The shared reference helper records a peer that a filter removes, so that derivation
   leaves that relationship alone. The warning of the previous behavior is removed.
-- When the source mapping model marks the field required and the source record holds no peer, the
-  source read reports a problem of the new type `required_relationship_empty_in_source`. The
+- When the source mapping model does not accept `None` for the field and the source record holds
+  no peer, the source read reports a problem of the new type `required_relationship_empty_in_source`. The
   record is left out of the plan and its destination node is kept, as for
   `required_peer_excluded_by_filter` ([ADR 0020](0020-records-with-problems-are-left-out-of-a-plan.md)).
 - Apply writes the emptied relationship as `<field>: null` in the one Upsert of the operation. The
@@ -58,8 +58,8 @@ empty. Plans that hold it are saved in format 5.
 - Saved plans in format 4 are not converted. Applying one leaves an emptied relationship as it is,
   as before.
 - The operation stays one Upsert, so the resume position does not move.
-- A field that the source mapping model marks optional but the destination schema requires gets no
-  reference and no problem.
+- A field that the source mapping model accepts as `None` but the destination schema requires gets
+  no reference and no problem, so the destination keeps the old peer.
 - A record with no source ID whose peer a configured filter removed is not recorded as filtered,
   so the plan empties that relationship.
 

@@ -173,7 +173,9 @@ def test_a_changed_attribute_gives_one_update_and_an_empty_next_plan() -> None:
 
 
 @pytest.mark.usefixtures("cache_dir")
-def test_an_interface_that_leaves_its_lag_gives_one_update_and_an_empty_next_plan() -> None:
+def test_an_interface_that_leaves_its_lag_gives_one_update_with_an_emptied_relationship_and_an_empty_next_plan() -> (
+    None
+):
     """T026 (FR-005, FR-006, FR-022): `eth0` of `leaf-1` leaves `ae0`; its `bundle` becomes empty."""
     fixture = load_second_plan_fixture()
     groups = ("devices", "lag")
