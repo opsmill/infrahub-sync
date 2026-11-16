@@ -1,0 +1,34 @@
+dev/specs/019-second-plan-real-changes/research.md
+  s_4c94b159df7a98::t_bdf613c5bca112 1-5,228-419
+  s_4c94b159df7a98::t_c0a4e7aad3bf86 6-227
+dev/specs/019-second-plan-real-changes/contracts/http-api.md
+  s_4c94b159df7a98::t_fb11fe022d4bb9 1-51
+dev/specs/019-second-plan-real-changes/plan.md
+  s_4c94b159df7a98::t_6296ddbde2cd85 1-188
+dev/specs/019-second-plan-real-changes/contracts/benchmark-record.md
+  s_4c94b159df7a98::t_fc03e0ef77aff9 1-40
+dev/specs/019-second-plan-real-changes/data-model.md
+  s_4c94b159df7a98::t_a8928780d43fc9 1-129
+dev/specs/019-second-plan-real-changes/contracts/plan-format-5.md
+  s_4c94b159df7a98::t_cb7114e1657898 1-47
+dev/specs/019-second-plan-real-changes/contracts/cli.md
+  s_4c94b159df7a98::t_4a099171b8b7e6 1-51
+dev/specs/019-second-plan-real-changes/quickstart.md
+  s_4c94b159df7a98::t_522ddfa2d6c000 1-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ce138d493a3aeb4d61669da01dc0148fd65aff7",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
