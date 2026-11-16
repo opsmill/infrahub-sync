@@ -128,8 +128,9 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why the nightly gate pins v2 2.0.1, what makes it pass, and how its lists of records left
   out and deletes are kept.
 - [0043 — A plan leaves out the deletes of nodes that Infrahub creates itself](0043-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md)
-  — why a plan reads the creator `__system__` from node metadata to leave out these deletes, and
-  why no file accepts the delete of the `default` namespace by name.
+  — why a plan reads the creator `__system__` from node metadata, for the kinds listed in
+  `INFRAHUB_BUILTIN_NODE_KINDS`, to leave out these deletes, and why no file accepts the delete of
+  the `default` namespace by name.
 - [0044 — Saved plan format 5 records an emptied one-peer relationship](0044-saved-plan-format-5-records-an-emptied-one-peer-relationship.md)
   — why an update records an emptied one-peer relationship as a reference with no peer, why every
   plan is saved in format 5, and why apply writes it as `null` in the one Upsert.

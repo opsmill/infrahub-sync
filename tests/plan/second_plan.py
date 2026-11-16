@@ -22,7 +22,8 @@ The destination holds one node before the first plan: the `IpamNamespace` named 
 which Infrahub creates itself in every branch (`tests/data/infrahub_builtin_nodes/`). Its row
 carries the node metadata Infrahub returns for it (creator `__system__`) in a `node_metadata`
 key; the stand-in client turns that key into node metadata, so it is not model data, and the
-plan's destination counts the node as built-in by its id (spec 019 research R2).
+plan's destination counts the node as built-in by its id, because its kind is in
+`INFRAHUB_BUILTIN_NODE_KINDS` (spec 019 research R2, ADR 0043).
 
 `ApplyingDestination` takes the place of the Infrahub adapter during `Potenda.apply_plan`. It
 writes each planned operation into model data by kind, and `destination_data` returns that data
@@ -38,7 +39,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from infrahub_sync.adapters.infrahub import INFRAHUB_SYSTEM_ACCOUNT_ID
+from infrahub_sync.adapters.infrahub import INFRAHUB_BUILTIN_NODE_KINDS, INFRAHUB_SYSTEM_ACCOUNT_ID
 from tests.plan.conftest import PlanProblemFixture
 from tests.plan.ownership_fixtures import granted_ownership
 
@@ -148,11 +149,13 @@ class ApplyingDestination:
 
         A held node carries the mark as Infrahub returns it, in its `node_metadata` key; the
         stand-in client of `tests/plan/problem_plan.py` reads that key as node metadata, so the
-        next plan's destination finds the same set.
+        next plan's destination finds the same set. As in the Infrahub adapter, only a node of a
+        kind in `INFRAHUB_BUILTIN_NODE_KINDS` counts.
         """
         return frozenset(
             str(row["local_id"])
-            for rows in self._nodes.values()
+            for kind, rows in self._nodes.items()
+            if kind in INFRAHUB_BUILTIN_NODE_KINDS
             for row in rows
             if (row.get("node_metadata") or {}).get("created_by", {}).get("id") == INFRAHUB_SYSTEM_ACCOUNT_ID
         )

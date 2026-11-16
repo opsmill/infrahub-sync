@@ -70,6 +70,15 @@ metadata, and the adapter reads `node_metadata.created_by.id == "__system__"`.
 **Rationale**: The rule must not depend on a name or on a list kept in the package (FR-002).
 The mark must come from Infrahub, the only system that knows which nodes it created.
 
+**Amendment (2026-11-17)**: The creator `__system__` alone is not enough. Infrahub 1.11.9 also
+records `__system__` as the creator of 274 `IpamPrefix`, `IpamIPAddress` and `IpamAggregate`
+nodes that an import from NetBox wrote
+(`dev/specs/archive/009-import-lineage/opsmill-implement-report.md`), so the mark above would
+leave out the delete of such a node when NetBox deletes it. The adapter now marks a node only
+when its creator is `__system__` and its kind is in `INFRAHUB_BUILTIN_NODE_KINDS`
+(`infrahub_sync/adapters/infrahub.py`), which holds `IpamNamespace` only. This is a list kept in
+the package, which FR-002 forbids; it holds kinds, not names. ADR 0043 records the amendment.
+
 **Alternatives considered**:
 
 - A list of built-in nodes by kind and name: forbidden by FR-002.

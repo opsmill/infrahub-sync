@@ -6,7 +6,8 @@ leaves a built-in node that a source record matches to the comparison, like any 
 
 The plans run the real `Potenda` plan path over the fixture of `tests/data/second_plan/`. A
 destination row marks a node as built-in with the node metadata Infrahub returns for it (creator
-`__system__`, research R2); the stand-in client of `tests/plan/problem_plan.py` reads that key
+`__system__`, research R2) when its kind is in `INFRAHUB_BUILTIN_NODE_KINDS` (ADR 0043); the
+stand-in client of `tests/plan/problem_plan.py` reads that key
 as node metadata, not as model data.
 """
 
@@ -35,6 +36,8 @@ ADMIN_METADATA = {"created_by": {"id": "account-admin", "display_label": "Admin"
 NAMESPACE_ID = "18d52a8a-0000-0000-0019-000000000001"
 HAND_MADE_DEVICE_ID = "18d52a8a-0000-0000-0019-000000000091"
 BUILTIN_DEVICE_ID = "18d52a8a-0000-0000-0019-000000000092"
+IMPORTED_IPAM_ID = "18d52a8a-0000-0000-0019-000000000093"
+SECOND_NAMESPACE_ID = "18d52a8a-0000-0000-0019-000000000094"
 
 
 @pytest.fixture
@@ -85,8 +88,53 @@ def test_a_node_without_node_metadata_keeps_its_delete(second_plan: PlanProblemF
     assert [(operation.kind, operation.identity) for operation in deletes] == [("IpamNamespace", {"name": "default"})]
 
 
+@pytest.mark.parametrize(
+    ("kind", "row"),
+    [
+        (
+            "IpamPrefix",
+            {"prefix": "10.9.0.0/24", "description": "imported from NetBox", "ip_namespace": "default"},
+        ),
+        (
+            "IpamIPAddress",
+            {"address": "10.9.0.1/24", "description": "imported from NetBox", "ip_namespace": "default"},
+        ),
+    ],
+    ids=["prefix", "ip-address"],
+)
+def test_an_imported_ipam_node_created_by_system_keeps_its_delete(
+    second_plan: PlanProblemFixture, kind: str, row: dict[str, Any]
+) -> None:
+    """ADR 0043 amendment: Infrahub 1.11.9 records `__system__` as the creator of imported IPAM nodes.
+
+    The archived import run of `dev/specs/archive/009-import-lineage/opsmill-implement-report.md`
+    found 274 NetBox-sourced `IpamPrefix`, `IpamIPAddress` and `IpamAggregate` nodes with that
+    creator. Their kinds are not in `INFRAHUB_BUILTIN_NODE_KINDS`, so when the source no longer
+    holds such a node, the plan keeps its delete.
+    """
+    destination = second_plan_destination(second_plan)
+    destination[kind] = [{"local_id": IMPORTED_IPAM_ID, **row, "node_metadata": BUILTIN_METADATA}]
+
+    planned = plan_fixture(
+        second_plan, records=second_plan_records(second_plan, "devices", "no_vrf"), destination=destination
+    )
+
+    assert planned.destination.builtin_node_ids == frozenset({NAMESPACE_ID})
+    deletes = [operation for operation in planned.operations if operation.action == "delete"]
+    assert [operation.kind for operation in deletes] == [kind]
+    (identity,) = [operation.identity for operation in deletes]
+    assert {key: value for key, value in identity.items() if key != "ip_namespace"} == {
+        key: value for key, value in row.items() if key in {"prefix", "address"}
+    }
+
+
 def test_a_matched_builtin_node_is_compared_like_any_other(second_plan: PlanProblemFixture) -> None:
-    """FR-003: the mark only removes deletes; a matched built-in node gets its update."""
+    """FR-003: the mark only removes deletes; a matched node is compared and gets its update.
+
+    The device carries the creator `__system__`, but its kind is not in
+    `INFRAHUB_BUILTIN_NODE_KINDS`, so it is not built in; the matched `default` namespace is
+    built in and equal to its source record, so it gets no operation.
+    """
     destination = second_plan_destination(second_plan)
     destination["DcimDevice"] = [_device(BUILTIN_DEVICE_ID, "leaf-1", "set by Infrahub", BUILTIN_METADATA)]
     records = second_plan_records(second_plan, "devices")
@@ -94,7 +142,7 @@ def test_a_matched_builtin_node_is_compared_like_any_other(second_plan: PlanProb
 
     planned = plan_fixture(second_plan, records=records, destination=destination)
 
-    assert planned.destination.builtin_node_ids == frozenset({NAMESPACE_ID, BUILTIN_DEVICE_ID})
+    assert planned.destination.builtin_node_ids == frozenset({NAMESPACE_ID})
     assert kinds_of(planned.operations) == [("create", "DcimDevice"), ("update", "DcimDevice")]
     (update,) = [operation for operation in planned.operations if operation.action == "update"]
     assert update.identity == {"name": "leaf-1"}
@@ -117,7 +165,9 @@ def test_derive_deletes_logs_one_info_line_with_the_count(
     second_plan: PlanProblemFixture, caplog: pytest.LogCaptureFixture
 ) -> None:
     destination = second_plan_destination(second_plan)
-    destination["DcimDevice"] = [_device(BUILTIN_DEVICE_ID, "leaf-8", "set by Infrahub", BUILTIN_METADATA)]
+    destination["IpamNamespace"].append(
+        {"local_id": SECOND_NAMESPACE_ID, "name": "second", "node_metadata": BUILTIN_METADATA}
+    )
     planned = plan_fixture(second_plan, records=second_plan_records(second_plan, "devices"), destination=destination)
     # The plan above logs the same line; only the call below is under test.
     caplog.clear()

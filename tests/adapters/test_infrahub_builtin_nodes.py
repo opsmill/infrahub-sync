@@ -1,7 +1,8 @@
 """The Infrahub destination keeps the ids of the nodes Infrahub created itself (spec 019 T009).
 
 The mark is the one research R2 chose from the probe of T001: the creator `__system__` in the
-node metadata. The nodes are built from the probe output of a new Infrahub 1.11.9 branch,
+node metadata, on a node whose kind is in `INFRAHUB_BUILTIN_NODE_KINDS` (ADR 0043). The nodes
+are built from the probe output of a new Infrahub 1.11.9 branch,
 `tests/data/infrahub_builtin_nodes/infrahub-1.11.9.json`: the `IpamNamespace` named `default`
 that Infrahub created, and a control `BuiltinTag` that the API token created.
 
@@ -23,7 +24,12 @@ from infrahub_sdk.node import InfrahubNodeSync
 from infrahub_sdk.schema.main import NodeSchemaAPI
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncConfig
-from infrahub_sync.adapters.infrahub import INFRAHUB_SYSTEM_ACCOUNT_ID, InfrahubAdapter, InfrahubModel
+from infrahub_sync.adapters.infrahub import (
+    INFRAHUB_BUILTIN_NODE_KINDS,
+    INFRAHUB_SYSTEM_ACCOUNT_ID,
+    InfrahubAdapter,
+    InfrahubModel,
+)
 from infrahub_sync.plan.write_surface import destination_builtin_node_ids
 
 PROBE = json.loads(
@@ -185,6 +191,21 @@ def test_the_node_the_api_token_created_is_not_built_in() -> None:
     destination = _load(ProbeClient(version="1.11.9", rows=_probe_rows()))
 
     assert CONTROL_TAG["id"] not in destination.builtin_node_ids
+
+
+def test_a_node_created_by_system_of_an_unlisted_kind_is_not_built_in() -> None:
+    """Infrahub also records `__system__` as the creator of imported IPAM nodes (ADR 0043).
+
+    Only a node whose kind is in `INFRAHUB_BUILTIN_NODE_KINDS` counts, so the control tag stays
+    out of the set even with the creator `__system__`.
+    """
+    rows = _probe_rows()
+    rows[TAG_KIND][0]["node_metadata"]["created_by"] = _account(DEFAULT_NAMESPACE["created_by"])
+
+    destination = _load(ProbeClient(version="1.11.9", rows=rows))
+
+    assert TAG_KIND not in INFRAHUB_BUILTIN_NODE_KINDS
+    assert destination.builtin_node_ids == frozenset({DEFAULT_NAMESPACE["id"]})
 
 
 def test_a_node_without_a_creator_is_not_built_in() -> None:

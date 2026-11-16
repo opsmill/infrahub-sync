@@ -1,7 +1,7 @@
 # 43. A plan leaves out the deletes of nodes that Infrahub creates itself
 
 **Status**: Accepted
-**Date**: 2026-11-16
+**Date**: 2026-11-16, amended 2026-11-17 (see [Amendment, 2026-11-17](#amendment-2026-11-17-the-mark-also-needs-a-listed-kind))
 **Source**: `dev/specs/019-second-plan-real-changes/spec.md` (FR-001 to FR-004, FR-024, SC-003),
 `dev/specs/019-second-plan-real-changes/research.md` (R2, R3)
 
@@ -43,7 +43,8 @@ output is `tests/data/infrahub_builtin_nodes/infrahub-1.11.9.json`. It found:
 ## Decision
 
 A plan records no delete for a destination node whose node metadata names the creator
-`__system__` and that no source record matches.
+`__system__` and that no source record matches. The amendment of 2026-11-17 below also requires
+the node's kind to be in a list of kinds that Infrahub creates nodes of.
 
 - The Infrahub destination adapter collects the ids of those nodes while it reads node metadata,
   with no extra request. It exposes them through the optional `BuiltinNodeReadingDestination`
@@ -80,10 +81,41 @@ A plan records no delete for a destination node whose node metadata names the cr
   namespaces only. The node metadata covers every kind, and on the probed instance both marks
   agree on the one built-in node.
 - **A list of built-in nodes by kind and name.** Rejected: the rule must not depend on a name or
-  on a list (FR-002).
+  on a list (FR-002). The amendment below adds a list of kinds, not of names, beside the
+  creator.
 - **A flag on a mapping entry that turns off its deletes.** Rejected: it depends on the
   configuration, and it would also hide deletes of nodes that an import wrote.
 - **Leaving out the deletes of nodes that no import wrote.** Rejected: it would also leave out a
   node that an operator created by hand, which must stay a delete.
 - **Filtering the delete after the plan is derived, or recording it as a kept record.**
   Rejected: it changes the plan report.
+
+## Amendment, 2026-11-17: the mark also needs a listed kind
+
+The creator `__system__` alone does not mark a node that Infrahub creates itself. Infrahub 1.11.9
+also records `__system__` as the creator of IPAM nodes that a sync imported: an import run from
+NetBox found 274 `IpamPrefix`, `IpamIPAddress` and `IpamAggregate` nodes with that creator,
+although their attributes have the source `netbox`
+(`dev/specs/archive/009-import-lineage/opsmill-implement-report.md`). The sources do not say why.
+Under the rule above, a plan would leave out the delete of such a node when NetBox deletes it,
+with no entry in the plan report.
+
+The rule is narrowed. A plan records no delete for a destination node that no source record
+matches when both conditions hold:
+
+- its node metadata names the creator `__system__`;
+- its kind is in `INFRAHUB_BUILTIN_NODE_KINDS` in `infrahub_sync/adapters/infrahub.py`.
+
+The list holds `IpamNamespace` only, the one kind of which the probe of a new branch found a
+node. A kind is added only when a probe of a new branch finds a node of that kind.
+
+Consequences of the amendment:
+
+- An imported `IpamPrefix`, `IpamIPAddress` or `IpamAggregate` node that the source deletes gets
+  its delete again, whatever its creator.
+- The rule now depends on a list kept in the package, which FR-002 of the spec forbids. The list
+  holds kinds, not names, and the creator still decides which node of a listed kind is built in.
+  A node that Infrahub creates itself, of a kind not in the list, gets a delete again until the
+  list names its kind.
+- An `IpamNamespace` that a sync imported with the creator `__system__`, if Infrahub records one,
+  is still left out. The import run above does not list namespaces among those nodes.

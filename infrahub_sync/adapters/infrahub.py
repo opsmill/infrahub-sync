@@ -96,6 +96,20 @@ _TIMESTAMP_FILTER_KW = "node_metadata__updated_at__after"
 # `IpamNamespace` named `default` of every branch (spec 019 research R2, probe of T001).
 INFRAHUB_SYSTEM_ACCOUNT_ID = "__system__"
 
+INFRAHUB_BUILTIN_NODE_KINDS: frozenset[str] = frozenset({"IpamNamespace"})
+"""The kinds of the nodes that Infrahub creates itself in a branch (ADR 0043, research R2).
+
+The creator `__system__` alone does not mark a node as built in. Infrahub 1.11.9 also records
+`__system__` as the creator of IPAM nodes that a sync imported, such as the `IpamPrefix`,
+`IpamIPAddress` and `IpamAggregate` nodes of a NetBox import
+(`dev/specs/archive/009-import-lineage/opsmill-implement-report.md`). A plan must keep the delete
+of such a node when the source deletes it, so a node counts as built in only when its creator is
+`__system__` and its kind is listed here. The probe of a new Infrahub 1.11.9 branch found one
+such node, the `IpamNamespace` named `default`
+(`tests/data/infrahub_builtin_nodes/infrahub-1.11.9.json`). Add a kind only when a probe of a
+new branch finds a node of that kind.
+"""
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, MutableMapping, Sequence
 
@@ -1033,7 +1047,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """The ids of the destination nodes this plan read that Infrahub created itself.
 
         The member of `BuiltinNodeReadingDestination`. A node is in the set when its node
-        metadata names the creator `__system__` (research R2). Empty when the plan read no
+        metadata names the creator `__system__` and its kind is in `INFRAHUB_BUILTIN_NODE_KINDS`
+        (research R2, ADR 0043). Empty when the plan read no
         metadata (`metadata_read` is false), so every unmatched node then becomes a delete.
         """
         return frozenset(self._builtin_node_ids or ())
@@ -1661,10 +1676,13 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """Keep the id of a node read with metadata when Infrahub created it itself (research R2).
 
         Infrahub 1.11.9 names the creator `__system__` in the node metadata of a node it creates
-        itself (`tests/data/infrahub_builtin_nodes/infrahub-1.11.9.json`). The mark is node-level,
-        so it is read for every kind, from the read that already returns the metadata; no
-        request is added. Nothing here reaches the DiffSync models.
+        itself (`tests/data/infrahub_builtin_nodes/infrahub-1.11.9.json`), and also of some IPAM
+        nodes that a sync imported. A node is therefore kept only when its kind is in
+        `INFRAHUB_BUILTIN_NODE_KINDS` as well. The mark is read from the read that already
+        returns the metadata; no request is added. Nothing here reaches the DiffSync models.
         """
+        if node.get_kind() not in INFRAHUB_BUILTIN_NODE_KINDS:
+            return
         metadata = node.get_node_metadata()
         creator = None if metadata is None else metadata.created_by
         if creator is None or creator.id != INFRAHUB_SYSTEM_ACCOUNT_ID:
