@@ -113,7 +113,7 @@ def test_integration_seeds_the_live_branch(runner: ModuleType, monkeypatch: pyte
 
 
 def test_planned_counts_include_unexecuted_deletes(runner: ModuleType) -> None:
-    """The branch count includes a built-in object whose delete is not executed."""
+    """The per-kind counts include the creates and the deletes of the plan."""
     output = (
         "operations: 3\nby_action: create=2, delete=1\nby_kind: IpamNamespace=2, DcimDevice=1\n"
         "1 delete operation(s) are recorded and NONE will be executed by apply.\n"
@@ -131,7 +131,7 @@ def test_from_netbox_accepts_cli_terminal_outcomes(runner: ModuleType, monkeypat
         if "register" in command:
             return "config_id: config-1\nregistry_version: 1\n"
         if "plan" in command:
-            return "run_id: plan-1\noperations: 1688\n"
+            return "run_id: plan-1\noperations: 1687\n"
         if "sync" in command:
             return "run_id: sync-1\n"
         if "show" in command:
@@ -145,10 +145,10 @@ def test_from_netbox_accepts_cli_terminal_outcomes(runner: ModuleType, monkeypat
 
 
 def test_import_counts_match_planned_operations(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The existing default namespace accounts for the unexecuted delete."""
+    """The branch's 7 IpamNamespace match 6 planned creates plus the default namespace (ADR 0043)."""
     plan = (
-        "operations: 1688\nby_action: create=1687, delete=1\nby_kind: DcimDevice=1681, IpamNamespace=7\n"
-        "1 delete operation(s) are recorded and NONE will be executed by apply.\n"
+        "operations: 1687\nby_action: create=1687\nby_kind: DcimDevice=1681, IpamNamespace=6\n"
+        "0 delete operations are recorded.\n"
     )
     monkeypatch.setattr(runner, "run", lambda *_args, **_kwargs: plan)
     sdk = ModuleType("infrahub_sdk")

@@ -382,7 +382,10 @@ In the measured run, the source supplied `Global` and `a4-ns-blue` while the
 destination also contained its built-in `default`. The first plan recorded 17
 creates and one delete of `default`. Apply created the intended objects and left
 the built-in namespace unchanged in identifier, name, and description. The second plan contained
-zero creates, zero updates, and the same single recorded delete.
+zero creates, zero updates, and the same single recorded delete. A plan now leaves out
+the deletes of nodes that Infrahub creates itself, such as `default`, as
+[ADR 0043](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0043-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md)
+describes, so a plan of this configuration no longer records that delete.
 
 This follows the saved-plan contract: destination-only objects are recorded as
 deletes, but apply never executes them. Review each identity and verify the
