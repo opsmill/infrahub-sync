@@ -103,7 +103,8 @@ Registered execution supplies all three configuration fields: `config_id`,
 `registry_version` and `package_checksum`. The worker checks them against the product run
 and registered package. The worker refuses a partial binding. It also refuses, with one
 fixed message, an execution in which all three fields are unset and a stored run that has
-no registered configuration, before it resolves a configuration or contacts a system.
+no registered configuration, before it resolves a configuration or contacts a source or
+destination system. By then the worker has contacted Prefect and claimed the execution.
 
 The worker reads endpoint settings from the package and resolves credential references
 in its environment. Each stage uses private

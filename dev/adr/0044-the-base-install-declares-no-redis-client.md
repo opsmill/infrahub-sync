@@ -36,8 +36,9 @@ execution surface. The dependency, the import and the import-compatibility test
 
 ## Consequences
 
-- A base installation no longer installs a Redis client. An installation with the `prefect` or
-  `service` extra still gets one, because Prefect requires it.
+- A base installation no longer installs a Redis client. An installation with the `prefect`
+  extra, or with the `service` extra on Python 3.11–3.13, still gets one, because Prefect requires
+  it. On Python 3.10 the `service` extra installs no package.
 - A project that installs `diffsync[redis]` next to `infrahub-sync` resolves the Redis client
   from that extra alone. It cannot also install the `prefect` extra, for the reason ADR 0008
   records.

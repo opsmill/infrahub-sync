@@ -80,8 +80,9 @@ matching where redaction already lives. A caller reaching for `SQLiteRunStore` o
 
 #### Schema creation and dialect
 
-There is no schema migration. Construction creates each table, index and constraint that is
-missing and does not add a column to a table that already exists. There is no schema version table. A
+Construction does not migrate columns or data. It creates each table, index, trigger and
+constraint that is missing, also on a table that already exists, and does not add a column to a
+table that already exists. There is no schema version table. A
 database that an earlier version created is not upgraded: start with an empty database.
 Construction is idempotent, so a process restart re-runs it safely.
 
