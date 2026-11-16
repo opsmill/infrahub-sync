@@ -58,10 +58,24 @@ at the root of the address, and the Sync API moves under `/api`.
   with every API request. The service keeps no browser session and sets no cookie. The token is
   never part of the files the service sends to the browser. The alternatives were a login route
   with a session cookie, and no browser authentication in this feature.
-- **D-3, the CLI adds `/api` to the configured address.** A default chosen while preparing this
-  specification, open to review. `INFRAHUB_SYNC_API_URL` keeps its meaning, "the address of the
-  Sync service", so the values in Compose files and in operators' environments stay valid after
-  an upgrade of both the service and the CLI.
+- **D-3, the CLI adds `/api` to the configured address.** Confirmed by the maintainer on
+  2026-11-16 (see "Clarifications"). `INFRAHUB_SYNC_API_URL` keeps its meaning, "the address of
+  the Sync service", so the values in Compose files and in operators' environments stay valid
+  after an upgrade of both the service and the CLI. A value that already ends in `/api` is used
+  as it is. This matches the Infrahub Python SDK, whose address is the root of the Infrahub
+  server and which adds `/api` itself
+  ([`infrahub_sdk/client.py`](https://github.com/opsmill/infrahub-sdk-python/blob/main/infrahub_sdk/client.py)).
+
+## Clarifications
+
+### Session 2026-11-16
+
+- Q: Does the CLI add `/api` to `INFRAHUB_SYNC_API_URL`, refuse a value ending in `/api`, or
+  require operators to add `/api` themselves? → A: The CLI adds `/api` and uses a value that
+  already ends in `/api` as it is (option A), as the Infrahub SDK does with its address.
+- Q: Does the "Requests sent as" line in the header of the web interface stay, now that each
+  person enters their own token? → A: Remove it in this feature. The status menu keeps the
+  service status and gains "Remove token".
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -215,6 +229,9 @@ web interface and confirm the API answers under `/api`.
   `/api`: the CLI calls the same routes in both cases and does not add `/api` twice.
 - The interactive API documentation and the OpenAPI document move with the API and keep
   answering without a token.
+- The browser cannot reach the font host of the design system (`rsms.me`, set in the design
+  system's own style sheet), for example in an isolated network: the web interface displays with
+  the browser's fallback font and works otherwise.
 
 ## Requirements *(mandatory)*
 
@@ -262,8 +279,9 @@ web interface and confirm the API answers under `/api`.
 - **FR-017**: The files the Sync service sends to the browser MUST NOT contain a token. The
   service MUST NOT read a token from its environment to give to the browser.
 - **FR-018**: The Sync service MUST NOT set a cookie and MUST NOT keep a browser session.
-- **FR-019**: The screens and messages this feature adds MUST NOT name a user. The token entry
-  screen does not display the name of the token's actor, before or after the token is checked.
+- **FR-019**: The web interface MUST NOT name a user. The token entry screen does not display the
+  name of the token's actor, before or after the token is checked, and the "Requests sent as"
+  line in the header of the web interface is removed.
 - **FR-020**: The development server of the web interface MUST stop adding a token to forwarded
   requests, so that development and a deployment authenticate the same way.
 - **FR-034**: Every answer the Sync service sends outside `/api` MUST tell the browser to run only
@@ -349,11 +367,11 @@ web interface and confirm the API answers under `/api`.
 
 - The web interface in `frontend/` is owned by another maintainer. This feature changes it only
   where the need requires it: the token entry screen, the bearer header, the handling of 401,
-  the development server's forwarding, and the README.
-- The header of the web interface already displays the actor of the token ("Requests sent as",
-  `frontend/src/routes/__root.tsx`). That conflicts with the repository rule never to name a user
-  in the interface, but it is existing code owned by the maintainer of `frontend/`, so this
-  feature leaves it unchanged and records the conflict for that maintainer.
+  the development server's forwarding, the status menu in the header, and the README.
+- The header of the web interface displays the actor of the token ("Requests sent as",
+  `frontend/src/routes/__root.tsx`). With one shared development token this named no person;
+  once each person enters their own token it would. It conflicts with the repository rule never
+  to name a user in the interface, so this feature removes it (see "Clarifications").
 - A file that the web interface offers for download (a plan or a run artifact) is fetched with the
   token and saved from the browser, because a plain link cannot send a bearer header.
 - The permissions of a token are unchanged. A person who enters a token in the web interface can

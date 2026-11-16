@@ -177,7 +177,9 @@ application that the unit tests use with unprefixed paths.
   quickstart scenario 3 are required evidence in the implementation report (critique E6).
 - The Node version of the `web` stage and of `.github/workflows/workflow-linter.yml` change
   together (critique E8).
-- The existing header line "Requests sent as" is left unchanged (spec Assumptions).
+- The header stops displaying the token's actor (spec Clarifications, FR-019): the "Requests
+  sent as" row, the actor badge on the status button and the actor in its `aria-label`. The
+  `GET /me` query stays, because the header uses it to detect a refused token.
 
 ### Records
 
