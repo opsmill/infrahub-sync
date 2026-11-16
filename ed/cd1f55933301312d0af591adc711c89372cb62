@@ -1,0 +1,52 @@
+tests/plan/problem_plan.py
+  s_4c94b159df7a98::t_ad853c26da1723 83-88
+  s_4c94b159df7a98::t_534ef0e6939fc2 38
+  s_4c94b159df7a98::t_961d9098b78dff 120-134
+tests/plan/second_plan.py
+  s_4c94b159df7a98::t_541cdcf777c56c 208
+  s_4c94b159df7a98::t_cca382c19ad254 189-190,192-196
+  s_4c94b159df7a98::t_708553581bb958 1-188,191,197-207,209-234
+infrahub_sync/plan/digest.py
+  s_4c94b159df7a98::t_4c4a2c71e5d46d 1-35,37,39-41,43-44,47-57
+  s_4c94b159df7a98::t_578477e3fa0587 36,38,42,45-46
+tests/plan/test_digest.py
+  s_4c94b159df7a98::t_8b8153d0c81045 27-38
+  s_4c94b159df7a98::t_52ff00e8a12f4e 1-26,39-45,47-49,51-87
+  s_4c94b159df7a98::t_61fda5742b357e 46,50
+tests/plan/test_applying_destination.py
+  s_4c94b159df7a98::t_ad971e2fd956ac 1-166
+dev/specs/019-second-plan-real-changes/tasks.md
+  s_4c94b159df7a98::t_3b8f81d331307f 29-32
+tests/data/second_plan/destination_records.json
+  s_cfeff7b0c9d7fd::t_b568b62aa0c591 1-8
+tests/data/second_plan/destination_schema.json
+  s_cfeff7b0c9d7fd::t_aad1cabfba0206 1-213
+tests/data/second_plan/source_records.json
+  s_cfeff7b0c9d7fd::t_3a5fee2e28817f 1-162
+tests/data/second_plan/sync_config.json
+  s_cfeff7b0c9d7fd::t_baaaf11d83de2c 1-171
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "edcd1f55933301312d0af591adc711c89372cb62",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_cfeff7b0c9d7fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a99c8e5a3723b18f9",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
