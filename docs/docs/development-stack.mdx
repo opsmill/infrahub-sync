@@ -100,8 +100,8 @@ read NetBox. [Run a first sync](#run-a-first-sync) uses this connection.
 Check the service:
 
 ```bash
-curl -sf http://127.0.0.1:8001/version
-curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8001/status
+curl -sf http://127.0.0.1:8001/api/version
+curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8001/api/status
 ```
 
 The `status` response reports `"service": "ready"` when the worker is running. The service
@@ -207,13 +207,19 @@ uv run invoke dev.frontend
 The task fetches the `frontend/vendor/infrahub` submodule when it is missing, installs the locked
 dependencies and serves the interface on `http://localhost:3000` until you stop it with Ctrl-C.
 
-The server forwards `/api` to the Sync API of the stack with a bearer token, chosen in this order:
+The server forwards every request under `/api` to the Sync API of the stack, at the same path, and
+adds no token. Open the page and enter a Sync API token, as in a deployment. The task prints which
+token to enter: `infrahub-sync-dev-token` when a principal in `BEARER_TOKENS` has the development
+token, otherwise `from BEARER_TOKENS`, which means a token you set there. The task never prints a
+token you set yourself.
 
-- `INFRAHUB_SYNC_API_TOKEN`, when your shell exports it.
-- The development token, when a principal in `BEARER_TOKENS` has it.
-- The token of the only principal in `BEARER_TOKENS`.
+The page keeps the token for the browser tab only. To remove it, select the Sync service status
+at the top of the page, then select **Remove token**.
 
-The token stays in the server process and is not included in the browser bundle.
+To view the built web interface from `dev.api` instead, build it with `pnpm build` in `frontend/`
+and start `dev.api` with `INFRAHUB_SYNC_WEB_DIRECTORY` set to the absolute path of
+`frontend/dist`. The Sync API then serves the web interface at the root of its address, as the
+image does.
 
 ## Use an Infrahub that already runs
 

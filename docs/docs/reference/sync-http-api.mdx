@@ -13,6 +13,13 @@ separate four-parameter deployment. Use the Sync API when a trusted automation c
 needs reviewed-plan apply, durable results, artifact retrieval, or actor-scoped mutation
 control.
 
+Every route in this document is relative to `/api` on the address of the Sync service. For
+example, `GET /runs` is `http://127.0.0.1:8000/api/runs`, the interactive documentation is at
+`/api/docs` and the OpenAPI document is at `/api/openapi.json`. The root of the address serves the
+web interface. A script that calls the Sync API directly adds `/api` to the address of the Sync
+service. The `infrahub-sync` CLI adds it itself, so `INFRAHUB_SYNC_API_URL` holds the address
+without `/api`.
+
 ## Terms
 
 - **Configuration**: a registered sync definition, identified by `config_id`. Its `name` is
@@ -212,7 +219,7 @@ The server listens on port `8000`. Its host defaults to `127.0.0.1`. Put TLS and
 network access controls at your ingress boundary. The bearer-token provider is the MVP
 application authentication boundary, not a replacement for transport security.
 
-Open `http://127.0.0.1:8000/docs`, select **Authorize**, and enter the configured token
+Open `http://127.0.0.1:8000/api/docs`, select **Authorize**, and enter the configured token
 without the `Bearer` prefix; Swagger UI adds the complete `Authorization` header.
 
 ## Discovery and liveness
@@ -721,7 +728,7 @@ Address the exact registered configuration revision by its `config_id` and
 `registry_version`:
 
 ```bash
-curl --request POST http://127.0.0.1:8000/runs \
+curl --request POST http://127.0.0.1:8000/api/runs \
   --header "Authorization: Bearer $SYNC_API_TOKEN" \
   --header "Idempotency-Key: plan-inventory-2026-08-10" \
   --header "Content-Type: application/json" \
@@ -747,7 +754,7 @@ Read the plan after the worker publishes it:
 
 ```bash
 curl --header "Authorization: Bearer $SYNC_API_TOKEN" \
-  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/plan
+  http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/plan
 ```
 
 The plan response includes its checksum, checksum verification state, summary, verification
@@ -772,7 +779,7 @@ Three routes list the entries, in the order of the saved plan:
 
 ```bash
 curl --header "Authorization: Bearer $SYNC_API_TOKEN" \
-  "http://127.0.0.1:8000/runs/20260810T1500-0123abcd/plan/problems?offset=0&limit=500&problem_type=dropdown_value_not_in_choices"
+  "http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/plan/problems?offset=0&limit=500&problem_type=dropdown_value_not_in_choices"
 ```
 
 `GET /runs/{run_id}/plan/problems`, `/plan/left-out` and `/plan/kept` take `offset` and `limit`
@@ -796,7 +803,7 @@ confirmation that the left-out records were reviewed: only an apply request carr
 
 ```bash
 curl --request POST \
-  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/verify \
+  http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/verify \
   --header "Authorization: Bearer $SYNC_API_TOKEN" \
   --header "Idempotency-Key: verify-20260810T1500-0123abcd" \
   --header "Content-Type: application/json" \
@@ -853,7 +860,7 @@ to the destination and submits no execution:
 
 ```bash
 curl --request POST \
-  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/approve \
+  http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/approve \
   --header "Authorization: Bearer $SYNC_API_TOKEN" \
   --header "Idempotency-Key: approve-20260810T1500-0123abcd" \
   --header "Content-Type: application/json" \
@@ -905,7 +912,7 @@ Apply requires the exact retained checksum and explicit write confirmation:
 
 ```bash
 curl --request POST \
-  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/apply \
+  http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/apply \
   --header "Authorization: Bearer $SYNC_API_TOKEN" \
   --header "Idempotency-Key: apply-20260810T1500-0123abcd" \
   --header "Content-Type: application/json" \
@@ -1031,7 +1038,7 @@ confirmation:
 
 ```bash
 curl --request POST \
-  http://127.0.0.1:8000/runs/20260810T1500-0123abcd/resume \
+  http://127.0.0.1:8000/api/runs/20260810T1500-0123abcd/resume \
   --header "Authorization: Bearer $SYNC_API_TOKEN" \
   --header "Idempotency-Key: resume-20260810T1500-0123abcd" \
   --header "Content-Type: application/json" \
