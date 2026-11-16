@@ -75,10 +75,13 @@ bootstrap Job again, as [Run the upgrade](#run-the-upgrade) describes.
 
 ### Minimum Sync version
 
-The chart needs a Sync release that contains the bootstrap record and its start check. With an
-earlier image, nothing makes the Sync API and the worker wait for the bootstrap. No release
-contains the check yet, so the minimum Sync version is not known yet. The chart's current
-`appVersion` does not contain it.
+The chart needs a Sync release whose image contains the bootstrap record, its start check and
+tini. The chart starts every Sync container with `/usr/bin/tini -g --`, because a Kubernetes
+`command` replaces the image's entrypoint. tini passes `SIGTERM` to the Sync process and to the
+process of each run, so a stopped pod ends within seconds instead of at the end of its grace
+period. A container from an earlier image fails to start, because the image has no
+`/usr/bin/tini`. No release contains these yet, so the minimum Sync version is not known yet. The
+chart's current `appVersion`, 3.0.0a5, does not contain them.
 
 ## Prerequisites
 

@@ -866,9 +866,51 @@ another stack; the worker does not need it. The stack and its volumes were remov
 
 ### Not tested: a run in progress
 
-No run was in progress when the worker was stopped. A run executes in a child process of the
-worker. When the first process of a container exits, the kernel stops every other process in the
-container. Before this change such a child was killed at the end of the grace period; now it is
-killed when the worker exits, about 1 second after `SIGTERM`. A run that would have finished within
-the grace period is now interrupted instead. Whether the worker should wait for runs in progress
-before it exits is not decided.
+No run was in progress when the worker was stopped. Section "tini as the entrypoint" below
+describes what tini changes for a run's process.
+
+## tini as the entrypoint
+
+Result: every Sync container now runs under tini, as Infrahub's containers do. The image sets
+`ENTRYPOINT ["/usr/bin/tini", "-g", "--"]`, and the chart starts the command of the Sync API, the
+worker, the Prefect server and the bootstrap Job with `/usr/bin/tini -g --`, because a Kubernetes
+`command` replaces the entrypoint. The Compose CLI service keeps tini in its `entrypoint`. The
+wait init containers stay without tini.
+
+### Changes
+
+- `Dockerfile`: installs `tini=0.19.0-1+b3` (the bookworm package) and sets the entrypoint.
+- `docker-compose.yml` and its copy `infrahub_sync/testcontainers/docker-compose.yml`: the CLI
+  `entrypoint` is `["/usr/bin/tini", "-g", "--", "infrahub-sync"]`.
+- Chart (H `1f0c302`): helper `infrahub-sync.tini`; the API container now has an explicit command;
+  README, NOTES and `docs/docs/kubernetes-deployment.mdx` state that an image without tini, such
+  as 3.0.0a5, does not start with the chart.
+- `tests/image/conftest.py`: the smoke fixture writes the bootstrap record before it starts the
+  Sync API. Since the start check (chunk 9a), the Sync API exited at start in this suite, because
+  its database had no record. `test_the_default_command_serves_the_sync_api` and
+  `test_the_api_logs_none_of_the_secrets_it_was_started_with` failed on the image built before
+  tini (`sigterm-check`) and on the first tini image, for that reason.
+
+### What a run's process receives
+
+The service worker sets a run command, so Prefect's process worker starts each run with
+`EngineCommandStarter` without `isolate_process_group`, and the run stays in the worker's process
+group (`prefect/workers/process.py:168`, `prefect/runner/_starter_engine.py:86`). `tini -g` sends
+`SIGTERM` to that group. A parent and child Python process in the tini image both logged
+`SIGTERM`, and the container stopped in under 1 second with exit code 0. What Prefect's run process
+does on `SIGTERM`, and whether the run can be resumed afterwards, was not tested.
+
+### Checks
+
+| Check | Command or setup | Result |
+| --- | --- | --- |
+| Image suite on `infrahub-sync:tini-check`, built from S `235857b2` with the release build arguments | `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=tini-check uv run pytest -m docker tests/image -p no:randomly -q` | `32 passed, 27 deselected in 33.32s` (2026-11-16T23:43:08Z) |
+| Compose contract tests | `uv run pytest tests/compose/test_compose_contract.py -q` | `179 passed in 7.91s` |
+| Chart lint and render tests (H) | `make lint`; `uv run pytest tests/unit -q` | exit 0; `143 passed in 7.36s` |
+| Chart end-to-end test (H `1f0c302`) on `tini-check`: install, upgrade that changes the work pool, start check refusal | `INFRAHUB_SYNC_E2E_IMAGE=infrahub-sync:tini-check uv run pytest -v -rs -s -m sync tests/e2e` (vcluster, Docker driver) | `1 passed, 28 deselected, 2 warnings in 115.65s` (2026-11-16T23:45:21Z) |
+| Root Compose stack on `tini-check` (project `tinicheck`, Sync API on port 18001) | `cat /proc/1/comm` in the worker and the API; `docker stop -t 30` | PID 1 is `tini` in both. Worker: stopped in under 1 s, exit 0. Sync API: 1 s, exit 143, after `Application shutdown complete.` Prefect server: under 1 s, exit 143 |
+
+Exit code 143 of the Sync API and the Prefect server is not a kill. uvicorn shuts down, then raises
+the captured `SIGTERM` again (`uvicorn/server.py:349`), and tini reports a child that ended on
+`SIGTERM` as 143. Before tini, uvicorn was PID 1, which ignores that second signal, so it exited 0.
+The stack and its volumes were removed afterwards.
