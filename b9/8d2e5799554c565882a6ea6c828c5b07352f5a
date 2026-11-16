@@ -1,0 +1,22 @@
+dev/adr/0043-the-kubernetes-deployment-orders-its-start-with-a-hashed-job-and-gates.md
+  s_d989f93fc3b8fb::t_27fb3464d2970f 33-34
+  s_d989f93fc3b8fb::t_2f340fd359a9f1 1-32,35-103
+dev/adr/README.md
+  s_d989f93fc3b8fb::t_2de93e42e992b6 130-133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b98d2e5799554c565882a6ea6c828c5b07352f5a",
+  "prompts": {},
+  "sessions": {
+    "s_d989f93fc3b8fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b53e9e82-fcbd-48f8-ae99-61f94c0060c7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
