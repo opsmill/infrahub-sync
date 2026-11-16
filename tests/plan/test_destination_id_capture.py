@@ -1,4 +1,4 @@
-"""Derivation records the destination id on updates, and discloses the clears it cannot record.
+"""Derivation records the destination id on updates, and records an emptied one-peer relationship.
 
 An update is keyed at apply by the destination object's Infrahub `id`, and plan time is the
 only moment that id is knowable without re-reading the destination — which apply is forbidden
@@ -8,10 +8,9 @@ id and records it on the operation.
 Where it cannot, the plan refuses. A missing id on an update would otherwise fall back to a
 create-shaped convergent upsert, which is exactly the G1 M6 silent-duplicate case.
 
-`[S7]` The other disclosure: a `None` cardinality-one peer on an update is dropped while
-resolving references, so the derived payload carries no reference for that field and the
-destination relationship is left alone. Plan format 3 adds no encoding for a clear, so the
-only honest thing to do is say so while the null is still visible.
+`[S7]` A `None` cardinality-one peer on an update, where the destination holds a peer, is
+recorded as a one-peer reference with no peer (plan format 5, spec 019 FR-005), and no warning
+is logged (FR-008). On a create the field is left out, as before.
 """
 
 from __future__ import annotations
@@ -139,7 +138,7 @@ def test_an_update_whose_destination_record_is_absent_is_refused() -> None:
 
 
 # ---------------------------------------------------------------------------------------
-# `[S7]` — the clear the plan cannot represent is disclosed where the null is still visible
+# `[S7]` — an update records the emptied one-peer relationship; a create leaves the field out
 # ---------------------------------------------------------------------------------------
 
 

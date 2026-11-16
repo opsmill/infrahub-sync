@@ -14,7 +14,7 @@ rest of the kind. When the peer is not stored otherwise:
 - through an optional relationship, the record is kept: a peer the source does not return gives
   a placeholder value and a load report entry, a peer the read could not build gives no value
   and a load report entry, and a peer a filter removed gives no value. The adapter records that
-  one-peer reference (`DiffSyncMixin.filtered_references`), so the plan does not record the
+  one-peer reference (`DiffSyncMixin.filtered_peer_fields`), so the plan does not record the
   relationship as emptied (spec 019 research R7).
 """
 

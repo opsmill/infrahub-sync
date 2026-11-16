@@ -630,7 +630,7 @@ def _emptied_one_peer_fields(  # pylint: disable=too-many-arguments  # the parts
     model = getattr(source_adapter, kind, None)
     model_fields = getattr(model, "model_fields", None) or {}
     destination_schema = getattr(destination_adapter, "schema", None)
-    filtered = getattr(source_adapter, "filtered_references", None) or frozenset()
+    filtered = getattr(source_adapter, "filtered_peer_fields", None) or frozenset()
     emptied: list[str] = []
     for field in sorted(candidates):
         if field in keys or not candidates[field] or field not in values or values[field] is not None:

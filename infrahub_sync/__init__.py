@@ -469,7 +469,7 @@ def _is_empty_required_reference(error: Mapping[str, Any], *, model: type[Any], 
     if field_name is None or len(error.get("loc") or ()) != 1:
         return False
     mapped = next((field for field in getattr(element, "fields", None) or () if field.name == field_name), None)
-    if mapped is None or not mapped.reference or mapped.static is not None:
+    if mapped is None or not mapped.reference or not mapped.mapping or mapped.static is not None:
         return False
     model_field = getattr(model, "model_fields", {}).get(field_name)
     if model_field is None or isinstance(model_field.default, list):
@@ -510,7 +510,7 @@ class _ReadState:
     could not build; `read_kinds` names the kinds the source read listed in full;
     `retained_ids` holds, per kind, the source IDs that the filters of at least one mapping
     entry kept, so a record that another entry of the kind removes is not recorded as filtered.
-    `filtered_references` holds the (kind, source record ID, field) of each one-peer reference
+    `filtered_peer_fields` holds the (kind, source record ID, field) of each one-peer reference
     whose optional peer a configured filter removed, so the reference has no value (spec 019
     research R7).
     """
@@ -520,7 +520,7 @@ class _ReadState:
     not_loaded: dict[tuple[str, str], LoadReportEntry] = dataclasses.field(default_factory=dict)
     read_kinds: set[str] = dataclasses.field(default_factory=set)
     retained_ids: dict[str, set[str]] = dataclasses.field(default_factory=dict)
-    filtered_references: set[tuple[str, str, str]] = dataclasses.field(default_factory=set)
+    filtered_peer_fields: set[tuple[str, str, str]] = dataclasses.field(default_factory=set)
     # Per kind being admitted by `load_records`: the listed source IDs not admitted yet.
     pending: dict[str, set[str]] = dataclasses.field(default_factory=dict)
     # The references that close a cycle, which `load_records` admits without waiting: the kind
@@ -587,20 +587,20 @@ class DiffSyncMixin(WarmSourceReadMixin):
         return self._read_state.report
 
     @property
-    def filtered_references(self) -> frozenset[tuple[str, str, str]]:
+    def filtered_peer_fields(self) -> frozenset[tuple[str, str, str]]:
         """The one-peer references whose optional peer a configured filter removed.
 
         Each item is (owner kind, owner source record ID, field). The reference has no value
         in the stored record, and the plan does not record that relationship as emptied
         (spec 019 research R7).
         """
-        return frozenset(self._read_state.filtered_references)
+        return frozenset(self._read_state.filtered_peer_fields)
 
     def record_filtered_reference(self, owner_kind: str, owner_source_id: str | None, field: str) -> None:
         """Record that a configured filter removed the optional peer of a one-peer reference."""
         source_id = source_record_id(owner_source_id)
         if source_id is not None:
-            self._read_state.filtered_references.add((owner_kind, source_id, field))
+            self._read_state.filtered_peer_fields.add((owner_kind, source_id, field))
 
     def _is_source(self) -> bool:
         return getattr(self, "target", None) == "source"

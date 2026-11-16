@@ -87,7 +87,7 @@ class WarmSourceReadMixin:
         if source_id is None:
             return None
         state = self._read_state
-        state.filtered_references = {item for item in state.filtered_references if item[:2] != (kind, source_id)}
+        state.filtered_peer_fields = {item for item in state.filtered_peer_fields if item[:2] != (kind, source_id)}
         unique_id = state.peer_index.pop((kind, source_id), None)
         if unique_id is None:
             return None
@@ -96,18 +96,9 @@ class WarmSourceReadMixin:
         return unique_id
 
     def kind_read_is_clean(self: DiffSyncMixin, kind: str) -> bool:
-        """Tell whether the read of `kind` recorded no load report entry, no filtered record and no filtered peer.
-
-        A record whose optional one-peer reference lost its peer to a configured filter makes
-        the read unclean: a restored record does not resolve its references again, so only a
-        cold read records that reference for the plan (spec 019 research R7).
-        """
+        """Tell whether the read of `kind` recorded no load report entry and no filtered record."""
         report = self.load_report
-        return (
-            not report.entries_for(kind)
-            and not report.filtered_ids.get(kind)
-            and not any(owner_kind == kind for owner_kind, _id, _field in self._read_state.filtered_references)
-        )
+        return not report.entries_for(kind) and not report.filtered_ids.get(kind)
 
     def discard_kind(self: DiffSyncMixin, kind: str, *, entries_from: int) -> None:
         """Remove the stored records of `kind`, their index and what its read recorded, before a cold read.
@@ -121,7 +112,7 @@ class WarmSourceReadMixin:
         del state.report.entries[entries_from:]
         state.report.filtered_ids.pop(kind, None)
         state.retained_ids.pop(kind, None)
-        state.filtered_references = {item for item in state.filtered_references if item[0] != kind}
+        state.filtered_peer_fields = {item for item in state.filtered_peer_fields if item[0] != kind}
         for key in [key for key in state.not_loaded if key[0] == kind]:
             del state.not_loaded[key]
         # The removed records no longer resolve a reference; the cold read indexes its own.

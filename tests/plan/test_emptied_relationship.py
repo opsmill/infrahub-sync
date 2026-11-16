@@ -7,9 +7,10 @@ record out with a `required_relationship_empty_in_source` problem, and keeps its
 node. Research R6 and R7 give the conditions: no reference when both sides are empty, when the
 peer was left out of the plan (a kept record), or when a configured filter removed the peer.
 
-Before this feature, a source record with no peer for a required one-peer relationship failed
-the whole plan with `RecordLoadError` (pydantic `missing`), because the admission step refuses
-every error that is not a type error.
+Before this feature, a source record with no peer for a required one-peer relationship gave one
+of two results, depending on how the adapter wrote it. A field left out of the record data
+failed the whole plan with `RecordLoadError` (pydantic `missing`). A field set to `None` left the
+record out as `wrong_value_type` (pydantic `string_type` with input `None`).
 """
 
 from __future__ import annotations
@@ -256,6 +257,21 @@ def test_a_missing_required_attribute_still_fails_the_read(monkeypatch: pytest.M
         source.model_loader("Tag", Tag)
 
 
+def test_a_required_reference_without_a_mapping_still_fails_the_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A reference field with neither `mapping` nor `static` is a configuration error, not an empty peer."""
+    from infrahub_sync import RecordLoadError
+
+    config = _config()
+    config.schema_mapping[1].fields[1].mapping = None
+    monkeypatch.setattr(NetboxAdapter, "_create_netbox_client", lambda _self, _adapter: MagicMock())
+    monkeypatch.setattr(_Adapter, "Example", RequiredOne)
+    source = _Adapter(target="source", adapter=SyncAdapter(name="netbox"), config=config)
+    source.client.dcim.examples.all.return_value = [_Record({"id": 1, "name": "owner", "peer": None})]
+
+    with pytest.raises(RecordLoadError):
+        source.model_loader("Example", RequiredOne)
+
+
 def test_no_reference_when_the_peer_was_left_out_and_the_record_is_kept(monkeypatch: pytest.MonkeyPatch) -> None:
     """A peer the read could not build keeps the record without that relationship; the plan does not empty it."""
     source = _source(monkeypatch, OptionalOne, {"id": 30})
@@ -277,8 +293,8 @@ def test_no_reference_when_a_configured_filter_removed_the_peer(
     with caplog.at_level(logging.WARNING, logger=DERIVE_LOGGER):
         operations, _report = _plan(source, destination)
 
-    assert source.filtered_references == frozenset({("Example", "1", "peer")})
-    # `tests/adapters/test_netbox_filtered_references.py` holds the same result: the update
+    assert source.filtered_peer_fields == frozenset({("Example", "1", "peer")})
+    # `tests/adapters/test_netbox_filtered_peer_fields.py` holds the same result: the update
     # carries no reference, so the relationship is left as it is.
     assert [(operation.action, operation.relationships) for operation in _example_operations(operations)] == [
         ("update", None)
@@ -286,13 +302,13 @@ def test_no_reference_when_a_configured_filter_removed_the_peer(
     assert [record for record in caplog.records if record.name == DERIVE_LOGGER] == []
 
 
-def test_a_filtered_reference_makes_the_warm_read_of_the_kind_unclean(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A restored record does not resolve its references again, so the next read of the kind is cold."""
+def test_a_kind_that_refers_to_a_filtered_peer_reads_cold(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The peer kind's read is unclean, so a kind that refers to it reads cold and records the filtered peer again."""
     source = _source(monkeypatch, OptionalOne, {"id": 20})
 
-    assert not source.kind_read_is_clean("Example")
+    assert not source.kind_read_is_clean("Tag")
     source.discard_kind("Example", entries_from=len(source.load_report.entries))
-    assert source.filtered_references == frozenset()
+    assert source.filtered_peer_fields == frozenset()
 
 
 def test_no_reference_when_the_destination_schema_requires_the_relationship(monkeypatch: pytest.MonkeyPatch) -> None:
