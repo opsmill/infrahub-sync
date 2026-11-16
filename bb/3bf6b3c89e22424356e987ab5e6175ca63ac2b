@@ -1,0 +1,26 @@
+dev/specs/018-helm-chart-kubernetes/spec.md
+  s_d989f93fc3b8fb::t_014f17fb07eb6d 215-216
+  s_d989f93fc3b8fb::t_d912502ab02e74 271-277
+dev/specs/018-helm-chart-kubernetes/tasks.md
+  s_d989f93fc3b8fb::t_aeeda735fe7264 425-508
+dev/specs/018-helm-chart-kubernetes/plan.md
+  s_d989f93fc3b8fb::t_f70ebb1a39908f 47-49
+  s_d989f93fc3b8fb::t_8e036dc9264bb9 201-204
+  s_d989f93fc3b8fb::t_1fc661ecf00ef9 156-162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bb3bf6b3c89e22424356e987ab5e6175ca63ac2b",
+  "prompts": {},
+  "sessions": {
+    "s_d989f93fc3b8fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b53e9e82-fcbd-48f8-ae99-61f94c0060c7",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
