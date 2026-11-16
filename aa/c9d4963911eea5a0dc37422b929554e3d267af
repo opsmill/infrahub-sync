@@ -1,0 +1,28 @@
+dev/adr/0043-the-kubernetes-deployment-orders-its-start-with-a-hashed-job-and-gates.md
+  s_d989f93fc3b8fb::t_28b966861a2add 27
+docs/docs/kubernetes-deployment.mdx
+  s_d989f93fc3b8fb::t_074d7d4386931b 245
+  s_d989f93fc3b8fb::t_dd2ca54bee1b14 240-242,244
+  s_d989f93fc3b8fb::t_14814ed6b16354 465-466,468-473
+  s_d989f93fc3b8fb::t_f92e70a858bd56 210,212-214
+  s_d989f93fc3b8fb::t_c953ce155ce790 132
+  s_d989f93fc3b8fb::t_765c723a0a46dc 58-59,61,63,65
+  s_d989f93fc3b8fb::t_bb2f5e4caf0acf 98-100
+  s_d989f93fc3b8fb::t_8fc0f655541d0d 380-382
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "aac9d4963911eea5a0dc37422b929554e3d267af",
+  "prompts": {},
+  "sessions": {
+    "s_d989f93fc3b8fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b53e9e82-fcbd-48f8-ae99-61f94c0060c7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
