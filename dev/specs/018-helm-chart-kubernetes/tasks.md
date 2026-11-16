@@ -378,7 +378,7 @@ else.
   - In `Makefile`, make the `lint` loop pass `-f "$$chart/ci/lint-values.yaml"` when that file
     exists.
   - Run `make lint`.
-- [ ] T030 [P] Write `S/docs/docs/kubernetes-deployment.mdx`, titled "Kubernetes deployment".
+- [X] T030 [P] Write `S/docs/docs/kubernetes-deployment.mdx`, titled "Kubernetes deployment".
   - Match the style of `S/docs/docs/compose-deployment.mdx`: frontmatter `title` only, and the
     same admonition syntax.
   - Sections:
@@ -404,18 +404,18 @@ else.
       not tested; OpenShift, not tested; backups
   - Follow `S/docs/docs/development/` writing guidance if it exists, and the organization writing
     rules: plain words and the most specific term.
-- [ ] T031 [P] Update the existing documentation in `S/`:
+- [X] T031 [P] Update the existing documentation in `S/`:
   - In `docs/sidebars.ts`, add `'kubernetes-deployment'` after `'compose-deployment'`.
   - In `docs/docs/compose-deployment.mdx`, link to the new page from "Related operator pages" and
     from "What this topology does not do".
-- [ ] T032 [P] Write the decision record `S/dev/adr/<next number>-the-kubernetes-deployment-orders-its-start-with-a-hashed-job-and-gates.md`.
+- [X] T032 [P] Write the decision record `S/dev/adr/<next number>-the-kubernetes-deployment-orders-its-start-with-a-hashed-job-and-gates.md`.
   - Pick the next free number when you commit; another branch may take 0043.
   - Use the format of `S/dev/adr/0016-the-compose-deployment-is-one-tag-pinned-file.md`, and take
     the content from research R-2 and R-3: the context, the decision, the consequences including
     the upgrade gap, and the alternatives.
   - Cite no internal source: no Slack, Jira or Claude links.
   - Add it to the index in `S/dev/adr/README.md`.
-- [ ] T033 [P] Add `S/changelog/422.added.md`, created with
+- [X] T033 [P] Add `S/changelog/422.added.md`, created with
   `uv run --extra dev towncrier create -c "..." 422.added.md`. Use one sentence that says
   operators can deploy Infrahub Sync on Kubernetes with the `infrahub-sync` Helm chart, and links
   to the new page by its path.
