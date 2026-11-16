@@ -80,9 +80,9 @@ set. Wait for the release to be ready. Call the version endpoint of the Sync API
    principal.
 3. **Given** an installed release, **When** the operator lists the workers through the Sync API or
    the CLI, **Then** one live worker is reported.
-4. **Given** a required credential is missing, **When** the operator installs the chart,
-   **Then** the installation stops before any pod is created and the message names the missing
-   value.
+4. **Given** the chart creates the Secret and a required credential is missing, **When** the
+   operator installs the chart, **Then** the installation stops before any pod is created and
+   the message names the missing value.
 5. **Given** a private image registry, **When** the operator sets an image pull secret,
    **Then** every pod of the release uses it.
 
@@ -217,9 +217,13 @@ created, that it points at the Sync API, and that no other service is exposed.
 
 **Order of start**
 
-- **FR-007**: The database bootstrap (the two roles and the two databases) and the service
-  bootstrap (the product schema, the artifact bucket, the work pool and the deployment in it)
-  MUST complete on install and on each upgrade before the Sync API and the worker serve.
+- **FR-007**: The service bootstrap (the product schema, the artifact bucket, the work pool and
+  the deployment in it) MUST run on install and on each upgrade. On install it MUST complete
+  before the Sync API and the worker serve. On upgrade it MUST complete without a manual step;
+  the plan states how close to "before the new pods serve" the chart gets, and why.
+- **FR-007a**: With the bundled PostgreSQL, the database bootstrap (the two roles and the two
+  databases) MUST complete before the Prefect server and the service bootstrap connect. It runs
+  when PostgreSQL first initializes its volume.
 - **FR-008**: A restart of the Sync API, the worker or the Prefect server MUST NOT run the
   bootstrap work again.
 - **FR-009**: `helm upgrade` on an installed release MUST complete without a manual step, such
@@ -232,10 +236,12 @@ created, that it points at the Sync API, and that no other service is exposed.
 - **FR-011**: The default values MUST NOT contain a credential. The operator supplies each
   credential either in a Kubernetes Secret that already exists or as a value from which the chart
   creates a Secret.
-- **FR-012**: The installation MUST stop with a message that names the value when one of these
-  is missing: the Sync API principals, the Prefect API credential, the object store access key
-  and secret key, and, with the bundled PostgreSQL, the administrator password and the two role
-  passwords.
+- **FR-012**: When the chart creates the Secret, the installation MUST stop with a message that
+  names the value when one of these is missing: the Sync API principals, the Prefect API
+  credential, the object store access key and secret key, and, with the bundled PostgreSQL, the
+  administrator password and the two role passwords. When the operator supplies an existing
+  Secret, Helm cannot read it before the install; a missing key then stops the pod that needs
+  it, and Kubernetes names the key in the pod's status.
 - **FR-013**: The worker MUST receive the source credentials and the destination credential of
   the bundled adapters, by the same variable names as in the Compose file. The Sync API MUST
   receive only the destination credential. The operator MUST be able to add further credential
@@ -326,8 +332,9 @@ created, that it points at the Sync API, and that no other service is exposed.
   the configuration packages and runs that were listed before the upgrade are listed after it.
 - **SC-004**: With the bundled PostgreSQL and object store turned off, the release contains zero
   PostgreSQL pods, zero object store pods and zero volume claims.
-- **SC-005**: An install with a missing required credential fails before any pod is created, and
-  the message names the missing value in 100% of the cases listed in FR-012.
+- **SC-005**: When the chart creates the Secret, an install with a missing required credential
+  fails before any pod is created, and the message names the missing value in 100% of the cases
+  listed in FR-012.
 - **SC-006**: An operator can install, call the CLI, upgrade and uninstall by following the
   documentation page alone, without reading the chart's templates.
 - **SC-007**: The rendered default release exposes zero services outside the cluster, and zero
