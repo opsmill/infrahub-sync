@@ -40,7 +40,10 @@ with `Content-Type: application/json`.
 | 5 | `Accept` includes `text/html` | `index.html`, 200, `Cache-Control: no-cache` |
 | 6 | otherwise | envelope naming /api |
 
-`GET /api` without a trailing slash is outside the mount and follows this table (rows 5 or 6).
+`GET /api` and `GET /api/` answer 307 with `Location: /api/status`, for every `Accept` value, with
+the security headers below. Two routes placed before the mount handle them: `/api` does not match the
+mount, and the API application has no route at `/api/`. Any other method at these two addresses
+gets the envelope naming /api.
 
 Never sent: a file whose resolved path is outside the built directory, whatever the encoding of
 `..` or `/` in the request.

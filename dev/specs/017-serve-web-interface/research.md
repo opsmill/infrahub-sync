@@ -45,7 +45,9 @@ one catch-all route for the web interface, and has a lifespan that enters
   `record_authentication_refusal` (`app.py:348`, `:352`) for a refused token becomes `/api/...`.
   Accepted; documented in the changelog.
 - `GET /api` without a trailing slash does not match the mount (the mount pattern is
-  `/api/{path:path}`). The outer route answers it with the 404 envelope.
+  `/api/{path:path}`). A route before the mount sends `GET /api` and `GET /api/` to `/api/status`
+  with a 307, so a person who opens the bare API address in a browser views the status of the
+  service instead of the web interface.
 
 ## R-2 Unknown routes under `/api` answer with the error envelope
 

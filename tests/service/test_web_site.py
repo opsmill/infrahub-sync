@@ -242,7 +242,7 @@ def test_a_missing_asset_behind_extra_path_segments_answers_with_the_envelope(si
 
 
 # Row 5: a browser asking for a page path.
-@pytest.mark.parametrize("path", ["/", "/runs", "/runs/abc", "/configs/c-1/versions", "/api"])
+@pytest.mark.parametrize("path", ["/", "/runs", "/runs/abc", "/configs/c-1/versions"])
 def test_a_browser_gets_the_entry_page_for_a_page_path(site: TestClient, path: str) -> None:
     response = site.get(path, headers=HTML)
 
@@ -259,9 +259,28 @@ def test_head_of_a_page_path_answers_the_entry_page_headers(site: TestClient) ->
 
 
 # Row 6: anything else.
-@pytest.mark.parametrize("path", ["/version", "/status", "/runs", "/api", "/favicon.png"])
+@pytest.mark.parametrize("path", ["/version", "/status", "/runs", "/favicon.png"])
 def test_a_program_outside_api_gets_the_envelope(site: TestClient, path: str) -> None:
     response = site.get(path, headers=JSON)
+
+    _assert_envelope(response)
+    _assert_security_headers(response)
+
+
+# The root of the API sends every client to the status of the service.
+@pytest.mark.parametrize("path", ["/api", "/api/"])
+@pytest.mark.parametrize("headers", [HTML, JSON])
+def test_the_api_root_redirects_to_the_status(site: TestClient, path: str, headers: dict[str, str]) -> None:
+    response = site.get(path, headers=headers, follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "/api/status"
+    _assert_security_headers(response)
+
+
+@pytest.mark.parametrize("path", ["/api", "/api/"])
+def test_a_write_to_the_api_root_gets_the_envelope(site: TestClient, path: str) -> None:
+    response = site.post(path, headers=JSON)
 
     _assert_envelope(response)
     _assert_security_headers(response)

@@ -1,7 +1,7 @@
 """Serve the Sync API under ``/api`` and the built web interface at every other address.
 
-The outer application mounts the API application at ``/api`` and answers every other address with
-one route that accepts every method. The route applies decision 1 of ADR 0043
+The outer application mounts the API application at ``/api``, sends ``GET /api`` and ``GET /api/``
+to ``/api/status``, and answers every other address with one route that accepts every method. The route applies decision 1 of ADR 0043
 (``dev/adr/0043-the-web-interface-is-served-at-the-root-and-the-api-under-api.md``) in this order:
 
 1. A method other than ``GET`` or ``HEAD``: the 404 envelope naming ``/api``.
@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 from starlette.applications import Starlette
-from starlette.responses import JSONResponse, PlainTextResponse, Response
+from starlette.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route, request_response
 from starlette.staticfiles import StaticFiles
 
@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from starlette.types import Receive, Scope, Send
 
 API_PREFIX = "/api"
+API_ROOT_TARGET = f"{API_PREFIX}/status"
 NOT_FOUND_MESSAGE = "the Sync API is served under /api"
 NO_WEB_INTERFACE_MESSAGE = "The web interface is not included in this install. The Sync API is served under /api."
 INDEX_CACHE_CONTROL = "no-cache"
@@ -218,6 +219,16 @@ def create_site(api: FastAPI, directory: Path | None) -> Starlette:
         response.headers.update(security_headers)
         return response
 
+    def api_root(request: Request) -> Response:
+        """Send ``GET /api`` and ``GET /api/`` to the status of the service, which needs no token."""
+        response: Response = (
+            RedirectResponse(API_ROOT_TARGET, status_code=307)
+            if request.method in {"GET", "HEAD"}
+            else _not_found_envelope()
+        )
+        response.headers.update(security_headers)
+        return response
+
     @asynccontextmanager
     async def lifespan(_application: Starlette) -> AsyncIterator[None]:
         async with api.router.lifespan_context(api):
@@ -225,6 +236,9 @@ def create_site(api: FastAPI, directory: Path | None) -> Starlette:
 
     return Starlette(
         routes=[
+            # Before the mount: the mount would hand `/api/` to the API, which has no root route.
+            Route(API_PREFIX, _EveryMethod(api_root)),
+            Route(f"{API_PREFIX}/", _EveryMethod(api_root)),
             Mount(API_PREFIX, app=api),
             Route("/{path:path}", _EveryMethod(web_interface)),
         ],
