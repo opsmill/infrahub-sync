@@ -1,0 +1,213 @@
+{
+  "IpamNamespace": {
+    "human_friendly_id": [
+      "name__value"
+    ],
+    "uniqueness_constraints": [
+      [
+        "name__value"
+      ]
+    ],
+    "attributes": {
+      "name": {
+        "kind": "Text",
+        "optional": false,
+        "default_value": null,
+        "unique": true,
+        "read_only": false
+      }
+    },
+    "relationships": {}
+  },
+  "DcimDevice": {
+    "human_friendly_id": [
+      "name__value"
+    ],
+    "uniqueness_constraints": [],
+    "attributes": {
+      "name": {
+        "kind": "Text",
+        "optional": false,
+        "default_value": null,
+        "unique": true,
+        "read_only": false
+      },
+      "description": {
+        "kind": "Text",
+        "optional": true,
+        "default_value": null,
+        "unique": false,
+        "read_only": false
+      }
+    },
+    "relationships": {}
+  },
+  "IpamVLAN": {
+    "human_friendly_id": [
+      "vlan_id__value"
+    ],
+    "uniqueness_constraints": [],
+    "attributes": {
+      "vlan_id": {
+        "kind": "Number",
+        "optional": false,
+        "default_value": null,
+        "unique": true,
+        "read_only": false
+      },
+      "name": {
+        "kind": "Text",
+        "optional": false,
+        "default_value": null,
+        "unique": false,
+        "read_only": false
+      }
+    },
+    "relationships": {}
+  },
+  "InterfaceLag": {
+    "human_friendly_id": [
+      "device__name__value",
+      "name__value"
+    ],
+    "uniqueness_constraints": [],
+    "attributes": {
+      "name": {
+        "kind": "Text",
+        "optional": false,
+        "default_value": null,
+        "unique": false,
+        "read_only": false
+      }
+    },
+    "relationships": {
+      "device": {
+        "peer": "DcimDevice",
+        "cardinality": "one",
+        "optional": false,
+        "kind": "Parent",
+        "read_only": false
+      }
+    }
+  },
+  "InterfacePhysical": {
+    "human_friendly_id": [
+      "device__name__value",
+      "name__value"
+    ],
+    "uniqueness_constraints": [],
+    "attributes": {
+      "name": {
+        "kind": "Text",
+        "optional": false,
+        "default_value": null,
+        "unique": false,
+        "read_only": false
+      },
+      "description": {
+        "kind": "Text",
+        "optional": true,
+        "default_value": null,
+        "unique": false,
+        "read_only": false
+      }
+    },
+    "relationships": {
+      "device": {
+        "peer": "DcimDevice",
+        "cardinality": "one",
+        "optional": false,
+        "kind": "Parent",
+        "read_only": false
+      },
+      "bundle": {
+        "peer": "InterfaceLag",
+        "cardinality": "one",
+        "optional": true,
+        "kind": "Attribute",
+        "read_only": false
+      },
+      "tagged_vlan": {
+        "peer": "IpamVLAN",
+        "cardinality": "many",
+        "optional": true,
+        "kind": "Attribute",
+        "read_only": false
+      }
+    }
+  },
+  "IpamPrefix": {
+    "human_friendly_id": [
+      "prefix__value",
+      "ip_namespace__name__value"
+    ],
+    "uniqueness_constraints": [
+      [
+        "prefix__value",
+        "ip_namespace__name__value"
+      ]
+    ],
+    "attributes": {
+      "prefix": {
+        "kind": "IPNetwork",
+        "optional": false,
+        "default_value": null,
+        "unique": false,
+        "read_only": false
+      },
+      "description": {
+        "kind": "Text",
+        "optional": true,
+        "default_value": null,
+        "unique": false,
+        "read_only": false
+      }
+    },
+    "relationships": {
+      "ip_namespace": {
+        "peer": "IpamNamespace",
+        "cardinality": "one",
+        "optional": false,
+        "kind": "Attribute",
+        "read_only": false
+      }
+    }
+  },
+  "IpamIPAddress": {
+    "human_friendly_id": [
+      "address__value",
+      "ip_namespace__name__value"
+    ],
+    "uniqueness_constraints": [
+      [
+        "address__value",
+        "ip_namespace__name__value"
+      ]
+    ],
+    "attributes": {
+      "address": {
+        "kind": "IPHost",
+        "optional": false,
+        "default_value": null,
+        "unique": false,
+        "read_only": false
+      },
+      "description": {
+        "kind": "Text",
+        "optional": true,
+        "default_value": null,
+        "unique": false,
+        "read_only": false
+      }
+    },
+    "relationships": {
+      "ip_namespace": {
+        "peer": "IpamNamespace",
+        "cardinality": "one",
+        "optional": false,
+        "kind": "Attribute",
+        "read_only": false
+      }
+    }
+  }
+}

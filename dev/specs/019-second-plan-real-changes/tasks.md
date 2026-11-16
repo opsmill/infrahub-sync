@@ -26,10 +26,10 @@ the design, stop and amend `plan.md` and `research.md` before Phase 2.
 
 **Purpose**: Shared helpers that User Stories 1, 2 and 4 use.
 
-- [ ] T004 [P] Write tests for `operations_digest`: equal for two operation lists in different orders, different when one payload value differs, unchanged when only `destination_id` differs, in `tests/plan/test_digest.py`
-- [ ] T005 [P] Implement `operations_digest(operations) -> str` (SHA-256 of the sorted `canonical_json_bytes` lines of `{action, kind, identity, payload, relationships}`, research R16) in `infrahub_sync/plan/digest.py`
-- [ ] T006 Create `ApplyingDestination`, a stand-in destination that implements `new_peer_resolver` and `apply_planned_operation`, keeps model data per kind, applies payloads and references (an empty one-peer reference gives `None`, a many reference replaces the set), and returns the destination data for the next `plan_fixture` call, in `tests/plan/second_plan.py` (research R9; reuse `FixtureSource` and `plan_fixture` of `tests/plan/problem_plan.py`)
-- [ ] T007 Add second-plan fixture data in `tests/data/second_plan/`: devices, `InterfaceLag` and `InterfacePhysical` with the one-peer `lag` relationship, prefixes and IP addresses without a VRF (pointing at the destination-only `default` namespace, as `tests/plan/test_destination_only_peer.py:485-584` does), interfaces with tagged VLANs (a many relationship), and an `IpamNamespace` named `default` present in the destination only
+- [X] T004 [P] Write tests for `operations_digest`: equal for two operation lists in different orders, different when one payload value differs, unchanged when only `destination_id` differs, in `tests/plan/test_digest.py`
+- [X] T005 [P] Implement `operations_digest(operations) -> str` (SHA-256 of the sorted `canonical_json_bytes` lines of `{action, kind, identity, payload, relationships}`, research R16) in `infrahub_sync/plan/digest.py`
+- [X] T006 Create `ApplyingDestination`, a stand-in destination that implements `new_peer_resolver` and `apply_planned_operation`, keeps model data per kind, applies payloads and references (an empty one-peer reference gives `None`, a many reference replaces the set), and returns the destination data for the next `plan_fixture` call, in `tests/plan/second_plan.py` (research R9; reuse `FixtureSource` and `plan_fixture` of `tests/plan/problem_plan.py`)
+- [X] T007 Add second-plan fixture data in `tests/data/second_plan/`: devices, `InterfaceLag` and `InterfacePhysical` with the one-peer `lag` relationship, prefixes and IP addresses without a VRF (pointing at the destination-only `default` namespace, as `tests/plan/test_destination_only_peer.py:485-584` does), interfaces with tagged VLANs (a many relationship), and an `IpamNamespace` named `default` present in the destination only
 
 **Checkpoint**: Foundation ready.
 

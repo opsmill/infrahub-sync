@@ -35,7 +35,7 @@ from diffsync import Adapter
 
 from infrahub_sync import DiffSyncMixin, SyncInstance
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, InfrahubModel
-from infrahub_sync.adapters.references import peer_unique_id
+from infrahub_sync.adapters.references import peer_unique_id, peer_unique_ids
 from infrahub_sync.adapters.utils import get_value
 from infrahub_sync.cache.paths import cache_root_for
 from infrahub_sync.plan.reader import load_plan_artifact
@@ -80,7 +80,12 @@ def reference_is_required(model: type[DiffSyncModel], field_name: str) -> bool:
 
 
 class FixtureSource(DiffSyncMixin, Adapter):
-    """In-memory source adapter that implements `list_records` and `record_to_data` only."""
+    """In-memory source adapter that implements `list_records` and `record_to_data` only.
+
+    A reference is `{"id": <source ID>}`, a list of those for a many relationship, or a
+    string that names the peer's unique ID directly, as the NetBox adapter passes a value
+    that is not a NetBox object (the `namespace_name` of the shipped example).
+    """
 
     type = "ProblemFixture"
 
@@ -111,6 +116,21 @@ class FixtureSource(DiffSyncMixin, Adapter):
                 data[mapped.name] = value
                 continue
             if not value:
+                continue
+            if isinstance(value, list):
+                # A many reference: the peers resolve as the NetBox adapter resolves them.
+                data[mapped.name] = peer_unique_ids(
+                    self,
+                    mapped.reference,
+                    [str(peer["id"]) for peer in value],
+                    owner=(element.name, source_id),
+                    field=mapped.name,
+                    required=reference_is_required(model, mapped.name),
+                )
+                continue
+            if not isinstance(value, dict):
+                # A peer named by its unique ID, as the NetBox adapter passes `namespace_name`.
+                data[mapped.name] = value
                 continue
             data[mapped.name] = self._peer(
                 mapped.reference,
