@@ -53,6 +53,28 @@ These were decided before this specification was written. They are not open.
 - **D-4. The web interface is out of scope.** The Sync image does not serve it yet
   ([#421](https://github.com/opsmill/infrahub-sync/issues/421)). The documentation says so.
 
+## Clarifications
+
+### Session 2026-11-16
+
+- Q: Should the first release be installable only as its own chart, or also as an option of the
+  `infrahub` chart? → A: Only as its own chart. Adding `infrahub-sync` as an optional dependency
+  of the `infrahub` chart (`infrahub-sync.enabled`) is a follow-up, after the chart is first
+  published.
+- Q: On an upgrade, the Sync API and the worker can start before the bootstrap of the new version
+  has completed. Is that gap acceptable? → A: No. No 3.x release exists yet, so Infrahub Sync
+  itself changes now: the bootstrap records the version it converged, and the Sync API and the
+  worker check that record when they start, as Infrahub's server and task worker check the graph
+  version (`validate_graph_version`).
+- Q: What does the Sync API or the worker do when the bootstrap record is missing or names
+  another version? → A: It fails fast. It logs that the bootstrap for its version has not run and
+  exits non-zero, and Kubernetes restarts it with backoff until the bootstrap Job has written the
+  record. The chart's wait init containers for the bootstrap are removed. The Compose deployment
+  runs the same check, which passes on the first start because of its `depends_on` order.
+- Q: Until the Sync image can be pulled without a login, what does the `infrahub-helm` CI
+  end-to-end job do? → A: It skips the test, and writes a warning annotation and a job summary
+  line that say the test did not run and why. The skip is removed at release 3.0.0.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Install Infrahub Sync on a Kubernetes cluster (Priority: P1)
@@ -187,6 +209,11 @@ created, that it points at the Sync API, and that no other service is exposed.
 - **The bootstrap work starts before PostgreSQL, the object store or the Prefect server is
   ready.** The installation still completes, and the Sync API and the worker do not serve before
   the bootstrap work has completed.
+- **An upgrade starts the new Sync API or worker before the new bootstrap has completed.** The
+  new process finds a record for the previous version and exits non-zero. Kubernetes restarts it
+  until the bootstrap Job writes the record for the new version. The previous Sync API pod keeps
+  serving until the new one is ready. The restart backoff can delay the new pod by up to about
+  40 seconds after the Job completes.
 - **The operator uninstalls the release.** The documentation states whether the volumes of
   PostgreSQL and of the object store are kept or deleted, and how to delete them.
 - **A PostgreSQL role password is changed in the values after the first install.** The role
@@ -215,7 +242,8 @@ created, that it points at the Sync API, and that no other service is exposed.
 **The chart and what it deploys**
 
 - **FR-001**: The `infrahub-helm` repository MUST hold a chart named `infrahub-sync` that an
-  operator can install with Helm into one namespace.
+  operator can install with Helm into one namespace, as its own release. The `infrahub` chart
+  does not install it in this work.
 - **FR-002**: A default install MUST run the same services as the root `docker-compose.yml`: the
   Sync API, one Sync worker, the Prefect server, PostgreSQL and the S3-compatible object store.
 - **FR-003**: The Sync API, the worker, the Prefect server and the bootstrap work MUST run from
@@ -233,12 +261,17 @@ created, that it points at the Sync API, and that no other service is exposed.
 - **FR-007**: The service bootstrap (the product schema, the artifact bucket, the work pool and
   the deployment in it) MUST run on install, and on each upgrade that changes the image or a
   setting the bootstrap reads. An upgrade that changes neither MAY leave the completed bootstrap
-  in place, because the bootstrap changes nothing on a converged deployment. On install it MUST
-  complete before the Sync API and the worker serve. On upgrade it MUST complete without a
-  manual step; the plan states how close to "before the new pods serve" the chart gets, and why.
+  in place, because the bootstrap changes nothing on a converged deployment. On install and on
+  upgrade it MUST complete before a Sync API or a worker of that version serves, and without a
+  manual step (FR-007b).
 - **FR-007a**: With the bundled PostgreSQL, the database bootstrap (the two roles and the two
   databases) MUST complete before the Prefect server and the service bootstrap connect. It runs
   when PostgreSQL first initializes its volume.
+- **FR-007b**: Infrahub Sync MUST record, when the service bootstrap completes, the Sync version
+  it converged the deployment for. When the Sync API or the worker starts, it MUST read that
+  record. When the record is missing or names a version other than its own, the process MUST
+  log which version it found and which it expected, without any credential, and exit non-zero.
+  This check applies to every deployment of 3.x, the Compose deployment included.
 - **FR-008**: A restart of the Sync API, the worker or the Prefect server MUST NOT run the
   bootstrap work again.
 - **FR-009**: `helm upgrade` on an installed release MUST complete without a manual step, such
@@ -307,6 +340,9 @@ created, that it points at the Sync API, and that no other service is exposed.
   generated from it, a changelog configuration and a changelog fragment.
 - **FR-029**: The repository's CI MUST lint the chart when it changes, and the repository MUST
   hold an end-to-end test of the chart that installs it, checks the Sync API, and upgrades it.
+  When CI has no login for the Sync image registry, the end-to-end job MUST skip the test and
+  write a warning annotation and a job summary line that say the test did not run and why. This
+  skip is removed once the Sync image can be pulled without a login (release 3.0.0).
 - **FR-030**: The chart MUST be selectable in the repository's publish workflow, so that a
   maintainer can release it to `oci://registry.opsmill.io/opsmill/chart`.
 
@@ -370,8 +406,8 @@ created, that it points at the Sync API, and that no other service is exposed.
   bundled PostgreSQL and object store. The operator can set another storage class and size.
 - **Access to the Sync image.** Until 3.0.0 the image is restricted to invited testers. The CI of
   `infrahub-helm` pulls images without credentials, so the end-to-end test of this chart cannot
-  pull the image there until the image is public. The plan states how the test behaves until
-  then. Whether the release date of 3.0.0 is set is not known.
+  pull the image there until the image is public. Until then the job skips the test with a
+  visible warning (FR-029). Whether the release date of 3.0.0 is set is not known.
 - **Release of the chart.** Publishing the chart to the registry is done by a maintainer with the
   repository's publish workflow. This specification makes the chart publishable; it does not
   publish it.
