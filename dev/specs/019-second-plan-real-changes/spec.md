@@ -322,8 +322,8 @@ tier M.
   and `runs resume`) MUST cover an emptied relationship in the same way as any other changed
   field of an update.
 - **FR-013a**: When the source record holds no peer for a one-peer relationship that the
-  destination schema requires, and the destination node holds a peer, the plan MUST hold no update
-  for that record. The plan report MUST hold a problem of a new type that names the record and the
+  destination schema requires, the plan MUST hold no operation for that record and MUST keep its
+  destination node (no delete). The plan report MUST hold a problem of a new type that names the record and the
   relationship. The plan step MUST NOT write a warning for it in the log instead.
 
 #### Timings of the plan step

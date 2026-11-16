@@ -144,6 +144,18 @@ through the load report (`infrahub_sync/adapters/references.py:56-122`), and app
 null required relationship (`infrahub_sync/adapters/infrahub.py:1832-1847`). The rule above
 never records an emptied required relationship.
 
+**Required relationship emptied in the source (spec FR-013a, clarification of 2026-11-16).** When
+the source record holds no peer for a one-peer relationship that the mapping model requires
+(`reference_is_required`, `infrahub_sync/adapters/references.py:44-53`), the plan reports a
+problem of the new type `required_relationship_empty_in_source` and plans no operation for the
+record. The precedent is `required_peer_excluded_by_filter`: a source-side problem raised while
+the source is read, which leaves the record out and keeps its destination node, so no delete is
+derived for it and its dependents follow the existing rules for records left out
+(`infrahub_sync/plan/problems.py:375-430`). The implementation first writes a test of what the
+current code does for a source `None` on a required one-peer field (model validation may already
+refuse it as `wrong_value_type`), then routes that case to the new type. The new type is added to
+`ProblemType` (`infrahub_sync/plan/models.py:803`), which allows additions.
+
 A peer that was left out of the plan already removes the reference from the update
 (`infrahub_sync/plan/problems.py:749-778`), so a kept record does not record an emptied
 relationship.
