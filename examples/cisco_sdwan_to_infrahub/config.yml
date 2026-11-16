@@ -1,0 +1,106 @@
+---
+name: from-cisco-sdwan
+
+# Credentials come from CISCO_SDWAN_USERNAME and CISCO_SDWAN_PASSWORD.
+# CISCO_SDWAN_URL, when set, replaces the url below.
+source:
+  name: ciscosdwan
+  settings:
+    url: "https://sdwan-manager.example.com"
+    # A lab Manager often presents a self-signed certificate. Keep verification on in production.
+    verify_ssl: true
+
+destination:
+  name: infrahub
+  settings:
+    url: "http://localhost:8000"
+
+# order: omitted — infrahub-sync computes it from the references below:
+# SdwanInstance, then SdwanSite and SdwanConfigurationGroup, then SdwanRouter.
+
+schema_mapping:
+  # One record describing the Manager. Its name is not reported by the API, so set it here
+  # and use the same value in every `instance` reference below.
+  - name: SdwanInstance
+    mapping: client/about
+    identifiers: ["name"]
+    fields:
+      - name: name
+        static: "sdwan-manager"
+      - name: manager_version
+        mapping: version
+
+  # Sites from the network hierarchy; the global node that contains them is left out.
+  - name: SdwanSite
+    mapping: v1/network-hierarchy
+    identifiers: ["id_value"]
+    filters:
+      - field: data.label
+        operation: "=="
+        value: "SITE"
+    fields:
+      - name: id_value
+        mapping: data.hierarchyId.siteId
+      - name: instance
+        static: "sdwan-manager"
+        reference: SdwanInstance
+
+  # Configuration groups with the name of the feature profile assigned for each type.
+  - name: SdwanConfigurationGroup
+    mapping: v1/config-group
+    identifiers: ["name"]
+    transforms:
+      - field: system_profile
+        expression: "{{ profiles | default([]) | selectattr('type', 'equalto', 'system') | map(attribute='name') | first | default(None) }}"
+      - field: transport_profile
+        expression: "{{ profiles | default([]) | selectattr('type', 'equalto', 'transport') | map(attribute='name') | first | default(None) }}"
+      - field: service_profile
+        expression: "{{ profiles | default([]) | selectattr('type', 'equalto', 'service') | map(attribute='name') | first | default(None) }}"
+      - field: cli_profile
+        expression: "{{ profiles | default([]) | selectattr('type', 'equalto', 'cli') | map(attribute='name') | first | default(None) }}"
+      - field: policy_object_profile
+        expression: "{{ profiles | default([]) | selectattr('type', 'equalto', 'policy-object') | map(attribute='name') | first | default(None) }}"
+    fields:
+      - name: name
+        mapping: name
+      - name: description
+        mapping: description
+      - name: system_profile
+        mapping: system_profile
+      - name: transport_profile
+        mapping: transport_profile
+      - name: service_profile
+        mapping: service_profile
+      - name: cli_profile
+        mapping: cli_profile
+      - name: policy_object_profile
+        mapping: policy_object_profile
+      - name: instance
+        static: "sdwan-manager"
+        reference: SdwanInstance
+
+  # WAN edge routers that are assigned to a site. The inventory also lists unassigned
+  # chassis numbers from the device list; the filter leaves those out.
+  - name: SdwanRouter
+    mapping: system/device/vedges
+    identifiers: ["chassis_id"]
+    filters:
+      - field: configuredSiteId
+        operation: is_not_empty
+    transforms:
+      # "vedge-C8000V" becomes "C8000V", one of the router model choices.
+      - field: model
+        expression: "{{ deviceModel | replace('vedge-', '', 1) }}"
+      # "Config-Group edge_basic" becomes "edge_basic"; devices managed another way have none.
+      - field: configuration_group
+        expression: "{{ managed_by[13:] if managed_by is string and managed_by.startswith('Config-Group ') else None }}"
+    fields:
+      - name: chassis_id
+        mapping: chasisNumber # spelled this way by the API
+      - name: model
+        mapping: model
+      - name: configuration_group
+        mapping: configuration_group
+      - name: site
+        mapping: configuredSiteId
+        reference: SdwanSite

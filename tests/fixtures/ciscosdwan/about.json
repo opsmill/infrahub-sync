@@ -1,0 +1,8 @@
+{
+  "header": {},
+  "data": {
+    "title": "Cisco vManage",
+    "version": "20.18.2.1",
+    "applicationServer": "Manager01"
+  }
+}

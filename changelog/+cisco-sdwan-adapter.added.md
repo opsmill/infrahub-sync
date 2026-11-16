@@ -1,0 +1,1 @@
+Added a Cisco Catalyst SD-WAN Manager source adapter (`ciscosdwan`) and an example that syncs the Manager, its sites, configuration groups and WAN edge routers into the `Sdwan` schema. The adapter logs in with a username and password read from environment variables, follows `pageInfo` pagination and logs out at the end of the run.
