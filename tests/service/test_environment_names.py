@@ -10,7 +10,7 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("prefect")
 
-from infrahub_sync.service import auth, deploy, serve
+from infrahub_sync.service import auth, deploy, serve, settings
 
 RETIRED_NAMES = (
     "INFRAHUB_SYNC_MANAGED_BEARER_TOKENS",
@@ -39,6 +39,7 @@ def _clear_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_the_service_environment_names_are_the_declared_ones() -> None:
     assert auth.PRINCIPALS_ENV == "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"
     assert deploy.WORK_POOL_ENV == "INFRAHUB_SYNC_SERVICE_WORK_POOL"
+    assert settings.WEB_DIRECTORY_ENV == "INFRAHUB_SYNC_WEB_DIRECTORY"
 
 
 def test_a_retired_bearer_token_name_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:

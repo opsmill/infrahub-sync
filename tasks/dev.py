@@ -16,7 +16,7 @@ services (`sync` profile) and a local Infrahub (`infrahub` profile). With
 against those containers' loopback publications. No task writes a PID file or keeps a
 process in the background. `dev.smoke` notices this mode from the running containers
 (the Prefect server runs, no `sync-api` container does) and first checks both host
-processes through the Sync API's `GET /status`.
+processes through the Sync API's `GET /api/status`.
 
 `dev.frontend` runs the web interface's development server on the host, in the
 foreground, against the Sync API of either mode.
@@ -113,7 +113,7 @@ DEPS_SMOKE_STACK = "dev-deps"
 DEPS_PROFILES = ("infrahub",)
 # Where `dev.api` listens: loopback only, like every publication of the stack.
 HOST_PROCESS_ADDRESS = "127.0.0.1"
-API_FACTORY = "infrahub_sync.service.serve:build_app"
+API_FACTORY = "infrahub_sync.service.serve:build_service"
 DATABASE_URL_VARIABLE = "INFRAHUB_SYNC_DATABASE_URL"
 S3_ENDPOINT_VARIABLE = "INFRAHUB_SYNC_S3_ENDPOINT_URL"
 # The bundled store's service, the host name its endpoint names inside the stack.
@@ -694,7 +694,7 @@ def in_dependencies_mode(context: Context, settings: DevSettings) -> bool:
 
 
 def check_host_processes(settings: DevSettings) -> None:
-    """Fail naming the missing host process, from the Sync API's `GET /status` alone.
+    """Fail naming the missing host process, from the Sync API's `GET /api/status` alone.
 
     No answer names `dev.api`. An answer whose worker is not available names
     `dev.worker`. The Sync API reads worker availability from Prefect itself, so this
@@ -702,7 +702,7 @@ def check_host_processes(settings: DevSettings) -> None:
     """
     import httpx  # noqa: PLC0415 -- lazy so importing the tasks package never requires the service extras
 
-    status_url = f"{settings.sync_api_url}/status"
+    status_url = f"{settings.sync_api_url}/api/status"
     try:
         response = httpx.get(status_url, timeout=10)
         response.raise_for_status()
@@ -819,7 +819,7 @@ def dev_smoke(context: Context) -> None:
     stack = "dev"
     if in_dependencies_mode(context, settings):
         print(
-            f" - [{NAMESPACE}] No Sync containers run; checking dev.api and dev.worker through {settings.sync_api_url}/status"
+            f" - [{NAMESPACE}] No Sync containers run; checking dev.api and dev.worker through {settings.sync_api_url}/api/status"
         )
         check_host_processes(settings)
         stack = DEPS_SMOKE_STACK
