@@ -816,3 +816,15 @@ After these runs, only the module docstring of the test changed, and `tests/READ
 - The install notes read the token with `read -rs`, use it in the in-cluster command from the
   variable, and wait for the Job for 10 minutes, like the documented `helm install`.
 - The RR-34 render tests cover `s3.bucket` and `settings.workPool`.
+
+## T036: uninstall
+
+On 2026-11-16 at 16:56:33Z, `helm uninstall sync -n sync` on minikube profile `sync-chart` printed
+`release "sync" uninstalled`. `kubectl -n sync get pvc` then still listed the two claims, as the
+documentation states:
+
+- `data-sync-infrahub-sync-object-store-0`, `Bound`
+- `data-sync-infrahub-sync-postgresql-0`, `Bound`
+
+`minikube delete --profile sync-chart` then printed `Removed all traces of the "sync-chart"
+cluster.`

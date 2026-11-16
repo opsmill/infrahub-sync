@@ -508,23 +508,23 @@ These tasks implement FR-007b and the FR-029 change from the clarification sessi
 
 ## Phase 8: Verification and finish
 
-- [ ] T034 Run the checks in `H/`:
+- [X] T034 Run the checks in `H/`:
   - `make lint`
   - `uv run pytest -v tests/unit`
   - `helm-docs --chart-search-root=charts/infrahub-sync`, then `git status`: no change may remain
   - `yamllint` on the new workflow and the changed `ci.yml`, if the repository configures it
 
   Fix every finding.
-- [ ] T035 Run the checks in `S/`:
+- [X] T035 Run the checks in `S/`:
   - `uv run invoke format`, `uv run invoke lint` and `uv run ruff check .`
   - `uv run invoke tests.tests-unit`, which includes any test that reads `docs/` or `dev/adr/`
   - `uv run invoke docs.docusaurus`; first run `cd docs && pnpm install --frozen-lockfile` if
     `node_modules` is missing
 
   Fix every finding.
-- [ ] T036 Run [quickstart.md](quickstart.md) step 6 (uninstall), record it in
+- [X] T036 Run [quickstart.md](quickstart.md) step 6 (uninstall), record it in
   `verification.md`, and delete the minikube profile.
-- [ ] T037 Commit, with explicit paths.
+- [X] T037 Commit, with explicit paths.
   - In `H/`: one commit per coherent change, scoped `infrahub-sync` (chart, tests, CI, workflow).
   - In `S/`: the documentation, the decision record, the fragment and `verification.md`.
   - End each message with the attribution line in use for this session.
