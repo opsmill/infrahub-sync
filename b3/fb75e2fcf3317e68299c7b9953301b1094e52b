@@ -1,0 +1,19 @@
+dev/specs/018-helm-chart-kubernetes/alignment-check.md
+  s_d989f93fc3b8fb::t_9032c3db1d0534 1-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b3fb75e2fcf3317e68299c7b9953301b1094e52b",
+  "prompts": {},
+  "sessions": {
+    "s_d989f93fc3b8fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b53e9e82-fcbd-48f8-ae99-61f94c0060c7",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
