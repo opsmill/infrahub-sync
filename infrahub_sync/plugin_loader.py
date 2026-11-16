@@ -19,7 +19,6 @@ import os
 import pkgutil
 import re
 import sys
-from enum import Enum
 from importlib.metadata import distributions, entry_points
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, cast
@@ -201,15 +200,6 @@ def _target_base_class(default_class_candidates: tuple[str, ...]) -> type[Any] |
     return None
 
 
-class Plugintype(str, Enum):
-    """Plugin type enum for categorizing how a plugin was loaded."""
-
-    BUILTIN = "builtin"
-    DOTTED_PATH = "dotted_path"
-    FILESYSTEM = "filesystem"
-    ENTRY_POINT = "entry_point"
-
-
 class PluginLoader:
     """
     Generic plugin loader responsible for resolving adapter classes.
@@ -233,7 +223,7 @@ class PluginLoader:
         """
         self.adapter_paths = list(adapter_paths) if adapter_paths else []
         self.installed_only = installed_only
-        self._cache: dict[str, tuple[type[Any], Plugintype]] = {}
+        self._cache: dict[str, type[Any]] = {}
 
     @classmethod
     def installed_only_loader(cls) -> PluginLoader:
@@ -325,7 +315,7 @@ class PluginLoader:
         """
         # Check cache first
         if spec in self._cache:
-            return self._cache[spec][0]
+            return self._cache[spec]
 
         # Parse spec to extract class name if specified
         class_name = None
@@ -345,7 +335,7 @@ class PluginLoader:
         if is_dotted and (not self.installed_only or is_installed_distribution_module(spec_path)):
             cls = self._resolve_from_dotted_path(spec_path, class_name, default_class_candidates)
             if cls:
-                self._cache[spec] = (cls, Plugintype.DOTTED_PATH)
+                self._cache[spec] = cls
                 return cls
 
         # 2. Filesystem path (search adapter_paths and CWD)
@@ -354,21 +344,21 @@ class PluginLoader:
                 path=spec_path, class_name=class_name, default_class_candidates=default_class_candidates
             )
             if cls:
-                self._cache[spec] = (cls, Plugintype.FILESYSTEM)
+                self._cache[spec] = cls
                 return cls
 
         # 3. Try as an entry point
         if cls is None:
             cls = self._resolve_from_entry_point(spec_path, class_name, default_class_candidates)
             if cls:
-                self._cache[spec] = (cls, Plugintype.ENTRY_POINT)
+                self._cache[spec] = cls
                 return cls
 
         # 4. Try as a built-in adapter
         if cls is None:
             cls = self._resolve_from_builtin(spec_path, class_name, default_class_candidates)
             if cls:
-                self._cache[spec] = (cls, Plugintype.BUILTIN)
+                self._cache[spec] = cls
                 return cls
 
         # If we get here, we couldn't resolve the class
@@ -694,10 +684,6 @@ class PluginLoader:
         camelized = self.camelize(base_name)
         for suffix in default_class_candidates:
             candidates.append(f"{camelized}{suffix}")
-
-        # Add default candidates with appropriate prefix
-        for candidate in default_class_candidates:
-            candidates.append(f"{camelized}{candidate}")
 
         # Also look for the default candidates on their own
         candidates.extend(default_class_candidates)

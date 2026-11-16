@@ -201,7 +201,7 @@ def stage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _SyncStage:
     session.events = events
     monkeypatch.setattr(service_flow, "service_guard_session", session)
     monkeypatch.setattr(service_flow, "service_guard_secrets", lambda: ())
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))
     monkeypatch.setattr(service_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)
     monkeypatch.setattr(service_flow, "_require_current_worker_identity", lambda *_args: None)

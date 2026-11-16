@@ -12,11 +12,9 @@ between the checkpoint and the first write runs as it does in production.
 from __future__ import annotations
 
 import json
-import logging
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pytest
@@ -35,7 +33,6 @@ from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.errors import ImportAccountMismatchError, ReviewedPayloadFieldMissingError, failed_checks
 from infrahub_sync.plan.models import DestinationBindingRecord, PlanManifest, PlannedOperation, SourceSnapshotRecord
 from infrahub_sync.plan.ownership import WriteDispatchTracker
-from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME, write_plan_artifact
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from infrahub_sync.runtime_schema import DestinationSchemaUnavailableError, RuntimeModelPlan, RuntimeSideModels
@@ -223,7 +220,7 @@ def _harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, purpose: str = 
         )
 
     monkeypatch.setattr(service_flow, "build_runtime_model_plan", build_runtime_model_plan)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))
     monkeypatch.setattr(service_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)
@@ -243,7 +240,6 @@ def _execute(harness: _Harness, stage: Literal["verify", "apply"], *, approved: 
             approved if stage == "apply" else None,
             confirm_writes=stage == "apply",
             secrets=[],
-            config_directory=str(harness.tmp_path),
             projection=harness.projection,
             tracker=WriteDispatchTracker(),
             scratch=scratch,
@@ -515,67 +511,3 @@ def test_verify_resolves_no_source_credential(tmp_path: Path, monkeypatch: pytes
     assert requested
     assert not any(requested)
     assert _stored(harness).results["verification"]["destination_checked"] is True
-
-
-def test_a_legacy_run_reports_that_the_destination_was_not_checked(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    run_id = "legacy-verify"
-    projection = local_product_projection(tmp_path / "product")
-    projection.create_run(
-        ProductRun(
-            run_id=run_id,
-            operation="verify",
-            configuration_reference="legacy-config-version",
-            actor="owner",
-            started_at=datetime.now(timezone.utc),
-            phase="planned",
-            summary={"sync_name": "legacy-inventory"},
-        )
-    )
-    append_execution(
-        projection,
-        run_id,
-        PrefectExecutionLink(
-            flow_run_id=FLOW_RUN_ID, purpose="verify", attempt=1, submitted_at=datetime.now(timezone.utc)
-        ),
-    )
-    saved = SavedPlan(
-        manifest=PlanManifest(
-            format_version=2,
-            run_id=run_id,
-            created_at="2026-08-10T12:00:00+00:00",
-            config_version="legacy-config-version",
-            source_snapshot=[],
-            operations_count=0,
-            delete_operations_computed=True,
-            plan_checksum="a" * 64,
-        ),
-        operations=[],
-        checksum_ok=True,
-        verification_notes=[],
-    )
-    monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
-    monkeypatch.setattr(service_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)
-    monkeypatch.setattr(service_flow, "_require_current_worker_identity", lambda *_args: None)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
-    monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
-    monkeypatch.setattr(
-        service_flow,
-        "resolve_sync_instance",
-        lambda _name, *, directory: SimpleNamespace(name="legacy-inventory", directory=directory),
-    )
-    monkeypatch.setattr(service_flow, "resolve_config_version", lambda _instance: "legacy-config-version")
-    monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
-    monkeypatch.setattr(service_flow, "rehydrate_plan_checkpoint", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(service_flow, "execute_run", lambda *_args, **_kwargs: saved)
-    monkeypatch.setattr(
-        service_flow, "PlanApplier", SimpleNamespace(open_existing=lambda *_a, **_k: pytest.fail("legacy checked"))
-    )
-
-    service_sync_run.fn(run_id, "verify")
-
-    stored = projection.lookup_run(run_id).value
-    assert stored is not None
-    assert stored.results["verification"]["destination_checked"] is False
-    assert "destination_schema" not in stored.results["verification"]["checks"]

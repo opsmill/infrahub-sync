@@ -136,15 +136,12 @@ def stub_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.usefixtures("claimed", "stub_runtime")
-def test_the_service_runtime_needs_no_shared_cache_setting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_the_service_runtime_needs_no_shared_cache_setting(monkeypatch: pytest.MonkeyPatch) -> None:
     """A worker resolves its runtime with no shared saved-plan cache configured."""
-    monkeypatch.delenv(service_flow.CONFIG_DIR_ENV, raising=False)
     monkeypatch.delenv("INFRAHUB_SYNC_CACHE_DIR", raising=False)
-    monkeypatch.setenv(service_flow.CONFIG_DIR_ENV, str(tmp_path))
 
-    config_directory, projection = service_flow._runtime(projection_factory=object)
+    projection = service_flow._runtime(projection_factory=object)
 
-    assert config_directory == str(tmp_path)
     assert projection is not None
     assert not hasattr(service_flow, "RUN_CACHE_ENV")
 
@@ -267,7 +264,7 @@ def test_the_managed_plan_stage_touches_neither_the_legacy_cache_nor_the_working
     """
     run_id = "run-real-plan"
     projection = _product_run(tmp_path / "product", run_id)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     monkeypatch.setattr(service_flow, "publish_plan_checkpoint", lambda *_a, **_k: None)
     monkeypatch.setattr(service_flow, "_publish_plan", lambda *_a, **_k: None)
 
@@ -292,7 +289,7 @@ def test_the_managed_sync_planning_leg_touches_neither_canary(
     """The planning leg of a sync holds to the same boundary as a standalone plan."""
     run_id = "run-real-sync-plan"
     projection = _product_run(tmp_path / "product", run_id, operation="sync")
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     monkeypatch.setattr(service_flow, "publish_plan_checkpoint", lambda *_a, **_k: None)
     monkeypatch.setattr(service_flow, "_publish_plan", lambda *_a, **_k: None)
     bind_granting_guard(monkeypatch, service_flow)
@@ -340,7 +337,7 @@ def test_two_managed_plans_never_share_a_stage_root(
     for index in range(2):
         run_id = f"run-real-plan-{index}"
         projection = _product_run(tmp_path / f"product-{index}", run_id)
-        monkeypatch.setattr(service_flow, "_runtime", lambda p=projection: (str(tmp_path), p))
+        monkeypatch.setattr(service_flow, "_runtime", lambda p=projection: p)
         monkeypatch.setattr(service_flow, "publish_plan_checkpoint", lambda *_a, **_k: None)
         monkeypatch.setattr(service_flow, "_publish_plan", lambda *_a, **_k: None)
 
@@ -372,7 +369,7 @@ def test_the_managed_plan_stage_creates_no_cache_under_the_working_directory(
     monkeypatch.delenv("INFRAHUB_SYNC_CACHE_DIR", raising=False)
     run_id = "run-real-plan-no-setting"
     projection = _product_run(tmp_path / "product", run_id)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     monkeypatch.setattr(service_flow, "publish_plan_checkpoint", lambda *_a, **_k: None)
     monkeypatch.setattr(service_flow, "_publish_plan", lambda *_a, **_k: None)
 
@@ -395,7 +392,7 @@ def test_the_managed_sync_planning_leg_creates_no_cache_under_the_working_direct
     monkeypatch.delenv("INFRAHUB_SYNC_CACHE_DIR", raising=False)
     run_id = "run-real-sync-no-setting"
     projection = _product_run(tmp_path / "product", run_id, operation="sync")
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     monkeypatch.setattr(service_flow, "publish_plan_checkpoint", lambda *_a, **_k: None)
     monkeypatch.setattr(service_flow, "_publish_plan", lambda *_a, **_k: None)
     bind_granting_guard(monkeypatch, service_flow)

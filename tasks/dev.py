@@ -62,7 +62,6 @@ if TYPE_CHECKING:
 NAMESPACE = "INFRAHUB-SYNC-DEV"
 
 API_URL = "http://127.0.0.1:8001"
-PREFECT_URL = "http://127.0.0.1:4230"
 # The development stack's Compose file, relative to the repository root.
 DEV_COMPOSE_FILE = "development/docker-compose.yml"
 # The Infrahub services' own file, which the development file includes.

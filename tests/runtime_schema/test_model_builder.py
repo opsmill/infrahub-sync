@@ -38,7 +38,8 @@ from infrahub_sync.runtime_schema import (
     mapped_attribute_kinds,
     normalize_destination_schema,
 )
-from infrahub_sync.utils import get_instance, render_adapter
+from infrahub_sync.utils import render_adapter
+from tests.sync_instances import get_instance
 
 if TYPE_CHECKING:
     from infrahub_sdk.schema import GenericSchema

@@ -57,7 +57,6 @@ def _make_potenda(tmp_path: Path):
         destination=dst,
         config=config,  # ty: ignore[invalid-argument-type]
         top_level=["InfraDevice"],
-        show_progress=False,
         concurrent_load=False,
     )
     pot.run_dir = tmp_path / "run-current"

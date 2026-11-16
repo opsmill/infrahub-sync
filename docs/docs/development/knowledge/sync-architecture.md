@@ -97,8 +97,7 @@ records why it works this way.
   a read ends, such as `Load: source read succeeded (full): 5 nodes; DcimDevice 3, LocationSite 2`
   or `Load: destination read failed (ConnectionError)`.
 - **The caller chooses the observer.** `execute_run` takes the private keyword `_read_observer`
-  and sets `Potenda.read_observer` after it built the engine. Direct Python callers and the
-  direct Prefect flow pass none.
+  and sets `Potenda.read_observer` after it built the engine. The direct Prefect flow passes none.
 - **The worker stores.** For a `plan` or `sync` stage, the worker first stores both sides as
   `waiting` in one write (`record_waiting`), then passes a `StoreSideReadObserver`
   (`infrahub_sync/service/read_progress.py`). The observer writes one JSON document for each side

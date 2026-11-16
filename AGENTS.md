@@ -212,7 +212,7 @@ The container image is published to `registry.opsmill.io/opsmill/infrahub-sync` 
 ## Known Issues and Limitations
 
 - Optional dependencies (e.g. `pynetbox`, `pynautobot`) may be missing, producing import warnings.
-- `plan`, `sync`, and `apply` require a running Sync API and its destination servers. `verify` requires the Sync API, and for a run of a registered configuration it also connects to the destination.
+- `plan`, `sync`, and `apply` require a running Sync API and its destination servers. `verify` requires the Sync API and connects to the destination.
 - Docs npm audit may flag dev-only vulnerabilities; they do not affect the Python package.
 
 ## Git and PR Process
@@ -268,7 +268,7 @@ Core rule unchanged: provide a read-only `diff` pathway and validate it before e
 `docs/docs/development/` is not adapter-only. When the work is not an adapter, start here:
 
 - [The shared execution surface](docs/docs/development/knowledge/execution-surface.md) — the typed entry point
-  used by the service worker and direct Python callers. The CLI submits runs through the Sync HTTP API;
+  used by the service worker and the direct Prefect flow. The CLI submits runs through the Sync HTTP API;
   the direct Prefect flow calls the execution module through `run_remote_request`.
 - [Prefect orchestration](docs/docs/development/knowledge/orchestration-prefect.md) — the optional
   orchestration integration and its import boundary.

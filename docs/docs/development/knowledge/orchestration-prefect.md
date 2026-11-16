@@ -101,9 +101,9 @@ creation, so no tagging call can fail after Prefect accepted the run.
 
 Registered execution supplies all three configuration fields: `config_id`,
 `registry_version` and `package_checksum`. The worker checks them against the product run
-and registered package. A partial binding is refused. When all three fields are unset,
-the worker can plan or verify an unregistered configuration from its local directory.
-Service writes require a registered binding.
+and registered package. The worker refuses a partial binding. It also refuses, with one
+fixed message, an execution in which all three fields are unset and a stored run that has
+no registered configuration, before it resolves a configuration or contacts a system.
 
 The worker reads endpoint settings from the package and resolves credential references
 in its environment. Each stage uses private
@@ -344,9 +344,12 @@ parameter therefore never reaches the flow body.
   any operator who wants one directory — needs both variables set.
 - **`dataclasses.asdict()` cannot copy a `MappingProxyType` field** — construct the return
   dictionary explicitly, as shown above.
-- **Pinning the version is not optional here.** The extra pins `prefect==3.8.6` exactly,
-  because the base dependency set and Prefect's transitive `redis` requirement interact —
-  see [ADR 8](https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/dev/adr/0008-declare-redis-directly-instead-of-the-diffsync-extra.md).
+- **Pinning the version is not optional here.** The extra pins `prefect==3.8.6` exactly.
+  The pin dates from the time the base dependency set declared `redis`, which interacted with
+  Prefect's transitive `redis` requirement — see
+  [ADR 8](https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/dev/adr/0008-declare-redis-directly-instead-of-the-diffsync-extra.md).
+  [ADR 44](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0044-the-base-install-declares-no-redis-client.md)
+  removed the base declaration; the exact pin stays.
 - **A Prefect upgrade moves three pins together.** The Prefect server runs from the Sync image
   through `infrahub_sync.service.prefect_server:create_prefect_app`, so the `prefect` pin sets
   both the server and the client version. `fastapi` is pinned at 0.141.1 in the `prefect` and

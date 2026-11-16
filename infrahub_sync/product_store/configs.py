@@ -26,7 +26,6 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, ParamSpec, TypeVar
 
 import yaml
@@ -545,72 +544,6 @@ class ValidationReport:
     package_checksum: str
     findings: tuple[ValidationFinding, ...]
     destination_schema_fingerprint: str | None = None
-
-
-@_service_boundary
-def load_package_content(path: str | Path) -> dict[str, Any]:
-    """Read one declared package file as JSON-native content.
-
-    ``yaml.safe_load`` reads JSON as well as YAML, so one code path serves both file forms.
-    Whether the result is a legal package is :func:`parse_configuration_package`'s decision,
-    not this function's.
-    """
-    try:
-        text = Path(path).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        # UnicodeDecodeError is a ValueError, not an OSError: a package saved as CP1252 rather
-        # than UTF-8 opens and reads and then fails on one byte. It is the likeliest of these
-        # mistakes to reach an operator, and it is the caller's file either way, so it belongs
-        # to the same refusal as a file that cannot be opened at all. The type is what names
-        # which of the two happened.
-        msg = f"declared package file {str(path)!r} could not be read: {type(exc).__name__}"
-        raise ConfigsRequestError(msg) from None
-    try:
-        content = yaml.safe_load(text)
-    except (yaml.YAMLError, RecursionError):
-        # RecursionError is not a YAMLError: the parser recurses once per nesting level, so a
-        # deeply nested file exhausts the interpreter stack instead of being reported as bad
-        # syntax. Both are the same refusal - the caller's file is not readable as a package.
-        msg = f"declared package file {str(path)!r} is not valid JSON or YAML"
-        raise ConfigsRequestError(msg) from None
-    if not isinstance(content, dict):
-        msg = f"declared package file {str(path)!r} does not contain a package object"
-        raise ConfigsRequestError(msg)
-    if not _needs_json_coercion(content):
-        return content
-    # json round-trip: YAML admits scalars a declared package may not carry. ``default=str``
-    # does not hand those to the parse boundary — it stringifies them first, so an unquoted
-    # YAML date arrives as the string "2024-01-01" and is accepted wherever a string is legal.
-    # Two consequences, both deliberate and both worth knowing about. The stored content is
-    # then not byte-for-byte what the operator wrote; and the interfaces diverge, because the
-    # API path is handed JSON-native content directly and refuses the same value with
-    # ConfigurationPackageParseError. Reading a YAML date as text is conventional, so this
-    # coerces rather than refuses — but it is coercion, not a precise report.
-    try:
-        return json.loads(json.dumps(content, default=str))
-    except (TypeError, ValueError):
-        # Not every dump failure is coercible, and the probe above cannot tell the difference:
-        # it reads *any* refusal as "coercion needed", so the coercion itself is where the rest
-        # have to be refused. Two shapes reach here, both legal YAML. An anchor that contains
-        # itself describes an infinite structure and raises ValueError("Circular reference
-        # detected"); a date used as a mapping key raises TypeError, because ``default=str``
-        # stringifies values and not keys. The caller's file is what cannot be read as a
-        # package, so this is the same request refusal as unparseable syntax.
-        msg = f"declared package file {str(path)!r} describes content JSON cannot represent"
-        raise ConfigsRequestError(msg) from None
-
-
-def _needs_json_coercion(content: Mapping[str, Any]) -> bool:
-    """Return whether `content` holds a value the JSON-native parse boundary would reject.
-
-    Any dump failure reads as "coercion needed", including the ones no coercion can fix. The
-    caller is where those are refused.
-    """
-    try:
-        json.dumps(content, allow_nan=False)
-    except (TypeError, ValueError):
-        return True
-    return False
 
 
 # The two machine-readable absence values the read operations distinguish.

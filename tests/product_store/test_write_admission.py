@@ -572,7 +572,6 @@ def test_result_replacement_cannot_clear_recorded_reconciliation_evidence(projec
     projection.interrupt_execution(_rid("never-cleared"), flow_run_id)
 
     projection.record_results(_rid("never-cleared"), {"reconciliation_required": False, "outcome": "succeeded"})
-    projection.merge_results(_rid("never-cleared"), {"reconciliation_required": False})
     projection.finish_run(_rid("never-cleared"), phase="applied", outcome="succeeded", summary={}, results={})
 
     stored = projection.lookup_run(_rid("never-cleared")).value

@@ -15,18 +15,19 @@ MAIN_DIRECTORY = "."
 PYLINT_BASELINE_MAX_COUNTS: dict[str, int] = {}
 
 
-def _ty_check_command(python_major: int, python_minor: int) -> str:
+def _ty_check_command(python_major: int, python_minor: int, *, runner: str = "uv run") -> str:
     """Return the type-check command for the active supported runtime profile.
 
     The service and testcontainers trees import dependencies that only install on
-    Python 3.11+, so the 3.10 profile excludes them and their tests.
+    Python 3.11+, so the 3.10 profile excludes them and their tests. `runner` is the
+    command prefix; `tests.check-310` passes `uv run --no-sync` to keep its own environment.
     """
     if (python_major, python_minor) == (3, 10):
         return (
-            "uv run ty check --exclude infrahub_sync/service --exclude tests/service "
+            f"{runner} ty check --exclude infrahub_sync/service --exclude tests/service "
             "--exclude infrahub_sync/testcontainers --exclude tests/testcontainers ."
         )
-    return "uv run ty check ."
+    return f"{runner} ty check ."
 
 
 def _pylint_command(python_major: int, python_minor: int) -> str:

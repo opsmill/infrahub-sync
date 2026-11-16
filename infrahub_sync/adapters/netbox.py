@@ -18,6 +18,7 @@ from infrahub_sync import (
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.configuration.credentials import select_runtime_credential
 
+from .endpoint_records import convert_records, mapped_element, resolve_endpoint, unique_ids
 from .references import peer_unique_id, peer_unique_ids, reference_is_required
 from .utils import get_value, keep_certificate_checks_off
 
@@ -68,15 +69,7 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
 
     def _resolve_endpoint(self, mapping: str) -> Any:
         """Walk `mapping` (e.g. 'dcim.devices' or 'plugins.foo.bar') to a pynetbox endpoint."""
-        parts = mapping.split(".")
-        endpoint = self.client
-        for part in parts:
-            try:
-                endpoint = getattr(endpoint, part)
-            except AttributeError as exc:
-                msg = f"Invalid NetBox mapping path {mapping!r} (missing segment {part!r})"
-                raise ValueError(msg) from exc
-        return endpoint
+        return resolve_endpoint(self.client, mapping, "NetBox")
 
     def _convert_records(
         self, *, element: SchemaMappingModel, model: type[NetboxModel], raw_records: list[dict]
@@ -85,28 +78,14 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
 
         A full read goes through the base-class read loop instead (`model_loader`).
         """
-        if self.target == "source":
-            filtered = model.filter_records(records=raw_records, schema_mapping=element)
-            transformed = model.transform_records(records=filtered, schema_mapping=element)
-        else:
-            transformed = raw_records
-        for obj in transformed:
-            data = self.record_to_data(obj, element, model)
-            if data is not None:
-                yield data
+        return convert_records(self, element=element, model=model, raw_records=raw_records)
 
     def list_changed_since(self, model_name: str, cursor: CursorState) -> Iterator[dict]:
         """Yield NetBox records changed since `cursor`. Uses `last_updated__gte` filter."""
-        element = next(
-            (e for e in self.config.schema_mapping if e.name == model_name),
-            None,
-        )
-        if element is None or not element.mapping:
-            msg = f"NetBox: no schema_mapping entry with mapping for {model_name!r}"
-            raise NotImplementedError(msg)
+        element, mapping = mapped_element(self.config, model_name, "NetBox")
 
         model: type[NetboxModel] = getattr(self, model_name)
-        endpoint = self._resolve_endpoint(element.mapping)
+        endpoint = self._resolve_endpoint(mapping)
         raw = [dict(node) for node in endpoint.filter(last_updated__gte=cursor.value)]
         yield from self._convert_records(element=element, model=model, raw_records=raw)
 
@@ -118,26 +97,13 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
         Adapters that override the identifier convention will produce
         correctly-shaped IDs without further work here.
         """
-        element = next(
-            (e for e in self.config.schema_mapping if e.name == model_name),
-            None,
-        )
-        if element is None or not element.mapping:
-            msg = f"NetBox: no schema_mapping entry with mapping for {model_name!r}"
-            raise NotImplementedError(msg)
+        element, mapping = mapped_element(self.config, model_name, "NetBox")
 
         model: type[NetboxModel] = getattr(self, model_name)
-        endpoint = self._resolve_endpoint(element.mapping)
+        endpoint = self._resolve_endpoint(mapping)
         raw_records = [dict(node) for node in endpoint.all()]
-        # This sweep only computes IDs: the load report entries its conversion writes describe
-        # no record the read admits, so they are dropped.
-        entries = self.load_report.entries
-        start = len(entries)
-        try:
-            for payload in self._convert_records(element=element, model=model, raw_records=raw_records):
-                yield model(**payload).get_unique_id()
-        finally:
-            del entries[start:]
+        payloads = self._convert_records(element=element, model=model, raw_records=raw_records)
+        yield from unique_ids(payloads, adapter=self, model=model)
 
     def list_records(self, model_name: str, element: SchemaMappingModel) -> list[dict]:  # noqa: ARG002
         """Return every NetBox record of the mapping entry's endpoint, as dicts.

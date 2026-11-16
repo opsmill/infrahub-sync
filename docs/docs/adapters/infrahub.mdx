@@ -128,7 +128,7 @@ A registered package declares its own connection settings:
 
 ### Direct adapter use
 
-The direct [Prefect remote run](../reference/prefect-remote-run.mdx) and Python callers that run a `config.yml` directory do not use a registered package. In that case the adapter reads these environment variables before the declared settings:
+The direct [Prefect remote run](../reference/prefect-remote-run.mdx) runs a `config.yml` directory and does not use a registered package. In that case the adapter reads these environment variables before the declared settings:
 
 | Variable | Replaces |
 |----------|----------|

@@ -1341,11 +1341,9 @@ dependencies = [
     { name = "pyarrow" },
     { name = "pydantic" },
     { name = "pyyaml" },
-    { name = "redis" },
     { name = "requests" },
     { name = "ruff" },
     { name = "structlog" },
-    { name = "tqdm" },
     { name = "typer" },
     { name = "typing-extensions" },
     { name = "urllib3" },
@@ -1370,10 +1368,7 @@ dev = [
     { name = "towncrier" },
     { name = "ty" },
     { name = "typer-cli" },
-    { name = "types-python-slugify" },
     { name = "types-pyyaml" },
-    { name = "types-toml" },
-    { name = "types-ujson" },
     { name = "yamllint" },
 ]
 ipfabric = [
@@ -1438,7 +1433,6 @@ requires-dist = [
     { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.3" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.8" },
     { name = "pyyaml", specifier = ">=6.0.2,<7" },
-    { name = "redis", specifier = ">=4.3,<9" },
     { name = "requests", specifier = ">=2.28.2" },
     { name = "ruff", specifier = ">=0.15.5,<0.16" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.5" },
@@ -1448,14 +1442,10 @@ requires-dist = [
     { name = "testcontainers", marker = "python_full_version >= '3.11' and extra == 'dev'", specifier = ">=4.8,<4.9" },
     { name = "testcontainers", marker = "python_full_version >= '3.11' and extra == 'testcontainers'", specifier = ">=4.8,<4.9" },
     { name = "towncrier", marker = "extra == 'dev'", specifier = ">=24.8,<27" },
-    { name = "tqdm", specifier = ">=4.67" },
     { name = "ty", marker = "extra == 'dev'", specifier = "==0.0.32" },
     { name = "typer", specifier = ">=0.23.1" },
     { name = "typer-cli", marker = "extra == 'dev'", specifier = ">=0.23" },
-    { name = "types-python-slugify", marker = "extra == 'dev'", specifier = ">=8.0.2.20240310" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.12" },
-    { name = "types-toml", marker = "extra == 'dev'", specifier = ">=0.10" },
-    { name = "types-ujson", marker = "extra == 'dev'", specifier = ">=5.10" },
     { name = "typing-extensions", specifier = ">=4.4" },
     { name = "urllib3", specifier = ">=1.26.9" },
     { name = "uvicorn", marker = "python_full_version >= '3.11' and extra == 'service'", specifier = ">=0.34,<1" },
@@ -3999,18 +3989,6 @@ wheels = [
 ]
 
 [[package]]
-name = "tqdm"
-version = "4.70.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/0d/ea/b2a5bd54b28a324dae8211928b2d730b6547500342c7e6c6dea08bd0a485/tqdm-4.70.1.tar.gz", hash = "sha256:cefd0eca11b2a37a3aee776544d4f4ae913f02688135b5556b8788dfa474afc4", size = 171846, upload-time = "2026-09-11T07:25:16.601Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/03/921a3d3c75785aca9ebfbfcabfbc3a1be12e2ab5265deb026d55a5a3f83e/tqdm-4.70.1-py3-none-any.whl", hash = "sha256:c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73", size = 80199, upload-time = "2026-09-11T07:25:14.599Z" },
-]
-
-[[package]]
 name = "traitlets"
 version = "5.16.1"
 source = { registry = "https://pypi.org/simple" }
@@ -4072,39 +4050,12 @@ wheels = [
 ]
 
 [[package]]
-name = "types-python-slugify"
-version = "8.0.2.20240310"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/d2/cb/7fdc1982b117d216a9ebbe4ecc6619690991c48f994d93dee7888f459976/types-python-slugify-8.0.2.20240310.tar.gz", hash = "sha256:5157b508c7fed587520c70d77f62aea0fafdc6620893c2ec8972f13a1faf5560", size = 3661, upload-time = "2024-03-10T02:19:03.582Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ce/6d/873300a60133e51b284a5287a618d3d948a65160e3954b90b3dc5e562667/types_python_slugify-8.0.2.20240310-py3-none-any.whl", hash = "sha256:0efec18b802c69ebd22dcee55c91afaeaa80e1e40ddd66ccabf69fd42ce87b74", size = 3566, upload-time = "2024-03-10T02:19:02.575Z" },
-]
-
-[[package]]
 name = "types-pyyaml"
 version = "6.0.12.20260906"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/90/6e/abec85b9013db5b934b0280a6dd104904d84f7bcbaab2e2f3def87ac7463/types_pyyaml-6.0.12.20260906.tar.gz", hash = "sha256:f59c1cc05010b833d2d72287bbaa72610106b28d42d89a907313117faba85212", size = 18649, upload-time = "2026-09-06T06:35:35.362Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/15/c0/fc0644b7ddcfb969e95845837143cb5173ddd6e06ee4ba5fc493cd9329b7/types_pyyaml-6.0.12.20260906-py3-none-any.whl", hash = "sha256:bca893ff0d51df5c9053137d5d0e6ccd36e939a196356f1d5c16372422f5137b", size = 21282, upload-time = "2026-09-06T06:35:34.372Z" },
-]
-
-[[package]]
-name = "types-toml"
-version = "0.10.8.20260518"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/4b/11/6ece999e91f2ccb848ab4420f3f4816e78ac0541f739e6864affdaaa5737/types_toml-0.10.8.20260518.tar.gz", hash = "sha256:80e10facd24fdeda9d5c672187d72be3ac284843788d67f5aae59e3e016db6fe", size = 9419, upload-time = "2026-05-18T06:02:16.719Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/91/25/489751806bf5c95e4007f8e17409199c54d31e49ffbea07c5729b1286c8e/types_toml-0.10.8.20260518-py3-none-any.whl", hash = "sha256:0e564ab05f6fde62a315b3b5a9b6624fda569399795d30a37e64705a70459303", size = 9669, upload-time = "2026-05-18T06:02:15.86Z" },
-]
-
-[[package]]
-name = "types-ujson"
-version = "5.10.0.20250822"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5c/bd/d372d44534f84864a96c19a7059d9b4d29db8541828b8b9dc3040f7a46d0/types_ujson-5.10.0.20250822.tar.gz", hash = "sha256:0a795558e1f78532373cf3f03f35b1f08bc60d52d924187b97995ee3597ba006", size = 8437, upload-time = "2025-08-22T03:02:19.433Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/f2/d812543c350674d8b3f6e17c8922248ee3bb752c2a76f64beb8c538b40cf/types_ujson-5.10.0.20250822-py3-none-any.whl", hash = "sha256:3e9e73a6dc62ccc03449d9ac2c580cd1b7a8e4873220db498f7dd056754be080", size = 7657, upload-time = "2025-08-22T03:02:18.699Z" },
 ]
 
 [[package]]

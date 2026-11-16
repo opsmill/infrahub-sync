@@ -322,9 +322,7 @@ non-zero status and the run's phase stays `planned`. Before the `error: run-term
 that failed, such as `failed_check: destination_binding`, and, when the run recorded a next
 action, a `hint:` line that says what to do. `runs results RUN_ID` shows the same failure under `verify_failure`: `failed_checks`
 names the check, `error_type` names the refusal, and `next_action` says what to do. The
-refusal is the same one that `apply` reports when it refuses on that check. A run with no registered configuration
-binding cannot be applied by the service; `verify` checks only its saved files, and its
-results report `destination_checked: false`.
+refusal is the same one that `apply` reports when it refuses on that check.
 
 `verify` describes the destination when it read it. It does not change the run's phase, does
 not compute a new plan, and does not wait for an `apply` of the same configuration that is
