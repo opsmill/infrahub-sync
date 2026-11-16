@@ -73,34 +73,6 @@ def _link(projection: ProductProjection) -> PrefectExecutionLink:
     return run.prefect_executions[0]
 
 
-def test_a_store_created_before_the_feature_gains_both_columns_and_reads_old_rows_as_none(
-    tmp_path: Path, profile: str
-) -> None:
-    _original, database = _projection_with_execution(tmp_path, profile)
-    # Return the store to its shape before this feature.
-    connection = sqlite3.connect(database)
-    try:
-        columns = {row[1] for row in connection.execute("PRAGMA table_info(prefect_executions)")}
-        for column in ("source_read", "destination_read"):
-            if column in columns:
-                connection.execute(f"ALTER TABLE prefect_executions DROP COLUMN {column}")
-        connection.commit()
-    finally:
-        connection.close()
-
-    restarted = _projection(tmp_path, profile)
-
-    connection = sqlite3.connect(database)
-    try:
-        columns = {row[1] for row in connection.execute("PRAGMA table_info(prefect_executions)")}
-    finally:
-        connection.close()
-    assert {"source_read", "destination_read"} <= columns
-    link = _link(restarted)
-    assert link.source_read is None
-    assert link.destination_read is None
-
-
 def test_recording_one_side_leaves_the_other_side_unchanged(tmp_path: Path, profile: str) -> None:
     projection, _database = _projection_with_execution(tmp_path, profile)
 

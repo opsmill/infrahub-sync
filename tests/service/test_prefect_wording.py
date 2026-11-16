@@ -139,7 +139,7 @@ def _failed_run(
     flow_run_id = str(uuid5(NAMESPACE_URL, RUN_ID))
     append_execution(projection, RUN_ID, PrefectExecutionLink(flow_run_id=flow_run_id, purpose="plan", attempt=1))
     assert projection.claim_execution(RUN_ID, flow_run_id, worker_id=WORKER_ID)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (None, projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     monkeypatch.setattr(service_flow, "_claim_current_execution", lambda _projection, _run_id: (flow_run_id, WORKER_ID))
 
     def fail(*_args: object, **_kwargs: object) -> None:

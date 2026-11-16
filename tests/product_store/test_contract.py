@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import re
 import sqlite3
@@ -23,7 +22,6 @@ from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
-from typing_extensions import LiteralString
 
 from infrahub_sync import product_store
 from infrahub_sync.configuration import ConfigurationPackage, CredentialConfigurationError
@@ -57,7 +55,7 @@ from infrahub_sync.product_store.store import (
     SQLiteRunStore,
     _RelationalRunStore,
 )
-from tests.product_store.postgresql_isolation import IsolatedSchema, dsn_or_skip, isolated_schema
+from tests.product_store.postgresql_isolation import dsn_or_skip, isolated_schema
 
 # This intentionally mirrors infrahub_sync/product_store/__init__.py's __all__, hand-maintained
 # so a change to the module's exports has to touch this list too.
@@ -134,14 +132,6 @@ class _CursorAdapter:
     def execute(self, operation: str, parameters: Sequence[Any] = ()):
         self._fake_rows = None
         stripped = operation.strip()
-        if "information_schema.columns" in stripped:
-            table_name = parameters[0] if parameters else "product_runs"
-            self._cursor.execute(f"PRAGMA table_info({table_name})")
-            # ``information_schema.columns`` is always selected as (column_name, is_nullable);
-            # PRAGMA's ``notnull`` flag carries the same fact for the literal table. The
-            # ``DROP NOT NULL`` below is a no-op here, so a legacy column keeps reporting "NO".
-            self._fake_rows = tuple((str(row[1]), "NO" if row[3] else "YES") for row in self._cursor.fetchall())
-            return self
         if "information_schema.table_constraints" in stripped:
             self._cursor.execute(
                 f"SELECT 1 FROM {_POSTGRESQL_EMULATION_CONSTRAINTS_TABLE} WHERE constraint_name = ?",  # noqa: S608
@@ -159,15 +149,13 @@ class _CursorAdapter:
             except sqlite3.IntegrityError as exc:
                 raise _FakeDriverError(sqlstate="42710") from exc
             return self
-        if "ALTER COLUMN" in stripped and "DROP NOT NULL" in stripped:
-            return self
         if "pg_advisory_xact_lock" in stripped:
             # SQLite already serializes writers; the schema-initialization lock has no
             # SQLite counterpart to emulate.
             return self
         stripped = stripped.replace(
-            "CAST(COALESCE(submitted_at, last_observed_at) AS TIMESTAMPTZ)",
-            "infrahub_sync_execution_timestamp_microseconds(COALESCE(submitted_at, last_observed_at))",
+            "CAST(submitted_at AS TIMESTAMPTZ)",
+            "infrahub_sync_execution_timestamp_microseconds(submitted_at)",
         )
         stripped = stripped.replace(
             "CAST(%s AS TIMESTAMPTZ)",
@@ -666,36 +654,6 @@ def test_postgresql_schema_bootstrap_does_not_swallow_other_ddl_failures() -> No
     connection.close.assert_called_once_with()
 
 
-def test_postgresql_duplicate_column_race_is_recognized() -> None:
-    assert product_store_store._is_duplicate_column_error(_FakeDriverError(sqlstate="42701"))
-
-
-@pytest.mark.parametrize("sqlstate", ["42501", "23505"])
-def test_postgresql_non_duplicate_column_errors_are_not_recognized(sqlstate: str) -> None:
-    assert not product_store_store._is_duplicate_column_error(_FakeDriverError(sqlstate=sqlstate))
-
-
-def test_sqlite_duplicate_column_race_is_recognized() -> None:
-    connection = sqlite3.connect(":memory:")
-    try:
-        connection.execute("CREATE TABLE example (existing TEXT)")
-        with pytest.raises(sqlite3.OperationalError) as exc_info:
-            connection.execute("ALTER TABLE example ADD COLUMN existing TEXT")
-        assert product_store_store._is_duplicate_column_error(exc_info.value)
-    finally:
-        connection.close()
-
-
-def test_sqlite_other_operational_errors_are_not_duplicate_columns() -> None:
-    connection = sqlite3.connect(":memory:")
-    try:
-        with pytest.raises(sqlite3.OperationalError) as exc_info:
-            connection.execute("ALTER TABLE table_that_does_not_exist ADD COLUMN extra TEXT")
-        assert not product_store_store._is_duplicate_column_error(exc_info.value)
-    finally:
-        connection.close()
-
-
 @pytest.mark.parametrize(
     "duplicate_parameters",
     [
@@ -818,51 +776,27 @@ def test_mutation_reservation_atomically_creates_one_run_and_replays_on_sqlite_a
 
 
 @pytest.mark.parametrize("profile", [("sqlite",), ("postgresql",)])
-def test_receipt_migration_backfills_legacy_runs_and_allows_configuration_receipts(
+def test_receipt_storage_allows_configuration_receipts_and_enforces_resource_identity(
     tmp_path: Path, profile: tuple[str]
 ) -> None:
-    """Receipt storage upgrades legacy run rows without inventing run identifiers for configs."""
+    """Receipt storage holds run and configuration receipts without inventing run identifiers for configs."""
     database = tmp_path / f"{profile[0]}.sqlite3"
-    legacy = sqlite3.connect(database)
-    try:
-        legacy.execute(
-            "CREATE TABLE mutation_receipts ("
-            "receipt_id TEXT PRIMARY KEY, actor TEXT NOT NULL, key_digest TEXT NOT NULL, "
-            "operation TEXT NOT NULL, target_run_id TEXT, request_fingerprint TEXT NOT NULL, "
-            "reason TEXT NOT NULL, run_id TEXT NOT NULL, prefect_key TEXT NOT NULL, "
-            "state TEXT NOT NULL, response_status INTEGER, response_body TEXT, flow_run_id TEXT, "
-            "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (actor, key_digest))"
-        )
-        legacy_receipt = _receipt()
-        legacy_values = product_store_store._receipt_values(legacy_receipt)
-        legacy.execute(
-            "INSERT INTO mutation_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            legacy_values[:7] + legacy_values[9:],
-        )
-        legacy.commit()
-    finally:
-        legacy.close()
-
     records = SQLiteRunStore(database) if profile[0] == "sqlite" else PostgreSQLRunStore(_connect(database))
     projection = ProductProjection(records, FileArtifactStore(tmp_path / f"{profile[0]}-objects"))
-    restored = projection.lookup_mutation(legacy_receipt.actor, legacy_receipt.key_digest)
+    run_receipt = _receipt()
+    projection.reserve_mutation(run_receipt, run=_run())
+    restored = projection.lookup_mutation(run_receipt.actor, run_receipt.key_digest)
     assert restored.value is not None
     assert restored.value.resource_kind == "run"
-    assert restored.value.resource_id == legacy_receipt.run_id
-    assert restored.value.run_id == legacy_receipt.run_id
-    assert restored.value.prefect_key == legacy_receipt.prefect_key
+    assert restored.value.resource_id == run_receipt.run_id
+    assert restored.value.run_id == run_receipt.run_id
+    assert restored.value.prefect_key == run_receipt.prefect_key
 
     restarted = ProductProjection(SQLiteRunStore(database), FileArtifactStore(tmp_path / "restarted-objects"))
-    after_restart = restarted.lookup_mutation(legacy_receipt.actor, legacy_receipt.key_digest)
+    after_restart = restarted.lookup_mutation(run_receipt.actor, run_receipt.key_digest)
     assert after_restart.value is not None
-    assert after_restart.value.run_id == legacy_receipt.run_id
-    assert after_restart.value.prefect_key == legacy_receipt.prefect_key
-    schema = sqlite3.connect(database)
-    try:
-        columns = {row[1] for row in schema.execute("PRAGMA table_info(mutation_receipts)")}
-    finally:
-        schema.close()
-    assert {"resource_kind", "resource_id"} <= columns
+    assert after_restart.value.run_id == run_receipt.run_id
+    assert after_restart.value.prefect_key == run_receipt.prefect_key
 
     now = datetime(2026, 8, 10, 12, tzinfo=timezone.utc)
     configuration_receipt = MutationReceipt(
@@ -887,14 +821,14 @@ def test_receipt_migration_backfills_legacy_runs_and_allows_configuration_receip
         with pytest.raises(sqlite3.IntegrityError):
             schema.execute(
                 "UPDATE mutation_receipts SET resource_kind = 'configuration' WHERE receipt_id = ?",
-                (legacy_receipt.receipt_id,),
+                (run_receipt.receipt_id,),
             )
     finally:
         schema.close()
 
 
 def test_fresh_sqlite_receipt_resource_invariant_rejects_mixed_direct_write(tmp_path: Path) -> None:
-    """The fresh schema enforces the same configuration/run shape as a migrated database."""
+    """The fresh schema enforces the configuration/run shape of a mutation receipt."""
     database = tmp_path / "fresh.sqlite3"
     SQLiteRunStore(database)
     connection = sqlite3.connect(database)
@@ -1324,7 +1258,7 @@ def test_new_execution_requires_submitted_at_without_persistence(provider: Produ
 def test_every_product_admission_refuses_embedded_execution_without_submitted_at(
     provider: ProductProjection,
 ) -> None:
-    """Legacy hydration remains readable, but no public creation path can persist a new legacy link."""
+    """No public creation path can persist an execution link without its submission time."""
     link = PrefectExecutionLink(flow_run_id="flow-legacy", purpose="plan", attempt=1, submitted_at=None)
 
     with pytest.raises(ValueError, match=r"^new Prefect execution requires submitted_at$"):
@@ -1336,106 +1270,6 @@ def test_every_product_admission_refuses_embedded_execution_without_submitted_at
 
     assert provider.lookup_run("run-001").reason == "run-not-found"
     assert provider.lookup_run("run-reserved").reason == "run-not-found"
-
-
-@pytest.mark.parametrize("profile", ["sqlite", "postgresql"])
-@pytest.mark.parametrize(
-    ("anchor_offset_microseconds", "expected_outcome"),
-    [
-        (-1, "refused"),
-        (0, "refused"),
-        (1, "claimed"),
-        (-300_000_000, "refused"),
-    ],
-    ids=["deadline-minus-one-microsecond", "deadline", "deadline-plus-one-microsecond", "well-past-ttl"],
-)
-def test_migrated_execution_claim_uses_observation_fallback_at_admission_deadline(
-    profile: str,
-    tmp_path: Path,
-    anchor_offset_microseconds: int,
-    expected_outcome: str,
-) -> None:
-    """A migrated row uses its observation as the claim CAS admission anchor."""
-    database = tmp_path / f"legacy-{profile}.sqlite3"
-    records = SQLiteRunStore(database) if profile == "sqlite" else PostgreSQLRunStore(_connect(database))
-    projection = ProductProjection(records, FileArtifactStore(tmp_path / f"objects-{profile}"))
-    claimed_at = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
-    admission_deadline_at = claimed_at - timedelta(seconds=300)
-    observed_at = (admission_deadline_at + timedelta(microseconds=anchor_offset_microseconds)).astimezone(
-        timezone(timedelta(hours=-4))
-    )
-    projection.create_run(_run())
-    _append_execution(
-        projection,
-        "run-001",
-        PrefectExecutionLink(
-            flow_run_id="flow-001",
-            purpose="plan",
-            attempt=1,
-            last_observed_state="pending",
-            last_observed_at=observed_at,
-            submitted_at=observed_at,
-        ),
-    )
-    with sqlite3.connect(database) as connection:
-        connection.execute(
-            "UPDATE prefect_executions SET submitted_at = NULL WHERE run_id = ? AND flow_run_id = ?",
-            ("run-001", "flow-001"),
-        )
-
-    loaded = projection.lookup_run("run-001").value
-    assert loaded is not None
-    assert loaded.prefect_executions[0].submitted_at == observed_at
-    with sqlite3.connect(database) as connection:
-        stored_submitted_at = connection.execute(
-            "SELECT submitted_at FROM prefect_executions WHERE run_id = ? AND flow_run_id = ?",
-            ("run-001", "flow-001"),
-        ).fetchone()
-    assert stored_submitted_at == (None,)
-    claimed = projection.claim_execution(
-        "run-001",
-        "flow-001",
-        worker_id="8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0",
-        claimed_at=claimed_at,
-        admission_ttl_seconds=300,
-    )
-    assert claimed is (expected_outcome == "claimed")
-
-
-@pytest.mark.parametrize("profile", ["sqlite", "postgresql"])
-def test_legacy_execution_without_any_admission_anchor_remains_claimable(profile: str, tmp_path: Path) -> None:
-    """Only a row with neither submission nor observation remains legacy-unclassified."""
-    database = tmp_path / f"unclassified-{profile}.sqlite3"
-    records = SQLiteRunStore(database) if profile == "sqlite" else PostgreSQLRunStore(_connect(database))
-    projection = ProductProjection(records, FileArtifactStore(tmp_path / f"objects-{profile}"))
-    observed_at = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
-    projection.create_run(_run())
-    _append_execution(
-        projection,
-        "run-001",
-        PrefectExecutionLink(
-            flow_run_id="flow-001",
-            purpose="plan",
-            attempt=1,
-            last_observed_state="pending",
-            last_observed_at=observed_at,
-            submitted_at=observed_at,
-        ),
-    )
-    with sqlite3.connect(database) as connection:
-        connection.execute(
-            "UPDATE prefect_executions SET submitted_at = NULL, last_observed_at = NULL "
-            "WHERE run_id = ? AND flow_run_id = ?",
-            ("run-001", "flow-001"),
-        )
-
-    assert projection.claim_execution(
-        "run-001",
-        "flow-001",
-        worker_id="8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0",
-        claimed_at=observed_at + timedelta(days=1),
-        admission_ttl_seconds=300,
-    )
 
 
 def test_execution_claim_stall_and_terminal_cas_contract(provider: ProductProjection) -> None:
@@ -1628,52 +1462,6 @@ def test_claim_and_abandon_race_has_one_winner(provider: ProductProjection, age_
     assert outcomes.count(True) == 1
     if age_seconds == 300:
         assert outcomes == (False, True)
-
-
-@pytest.mark.parametrize("profile", ["sqlite", "postgresql"])
-def test_migrated_claim_and_abandon_race_at_deadline_has_one_winner(profile: str, tmp_path: Path) -> None:
-    """The effective observation anchor excludes claim while abandonment wins the row CAS."""
-    database = tmp_path / f"migrated-race-{profile}.sqlite3"
-    records = SQLiteRunStore(database) if profile == "sqlite" else PostgreSQLRunStore(_connect(database))
-    projection = ProductProjection(records, FileArtifactStore(tmp_path / f"objects-{profile}"))
-    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
-    worker_id = "8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0"
-    projection.create_run(_run())
-    _append_execution(
-        projection,
-        "run-001",
-        PrefectExecutionLink(
-            flow_run_id="flow-001",
-            purpose="plan",
-            attempt=1,
-            last_observed_at=now - timedelta(seconds=300),
-            submitted_at=now - timedelta(seconds=300),
-        ),
-    )
-    with sqlite3.connect(database) as connection:
-        connection.execute(
-            "UPDATE prefect_executions SET submitted_at = NULL WHERE run_id = ? AND flow_run_id = ?",
-            ("run-001", "flow-001"),
-        )
-    barrier = Barrier(2)
-
-    def claim() -> bool:
-        barrier.wait()
-        return projection.claim_execution(
-            "run-001",
-            "flow-001",
-            worker_id=worker_id,
-            claimed_at=now,
-            admission_ttl_seconds=300,
-        )
-
-    def abandon() -> bool:
-        barrier.wait()
-        return projection.abandon_execution("run-001", "flow-001", terminal_at=now)
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        outcomes = tuple(pool.map(lambda action: action(), (claim, abandon)))
-    assert outcomes == (False, True)
 
 
 def test_execution_claim_refuses_invalid_worker_identity_without_mutation(provider: ProductProjection) -> None:
@@ -3497,27 +3285,6 @@ def test_a_public_json_artifact_without_secrets_is_published_byte_for_byte(
     assert redaction_provider.lookup_artifact("run-001", "plan-review").value == data
 
 
-def test_concurrent_result_merges_retain_every_stage_on_sqlite_and_emulated_postgresql(
-    provider: ProductProjection,
-) -> None:
-    provider.create_run(_run())
-    ready = Barrier(2)
-
-    def merge(stage: str) -> None:
-        ready.wait()
-        provider.merge_results("run-001", {stage: {"outcome": stage}})
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        list(pool.map(merge, ("verification", "apply_failure")))
-
-    loaded = provider.lookup_run("run-001").value
-    assert loaded is not None
-    assert loaded.results == {
-        "apply_failure": {"outcome": "apply_failure"},
-        "verification": {"outcome": "verification"},
-    }
-
-
 @pytest.mark.parametrize("mutation", ["create", "finish"])
 def test_redaction_key_collision_is_rejected_before_a_relational_write(
     mutation: str, provider: ProductProjection
@@ -4256,17 +4023,6 @@ def test_concurrent_identical_checksums_deduplicate_to_exactly_one_row_on_sqlite
 
 # --- Run-to-configuration binding columns (deliberately inert so far) -------------------------
 
-# The pre-binding shape the additive migration still brings forward. It carries
-# ``reconciliation_required`` because that column is part of the clean V3 table and is
-# never migrated onto an older one: V3 development databases are recreated across it.
-_LEGACY_PRODUCT_RUNS_TABLE = """
-CREATE TABLE product_runs (
-    run_id TEXT PRIMARY KEY, operation TEXT NOT NULL, configuration_reference TEXT NOT NULL,
-    actor TEXT, audit_links TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
-    phase TEXT NOT NULL, outcome TEXT, summary TEXT NOT NULL, results TEXT NOT NULL,
-    reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE
-);
-"""
 _CONFIGURATION_BINDING_COLUMN_NAMES = ("config_id", "registry_version", "package_checksum")
 
 
@@ -4284,48 +4040,7 @@ def test_product_run_model_declares_configuration_binding_fields() -> None:
     assert set(_CONFIGURATION_BINDING_COLUMN_NAMES) <= set(ProductRun.model_fields)
 
 
-def test_preexisting_database_is_migrated_forward_and_keeps_its_legacy_row(tmp_path: Path) -> None:
-    database = tmp_path / "legacy.sqlite3"
-    legacy_started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    with sqlite3.connect(database) as connection:
-        connection.execute(_LEGACY_PRODUCT_RUNS_TABLE)
-        connection.execute(
-            "INSERT INTO product_runs (run_id, operation, configuration_reference, actor, audit_links, "
-            "started_at, finished_at, phase, outcome, summary, results) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                "legacy-run-001",
-                "plan",
-                "sha256:legacy",
-                None,
-                "[]",
-                legacy_started_at.isoformat(),
-                None,
-                "planning",
-                None,
-                "{}",
-                "{}",
-            ),
-        )
-
-    store = SQLiteRunStore(database)
-
-    with sqlite3.connect(database) as connection:
-        columns = {row[1]: row for row in connection.execute("PRAGMA table_info(product_runs)")}
-        row = connection.execute(
-            "SELECT config_id, registry_version, package_checksum FROM product_runs WHERE run_id = ?",
-            ("legacy-run-001",),
-        ).fetchone()
-
-    assert set(_CONFIGURATION_BINDING_COLUMN_NAMES) <= set(columns)
-    assert row == (None, None, None)
-    loaded = store.lookup("legacy-run-001")
-    assert loaded.available
-    assert loaded.value is not None
-    assert loaded.value.operation == "plan"
-    assert loaded.value.configuration_reference == "sha256:legacy"
-
-
-def test_migration_is_idempotent_across_repeated_store_construction(tmp_path: Path) -> None:
+def test_repeated_store_construction_keeps_one_of_each_binding_column(tmp_path: Path) -> None:
     database = tmp_path / "records.sqlite3"
     SQLiteRunStore(database)
     SQLiteRunStore(database)
@@ -4352,7 +4067,7 @@ def test_existing_run_lifecycle_is_unaffected_by_the_new_binding_columns(provide
     assert set(_CONFIGURATION_BINDING_COLUMN_NAMES) <= set(ProductRun.model_fields)
 
 
-# Columns and indexes the run-discovery start-up migration adds, per table.
+# The run-discovery columns and indexes, per table.
 _RUN_DISCOVERY_COLUMNS = {
     "product_runs": frozenset({"destination_branch"}),
     "configuration_versions": frozenset({"registered_by", "registration_reason"}),
@@ -4366,13 +4081,6 @@ _RUN_DISCOVERY_INDEXES = {
     "configurations_name": ["name"],
     "configurations_created": ["created_at", "config_id"],
 }
-# The configuration tables as they were before the run-discovery columns existed.
-_LEGACY_CONFIGURATION_TABLES = (
-    "CREATE TABLE configurations (config_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)",
-    "CREATE TABLE configuration_versions (config_id TEXT NOT NULL, registry_version INTEGER NOT NULL, "
-    "package_checksum TEXT NOT NULL, declared_content TEXT NOT NULL, created_at TEXT NOT NULL, "
-    "PRIMARY KEY (config_id, registry_version), FOREIGN KEY (config_id) REFERENCES configurations(config_id))",
-)
 
 
 def _sqlite_columns(database: Path, table: str) -> list[str]:
@@ -4416,67 +4124,6 @@ def test_second_start_up_leaves_the_run_discovery_schema_unchanged(tmp_path: Pat
             assert present.count(column) == 1, (table, column)
 
 
-def test_preexisting_database_without_run_discovery_columns_is_upgraded(tmp_path: Path) -> None:
-    database = tmp_path / "legacy.sqlite3"
-    with sqlite3.connect(database) as connection:
-        connection.execute(_LEGACY_PRODUCT_RUNS_TABLE)
-        for statement in _LEGACY_CONFIGURATION_TABLES:
-            connection.execute(statement)
-        connection.execute(
-            "INSERT INTO product_runs (run_id, operation, configuration_reference, actor, audit_links, "
-            "started_at, finished_at, phase, outcome, summary, results) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                "legacy-run-001",
-                "plan",
-                "sha256:legacy",
-                None,
-                "[]",
-                datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat(),
-                None,
-                "planning",
-                None,
-                "{}",
-                "{}",
-            ),
-        )
-
-    store = SQLiteRunStore(database)
-
-    for table, columns in _RUN_DISCOVERY_COLUMNS.items():
-        assert columns <= set(_sqlite_columns(database, table)), table
-    for index, columns in _RUN_DISCOVERY_INDEXES.items():
-        assert _sqlite_index_columns(database, index) == columns
-    loaded = store.lookup("legacy-run-001").value
-    assert loaded is not None
-    assert loaded.destination_branch is None
-
-
-def test_undecodable_legacy_package_logs_its_config_id_only(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    database = tmp_path / "legacy.sqlite3"
-    undecodable = "{not json secret-token-value"
-    with sqlite3.connect(database) as connection:
-        connection.execute(_LEGACY_PRODUCT_RUNS_TABLE)
-        for statement in _LEGACY_CONFIGURATION_TABLES:
-            connection.execute(statement)
-        connection.execute(
-            "INSERT INTO configurations (config_id, created_at) VALUES ('legacy-config', '2026-01-01T00:00:00+00:00')"
-        )
-        connection.execute(
-            "INSERT INTO configuration_versions (config_id, registry_version, package_checksum, declared_content, "
-            "created_at) VALUES ('legacy-config', 1, 'sha256:legacy', ?, '2026-01-01T00:00:00+00:00')",
-            (undecodable,),
-        )
-
-    with caplog.at_level(logging.WARNING, logger="infrahub_sync.product_store.store"):
-        SQLiteRunStore(database)
-
-    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
-    assert any("legacy-config" in message for message in warnings)
-    assert not any("secret-token-value" in message for message in warnings)
-    with sqlite3.connect(database) as connection:
-        assert connection.execute("SELECT name FROM configurations").fetchone() == (None,)
-
-
 def test_run_destination_branch_round_trips(provider: ProductProjection) -> None:
     expected = _run().model_copy(update={"destination_branch": "feature-x"})
     provider.create_run(expected)
@@ -4487,16 +4134,11 @@ def test_run_destination_branch_round_trips(provider: ProductProjection) -> None
     assert loaded.destination_branch == "feature-x"
 
 
-def test_postgresql_start_up_adds_the_run_discovery_schema_once() -> None:
-    database = _FakePostgreSQLDatabase(
-        tables=_PARENT_TABLES,
-        columns={"product_runs": _PARENT_PRODUCT_RUNS_COLUMNS},
-    )
+def test_postgresql_start_up_creates_each_run_discovery_index_once_and_alters_no_column() -> None:
+    database = _FakePostgreSQLDatabase()
 
     PostgreSQLRunStore(database.connect)
 
-    for table, columns in _RUN_DISCOVERY_COLUMNS.items():
-        assert columns <= database.columns.get(table, set()), table
     index_statements = [statement for statement in database.statements if statement.startswith("CREATE INDEX")]
     for index, columns in _RUN_DISCOVERY_INDEXES.items():
         prefix = f"CREATE INDEX IF NOT EXISTS {index} ON "
@@ -4504,11 +4146,9 @@ def test_postgresql_start_up_adds_the_run_discovery_schema_once() -> None:
         assert len(issued) == 1, index
         assert f"({', '.join(columns)})" in issued[0], issued[0]
 
-    already_issued = len(database.statements)
     PostgreSQLRunStore(database.connect)
 
-    second_start_up = database.statements[already_issued:]
-    assert not [statement for statement in second_start_up if " ADD COLUMN " in statement]
+    assert not [statement for statement in database.statements if " COLUMN " in statement]
 
 
 @pytest.mark.parametrize("dialect", ["sqlite", "postgresql-emulated"])
@@ -4539,24 +4179,15 @@ def test_non_utc_started_at_is_stored_and_ordered_as_its_utc_instant(tmp_path: P
 
 
 class _FakePostgreSQLDatabase:
-    """In-memory PostgreSQL catalog modelling the four semantics a literal SQLite file
-    cannot: transactional DDL, transaction abort on error, ``ADD CONSTRAINT`` raising
-    ``42710`` when the named constraint already exists, and per-column ``is_nullable`` that
-    ``ALTER COLUMN ... DROP NOT NULL`` actually changes. This is what proves the schema
-    bootstrap fix itself; the general CRUD tests above use the real-SQLite-backed
-    ``_ConnectionAdapter`` instead, which does not model those four semantics.
+    """In-memory PostgreSQL catalog modelling the three semantics a literal SQLite file
+    cannot: transactional DDL, transaction abort on error, and ``ADD CONSTRAINT`` raising
+    ``42710`` when the named constraint already exists. This is what proves the schema
+    bootstrap itself; the general CRUD tests above use the real-SQLite-backed
+    ``_ConnectionAdapter`` instead, which does not model those three semantics.
     """
 
-    def __init__(
-        self,
-        *,
-        tables: frozenset[str] = frozenset(),
-        columns: dict[str, frozenset[str]] | None = None,
-        not_null: dict[str, frozenset[str]] | None = None,
-    ) -> None:
+    def __init__(self, *, tables: frozenset[str] = frozenset()) -> None:
         self.tables: set[str] = set(tables)
-        self.columns: dict[str, set[str]] = {name: set(cols) for name, cols in (columns or {}).items()}
-        self.not_null: dict[str, set[str]] = {name: set(cols) for name, cols in (not_null or {}).items()}
         self.constraints: set[str] = set()
         self.statements: list[str] = []
 
@@ -4568,8 +4199,6 @@ class _FakePostgreSQLConnection:
     def __init__(self, database: _FakePostgreSQLDatabase) -> None:
         self.database = database
         self.pending_tables: set[str] = set()
-        self.pending_columns: dict[str, set[str]] = {}
-        self.pending_dropped_not_null: dict[str, set[str]] = {}
         self.pending_constraints: set[str] = set()
         self.aborted = False
 
@@ -4578,10 +4207,6 @@ class _FakePostgreSQLConnection:
 
     def commit(self) -> None:
         self.database.tables |= self.pending_tables
-        for table, added in self.pending_columns.items():
-            self.database.columns.setdefault(table, set()).update(added)
-        for table, relaxed in self.pending_dropped_not_null.items():
-            self.database.not_null.setdefault(table, set()).difference_update(relaxed)
         self.database.constraints |= self.pending_constraints
         self._discard_pending()
 
@@ -4590,8 +4215,6 @@ class _FakePostgreSQLConnection:
 
     def _discard_pending(self) -> None:
         self.pending_tables = set()
-        self.pending_columns = {}
-        self.pending_dropped_not_null = {}
         self.pending_constraints = set()
         self.aborted = False
 
@@ -4600,9 +4223,7 @@ class _FakePostgreSQLConnection:
 
 
 _FAKE_CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)")
-_FAKE_ALTER_ADD_COLUMN = re.compile(r"^ALTER TABLE (\w+) ADD COLUMN (\w+)")
 _FAKE_ALTER_ADD_CONSTRAINT = re.compile(r"^ALTER TABLE \w+ ADD CONSTRAINT (\w+)")
-_FAKE_ALTER_DROP_NOT_NULL = re.compile(r"^ALTER TABLE (\w+) ALTER COLUMN (\w+) DROP NOT NULL")
 
 
 class _FakePostgreSQLCursor:
@@ -4624,7 +4245,7 @@ class _FakePostgreSQLCursor:
             raise
         return self
 
-    def _dispatch(self, operation: str, parameters: Sequence[Any]) -> tuple[tuple[Any, ...], ...]:  # noqa: PLR0911, PLR0912
+    def _dispatch(self, operation: str, parameters: Sequence[Any]) -> tuple[tuple[Any, ...], ...]:
         connection = self._connection
         database = connection.database
         if operation.startswith("SELECT pg_advisory_xact_lock("):
@@ -4634,38 +4255,8 @@ class _FakePostgreSQLCursor:
             table = match.group(1)
             if table not in database.tables:
                 connection.pending_tables.add(table)
-            if table == "mutation_receipts":
-                connection.pending_columns.setdefault(table, set()).update({"resource_kind", "resource_id"})
-            if table == "audit_events" and table not in database.tables:
-                # A fresh table is created with the event columns; a legacy one gains them by ALTER.
-                connection.pending_columns.setdefault(table, set()).update(
-                    {"event_type", "config_id", "registry_version", "branch"}
-                )
             return ()
         if operation.startswith(("CREATE UNIQUE INDEX IF NOT EXISTS", "CREATE INDEX IF NOT EXISTS")):
-            return ()
-        if "information_schema.columns" in operation:
-            table = parameters[0]
-            visible = database.columns.get(table, set()) | connection.pending_columns.get(table, set())
-            not_null = database.not_null.get(table, set()) - connection.pending_dropped_not_null.get(table, set())
-            return tuple((name, "NO" if name in not_null else "YES") for name in sorted(visible))
-        if match := _FAKE_ALTER_ADD_COLUMN.match(operation):
-            table, column = match.groups()
-            if table not in (database.tables | connection.pending_tables):
-                raise _FakeDriverError(sqlstate="42P01")  # relation "{table}" does not exist
-            connection.pending_columns.setdefault(table, set()).add(column)
-            return ()
-        if operation.startswith("UPDATE mutation_receipts SET resource_kind"):
-            return ()
-        if operation.startswith(("UPDATE audit_events SET event_type", "INSERT INTO audit_event_resources")):
-            # The audit-event backfill reads stored events; this catalog holds no rows.
-            return ()
-        if operation.startswith("SELECT configurations.config_id, versions.declared_content"):
-            # The configuration-name fill reads stored packages; this catalog holds no rows.
-            return ()
-        if match := _FAKE_ALTER_DROP_NOT_NULL.match(operation):
-            table, column = match.groups()
-            connection.pending_dropped_not_null.setdefault(table, set()).add(column)
             return ()
         if "information_schema.table_constraints" in operation:
             name = parameters[-1]
@@ -4696,53 +4287,6 @@ class _FakePostgreSQLCursor:
         pass
 
 
-_PARENT_PRODUCT_RUNS_COLUMNS = frozenset(
-    {
-        "run_id",
-        "operation",
-        "configuration_reference",
-        "actor",
-        "audit_links",
-        "started_at",
-        "finished_at",
-        "phase",
-        "outcome",
-        "summary",
-        "results",
-    }
-)
-_PARENT_TABLES = frozenset(
-    {"product_runs", "artifact_refs", "prefect_executions", "mutation_receipts", "write_admissions", "audit_events"}
-)
-# The pre-resource-identity ``mutation_receipts`` shape, whose ``run_id`` and ``prefect_key``
-# are still declared NOT NULL.
-_LEGACY_MUTATION_RECEIPT_COLUMNS = frozenset(
-    {
-        "receipt_id",
-        "actor",
-        "key_digest",
-        "operation",
-        "target_run_id",
-        "request_fingerprint",
-        "reason",
-        "run_id",
-        "prefect_key",
-        "state",
-        "response_status",
-        "response_body",
-        "flow_run_id",
-        "created_at",
-        "updated_at",
-    }
-)
-
-_LEGACY_AUDIT_EVENT_COLUMNS = frozenset({"event_id", "run_id", "actor", "operation", "reason", "outcome", "created_at"})
-
-
-def _drop_not_null_statements(database: _FakePostgreSQLDatabase) -> list[str]:
-    return [statement for statement in database.statements if "DROP NOT NULL" in statement]
-
-
 def test_postgresql_initialize_succeeds_twice_on_a_fresh_catalog() -> None:
     database = _FakePostgreSQLDatabase()
 
@@ -4751,154 +4295,6 @@ def test_postgresql_initialize_succeeds_twice_on_a_fresh_catalog() -> None:
 
     PostgreSQLRunStore(database.connect)
     assert {"configurations", "configuration_versions"} <= database.tables
-
-
-def test_postgresql_repeated_initialization_skips_completed_mutation_receipt_nullability_ddl() -> None:
-    connections: list[MagicMock] = []
-
-    def connect() -> MagicMock:
-        connection = MagicMock()
-        # One catalog read per table, in migration order: product_runs, configuration_versions,
-        # configurations; the configuration-name fill's package read; prefect_executions; the
-        # mutation-receipt nullability read; the audit-event columns; then the audit-event
-        # nullability read.
-        connection.cursor.return_value.fetchall.side_effect = [
-            (),
-            (),
-            (),
-            (),
-            (),
-            (
-                ("prefect_key", "YES"),
-                ("reason", "YES"),
-                ("resource_id", "NO"),
-                ("resource_kind", "NO"),
-                ("run_id", "YES"),
-            ),
-            (("event_type",), ("config_id",), ("registry_version",), ("branch",)),
-            (("reason", "YES"),),
-        ]
-        connection.cursor.return_value.fetchone.return_value = (1,)
-        connections.append(connection)
-        return connection
-
-    PostgreSQLRunStore(connect)
-    PostgreSQLRunStore(connect)
-
-    recurring_ddl = [
-        call.args[0].strip()
-        for connection in connections
-        for call in connection.cursor.return_value.execute.call_args_list
-        if call.args[0].strip().startswith(("ALTER TABLE mutation_receipts ALTER COLUMN", "ALTER TABLE audit_events"))
-        and call.args[0].strip().endswith("DROP NOT NULL")
-    ]
-    assert recurring_ddl == []
-
-
-def test_postgresql_legacy_mutation_receipt_nullability_migrates_once() -> None:
-    """A legacy ``NO`` catalog is relaxed on the first construction and left alone afterwards.
-
-    The two halves belong together: skipping the DDL only because a column is already nullable
-    is correct, skipping it while a real ``NOT NULL`` column survives is the legacy-migration
-    regression the idempotency work must not cause. ``reason`` is relaxed on both tables that
-    carry it, because a request may omit its audit reason.
-    """
-    database = _FakePostgreSQLDatabase(
-        tables=_PARENT_TABLES,
-        columns={
-            "product_runs": _PARENT_PRODUCT_RUNS_COLUMNS,
-            "mutation_receipts": _LEGACY_MUTATION_RECEIPT_COLUMNS,
-            "audit_events": _LEGACY_AUDIT_EVENT_COLUMNS,
-        },
-        not_null={
-            "mutation_receipts": frozenset({"run_id", "prefect_key", "reason"}),
-            "audit_events": frozenset({"actor", "operation", "reason", "outcome", "created_at"}),
-        },
-    )
-
-    PostgreSQLRunStore(database.connect)
-
-    assert _drop_not_null_statements(database) == [
-        "ALTER TABLE mutation_receipts ALTER COLUMN run_id DROP NOT NULL",
-        "ALTER TABLE mutation_receipts ALTER COLUMN prefect_key DROP NOT NULL",
-        "ALTER TABLE mutation_receipts ALTER COLUMN reason DROP NOT NULL",
-        "ALTER TABLE audit_events ALTER COLUMN reason DROP NOT NULL",
-    ]
-    assert database.not_null["mutation_receipts"] == set()
-    assert database.not_null["audit_events"] == {"actor", "operation", "outcome", "created_at"}
-
-    database.statements.clear()
-    PostgreSQLRunStore(database.connect)
-
-    assert _drop_not_null_statements(database) == []
-
-
-@pytest.mark.parametrize(
-    "catalog_rows",
-    [
-        pytest.param((("run_id",), ("prefect_key", "YES")), id="row-narrower-than-two-cells"),
-        pytest.param((("run_id", "UNKNOWN"), ("prefect_key", "YES")), id="value-outside-the-yes-no-domain"),
-        pytest.param((("run_id", None), ("prefect_key", "YES")), id="null-value"),
-        pytest.param((("run_id", 0), ("prefect_key", "YES")), id="non-string-value"),
-    ],
-)
-def test_postgresql_initialization_refuses_a_malformed_column_catalog_row(
-    catalog_rows: tuple[tuple[Any, ...], ...],
-) -> None:
-    """A catalog answer outside the closed nullability domain fails closed.
-
-    The store selects ``information_schema.columns`` as exactly (column_name, is_nullable),
-    and PostgreSQL declares ``is_nullable`` over the ``yes_or_no`` domain, so the only two
-    readable answers are ``"YES"`` and ``"NO"``. Anything else -- a narrower row, a value
-    outside that domain, or a non-string -- means the provider did not answer the statement
-    that was issued. Accepting it as "not NO" would silently skip the one-time legacy
-    migration and leave a real ``NOT NULL`` column in place, which no later construction
-    would ever repair.
-    """
-    connection = MagicMock()
-    # Empty catalogs for product_runs, configuration_versions and configurations, no package
-    # for the configuration-name fill, an empty prefect_executions catalog, then the
-    # mutation_receipts nullability read under test.
-    connection.cursor.return_value.fetchall.side_effect = [(), (), (), (), (), catalog_rows]
-    connection.cursor.return_value.fetchone.return_value = (1,)
-
-    with pytest.raises(product_store.ProductStoreProviderError):
-        PostgreSQLRunStore(lambda: connection)
-
-    connection.rollback.assert_called_once_with()
-
-
-def test_postgresql_initialize_succeeds_twice_on_a_prepopulated_parent_catalog() -> None:
-    """The realistic upgrade path: every parent table already exists, the two registry tables
-    do not yet. Regression coverage for the silent partial-initialization defect, where the old
-    probe-and-rollback introspection wiped the uncommitted ``CREATE TABLE`` for both new tables
-    before they ever committed, while ``_initialize()`` still reported success.
-    """
-    database = _FakePostgreSQLDatabase(
-        tables=_PARENT_TABLES,
-        columns={"product_runs": _PARENT_PRODUCT_RUNS_COLUMNS},
-    )
-
-    PostgreSQLRunStore(database.connect)
-    assert {"configurations", "configuration_versions"} <= database.tables
-
-    PostgreSQLRunStore(database.connect)
-    assert {"configurations", "configuration_versions"} <= database.tables
-
-
-def test_postgresql_dialect_reads_columns_via_information_schema_without_probing_pragma() -> None:
-    database = _FakePostgreSQLDatabase(
-        tables=frozenset({"product_runs"}),
-        columns={"product_runs": frozenset({"run_id", "operation"})},
-    )
-    store = object.__new__(PostgreSQLRunStore)
-    store._placeholder = "%s"
-    store._dialect = "postgresql"
-    cursor = database.connect().cursor()
-
-    columns = store._read_table_columns(cursor, "product_runs")
-
-    assert columns == frozenset({"run_id", "operation"})
 
 
 def test_postgresql_dialect_binding_constraint_checks_existence_before_creating() -> None:
@@ -4918,27 +4314,6 @@ def test_postgresql_dialect_binding_constraint_checks_existence_before_creating(
     second_connection = database.connect()
     store._ensure_configuration_binding_constraint(second_connection.cursor())
     second_connection.commit()
-
-
-def test_postgresql_schema_bootstrap_propagates_a_non_duplicate_alter_failure() -> None:
-    """``_is_duplicate_column_error`` must not swallow a genuine ALTER failure."""
-    connection = MagicMock()
-    connection.cursor.return_value.fetchall.return_value = []
-    connection.cursor.return_value.fetchone.return_value = None
-
-    def side_effect(operation: str, parameters: tuple[Any, ...] = ()) -> MagicMock:  # noqa: ARG001
-        # pylint: disable=unused-argument
-        if operation.strip().startswith("ALTER TABLE product_runs ADD COLUMN"):
-            raise _FakeDriverError(sqlstate="42501")
-        return connection.cursor.return_value
-
-    connection.cursor.return_value.execute.side_effect = side_effect
-
-    with pytest.raises(_FakeDriverError):
-        PostgreSQLRunStore(lambda: connection)
-
-    connection.rollback.assert_called_once_with()
-    connection.close.assert_called_once_with()
 
 
 def _reachable_postgresql_dsn() -> str | None:
@@ -4965,7 +4340,7 @@ def _reachable_postgresql_dsn() -> str | None:
 
 @pytest.mark.integration
 def test_postgresql_run_store_initializes_against_a_real_server() -> None:
-    """Real-server confirmation of the schema-bootstrap fix, and of the run-to-configuration
+    """Real-server confirmation of the schema bootstrap, and of the run-to-configuration
     binding columns and CHECK constraint that were otherwise only verified by hand.
 
     The case runs inside a generated schema it creates and drops, so a DSN aimed at the wrong
@@ -4979,10 +4354,9 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
             uv run --with 'psycopg[binary]' python -m pytest -m integration \\
             tests/product_store/test_contract.py::test_postgresql_run_store_initializes_against_a_real_server
 
-    Covers the same three constructions the in-memory fake proves above, now against a real
-    server: a fresh catalog (twice consecutively), and the pre-populated parent-tables upgrade
-    path (twice consecutively). Also asserts, against the real server, that construction leaves
-    ``product_runs`` with its three binding columns and the binding CHECK constraint in place.
+    Covers the construction the in-memory fake proves above, now against a real server: a
+    fresh catalog, twice consecutively. Also asserts, against the real server, that construction
+    leaves ``product_runs`` with its three binding columns and the binding CHECK constraint in place.
     """
     endpoint = _reachable_postgresql_dsn()
     if endpoint is None:
@@ -5037,26 +4411,6 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
         assert binding_columns <= product_runs_columns()
         assert binding_constraint_exists()
 
-        # The realistic upgrade path: every parent table pre-exists, the two registry tables do not.
-        schema.reset()
-        parent_statements = [
-            statement.strip()
-            for statement in product_store_store._SCHEMA.split(";")
-            if statement.strip() and not any(table in statement for table in registry_tables)
-        ]
-        with psycopg.connect(dsn) as admin:
-            for statement in parent_statements:
-                admin.execute(statement)
-            admin.commit()
-        PostgreSQLRunStore(connect)
-        assert registry_tables <= committed_tables()
-        assert binding_columns <= product_runs_columns()
-        assert binding_constraint_exists()
-        PostgreSQLRunStore(connect)
-        assert registry_tables <= committed_tables()
-        assert binding_columns <= product_runs_columns()
-        assert binding_constraint_exists()
-
         # The CHECK constraint must actually enforce the binding invariant against a real server,
         # not merely exist by name.
         _assert_real_postgresql_refuses_partial_configuration_binding(dsn)
@@ -5073,10 +4427,9 @@ def test_postgresql_run_store_initializes_concurrently_against_a_real_server() -
     """Several processes starting at once must all initialize the same existing schema.
 
     Every service process runs the schema initialization on start-up, so two workers that
-    start flow runs together initialize concurrently. Each `CREATE INDEX IF NOT EXISTS`
-    takes a SHARE lock on its table even when the index exists, and the audit-event fill
-    that follows needs ROW EXCLUSIVE on the same table. Two initializers each holding the
-    SHARE lock and waiting for the other's is a deadlock, and PostgreSQL aborts one of them.
+    start flow runs together initialize concurrently. The schema-initialization lock makes
+    them run one after the other, so none of them fails on a catalog entry another one is
+    creating or on a table lock another one holds.
     """
     endpoint = _reachable_postgresql_dsn()
     if endpoint is None:
@@ -5108,30 +4461,13 @@ def test_postgresql_run_store_initializes_concurrently_against_a_real_server() -
         schema.drop()
 
 
-# The pre-migration shape of the two tables that carry their own column migrations.
-_LEGACY_RECEIPT_AND_EXECUTION_DDL: list[LiteralString] = [
-    "CREATE TABLE mutation_receipts ("
-    "receipt_id TEXT PRIMARY KEY, actor TEXT NOT NULL, key_digest TEXT NOT NULL, "
-    "operation TEXT NOT NULL, target_run_id TEXT, request_fingerprint TEXT NOT NULL, "
-    "reason TEXT NOT NULL, run_id TEXT NOT NULL, prefect_key TEXT NOT NULL, "
-    "state TEXT NOT NULL, response_status INTEGER, response_body TEXT, flow_run_id TEXT, "
-    "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (actor, key_digest))",
-    "CREATE TABLE prefect_executions ("
-    "run_id TEXT NOT NULL, flow_run_id TEXT NOT NULL, deployment_id TEXT, purpose TEXT NOT NULL, "
-    "attempt INTEGER NOT NULL, last_observed_state TEXT, last_observed_at TEXT, "
-    "position INTEGER NOT NULL, mutation_receipt_id TEXT UNIQUE, "
-    "PRIMARY KEY (run_id, flow_run_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id), "
-    "FOREIGN KEY (mutation_receipt_id) REFERENCES mutation_receipts(receipt_id))",
-]
-
-
 @pytest.mark.integration
-def test_postgresql_migration_ignores_same_named_tables_in_a_sibling_schema() -> None:
-    """A sibling schema's migrated ``product_runs`` must not suppress the target's column migration.
+def test_postgresql_initialization_ignores_same_named_constraints_in_a_sibling_schema() -> None:
+    """A sibling schema's constraints must not suppress the target's own constraints.
 
-    Column introspection that omits ``table_schema`` sees the sibling's migrated columns, decides
-    nothing is missing, and leaves the target's legacy ``product_runs``, ``mutation_receipts`` and
-    ``prefect_executions`` without them.
+    A constraint lookup that omits ``table_schema`` sees the sibling's ``product_runs`` and
+    ``mutation_receipts`` constraints, decides nothing is missing, and leaves the target's
+    tables without them.
     """
     endpoint = _reachable_postgresql_dsn()
     if endpoint is None:
@@ -5143,16 +4479,6 @@ def test_postgresql_migration_ignores_same_named_tables_in_a_sibling_schema() ->
 
     target = isolated_schema(endpoint)
     sibling = isolated_schema(endpoint)
-    binding_columns = {"config_id", "registry_version", "package_checksum"}
-
-    def columns_of(schema_name: str, dsn: str) -> set[str]:
-        with psycopg.connect(dsn) as admin:
-            rows = admin.execute(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = 'product_runs' AND table_schema = %s",
-                (schema_name,),
-            ).fetchall()
-        return {row[0] for row in rows}
 
     def constraints_of(schema_name: str, dsn: str) -> set[tuple[str, str]]:
         with psycopg.connect(dsn) as admin:
@@ -5171,43 +4497,13 @@ def test_postgresql_migration_ignores_same_named_tables_in_a_sibling_schema() ->
     try:
         sibling.create()
         target.create()
-        # The sibling is fully migrated, so it carries the binding columns.
+        # The sibling is initialized first, so it carries both constraints.
         PostgreSQLRunStore(lambda: PsycopgConnectionFactory(psycopg.connect)(sibling.dsn))
-        assert binding_columns <= columns_of(sibling.name, sibling.dsn)
         assert guards <= constraints_of(sibling.name, sibling.dsn)
-
-        # The target holds the legacy tables only: same table names, none of the later columns.
-        # The two tables with their own migrations get their legacy shape, not the current one.
-        migrated_elsewhere = ("configurations", "configuration_versions", "mutation_receipts", "prefect_executions")
-        liveness = {column for column, _ in product_store_store._PREFECT_EXECUTION_LIVENESS_COLUMNS}
-        with psycopg.connect(target.dsn) as admin:
-            for statement in product_store_store._SCHEMA.split(";"):
-                if statement.strip() and not any(table in statement for table in migrated_elsewhere):
-                    admin.execute(statement)
-            for statement in _LEGACY_RECEIPT_AND_EXECUTION_DDL:
-                admin.execute(statement)
-            admin.commit()
-
-        def legacy_columns_of(table: str, schema: IsolatedSchema) -> set[str]:
-            with psycopg.connect(schema.dsn) as admin:
-                rows = admin.execute(
-                    "SELECT column_name FROM information_schema.columns WHERE table_name = %s AND table_schema = %s",
-                    (table, schema.name),
-                ).fetchall()
-            return {row[0] for row in rows}
-
-        assert not binding_columns & columns_of(target.name, target.dsn)
         assert not guards & constraints_of(target.name, target.dsn)
-        assert not {"resource_kind", "resource_id"} & legacy_columns_of("mutation_receipts", target)
-        assert not liveness & legacy_columns_of("prefect_executions", target)
-        assert {"resource_kind", "resource_id"} <= legacy_columns_of("mutation_receipts", sibling)
-        assert liveness <= legacy_columns_of("prefect_executions", sibling)
 
         PostgreSQLRunStore(lambda: PsycopgConnectionFactory(psycopg.connect)(target.dsn))
 
-        assert binding_columns <= columns_of(target.name, target.dsn)
-        assert {"resource_kind", "resource_id"} <= legacy_columns_of("mutation_receipts", target)
-        assert liveness <= legacy_columns_of("prefect_executions", target)
         # A same-named constraint in the sibling must not satisfy the existence checks.
         assert guards <= constraints_of(target.name, target.dsn)
     finally:
@@ -5429,6 +4725,28 @@ def test_reconstructing_the_store_restores_a_dropped_update_trigger(tmp_path: Pa
     assert unchanged == (None, None, None)
 
 
+@pytest.mark.parametrize(
+    "dropped",
+    ["mutation_receipts_resource_consistent_insert", "mutation_receipts_resource_consistent_update"],
+)
+def test_reconstructing_the_store_restores_a_missing_receipt_trigger(tmp_path: Path, dropped: str) -> None:
+    """SQLite commits each receipt trigger on its own, so a start-up can stop after the first.
+
+    The next start-up must create the missing trigger and must not fail on the one that exists.
+    """
+    database = tmp_path / "records.sqlite3"
+    SQLiteRunStore(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute(f"DROP TRIGGER {dropped}")
+        connection.commit()
+
+    SQLiteRunStore(database)
+
+    with sqlite3.connect(database) as connection:
+        triggers = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
+    assert set(product_store_store._SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES) <= triggers
+
+
 def test_postgresql_dialect_binding_constraint_uses_a_check_constraint_not_a_trigger() -> None:
     database = _FakePostgreSQLDatabase()
 
@@ -5537,131 +4855,6 @@ def test_a_missing_reason_is_refused(build: Callable[[], BaseModel]) -> None:
         type(model).model_validate(payload)
 
     assert [(error["type"], error["loc"]) for error in caught.value.errors()] == [("missing", ("reason",))]
-
-
-_LEGACY_AUDIT_EVENTS_DDL = (
-    "CREATE TABLE audit_events ("
-    "event_id TEXT PRIMARY KEY, run_id TEXT, actor TEXT NOT NULL, operation TEXT NOT NULL, "
-    "reason TEXT NOT NULL, outcome TEXT NOT NULL, created_at TEXT NOT NULL)"
-)
-
-
-def _create_legacy_reason_tables(database: Path) -> None:
-    """Create the legacy receipt and audit tables, whose reason columns are NOT NULL."""
-    legacy = sqlite3.connect(database)
-    try:
-        legacy.execute(_LEGACY_RECEIPT_AND_EXECUTION_DDL[0])
-        legacy.execute(_LEGACY_AUDIT_EVENTS_DDL)
-        legacy.commit()
-    finally:
-        legacy.close()
-
-
-def _sqlite_table_sql_and_reason_notnull(database: Path) -> dict[str, tuple[str, int]]:
-    connection = sqlite3.connect(database)
-    try:
-        result: dict[str, tuple[str, int]] = {}
-        for table in ("mutation_receipts", "audit_events"):
-            (sql,) = connection.execute(
-                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
-            ).fetchone()
-            notnull = next(row[3] for row in connection.execute(f"PRAGMA table_info({table})") if row[1] == "reason")
-            result[table] = (sql, notnull)
-        return result
-    finally:
-        connection.close()
-
-
-def test_sqlite_migration_makes_legacy_reason_columns_nullable_and_is_idempotent(tmp_path: Path) -> None:
-    """A legacy SQLite file keeps its rows and accepts a NULL reason after the migration.
-
-    The second construction runs the same migration over the already-migrated file, which
-    must leave the table declarations exactly as the first construction left them.
-    """
-    database = tmp_path / "legacy.sqlite3"
-    legacy_receipt = _receipt()
-    _create_legacy_reason_tables(database)
-    legacy = sqlite3.connect(database)
-    try:
-        legacy_values = product_store_store._receipt_values(legacy_receipt)
-        legacy.execute(
-            "INSERT INTO mutation_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            legacy_values[:7] + legacy_values[9:],
-        )
-        legacy.execute(
-            "INSERT INTO audit_events VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                "audit-legacy",
-                "run-001",
-                "operator@example.com",
-                "plan",
-                "legacy reason",
-                "accepted",
-                "2026-08-10T12:00:00+00:00",
-            ),
-        )
-        legacy.commit()
-        with pytest.raises(sqlite3.IntegrityError):
-            legacy.execute(
-                "INSERT INTO audit_events VALUES (?, ?, ?, ?, ?, ?, ?)",
-                ("audit-null", None, "operator@example.com", "plan", None, "accepted", "2026-08-10T12:00:00+00:00"),
-            )
-    finally:
-        legacy.close()
-
-    SQLiteRunStore(database)
-    migrated = _sqlite_table_sql_and_reason_notnull(database)
-    SQLiteRunStore(database)
-
-    assert _sqlite_table_sql_and_reason_notnull(database) == migrated
-    assert {table: notnull for table, (_sql, notnull) in migrated.items()} == {
-        "mutation_receipts": 0,
-        "audit_events": 0,
-    }
-    projection = ProductProjection(SQLiteRunStore(database), FileArtifactStore(tmp_path / "objects"))
-    restored = projection.lookup_mutation(legacy_receipt.actor, legacy_receipt.key_digest).value
-    assert restored is not None
-    assert restored.reason == legacy_receipt.reason
-
-    absent = _receipt("mutation-002", run_id="run-002", client_key="second-key").model_copy(update={"reason": None})
-    reserved, created = projection.reserve_mutation(absent, run=_run("run-002"))
-    projection.record_audit(_audit_event("audit-no-reason", reason=None))
-
-    assert created is True
-    assert reserved.reason is None
-    assert sorted((event.event_id, event.reason) for event in projection.audit_events("run-001")) == [
-        ("audit-legacy", "legacy reason"),
-        ("audit-no-reason", None),
-    ]
-
-
-def test_sqlite_migration_writes_the_schema_table_only_while_a_reason_column_is_not_null(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The first construction rewrites the legacy declarations; a later one leaves them alone."""
-    database = tmp_path / "legacy.sqlite3"
-    _create_legacy_reason_tables(database)
-
-    statements: list[str] = []
-    connect = sqlite3.connect
-
-    def traced(path: Path) -> sqlite3.Connection:
-        connection = connect(path)
-        connection.set_trace_callback(statements.append)
-        return connection
-
-    def schema_writes() -> list[str]:
-        return [statement for statement in statements if "writable_schema" in statement]
-
-    monkeypatch.setattr(sqlite3, "connect", traced)
-    SQLiteRunStore(database)
-    first = schema_writes()
-    statements.clear()
-    SQLiteRunStore(database)
-
-    assert first == ["PRAGMA writable_schema = ON", "PRAGMA writable_schema = OFF"] * 2
-    assert statements != []
-    assert schema_writes() == []
 
 
 # The run list (US1): one store query over the binding columns, newest first, keyset paged.

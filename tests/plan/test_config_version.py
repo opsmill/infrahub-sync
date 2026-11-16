@@ -39,9 +39,9 @@ from infrahub_sync.plan.models import PlannedOperation
 from infrahub_sync.plan.reader import load_plan_artifact
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, PLAN_DIR_NAME, write_plan_artifact
 from infrahub_sync.potenda import Potenda
-from infrahub_sync.utils import get_instance
 from tests.plan.artifact_fixtures import RUN_ID, operation_record
 from tests.plan.ownership_fixtures import granted_ownership
+from tests.sync_instances import get_instance
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -206,8 +206,8 @@ def run_tags(parameters: dict[str, object]) -> frozenset[str]:
     """Return the Prefect tags that identify one run, its stage and its configuration version.
 
     Built only from identifiers the run resource already publishes: never the actor, the
-    branch, the work pool or a secret. A legacy run has no registry version and gets no
-    configuration tags.
+    branch, the work pool or a secret. Parameters that carry no configuration ID and
+    registry version get no configuration tags.
     """
     tags: set[str] = set()
     run_id = parameters.get("run_id")

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from invoke import Context, Exit, task
 
+from .linter import _ty_check_command
 from .utils import ESCAPED_REPO_PATH, REPO_BASE
 
 NAMESPACE = "INFRAHUB-SYNC-TEST"
@@ -85,7 +86,7 @@ def tests_all(context: Context) -> None:
 # ----------------------------------------------------------------------------
 
 CHECK_310_LEGS = (
-    "ty check, with the Python 3.10 excludes for infrahub_sync/service and tests/service",
+    "ty check, with the Python 3.10 excludes for the service and testcontainers trees and their tests",
     "unit tests on Python 3.10 with the dev and prefect extras",
     "unit tests on Python 3.10 with the dev extra alone, without service runtimes",
 )
@@ -117,11 +118,7 @@ def check_310(context: Context) -> None:
         context.run("uv sync --python 3.10 --frozen --extra dev --extra prefect", env=CHECK_310_ENVIRONMENT, pty=True)
 
         print(f" - [{NAMESPACE}] {CHECK_310_LEGS[0]}")
-        context.run(
-            "uv run --no-sync ty check --exclude infrahub_sync/service --exclude tests/service .",
-            env=CHECK_310_ENVIRONMENT,
-            pty=True,
-        )
+        context.run(_ty_check_command(3, 10, runner="uv run --no-sync"), env=CHECK_310_ENVIRONMENT, pty=True)
 
         print(f" - [{NAMESPACE}] {CHECK_310_LEGS[1]}")
         context.run("uv run --no-sync invoke tests.tests-unit", env=CHECK_310_ENVIRONMENT, pty=True)

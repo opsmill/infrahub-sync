@@ -35,13 +35,13 @@ from infrahub_sync.plan.errors import (
     SourcePeerUnresolvedError,
     UnserializablePayloadValueError,
 )
-from infrahub_sync.utils import get_instance
 from tests.adapters.test_infrahub_planned_write import (
     PeerResolver,
     RecordingClient,
     make_adapter,
     server_operation,
 )
+from tests.sync_instances import get_instance
 from tests.test_generated_examples import REPO_ROOT, _load_snapshot
 from tests.test_potenda_plan_artifact import (
     _FakeAdapter,

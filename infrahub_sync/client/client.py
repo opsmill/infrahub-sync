@@ -317,8 +317,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
 
         config_id = self._identifier(config_id, "config_id")
         version = self._positive_integer(registry_version, "registry_version")
-        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
-            raise ClientInputError(_OFFSET_ARG)
+        self._offset(offset)
         if type(limit) is not int or not 1 <= limit <= 256:  # pylint: disable=unidiomatic-typecheck
             raise ClientInputError(_LIMIT_ARG)
         # The service refuses an empty name and one with surrounding whitespace (`parse_branch`).
@@ -421,8 +420,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             if bound is not None:
                 params.append((name, self._aware_time(bound, name)))
         params.extend(self._page_params(limit, None).items())
-        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
-            raise ClientInputError(_OFFSET_ARG)
+        self._offset(offset)
         if offset:
             params.append((_OFFSET_ARG, offset))
         return self._request_model(_LIST_EVENTS, "GET", "/events", model=EventPage, success={200}, params=tuple(params))
@@ -502,8 +500,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             if type(limit) is not int or not MIN_LIMIT <= limit <= MAX_LOG_LIMIT:  # pylint: disable=unidiomatic-typecheck
                 raise ClientInputError(_LIMIT_ARG)
             params.append((_LIMIT_ARG, limit))
-        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
-            raise ClientInputError(_OFFSET_ARG)
+        self._offset(offset)
         if offset:
             params.append((_OFFSET_ARG, offset))
         return self._request_model(
@@ -602,8 +599,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             type(expected_checksum) is not str or not _PLAN_CHECKSUM.fullmatch(expected_checksum)  # pylint: disable=unidiomatic-typecheck
         ):
             raise ClientInputError(_EXPECTED_CHECKSUM_ARG)
-        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
-            raise ClientInputError(_OFFSET_ARG)
+        self._offset(offset)
         if type(limit) is not int or not MIN_LIMIT <= limit <= MAX_REPORT_LIMIT:  # pylint: disable=unidiomatic-typecheck
             raise ClientInputError(_LIMIT_ARG)
         params: dict[str, str | int] = {"offset": offset, "limit": limit}
@@ -1029,6 +1025,12 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         if not isinstance(value, datetime) or value.utcoffset() is None:
             raise ClientInputError(argument)
         return value.isoformat()
+
+    @staticmethod
+    def _offset(offset: object) -> None:
+        """Refuse an `offset` that is not a non-negative integer."""
+        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_OFFSET_ARG)
 
     @staticmethod
     def _positive_integer(value: object, argument: str) -> int:

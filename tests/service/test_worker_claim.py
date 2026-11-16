@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -81,7 +80,7 @@ def _current_prefect_worker(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(service_flow, "get_client", lambda **_kwargs: client, raising=False)
 
 
-def _projection(tmp_path: Path, *, submitted_at: datetime | None = None, migrated: bool = False):
+def _projection(tmp_path: Path, *, submitted_at: datetime | None = None):
     projection = local_product_projection(tmp_path)
     now = datetime.now(timezone.utc)
     effective_submitted_at = now if submitted_at is None else submitted_at
@@ -101,16 +100,9 @@ def _projection(tmp_path: Path, *, submitted_at: datetime | None = None, migrate
             flow_run_id=FLOW_ID,
             purpose="plan",
             attempt=1,
-            last_observed_at=effective_submitted_at if migrated else None,
             submitted_at=effective_submitted_at,
         ),
     )
-    if migrated:
-        with sqlite3.connect(tmp_path / "product-records.sqlite3") as connection:
-            connection.execute(
-                "UPDATE prefect_executions SET submitted_at = NULL WHERE run_id = ? AND flow_run_id = ?",
-                ("run-worker-claim", FLOW_ID),
-            )
     return projection
 
 
@@ -182,16 +174,12 @@ def test_expired_worker_claim_refusal_precedes_all_stage_runtime_construction(
     stage: Literal["plan", "verify", "apply", "sync"],
 ) -> None:
     """An expired admission cannot enter registry, package, adapter, cache, or artifact work."""
-    projection = _projection(
-        tmp_path,
-        submitted_at=datetime.now(timezone.utc) - timedelta(seconds=2),
-        migrated=True,
-    )
+    projection = _projection(tmp_path, submitted_at=datetime.now(timezone.utc) - timedelta(seconds=2))
     constructed: list[str] = []
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
     monkeypatch.setenv("INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS", "1")
     monkeypatch.setattr(service_flow, "_prefect_flow_run_id", lambda: FLOW_ID)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     monkeypatch.setattr(service_flow, "_execute_stage", lambda *_args, **_kwargs: constructed.append(stage))
 
     state = service_flow.service_sync_run.fn("run-worker-claim", stage)
@@ -221,7 +209,7 @@ def test_claim_refusal_prevents_registry_and_adapter_construction(
     constructed: list[object] = []
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
     monkeypatch.setattr(service_flow, "_prefect_flow_run_id", lambda: flow_id)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", lambda *_args, **_kwargs: constructed.append(True))
 
     refusal = service_flow.service_sync_run.fn("run-worker-claim", "plan")
@@ -301,7 +289,7 @@ def test_claim_refusal_is_logged_at_error_before_the_flow_fails(
     def refuse(*_args: object) -> tuple[str, str]:
         raise refused
 
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), _projection(tmp_path)))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: _projection(tmp_path))
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (run_logger, True))
     monkeypatch.setattr(service_flow, "_claim_current_execution", refuse)
 

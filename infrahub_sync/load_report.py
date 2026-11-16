@@ -9,7 +9,7 @@ the left-out records (data-model.md).
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Literal, TypeAlias, get_args
+from typing import Any, Literal, TypeAlias
 
 import pydantic
 
@@ -28,8 +28,6 @@ LoadReportReason: TypeAlias = Literal[
 `peer_not_loaded` names a record whose required peer was itself not loaded; the plan step
 records it as a dependent left-out record, not as a problem.
 """
-
-LOAD_REPORT_REASONS: tuple[LoadReportReason, ...] = get_args(LoadReportReason)
 
 
 _NO_SOURCE_ID_VALUES = frozenset({"", "None"})

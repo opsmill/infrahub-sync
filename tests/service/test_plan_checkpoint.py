@@ -171,7 +171,7 @@ def test_the_plan_checkpoint_publishes_before_the_public_review(
     """A run becomes publicly reviewable only after its internal handoff is durable."""
     run_id = "run-plan-checkpoint-order"
     projection = _OrderedProjection(_product_run(tmp_path / "product", run_id))
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
 
     service_sync_run.fn(run_id, "plan", *_binding(projection, run_id))
 
@@ -189,7 +189,7 @@ def test_the_plan_checkpoint_carries_the_plan_and_its_declared_source_snapshots(
     """Membership is the plan files plus every snapshot the manifest accounts for."""
     run_id = "run-plan-checkpoint-members"
     projection = _product_run(tmp_path / "product", run_id)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
 
     service_sync_run.fn(run_id, "plan", *_binding(projection, run_id))
 
@@ -212,7 +212,7 @@ def test_a_failed_checkpoint_publication_leaves_no_review_and_no_planned_result(
     """The public review artifact and the planned verdict both depend on the handoff."""
     run_id = "run-plan-checkpoint-failure"
     projection = _product_run(tmp_path / "product", run_id)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
 
     def refuse(*_args: object, **kwargs: object) -> None:
         if kwargs.get("visibility") == "internal":
@@ -443,7 +443,7 @@ def test_the_verify_stage_refuses_a_missing_checkpoint_in_its_own_scratch(
     stale.mkdir(parents=True)
     _write_plan(stale, run_id)
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "shared-cache"))
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
 
     with pytest.raises(RuntimeError) as failure:
         service_sync_run.fn(run_id, "verify", *_binding(projection, run_id))
@@ -476,7 +476,7 @@ def test_the_verify_stage_reads_the_checkpoint_it_rehydrated(monkeypatch: pytest
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", lambda *_a, **_k: _instance())
     monkeypatch.setattr(service_flow, "build_runtime_model_plan", lambda *_a, **_k: None)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
 
     result = service_sync_run.fn(run_id, "verify", *_binding(projection, run_id))
 
@@ -513,7 +513,7 @@ def test_a_read_stage_advances_no_baseline(monkeypatch: pytest.MonkeyPatch, tmp_
     monkeypatch.setattr(service_flow, "resolve_runtime_instance", lambda *_a, **_k: _instance())
     monkeypatch.setattr(service_flow, "build_runtime_model_plan", lambda *_a, **_k: None)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
 
     service_sync_run.fn(run_id, "verify", *binding)
 

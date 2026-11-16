@@ -6,8 +6,9 @@ title: "Knowledge"
 
 Understand the service components, execution stages and Python modules before changing
 infrahub-sync. A **registered run** is one the Sync HTTP API creates against a
-configuration package registered in PostgreSQL, as opposed to a legacy run resolved from a
-local configuration directory; see [Sync architecture](sync-architecture.md) for the
+configuration package registered in PostgreSQL. The Sync worker runs registered runs only.
+The direct Prefect deployment resolves a configuration from a local configuration directory
+and creates no registered run. See [Sync architecture](sync-architecture.md) for the
 lifecycle. Start there, or with the repository tour for a module to edit. For development
 rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
 [Developer guides](../guides/index.md).
@@ -55,7 +56,7 @@ rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
 - [V2 configuration conversion](v2-configuration-conversion.md) — how `configs convert` is
   built: the pure conversion, the fixed tables of v2 behaviour, the live-schema fill, and how
   the file is written.
-- [The shared execution surface](execution-surface.md) — service and direct Python
+- [The shared execution surface](execution-surface.md) — service and direct Prefect
   callers, plan/verify/apply inputs and return types, failure handling and filesystem locks.
 - [Prefect orchestration](orchestration-prefect.md) — registered service execution and
   direct read-only planning, with their inputs, results and optional dependencies.

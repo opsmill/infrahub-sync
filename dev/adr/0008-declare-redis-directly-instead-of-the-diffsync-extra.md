@@ -1,6 +1,7 @@
 # 8. Declare redis directly instead of using the diffsync `[redis]` extra
 
-**Status**: Accepted
+**Status**: Superseded on 2026-11-16 by
+[ADR 0044](0044-the-base-install-declares-no-redis-client.md)
 **Date**: 2026-07-31
 **Source**: `dev/specs/archive/002-prefect-managed-remote-run/research.md`
 (D005, "Gate-ratified resolution")
