@@ -1,0 +1,39 @@
+infrahub_sync/warm_read.py
+  s_4c94b159df7a98::t_9f2b26003e5083 90,99,101,115
+infrahub_sync/__init__.py
+  s_4c94b159df7a98::t_9f2b26003e5083 472,513,523,590,597,603
+infrahub_sync/plan/derive.py
+  s_4c94b159df7a98::t_9f2b26003e5083 633
+infrahub_sync/adapters/references.py
+  s_4c94b159df7a98::t_9f2b26003e5083 17
+tests/plan/test_emptied_relationship.py
+  s_4c94b159df7a98::t_9f2b26003e5083 260-261,263-274,296-297,305-306,309,311
+  s_4c94b159df7a98::t_3b69bbdefaa6f7 10-13
+  s_c4f9bd3d1fabe8::t_6ecaf289353c5a 262
+tests/plan/test_destination_id_capture.py
+  s_4c94b159df7a98::t_3b69bbdefaa6f7 1,11-13,141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "580a2990231cb53c8ad7f7dd02b173103773bc99",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_c4f9bd3d1fabe8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f7bf5003-b7b7-444d-a7c2-d1ecbcb55ad7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
