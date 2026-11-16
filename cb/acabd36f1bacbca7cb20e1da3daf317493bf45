@@ -1,0 +1,21 @@
+dev/specs/019-second-plan-real-changes/checklists/requirements.md
+  s_4c94b159df7a98::t_b8c71a9c5b41e9 1-43
+dev/specs/019-second-plan-real-changes/spec.md
+  s_4c94b159df7a98::t_4afc0bb96ec7c2 1-482
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cbacabd36f1bacbca7cb20e1da3daf317493bf45",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
