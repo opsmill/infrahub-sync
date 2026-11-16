@@ -61,7 +61,7 @@ Rules for every task:
     dependency of `infrahub`) and `sync` to the marker list.
   - Add `infrahub-sync` to `LOCAL_CHART_NAMES` in `H/tests/e2e/conftest.py` only if the harness
     needs it to install a local chart; read how `infrahub-mcp` is installed first.
-- [ ] T003 [P] Build the Sync image from this repository for local verification:
+- [X] T003 [P] Build the Sync image from this repository for local verification:
   `docker build -t infrahub-sync:chart-test S/`, run in the background. Then check it:
   `docker run --rm infrahub-sync:chart-test python -c "import infrahub_sync.service.prefect_server, infrahub_sync.service.trust_store"`.
   Record the image ID in the task notes.
