@@ -411,7 +411,7 @@ chart template changed.
 
 Kube context `sync-chart` (minikube, Kubernetes v1.37.0, arm64), Helm v4.2.4, image
 `infrahub-sync:chart-test-2` with `image.pullPolicy=Never`, `H/charts/infrahub-sync` at commit
-`8702d11` of `H`. All times are UTC. Each release read its credentials from a Secret
+`8702d11` of `H` (the chart templates are the same at `6f88cf6`). All times are UTC. Each release read its credentials from a Secret
 `infrahub-sync` created in its namespace with `kubectl create secret generic --from-env-file`; no
 credential value was printed.
 
@@ -437,8 +437,15 @@ tests/unit/test_infrahub_sync_chart.py::test_rr44_external_postgresql_without_co
 11 passed, 77 deselected in 0.43s
 ```
 
-RR-21 was already covered by `test_rr21_ca_only_in_api_worker_and_bootstrap`. RR-41 was already
-covered by a refusal test, renamed `test_rr41_endpoint_with_bundled_object_store_is_refused`.
+RR-21 was already covered by `test_rr21_ca_only_in_api_worker_and_bootstrap` for
+`caCertificates.certificates`; commit `6f88cf6` of `H` adds the case
+`caCertificates.existingConfigMap`. RR-41 was already covered by a refusal test, renamed
+`test_rr41_endpoint_with_bundled_object_store_is_refused`.
+
+The run above was before `uvx ruff format` reformatted the test file. On the committed file
+(`6f88cf6`), at 2026-11-16T12:00:47Z, `uv run pytest -q tests/unit/test_infrahub_sync_chart.py`:
+`89 passed in 4.19s`; at 2026-11-16T12:00:52Z the same `-k` selection with `rr21` added gave
+`14 passed, 75 deselected in 0.57s`, the three RR-21 cases included.
 `helm lint charts/infrahub-sync -f charts/infrahub-sync/ci/lint-values.yaml`: `1 chart(s) linted,
 0 chart(s) failed`.
 
@@ -537,8 +544,8 @@ Sync API and the Prefect server only, no StatefulSet and no volume claim. The bo
 2026-11-16T11:58:02Z, `/version` gave the same answer as above and `/status` gave
 `"service":"ready"`, `worker.state` `ready`, `live_workers` 1.
 
-`extpg` shares the product database and the Prefect database of `store`, so both releases wrote
-to the same Prefect deployment. This setup checks only that the chart connects to an external
+`extpg` connected to the product database and the Prefect database of `store`. Its effect on the
+Prefect deployment of `store` was not checked. This setup checks only that the chart connects to an external
 PostgreSQL. It is not a supported way to run two releases, and it was removed right after the
 check.
 
