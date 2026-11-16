@@ -125,6 +125,23 @@ Browser (headless Chrome 148 driven through the DevTools protocol, one context p
   `sessionStorage`.
 - Console after the style fallback: no Content-Security-Policy message.
 
+### Live tiers (run after the report, 2026-11-16)
+
+Run as `docs/docs/development/guidelines/testing-tiers.md` describes. Every request to an `/api`
+address worked. No failure comes from this branch, and no code changed.
+
+| Tier | Command | Result | Failures |
+|---|---|---|---|
+| Smoke | `uv run invoke dev.start`, `uv run invoke dev.smoke` | `3 failed, 20 passed, 33 deselected in 210.80s` | Earlier problem: two tests in `tests/dev_stack/smoke/test_config_lifecycle.py` and `test_netbox_package.py::test_validating_the_netbox_package_reads_no_source` expect `declared_content` in registration answers, which spec 007 FR-038 removed |
+| Smoke, unmarked modules | `uv run pytest -q -m "not smoke" -rs tests/dev_stack/smoke` | `32 passed, 1 skipped, 23 deselected` | Skipped: the resume check needs the NetBox `demo` package (optional) |
+| Compose | `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose -rs` | `1 failed, 63 passed, 407 deselected in 1017.84s` | Earlier problem: `test_managed_run.py::test_the_deployed_worker_container_mounts_nothing` does not know the read-only `sync-ca-certificates` volume added by spec 015 |
+| Integration, step 3 | `uv run pytest -m integration -rs` | `1 failed, 231 passed, 12 skipped in 303.27s` | Unstable: `test_apply_guard_integration.py::test_a_body_exception_releases_the_real_lock` failed in 1 of 10 runs in random order and passed in 5 of 5 runs in fixed order. Skips: optional lineage, remote-run and resume legs; saved-plan tests run in step 4 |
+| Integration, step 4 | `uv run pytest -m integration -rs tests/integration/test_saved_plan_apply_integration.py` | `6 passed, 1 skipped in 38.77s` | Skipped: the optional ambiguous-peer test (SC-016) |
+
+The development stack and the local NetBox were destroyed afterwards. The image smoke tier ran
+earlier (section 4). One stale line was found and corrected: `testing-tiers.md` described the
+image check as calling `GET /version`.
+
 ## 5. Review findings
 
 Six reviewers ran on `daa45d28..e2c5a5bb`: code, tests, error handling, comments, types, and
