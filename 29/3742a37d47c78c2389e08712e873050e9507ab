@@ -1,0 +1,45 @@
+tests/test_benchmark_runner.py
+  s_4c94b159df7a98::t_5396918258685c 18
+  s_4c94b159df7a98::t_a8764af95cc446 550
+  s_4c94b159df7a98::t_82156ecb9f8020 551-572,574-633,635-636,638-665,667-690,692-703,705-716,718-739,741-754,756-773,775-793,795-809,811-816
+  s_4c94b159df7a98::t_cd92445cadaa9d 40-51
+  s_4c94b159df7a98::t_5f6cec5afc0253 666
+  s_4c94b159df7a98::t_9d78381269b2f4 634,637
+  s_4c94b159df7a98::t_3310020d115766 870-872,874
+  s_4c94b159df7a98::t_31553675800566 23
+  s_4c94b159df7a98::t_7a7b4d8f49a17a 573,691,704,717,740,755,774,794,810,864
+development/bench/records.py
+  s_4c94b159df7a98::t_8a19609609e008 100-104
+  s_4c94b159df7a98::t_a6f9124722cd39 256-266,269,275-276
+docs/docs/development/guides/netbox-benchmark-runner.md
+  s_4c94b159df7a98::t_7011438303d7ee 171-174
+  s_4c94b159df7a98::t_94d1e38f73402d 185-189
+  s_4c94b159df7a98::t_ff73c229e7e784 153-166
+dev/specs/019-second-plan-real-changes/tasks.md
+  s_4c94b159df7a98::t_972dac8c9350b1 139-140,144-146
+tasks/bench.py
+  s_4c94b159df7a98::t_2eda6fb25c132f 59,63-65
+  s_4c94b159df7a98::t_bd43ed685e165d 474
+  s_4c94b159df7a98::t_7cab11ec32205e 482-486,534-558
+  s_4c94b159df7a98::t_0dc81b343558f6 487-489,528-533
+  s_4c94b159df7a98::t_6e76860103db5c 66
+  s_4c94b159df7a98::t_67d92f2c5f0259 16
+  s_4c94b159df7a98::t_ce0d7ed7c13d3b 490-527
+  s_4c94b159df7a98::t_7c896996511a78 67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "293742a37d47c78c2389e08712e873050e9507ab",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
