@@ -10,6 +10,7 @@ import pytest
 pytest.importorskip("prefect")
 pytest.importorskip("fastapi")
 
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from infrahub_sync.product_store import local_product_projection
@@ -48,6 +49,21 @@ def test_a_wrong_method_answers_with_the_method_envelope_and_keeps_allow(client:
     assert response.headers["allow"] == "GET"
     error = response.json()["error"]
     assert (error["code"], error["message"], error["status"]) == ("method-not-allowed", "Method Not Allowed", 405)
+
+
+def test_another_http_exception_answers_with_the_generic_http_error_code(client: TestClient) -> None:
+    api = client.app
+    assert isinstance(api, FastAPI)
+
+    @api.get("/test-only/teapot")
+    def teapot() -> None:
+        raise HTTPException(status_code=418, detail="test refusal")
+
+    response = client.get("/test-only/teapot")
+
+    assert response.status_code == 418
+    error = response.json()["error"]
+    assert (error["code"], error["message"], error["status"]) == ("http-error", "test refusal", 418)
 
 
 def test_an_existing_route_answers_as_before(client: TestClient) -> None:

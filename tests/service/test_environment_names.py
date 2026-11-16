@@ -71,7 +71,7 @@ def test_a_retired_work_pool_name_is_ignored_by_the_reconciler(monkeypatch: pyte
 
 def test_a_retired_host_name_is_ignored_by_the_server(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("INFRAHUB_SYNC_MANAGED_HOST", "10.0.0.1")
-    monkeypatch.setattr(serve, "build_app", object)
+    monkeypatch.setattr(serve, "build_app", lambda **_factories: object())
     captured: dict[str, Any] = {}
     monkeypatch.setattr(serve.uvicorn, "run", lambda app, **kwargs: captured.update(app=app, **kwargs))
 

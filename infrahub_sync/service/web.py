@@ -1,7 +1,8 @@
 """Serve the Sync API under ``/api`` and the built web interface at every other address.
 
 The outer application mounts the API application at ``/api`` and answers every other address with
-one route, following the decision order of the HTTP routing contract of spec 017:
+one route that accepts every method. The route applies decision 1 of ADR 0043
+(``dev/adr/0043-the-web-interface-is-served-at-the-root-and-the-api-under-api.md``) in this order:
 
 1. A method other than ``GET`` or ``HEAD``: the 404 envelope naming ``/api``.
 2. No built web interface: a plain-text 404 for a browser, the envelope otherwise.
@@ -24,27 +25,30 @@ from contextlib import asynccontextmanager
 from html.parser import HTMLParser
 from typing import TYPE_CHECKING
 
+import structlog
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse, PlainTextResponse, Response
-from starlette.routing import Mount, Route
+from starlette.routing import Mount, Route, request_response
 from starlette.staticfiles import StaticFiles
 
 from .app import _error_content
 from .models import ErrorDetail, ErrorEnvelope
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Callable
     from pathlib import Path
 
     from fastapi import FastAPI
     from starlette.requests import Request
+    from starlette.types import Receive, Scope, Send
 
 API_PREFIX = "/api"
 NOT_FOUND_MESSAGE = "the Sync API is served under /api"
 NO_WEB_INTERFACE_MESSAGE = "The web interface is not included in this install. The Sync API is served under /api."
 INDEX_CACHE_CONTROL = "no-cache"
 ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable"
-_ALL_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+
+logger = structlog.get_logger(__name__)
 
 
 class _InlineScriptCollector(HTMLParser):
@@ -110,6 +114,31 @@ def _relative_path(path: str) -> str:
     return os.path.normpath("/".join(part for part in path.split("/") if part))
 
 
+def _under_assets(raw_path: str, relative: str) -> bool:
+    """Return whether a request path is under ``assets/``, before or after ``..`` and ``.`` are folded.
+
+    Empty segments are dropped first, so ``//assets/x`` counts. The unfolded form keeps
+    ``assets/../../x`` under ``assets/``, so a browser gets the envelope rather than the entry page.
+    """
+    collapsed = "/".join(part for part in raw_path.split("/") if part)
+    return collapsed.startswith("assets/") or relative.startswith("assets/")
+
+
+class _EveryMethod:
+    """Hand a request of any method to the web interface endpoint.
+
+    A ``Route`` with a function endpoint accepts only the methods it lists, and Starlette answers any
+    other method with a plain 405 that has no security headers. An endpoint that is not a function
+    leaves ``Route.methods`` unset, so every method reaches the endpoint and gets the contract's answer.
+    """
+
+    def __init__(self, endpoint: Callable[[Request], Response]) -> None:
+        self._app = request_response(endpoint)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        await self._app(scope, receive, send)
+
+
 def create_site(api: FastAPI, directory: Path | None) -> Starlette:
     """Build the service application: the API under ``/api`` and the web interface everywhere else.
 
@@ -123,9 +152,19 @@ def create_site(api: FastAPI, directory: Path | None) -> Starlette:
     script_hashes: tuple[str, ...] = ()
     if directory is not None:
         resolved = directory.resolve()
-        files = StaticFiles(directory=resolved, check_dir=False)
-        index_file = str(resolved / "index.html")
-        script_hashes = _inline_script_hashes((resolved / "index.html").read_text(encoding="utf-8"))
+        try:
+            index_html = (resolved / "index.html").read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            # Never the error text: a decoding error quotes bytes of the file.
+            logger.warning(
+                "web interface index.html cannot be read; the web interface is not served",
+                path=str(resolved / "index.html"),
+                error_type=type(error).__name__,
+            )
+        else:
+            files = StaticFiles(directory=resolved, check_dir=False)
+            index_file = str(resolved / "index.html")
+            script_hashes = _inline_script_hashes(index_html)
     security_headers = {
         "Content-Security-Policy": content_security_policy(script_hashes),
         "X-Content-Type-Options": "nosniff",
@@ -156,7 +195,7 @@ def create_site(api: FastAPI, directory: Path | None) -> Starlette:
         full_path, stat_result = lookup(built, relative)
         if stat_result is not None and stat.S_ISREG(stat_result.st_mode):
             return file_answer(built, request, (full_path, stat_result), relative)
-        if raw_path.startswith("assets/") or not _accepts_html(request):
+        if _under_assets(raw_path, relative) or not _accepts_html(request):
             return None
         index_path, index_stat = lookup(built, "index.html")
         if index_stat is None or not stat.S_ISREG(index_stat.st_mode):
@@ -186,7 +225,7 @@ def create_site(api: FastAPI, directory: Path | None) -> Starlette:
     return Starlette(
         routes=[
             Mount(API_PREFIX, app=api),
-            Route("/{path:path}", web_interface, methods=_ALL_METHODS),
+            Route("/{path:path}", _EveryMethod(web_interface)),
         ],
         lifespan=lifespan,
     )

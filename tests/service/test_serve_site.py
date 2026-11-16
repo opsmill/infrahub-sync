@@ -59,6 +59,28 @@ def test_build_service_serves_the_api_under_api_and_runs_the_liveness_loop(
         assert reconcilers[0].iterated.wait(timeout=5)
 
 
+def test_build_service_serves_the_web_interface_named_by_the_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    page = "<!doctype html><html><body>built entry page</body></html>"
+    directory = tmp_path / "web"
+    directory.mkdir()
+    (directory / "index.html").write_text(page, encoding="utf-8")
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": "serve-site-token-0002", "administrator": True}}))
+    monkeypatch.setenv(WEB_DIRECTORY_ENV, str(directory))
+    monkeypatch.delenv("INFRAHUB_SYNC_REQUIRE_APPROVAL", raising=False)
+    monkeypatch.setattr(serve, "RunLivenessReconciler", _RecordingReconciler)
+    projection = local_product_projection((tmp_path / "store").resolve())
+
+    service = serve.build_service(projection_factory=lambda: projection)
+
+    with TestClient(service) as client:
+        response = client.get("/", headers={"Accept": "text/html"})
+        assert response.status_code == 200
+        assert response.text == page
+        assert client.get("/api/version").status_code == 200
+
+
 def test_main_serves_the_outer_application(monkeypatch: pytest.MonkeyPatch) -> None:
     sentinel = object()
     monkeypatch.setattr(serve, "build_service", lambda: sentinel)

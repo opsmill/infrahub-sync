@@ -1,4 +1,4 @@
-"""The service answers the HTTP routing contract of spec 017: the API under /api, the web interface elsewhere."""
+"""The service answers the HTTP routing contract of ADR 0043: the API under /api, the web interface elsewhere."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import pytest
+import structlog.testing
 
 pytest.importorskip("prefect")
 pytest.importorskip("fastapi")
@@ -121,6 +122,24 @@ def test_a_write_method_outside_api_answers_with_the_envelope(site: TestClient, 
     _assert_security_headers(response)
 
 
+@pytest.mark.parametrize("method", ["TRACE", "PROPFIND", "MADEUP"])
+@pytest.mark.parametrize("headers", [HTML, JSON])
+def test_any_other_method_outside_api_answers_with_the_envelope_and_the_security_headers(
+    site: TestClient, method: str, headers: dict[str, str]
+) -> None:
+    response = site.request(method, "/runs", headers=headers)
+
+    _assert_envelope(response)
+    _assert_security_headers(response)
+
+
+def test_another_method_under_api_still_reaches_the_api(site: TestClient) -> None:
+    response = site.request("TRACE", "/api/version")
+
+    assert response.status_code == 405
+    assert "content-security-policy" not in response.headers
+
+
 def test_post_runs_outside_api_does_not_reach_the_api(site: TestClient) -> None:
     _assert_envelope(site.post("/runs", headers=JSON))
     assert site.post("/api/runs").json() == {"run_id": "r-1"}
@@ -210,6 +229,15 @@ def test_a_missing_asset_answers_with_the_envelope_even_for_a_browser(site: Test
     _assert_security_headers(response)
 
 
+@pytest.mark.parametrize("path", ["//assets/missing.js", "/./assets/missing.js", "/runs/../assets/missing.js"])
+def test_a_missing_asset_behind_extra_path_segments_answers_with_the_envelope(site: TestClient, path: str) -> None:
+    # The absolute form keeps httpx from reading `//assets` as a host name.
+    response = site.get(f"http://testserver{path}", headers=HTML)
+
+    _assert_envelope(response)
+    _assert_security_headers(response)
+
+
 # Row 5: a browser asking for a page path.
 @pytest.mark.parametrize("path", ["/", "/runs", "/runs/abc", "/configs/c-1/versions", "/api"])
 def test_a_browser_gets_the_entry_page_for_a_page_path(site: TestClient, path: str) -> None:
@@ -254,6 +282,55 @@ def test_a_traversal_path_never_returns_the_outside_file(site: TestClient, path:
     assert response.status_code in {200, 404}
     if response.status_code == 200:
         assert response.text == INDEX_HTML
+
+
+@pytest.mark.parametrize("path", ["/linked.txt", "/assets/linked.js"])
+@pytest.mark.parametrize("headers", [HTML, JSON])
+def test_a_symbolic_link_to_a_file_outside_the_directory_is_never_served(
+    web_directory: Path, path: str, headers: dict[str, str]
+) -> None:
+    outside = web_directory.parent / "secret.txt"
+    (web_directory / "linked.txt").symlink_to(outside)
+    (web_directory / "assets" / "linked.js").symlink_to(outside)
+    client = TestClient(create_site(_small_api(), web_directory))
+
+    response = client.get(path, headers=headers)
+
+    assert OUTSIDE_CONTENT not in response.text
+    assert response.status_code in {200, 404}
+    if response.status_code == 200:
+        assert response.text == INDEX_HTML
+
+
+@pytest.mark.parametrize("path", ["/a%00b", "/assets/a%00b", "/" + "a" * 5000, "/assets/" + "b" * 5000])
+@pytest.mark.parametrize("headers", [HTML, JSON])
+def test_a_null_byte_or_a_very_long_path_never_answers_500(
+    site: TestClient, path: str, headers: dict[str, str]
+) -> None:
+    response = site.get(path, headers=headers)
+
+    assert response.status_code in {200, 404}
+    _assert_security_headers(response)
+
+
+def test_an_entry_page_that_is_not_utf_8_is_treated_as_no_web_interface(tmp_path: Path) -> None:
+    directory = tmp_path / "web"
+    directory.mkdir()
+    (directory / "index.html").write_bytes(b"<!doctype html><html>\xff\xfe\x80</html>")
+
+    with structlog.testing.capture_logs() as logs:
+        client = TestClient(create_site(_small_api(), directory))
+
+    assert [(log["log_level"], log["error_type"], log["path"]) for log in logs] == [
+        ("warning", "UnicodeDecodeError", str((directory / "index.html").resolve()))
+    ]
+    assert "0xff" not in repr(logs)
+
+    response = client.get("/", headers=HTML)
+    assert response.status_code == 404
+    assert response.text == NO_WEB_INTERFACE_MESSAGE
+    _assert_envelope(client.get("/", headers=JSON))
+    assert client.get("/api/version").json() == {"server_version": "test"}
 
 
 def test_an_encoded_traversal_under_assets_reaches_the_route_undecoded(site: TestClient) -> None:

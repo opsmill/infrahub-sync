@@ -103,16 +103,30 @@ def build_app(
     return app_factory(service, resolver, configuration_routes, reconciler)
 
 
-def build_service(**factories: Any) -> Starlette:
+def build_service(
+    *,
+    projection_factory: Any = service_product_projection,
+    resolver_factory: Any = EnvironmentPrincipalResolver.from_environment,
+    run_service_factory: Any = RunService,
+    configuration_routes_factory: Any = ConfigurationRoutes,
+    app_factory: Any = create_app,
+) -> Starlette:
     """Construct the served application: the Sync API under ``/api`` and the web interface elsewhere.
 
-    ``factories`` pass through to ``build_app`` unchanged. ``INFRAHUB_SYNC_WEB_DIRECTORY`` is read
+    The factories pass through to ``build_app`` unchanged. ``INFRAHUB_SYNC_WEB_DIRECTORY`` is read
     here, once; when it names no built web interface, only the API is served.
 
     Raises:
         TrustStoreError: when the CA directory holds a private key or an unreadable certificate.
     """
-    return create_site(build_app(**factories), web_directory())
+    api = build_app(
+        projection_factory=projection_factory,
+        resolver_factory=resolver_factory,
+        run_service_factory=run_service_factory,
+        configuration_routes_factory=configuration_routes_factory,
+        app_factory=app_factory,
+    )
+    return create_site(api, web_directory())
 
 
 def main() -> None:
