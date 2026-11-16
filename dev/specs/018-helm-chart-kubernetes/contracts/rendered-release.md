@@ -41,8 +41,9 @@ bootstrap Job.
 - **RR-17**: The Sync API and the Prefect server have readiness and liveness probes, on
   `/version` (port 8000) and `/api/health` (port 4200).
 - **RR-18**: Every Service has type `ClusterIP`. No Ingress, Gateway or HTTPRoute is rendered.
-- **RR-19**: The Sync API and the worker each have an init container that waits for the
-  bootstrap result. The bootstrap is not an init container of any pod.
+- **RR-19**: The Sync API and the worker have no init container. Both receive
+  `INFRAHUB_SYNC_DATABASE_URL`, from which they read the bootstrap record at start (FR-007b).
+  The bootstrap is not an init container of any pod.
 - **RR-20**: The S3 endpoint is `http://<fullname>-object-store:9000`, and its host is never
   exactly `object-store`.
 - **RR-21**: The CA mount and `INFRAHUB_SYNC_CA_DIRECTORY` appear only in the Sync API, the

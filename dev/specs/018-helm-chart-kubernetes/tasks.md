@@ -460,16 +460,16 @@ These tasks implement FR-007b and the FR-029 change from the clarification sessi
 
 ### Chunk 9b: the chart (`H/`)
 
-- [ ] T043 [US2] Remove the `waitForBootstrap` init container from the Sync API and the worker
+- [X] T043 [US2] Remove the `waitForBootstrap` init container from the Sync API and the worker
   in `C/templates/` and `_helpers.tpl`. Keep `waitForPostgresql` and `waitForPrefect`. Remove any
   value that only the bootstrap wait reads from `C/values.yaml`, regenerate `C/README.md` with
   helm-docs, and add a chart changelog fragment.
-- [ ] T044 [US2] Update the render tests in `H/tests/unit/test_infrahub_sync_chart.py` and
+- [X] T044 [US2] Update the render tests in `H/tests/unit/test_infrahub_sync_chart.py` and
   RR-19 in [contracts/rendered-release.md](contracts/rendered-release.md) (and
   [contracts/values.md](contracts/values.md) for removed values): the Sync API and the worker
   have no init container that waits for the bootstrap, and the bootstrap is not an init
   container of any pod.
-- [ ] T045 [P] [US2] In `H/.github/workflows/ci.yml`, when the `e2e-infrahub-sync` job has no
+- [X] T045 [P] [US2] In `H/.github/workflows/ci.yml`, when the `e2e-infrahub-sync` job has no
   registry login, write a warning annotation (`::warning::`) and a line to
   `$GITHUB_STEP_SUMMARY` that say the end-to-end test did not run because the Sync image needs a
   registry login until release 3.0.0 (FR-029).

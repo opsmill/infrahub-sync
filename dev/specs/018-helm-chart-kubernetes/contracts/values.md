@@ -94,7 +94,7 @@ For each of `api`, `worker`, `prefectServer` and `bootstrap`: `resources`, `node
 | `worker.credentialsExistingSecrets` | `[]` | Secrets whose keys are passed to the worker as variables |
 | `prefectServer.uiEnabled` | `false` | `PREFECT_UI_ENABLED`. The chart offers no route to the UI |
 | `bootstrap.backoffLimit` | `6` | |
-| `waitTimeoutSeconds` | `600` | How long an init container waits before it fails |
+| `waitTimeoutSeconds` | `600` | How long the init containers of the Prefect server and the bootstrap Job wait before they fail |
 | `serviceAccount.create`, `.name`, `.annotations` | `true`, `""`, `{}` | The token is not mounted in any pod |
 | `podSecurityContext`, `securityContext` | non-root 10001, read-only root, no capabilities | For the Sync containers |
 
