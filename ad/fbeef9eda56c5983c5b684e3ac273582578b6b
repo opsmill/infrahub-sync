@@ -1,0 +1,86 @@
+tests/product_store/test_bootstrap_record.py
+  s_d989f93fc3b8fb::t_13d5c3b4c9a023 167-168
+  s_d989f93fc3b8fb::t_19c36ad8a23c45 1-27,29-42,44-58,60-73,75-85,87-89,91-103,105-106,111-128,130-131,133-141,143-166,169-193
+  s_d989f93fc3b8fb::t_e5fd3efe6d67ef 28,43,59,74,86,90,104,107-110,142
+  s_d989f93fc3b8fb::t_bb6fa32e023462 129,132
+infrahub_sync/service/worker.py
+  s_d989f93fc3b8fb::t_6abdbf3b28ad8f 558,563-565,574
+  s_d989f93fc3b8fb::t_982399bd0d95ce 32,38
+  s_d989f93fc3b8fb::t_2d55e3964d010b 555-557,559-562,566,573,575-577
+tests/service/test_environment_names.py
+  s_d989f93fc3b8fb::t_6abdbf3b28ad8f 66
+infrahub_sync/service/start_check.py
+  s_d989f93fc3b8fb::t_bc1983a3a3349c 1-17,19-20,22-30,32-68,70-90
+  s_d989f93fc3b8fb::t_4458e723119b21 18,21,31,69,104-105
+  s_d989f93fc3b8fb::t_12451b5a70df07 91-103,106-110
+tests/service/test_compose_bootstrap.py
+  s_d989f93fc3b8fb::t_636043f9b6a663 458-554
+  s_d989f93fc3b8fb::t_5fd55593e3fdfa 14,16
+  s_d989f93fc3b8fb::t_423c05c1408ade 27-32
+  s_d989f93fc3b8fb::t_5101db559ddb96 51
+  s_878e7b07536f6e::t_92f4befdad32eb 42
+infrahub_sync/product_store/models.py
+  s_d989f93fc3b8fb::t_370b7937d972a9 463-482
+tests/service/test_config_routes.py
+  s_d989f93fc3b8fb::t_254a854e94696d 1076-1078
+  s_d989f93fc3b8fb::t_8309606688b055 1075,1112,1153,1180,1211
+infrahub_sync/service/serve.py
+  s_d989f93fc3b8fb::t_2d55e3964d010b 27,68,75-78,81-82,88-89,108,117
+tests/service/test_trust_store_entry_points.py
+  s_d989f93fc3b8fb::t_6abdbf3b28ad8f 20-21,24
+tests/service/test_start_check.py
+  s_d989f93fc3b8fb::t_13d5c3b4c9a023 37,133-134
+  s_d989f93fc3b8fb::t_465eae15b3d8be 1-36,38-132,135-277
+changelog/+bootstrap-record.added.md
+  s_d989f93fc3b8fb::t_11b78bd43ea722 1
+infrahub_sync/product_store/__init__.py
+  s_d989f93fc3b8fb::t_48833b9275f321 101
+  s_d989f93fc3b8fb::t_4636dac40cd056 9
+  s_d989f93fc3b8fb::t_3e8a91979d52f7 51
+  s_d989f93fc3b8fb::t_ae4d46eca20df5 65
+infrahub_sync/service/bootstrap.py
+  s_d989f93fc3b8fb::t_90f951315bace2 350
+  s_d989f93fc3b8fb::t_125104137c5ed6 43,99,334,336,352,356-362,368
+  s_d989f93fc3b8fb::t_190e9234687775 6-10
+tests/service/test_validation_secret_containment.py
+  s_d989f93fc3b8fb::t_6abdbf3b28ad8f 284
+infrahub_sync/product_store/store.py
+  s_d989f93fc3b8fb::t_63822288284c99 153-156
+  s_d989f93fc3b8fb::t_d8ee0d1e9647de 529-536
+  s_d989f93fc3b8fb::t_fd41d4066d57ca 42
+  s_d989f93fc3b8fb::t_1338519dc729f0 4703-4735
+  s_d989f93fc3b8fb::t_cbf2fd4aadc77f 701-702
+  s_d989f93fc3b8fb::t_9c82c89751448f 1927-1945
+  s_d989f93fc3b8fb::t_b61fa1fba0139f 4558-4573
+infrahub_sync/service/storage.py
+  s_d989f93fc3b8fb::t_5c4ad91168458a 204-216
+  s_d989f93fc3b8fb::t_1cf8cd0a6652bd 203
+tests/service/test_installed_flow_identity.py
+  s_d989f93fc3b8fb::t_6abdbf3b28ad8f 271
+tests/product_store/test_contract.py
+  s_d989f93fc3b8fb::t_8209fddc0f699a 74,110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "adfbeef9eda56c5983c5b684e3ac273582578b6b",
+  "prompts": {},
+  "sessions": {
+    "s_878e7b07536f6e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ae0a854d70400fba4",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_d989f93fc3b8fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b53e9e82-fcbd-48f8-ae99-61f94c0060c7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
