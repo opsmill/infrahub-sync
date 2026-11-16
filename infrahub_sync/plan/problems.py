@@ -1,7 +1,7 @@
 """The plan problem pass, the dependency walk and the selection step (spec 007 research R3).
 
 `find_problems` reads the source adapter's load report, the source store, the destination
-schema and the derived operations, and returns the plan report: the problems of the nine
+schema and the derived operations, and returns the plan report: the problems of the ten
 types, the records the plan leaves out and the records it keeps without one optional
 relationship. It changes no store and no operation.
 
@@ -20,16 +20,20 @@ from __future__ import annotations
 import logging
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from diffsync.exceptions import ObjectNotFound
 
 from infrahub_sync.load_report import source_record_id
 from infrahub_sync.plan.canonical import canonical_json_bytes
-from infrahub_sync.plan.derive import _identity_from_keys, _resolve_references, unique_identity_groups
+from infrahub_sync.plan.derive import (
+    _identity_from_keys,
+    _resolve_references,
+    destination_requires,
+    unique_identity_groups,
+)
 from infrahub_sync.plan.destination_only_peer import destination_only_peers
 from infrahub_sync.plan.errors import SourcePeerUnresolvedError, UnformableDestinationIdentityError
-from infrahub_sync.plan.keying import _component_field
 from infrahub_sync.plan.models import (
     REPORT_REASON_LIMIT,
     KeptRecord,
@@ -89,6 +93,10 @@ _REASON_TEMPLATES: Mapping[ProblemType, str] = {
     "transform_failed": (
         "{record}: {transform} of the {kind} mapping entry, which writes {field}, failed for this record, "
         "so the record is not loaded."
+    ),
+    "required_relationship_empty_in_source": (
+        "{record}: the source holds no peer for the required relationship {field}, so the plan does not "
+        "change this record."
     ),
 }
 
@@ -331,12 +339,9 @@ def _requires(kind: str, field_name: str, *, source: Any, destination_schema: An
     model = getattr(source, kind, None)
     if field_name in (getattr(model, "_identifiers", None) or ()):
         return True
-    node = destination_schema.get(kind) if hasattr(destination_schema, "get") else None
-    if field_name in {_component_field(component) for component in getattr(node, "human_friendly_id", None) or ()}:
-        return True
-    for relationship in getattr(node, "relationships", None) or ():
-        if getattr(relationship, "name", None) == field_name:
-            return not getattr(relationship, "optional", True)
+    required = destination_requires(destination_schema, kind, field_name)
+    if required is not None:
+        return required
     info = None if model is None else getattr(model, "model_fields", {}).get(field_name)
     return info is not None and info.is_required()
 
@@ -379,6 +384,10 @@ def _group_problem(problem_type: ProblemType, members: Iterable[_Record], findin
         return
     problem = _problem(problem_type, ordered[0].reference(), other_records=[m.reference() for m in ordered[1:]])
     findings.add(problem, [member.key for member in ordered])
+
+
+# The load report reasons that give one problem of the same name, naming the record and the field.
+_FIELD_PROBLEMS: frozenset[str] = frozenset({"transform_failed", "required_relationship_empty_in_source"})
 
 
 def _load_report_problems(
@@ -427,8 +436,10 @@ def _load_report_problems(
                 config_entry=entry.config_entry,
             )
             findings.add(problem, [key])
-        elif entry.reason == "transform_failed":
-            problem = _problem("transform_failed", reference, field_name=entry.field, config_entry=entry.config_entry)
+        elif entry.reason in _FIELD_PROBLEMS:
+            problem = _problem(
+                cast("ProblemType", entry.reason), reference, field_name=entry.field, config_entry=entry.config_entry
+            )
             findings.add(problem, [key])
         elif entry.reason == "peer_not_found_in_source":
             missing = None if entry.peer is None else entry.peer.model_copy(update={"identity": None})

@@ -143,10 +143,10 @@ def test_an_update_whose_destination_record_is_absent_is_refused() -> None:
 # ---------------------------------------------------------------------------------------
 
 
-def test_a_dropped_null_cardinality_one_peer_on_an_update_is_warned_about(
+def test_a_null_cardinality_one_peer_on_an_update_empties_the_relationship(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The relationship is not cleared, and the plan says so rather than implying convergence."""
+    """Spec 019 FR-005, FR-008: the update records the emptied relationship, and no warning is logged."""
     element = _FakeElement(
         kind="DcimDevice",
         name="d1",
@@ -157,7 +157,7 @@ def test_a_dropped_null_cardinality_one_peer_on_an_update_is_warned_about(
     destination = destination_with(_KeyedRecord("DcimDevice", {"name": "d1"}, {"model": "c9200"}))
 
     with caplog.at_level("WARNING"):
-        operations_from_diff(
+        operations = operations_from_diff(
             _FakeDiff({"DcimDevice": [element]}),
             config=build_config(),
             tier_of=resolver(),
@@ -165,10 +165,11 @@ def test_a_dropped_null_cardinality_one_peer_on_an_update_is_warned_about(
             destination_adapter=destination,
         )
 
+    assert [
+        (reference.field, reference.cardinality, reference.peers) for reference in operations[0].relationships or ()
+    ] == [("rack", "one", [])]
     messages = [record.getMessage() for record in caplog.records]
-    assert any("rack" in message and "DcimDevice" in message for message in messages), (
-        f"The dropped cardinality-one clear must be disclosed at plan time; got {messages}."
-    )
+    assert not any("rack" in message for message in messages), messages
 
 
 def test_a_dropped_null_cardinality_one_peer_on_a_create_is_not_warned_about(

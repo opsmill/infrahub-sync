@@ -6,7 +6,7 @@ import logging
 import operator
 import re
 from collections.abc import Iterator, Mapping
-from typing import TYPE_CHECKING, Any, ClassVar, Union
+from typing import TYPE_CHECKING, Any, ClassVar, Union, get_args
 
 import pydantic
 from diffsync.enum import DiffSyncFlags
@@ -456,6 +456,27 @@ def _is_type_error(error_type: str) -> bool:
     return error_type.endswith(_TYPE_ERROR_SUFFIXES)
 
 
+def _is_empty_required_reference(error: Mapping[str, Any], *, model: type[Any], element: Any) -> bool:
+    """Tell whether a pydantic error refuses a required one-peer relationship that has no peer.
+
+    The field is a reference of the mapping entry, its model field is not a list and does not
+    accept `None`, and the error says that the value is missing or is `None` (spec 019 FR-013a).
+    """
+    error_type = str(error.get("type", ""))
+    if error_type != "missing" and not (_is_type_error(error_type) and error.get("input") is None):
+        return False
+    field_name = _error_field(error)
+    if field_name is None or len(error.get("loc") or ()) != 1:
+        return False
+    mapped = next((field for field in getattr(element, "fields", None) or () if field.name == field_name), None)
+    if mapped is None or not mapped.reference or mapped.static is not None:
+        return False
+    model_field = getattr(model, "model_fields", {}).get(field_name)
+    if model_field is None or isinstance(model_field.default, list):
+        return False
+    return type(None) not in get_args(model_field.annotation)
+
+
 def _error_field(error: Mapping[str, Any]) -> str | None:
     location = error.get("loc") or ()
     return str(location[0]) if location else None
@@ -489,6 +510,9 @@ class _ReadState:
     could not build; `read_kinds` names the kinds the source read listed in full;
     `retained_ids` holds, per kind, the source IDs that the filters of at least one mapping
     entry kept, so a record that another entry of the kind removes is not recorded as filtered.
+    `filtered_references` holds the (kind, source record ID, field) of each one-peer reference
+    whose optional peer a configured filter removed, so the reference has no value (spec 019
+    research R7).
     """
 
     report: LoadReport
@@ -496,6 +520,7 @@ class _ReadState:
     not_loaded: dict[tuple[str, str], LoadReportEntry] = dataclasses.field(default_factory=dict)
     read_kinds: set[str] = dataclasses.field(default_factory=set)
     retained_ids: dict[str, set[str]] = dataclasses.field(default_factory=dict)
+    filtered_references: set[tuple[str, str, str]] = dataclasses.field(default_factory=set)
     # Per kind being admitted by `load_records`: the listed source IDs not admitted yet.
     pending: dict[str, set[str]] = dataclasses.field(default_factory=dict)
     # The references that close a cycle, which `load_records` admits without waiting: the kind
@@ -560,6 +585,22 @@ class DiffSyncMixin(WarmSourceReadMixin):
     def load_report(self) -> LoadReport:
         """The load report of this adapter: the source records the read could not build."""
         return self._read_state.report
+
+    @property
+    def filtered_references(self) -> frozenset[tuple[str, str, str]]:
+        """The one-peer references whose optional peer a configured filter removed.
+
+        Each item is (owner kind, owner source record ID, field). The reference has no value
+        in the stored record, and the plan does not record that relationship as emptied
+        (spec 019 research R7).
+        """
+        return frozenset(self._read_state.filtered_references)
+
+    def record_filtered_reference(self, owner_kind: str, owner_source_id: str | None, field: str) -> None:
+        """Record that a configured filter removed the optional peer of a one-peer reference."""
+        source_id = source_record_id(owner_source_id)
+        if source_id is not None:
+            self._read_state.filtered_references.add((owner_kind, source_id, field))
 
     def _is_source(self) -> bool:
         return getattr(self, "target", None) == "source"
@@ -833,7 +874,7 @@ class DiffSyncMixin(WarmSourceReadMixin):
             return None
         except pydantic.ValidationError as exc:
             self._settle_pending(start, kind, source_id, loaded=False)
-            self._record_validation_error(kind, model=model, source_id=source_id, data=data, exc=exc)
+            self._record_validation_error(kind, model=model, element=element, source_id=source_id, data=data, exc=exc)
             return None
         except ObjectAlreadyExists as exc:
             return self._record_duplicate(
@@ -922,28 +963,40 @@ class DiffSyncMixin(WarmSourceReadMixin):
             )
         )
 
-    def _record_validation_error(
+    def _record_validation_error(  # pylint: disable=too-many-arguments  # the record being admitted, keyword-only
         self,
         kind: str,
         *,
         model: type[Any],
+        element: SchemaMappingModel,
         source_id: str | None,
         data: Mapping[str, Any] | None,
         exc: pydantic.ValidationError,
     ) -> None:
+        """Record a record whose values the model refuses, or raise `RecordLoadError`.
 
+        A value of the wrong type gives a `wrong_value_type` entry. A required one-peer
+        relationship for which the source holds no peer gives a
+        `required_relationship_empty_in_source` entry (spec 019 FR-013a). Any other refusal,
+        such as a missing required attribute, raises `RecordLoadError`.
+        """
         errors = exc.errors(include_url=False)
-        refused = [error for error in errors if not _is_type_error(error["type"])]
+        empty = [error for error in errors if _is_empty_required_reference(error, model=model, element=element)]
+        refused = [error for error in errors if not _is_type_error(error["type"]) and error not in empty]
         if data is None or not errors or refused:
             field_name = _error_field(refused[0]) if refused else None
             raise RecordLoadError(kind=kind, source_id=source_id, field=field_name) from exc
         record = SourceRecordReference(kind=kind, identity=_identity_of(model, data), source_id=source_id)
         for error in errors:
-            self._report(
-                LoadReportEntry(
+            if error in empty:
+                entry = LoadReportEntry(
+                    record=record, reason="required_relationship_empty_in_source", field=_error_field(error)
+                )
+            else:
+                entry = LoadReportEntry(
                     record=record, reason="wrong_value_type", field=_error_field(error), value=error.get("input")
                 )
-            )
+            self._report(entry)
 
     def _record_duplicate(  # pylint: disable=too-many-arguments  # the record being admitted, keyword-only
         self,

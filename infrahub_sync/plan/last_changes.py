@@ -83,8 +83,8 @@ def changed_fields(
 
     A field counts when the comparison found its values different (`get_attrs_diffs()`'s
     `"+"` side) and the operation carries it: in its payload (an attribute) or in its
-    resolved references (a relationship). A relationship clear the plan cannot record is not
-    carried, so it gets no record.
+    resolved references (a relationship). An emptied one-peer relationship is a resolved
+    reference with no peer (plan format 5), so it gets a record like any other relationship.
     """
     diffs = element.get_attrs_diffs() if hasattr(element, "get_attrs_diffs") else {}
     changed = (diffs or {}).get("+") or {}

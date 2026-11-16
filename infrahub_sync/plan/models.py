@@ -861,6 +861,7 @@ ProblemType: TypeAlias = Literal[
     "peer_not_found_in_source",
     "destination_identity_ambiguous",
     "transform_failed",
+    "required_relationship_empty_in_source",
 ]
 """The stable problem type names (FR-002, FR-025). A later release may add a name; an
 existing name is never renamed or removed."""

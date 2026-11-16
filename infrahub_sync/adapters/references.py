@@ -13,7 +13,9 @@ rest of the kind. When the peer is not stored otherwise:
   record in the load report and leaves it out;
 - through an optional relationship, the record is kept: a peer the source does not return gives
   a placeholder value and a load report entry, a peer the read could not build gives no value
-  and a load report entry, and a peer a filter removed gives no value.
+  and a load report entry, and a peer a filter removed gives no value. The adapter records that
+  one-peer reference (`DiffSyncMixin.filtered_references`), so the plan does not record the
+  relationship as emptied (spec 019 research R7).
 """
 
 from __future__ import annotations
@@ -61,10 +63,14 @@ def peer_unique_id(
     owner: tuple[str, str | None],
     field: str,
     required: bool,
+    one_peer: bool = True,
 ) -> str | None:
     """Resolve one reference of the record `owner` (kind, source record ID) to its peer's unique ID.
 
-    See the module docstring for a peer that is not stored.
+    See the module docstring for a peer that is not stored. When a configured filter removed
+    the optional peer of a one-peer reference (`one_peer`), the adapter records the reference
+    with `record_filtered_reference`. `peer_unique_ids` resolves each peer of a many-peer
+    reference with `one_peer=False`.
     """
     source_id = str(peer_source_id)
     unique_id = adapter.stored_peer_unique_id(peer_kind, source_id)
@@ -99,6 +105,9 @@ def peer_unique_id(
     if filtered:
         if required:
             raise ExcludedRequiredPeerError(**details)
+        if one_peer:
+            # The plan does not record this relationship as emptied (spec 019 research R7).
+            adapter.record_filtered_reference(owner_kind, owner_source_id, field)
         logger.warning(
             "A configured filter removed the peer of %s record %s field %s (peer kind %s, source ID %s)",
             owner_kind,
@@ -145,7 +154,9 @@ def peer_unique_ids(
     start = len(adapter.load_report.entries)
     for peer_source_id in peer_source_ids:
         source_id = str(peer_source_id)
-        unique_id = peer_unique_id(adapter, peer_kind, source_id, owner=owner, field=field, required=False)
+        unique_id = peer_unique_id(
+            adapter, peer_kind, source_id, owner=owner, field=field, required=False, one_peer=False
+        )
         if unique_id is None:
             if adapter.filtered_peer_position(peer_kind, source_id)[0]:
                 excluded.append(source_id)

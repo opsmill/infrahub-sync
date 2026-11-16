@@ -55,6 +55,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from diffsync.exceptions import ObjectNotFound
 
+from infrahub_sync.load_report import source_record_id
 from infrahub_sync.plan.canonical import canonical_json_bytes, canonical_value
 from infrahub_sync.plan.destination_only_peer import (
     DestinationOnlyPeers,
@@ -572,36 +573,82 @@ def _require_destination_id(
     raise MissingDestinationIdError(msg)
 
 
-def _warn_dropped_cardinality_one_clear(
-    *,
-    action: str,
-    kind: str,
-    identity: Mapping[str, Any],
-    candidates: Mapping[str, tuple[str, ...]],
-    values: Mapping[str, Any],
-) -> None:
-    """`[S7]` Disclose a null cardinality-one peer that the plan cannot represent.
+def destination_requires(destination_schema: Any, kind: str, field_name: str) -> bool | None:
+    """Tell whether the destination schema requires a value for `field_name` of `kind`.
 
-    `_resolve_references` treats a `None`-valued reference field as absent, so the derived
-    operation carries no reference for it and the apply leaves the destination relationship
-    alone. On a **create** that is the established and correct omission — there is nothing to
-    clear. On an **update** the null is a real difference between the two sides that the plan
-    silently drops, and plan format 3 adds no encoding for a clear, so the only honest thing
-    to do is say so here, where the null is still visible.
+    True for a component of the destination's human-friendly ID and for a relationship the
+    destination marks `optional: false`; False for a relationship it marks optional. `None`
+    when the destination schema does not describe the field.
     """
-    if action != "update":
-        return
-    dropped = sorted(field for field in candidates if field in values and values[field] is None)
-    if not dropped:
-        return
-    logger.warning(
-        "Plan: update of destination kind %s (%s) drops null cardinality-one relationship field(s) %s. "
-        "The plan format cannot represent a relationship clear, so the destination relationship is "
-        "not changed. Clear it at the destination if the clear was intended",
-        kind,
-        ", ".join(f"{name}={value!r}" for name, value in sorted(identity.items())),
-        ", ".join(dropped),
-    )
+    node = destination_schema.get(kind) if hasattr(destination_schema, "get") else None
+    if field_name in {_component_field(component) for component in getattr(node, "human_friendly_id", None) or ()}:
+        return True
+    for relationship in getattr(node, "relationships", None) or ():
+        if getattr(relationship, "name", None) == field_name:
+            return not getattr(relationship, "optional", True)
+    return None
+
+
+def _owner_source_id(store: Any, kind: str, unique_id: str) -> str | None:
+    """The source record ID of the stored source record `unique_id` of `kind`, or `None`."""
+    try:
+        item = store.get(model=kind, identifier=unique_id)
+    except ObjectNotFound:
+        return None
+    return source_record_id(getattr(item, "local_id", None))
+
+
+def _emptied_one_peer_fields(  # pylint: disable=too-many-arguments  # the parts of one update element
+    *,
+    element: Any,
+    kind: str,
+    keys: Mapping[str, Any],
+    values: Mapping[str, Any],
+    candidates: Mapping[str, tuple[str, ...]],
+    source_adapter: Any,
+    destination_adapter: Any,
+) -> list[str]:
+    """The one-peer relationships of an update that the source empties (spec 019 FR-005, research R6).
+
+    A field counts when all of these hold:
+
+    - it is a reference field of the mapping, and not one of the identifiers;
+    - the source value is `None`;
+    - the comparison found it different, and the destination value is one peer, so the
+      destination holds a peer that the source does not;
+    - the source model does not declare it as a list;
+    - the destination schema does not require it;
+    - the source adapter did not leave the peer out through a configured filter (research R7).
+
+    A required one-peer relationship that the source empties never reaches this point: the
+    source read leaves its record out with a `required_relationship_empty_in_source` problem
+    (FR-013a).
+    """
+    diffs = element.get_attrs_diffs() if hasattr(element, "get_attrs_diffs") else {}
+    source_side = (diffs or {}).get("+") or {}
+    destination_side = (diffs or {}).get("-") or {}
+    model = getattr(source_adapter, kind, None)
+    model_fields = getattr(model, "model_fields", None) or {}
+    destination_schema = getattr(destination_adapter, "schema", None)
+    filtered = getattr(source_adapter, "filtered_references", None) or frozenset()
+    emptied: list[str] = []
+    for field in sorted(candidates):
+        if field in keys or not candidates[field] or field not in values or values[field] is not None:
+            continue
+        if field not in source_side or source_side[field] is not None:
+            continue
+        held = destination_side.get(field)
+        if held is None or isinstance(held, (list, tuple)):
+            continue
+        model_field = model_fields.get(field)
+        if model_field is not None and isinstance(model_field.default, list):
+            continue
+        if destination_requires(destination_schema, kind, field):
+            continue
+        if filtered and (kind, _owner_source_id(source_adapter.store, kind, element.name), field) in filtered:
+            continue
+        emptied.append(field)
+    return emptied
 
 
 def operations_from_diff(  # pylint: disable=redefined-outer-name
@@ -669,9 +716,18 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
                 peers=peers,
             )
             identity = _identity_from_keys(keys=keys, kind=kind, resolved=resolved)
-            _warn_dropped_cardinality_one_clear(
-                action=action, kind=kind, identity=identity, candidates=candidates, values=merged
-            )
+            if action == DIFF_UPDATE_ACTION:
+                # Plan format 5: a one-peer reference with no peer empties the relationship.
+                for field in _emptied_one_peer_fields(
+                    element=element,
+                    kind=kind,
+                    keys=keys,
+                    values=merged,
+                    candidates=candidates,
+                    source_adapter=source_adapter,
+                    destination_adapter=destination_adapter,
+                ):
+                    resolved[field] = _ResolvedReference(peer_kind=candidates[field][0], pairs=[], is_many=False)
             payload = {
                 name: canonical_value(value, kind=kind, field=name)
                 for name, value in merged.items()
