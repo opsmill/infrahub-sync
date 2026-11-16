@@ -13,6 +13,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -55,8 +56,14 @@ from infrahub_sync.client import (
     SyncClient,
     SyncClientError,
 )
+from infrahub_sync.plan.digest import operations_digest
 
 from . import dev, netbox
+
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    from infrahub_sync.client import OrchestrationSummary, PlanResource, PublicRunResource, RunResource
 
 ROOT = netbox.REPO_ROOT
 STATE = netbox.STATE_DIR / "bench"
@@ -464,23 +471,7 @@ def v3_sync(stack: CellStack, registered: tuple[str, int], record: ResultRecord,
                 raise TimeoutError(msg) from None
         record.peak_rss_mb = sampler.result()
         plan = client.get_plan(record.run_id)
-        actions = {action: {} for action in ACTION_NAMES}
-        for operation in plan.operations:
-            bucket = actions[operation.action]
-            bucket[operation.kind] = bucket.get(operation.kind, 0) + 1
-        if sum(actions["delete"].values()) != plan.summary.deletes_not_executed:
-            msg = "plan's nonexecuted delete disclosure differs from its operations"
-            raise BenchmarkError(msg)
-        applied = client.get_results(record.run_id).results["summary"]
-        if applied != {action: sum(counts.values()) for action, counts in actions.items()}:
-            msg = "apply summary differs from the saved plan"
-            raise BenchmarkError(msg)
-        # The current apply summary counts saved operations, including undispatched deletes.
-        # Use the plan's explicit disclosure to report only executed actions.
-        record.skipped_deletes = dict(actions["delete"])
-        actions["delete"] = {}
-        record.actions = actions
-        record.action_evidence = "run-plan-and-apply-summary"
+        applied_ran = record_plan_actions(client, record, finished.run, plan)
         checkpoint = next(ref for ref in finished.run.artifact_refs if ref.kind == "saved-plan-review")
         if finished.run.finished_at is None:
             msg = "finished run has no timestamp"
@@ -488,6 +479,83 @@ def v3_sync(stack: CellStack, registered: tuple[str, int], record: ResultRecord,
         record.plan_seconds, record.apply_seconds = stage_seconds(
             finished.run.started_at, checkpoint.created_at, finished.run.finished_at
         )
+        if not applied_ran:
+            record.apply_seconds = None
+        # The size of the public review document, not of the internal plan bundle (research R15).
+        record.plan_bytes = checkpoint.size
+        record.operations_digest = operations_digest(plan.operations)
+        record_plan_step(record, reading_entry(finished))
+
+
+def record_plan_actions(client: SyncClient, record: ResultRecord, run: PublicRunResource, plan: PlanResource) -> bool:
+    """Check the saved plan against the scenario and the apply, record its actions, and say whether an apply ran."""
+    summary = plan.summary
+    # A plan with no change holds no operation at all, deletes included (FR-025, FR-030).
+    if record.scenario == "warm" and summary.total:
+        msg = f"warm plan holds {summary.total} operation(s); a plan with no change must be empty"
+        raise BenchmarkError(msg)
+    actions: dict[str, dict[str, int]] = {action: {} for action in ACTION_NAMES}
+    for operation in plan.operations:
+        bucket = actions[operation.action]
+        bucket[operation.kind] = bucket.get(operation.kind, 0) + 1
+    if sum(actions["delete"].values()) != summary.deletes_not_executed:
+        msg = "plan's nonexecuted delete disclosure differs from its operations"
+        raise BenchmarkError(msg)
+    applied_ran = run.phase == "applied"
+    if applied_ran:
+        applied = client.get_results(run.run_id).results["summary"]
+        if applied != {action: sum(counts.values()) for action, counts in actions.items()}:
+            msg = "apply summary differs from the saved plan"
+            raise BenchmarkError(msg)
+        record.action_evidence = "run-plan-and-apply-summary"
+    elif summary.left_out:
+        # The sync stopped at `planned` for review of the records left out: nothing was
+        # written, and its results summary is the plan summary, not an apply summary (FR-029).
+        actions["create"], actions["update"] = {}, {}
+        record.action_evidence = "run-plan-left-out-stop"
+    else:
+        msg = f"sync stopped before its apply in phase {run.phase} without leaving records out"
+        raise BenchmarkError(msg)
+    # The current apply summary counts saved operations, including undispatched deletes.
+    # Use the plan's explicit disclosure to report only executed actions.
+    record.skipped_deletes = dict(actions["delete"])
+    actions["delete"] = {}
+    record.actions = actions
+    record.left_out, record.kept, record.problems = summary.left_out, summary.kept, summary.problems
+    return applied_ran
+
+
+def record_plan_step(record: ResultRecord, entry: OrchestrationSummary) -> None:
+    """Record the seconds of each part of the plan step and the read mode of each side."""
+    record.plan_parts = plan_parts(entry)
+    reads = entry.reads
+    record.source_read_mode = reads.source.read_mode if reads and reads.source else None
+    record.destination_read_mode = reads.destination.read_mode if reads and reads.destination else None
+
+
+def reading_entry(resource: RunResource) -> OrchestrationSummary:
+    """The latest execution of the run that read both sides and built the plan."""
+    entry = next((entry for entry in reversed(resource.orchestration) if entry.purpose in {"plan", "sync"}), None)
+    if entry is None:
+        msg = "run response holds no plan or sync execution"
+        raise BenchmarkError(msg)
+    return entry
+
+
+def plan_parts(entry: OrchestrationSummary) -> dict[str, float]:
+    """Seconds per part of the plan step, both reads included; a part without both times is left out."""
+    spans: dict[str, tuple[datetime | None, datetime | None]] = {}
+    if entry.plan_step is not None:
+        spans.update({name: (part.started_at, part.ended_at) for name, part in entry.plan_step.parts.items()})
+    if entry.reads is not None:
+        for name, side in (("source_read", entry.reads.source), ("destination_read", entry.reads.destination)):
+            if side is not None:
+                spans[name] = (side.started_at, side.ended_at)
+    return {
+        name: (ended - started).total_seconds()
+        for name, (started, ended) in spans.items()
+        if started is not None and ended is not None
+    }
 
 
 @task(

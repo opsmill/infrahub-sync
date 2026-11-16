@@ -97,8 +97,11 @@ def validate_result(  # noqa: PLR0913, PLR0917 -- independent validation inputs
             raise BenchmarkError(msg)
         for kind in wanted:
             wanted[kind] += executed_expected["create"].get(kind, 0) - executed_expected["delete"].get(kind, 0)
-    elif scenario == "warm" and any(normalized(actions).values()):
-        msg = "warm run applied nonzero actions"
+    elif scenario == "warm" and (
+        any(normalized(actions).values()) or any(normalized({"delete": skipped_deletes or {}})["delete"])
+    ):
+        # A planned delete is an operation even though the apply does not execute it (FR-025).
+        msg = "warm run planned or applied nonzero actions"
         raise BenchmarkError(msg)
     if counts != wanted:
         msg = "Infrahub counts differ from the mapped tier counts"
@@ -250,14 +253,27 @@ class ResultRecord:
     infrahub_image_digest: str | None = None
     harness_commit: str | None = None
     mapping_sha256: str | None = None
+    # The plan step of a v3 run (spec 019 contracts/benchmark-record.md): seconds per part, a
+    # part without both a start and an end left out; the read mode of each side; the size of the
+    # saved-plan review artifact; the operations digest; and the counts of the plan report.
+    plan_parts: dict[str, float] | None = None
+    source_read_mode: str | None = None
+    destination_read_mode: str | None = None
+    plan_bytes: int | None = None
+    operations_digest: str | None = None
+    left_out: int | None = None
+    kept: int | None = None
+    problems: int | None = None
 
     def append(self, path: Path) -> None:
-        """Append exactly one JSON line, clearing times on every invalid result."""
+        """Append exactly one JSON line, clearing times and plan step fields on every invalid result."""
         if self.status not in {"ok", "failed", "timed_out"}:
             msg = "invalid benchmark status"
             raise ValueError(msg)
         if self.status != "ok":
             self.wall_seconds = self.plan_seconds = self.apply_seconds = None
+            self.plan_parts = self.source_read_mode = self.destination_read_mode = None
+            self.plan_bytes = self.operations_digest = self.left_out = self.kept = self.problems = None
         elif self.wall_seconds is None or self.peak_rss_mb is None:
             msg = "successful result needs time and memory evidence"
             raise ValueError(msg)

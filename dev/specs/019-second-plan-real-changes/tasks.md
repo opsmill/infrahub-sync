@@ -136,14 +136,14 @@ tiers S and M.
 
 ### Tests for User Story 4
 
-- [ ] T049 [P] [US4] Test the new record fields (`plan_parts`, read modes, `plan_bytes`, `operations_digest`, `left_out`, `kept`, `problems`), their clearing for a result that is not `ok`, and that a part without times is left out (`contracts/benchmark-record.md`), in `tests/test_benchmark_runner.py`
-- [ ] T050 [P] [US4] Test the checks: a `warm` run fails on any operation, deletes included; a `changed` run compares deletes; a run whose plan leaves records out records the report counts and compares the apply summary only when an apply ran (FR-029, FR-030), in `tests/test_benchmark_runner.py`
+- [X] T049 [P] [US4] Test the new record fields (`plan_parts`, read modes, `plan_bytes`, `operations_digest`, `left_out`, `kept`, `problems`), their clearing for a result that is not `ok`, and that a part without times is left out (`contracts/benchmark-record.md`), in `tests/test_benchmark_runner.py`
+- [X] T050 [P] [US4] Test the checks: a `warm` run fails on any operation, deletes included; a `changed` run compares deletes; a run whose plan leaves records out records the report counts and compares the apply summary only when an apply ran (FR-029, FR-030), in `tests/test_benchmark_runner.py`
 
 ### Implementation for User Story 4
 
-- [ ] T051 [US4] Add the new fields to `ResultRecord` in `development/bench/records.py`
-- [ ] T052 [US4] Fill the new fields from the run response, the plan review artifact and `operations_digest`, replace the `warm` check with `summary.total == 0`, and handle a plan with records left out, in `tasks/bench.py`
-- [ ] T053 [P] [US4] Update the record description in `docs/docs/development/guides/netbox-benchmark-runner.md`
+- [X] T051 [US4] Add the new fields to `ResultRecord` in `development/bench/records.py`
+- [X] T052 [US4] Fill the new fields from the run response, the plan review artifact and `operations_digest`, replace the `warm` check with `summary.total == 0`, and handle a plan with records left out, in `tasks/bench.py`
+- [X] T053 [P] [US4] Update the record description in `docs/docs/development/guides/netbox-benchmark-runner.md`
 - [ ] T054 [US4] On the benchmark machine, run tiers S and M, scenarios `cold`, `warm` and `changed`, three repetitions each, on the code of this feature before any speed change (FR-031, FR-033; `quickstart.md` section 4). If the machine is not available, leave this task open and say so in the final report
 - [ ] T055 [US4] Write `docs/docs/development/guides/netbox-benchmark-results.md` from the 18 records (FR-032; `contracts/benchmark-record.md`), link it from `netbox-benchmark-runner.md`, `netbox-benchmark-tiers.md` and `docs/docs/development/guides/index.md`, and add it to the docs sidebar and to the page list of `tests/test_developer_pages_sidebar.py:68-73`
 
