@@ -60,13 +60,14 @@ bootstrap's object store check correct. None of them needs access to the Kuberne
   exit with code 1. Kubernetes restarts them with back-off until the Job has written the record.
   The Sync API and the worker have no init container. A pod restart runs the check again, which
   only reads.
-- **What the record does not cover.** The record covers the Sync version and the work pool name,
-  and no other bootstrap setting, such as the bucket. A change to such a setting at the same
-  version gives the Job a new name, so the Job runs again, but the start check already passes.
 - **Object store name.** The bundled object store's Service is named `<fullname>-object-store`,
   never `object-store`. The chart enforces at render time, with `fail`, that `s3.endpointUrl` is
   empty when `objectStore.enabled` is true and set when it is false, because the bootstrap's own
   DNS check cannot tell the two cases apart in Kubernetes.
+
+The record covers the Sync version and the work pool name, and no other bootstrap setting, such
+as the bucket. A change to such a setting at the same version gives the Job a new name, so the
+Job runs again, but the start check already passes.
 
 ## Consequences
 
