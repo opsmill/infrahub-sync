@@ -1,0 +1,21 @@
+dev/specs/018-helm-chart-kubernetes/verification.md
+  s_d989f93fc3b8fb::t_3e3ceded2d4bdc 189-192
+  s_d989f93fc3b8fb::t_260756d2b8cd8d 72-74
+  s_d989f93fc3b8fb::t_afcbb8830c50af 85-111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c04670e06caabe91493b897563b2fcbeddcb3d20",
+  "prompts": {},
+  "sessions": {
+    "s_d989f93fc3b8fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b53e9e82-fcbd-48f8-ae99-61f94c0060c7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
