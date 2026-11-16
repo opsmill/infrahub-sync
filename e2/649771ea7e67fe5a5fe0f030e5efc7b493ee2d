@@ -1,0 +1,29 @@
+dev/specs/019-second-plan-real-changes/plan.md
+  s_4c94b159df7a98::t_06e2bbe87efc3c 183-186
+dev/specs/019-second-plan-real-changes/spec.md
+  s_4c94b159df7a98::t_1fc327aca8a050 399-401
+  s_4c94b159df7a98::t_c54947b2635146 326-327
+  s_4c94b159df7a98::t_d749540d00d157 461-468
+  s_4c94b159df7a98::t_dcb95b8bf17b1e 311-313
+dev/specs/019-second-plan-real-changes/critiques/critique-20261116.md
+  s_4c94b159df7a98::t_1101ec3547e427 1-146
+dev/specs/019-second-plan-real-changes/research.md
+  s_4c94b159df7a98::t_1953f167f55fb0 170-174
+  s_4c94b159df7a98::t_be2240033d6192 46-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e2649771ea7e67fe5a5fe0f030e5efc7b493ee2d",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
