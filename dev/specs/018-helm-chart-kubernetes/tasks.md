@@ -167,14 +167,14 @@ answers `/version` and `whoami`.
 
 ### Tests for User Story 1
 
-- [ ] T009 [US1] Add render tests to `H/tests/unit/test_infrahub_sync_chart.py`: one test per
+- [X] T009 [US1] Add render tests to `H/tests/unit/test_infrahub_sync_chart.py`: one test per
   property RR-01 to RR-17, RR-19 to RR-26, RR-40, RR-43 and RR-45 of
   [contracts/rendered-release.md](contracts/rendered-release.md). Parametrize where the property
   is the same for several pods. Write them first; they fail until T010 to T015 are done.
 
 ### Implementation for User Story 1
 
-- [ ] T010 [P] [US1] Write `C/templates/postgresql.yaml`, rendered when `postgresql.enabled`.
+- [X] T010 [P] [US1] Write `C/templates/postgresql.yaml`, rendered when `postgresql.enabled`.
   - **ConfigMap**: holds `databases.sh`, the script in `S/docker-compose.yml:392-424` with every
     `$$` written `$`.
   - **Service**: `<fullname>-postgresql`, port 5432.
@@ -189,7 +189,7 @@ answers `/version` and `whoami`.
     - a `pg_isready` readiness probe
     - a `volumeClaimTemplate` of `postgresql.persistence.size` and `storageClass`
     - `enableServiceLinks: false` and `automountServiceAccountToken: false`
-- [ ] T011 [P] [US1] Write `C/templates/object-store.yaml`, rendered when `objectStore.enabled`.
+- [X] T011 [P] [US1] Write `C/templates/object-store.yaml`, rendered when `objectStore.enabled`.
   - **Service**: `<fullname>-object-store`, port 9000.
   - **StatefulSet**:
     - one replica, the digest Silo image, `runAsUser` and `runAsGroup` 65532, and
@@ -200,7 +200,7 @@ answers `/version` and `whoami`.
     - a readiness probe on HTTP `/minio/health/ready`
     - a `volumeClaimTemplate`
     - `enableServiceLinks: false` and `automountServiceAccountToken: false`
-- [ ] T012 [P] [US1] Write `C/templates/prefect-server.yaml`.
+- [X] T012 [P] [US1] Write `C/templates/prefect-server.yaml`.
   - **Deployment**:
     - one replica and strategy `Recreate`
     - the command of `S/docker-compose.yml:173-180`
@@ -216,7 +216,7 @@ answers `/version` and `whoami`.
     - readiness and liveness probes on HTTP `/api/health`, port 4200
     - the scratch volumes and the Sync security context
   - **Service**: `<fullname>-prefect-server`, port 4200.
-- [ ] T013 [US1] Write `C/templates/bootstrap-job.yaml`.
+- [X] T013 [US1] Write `C/templates/bootstrap-job.yaml`.
   - The Job is named `<fullname>-bootstrap-<bootstrapHash>` and has the label
     `app.kubernetes.io/component: bootstrap`.
   - `backoffLimit` from `bootstrap.backoffLimit`, and `restartPolicy: OnFailure`.
@@ -224,7 +224,7 @@ answers `/version` and `whoami`.
   - Command `python -m infrahub_sync.service.bootstrap`.
   - The storage and CA environment, the scratch and CA volumes, and the Sync security context.
   - No Helm hook annotation. Depends on T005.
-- [ ] T014 [P] [US1] Write the Sync API in `C/templates/api.yaml`.
+- [X] T014 [P] [US1] Write the Sync API in `C/templates/api.yaml`.
   - **Deployment**:
     - `api.replicaCount` and strategy `RollingUpdate`
     - the `waitForBootstrap` init container
@@ -239,7 +239,7 @@ answers `/version` and `whoami`.
     - container port 8000, and readiness and liveness probes on HTTP `/version`
     - the checksum annotation
   - **Service**: `<fullname>-api`, of `api.service.type`, port `api.service.port` to 8000.
-- [ ] T015 [P] [US1] Write `C/templates/worker.yaml`.
+- [X] T015 [P] [US1] Write `C/templates/worker.yaml`.
   - **Deployment**:
     - `worker.replicaCount` and strategy `Recreate`
     - the `waitForBootstrap` init container
@@ -252,11 +252,11 @@ answers `/version` and `whoami`.
       `worker.credentialsExistingSecrets`
     - no probe, as in Compose
     - the checksum annotation
-- [ ] T016 [US1] Write `C/templates/NOTES.txt`. It prints the port-forward command to the API
+- [X] T016 [US1] Write `C/templates/NOTES.txt`. It prints the port-forward command to the API
   Service. It also prints a `kubectl run --rm -it` command that runs `infrahub-sync whoami` from
   the Sync image with only `INFRAHUB_SYNC_API_URL` and `INFRAHUB_SYNC_API_TOKEN`, and a token
   placeholder, never a value. Last, it prints the command to wait for the bootstrap Job.
-- [ ] T017 [US1] Make every test of T009 pass: `cd H && uv run pytest -v tests/unit/test_infrahub_sync_chart.py`.
+- [X] T017 [US1] Make every test of T009 pass: `cd H && uv run pytest -v tests/unit/test_infrahub_sync_chart.py`.
   Then run `helm lint C/ -f C/ci/lint-values.yaml`.
 - [ ] T018 [US1] Verify the install on a local cluster with [quickstart.md](quickstart.md)
   steps 2 and 3. Use the image of T003 (`minikube image load infrahub-sync:chart-test`,
