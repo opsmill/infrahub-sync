@@ -185,8 +185,10 @@ records the deletions under `skipped_deletes`.
 A v3 sync whose plan leaves records out stops in phase `planned` and writes nothing. The
 runner then records the counts of the plan report, records no applied action and no
 `apply_seconds`, and does not compare an apply summary. It compares the apply summary only
-when the run reached phase `applied`. A sync that stops before its apply for any other
-reason fails the cell.
+when the run reached phase `applied`. Only a `warm` cell can pass after such a stop: a
+`cold` cell fails the count check and a `changed` cell fails the action check, because
+nothing was written, and their records then hold `null` in the counts of the plan report.
+A sync that stops before its apply for any other reason fails the cell.
 v2 parses complete per-kind summaries or successful per-object action
 status lines from a finished sync. For a parallel no-op, all mapped tier logs and the
 completed release footer establish zero writes. The runner otherwise records count
