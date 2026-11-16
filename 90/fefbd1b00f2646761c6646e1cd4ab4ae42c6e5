@@ -1,0 +1,43 @@
+tests/data/v2_gate/expected_deletes.yml
+  s_4c94b159df7a98::t_666eb2030c0a26 16-19
+dev/adr/0041-an-unmapped-ip-namespace-converts-to-the-default-namespace.md
+  s_4c94b159df7a98::t_f02b198ee1dea3 57-59
+dev/adr/README.md
+  s_4c94b159df7a98::t_9827f485dae075 130-132
+tests/test_nightly_v2_gate.py
+  s_4c94b159df7a98::t_1fdfea59149974 501,527
+  s_4c94b159df7a98::t_030d948e1467fd 398-412
+dev/adr/0042-the-v2-gate-passes-on-no-creates-and-reviewed-lists.md
+  s_4c94b159df7a98::t_24cc16f417a0ac 72-74
+tasks/bench.py
+  s_4c94b159df7a98::t_1c43821acf7f4e 480
+dev/specs/019-second-plan-real-changes/tasks.md
+  s_4c94b159df7a98::t_fc98eec08da3a2 59-62
+tests/test_benchmark_runner.py
+  s_4c94b159df7a98::t_91872617917b07 175
+  s_4c94b159df7a98::t_8dca3f6ecd8d90 612-614
+examples/netbox_to_infrahub/README.md
+  s_4c94b159df7a98::t_541ee380cda302 126-131
+docs/docs/development/guides/netbox-benchmark-runner.md
+  s_4c94b159df7a98::t_1740350e1c43aa 152
+  s_4c94b159df7a98::t_f664b8fe7ac20f 160-163,165,167
+dev/adr/0043-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md
+  s_4c94b159df7a98::t_52f0656a558c7d 1-81,84-89
+  s_4c94b159df7a98::t_1ff59288d85459 82-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "90fefbd1b00f2646761c6646e1cd4ab4ae42c6e5",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
