@@ -141,7 +141,9 @@ export function FailureNotice({
                 <span className={LABEL}>Command-line instruction recorded by the Sync service</span>
                 <InlineCode text={f.nextAction} />
               </p>
-              {!resumable && (
+              {/* The Sync service names `runs resume` only for a failure the saved plan survives;
+                  a record or transform failure keeps its new-plan advice on a resumable run. */}
+              {!(resumable && f.nextAction.includes("runs resume")) && (
                 <p>To continue here, create a new plan, review it, then apply that plan.</p>
               )}
             </>
