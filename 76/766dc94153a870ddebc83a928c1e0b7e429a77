@@ -1,0 +1,51 @@
+development/docker-compose.yml
+  s_564c364058ca9c::t_5f72052140612b 262-267
+docker-compose.yml
+  s_564c364058ca9c::t_e24818305a5548 257-266,380-383
+infrahub_sync/testcontainers/docker-compose.yml
+  s_564c364058ca9c::t_ad695ac60ea589 257-266,380-383
+infrahub_sync/testcontainers/helpers.py
+  s_564c364058ca9c::t_82813bf11ef6ef 52-53,55-56,74-76
+tasks/dev.py
+  s_564c364058ca9c::t_332fd892c95e5e 79,87-88,205-206,366,582,585-587,589,591,595,960,970
+tests/compose/conftest.py
+  s_564c364058ca9c::t_ac8c96f13a7cd3 163,482-490
+tests/compose/lifecycle.py
+  s_564c364058ca9c::t_22a6664f3f0259 348-349,367-368
+tests/compose/test_compose_contract.py
+  s_564c364058ca9c::t_5646f8135688b8 59
+tests/compose/test_configuration_free_startup.py
+  s_564c364058ca9c::t_5862342040d381 174-175
+tests/compose/test_container_cli.py
+  s_564c364058ca9c::t_b448abacf96db4 184-185
+tests/compose/test_credential_leaks.py
+  s_564c364058ca9c::t_9e5138f812c94a 86
+tests/compose/test_external_store.py
+  s_564c364058ca9c::t_b089c01b7f033b 517,738
+tests/dev_stack/test_deps_mode.py
+  s_564c364058ca9c::t_3f3aac49495b54 60-61,227-228
+tests/dev_stack/test_dev_tasks.py
+  s_564c364058ca9c::t_d7c2a3a8e623fa 38-39,200,202-204,206,208-209,435,437-438,446,450
+dev/specs/022-local-accounts/tasks.md
+  s_564c364058ca9c::t_3361bef51064ab 139,143
+tests/compose/test_documentation.py
+  s_564c364058ca9c::t_c40d828e7aa346 264-286,338,371,381
+tests/compose/test_lifecycle.py
+  s_564c364058ca9c::t_4a496cbe9720c5 79,195-196
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "76766dc94153a870ddebc83a928c1e0b7e429a77",
+  "prompts": {},
+  "sessions": {
+    "s_564c364058ca9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-abf5fe180b33ba309",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
