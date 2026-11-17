@@ -35,6 +35,9 @@ Rules:
 - `write_target = default-branch` is refused while the Sync API requires approval (R6).
 - `write_target = branch-review` is refused when the configuration version declares a destination
   branch (R11).
+- `write_when_left_out = true` is refused for the write target `branch-review`: a run with branch
+  review always writes the remaining records (R11). A change of the write target to
+  `branch-review` sets it to false.
 - `left_out_set_by` and `left_out_set_at` are set when `write_when_left_out` changes from false to
   true, and cleared when it changes to false.
 - `next_start_at` is computed from `cron` and `timezone` each time the schedule is returned. It
@@ -81,12 +84,13 @@ Rules:
   run. The branch may or
   may not exist in Infrahub.
 - `open`: the run finished its write and opened its proposed change.
-- `removed`: the run itself deleted its branch, because the plan held no operation or the run
-  stopped for a review of records left out.
+- `removed`: the run itself deleted its branch, because the plan held no operation.
 - `replaced`: a later run of the schedule closed the proposed change, if any, and deleted the
   branch.
-- `kept`: a person approved, merged or closed the proposed change. The schedule never touches
-  the branch or the proposed change again.
+- `kept`: a person merged or closed the proposed change. The schedule never touches the branch
+  or the proposed change again.
+- A row in the state `open` whose proposed change a person approved stays `open`. While it is
+  approved and open, the schedule starts no run (FR-031).
 - A later successful run handles every row of its schedule in the states `pending` and `open`
   other than its own. After it, the schedule has at most one row in the state `open` (SC-004).
 
@@ -148,7 +152,7 @@ review:
 | `branch_review.branch_state` | text | `written`, or `removed` when the run deleted its branch. |
 | `branch_review.proposed_change_id` | text or null | The proposed change the run opened. |
 | `branch_review.replaced` | list | For each earlier run that was replaced: its run identifier. |
-| `branch_review.kept` | list | For each earlier run that was left in place: its run identifier and the cause, `approved`, `merged` or `closed`. |
+| `branch_review.kept` | list | For each earlier run that was left in place: its run identifier and the cause, `approved` (approved while this run was writing), `merged` or `closed`. |
 | `branch_review.failure` | text or null | The failure class when opening the proposed change or replacing an earlier one failed. The write verdict does not change. |
 
 The result also holds `left_out`, the plan's count of records left out, for every scheduled run.
@@ -173,12 +177,13 @@ carries it, and a scheduled flow run gets it from the admission.
 The admission of R2 returns one of two results:
 
 - **Not started**: the cause (`schedule-not-active`, `missed`, `skipped-run-in-progress`,
-  `skipped-start-waiting`, `queued`, `failed`). The flow run ends with no run record.
+  `skipped-approved-change-open`, `skipped-start-waiting`, `queued`, `failed`). The flow run
+  ends with no run record.
 - **Started**: the run identifier, the configuration binding of the run, and the values the
   stage needs from the schedule:
 
 | Value | Meaning |
 | --- | --- |
-| `confirm_left_out` | True when the schedule's left-out setting is on (R5). |
+| `confirm_left_out` | True when the schedule's left-out setting is on, and always true for branch review (R5, R11). |
 | `branch_review` | True for the write target `branch-review`. |
 | `earlier_branches` | The schedule's rows in the states `pending` and `open`: run identifier, branch, proposed change identifier. |

@@ -2,7 +2,7 @@
 
 **Input**: Design documents from `dev/specs/021-scheduled-runs/`
 
-**Prerequisites**: [plan.md](plan.md), [spec.md](spec.md), [research.md](research.md) (R1 to R14),
+**Prerequisites**: [plan.md](plan.md), [spec.md](spec.md), [research.md](research.md) (R1 to R15),
 [data-model.md](data-model.md), [contracts/](contracts/), [quickstart.md](quickstart.md)
 
 **Tests**: included. Constitution principle V asks for a test with each change, and each test
@@ -13,25 +13,18 @@ task comes before the implementation task it covers.
 - **[P]**: the task touches different files from the other open tasks of its phase and has no
   dependency on them.
 - **[Story]**: the user story of the task (US1, US2, US3).
-- **BLOCKED (INFP-655)**: the task cannot start before the two prerequisite capabilities of the
-  specification exist. It is then written against their real interface.
-- **GATED (principle I)**: the task must not be merged before the product owner confirms the
-  amendment of constitution principle I for user story 2.
 
-## What can start today
+## Order of delivery
 
-| Phase | State |
+The product owner decided the order on 2026-11-17. No task is blocked or gated.
+
+| Phase | Delivered to a team |
 | --- | --- |
-| 1, 2, 3 | Can start. |
-| 4 | Blocked until the prerequisite exists. |
-| 5 | Can be built. Its last task, which turns the write target on, is gated. |
-| 6 | Can start after phase 3. |
-| 7 | Follows the phases that are delivered. |
-
-Phase 3 alone gives a team nothing to use. Both write targets are refused with
-`schedule-setting-not-available` until they are delivered: branch review by the last task of
-phase 4, the default branch by the last task of phase 5. Until one of the two is merged, no
-schedule can be created outside the unit tests.
+| 1, 2, 3 | No. Both write targets are refused with `schedule-setting-not-available` until they are delivered. |
+| 4 | **Yes, first delivery: scheduled runs with review in Infrahub.** Merge phases 1 to 4 together. |
+| 5 | Yes: a write to the default branch, and the left-out setting. |
+| 6 | Yes: the `queue` policy, the late run, the newer-version warning, the take-over. |
+| 7 | Follows each delivery. |
 
 ---
 
@@ -105,27 +98,33 @@ branch review fails in the worker until phase 4.
 ## Phase 4: User Story 1 - Scheduled sync with review in Infrahub, worker side (Priority: P1)
 
 **Goal**: a scheduled run writes to its own branch and opens a proposed change that replaces the
-schedule's earlier one.
+schedule's earlier one. This phase also builds the five branch and proposed change operations
+(FR-029, FR-030).
 
-**Independent Test**: section 4 of [quickstart.md](quickstart.md), on the development stack.
+**Independent Test**: `uv run pytest tests/service/test_branch_review_operations.py tests/service/test_schedule_branch_review.py`, then section 4 of [quickstart.md](quickstart.md) on the development stack.
 
-**Every task of this phase is BLOCKED (INFP-655).** See
-[contracts/branch-review.md](contracts/branch-review.md).
+### Facts to check first
+
+- [ ] T059 [US1] Check against a running Infrahub and the code, and record the answers in `dev/specs/021-scheduled-runs/research.md` under "Facts not known": the permissions that the worker's token needs to create and delete a branch and to create, update and comment on a `CoreProposedChange`; whether closing a proposed change is an update of its `state` or a mutation of its own; whether the worker can call Infrahub and the store after the stage result is committed and the write guard is released (`infrahub_sync/service/flow.py`, `infrahub_sync/service/apply_guard.py`)
 
 ### Tests for User Story 1, worker side
 
-- [ ] T031 [US1] BLOCKED (INFP-655): extend `tests/service/test_schedule_branch_review.py` with the worker part, against a fake of the prerequisite: the branch is created before the plan; a plan with no operation deletes the branch and ends `no-change` (scenario 6); the proposed change is opened after the write is committed (scenario 3); an unapproved earlier one is closed with the comment and its branch deleted (scenario 4); an approved, merged or closed earlier one is kept (scenario 5); a `pending` branch of a failed run is deleted by the next successful run; a failure to open or replace does not change the write verdict and records `proposed_change_failed`
-- [ ] T032 [US1] BLOCKED (INFP-655): write `tests/dev_stack/smoke/test_scheduled_run.py` with the `smoke` marker for section 4 of quickstart.md
+- [ ] T060 [P] [US1] Write `tests/service/test_branch_review_operations.py` with a fake Infrahub client, for contracts/branch-review.md: each of the five operations; a branch that exists counts as created, a branch that is missing counts as deleted, a proposed change that is closed counts as closed; `approved` only when the state is open and `approved_by` holds an account; each failure maps to a failure class with no text from Infrahub
+- [ ] T061 [P] [US1] Write `tests/integration/test_branch_review_operations_integration.py` with the `integration` marker: the five operations against a running Infrahub, with a branch that the test deletes in `finally`
+- [ ] T031 [US1] Extend `tests/service/test_schedule_branch_review.py` with the worker part, against the fake Infrahub client: an earlier proposed change that is approved and open stops the start with `skipped-approved-change-open` and no run (scenario 5); one that a person merged or closed moves to `kept` and the start runs (scenario 19); the branch is created before the plan; a plan with no operation deletes the branch and ends `no-change` (scenario 6); a plan that leaves out records still writes the remaining ones, and the description of the proposed change states the count (scenario 20); the proposed change is opened after the write is committed (scenario 3); an earlier unapproved one is closed with the comment and its branch deleted (scenario 4); a `pending` branch of a failed run is deleted by the next successful run; a failure to open or replace does not change the write verdict and records `proposed_change_failed`; Infrahub out of reach before the admission records `start_failed`
+- [ ] T032 [US1] Write `tests/dev_stack/smoke/test_scheduled_run.py` with the `smoke` marker for section 4 of quickstart.md
 
 ### Implementation for User Story 1, worker side
 
-- [ ] T059 [US1] BLOCKED (INFP-655): check in `infrahub_sync/service/flow.py` and `infrahub_sync/service/apply_guard.py` whether the worker can call Infrahub and the store after the stage result is committed and the write guard is released (R11 steps 6 and 7, research "Facts not known"); record the answer in `research.md` before T034
-- [ ] T033 [US1] BLOCKED (INFP-655): in the `sync` branch of `_execute_stage` in `infrahub_sync/service/flow.py`, for a run with `branch_review`: create the branch, plan on it, delete it and end when the plan has no operation, then verify and apply on it; save `branch_review.branch` and `branch_state` with the stage result (R11 steps 1 to 5)
-- [ ] T034 [US1] BLOCKED (INFP-655): after the stage result is committed in `infrahub_sync/service/flow.py`, open the proposed change and handle `earlier_branches` (R11 steps 6 and 7); save the second part of `branch_review` and its events with one store call; add the failure classes of these steps to `infrahub_sync/service/failure_cause.py`
-- [ ] T035 [US1] BLOCKED (INFP-655): update `schedule_branches` from the two parts of `branch_review` in `infrahub_sync/product_store/store.py`, and return `open_branch` on the schedule resource
-- [ ] T058 [US1] BLOCKED (INFP-655): add `branch-review` to the set of delivered write targets in `infrahub_sync/service/serve.py` and remove the flow's refusal of `branch_review` in `infrahub_sync/service/flow.py`. This is the last task of the phase
+- [ ] T062 [US1] Create `infrahub_sync/service/branch_review.py` with the five operations of research R15 on the Infrahub client that the destination adapter builds, and add their failure classes to `infrahub_sync/service/failure_cause.py`
+- [ ] T063 [US1] In the admission in `infrahub_sync/service/flow.py`: for a schedule with branch review, read the state of the schedule's earlier proposed changes before `admit_scheduled_start`; skip the start when one is approved and open, with the event `start_skipped` and the outcome `skipped-approved-change-open`; move a merged or closed one to `kept`; record `start_failed` when Infrahub cannot be reached (FR-031, R11)
+- [ ] T033 [US1] In the `sync` branch of `_execute_stage` in `infrahub_sync/service/flow.py`, for a run with branch review: create the branch, plan on it, delete it and end when the plan has no operation, then verify and apply on it with `confirm_left_out` true; save `branch_review.branch` and `branch_state` with the stage result (R11 steps 1 to 4)
+- [ ] T034 [US1] After the stage result is committed in `infrahub_sync/service/flow.py`, open the proposed change with the description of contracts/branch-review.md and replace the schedule's earlier branches (R11 steps 5 and 6); save the second part of `branch_review` and its events with one store call
+- [ ] T035 [US1] Update `schedule_branches` from the two parts of `branch_review` in `infrahub_sync/product_store/store.py`, and return `open_branch` on the schedule resource
+- [ ] T058 [US1] Add `branch-review` to the set of delivered write targets in `infrahub_sync/service/serve.py` and remove the flow's refusal of a run with branch review in `infrahub_sync/service/flow.py`. This is the last task of the phase
 
-**Checkpoint**: user story 1 works end to end on the development stack.
+**Checkpoint**: user story 1 works end to end on the development stack. This is the first
+delivery.
 
 ---
 
@@ -139,17 +138,17 @@ and the team chooses whether it writes when records are left out.
 
 ### Tests for User Story 2
 
-- [ ] T036 [P] [US2] Write `tests/service/test_schedule_left_out.py`: the setting on makes a `sync` stage write the remaining records and record `details.left_out` in its result event (scenario 2); the setting off stops after the plan with `left-out-review-required` (scenario 3); turning it on records who and when, and turning it off clears both (scenario 4); a run that a person starts is not changed
+- [ ] T036 [P] [US2] Write `tests/service/test_schedule_left_out.py`: for the default branch, the setting on makes a `sync` stage write the remaining records and record `details.left_out` in its result event (scenario 2); the setting off stops after the plan with `left-out-review-required` (scenario 3); turning it on records who and when, and turning it off clears both (scenario 4); turning it on for a schedule with branch review answers `422 schedule-left-out-not-applicable`, and a change of the write target to branch review sets it to false (scenario 5); a run that a person starts is not changed
 - [ ] T037 [P] [US2] Extend `tests/service/test_schedule_routes.py` and `tests/service/test_schedule_admission.py`: a schedule with the write target `default-branch` is created when approval is not required (scenario 1), its run writes to the branch that a run of a person writes to for that version (FR-027), and it has no `schedule_branches` row
 
 ### Implementation for User Story 2
 
-- [ ] T038 [US2] In the `sync` branch of `_execute_stage` in `infrahub_sync/service/flow.py`: when `confirm_left_out` is true, skip `_left_out_stop` and pass `confirm_left_out=True` to the apply step; carry the plan's `left_out` count into the stage result and into `details.left_out` of the result event (R5, FR-005)
+- [ ] T038 [US2] In the `sync` branch of `_execute_stage` in `infrahub_sync/service/flow.py`: when the admission returns `confirm_left_out` true, skip `_left_out_stop` and pass `confirm_left_out=True` to the apply step; carry the plan's `left_out` count into the stage result and into `details.left_out` of the result event (R5, FR-005)
 - [ ] T039 [US2] Record `left_out_set_by` and `left_out_set_at` in `ScheduleService` in `infrahub_sync/service/schedules.py`, and add `--write-when-left-out` and `--no-write-when-left-out` to `schedules create` and `schedules change` in `infrahub_sync/cli.py`
-- [ ] T040 [US2] BLOCKED (INFP-655): for a run with branch review whose plan leaves out records and whose setting is off, delete the branch, end with `left-out-review-required` and the next action "correct the source records or turn the setting on", in `infrahub_sync/service/flow.py`; cover scenarios 5 and 6 in `tests/service/test_schedule_branch_review.py`
-- [ ] T041 [US2] GATED (principle I): add `default-branch` to the set of delivered write targets in `infrahub_sync/service/serve.py` and add `--write-to-default-branch` and `--write-to-branch-review` to `infrahub_sync/cli.py`. Do this only after the amendment of constitution principle I is merged
+- [ ] T040 [US2] In `ScheduleService` in `infrahub_sync/service/schedules.py`: refuse `write_when_left_out` true for the write target `branch-review` with `422 schedule-left-out-not-applicable`, and set it to false when the write target changes to `branch-review` (FR-004)
+- [ ] T041 [US2] Add `default-branch` to the set of delivered write targets in `infrahub_sync/service/serve.py` and add `--write-to-default-branch` and `--write-to-branch-review` to `infrahub_sync/cli.py`. This is the last task of the phase
 
-**Checkpoint**: user story 2 works on the development stack once T041 is merged.
+**Checkpoint**: user story 2 works on the development stack.
 
 ---
 
@@ -173,7 +172,7 @@ a take-over by an administrator.
 - [ ] T047 [US3] In `infrahub_sync/service/schedules.py` and `infrahub_sync/service/schedule_routes.py`: accept `queue` and the late-start duration, return `start_late_by_at_most_seconds`, `waiting_start_at` and `newer_version`, and add `POST /schedules/{schedule_id}/take-over` with its event (FR-007, FR-026)
 - [ ] T048 [P] [US3] Add `take_over_schedule` to `infrahub_sync/client/client.py`, and to `infrahub_sync/cli.py` the `schedules take-over` command, `--overlap-policy`, `--start-late-by-at-most` with its duration parser, and the newer-version warning
 
-**Checkpoint**: all user stories that are not blocked work.
+**Checkpoint**: all three user stories work.
 
 ---
 
@@ -185,26 +184,25 @@ a take-over by an administrator.
 - [ ] T052 [P] Add the schedule loop, the start of a scheduled run and the branch records to `docs/docs/development/knowledge/sync-architecture.md` and `docs/docs/development/knowledge/repository-tour.md`
 - [ ] T053 Run `uv run invoke docs.generate` and commit `docs/docs/reference/cli.mdx`
 - [ ] T054 Regenerate `frontend/src/api/types.generated.ts` with `pnpm codegen:openapi` against a running Sync service. Change no interface file
-- [ ] T055 Write the smoke test of section 3 of quickstart.md in `tests/dev_stack/smoke/test_scheduled_run.py` (after T041), or of section 4 (after phase 4), whichever is delivered first
+- [ ] T055 Add the smoke test of section 3 of quickstart.md to `tests/dev_stack/smoke/test_scheduled_run.py` (after T041), and state the permissions of the worker's token in Infrahub in `docs/docs/compose-deployment.mdx` (from T059)
 - [ ] T056 Run `uv run invoke format`, `uv run invoke lint`, `uv run ruff check .`, `uv run invoke tests.tests-unit`, `uv run invoke tests.tests-product-store-postgresql`, the three `--help` checks of `AGENTS.md`, and `uv run invoke docs.docusaurus`
-- [ ] T057 Run the sections of [quickstart.md](quickstart.md) that are not blocked and record the results in the implementation report
+- [ ] T057 Run every section of [quickstart.md](quickstart.md) and record the results in the implementation report
 
 ---
 
 ## Dependencies & execution order
 
-- Phase 1 → Phase 2 → Phase 3. Phase 3 blocks phases 4, 5 and 6.
-- Phase 4 needs phase 3 and the prerequisite of the specification.
-- Phase 5 needs phase 3. T040 also needs phase 4. T041 needs the amendment of principle I.
+- Phase 1 → Phase 2 → Phase 3 → Phase 4. Phases 1 to 4 are merged together.
+- Phase 5 needs phase 3. It does not need phase 4, and is delivered after it.
 - Phase 6 needs phase 3. It does not need phases 4 or 5.
-- Phase 7 follows the phases that are delivered.
+- Phase 7 follows each delivery.
 
 Within a phase:
 
 - T008 → T009 → T010 → T011. T007, T012, T013 and T014 are independent of them, except that T014
   needs T008.
 - T024 → T022 → T023 → T027. T026 needs T010 and T011. T025 and T028 need T026. T030 needs T029.
-- T059 → T033 → T034 → T035 → T058.
+- T059 → T062 → T063 → T033 → T034 → T035 → T058. T060 and T061 come before T062.
 - T045 and T046 touch the same function: do them in that order.
 
 ### Parallel examples
@@ -217,23 +215,23 @@ Within a phase:
 
 1. **Foundation and the service side of user story 1** (phases 1 to 3). Nothing is delivered to a
    team yet.
-2. **The first delivery is one of two**, and the product owner chooses:
-    - phase 4, when the prerequisite exists: scheduled runs with review in Infrahub;
-    - phase 5 with T041, when principle I is amended: scheduled runs to the default branch.
-3. **User story 3** (phase 6) after either.
-4. **Decision records** are written when this specification is extracted: Prefect holds the
+2. **First delivery: phase 4.** Scheduled runs with review in Infrahub. Phases 1 to 4 are one
+   pull request, or a series merged together.
+3. **Second delivery: phase 5.** Scheduled runs to the default branch.
+4. **User story 3** (phase 6).
+5. **Decision records** are written when this specification is extracted: Prefect holds the
    cadence and the worker admits a scheduled flow run, and a write to a branch that Infrahub Sync
    created for a run needs no Sync approval.
 
 ## Task counts
 
-| Phase | Tasks | Blocked or gated |
-| --- | --- | --- |
-| 1 Setup | 2 | 0 |
-| 2 Foundational | 12 | 0 |
-| 3 User story 1, service side | 16 | 0 |
-| 4 User story 1, worker side | 7 | 7 blocked |
-| 5 User story 2 | 6 | 1 blocked, 1 gated |
-| 6 User story 3 | 7 | 0 |
-| 7 Polish | 9 | 0 |
-| Total | 59 | 8 blocked, 1 gated |
+| Phase | Tasks |
+| --- | --- |
+| 1 Setup | 2 |
+| 2 Foundational | 12 |
+| 3 User story 1, service side | 16 |
+| 4 User story 1, worker side | 11 |
+| 5 User story 2 | 6 |
+| 6 User story 3 | 7 |
+| 7 Polish | 9 |
+| Total | 63 |

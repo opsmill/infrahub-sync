@@ -57,6 +57,21 @@ and prerequisites:
 Two points are new: whether a schedule should start a run while one of its proposed changes is
 approved and not merged (critique P2), and the first row of the findings table (FR-028).
 
+## Decisions after this check
+
+On 2026-11-17, after this check, the product owner answered the open points, and the
+specification was changed. These changes are decisions of the product owner, not drift:
+
+- **Prefect holds the cadence.** No requirement changed; research R1 to R3 and R10 did.
+- **This specification builds the two capabilities of INFP-655** that user story 1 needs (FR-029,
+  FR-030). The brief had them as a prerequisite and out of scope.
+- **Constitution principle I is amended** for both write targets, in version 1.1.0.
+- **A run with branch review always writes the remaining records** (FR-004). This replaces the
+  first row of the findings table: the brief applied the left-out setting to both write targets.
+- **A schedule starts no run while one of its proposed changes is approved and not merged**
+  (FR-031). The brief opened a second proposed change. SC-004 now reads "at most one open proposed
+  change".
+
 ## Action
 
 Proceed. No phase is run again: the one change that touches a decision comes from a limit of the

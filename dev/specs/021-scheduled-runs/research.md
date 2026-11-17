@@ -306,23 +306,35 @@ the run's destination branch, and writes a `schedule_branches` row in the state 
 same transaction. In the worker, the `sync` stage of a run with branch review does this under the
 write guard:
 
-1. Create the branch through the prerequisite.
+1. Create the branch (R15).
 2. Plan, against the new branch.
 3. If the plan has no operation, delete the branch and end with the outcome `no-change`.
-4. If the plan leaves out records and the left-out setting is off, delete the branch and end with
-   the outcome `left-out-review-required`.
-5. Verify and apply against the new branch.
+4. Verify and apply against the new branch. A plan that leaves out records does not stop the
+   run: with branch review the remaining records are always written, because the proposed
+   change is the review. The schedule's left-out setting applies only to a write to the
+   default branch.
 
 After the write is committed as the stage result, and outside the scope whose failures make a
 write ambiguous (`service/flow.py:1502-1508`):
 
-6. Open the proposed change through the prerequisite.
-7. Read the schedule's earlier branches in the states `open` and `pending`. For each one that
-   nobody approved, close its proposed change, if it has one, with a comment that names the new
-   one, and delete its branch (FR-020, FR-021).
+5. Open the proposed change (R15). Its description states the count of records left out.
+6. For each earlier branch of the schedule in the states `open` and `pending`, close its
+   proposed change, if it has one, with a comment that names the new one, and delete its branch
+   (FR-020, FR-021).
 
-A failure of step 6 or 7 does not change the verdict of the write. It is recorded in the run's
-result and as an event, and the next successful run of the schedule does step 7 again.
+A failure of step 5 or 6 does not change the verdict of the write. It is recorded in the run's
+result and as an event, and the next successful run of the schedule does step 6 again.
+
+**Before the admission**, for a schedule with branch review, the flow reads from Infrahub the
+state of the schedule's earlier proposed changes (R15) and passes the states to the admission of
+R2:
+
+- One of them is approved and open: the start does not run. It is recorded as skipped with the
+  outcome `skipped-approved-change-open` (FR-031). Step 6 therefore never meets an approved
+  proposed change, except one that a person approved while the run was writing; that one is
+  left in place.
+- Merged or closed by a person: its row moves to the state `kept`, and the start runs.
+- Infrahub cannot be reached: the start is recorded as failed, and no run is created.
 
 **Rationale**:
 
@@ -336,13 +348,13 @@ result and as an event, and the next successful run of the schedule does step 7 
   checksum.
 - The `pending` row names a branch before the worker creates it, so a run that fails, is
   interrupted or is cancelled never leaves a branch that no record names.
-- A failed run replaces nothing, because step 7 comes after the write and the new proposed
+- A failed run replaces nothing, because step 6 comes after the write and the new proposed
   change.
 
 **A run with branch review is never applied or resumed by a person.** `verify`, `apply` and
-`resume` requests on such a run are refused. Its branch is deleted when it stops after the plan,
-and a run interrupted during its write leaves a `pending` branch that the next successful run
-deletes. Nothing of it reached the default branch.
+`resume` requests on such a run are refused. A run interrupted during its write leaves a
+`pending` branch that the next successful run deletes. Nothing of it reached the default
+branch.
 
 **A configuration version that declares a destination branch** cannot have a schedule with branch
 review. `effective_destination_branch` puts the declared branch before the run's branch
@@ -421,22 +433,45 @@ both times. The project uses no time-freezing library.
 (`service/service.py:355`, `service/flow.py:814`). The tests of this feature need a start time
 and a lateness they control.
 
+## R15. The branch and the proposed change are made with the Infrahub SDK, in the worker
+
+**Decision**: One new module of the service holds five operations, called by the scheduled
+`sync` stage with the Infrahub client that the destination adapter already builds
+(`adapters/infrahub.py:1008`):
+
+| Operation | How |
+| --- | --- |
+| Create a branch | `client.branch.create(branch_name=..., sync_with_git=False, wait_until_completion=True)`. A branch of that name that exists counts as created. |
+| Delete a branch | `client.branch.delete(...)`. A branch that no longer exists counts as deleted. |
+| Open a proposed change | Create a `CoreProposedChange` node with `name`, `description`, `source_branch` and `destination_branch`. |
+| Read a proposed change | Read the node's `state` and its `approved_by` peers: `approved` when the state is open and `approved_by` holds at least one account. |
+| Close a proposed change | Add a `CoreChangeComment` to the node, then set its `state` to closed. |
+
+**Rationale**:
+
+- These are the calls that Infrahub MCP makes for its session branch and its proposed change
+  (`infrahub-mcp/src/infrahub_mcp/utils.py:307-338`, `tools/write.py:397-400`), and that this
+  repository's tests and tasks already make for a branch (`tasks/smoke_dataset.py:50-60`).
+- `CoreProposedChange` holds `source_branch`, `destination_branch`, `state`, `approved_by` and
+  `comments` (`infrahub/backend/infrahub/core/schema/definitions/core/propose_change.py`).
+- Only the worker holds the Infrahub token (ADR 0031, ADR 0039).
+- The product owner decided on 2026-11-17 that this specification builds these two parts of
+  INFP-655. Only a scheduled run uses them here.
+
+**Failures** are mapped to failure classes in `service/failure_cause.py`, with no text from
+Infrahub in the record (ADR 0021).
+
 ## Facts not known at the time of writing
 
-- Whether a schedule should start a run while one of its proposed changes is approved and not
-  merged. This plan starts it, as the specification says, and the two proposed changes then hold
-  the same changes.
 - Whether the worker can open the proposed change and replace earlier ones after the stage result
-  is committed (R11, steps 6 and 7). At that point the execution is terminal and the write guard
+  is committed (R11, steps 5 and 6). At that point the execution is terminal and the write guard
   is released. This was not checked against `service/flow.py`; phase 4 of the tasks checks it
   first.
 - Whether Prefect deletes the flow runs it created ahead when a schedule is changed, paused or
   deleted. The admission of R2 does not depend on it: a flow run of a schedule that is not
   active, or of a cadence that no longer holds its start time, creates no run.
 - Which Prefect state a flow returns to be scheduled again later (the `queue` policy, R7).
-- The interface of the two prerequisite capabilities of INFP-655. The contract in
-  [contracts/branch-review.md](contracts/branch-review.md) is what this plan needs; the
-  prerequisite may deliver it in another form.
-- How Infrahub reports that a person approved a proposed change, and whether the token of the
-  worker may close a proposed change and delete a branch. The prerequisite answers both.
-- Whether constitution principle I will be amended for user story 2.
+- Which permissions the token of the worker needs in Infrahub to create and delete a branch and
+  to create, update and comment on a proposed change, and whether closing a proposed change is
+  an update of its `state` or needs a mutation of its own. The first task of phase 4 checks
+  both against a running Infrahub.

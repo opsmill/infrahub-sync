@@ -36,15 +36,19 @@
 - The specification names the existing commands, routes and settings that a team uses today
   (`sync`, `GET /events`, `INFRAHUB_SYNC_REQUIRE_APPROVAL`, `--confirm-left-out`), because the
   requirements are stated against them. It names no new route, table or library.
-- Four points are not decided. The specification records them as dependencies and assumptions,
-  not as clarification markers, because each needs a decision of the product owner and none
-  of them changes what the tasks build first:
-    - who delivers the two prerequisite capabilities of INFP-655, and when
-    - whether the event system is delivered before user story 1
-    - whether constitution principle I is amended, for a write to a review branch and for a write
-      to the default branch
-    - what a team does with a run with branch review that stopped for records left out (FR-028)
-- FR-024 to FR-028 are not in the idea brief. FR-024 states the pause, resume, change, delete,
+- The product owner answered four questions on 2026-11-17, and the specification holds the
+  answers:
+    - This specification builds the two capabilities of INFP-655 that user story 1 needs (FR-029,
+      FR-030), so review in Infrahub is the first delivery.
+    - Constitution principle I is amended for both write targets (version 1.1.0).
+    - A run with branch review always writes the remaining records; the left-out setting applies
+      only to a write to the default branch (FR-004).
+    - A schedule starts no run while one of its proposed changes is approved and not merged
+      (FR-031).
+- One point is not decided: whether the event system is delivered before user story 1. It is
+  recorded as an assumption.
+- FR-024 to FR-031 are not in the idea brief. FR-024 states the pause, resume, change, delete,
   list and view actions that the brief's first journey names. FR-025 states the project's rule
   on secrets for the new records. FR-026 is the take-over that the brief had inside FR-013.
-  FR-027 and FR-028 come from the critique. `alignment-check.md` lists every difference.
+  FR-027 and FR-028 come from the critique, and FR-029 to FR-031 from the product owner's
+  answers. `alignment-check.md` lists every difference.

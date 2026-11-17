@@ -24,22 +24,18 @@ Technical approach, from [research.md](research.md):
 - Schedule events use the existing event record, with the schedule as a related resource and a
   new `details` field (R9).
 
-## What can be built now, and what is blocked
+## Order of delivery
 
-| Part | State |
-| --- | --- |
-| Schedule record, routes, Prefect schedule, client, CLI, admission of a start, `reject` policy, trigger type, events (user story 1, service side) | Can be built now. |
-| Branch creation, proposed change, replacement, no branch left for a plan with no change (user story 1, worker side) | **Blocked** until the two capabilities of INFP-655 exist. See [contracts/branch-review.md](contracts/branch-review.md). |
-| Write to the default branch and the left-out setting (user story 2) | Can be built now. **Must not be delivered** before the product owner confirms the amendment of constitution principle I. |
-| `queue` policy, late run, newer-version warning, take-over (user story 3) | Can be built now, after the service side of user story 1. |
+The product owner decided the order on 2026-11-17. Nothing in this plan is blocked.
 
-Until the blocked part exists, a schedule with branch review cannot run. The service side of user
-story 1 is therefore not delivered to users on its own: it is merged with either the worker side
-of user story 1 or user story 2.
+| Step | Content | Delivered to a team |
+| --- | --- | --- |
+| 1 | Foundation, and the service side of user story 1: schedule record, routes, Prefect schedule, client, CLI, admission of a start, `reject` policy, trigger type, events | No. Both write targets are refused until they are delivered. |
+| 2 | The branch and proposed change operations (FR-029, FR-030), and the worker side of user story 1 | **Yes: scheduled runs with review in Infrahub.** |
+| 3 | User story 2: a write to the default branch and the left-out setting | Yes |
+| 4 | User story 3: `queue` policy, late run, newer-version warning, take-over | Yes |
 
-**No part of this plan can reach a user until the product owner decides one of two things**: who
-delivers the two capabilities of INFP-655, or that constitution principle I is amended so that
-user story 2 is delivered first.
+Steps 1 and 2 are merged together, because step 1 alone gives a team nothing to use.
 
 ## Technical Context
 
@@ -77,13 +73,13 @@ week. About 8 routes, 8 CLI commands, 2 tables.
 
 | Principle | Result | Note |
 | --- | --- | --- |
-| I. Read-only and dry-run by default | **Open. Two amendments are needed.** | Branch review is the default write target, and nothing reaches the default branch before a person merges in Infrahub. That meets the purpose of the principle, but its text asks for a person's approval of every `sync`, and a review branch is part of the destination system. A write to the default branch needs an explicit option (`--write-to-default-branch`) and still writes without a person's approval of each run. See Complexity Tracking. |
+| I. Read-only and dry-run by default | Pass, with the amendment of version 1.1.0 | The product owner decided on 2026-11-17 to amend the principle, and the amendment is on this branch. Branch review is the default write target, and the person's approval is the merge of the proposed change in Infrahub. A write to the default branch needs an explicit option (`--write-to-default-branch`), and creating the schedule with it is the deliberate act. |
 | II. Sync idempotency and safety | Pass | A start creates one run (R2). Making the Prefect schedules match the stored ones can be repeated (R13). Repeating the branch review steps is safe (contract, requirement 4). A failed run replaces nothing. |
 | III. Adapter symmetry and pattern consistency | Pass | No adapter contract changes in this plan. Routes, models, client methods and commands follow the existing conventions (R13). |
 | IV. Type safety and explicit contracts | Pass | New models are Pydantic models with closed literals. New refusals have their own codes. |
 | V. Test discipline | Pass | Each requirement has a unit test with times that the test passes. Two admissions of one start have a PostgreSQL test. What Prefect's scheduler does is shown only on the development stack. |
 | VI. Security, secrets, and input boundaries | Pass | A schedule stores an actor name, never a token (R8). Events hold identifiers only (FR-025). The cron expression and the time zone are validated at the API boundary. |
-| VII. Simplicity and maintainability | Pass | No new container, no new package, no scheduler of our own: Prefect's is used. No interface with a single implementation: the prerequisite is a contract document, and the code that calls it is written when it exists. |
+| VII. Simplicity and maintainability | Pass | No new container, no new package, no scheduler of our own: Prefect's is used. The five branch and proposed change operations are plain functions on the Infrahub client, with no interface in front of them. |
 
 Re-check after design, after the critique and after the move to Prefect schedules: the result is
 the same. The design adds no periodic task and no new abstraction.
@@ -103,7 +99,7 @@ dev/specs/021-scheduled-runs/
 │   ├── http-api.md      # Schedule routes and changed run and event routes
 │   ├── cli.md           # `infrahub-sync schedules` and changed commands
 │   ├── events.md        # Schedule event types
-│   └── branch-review.md # What the plan needs from the prerequisite
+│   └── branch-review.md # The five branch and proposed change operations
 ├── checklists/requirements.md
 └── tasks.md             # Written by /speckit-tasks
 ```
@@ -123,8 +119,9 @@ infrahub_sync/
     ├── app.py               # Mounts the schedule router; matches Prefect to the store at startup
     ├── auth.py              # Read the principal of a named actor
     ├── events.py            # Schedule event types and builders
-    ├── flow.py              # Admission of a scheduled flow run; left-out setting; branch review steps (blocked)
-    ├── failure_cause.py     # Failure classes of the branch review steps (blocked)
+    ├── branch_review.py     # New: create and delete a branch; open, read and close a proposed change
+    ├── flow.py              # Admission of a scheduled flow run; left-out setting; branch review steps
+    ├── failure_cause.py     # Failure classes of the branch review steps
     ├── models.py            # Re-exports and emitted variants of the schedule models
     ├── orchestration.py     # Create, update and delete the Prefect schedule of a schedule
     ├── schedule_cadence.py  # New: validate a cadence and compute start times with Prefect
@@ -141,6 +138,8 @@ tests/
 └── dev_stack/smoke/         # test_scheduled_run.py
 
 docs/docs/
+├── development/constitution.md                    # Principle I, version 1.1.0
+├── compose-deployment.mdx                         # Permissions of the worker's token in Infrahub
 ├── orchestration.mdx                              # "Schedule sync runs": the built-in schedule
 ├── operations/supported-platforms-and-limits.mdx  # Remove "no built-in schedule"
 ├── readme.mdx, migrating-from-netbox-or-nautobot.mdx
@@ -154,7 +153,7 @@ changelog/+scheduled-runs.added.md
 ```
 
 **Structure Decision**: the feature stays inside the existing package. The service gains three
-modules with the prefix `schedule`, so that `service.py` and `app.py`, which are already large,
+modules with the prefix `schedule` and one for the branch and proposed change operations, so that `service.py` and `app.py`, which are already large,
 grow by a method and a mount each.
 
 ## Implementation notes
@@ -192,8 +191,7 @@ grow by a method and a mount each.
       user story 1 exists. Without this, a schedule would start a run at every start that fails in
       the worker, and on a Sync API that requires approval those runs would be accepted with no
       approval and no review.
-    - `default-branch` is refused the same way until the product owner confirms the amendment of
-      principle I.
+    - `default-branch` is refused the same way until user story 2 is delivered.
     - While branch review is not delivered, a request that names no write target is refused. The
       default branch is never chosen for the operator.
   The last task of each of the two phases adds its write target to the set.
@@ -210,7 +208,5 @@ grow by a method and a mount each.
 
 ## Complexity Tracking
 
-| Violation | Why Needed | Simpler Alternative Rejected Because |
-| --- | --- | --- |
-| Principle I: a scheduled write to a review branch has no person's approval of the run (user story 1). | The person's approval is the merge of the proposed change in Infrahub, before anything reaches the default branch. This is the review path the product owner chose for scheduled runs. | A plan-only schedule with an approval in Infrahub Sync was considered in the interview and rejected: it builds a second approval procedure. The text of the principle needs an amendment that the product owner has not confirmed. |
-| Principle I: a scheduled write to the default branch has no person's approval of each run (user story 2). | A `sync` to the default branch already runs today without a second person when the approval setting is off, and teams repeat it with cron. The schedule repeats the same write on a cadence. | Dropping user story 2 leaves those teams with cron and no run history of the trigger. The violation is not accepted by this plan: user story 2 is gated on an amendment of the principle that the product owner has not confirmed. |
+No violation. The two points that an earlier version of this plan listed against principle I are
+settled by the amendment of version 1.1.0 of the constitution.

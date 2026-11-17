@@ -33,7 +33,7 @@ infrahub-sync schedules create --name from-netbox-nightly --config from-netbox -
 | `--cron` | Required. |
 | `--timezone` | Default `UTC`. |
 | `--write-to-default-branch` | Selects the write target `default-branch` (user story 2). Without it the write target is branch review. |
-| `--write-when-left-out` | Turns the left-out setting on. |
+| `--write-when-left-out` | Turns the left-out setting on. Only with `--write-to-default-branch`. |
 | `--overlap-policy` | `reject` (default) or `queue` (user story 3). |
 | `--start-late-by-at-most` | A duration such as `30m` or `2h` (user story 3). |
 

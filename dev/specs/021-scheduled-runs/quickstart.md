@@ -28,7 +28,8 @@ flow runs: sections 3 and 4 do. It shows:
 | Branch review is refused for a version that declares a branch; `verify`, `apply` and `resume` are refused on a run with branch review | `tests/service/test_schedule_branch_review.py` |
 | The store records of a run's branch from a worker result that the test writes: `pending`, `open`, `removed`, `replaced`, `kept` | `tests/service/test_schedule_branch_review.py` |
 | The approval setting and the two write targets | `tests/service/test_schedule_approval.py` |
-| The left-out setting reaches the `sync` stage | `tests/service/test_schedule_left_out.py` |
+| The left-out setting reaches the `sync` stage for the default branch, and is refused for branch review | `tests/service/test_schedule_left_out.py` |
+| The five branch and proposed change operations, with a fake Infrahub client | `tests/service/test_branch_review_operations.py` |
 | Missed starts, the late run and the `queue` policy (user story 3) | `tests/service/test_schedule_missed_starts.py` |
 | Schedule records and two admissions of one start | `tests/product_store/test_schedules.py` |
 | Client methods and CLI commands, and the command, method and route matrix | `tests/client/test_schedules.py`, `tests/cli/test_schedule_commands.py`, `tests/cli/test_parity_and_closure.py` |
@@ -77,7 +78,8 @@ command: it is refused with `approval-required-for-schedule`.
 
 ## 4. Development stack: a schedule with branch review (user story 1)
 
-**Blocked until the prerequisite of the specification exists.** When it does:
+This is the first delivery. The token of the worker needs the permissions of
+[contracts/branch-review.md](contracts/branch-review.md).
 
 ```bash
 infrahub-sync schedules create --name smoke-review --config from-netbox --version 1 \
@@ -90,8 +92,11 @@ Expected, with a source that changes between two starts:
   proposed change. `schedules show` holds both in `open_branch`.
 - After the second start, the first proposed change is closed with a comment that names the
   second, and its branch no longer exists.
-- Approve the second proposed change in Infrahub and wait for the third start: the second stays
-  open, and the events hold `infrahub_sync.schedule.proposed_change_kept`.
+- Approve the second proposed change in Infrahub and wait for the third start: no run starts,
+  and the events hold `infrahub_sync.schedule.start_skipped` with
+  `skipped-approved-change-open`. Merge it and wait for the next start: a run starts.
+- With one source record that has a problem, the run writes the other records to its branch,
+  and the description of the proposed change states that one record was left out.
 - With a source that does not change, a start ends with the outcome `no-change`, and Infrahub
   holds no branch of that run when it ends.
 - Stop the worker during a write, then let the next start pass: the branch of the interrupted run

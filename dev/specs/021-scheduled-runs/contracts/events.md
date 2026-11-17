@@ -30,7 +30,7 @@ The actor is the schedule's owner. `operation` is `schedule-start`. `details.sta
 
 | Event type | When | `run_id` | `outcome` |
 | --- | --- | --- | --- |
-| `infrahub_sync.schedule.start_skipped` | A run of the same configuration is in progress, or a start already waits. | The run in progress. | `skipped-run-in-progress` or `skipped-start-waiting` |
+| `infrahub_sync.schedule.start_skipped` | A run of the same configuration is in progress, a proposed change of the schedule is approved and not merged, or a start already waits. | The run in progress, or the run that opened the approved proposed change. | `skipped-run-in-progress`, `skipped-approved-change-open` or `skipped-start-waiting` |
 | `infrahub_sync.schedule.start_queued` | The start waits under the `queue` policy (user story 3). | The run in progress. | `queued` |
 | `infrahub_sync.schedule.start_missed` | The start time passed while the worker or the task manager was not running. Recorded when the next flow run of the schedule is admitted. | The late run, if one started. | `missed-skipped` or `missed-started-late` |
 | `infrahub_sync.schedule.start_failed` | The run could not be created, for example because the configuration version can no longer be run. `details.cause` holds the refusal code. | none | `failed` |
@@ -51,7 +51,7 @@ is `sync`.
 | --- | --- | --- |
 | `infrahub_sync.schedule.proposed_change_opened` | The run opened a proposed change. | `opened` |
 | `infrahub_sync.schedule.proposed_change_replaced` | The run closed an earlier proposed change of the schedule, or deleted an earlier branch that had none. One event for each. | `replaced` |
-| `infrahub_sync.schedule.proposed_change_kept` | An earlier proposed change was left in place. | `kept-approved`, `kept-merged` or `kept-closed` |
+| `infrahub_sync.schedule.proposed_change_kept` | An earlier proposed change was left in place: a person merged or closed it, or approved it while the run was writing. | `kept-merged`, `kept-closed` or `kept-approved` |
 | `infrahub_sync.schedule.proposed_change_failed` | Opening the proposed change, or replacing an earlier one, failed. `details.cause` holds the failure class. | `failed` |
 
 ## Result event of a scheduled run

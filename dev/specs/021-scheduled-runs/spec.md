@@ -18,8 +18,8 @@ Sources:
   with overlap control. This specification adds to that card how a scheduled run passes the write
   gates.
 - [INFP-655](https://opsmill.atlassian.net/browse/INFP-655): Apply and review changes through
-  Infrahub branches. Two parts of that card are a prerequisite, see
-  [Prerequisites](#prerequisites).
+  Infrahub branches. Two parts of that card are built by this specification, see
+  [Branch and proposed change capabilities](#branch-and-proposed-change-capabilities).
 - [ADR 0037](../../adr/0037-an-approval-is-a-record-on-the-run.md): an approval is a record on the
   run.
 - [ADR 0033](../../adr/0033-an-event-is-saved-in-the-transaction-of-its-decision.md): an event is
@@ -64,8 +64,9 @@ Sources:
   and opens a proposed change to the default branch.
 - **Owner**: the actor who created the schedule, or the administrator who took it over. An
   actor is a name that the Sync API maps to a token.
-- **Skipped start**: a start for which no run was started, because of the overlap policy or
-  because the start was missed by more than the allowed duration.
+- **Skipped start**: a start for which no run was started: because of the overlap policy,
+  because a proposed change of the schedule is approved and not merged, or because the start was
+  missed by more than the allowed duration.
 - **Missed start**: a start whose time passed while the worker or the task manager of the Sync
   service was not running.
 
@@ -78,7 +79,10 @@ An operator creates a schedule for version 3 of the configuration `from-netbox`,
 present. It writes the differences to a new Infrahub branch and opens a proposed change. In the
 morning the team reviews and merges that proposed change in Infrahub. When the team did not merge
 the proposed change of the night before, the new one replaces it, so the team always reviews one
-proposed change, the newest. The operator can pause, resume, change and delete the schedule.
+proposed change, the newest. When a person approved a proposed change and did not merge it yet,
+the schedule waits for the merge. A plan that leaves out records does not stop the run: the
+remaining records are written to the branch, and the proposed change states how many were left
+out. The operator can pause, resume, change and delete the schedule.
 
 **Why this priority**: Branch review is the only write target that works on every Sync API, with
 or without required approval, so every team can use it. It also keeps a person's review before
@@ -87,8 +91,7 @@ anything reaches the default branch.
 **Independent Test**: In the unit tier, with a clock that the test controls, create a schedule,
 let two starts pass and check the runs and the events. On the development stack, in real time,
 create a schedule with branch review, let two starts pass with a changed source, and check the
-branches and the proposed changes. The second part needs the prerequisite of
-[Prerequisites](#prerequisites).
+branches and the proposed changes.
 
 **Acceptance Scenarios**:
 
@@ -106,8 +109,8 @@ branches and the proposed changes. The second part needs the prerequisite of
    **When** the new run opens its proposed change, **Then** the older one is closed with a link to
    the new one and its branch is deleted.
 5. **Given** the schedule's proposed change of the night before was approved by a person in
-   Infrahub and not merged, **When** the new run opens its proposed change, **Then** the older one
-   stays open and its branch stays.
+   Infrahub and not merged, **When** the start passes, **Then** no run starts, the start is
+   recorded as skipped with that reason, and the proposed change and its branch stay.
 6. **Given** a source that did not change, **When** the start passes, **Then** the run ends with
    the outcome `no-change`, and Infrahub holds no branch and no proposed change of that run.
 7. **Given** another run of `from-netbox` is in progress at 02:00, **When** the start passes,
@@ -140,6 +143,12 @@ branches and the proposed changes. The second part needs the prerequisite of
 18. **Given** a schedule, **When** an operator lists the events of that schedule, **Then** the
     list holds its creation, each skipped start, each proposed change that was opened or
     replaced, and the events of its runs.
+19. **Given** the approved proposed change of scenario 5 was merged or closed by a person,
+    **When** the next start passes, **Then** a run starts, and the schedule does not touch the
+    merged or closed proposed change.
+20. **Given** a schedule with branch review, **When** a plan leaves out 13 records of 4,013,
+    **Then** the run writes the 4,000 remaining records to its branch, whatever the left-out
+    setting is, and the proposed change states that 13 records were left out.
 
 ---
 
@@ -148,7 +157,8 @@ branches and the proposed changes. The second part needs the prerequisite of
 On a Sync API that does not require approval, an operator wants the nightly run to write to the
 default branch with no review. They choose that write target when they create the schedule. They
 also choose what the run does when its plan leaves out records: stop after the plan, as a `sync`
-that a person starts does, or write the remaining records.
+that a person starts does, or write the remaining records. This choice exists only for a write
+to the default branch, where no person reviews the run.
 
 **Why this priority**: A `sync` to the default branch already exists, so this is a small addition.
 It comes second because the left-out setting lets a schedule write with no review at all, and the
@@ -171,12 +181,9 @@ holds one record with a problem. Check what each run wrote and recorded.
    needed.
 4. **Given** a schedule, **When** an operator turns the left-out setting on, **Then** the schedule
    records who turned it on and when.
-5. **Given** a schedule with branch review whose left-out setting is on, **When** a plan leaves
-   out records, **Then** the run writes the remaining records to its new branch and opens the
-   proposed change.
-6. **Given** a schedule with branch review whose left-out setting is off, **When** a plan leaves
-   out records, **Then** the run stops after the plan, Infrahub holds no branch of that run, and
-   the run's result tells the team to correct the source records or to turn the setting on.
+5. **Given** a schedule with branch review, **When** an operator asks to turn the left-out
+   setting on, **Then** the request is refused with the reason: the setting applies only to a
+   write to the default branch.
 
 ---
 
@@ -237,9 +244,9 @@ and take over a stopped schedule. Check the runs and the events each time.
   successful run deletes it. A person cannot resume such a run.
 - A scheduled run finishes its write, and opening the proposed change fails. The write stays on
   the branch, the run records the failure, and the next successful run deletes that branch.
-- A person approved a schedule's proposed change and did not merge it. The next run opens a
-  second proposed change that holds the same changes and the newer ones. The team merges one
-  and closes the other.
+- A person approved a schedule's proposed change and does not merge it for a week. The schedule
+  starts no run in that week and records each start as skipped. The run after the merge picks
+  up every change of the source since then.
 - A person's `plan` or `verify` of the same configuration is in progress at a start time. The
   overlap policy applies to it too.
 - An earlier run of the configuration ended with an outcome that a person must reconcile. A
@@ -287,9 +294,10 @@ and take over a stopped schedule. Check the runs and the events each time.
 - **FR-004**: A schedule MUST carry a setting "write when records are left out", off by default.
   When it is off, a scheduled run whose plan leaves out records MUST stop after the plan and write
   nothing, as a `sync` that a person starts does. When it is on, the run MUST write the remaining
-  records. The setting MUST apply to both write targets. With branch review, a run that stops
-  after the plan MUST leave no branch, and its result MUST tell the team to correct the source
-  records or to turn the setting on.
+  records. The setting MUST apply only to a write to the default branch. A run with branch
+  review MUST write the remaining records whatever the setting is, and its proposed change MUST
+  state the count of records left out. A request to turn the setting on for a schedule with
+  branch review MUST be refused.
 - **FR-005**: The schedule MUST record who turned the left-out setting on and when. Every
   scheduled run MUST record its left-out count in its result event.
 
@@ -351,6 +359,9 @@ and take over a stopped schedule. Check the runs and the events each time.
 - **FR-021**: The schedule MUST NOT close a proposed change that a person approved in Infrahub,
   and MUST NOT delete its branch. It MUST close only proposed changes, and delete only branches,
   that it created.
+- **FR-031**: While a proposed change of the schedule is approved and open, the schedule MUST
+  start no run, and MUST record each such start as skipped with that reason. After a person
+  merges or closes that proposed change, the next start MUST run.
 - **FR-022**: A scheduled run whose plan has no change MUST leave no branch and no proposed
   change in Infrahub when it ends.
 - **FR-027**: A request for a schedule with branch review MUST be refused when the configuration
@@ -360,12 +371,24 @@ and take over a stopped schedule. Check the runs and the events each time.
 - **FR-028**: Requests to verify, apply or resume a scheduled run with branch review MUST be
   refused. Its plan and its results MUST stay readable.
 
+#### Branch and proposed change capabilities
+
+- **FR-029**: Infrahub Sync MUST be able to create a branch in Infrahub for a run, from the
+  default branch and with no synchronization to Git, and to delete a branch that it created.
+  Creating a branch that the same run already created, and deleting a branch that no longer
+  exists, MUST succeed.
+- **FR-030**: Infrahub Sync MUST be able to open a proposed change from such a branch to the
+  default branch, to read whether a proposed change is open, approved by a person, merged or
+  closed, and to close a proposed change with a comment. Each of these MUST fail with a cause
+  that the run's failure record can hold, with no text that may hold a credential.
+
 #### Events
 
 - **FR-023**: Scheduling MUST record these events in the event record that Infrahub Sync already
   keeps, each with the schedule's identifier:
     - a schedule was created, changed, paused, resumed or deleted
-    - a start was skipped because of the overlap policy
+    - a start was skipped because of the overlap policy, or because a proposed change of the
+      schedule is approved and not merged
     - a start was missed, and whether a late run started
     - a start failed because no run could be created
     - a schedule stopped, with the reason, and a schedule was taken over
@@ -380,7 +403,7 @@ and take over a stopped schedule. Check the runs and the events each time.
 
 | User story | Requirements |
 | --- | --- |
-| 1 (P1) | FR-001, FR-002, FR-006, FR-008 to FR-015, FR-020 to FR-025, FR-027, FR-028 |
+| 1 (P1) | FR-001, FR-002, FR-006, FR-008 to FR-015, FR-020 to FR-025, FR-027 to FR-031 |
 | 2 (P2) | FR-003, FR-004, FR-005 |
 | 3 (P3) | FR-007, FR-016 to FR-019, FR-026 |
 
@@ -402,8 +425,8 @@ schedule does not show a "start late by at most" duration.
   schedule.
 - **Configuration version**: existing, not changed.
 - **Approval**: existing, not changed for a run that a person starts.
-- **Infrahub branch and proposed change**: exist in Infrahub. Infrahub Sync creates them through
-  the prerequisite, and records which ones a schedule created.
+- **Infrahub branch and proposed change**: exist in Infrahub. Infrahub Sync creates them, and
+  records which ones a schedule created.
 
 ## Success Criteria *(mandatory)*
 
@@ -416,31 +439,31 @@ schedule does not show a "start late by at most" duration.
   history, and no start produces two runs.
 - **SC-003**: On a Sync API that requires approval, no scheduled run changes the default branch
   without a merge by a person in Infrahub.
-- **SC-004**: At any time, a schedule has at most one open proposed change that nobody has
-  approved.
+- **SC-004**: At any time, a schedule has at most one open proposed change.
 - **SC-005**: For every scheduled run, the run history states that a schedule started it, which
   schedule, which configuration version and who owns the schedule.
 - **SC-006**: Two runs of the same configuration never write at the same time, whoever or whatever
   started them.
 
-## Prerequisites
+## Branch and proposed change capabilities
 
-User story 1 cannot be built before two capabilities exist. They are parts of INFP-655 and are not
-part of this specification. This specification depends on them through this contract:
+User story 1 needs two capabilities that are parts of INFP-655. The product owner decided on
+2026-11-17 that this specification builds them, as FR-029 and FR-030, so that review in Infrahub
+is the first delivery:
 
 - **Create a branch for a run.** Given a run and a branch name, Infrahub Sync creates that branch
-  in Infrahub from the default branch, and the run plans, verifies and writes on it. The
-  capability also deletes a branch that it created.
+  in Infrahub from the default branch, and the run plans, verifies and writes on it. It also
+  deletes a branch that it created.
 - **Open a proposed change for a run.** Given a run that finished its write to such a branch,
-  Infrahub Sync opens a proposed change from that branch to the default branch, and returns its
-  identifier. The capability also reads whether a person approved a proposed change, and closes a
-  proposed change with a comment.
+  Infrahub Sync opens a proposed change from that branch to the default branch. It also reads
+  the state of a proposed change, and closes a proposed change with a comment.
 
-Who delivers these two capabilities is not decided, and neither is their order relative to the
-recovery of interrupted runs (INFP-650), which is the current priority.
+Only a scheduled run uses them in this specification. The other parts of INFP-655 stay out of
+scope: a branch review mode for a run that a person starts, following a proposed change's merge
+state from the run record, the adapter declaration, and validation of large merges.
 
-User stories 2 and 3 do not need the prerequisite, except acceptance scenarios 5 and 6 of user
-story 2.
+The token of the worker must be allowed to create and delete branches and to create and update
+proposed changes in Infrahub. The deployment guide states this.
 
 ## Assumptions
 
@@ -450,24 +473,16 @@ story 2.
   `infrahub-sync events`. Whether that event system is delivered before user story 1 is not
   decided.
 - **Telemetry is a separate specification.** Scheduling adds nothing to it.
-- **Constitution principle I.** Principle I asks for a person's approval of every `sync`, because
-  a `sync` changes a destination system.
-    - User story 1 meets its purpose: nothing reaches the default branch before a person merges
-      in Infrahub. Its text does not say that a write to a review branch is allowed without a
-      person's approval, and a branch is part of the destination system. This specification
-      assumes that the principle will be amended to say so.
-    - User story 2 does not meet it: a person gives the instruction once, when they create the
-      schedule. This specification assumes that the principle will be amended to state that
-      creating a schedule with an explicit choice of the default branch is that deliberate act.
-
-  The product owner has not confirmed either amendment. User story 2 must not be delivered
-  before they confirm the second.
+- **Constitution principle I is amended with this work.** The product owner decided on
+  2026-11-17 to amend it for both write targets, and the amendment is in version 1.1.0 of the
+  constitution, on the branch of this specification:
+    - For a write to a review branch, the person's approval is the merge of the proposed change
+      in Infrahub.
+    - For a write to the default branch, creating the schedule with an explicit choice of the
+      default branch is the deliberate act, and it stands for every run of that schedule.
 - **An actor name is not a fixed identity.** The Sync API maps actor names to tokens in one
   setting. A changed token under the same name keeps the schedule running. A name that is
   removed and later given to another person makes that person the owner of the schedule.
-- **An approved proposed change that is not merged.** The schedule keeps starting runs, and the
-  next proposed change holds the same changes again. Whether the schedule should wait instead is
-  a question for the product owner.
 - **A new decision record is needed** for the rule that a write to a branch Infrahub Sync created
   for a run needs no Sync approval. The rule amends ADR 0037.
 - **Branch name pattern.** The pattern is fixed and follows the one Infrahub MCP uses for its
@@ -492,7 +507,7 @@ story 2.
 - A cadence stated as an interval counted from the creation of the schedule, and named fields such
   as a time of day and a list of days.
 - Protection for an edit that a person makes on a schedule's branch.
-- Following a proposed change's merge state from the run record, and the other parts of INFP-655.
+- A branch review mode for a run that a person starts, following a proposed change's merge state
+  from the run record, and the other parts of INFP-655 that FR-029 and FR-030 do not cover.
 - Starting a run from a change in Infrahub (INFP-658).
 - The web interface for schedules.
-- Building the two capabilities of [Prerequisites](#prerequisites).

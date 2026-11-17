@@ -69,6 +69,7 @@ Refusals:
 | 409 | `schedule-name-in-use` | A schedule that is not deleted has that name. |
 | 409 | `approval-required-for-schedule` | `write_target` is `default-branch` and the Sync API requires approval. The message names `INFRAHUB_SYNC_REQUIRE_APPROVAL`. |
 | 409 | `schedule-branch-declared` | `write_target` is `branch-review` and the configuration version declares its own destination branch. |
+| 422 | `schedule-left-out-not-applicable` | `write_when_left_out` is true and `write_target` is `branch-review`. A run with branch review always writes the remaining records. |
 | 422 | `schedule-cron-invalid` | The cron expression is not valid, or does not have five fields. The message holds the reason. |
 | 503 | `orchestration-unavailable` | The schedule is stored and the task manager could not be reached. The schedule starts no run until a later request, or a restart of the Sync API, hands it to the task manager. `GET /schedules/{schedule_id}` shows `prefect_synced: false`. |
 | 422 | `schedule-timezone-invalid` | The time zone name is not known. |
