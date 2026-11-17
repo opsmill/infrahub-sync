@@ -1,0 +1,19 @@
+frontend/src/features/runs/run-sections.tsx
+  s_c4f9bd3d1fabe8::t_cc626de4e88865 110-114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "baca7b306880bed7ace648d7fea4d73d12a4504e",
+  "prompts": {},
+  "sessions": {
+    "s_c4f9bd3d1fabe8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f7bf5003-b7b7-444d-a7c2-d1ecbcb55ad7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
