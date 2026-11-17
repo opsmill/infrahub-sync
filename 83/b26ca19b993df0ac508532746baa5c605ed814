@@ -1,0 +1,19 @@
+tests/compose/redaction.py
+  s_564c364058ca9c::t_55c40e96c3ca06 96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "83b26ca19b993df0ac508532746baa5c605ed814",
+  "prompts": {},
+  "sessions": {
+    "s_564c364058ca9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-abf5fe180b33ba309",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
