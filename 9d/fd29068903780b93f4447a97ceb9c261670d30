@@ -1,0 +1,19 @@
+docs/docs/development/constitution.md
+  s_29b17f91da9f30::t_5b9582cdd1a6a1 25-33,214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9dfd29068903780b93f4447a97ceb9c261670d30",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
