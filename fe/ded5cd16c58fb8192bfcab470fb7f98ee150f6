@@ -1,0 +1,85 @@
+tests/plan/test_format_5.py
+  s_cf9ada8f865389::t_191aff9ce68f3c 305,314
+  s_564c364058ca9c::t_f6df6ccf9f683f 292
+tests/service/test_failure_cause_credentials.py
+  s_cf9ada8f865389::t_191aff9ce68f3c 108
+  s_564c364058ca9c::t_78356d75c91338 52,105,118,155
+tests/service/test_config_routes.py
+  s_cf9ada8f865389::t_191aff9ce68f3c 35,82-84,102,107,196,203-209,297-303,370,373-375,394,400,405,435,440,481-483,515-517,688,691-697,719,722-724,808,811-813,898-900,1253,1257-1259,1277-1279,1291,1294,1339-1340,1359-1360,1371-1372,1382-1383,1419,1421,1444-1445,1455-1456,1465,1467,1490,1492,1520,1523-1525
+  s_564c364058ca9c::t_d7731cf7ada465 41,79,1547,1593,1599,1601,1631,1704,1735,1751,1773,1775,1792,1794,1813,1815
+tests/service/test_validation_secret_containment.py
+  s_cf9ada8f865389::t_191aff9ce68f3c 41,165,172
+  s_cf9ada8f865389::t_c0be41474f35f8 173
+  s_564c364058ca9c::t_9fd1d396fe866e 417,427
+tests/service/test_worker_environment.py
+  s_cf9ada8f865389::t_191aff9ce68f3c 54,157
+tests/service/test_plan_report_routes.py
+  s_cf9ada8f865389::t_191aff9ce68f3c 55
+  s_564c364058ca9c::t_570dd31c3e1eca 39,52,65,80,85,87,179,181,187-188,194,197,206-207,249,251
+tests/service/test_sync_store_policy.py
+  s_cf9ada8f865389::t_eb74dc2b70118b 20,121,188,217
+  s_cf9ada8f865389::t_191aff9ce68f3c 88-90,180-182
+tests/service/test_artifact_confidentiality.py
+  s_cf9ada8f865389::t_191aff9ce68f3c 96
+  s_564c364058ca9c::t_34646cf2138793 22,93,106
+tests/service/test_approval_required.py
+  s_cf9ada8f865389::t_eb74dc2b70118b 27,158,232,276
+  s_cf9ada8f865389::t_191aff9ce68f3c 142
+  s_cf9ada8f865389::t_701db136769ffd 75
+tests/service/test_http_api.py
+  s_cf9ada8f865389::t_191aff9ce68f3c 199-208,250,330-333,418-421,437,463-466,490,517,537-539,548-551,633,636
+  s_564c364058ca9c::t_0476e4a7fa6e60 59,82,197,648,704-705,730,735,744,897-899,973-975,1025,1039-1042,1072-1075,1111-1116,1200-1202,1251-1253,1713-1716,2604,2621-2622,2624-2626,2656,2670-2672,2696-2698,2725-2726
+tests/service/test_approval.py
+  s_cf9ada8f865389::t_eb74dc2b70118b 25,132,204,404
+  s_cf9ada8f865389::t_191aff9ce68f3c 102-109,211
+  s_cf9ada8f865389::t_82be5deb7ab515 100,208
+tests/service/test_prefect_wording.py
+  s_cf9ada8f865389::t_191aff9ce68f3c 45,201
+tests/product_store/test_contract.py
+  s_cf9ada8f865389::t_191aff9ce68f3c 3184
+  s_564c364058ca9c::t_38cf8bc1c5584f 3170,3188
+tests/service/test_cancel_planned_run.py
+  s_cf9ada8f865389::t_191aff9ce68f3c 120-123
+  s_cf9ada8f865389::t_eb74dc2b70118b 38,139,199,269,298-302
+  s_cf9ada8f865389::t_195a37cbd38ad0 118-119,124-125
+tests/service/test_run_logs_route.py
+  s_cf9ada8f865389::t_191aff9ce68f3c 28,104,106
+dev/specs/022-local-accounts/tasks.md
+  s_cf9ada8f865389::t_40e12178fec52e 133,136
+tests/image/conftest.py
+  s_564c364058ca9c::t_fcf01f1cf24c35 169,171,253-255
+tests/service/test_admin_account.py
+  s_564c364058ca9c::t_e388979b80965f 22,450-452
+tests/service/test_environment_names.py
+  s_564c364058ca9c::t_c7e2e124159dd1 14,21-22,38-40,48-50,55-58,60-61
+tests/service/test_http_errors.py
+  s_564c364058ca9c::t_88951e1ebe08d6 18,28
+tests/service/test_resume_run.py
+  s_564c364058ca9c::t_4484aecc3b70fd 61,391
+tests/service/test_web_site.py
+  s_564c364058ca9c::t_85de80947861f4 29,426
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "feded5cd16c58fb8192bfcab470fb7f98ee150f6",
+  "prompts": {},
+  "sessions": {
+    "s_564c364058ca9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-abf5fe180b33ba309",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
