@@ -1,0 +1,23 @@
+tests/product_store/test_layout_check.py
+  s_313229fc4d1c44::t_789b88e1248fc7 144-164
+infrahub_sync/product_store/store.py
+  s_313229fc4d1c44::t_d8d9666d596e04 955-959
+  s_313229fc4d1c44::t_2854b726e80719 375-379
+  s_313229fc4d1c44::t_21b6695358ad5d 1036-1038
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "26c60fa22d7541e7adf912845d7998e3405c348d",
+  "prompts": {},
+  "sessions": {
+    "s_313229fc4d1c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c6738f-876b-4301-a742-80e31346a4cc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
