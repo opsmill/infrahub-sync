@@ -1,0 +1,31 @@
+dev/specs/020-product-store-failure-cause/alignment-check.md
+  s_313229fc4d1c44::t_fb6749da8e7ea9 23
+dev/specs/020-product-store-failure-cause/contracts/start-up.md
+  s_313229fc4d1c44::t_07771ae06e8a60 12-18
+dev/specs/020-product-store-failure-cause/plan.md
+  s_313229fc4d1c44::t_4e882beb41eb71 100-101,184-191
+dev/specs/020-product-store-failure-cause/quickstart.md
+  s_313229fc4d1c44::t_8b728094adebf8 42-45,64-75
+dev/specs/020-product-store-failure-cause/research.md
+  s_313229fc4d1c44::t_be5983144ed1b6 144-149,151-161
+dev/specs/020-product-store-failure-cause/spec.md
+  s_313229fc4d1c44::t_a034a2955ae51a 187-192,208-210,272-273,312-314
+dev/specs/020-product-store-failure-cause/tasks.md
+  s_313229fc4d1c44::t_f8e3b3cb7d0cc9 173-176,204-208,237-238,249-250
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0974566583d9dd89d91508db7feee172e7d42cf4",
+  "prompts": {},
+  "sessions": {
+    "s_313229fc4d1c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c6738f-876b-4301-a742-80e31346a4cc",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
