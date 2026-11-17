@@ -1,0 +1,25 @@
+docs/docs/operations/day-2-operations.mdx
+  s_e27e0562681035::t_1757677bb84a8f 126-128
+infrahub_sync/service/config_routes.py
+  s_e27e0562681035::t_a628db58a71856 182
+tests/service/test_config_routes.py
+  s_e27e0562681035::t_5858747d8e6b66 467-470
+tests/service/test_sqlstate_read_only.py
+  s_e27e0562681035::t_c26fb7c1bda42e 7-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2d19ed5e43c02c17fda9319fc0151b1b3ab6ae6d",
+  "prompts": {},
+  "sessions": {
+    "s_e27e0562681035": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a174389c08e291358",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
