@@ -1,0 +1,36 @@
+dev/specs/020-product-store-failure-cause/plan.md
+  s_313229fc4d1c44::t_11629380f3f42a 1-176
+dev/specs/020-product-store-failure-cause/quickstart.md
+  s_313229fc4d1c44::t_bf7208cc4cd085 1-90
+dev/specs/020-product-store-failure-cause/contracts/failure-text.md
+  s_313229fc4d1c44::t_6facc103629494 1-33
+dev/specs/020-product-store-failure-cause/contracts/start-up.md
+  s_313229fc4d1c44::t_8fd5a93f92267d 1-36
+dev/specs/020-product-store-failure-cause/data-model.md
+  s_313229fc4d1c44::t_82f3969c4fd496 1-64
+dev/specs/020-product-store-failure-cause/research.md
+  s_313229fc4d1c44::t_d067bfb613bef4 1-179
+dev/specs/020-product-store-failure-cause/spec.md
+  s_313229fc4d1c44::t_fb0b896d8c93ab 335
+  s_313229fc4d1c44::t_6c5942a53a75a6 210-212
+  s_313229fc4d1c44::t_086b341b84a928 265-269
+  s_313229fc4d1c44::t_b5c9edcacd5f98 74-94
+  s_313229fc4d1c44::t_ba47619efd5dbc 244-246
+  s_313229fc4d1c44::t_1d6bb5f457f03f 249-250
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "33fdbee030decf5e54bdbfb131216e11fe1c39cd",
+  "prompts": {},
+  "sessions": {
+    "s_313229fc4d1c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c6738f-876b-4301-a742-80e31346a4cc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
