@@ -20,7 +20,9 @@ Kubernetes has no start dependency between resources, and the chart has to give 
 guarantees:
 
 - The Sync API and the worker of a Sync version do not serve before the bootstrap has run for that
-  version, on an install and on an upgrade.
+  version and work pool, on an install and on an upgrade. An upgrade at the same version that
+  changes another bootstrap setting, such as the bucket, is the exception described under
+  "Upgrade at the same version" in the consequences.
 - A pod restart does not run the bootstrap.
 - An upgrade that changes what the bootstrap reads runs it again, without a manual step.
 - An upgrade works when a tool applies the output of `helm template` instead of Helm itself.
