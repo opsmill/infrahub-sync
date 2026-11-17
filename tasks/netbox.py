@@ -525,7 +525,9 @@ def ensure_netbox(context: Context, values: dict[str, str]) -> None:
     A running NetBox is left as it is. A stopped NetBox, or one whose data volume remains,
     is started with its data. Only a NetBox that does not exist at all gets the `demo`
     dataset, the same restore `netbox.seed --dataset demo` runs: there is nothing to lose,
-    and NetBox starts against the restored data instead of migrating an empty database.
+    and NetBox starts against the restored data instead of migrating an empty database. When
+    that restore fails, the NetBox it created is removed with its volumes, so the next start
+    restores again instead of starting a partial database.
     """
     state = netbox_state(context, values)
     if state == "running":
@@ -538,7 +540,16 @@ def ensure_netbox(context: Context, values: dict[str, str]) -> None:
         return
     print(f" - [{NAMESPACE}] No local NetBox exists; creating one with the {DEMO_DATASET!r} dataset")
     sql_file = fetch_demo_sql()
-    restore_demo_database(context, values, sql_file)
+    restored = False
+    try:
+        restore_demo_database(context, values, sql_file)
+        restored = True
+    finally:
+        if not restored:
+            # The restore created this NetBox and failed partway. Its data volume would make the
+            # next start read NetBox as stopped and start it on a partial database, so remove it.
+            print(f" - [{NAMESPACE}] The restore failed; removing the partial local NetBox")
+            _compose(context, "down --volumes", values)
     _ready(context, values)
 
 

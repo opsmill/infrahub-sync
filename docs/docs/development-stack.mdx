@@ -75,7 +75,8 @@ The `preview` preset changes the local NetBox only when no NetBox exists:
 - A running NetBox is kept as it is.
 - A stopped NetBox, or one whose data volume remains, is started with its data.
 - When no NetBox exists, the task loads the `demo` dataset, as `netbox.seed --dataset demo`
-  does. The first run downloads that dataset.
+  does. The first run downloads that dataset. When the restore fails, the task removes the
+  NetBox it created, with its data volume, so the next run loads the dataset again.
 
 With the `preview` preset, and with any preset while the local NetBox runs, the worker gets
 the local NetBox's development token as `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`, unless your

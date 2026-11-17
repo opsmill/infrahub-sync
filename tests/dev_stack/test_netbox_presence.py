@@ -95,3 +95,21 @@ def test_ensure_netbox_never_replaces_existing_data(
     netbox.ensure_netbox(_context(fake, monkeypatch), VALUES)
 
     assert events == expected
+
+
+def test_a_failed_demo_restore_removes_the_partial_netbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A restore that fails partway must not leave a volume the next start reads as a stopped NetBox."""
+    fake = FakeNetboxDocker()
+
+    def failed_restore(*_args: object) -> None:
+        msg = "restore failed"
+        raise netbox.NetboxError(msg)
+
+    monkeypatch.setattr(netbox, "fetch_demo_sql", lambda: Path("demo.sql"))
+    monkeypatch.setattr(netbox, "restore_demo_database", failed_restore)
+
+    with pytest.raises(netbox.NetboxError, match="restore failed"):
+        netbox.ensure_netbox(_context(fake, monkeypatch), VALUES)
+
+    assert fake.commands[-1].endswith(" down --volumes")
+    assert "--project-name netbox-dev" in fake.commands[-1]
