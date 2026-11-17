@@ -225,6 +225,12 @@ Check the runs and the events each time.
   reason, like a run that a person starts.
 - Two schedules name the same configuration. Each start follows the overlap policy of its own
   schedule, and two runs of that configuration never write at the same time.
+- The Sync API is restarted with required approval turned on, while a schedule writes to the
+  default branch. At its next start the schedule starts no run, stops, and reports that reason.
+  It becomes active again when its owner changes its write target to branch review.
+- The Sync service was not running for so long that one schedule missed more than 500 starts.
+  The 500 most recent are recorded one by one, and the older ones in one event that holds their
+  count and their first and last start times.
 
 ## Requirements *(mandatory)*
 
@@ -254,7 +260,8 @@ Check the runs and the events each time.
 
 - **FR-006**: A schedule MUST be a record separate from the configuration, and MUST name one
   configuration and one version of it. Registering a newer version MUST NOT change what the
-  schedule runs.
+  schedule runs. A schedule MUST have a name that the operator chooses, unique among the
+  schedules that are not deleted.
 - **FR-007**: When a newer version of the configuration exists than the one a schedule names, the
   Sync API MUST report it on the schedule, and the CLI MUST show a warning wherever it lists or
   shows the schedule.
@@ -334,10 +341,11 @@ recorded with no late run. The `queue` policy and the late run arrive with user 
 
 ### Key Entities *(include if feature involves data)*
 
-- **Schedule**: new. Names one configuration, one version of it and one owner. Holds the cadence,
-  the time zone, the write target, the left-out setting with who turned it on and when, the
-  overlap policy, the "start late by at most" duration, and its state: active, paused, or stopped
-  because the owner's token is no longer valid.
+- **Schedule**: new. Has a name, and names one configuration, one version of it and one owner.
+  Holds the cadence, the time zone, the write target, the left-out setting with who turned it on
+  and when, the overlap policy, the "start late by at most" duration, and its state: active,
+  paused, stopped or deleted. A stopped schedule holds the reason: the owner's token is no longer
+  valid, or the Sync API now requires approval for its write target.
 - **Run**: existing. Gains a trigger type and, for a scheduled run, the schedule's identifier.
 - **Event**: existing. Gains the event types of FR-023. Together they are the history of a
   schedule.
