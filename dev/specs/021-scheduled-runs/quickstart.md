@@ -21,12 +21,24 @@ advances. It needs no Infrahub and no Prefect server. It shows:
 | Start times from a cron expression and a time zone, including a daylight-saving change | `tests/service/test_schedule_cadence.py` |
 | Schedule routes, refusals, owner and administrator rules, idempotency | `tests/service/test_schedule_routes.py` |
 | The loop: a start creates one run, a repeated pass creates no second run, `reject` skips | `tests/service/test_schedule_loop.py` |
+| A run that could not be handed to the task manager is retried and never recorded as missed; an old unresolved receipt does not block a schedule | `tests/service/test_schedule_loop.py` |
+| A change of the schedule or a take-over between two attempts of one start creates no second run | `tests/service/test_schedule_loop.py` |
+| The owner's actor is removed: the schedule stops, and a resume succeeds when the actor exists again | `tests/service/test_schedule_owner.py` |
+| Branch review is refused for a version that declares a branch; `verify`, `apply` and `resume` are refused on a run with branch review | `tests/service/test_schedule_branch_review.py` |
+| The store records of a run's branch from a worker result that the test writes: `pending`, `open`, `removed`, `replaced`, `kept` | `tests/service/test_schedule_branch_review.py` |
 | The approval setting and the two write targets | `tests/service/test_schedule_approval.py` |
 | The left-out setting reaches the `sync` stage | `tests/service/test_schedule_left_out.py` |
 | Missed starts, the late run and the `queue` policy (user story 3) | `tests/service/test_schedule_missed_starts.py` |
 | Schedule records and the compare-and-set advance | `tests/product_store/test_schedules.py` |
 | Client methods and CLI commands, and the command, method and route matrix | `tests/client/test_schedules.py`, `tests/cli/test_schedule_commands.py`, `tests/cli/test_parity_and_closure.py` |
 | The documented event types match the code | `tests/test_run_events_docs.py` |
+| The CLI and the client import without `cronsim` | `tests/client/test_public_surface.py` |
+
+Requirements with no acceptance scenario of their own in the specification are shown here:
+FR-019 and the daylight-saving edge case in `test_schedule_missed_starts.py` and
+`test_schedule_cadence.py`, FR-021 (only what the schedule created) in
+`test_schedule_branch_review.py`, and FR-025 in `test_schedule_routes.py` with a canary
+credential.
 
 ## 2. PostgreSQL product store (opt-in)
 
@@ -80,7 +92,9 @@ Expected, with a source that changes between two starts:
 - Approve the second proposed change in Infrahub and wait for the third start: the second stays
   open, and the events hold `infrahub_sync.schedule.proposed_change_kept`.
 - With a source that does not change, a start ends with the outcome `no-change`, and Infrahub
-  holds no new branch.
+  holds no branch of that run when it ends.
+- Stop the worker during a write, then let the next start pass: the branch of the interrupted run
+  no longer exists after the next successful run.
 - With `INFRAHUB_SYNC_REQUIRE_APPROVAL=true`, the same schedule still runs.
 
 ## 5. Missed starts (user story 3)

@@ -32,7 +32,7 @@ infrahub-sync schedules create --name from-netbox-nightly --config from-netbox -
 | `--version` | Required. |
 | `--cron` | Required. |
 | `--timezone` | Default `UTC`. |
-| `--write-to-default-branch` | Selects the write target `default-branch`. Without it the write target is branch review. |
+| `--write-to-default-branch` | Selects the write target `default-branch` (user story 2). Without it the write target is branch review. |
 | `--write-when-left-out` | Turns the left-out setting on. |
 | `--overlap-policy` | `reject` (default) or `queue` (user story 3). |
 | `--start-late-by-at-most` | A duration such as `30m` or `2h` (user story 3). |
@@ -66,15 +66,23 @@ of the schedule.
 it applies to:
 
 - `warning: a newer version of this configuration exists: <config_id> version <n>` (user story 3)
-- `warning: this schedule is stopped: <state_reason>`
+- `warning: this schedule is stopped: <state_reason>`, followed by the action that the reason
+  needs
 
 A warning does not change the exit code.
 
 ## Changed commands
 
 - `runs list` gains `--trigger-type` and `--schedule`, and its lines show the trigger type.
-- `runs show` prints `trigger_type` and `schedule_id`.
-- `events` accepts `--schedule <schedule>`, which filters on the related schedule.
+- `runs show` prints `trigger_type`, `schedule_id` and `scheduled_start_at`.
+- `events` gains `--schedule <schedule>`, which filters on the related schedule. The command has
+  no filter on a related resource today. Its lines print the `details` of an event.
+
+## Validation
+
+The CLI and the client send the cron expression and the time zone as text. Only the Sync API
+validates them, so the CLI and the client models still import on Python 3.10 without the
+`service` extra.
 
 ## Exit codes
 

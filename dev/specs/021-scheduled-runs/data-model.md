@@ -19,9 +19,9 @@ Table `schedules` of the product store. One row for each schedule, kept after de
 | `left_out_set_by` | text or null | The actor who last turned `write_when_left_out` on. |
 | `left_out_set_at` | timestamp or null | When they did. |
 | `overlap_policy` | text | `reject` (default) or `queue`. `queue` is accepted from user story 3. |
-| `start_late_by_at_most_seconds` | integer | Default 3600, from 60 to 604800. Used from user story 3. |
+| `start_late_by_at_most_seconds` | integer | Default 3600, from 60 to 604800. Used, and shown by the API, from user story 3. |
 | `state` | text | `active`, `paused`, `stopped` or `deleted`. |
-| `state_reason` | text or null | For `stopped`: `owner-token-invalid` or `approval-required`. |
+| `state_reason` | text or null | For `stopped`: `owner-not-found` or `approval-required`. |
 | `owner` | text | The actor name of the owner (R8). No token is stored. |
 | `next_start_at` | timestamp or null | In UTC. Null when the state is not `active`. |
 | `waiting_start_at` | timestamp or null | The start that waits under the `queue` policy. |
@@ -30,6 +30,8 @@ Table `schedules` of the product store. One row for each schedule, kept after de
 Rules:
 
 - `write_target = default-branch` is refused while the Sync API requires approval (R6).
+- `write_target = branch-review` is refused when the configuration version declares a destination
+  branch (R11).
 - `left_out_set_by` and `left_out_set_at` are set when `write_when_left_out` changes from false to
   true, and cleared when it changes to false.
 - `next_start_at` is computed from `cron` and `timezone` when the schedule is created, changed,
@@ -46,52 +48,64 @@ State transitions:
 | (none) | create | `active` |
 | `active` | pause | `paused` |
 | `paused` | resume | `active` |
-| `active` | the owner has no valid token at a start | `stopped`, reason `owner-token-invalid` |
+| `active` | the owner's actor does not exist on the Sync API, at a start | `stopped`, reason `owner-not-found` |
 | `active` | the Sync API requires approval and the write target is the default branch, at a start | `stopped`, reason `approval-required` |
-| `stopped` (`owner-token-invalid`) | take over by an administrator | `active`, with the administrator as owner |
+| `stopped` | resume, when the reason no longer holds | `active` |
+| `stopped` (`owner-not-found`) | take over by an administrator (user story 3) | `active`, with the administrator as owner |
 | `stopped` (`approval-required`) | change of the write target to `branch-review` | `active` |
 | `active`, `paused`, `stopped` | delete | `deleted` |
 
 A `deleted` schedule accepts no action. A paused or stopped schedule starts no run and records no
-missed start.
+missed start. A resume of a stopped schedule whose reason still holds is refused.
 
 ## Schedule branch (new, stored)
 
-Table `schedule_branches`. One row for each branch that a schedule's run created.
+Table `schedule_branches`. One row for each run with branch review.
 
 | Field | Type | Rule |
 | --- | --- | --- |
 | `schedule_id` | text | The schedule. |
-| `run_id` | text, primary key | The run that created the branch. |
-| `branch` | text | The branch name (R11). |
-| `proposed_change_id` | text or null | Null when the run failed before it opened one. |
-| `state` | text | `open`, `replaced` or `kept`. |
-| `replaced_by_run_id` | text or null | The run whose proposed change replaced this one. |
+| `run_id` | text, primary key | The run. |
+| `branch` | text | The branch name, derived from the schedule and the start time (R11). |
+| `proposed_change_id` | text or null | Set when the run opened one. |
+| `state` | text | `pending`, `open`, `removed`, `replaced` or `kept`. |
+| `replaced_by_run_id` | text or null | The run that replaced this one. |
 | `created_at` | timestamp | In UTC. |
 
 Rules:
 
-- A row is written when the worker reports that it created the branch.
-- `open`: the schedule may replace it at its next successful run.
-- `replaced`: the schedule closed the proposed change, if any, and deleted the branch.
-- `kept`: a person approved, merged or closed the proposed change, or the branch no longer
-  exists. The schedule never touches it again.
-- A schedule has at most one row in the state `open` (SC-004).
+- `pending`: written by the service in the transaction that creates the run. The branch may or
+  may not exist in Infrahub.
+- `open`: the run finished its write and opened its proposed change.
+- `removed`: the run itself deleted its branch, because the plan held no operation or the run
+  stopped for a review of records left out.
+- `replaced`: a later run of the schedule closed the proposed change, if any, and deleted the
+  branch.
+- `kept`: a person approved, merged or closed the proposed change. The schedule never touches
+  the branch or the proposed change again.
+- A later successful run handles every row of its schedule in the states `pending` and `open`
+  other than its own. After it, the schedule has at most one row in the state `open` (SC-004).
 
 ## Run (changed)
 
-Two columns on `product_runs`, and the same two fields on `ProductRun`, `RunResource` and
+Three columns on `product_runs`, and the same three fields on `ProductRun`, `RunResource` and
 `PublicRunResource`.
 
 | Field | Type | Rule |
 | --- | --- | --- |
 | `trigger_type` | text | `manual` or `scheduled`. A run of `POST /runs` holds `manual`. |
 | `schedule_id` | text or null | Set when `trigger_type` is `scheduled`. |
+| `scheduled_start_at` | timestamp or null | The start time `T` of the cadence, in UTC. Set when `trigger_type` is `scheduled`. |
 
-- `actor` of a scheduled run is the schedule's owner at the start time.
-- `destination_branch` of a run with branch review is the generated branch name.
-- `GET /runs` filters on both fields. Both are stored columns, as ADR 0032 requires.
-- The two columns reach only a new product database (R12).
+- A unique index on `(schedule_id, scheduled_start_at)` allows one run for each start (R2).
+- `started_at` is the time the run was created. For a late or queued run it is later than
+  `scheduled_start_at`.
+- `actor` of a scheduled run is the schedule's owner when the run is created.
+- `destination_branch` of a run with branch review is the derived branch name.
+- `GET /runs` filters on `trigger_type` and `schedule_id`. Both are stored columns, as ADR 0032
+  requires, and `schedule_id` has an index.
+- `verify`, `apply` and `resume` requests on a run with branch review are refused (R11).
+- The columns reach only a new product database (R12).
 
 ## Event (changed)
 
@@ -99,13 +113,25 @@ Two columns on `product_runs`, and the same two fields on `ProductRun`, `RunReso
 - `RelatedResource.kind` and `PrimaryResource.kind` accept `schedule`.
 - The primary resource of an event is the run when `run_id` is set, else the schedule when the
   event names one, else the configuration.
-- No new column.
+- A new optional field `details`, stored in a new nullable column of `audit_events`. Its keys are
+  closed:
+
+| Key | Type | Used by |
+| --- | --- | --- |
+| `start_at` | timestamp | Every event of a start. |
+| `starts`, `first_start_at`, `last_start_at` | integer, timestamps | The one event that records more than 500 missed starts. |
+| `left_out` | integer | The result event of a scheduled run. |
+| `branch`, `proposed_change_id` | text | Events of a proposed change. |
+| `replaced_run_id` | text | `proposed_change_replaced`. |
+| `cause` | text | A refusal code or a failure class. Never free text from Infrahub. |
 
 ## Mutation receipt (changed)
 
-- `resource_kind` accepts `schedule`, for the mutations of the schedule routes.
-- A scheduled run's receipt has the resource kind `run`, the owner as actor, and the key digest
-  of `schedule:<schedule_id>:<start time in UTC>` (R2).
+- `resource_kind` accepts `schedule`, for the mutations of the schedule routes. The kinds are
+  also named in a `CHECK` constraint, SQLite triggers and model invariants (R12).
+- A scheduled run's receipt has the resource kind `run`, the owner as actor, the key digest of
+  `schedule:<schedule_id>:<scheduled_start_at>`, and a request fingerprint computed from the
+  schedule identifier and the start time only (R2).
 
 ## Stage result of a scheduled `sync` (changed, in the run's results)
 
@@ -114,14 +140,19 @@ review:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `branch_review.branch` | text or null | The branch the run created. Null when the plan had no operation. |
+| `branch_review.branch` | text | The run's branch. |
+| `branch_review.branch_state` | text | `written`, or `removed` when the run deleted its branch. |
 | `branch_review.proposed_change_id` | text or null | The proposed change the run opened. |
-| `branch_review.replaced_run_id` | text or null | The run whose branch and proposed change this run replaced. |
-| `branch_review.kept_run_id` | text or null | The earlier run whose proposed change was left in place, with the cause in `kept_cause`. |
-| `branch_review.kept_cause` | text or null | `approved`, `merged`, `closed` or `missing`. |
+| `branch_review.replaced` | list | For each earlier run that was replaced: its run identifier. |
+| `branch_review.kept` | list | For each earlier run that was left in place: its run identifier and the cause, `approved`, `merged` or `closed`. |
+| `branch_review.failure` | text or null | The failure class when opening the proposed change or replacing an earlier one failed. The write verdict does not change. |
 
-The store reads this entry in `commit_claimed_execution` and updates `schedule_branches` in the
-same transaction.
+The result also holds `left_out`, the plan's count of records left out, for every scheduled run.
+
+The store updates `schedule_branches` from this entry in the transaction that saves it. The part
+that is known when the write is committed (`branch`, `branch_state`) is saved with the stage
+result. The part that follows the write (`proposed_change_id`, `replaced`, `kept`, `failure`) is
+saved by a second store call with its events.
 
 ## Flow parameters of a scheduled run (changed, in memory only)
 
@@ -131,7 +162,7 @@ The service adds these to the parameters of `service_sync_run`:
 | --- | --- |
 | `confirm_left_out` | Exists today. True when the schedule's left-out setting is on (R5). |
 | `branch_review` | True for the write target `branch-review`. |
-| `replace_branch`, `replace_proposed_change_id` | The schedule's row in the state `open`, if any. |
+| `earlier_branches` | The schedule's rows in the states `pending` and `open`: run identifier, branch, proposed change identifier. |
 
 The flow reads them only after it claimed its execution, so only a run that the service started
 can carry them.

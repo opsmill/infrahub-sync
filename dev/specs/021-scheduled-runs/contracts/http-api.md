@@ -26,6 +26,7 @@ existing rules for a repeated key. Errors use the existing error body.
   "owner": "operator",
   "next_start_at": "2026-11-18T01:00:00Z",
   "waiting_start_at": null,
+  "last_run_id": "…",
   "open_branch": {"run_id": "…", "branch": "sync/from-netbox-nightly-20261117-a1b2c3", "proposed_change_id": "…"},
   "created_at": "2026-11-17T09:12:00Z",
   "updated_at": "2026-11-17T09:12:00Z"
@@ -33,8 +34,13 @@ existing rules for a repeated key. Errors use the existing error body.
 ```
 
 - `newer_version` is the highest registered version of the configuration when it is higher than
-  `registry_version`, else null (user story 3). Before user story 3 the field is absent.
-- `open_branch` is the schedule's branch in the state `open`, else null.
+  `registry_version`, else null (user story 3).
+- `newer_version`, `start_late_by_at_most_seconds` and `waiting_start_at` are absent before user
+  story 3 is delivered.
+- `state_reason` is `owner-not-found` or `approval-required` for a stopped schedule, else null.
+- `last_run_id` is the schedule's most recent run, else null. `GET /runs/{run_id}` holds its
+  outcome.
+- `open_branch` is the schedule's most recent branch in the state `open`, else null.
 - All times are in UTC.
 
 ## `POST /schedules`
@@ -61,9 +67,10 @@ Refusals:
 | 404 | `configuration-version-not-found` | The configuration or the version is not registered. |
 | 409 | `schedule-name-in-use` | A schedule that is not deleted has that name. |
 | 409 | `approval-required-for-schedule` | `write_target` is `default-branch` and the Sync API requires approval. The message names `INFRAHUB_SYNC_REQUIRE_APPROVAL`. |
+| 409 | `schedule-branch-declared` | `write_target` is `branch-review` and the configuration version declares its own destination branch. |
 | 422 | `schedule-cron-invalid` | The cron expression is not valid. The message holds the reason. |
 | 422 | `schedule-timezone-invalid` | The time zone name is not known. |
-| 422 | `schedule-setting-not-available` | `overlap_policy` is `queue` or `start_late_by_at_most_seconds` is set, before user story 3 is delivered. |
+| 422 | `schedule-setting-not-available` | `overlap_policy` is `queue` or `start_late_by_at_most_seconds` is set, before user story 3 is delivered. `write_target` is `default-branch`, before user story 2 is delivered. |
 
 ## `GET /schedules`
 
@@ -107,7 +114,10 @@ and a resume of an active schedule answer `200` and change nothing.
 | 403 | `forbidden` | The caller is neither the owner nor an administrator. |
 | 404 | `schedule-not-found` | |
 | 409 | `schedule-deleted` | |
-| 409 | `schedule-stopped` | A resume of a stopped schedule. The message names the action that the reason needs. |
+| 409 | `schedule-stopped` | A resume of a stopped schedule whose reason still holds. The message names the reason and the action it needs. |
+
+A resume of a stopped schedule whose reason no longer holds answers `200`, and the schedule is
+active.
 
 ## `POST /schedules/{schedule_id}/delete`
 
@@ -118,19 +128,26 @@ forbidden`, `404 schedule-not-found`. A second deletion answers `200`.
 ## `POST /schedules/{schedule_id}/take-over` (user story 3)
 
 Body: an optional `reason`. The caller must be an administrator. The caller becomes the owner,
-and a schedule stopped with the reason `owner-token-invalid` becomes active. Answer `200` with
+and a schedule stopped with the reason `owner-not-found` becomes active. Answer `200` with
 the schedule resource. Refusals: `403 forbidden`, `404 schedule-not-found`, `409
 schedule-deleted`.
 
 ## `GET /runs` and `GET /runs/{run_id}` (changed)
 
-- The run resource gains `trigger_type` (`manual` or `scheduled`) and `schedule_id`.
+- The run resource gains `trigger_type` (`manual` or `scheduled`), `schedule_id` and
+  `scheduled_start_at`.
 - `GET /runs` gains the filters `trigger_type` and `schedule_id`.
+
+## `POST /runs/{run_id}/verify`, `/apply` and `/resume` (changed)
+
+Refused with `409 scheduled-run-not-appliable` for a scheduled run with branch review. The
+message says that the schedule's next run replaces it.
 
 ## `GET /events` (changed)
 
 - `event_types` accepts the types of [events.md](events.md).
 - `related` accepts `schedule:<schedule_id>`.
+- An event gains the optional field `details`.
 
 ## `POST /runs` (not changed)
 

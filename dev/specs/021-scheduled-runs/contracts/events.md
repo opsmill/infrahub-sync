@@ -2,7 +2,11 @@
 
 Every event below names the schedule as a related resource of the kind `schedule`, and the
 configuration and its version as related resources. `GET /events?related=schedule:<schedule_id>`
-returns the history of a schedule.
+returns the history of a schedule. Every event of a scheduled run also names its schedule, so the
+same request returns the events of the schedule's runs.
+
+Facts of an event are in its `details` field, described in [data-model.md](../data-model.md).
+`reason` holds only the text that a person gave with a request.
 
 ## Events of a request
 
@@ -22,35 +26,41 @@ Written by the Sync API in the transaction that saves the answer. The actor is t
 ## Events of a start
 
 Written by the schedule loop in the transaction that advances the schedule. The actor is the
-schedule's owner. `operation` is `schedule-start`. `reason` holds `start=<time in UTC>`.
+schedule's owner. `operation` is `schedule-start`. `details.start_at` holds the start time.
 
 | Event type | When | `run_id` | `outcome` |
 | --- | --- | --- | --- |
 | `infrahub_sync.schedule.start_skipped` | A run of the same configuration is in progress, or a start already waits. | The run in progress. | `skipped-run-in-progress` or `skipped-start-waiting` |
 | `infrahub_sync.schedule.start_queued` | The start waits under the `queue` policy (user story 3). | The run in progress. | `queued` |
 | `infrahub_sync.schedule.start_missed` | The start time passed while the Sync service was not running. | The late run, if one started. | `missed-skipped` or `missed-started-late` |
-| `infrahub_sync.schedule.stopped` | The schedule moved to the state `stopped`. | none | `owner-token-invalid` or `approval-required` |
+| `infrahub_sync.schedule.start_failed` | The run could not be created, for example because the configuration version can no longer be run. `details.cause` holds the refusal code. | none | `failed` |
+| `infrahub_sync.schedule.stopped` | The schedule moved to the state `stopped`. | none | `owner-not-found` or `approval-required` |
 
 - A start that creates a run on time writes no schedule event. The run's own events
-  (`infrahub_sync.run.accepted` and the stage result) name the schedule as a related resource.
+  (`infrahub_sync.run.accepted` and the stage result) name the schedule.
+- A start whose run exists and could not be submitted to Prefect is retried and writes no
+  `start_failed` event. The run's `infrahub_sync.run.unavailable` event is written once for each
+  attempt, as today.
 - When more than 500 starts of one schedule were missed, the oldest are recorded in one
-  `start_missed` event whose `reason` is `starts=<count> from=<time> to=<time>`.
+  `start_missed` event whose `details` hold `starts`, `first_start_at` and `last_start_at`.
 
 ## Events of a proposed change
 
-Written by the worker with the stage result, in the transaction that saves it. `run_id` is the
-scheduled run. The actor is the schedule's owner. `operation` is `sync`.
+Written by the worker after the write is committed, in one transaction with the second part of
+the stage result. `run_id` is the scheduled run. The actor is the schedule's owner. `operation`
+is `sync`.
 
 | Event type | When | `outcome` |
 | --- | --- | --- |
 | `infrahub_sync.schedule.proposed_change_opened` | The run opened a proposed change. | `opened` |
-| `infrahub_sync.schedule.proposed_change_replaced` | The run closed the schedule's earlier proposed change and deleted its branch. | `replaced` |
-| `infrahub_sync.schedule.proposed_change_kept` | The earlier proposed change was left in place. | `kept-approved`, `kept-merged`, `kept-closed` or `kept-missing` |
+| `infrahub_sync.schedule.proposed_change_replaced` | The run closed an earlier proposed change of the schedule, or deleted an earlier branch that had none. One event for each. | `replaced` |
+| `infrahub_sync.schedule.proposed_change_kept` | An earlier proposed change was left in place. | `kept-approved`, `kept-merged` or `kept-closed` |
+| `infrahub_sync.schedule.proposed_change_failed` | Opening the proposed change, or replacing an earlier one, failed. `details.cause` holds the failure class. | `failed` |
 
 ## Result event of a scheduled run
 
 The existing event `infrahub_sync.run.synced` or `infrahub_sync.run.failed`. For a scheduled run
-its `reason` holds `left_out=<count>` (FR-005).
+its `details.left_out` holds the plan's count of records left out (FR-005).
 
 ## What no event holds
 
