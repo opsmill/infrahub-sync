@@ -1,0 +1,21 @@
+infrahub_sync/service/failure_cause.py
+  s_a6e67454191553::t_b6bb413f4c7668 114,145-147,153-154,174-175,179-181
+tests/service/test_failure_cause.py
+  s_a6e67454191553::t_db1aefebbd62ac 496-517
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7122179ac457506e4f9c187ea445a2667166b8fb",
+  "prompts": {},
+  "sessions": {
+    "s_a6e67454191553": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ab1fe64d171c2d2f0",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
