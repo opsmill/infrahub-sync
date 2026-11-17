@@ -479,3 +479,14 @@ Infrahub in the record (ADR 0021).
   to create, update and comment on a proposed change, and whether closing a proposed change is
   an update of its `state` or needs a mutation of its own. The first task of phase 4 checks
   both against a running Infrahub.
+
+Checked since, for R3, in the installed Prefect 3.8.6 on 2026-11-17 while writing
+`infrahub_sync/service/schedule_cadence.py`:
+
+- Prefect accepts an empty time zone name and an alias such as `@daily`. The module refuses both:
+  the empty name itself, and the alias because it does not have five fields.
+- Prefect accepts an expression whose date never comes, such as `0 2 30 2 *`, and `get_dates`
+  then raises a `ValueError` of the cron library. The module reports it as an invalid expression.
+- An unknown time zone raises a `ValidationError` with no field location; an invalid expression
+  raises one with the location `cron`. The module's error names the field from that difference.
+- `get_dates` returns a start that is equal to its `start` argument, and awaits nothing.

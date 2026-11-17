@@ -31,7 +31,7 @@ The product owner decided the order on 2026-11-17. No task is blocked or gated.
 ## Phase 1: Setup (bootstrap test and release note)
 
 - [ ] T001 Write `tests/service/test_schedule_bootstrap.py`: after the bootstrap job applies the deployment again, which removes its Prefect schedules, the Prefect schedule of every stored active schedule exists again (R13)
-- [ ] T002 [P] Create the news fragment `changelog/+scheduled-runs.added.md`: schedules exist, and a product database of an earlier build must be replaced (R12)
+- [X] T002 [P] Create the news fragment `changelog/+scheduled-runs.added.md`: schedules exist, and a product database of an earlier build must be replaced (R12)
 
 ---
 
@@ -41,14 +41,14 @@ The product owner decided the order on 2026-11-17. No task is blocked or gated.
 
 ### Tests
 
-- [ ] T003 [P] Write `tests/service/test_schedule_cadence.py`: a valid cadence gives its next start in UTC; a start in the hour that a daylight-saving change removes and in the hour it repeats gives at most one start; an invalid expression, an expression that does not have five fields and an unknown time zone raise the module's own error; the list of starts between two times is bounded (R3)
+- [X] T003 [P] Write `tests/service/test_schedule_cadence.py`: a valid cadence gives its next start in UTC; a start in the hour that a daylight-saving change removes and in the hour it repeats gives at most one start; an invalid expression, an expression that does not have five fields and an unknown time zone raise the module's own error; the list of starts between two times is bounded (R3)
 - [ ] T004 [P] Write `tests/product_store/test_schedules.py`, parameterized as `("sqlite", pytest.param("postgresql", marks=pytest.mark.integration))`: create, read, list with cursor and filters, change, state transitions of data-model.md, unique name among schedules that are not deleted, `admit_scheduled_start` (the run, receipt, write admission, claimed execution and events in one transaction; two calls for one start, one creates the run), `schedule_branches` states, the unique index on `(schedule_id, scheduled_start_at)` of `product_runs`
 - [ ] T005 [P] Extend `tests/product_store/test_contract.py`, `tests/product_store/test_run_approval.py` and `tests/product_store/test_postgresql_isolation.py`: new public names, the receipt kind `schedule`, the new columns of `product_runs` and `audit_events` (critique E9)
 - [ ] T006 [P] Extend `tests/client/test_models.py` and `tests/client/test_public_surface.py`: schedule request, resource and page models; `trigger_type`, `schedule_id` and `scheduled_start_at` on the run resource; `details` on the event resource; the client package imports with `prefect` absent from `sys.modules`
 
 ### Implementation
 
-- [ ] T007 Create `infrahub_sync/service/schedule_cadence.py`: `validate(cron, timezone)`, `next_start(cron, timezone, after)` and `starts_between(cron, timezone, after, until, limit)` in UTC, built on Prefect's `CronSchedule`, with one typed error for an invalid expression or time zone. No module outside `infrahub_sync/service/` imports it (R3)
+- [X] T007 Create `infrahub_sync/service/schedule_cadence.py`: `validate(cron, timezone)`, `next_start(cron, timezone, after)` and `starts_between(cron, timezone, after, until, limit)` in UTC, built on Prefect's `CronSchedule`, with one typed error for an invalid expression or time zone. No module outside `infrahub_sync/service/` imports it (R3)
 - [ ] T008 Add to `infrahub_sync/product_store/models.py`: `ScheduleRecord`, `ScheduleBranch`, `ScheduleFilters`; `trigger_type`, `schedule_id` and `scheduled_start_at` on `ProductRun` and `RunFilters`; the segment `schedule` in `EVENT_TYPE_PATTERN`; the kind `schedule` in `RelatedResource`, `PrimaryResource`, `_RELATED_KIND_ORDER` and `primary_resource`; the closed `details` model on `AuditEvent`; the kind `schedule` in `MutationReceipt.resource_kind` and its invariants (data-model.md, R9)
 - [ ] T009 Add to `infrahub_sync/product_store/store.py`: tables `schedules` and `schedule_branches`; columns `trigger_type`, `schedule_id`, `scheduled_start_at` on `product_runs` and `details` on `audit_events`; the unique index and the `schedule_id` index; the receipt `CHECK` constraint and SQLite triggers with the kind `schedule`; a startup refusal, with a message, of a database whose tables lack the new columns (R12)
 - [ ] T010 Add the schedule methods to the store protocol and both stores in `infrahub_sync/product_store/store.py`: create, get, list, update, the `schedule_branches` reads and writes, and `admit_scheduled_start(schedule_id, scheduled_start_at, flow_run_id, worker_id, now, decision)` which writes the run, its accepted receipt, its write admission, its claimed execution and the events of the start in one transaction, or only the events when the start does not run; change `complete_mutation` and `commit_claimed_execution` to take a sequence of events (R2, R9); update `consecutive_failures` and stop the schedule at 5 in the store call that saves the end of a scheduled run, with its event (FR-032)
