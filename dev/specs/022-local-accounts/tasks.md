@@ -23,12 +23,12 @@ from the other `[P]` tasks of its group and depends on no unfinished task of tha
 
 **Purpose**: a known starting point.
 
-- [ ] T001 Run `uv sync --extra dev --extra prefect --extra service` and
+- [X] T001 Run `uv sync --extra dev --extra prefect --extra service` and
   `uv run invoke tests.tests-unit` in the worktree; record the number of passing tests in
   `dev/specs/022-local-accounts/notes.md`, to compare after Phase 2.
-- [ ] T002 [P] Confirm the scrypt setting of research R2 against the current OWASP Password
+- [X] T002 [P] Confirm the scrypt setting of research R2 against the current OWASP Password
   Storage Cheat Sheet; record the setting and the date in `dev/specs/022-local-accounts/notes.md`.
-- [ ] T003 [P] List every file that names `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`,
+- [X] T003 [P] List every file that names `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`,
   `BEARER_TOKENS` or `EnvironmentPrincipalResolver` (exclude `dev/specs`, `node_modules`,
   `.venv`) into `dev/specs/022-local-accounts/notes.md`; this is the checklist for T021 to T025.
 
