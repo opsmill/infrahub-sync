@@ -121,6 +121,11 @@ class _Resolver:
         del token
         return Resolution.accepted(Principal(actor="operator"))
 
+    @staticmethod
+    def principal_of(actor: str) -> Principal:
+        """Treat every actor name as a configured operator."""
+        return Principal(actor=actor)
+
 
 def _pending(flow_run_id: str, attempt: int) -> PrefectExecutionLink:
     return PrefectExecutionLink(

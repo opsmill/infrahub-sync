@@ -175,6 +175,7 @@ def test_the_event_list_returns_the_contract_shape(events_api: tuple[TestClient,
                     {"kind": "config_version", "id": "cfg-a@1"},
                     {"kind": "branch", "id": "main"},
                 ],
+                "details": None,
             }
         ],
         "limit": 50,

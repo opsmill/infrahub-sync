@@ -555,6 +555,10 @@ def test_lifespan_continues_after_ordinary_failure_and_cancels_cleanly(tmp_path)
             del token
             return Resolution.accepted(Principal(actor="operator"))
 
+        @staticmethod
+        def principal_of(actor: str) -> Principal:
+            return Principal(actor=actor)
+
     projection = local_product_projection(tmp_path)
     reconciler = _Reconciler()
     app = create_app(
@@ -984,6 +988,10 @@ def test_request_time_reconciliation_terminalizes_each_pending_link(tmp_path) ->
         def resolve(token: str) -> Resolution:
             del token
             return Resolution.accepted(Principal(actor="operator"))
+
+        @staticmethod
+        def principal_of(actor: str) -> Principal:
+            return Principal(actor=actor)
 
     app = create_app(RunService(projection, orchestration), _Resolver(), reconciler=reconciler)  # type: ignore[arg-type]
     response = TestClient(app).get("/runs/run-request-reconcile", headers={"Authorization": "Bearer token"})

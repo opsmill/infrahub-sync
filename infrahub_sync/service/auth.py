@@ -81,6 +81,8 @@ class PrincipalResolver(Protocol):
 
     def resolve(self, token: str) -> Resolution: ...
 
+    def principal_of(self, actor: str) -> Principal | None: ...
+
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -109,71 +111,17 @@ class StoreAccountResolver:
     def secret_values(self) -> tuple[str, ...]:
         """Return the token of ``admin`` that the environment defines, for boundary redaction.
 
-        The store holds every other token as a digest, so the process cannot list them. The
-        password of ``admin`` is never in this list.
-        """
-        return () if self._admin_token is None else (self._admin_token,)
+    def resolve(self, token: str) -> Principal | None:
+        """Compare every configured token with a timing-safe operation."""
+        matched: Principal | None = None
+        for actor, entry in self._entries:
+            if hmac.compare_digest(token.encode(), entry.token.encode()):
+                matched = Principal(actor=actor, administrator=entry.administrator)
+        return matched
 
-    def resolve(self, token: str) -> Resolution:
-        """Return the account that owns the presented value, or the code of the refusal.
-
-        An unknown value, a disabled account, a deleted account and a session that was not used
-        for longer than the idle period are refused as ``unauthenticated``. An API token after its
-        expiry date is refused as ``token-expired``.
-        """
-        now = self._clock()
-        resolved = self._projection.resolve_digest(digest(token), now=now)
-        if resolved is None:
-            return Resolution.refused()
-        account = resolved.account
-        if account.disabled or account.deleted_at is not None:
-            return Resolution.refused()
-        if resolved.kind == "token":
-            if resolved.expires_at is not None and resolved.expires_at <= now:
-                return Resolution.refused("token-expired")
-        elif resolved.last_used_at is None or now - resolved.last_used_at > self._idle_period:
-            # The store recorded this use before the verdict. The session is deleted, or its
-            # next request would find it used a moment ago.
-            self._projection.delete_account_session(resolved.credential_id)
-            return Resolution.refused()
-        return Resolution.accepted(
-            Principal(
-                actor=account.account_id,
-                administrator=account.administrator,
-                name=account.name,
-                kind=resolved.kind,
-                session_id=resolved.credential_id if resolved.kind == "session" else None,
-            )
-        )
-
-
-def apply_admin_account(projection: ProductProjection, settings: AdminAccountSettings) -> Account:
-    """Make the ``admin`` account of the store match the variables of the environment.
-
-    One transaction, which two processes that start together run one after the other:
-
-    - ``admin`` is created when it is missing, as an active administrator that the environment
-      manages;
-    - when the stored hash does not verify the password of the environment, a new hash is stored
-      and the sessions of ``admin`` end;
-    - ``admin`` keeps one API token, the token of the environment, or none when it is not set;
-    - a refusal after repeated failed sign-ins for ``admin`` ends.
-
-    A call that finds the store as the environment describes it changes no row. The caller removes
-    the password from the environment of the process afterwards.
-
-    Raises:
-        DuplicateCredentialError: another account already has an API token with the same value.
-    """
-
-    def password_hash_for(stored_hash: str | None) -> str | None:
-        if stored_hash is not None and verify_password(settings.password, stored_hash):
-            return None
-        return hash_password(settings.password)
-
-    return projection.apply_environment_account(
-        name=ADMIN_ACCOUNT_NAME,
-        password_hash_for=password_hash_for,
-        token_name=ADMIN_ACCOUNT_TOKEN_NAME,
-        token_digest=None if settings.token is None else digest(settings.token),
-    )
+    def principal_of(self, actor: str) -> Principal | None:
+        """Return the principal of a configured actor name, or ``None``; a token is never read or returned."""
+        for name, entry in self._entries:
+            if name == actor:
+                return Principal(actor=name, administrator=entry.administrator)
+        return None
