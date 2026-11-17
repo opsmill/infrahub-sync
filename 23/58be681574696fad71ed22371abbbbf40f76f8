@@ -1,0 +1,45 @@
+changelog/+scheduled-runs.added.md
+  s_29b17f91da9f30::t_fb7ee0f5656d23 1
+infrahub_sync/service/schedule_cadence.py
+  s_29b17f91da9f30::t_bd9a3ce0f0334a 130-131
+  s_29b17f91da9f30::t_aa1de71d6f83d7 1-129,132-152
+  s_cf9ada8f865389::t_0e42d6e5f0dea7 153-155
+tests/service/test_schedule_cadence.py
+  s_29b17f91da9f30::t_e05a6635191d3b 1-202
+dev/specs/021-scheduled-runs/tasks.md
+  s_609daeaa865193::t_9bca79de10e7f1 34,44,51
+dev/specs/021-scheduled-runs/research.md
+  s_29b17f91da9f30::t_e5796a6542aced 482-492
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2358be681574696fad71ed22371abbbbf40f76f8",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_609daeaa865193": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a959f60619b9a74f0",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
