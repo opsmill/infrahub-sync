@@ -24,6 +24,13 @@ from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.configuration import ConfigurationPackage, validate_package_credentials
 from infrahub_sync.execution import REDACTED, json_string_forms, redact, redact_ordered, redaction_order
 from infrahub_sync.plan.canonical import canonical_json_bytes
+from infrahub_sync.product_store import accounts as account_statements
+from infrahub_sync.product_store.accounts import (
+    AccountIdentifierAllocationError,
+    AccountNameTakenError,
+    AccountTokenNameTakenError,
+    DuplicateCredentialError,
+)
 from infrahub_sync.product_store.bundle import (
     FINAL_CHECKPOINT_ARTIFACT_ID,
     MAX_BUNDLE_BYTES,
@@ -33,6 +40,9 @@ from infrahub_sync.product_store.models import (
     DEFAULT_LIMIT,
     RUN_ALREADY_CANCELLED_MESSAGE,
     RUN_CANCELLED_MESSAGE,
+    Account,
+    AccountSession,
+    AccountToken,
     ApplyProgress,
     ApplyProgressSave,
     ArtifactReference,
@@ -53,6 +63,7 @@ from infrahub_sync.product_store.models import (
     MutationReceipt,
     PrefectExecutionLink,
     ProductRun,
+    ResolvedCredential,
     RunApproval,
     RunFilters,
     RunPage,
@@ -152,7 +163,41 @@ CREATE UNIQUE INDEX IF NOT EXISTS configuration_versions_checksum
 CREATE TABLE IF NOT EXISTS worker_environments (
     worker_id TEXT PRIMARY KEY, credential_names TEXT NOT NULL, observed_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS accounts (
+    account_id TEXT PRIMARY KEY, short_id TEXT NOT NULL UNIQUE, name TEXT, name_key TEXT, password_hash TEXT,
+    administrator BOOLEAN NOT NULL DEFAULT FALSE, disabled BOOLEAN NOT NULL DEFAULT FALSE,
+    environment_managed BOOLEAN NOT NULL DEFAULT FALSE, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    password_changed_at TEXT NOT NULL, deleted_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS accounts_name_key
+    ON accounts (name_key);
+CREATE TABLE IF NOT EXISTS account_tokens (
+    token_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, name TEXT NOT NULL, digest TEXT NOT NULL,
+    created_at TEXT NOT NULL, expires_at TEXT, last_used_at TEXT,
+    environment_managed BOOLEAN NOT NULL DEFAULT FALSE,
+    FOREIGN KEY (account_id) REFERENCES accounts(account_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS account_tokens_digest
+    ON account_tokens (digest);
+CREATE UNIQUE INDEX IF NOT EXISTS account_tokens_account_name
+    ON account_tokens (account_id, name);
+CREATE TABLE IF NOT EXISTS account_sessions (
+    session_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, digest TEXT NOT NULL,
+    created_at TEXT NOT NULL, last_used_at TEXT NOT NULL,
+    FOREIGN KEY (account_id) REFERENCES accounts(account_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS account_sessions_digest
+    ON account_sessions (digest);
+CREATE INDEX IF NOT EXISTS account_sessions_account
+    ON account_sessions (account_id);
+CREATE TABLE IF NOT EXISTS sign_in_attempts (
+    name_key TEXT PRIMARY KEY, failed_count INTEGER NOT NULL, window_started_at TEXT NOT NULL,
+    refused_until TEXT
+);
 """
+# ``accounts_name_key`` is a plain unique index. SQLite and PostgreSQL both treat two empty
+# (NULL) values as different, so every deleted account can have an empty key while two accounts
+# cannot share a name.
 _SQLITE_EXECUTION_TIMESTAMP_FUNCTION = "infrahub_sync_execution_timestamp_microseconds"
 _UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _CANCELLATION_DEADLINE_ERROR = "execution cancellation recovery deadline is invalid"
@@ -374,6 +419,9 @@ _POSTGRESQL_SCHEMA_INITIALIZATION_LOCK = (
 # locking), the worst observed attempt count for any one caller was 5-7. This budget
 # supports up to 8 concurrent writers with margin above that observed worst case.
 _CONFIGURATION_VERSION_ATTEMPTS = 8
+# An account identifier has 128 random bits and a short identifier 32. A second attempt is
+# needed about once in four billion creations for each account that exists.
+_ACCOUNT_IDENTIFIER_ATTEMPTS = 4
 _JSON_MAPPING_ADAPTER = TypeAdapter(dict[str, Any])
 _JSON_LIST_ADAPTER = TypeAdapter(list[str])
 _INVALID_SERVICE_WORKER_ID = "service worker identity is invalid"
@@ -555,6 +603,9 @@ class ConfigurationVersionAllocationError(ValueError):
 
 class DuplicateConfigurationError(ValueError):
     """The generated configuration ID already exists."""
+
+
+_DUPLICATE_CREDENTIAL_MESSAGE = "The store already holds this token or session"
 
 
 class _Cursor(Protocol):
@@ -778,6 +829,63 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     def list_runs(
         self, filters: RunFilters, *, after: tuple[datetime, str] | None = None, limit: int = DEFAULT_LIMIT
     ) -> RunPage: ...
+
+    def create_account(
+        self,
+        *,
+        name: str,
+        password_hash: str | None,
+        administrator: bool = False,
+        environment_managed: bool = False,
+        now: datetime | None = None,
+    ) -> Account: ...
+
+    def lookup_account(self, account_id: str) -> Account | None: ...
+
+    def lookup_account_by_name(self, name: str) -> Account | None: ...
+
+    def lookup_accounts(self, account_ids: Sequence[str]) -> dict[str, Account]: ...
+
+    def list_accounts(self, *, disabled: bool | None = None) -> tuple[Account, ...]: ...
+
+    def set_account_level(self, account_id: str, *, administrator: bool, now: datetime | None = None) -> bool: ...
+
+    def set_account_password_hash(
+        self, account_id: str, *, password_hash: str, now: datetime | None = None
+    ) -> bool: ...
+
+    def disable_account(self, account_id: str, *, now: datetime | None = None) -> bool: ...
+
+    def enable_account(self, account_id: str, *, now: datetime | None = None) -> bool: ...
+
+    def create_account_token(
+        self,
+        account_id: str,
+        *,
+        name: str,
+        digest: str,
+        expires_at: datetime | None = None,
+        environment_managed: bool = False,
+        now: datetime | None = None,
+    ) -> AccountToken: ...
+
+    def list_account_tokens(self, account_id: str) -> tuple[AccountToken, ...]: ...
+
+    def delete_account_token(self, account_id: str, token_id: str) -> bool: ...
+
+    def delete_account_tokens(self, account_id: str) -> int: ...
+
+    def create_account_session(
+        self, account_id: str, *, digest: str, now: datetime | None = None
+    ) -> AccountSession: ...
+
+    def list_account_sessions(self, account_id: str) -> tuple[AccountSession, ...]: ...
+
+    def delete_account_session(self, session_id: str) -> bool: ...
+
+    def delete_account_sessions(self, account_id: str) -> int: ...
+
+    def resolve_digest(self, digest: str, *, now: datetime | None = None) -> ResolvedCredential | None: ...
 
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
 
@@ -3043,6 +3151,190 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         rows, has_more = self._read_page(statement, parameters, limit, read_audit_links)
         return RunPage(items=tuple(_run_from_rows(row, (), (), audit_links[row[0]]) for row in rows), has_more=has_more)
 
+    def create_account(
+        self,
+        *,
+        name: str,
+        password_hash: str | None,
+        administrator: bool = False,
+        environment_managed: bool = False,
+        now: datetime | None = None,
+    ) -> Account:
+        """Create an active account with a new identifier and a new short identifier.
+
+        Raises:
+            AccountNameTakenError: an account that is not deleted has this name, in any letter case.
+            AccountIdentifierAllocationError: every generated identifier was already in use.
+        """
+        created_at = _now(now)
+        for _attempt in range(_ACCOUNT_IDENTIFIER_ATTEMPTS):
+            try:
+                with self._transaction() as cursor:
+                    return account_statements.create_account(
+                        cursor,
+                        self._sql,
+                        name=name,
+                        password_hash=password_hash,
+                        administrator=administrator,
+                        environment_managed=environment_managed,
+                        now=created_at,
+                    )
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                # DB-API drivers do not share an integrity-error base class;
+                # inspect only documented SQLite/PostgreSQL uniqueness markers.
+                if not _is_unique_violation(exc):
+                    raise
+            # The refused transaction is over. A new read tells a taken name from an identifier
+            # that is in use; only the second is worth another attempt.
+            if self.lookup_account_by_name(name) is not None:
+                msg = f"The account name {name!r} is already taken"
+                raise AccountNameTakenError(msg)
+        msg = "Could not choose an unused account identifier"
+        raise AccountIdentifierAllocationError(msg)
+
+    def lookup_account(self, account_id: str) -> Account | None:
+        """Return the account with this identifier, deleted or not."""
+        with self._reading() as cursor:
+            return account_statements.read_account(cursor, self._sql, account_id)
+
+    def lookup_account_by_name(self, name: str) -> Account | None:
+        """Return the account that has this name, in any letter case."""
+        with self._reading() as cursor:
+            return account_statements.read_account_by_name(cursor, self._sql, name)
+
+    def lookup_accounts(self, account_ids: Sequence[str]) -> dict[str, Account]:
+        """Return the accounts among these identifiers, deleted or not, by identifier."""
+        if not account_ids:
+            return {}
+        with self._reading() as cursor:
+            return account_statements.read_accounts(cursor, self._sql, account_ids)
+
+    def list_accounts(self, *, disabled: bool | None = None) -> tuple[Account, ...]:
+        """Return the accounts that are not deleted, by name; only one state when ``disabled`` is given."""
+        with self._reading() as cursor:
+            return account_statements.list_accounts(cursor, self._sql, disabled=disabled)
+
+    def set_account_level(self, account_id: str, *, administrator: bool, now: datetime | None = None) -> bool:
+        """Set whether the account is an administrator. Return whether an account changed."""
+        with self._transaction() as cursor:
+            return account_statements.set_account_level(
+                cursor, self._sql, account_id, administrator=administrator, now=_now(now)
+            )
+
+    def set_account_password_hash(self, account_id: str, *, password_hash: str, now: datetime | None = None) -> bool:
+        """Replace the password hash of the account. Return whether an account changed."""
+        with self._transaction() as cursor:
+            return account_statements.set_account_password_hash(
+                cursor, self._sql, account_id, password_hash=password_hash, now=_now(now)
+            )
+
+    def disable_account(self, account_id: str, *, now: datetime | None = None) -> bool:
+        """Disable the account and delete its tokens and its sessions, in one transaction."""
+        with self._transaction() as cursor:
+            return account_statements.disable_account(cursor, self._sql, account_id, now=_now(now))
+
+    def enable_account(self, account_id: str, *, now: datetime | None = None) -> bool:
+        """Enable the account. Return whether an account changed."""
+        with self._transaction() as cursor:
+            return account_statements.enable_account(cursor, self._sql, account_id, now=_now(now))
+
+    def create_account_token(
+        self,
+        account_id: str,
+        *,
+        name: str,
+        digest: str,
+        expires_at: datetime | None = None,
+        environment_managed: bool = False,
+        now: datetime | None = None,
+    ) -> AccountToken:
+        """Create an API token row from the digest of its value.
+
+        Raises:
+            AccountTokenNameTakenError: the account already has a token with this name.
+            DuplicateCredentialError: the store already holds this digest.
+        """
+        try:
+            with self._transaction() as cursor:
+                return account_statements.create_token(
+                    cursor,
+                    self._sql,
+                    account_id,
+                    name=name,
+                    digest=digest,
+                    expires_at=expires_at,
+                    environment_managed=environment_managed,
+                    now=_now(now),
+                )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # DB-API drivers do not share an integrity-error base class;
+            # inspect only documented SQLite/PostgreSQL uniqueness markers.
+            if not _is_unique_violation(exc):
+                raise
+        # Raised outside the handler, so the driver's error, which can quote the digest, is
+        # neither the cause nor the context of the exception that leaves the store.
+        with self._reading() as cursor:
+            name_taken = account_statements.token_name_exists(cursor, self._sql, account_id, name)
+        if name_taken:
+            msg = f"The account already has an API token named {name!r}"
+            raise AccountTokenNameTakenError(msg)
+        raise DuplicateCredentialError(_DUPLICATE_CREDENTIAL_MESSAGE)
+
+    def list_account_tokens(self, account_id: str) -> tuple[AccountToken, ...]:
+        """Return the API tokens of the account, oldest first."""
+        with self._reading() as cursor:
+            return account_statements.list_tokens(cursor, self._sql, account_id)
+
+    def delete_account_token(self, account_id: str, token_id: str) -> bool:
+        """Delete one API token of the account. Return whether a token was deleted."""
+        with self._transaction() as cursor:
+            return account_statements.delete_token(cursor, self._sql, account_id, token_id)
+
+    def delete_account_tokens(self, account_id: str) -> int:
+        """Delete every API token of the account. Return the number deleted."""
+        with self._transaction() as cursor:
+            return account_statements.delete_tokens(cursor, self._sql, account_id)
+
+    def create_account_session(self, account_id: str, *, digest: str, now: datetime | None = None) -> AccountSession:
+        """Create a session row from the digest of its session token.
+
+        Raises:
+            DuplicateCredentialError: the store already holds this digest.
+        """
+        try:
+            with self._transaction() as cursor:
+                return account_statements.create_session(cursor, self._sql, account_id, digest=digest, now=_now(now))
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # DB-API drivers do not share an integrity-error base class;
+            # inspect only documented SQLite/PostgreSQL uniqueness markers.
+            if not _is_unique_violation(exc):
+                raise
+        # Raised outside the handler: see ``create_account_token``.
+        raise DuplicateCredentialError(_DUPLICATE_CREDENTIAL_MESSAGE)
+
+    def list_account_sessions(self, account_id: str) -> tuple[AccountSession, ...]:
+        """Return the sessions of the account, oldest first."""
+        with self._reading() as cursor:
+            return account_statements.list_sessions(cursor, self._sql, account_id)
+
+    def delete_account_session(self, session_id: str) -> bool:
+        """Delete one session. Return whether a session was deleted."""
+        with self._transaction() as cursor:
+            return account_statements.delete_session(cursor, self._sql, session_id)
+
+    def delete_account_sessions(self, account_id: str) -> int:
+        """Delete every session of the account. Return the number deleted."""
+        with self._transaction() as cursor:
+            return account_statements.delete_sessions(cursor, self._sql, account_id)
+
+    def resolve_digest(self, digest: str, *, now: datetime | None = None) -> ResolvedCredential | None:
+        """Read the token or the session of a digest with its account, and record the use.
+
+        One connection and one transaction. See ``accounts.resolve_digest``.
+        """
+        with self._transaction() as cursor:
+            return account_statements.resolve_digest(cursor, self._sql, digest, now=_now(now))
+
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None:
         with self._transaction() as cursor:
             cursor.execute(
@@ -3849,6 +4141,126 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Return one page of runs, newest first, without artifact references or execution links."""
         return self._records.list_runs(filters, after=after, limit=limit)
 
+    def create_account(
+        self,
+        *,
+        name: str,
+        password_hash: str | None,
+        administrator: bool = False,
+        environment_managed: bool = False,
+        now: datetime | None = None,
+    ) -> Account:
+        """Create an active account. ``password_hash`` is stored as given; the store reads no password.
+
+        Raises:
+            AccountNameTakenError: an account that is not deleted has this name, in any letter case.
+        """
+        return self._records.create_account(
+            name=name,
+            password_hash=password_hash,
+            administrator=administrator,
+            environment_managed=environment_managed,
+            now=now,
+        )
+
+    def lookup_account(self, account_id: str) -> Account | None:
+        """Return the account with this identifier, deleted or not."""
+        return self._records.lookup_account(account_id)
+
+    def lookup_account_by_name(self, name: str) -> Account | None:
+        """Return the account that has this name, in any letter case. A deleted account has no name."""
+        return self._records.lookup_account_by_name(name)
+
+    def lookup_accounts(self, account_ids: Sequence[str]) -> dict[str, Account]:
+        """Return the accounts among these identifiers, deleted or not, by identifier, in one store call."""
+        return self._records.lookup_accounts(account_ids)
+
+    def list_accounts(self, *, disabled: bool | None = None) -> tuple[Account, ...]:
+        """Return the accounts that are not deleted, by name; only one state when ``disabled`` is given."""
+        return self._records.list_accounts(disabled=disabled)
+
+    def set_account_level(self, account_id: str, *, administrator: bool, now: datetime | None = None) -> bool:
+        """Set whether the account is an administrator. Return whether an account changed."""
+        return self._records.set_account_level(account_id, administrator=administrator, now=now)
+
+    def set_account_password_hash(self, account_id: str, *, password_hash: str, now: datetime | None = None) -> bool:
+        """Replace the password hash of the account. Return whether an account changed."""
+        return self._records.set_account_password_hash(account_id, password_hash=password_hash, now=now)
+
+    def disable_account(self, account_id: str, *, now: datetime | None = None) -> bool:
+        """Disable the account and delete its tokens and its sessions. Return whether an account changed."""
+        return self._records.disable_account(account_id, now=now)
+
+    def enable_account(self, account_id: str, *, now: datetime | None = None) -> bool:
+        """Enable the account. Return whether an account changed."""
+        return self._records.enable_account(account_id, now=now)
+
+    def create_account_token(
+        self,
+        account_id: str,
+        *,
+        name: str,
+        digest: str,
+        expires_at: datetime | None = None,
+        environment_managed: bool = False,
+        now: datetime | None = None,
+    ) -> AccountToken:
+        """Create an API token row from the SHA-256 digest of its value.
+
+        Raises:
+            AccountTokenNameTakenError: the account already has a token with this name.
+            DuplicateCredentialError: the store already holds this digest.
+        """
+        return self._records.create_account_token(
+            account_id,
+            name=name,
+            digest=digest,
+            expires_at=expires_at,
+            environment_managed=environment_managed,
+            now=now,
+        )
+
+    def list_account_tokens(self, account_id: str) -> tuple[AccountToken, ...]:
+        """Return the API tokens of the account, oldest first."""
+        return self._records.list_account_tokens(account_id)
+
+    def delete_account_token(self, account_id: str, token_id: str) -> bool:
+        """Delete one API token of the account. Return whether a token was deleted."""
+        return self._records.delete_account_token(account_id, token_id)
+
+    def delete_account_tokens(self, account_id: str) -> int:
+        """Delete every API token of the account. Return the number deleted."""
+        return self._records.delete_account_tokens(account_id)
+
+    def create_account_session(self, account_id: str, *, digest: str, now: datetime | None = None) -> AccountSession:
+        """Create a session row from the SHA-256 digest of its session token.
+
+        Raises:
+            DuplicateCredentialError: the store already holds this digest.
+        """
+        return self._records.create_account_session(account_id, digest=digest, now=now)
+
+    def list_account_sessions(self, account_id: str) -> tuple[AccountSession, ...]:
+        """Return the sessions of the account, oldest first."""
+        return self._records.list_account_sessions(account_id)
+
+    def delete_account_session(self, session_id: str) -> bool:
+        """Delete one session. Return whether a session was deleted."""
+        return self._records.delete_account_session(session_id)
+
+    def delete_account_sessions(self, account_id: str) -> int:
+        """Delete every session of the account. Return the number deleted."""
+        return self._records.delete_account_sessions(account_id)
+
+    def resolve_digest(self, digest: str, *, now: datetime | None = None) -> ResolvedCredential | None:
+        """Return the API token or the session that holds this digest, with its account.
+
+        One store call. The use is recorded when the stored time is empty or more than a minute
+        old, and the result carries the time stored before this call. Nothing is refused here:
+        the caller checks the account's state, a token's expiry date and a session's idle period.
+        """
+        return self._records.resolve_digest(digest, now=now)
+
     def record_results(
         self,
         run_id: str,
@@ -4207,6 +4619,11 @@ def _json(value: Any) -> str:
 
 def _iso(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat()
+
+
+def _now(value: datetime | None) -> datetime:
+    """Return the caller's time, or the current time in UTC when the caller gives none."""
+    return datetime.now(timezone.utc) if value is None else value
 
 
 def _utc_iso(value: datetime) -> str:

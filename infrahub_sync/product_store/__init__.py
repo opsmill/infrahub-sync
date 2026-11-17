@@ -1,6 +1,15 @@
 """Durable Sync product records and immutable artifacts."""
 
+from infrahub_sync.product_store.accounts import (
+    AccountIdentifierAllocationError,
+    AccountNameTakenError,
+    AccountTokenNameTakenError,
+    DuplicateCredentialError,
+)
 from infrahub_sync.product_store.models import (
+    Account,
+    AccountSession,
+    AccountToken,
     ApplyProgress,
     ApplyProgressSave,
     ArtifactReference,
@@ -23,9 +32,11 @@ from infrahub_sync.product_store.models import (
     PrimaryResource,
     ProductRun,
     RelatedResource,
+    ResolvedCredential,
     RunFilters,
     RunPage,
     RunReference,
+    SignInAttempt,
     WorkerEnvironment,
 )
 from infrahub_sync.product_store.store import (
@@ -54,6 +65,12 @@ __all__ = (
     "NO_SAVED_PLAN_MESSAGE",
     "PLAN_ARTIFACT_ID",
     "WRITE_PURPOSES",
+    "Account",
+    "AccountIdentifierAllocationError",
+    "AccountNameTakenError",
+    "AccountSession",
+    "AccountToken",
+    "AccountTokenNameTakenError",
     "ApplyProgress",
     "ApplyProgressSave",
     "ArtifactReference",
@@ -71,6 +88,7 @@ __all__ = (
     "DBAPIConnection",
     "DuplicateArtifactError",
     "DuplicateConfigurationError",
+    "DuplicateCredentialError",
     "DuplicatePrefectExecutionError",
     "DuplicateRunError",
     "EventFilters",
@@ -86,11 +104,13 @@ __all__ = (
     "ProductRun",
     "ProductStoreProviderError",
     "RelatedResource",
+    "ResolvedCredential",
     "RunFilters",
     "RunNotFoundError",
     "RunPage",
     "RunReference",
     "S3Client",
+    "SignInAttempt",
     "WorkerEnvironment",
     "WriteAdmissionConflictError",
     "local_product_projection",

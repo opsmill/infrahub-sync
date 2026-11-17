@@ -42,26 +42,26 @@ sign in is the `admin` token from the environment.
 
 ### The store
 
-- [ ] T004 Add the tables `accounts`, `account_tokens`, `account_sessions` and
+- [X] T004 Add the tables `accounts`, `account_tokens`, `account_sessions` and
   `sign_in_attempts`, with their unique indexes, to `_SCHEMA` in
   `infrahub_sync/product_store/store.py`, as [data-model.md](data-model.md) defines them. The
   unique index on `accounts.name_key` must allow several empty values on both databases.
-- [ ] T005 [P] Add the records `Account`, `AccountToken`, `AccountSession` and `SignInAttempt`
+- [X] T005 [P] Add the records `Account`, `AccountToken`, `AccountSession` and `SignInAttempt`
   as frozen Pydantic models in `infrahub_sync/product_store/models.py`, and export them from
   `infrahub_sync/product_store/__init__.py`.
-- [ ] T006 Create `infrahub_sync/product_store/accounts.py` with the statements and functions
+- [X] T006 Create `infrahub_sync/product_store/accounts.py` with the statements and functions
   for accounts: create (with a new `acct_` identifier and a unique `short_id`), read by
   identifier, by lower-case name and by a list of identifiers, list by state, set level, set
   password hash, disable (deletes tokens and sessions), enable. Each takes a cursor so the
   caller owns the transaction.
-- [ ] T007 In `infrahub_sync/product_store/accounts.py`, add the functions for tokens and
+- [X] T007 In `infrahub_sync/product_store/accounts.py`, add the functions for tokens and
   sessions: create, list for an account, delete, delete all for an account, and one function
   `resolve_digest` that reads the token or session row with its account and writes
   `last_used_at` when the stored value is more than a minute old, in one transaction.
-- [ ] T008 Expose the functions of T006 and T007 as methods of `_RelationalRunStore` and of
+- [X] T008 Expose the functions of T006 and T007 as methods of `_RelationalRunStore` and of
   `ProductProjection` in `infrahub_sync/product_store/store.py`, following how the configuration
   methods are exposed, and add them to the `_RunStore` protocol.
-- [ ] T009 [P] Write `tests/product_store/test_accounts.py`: creation, uniqueness of the name
+- [X] T009 [P] Write `tests/product_store/test_accounts.py`: creation, uniqueness of the name
   without regard to case, a freed name after the key is emptied, level, disable and enable,
   token and session rows, `resolve_digest` for a token, a session, an expired token, a disabled
   account and an unknown digest, and the one-minute rule of `last_used_at`. Parametrize over the
