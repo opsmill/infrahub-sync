@@ -514,7 +514,7 @@ def test_a_plan_and_an_apply_keep_their_files_in_the_external_bucket(
     started: Deployment, external_store: ExternalStore
 ) -> None:
     before = set(external_store.keys())
-    principal = json.loads(started.setting("INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"))["compose-suite"]["token"]
+    principal = started.setting("INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN")
     with api_client(started, principal) as client:
         config_id, registry_version = register(
             client, smoke_package(started.destination), "compose suite: external store configuration"
@@ -735,7 +735,7 @@ def test_a_plan_reaches_netbox_infrahub_and_the_store_behind_a_private_ca(
         for name in ("sync-api", "sync-worker"):
             assert "loaded 1 CA certificate(s)" in deployment.logs(name).output, name
         before = set(tls_store.keys())
-        principal = json.loads(deployment.setting("INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"))["compose-suite"]["token"]
+        principal = deployment.setting("INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN")
         package = netbox_package(f"https://{NETBOX_HOST}:{FRONT_PORT}", deployment.destination)
         with api_client(deployment, principal) as client:
             config_id, registry_version = register(client, package, "compose suite: private CA configuration")

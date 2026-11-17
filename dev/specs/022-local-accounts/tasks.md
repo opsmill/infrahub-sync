@@ -136,11 +136,11 @@ sign in is the `admin` token from the environment.
 - [X] T023 [P] Do the same for `tests/plan/test_format_5.py`,
   `tests/product_store/test_contract.py`, `tests/image/conftest.py` and
   `tests/service/test_environment_names.py`.
-- [ ] T024 [P] Replace the removed variable with the `admin` variables in
+- [X] T024 [P] Replace the removed variable with the `admin` variables in
   `infrahub_sync/testcontainers/docker-compose.yml` and
   `infrahub_sync/testcontainers/helpers.py`, keeping `TEST_API_TOKEN` as the token of `admin`;
   update the 9 files of `tests/compose/` and the 2 files of `tests/dev_stack/`.
-- [ ] T025 [P] Replace the removed variable in `docker-compose.yml` (required password with the
+- [X] T025 [P] Replace the removed variable in `docker-compose.yml` (required password with the
   `${NAME:?message}` form, optional token, optional idle period), in
   `development/docker-compose.yml` (fixed development password, token
   `infrahub-sync-dev-token`) and in the `tasks/` modules that read `BEARER_TOKENS`.

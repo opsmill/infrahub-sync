@@ -76,6 +76,7 @@ GENERATED_SETTINGS = (
     "INFRAHUB_SYNC_PRODUCT_PASSWORD",
     "INFRAHUB_SYNC_PREFECT_PASSWORD",
     "INFRAHUB_SYNC_S3_SECRET_KEY",
+    "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD",
     "INFRAHUB_SYNC_API_TOKEN",
 )
 
@@ -191,9 +192,8 @@ def started(
 
 @pytest.fixture(scope="module")
 def principal(started: Deployment) -> str:
-    """The bearer token of this deployment's one principal."""
-    tokens = json.loads(started.setting("INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"))
-    return str(next(iter(tokens.values()))["token"])
+    """The API token of this deployment's `admin` account."""
+    return started.setting("INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN")
 
 
 # ---------------------------------------------------------------------------

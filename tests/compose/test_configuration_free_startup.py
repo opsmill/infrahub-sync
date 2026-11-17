@@ -18,7 +18,6 @@ lifecycle matrix, which runs elsewhere against a real destination.
 
 from __future__ import annotations
 
-import json
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -172,9 +171,8 @@ def started(
 
 @pytest.fixture(scope="module")
 def principal(started: Deployment) -> str:
-    """The bearer token of this deployment's one principal."""
-    tokens = json.loads(started.setting("INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"))
-    return str(next(iter(tokens.values()))["token"])
+    """The API token of this deployment's `admin` account."""
+    return started.setting("INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN")
 
 
 def test_a_deployment_with_no_configuration_reaches_ready(started: Deployment) -> None:

@@ -76,7 +76,7 @@ START_PROFILES = ("sync",)
 ALL_PROFILES = ("sync", "infrahub")
 # The services `dev.restart` recreates so they import the mounted source again.
 SYNC_SERVICES = ("sync-bootstrap", "sync-api", "sync-worker")
-# The dev stack's default principal, the value docker-compose.yml defaults to.
+# The API token of the dev stack's `admin` account, the value docker-compose.yml defaults to.
 API_TOKEN = "infrahub-sync-dev-token"  # noqa: S105 -- a local-only development credential
 WAIT_TIMEOUT_SECONDS = 420
 INFRAHUB_NETWORK_VARIABLE = "INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK"
@@ -84,6 +84,8 @@ INFRAHUB_URL_VARIABLE = "INFRAHUB_SYNC_DEV_INFRAHUB_URL"
 DEFAULT_INFRAHUB_NETWORK = "infrahub_default"
 # The credential a registered package's `infrahub-token` reference resolves.
 INFRAHUB_CREDENTIAL_VARIABLE = "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
+# The variable of the Sync API that holds the API token of its `admin` account.
+ADMIN_TOKEN_VARIABLE = "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN"  # noqa: S105 -- the name of a variable
 DEV_IMAGE = "infrahub-sync:dev"
 BUILD_INPUTS_LABEL = "org.opsmill.infrahub-sync.build-inputs"
 # The files whose bytes decide whether the image must be rebuilt, in hashing order.
@@ -200,7 +202,8 @@ class DevSettings:
     # The Infrahub URL the worker uses, the one a package names.
     worker_infrahub_url: str
     infrahub_network: str
-    bearer_tokens: str
+    # The API token of the `admin` account, as the Sync API receives it.
+    admin_token: str
     work_pool: str
     # The image every Sync-image service runs, `SYNC_IMAGE` or `infrahub-sync:dev`.
     image: str = DEV_IMAGE
@@ -360,7 +363,7 @@ def parse_dev_settings(resolved: Mapping[str, Any], *, infrahub_network: str = "
         infrahub_admin_token=token,
         worker_infrahub_url=worker_url,
         infrahub_network=infrahub_network,
-        bearer_tokens=str(sync_api_environment.get("INFRAHUB_SYNC_SERVICE_BEARER_TOKENS", "")),
+        admin_token=str(sync_api_environment.get(ADMIN_TOKEN_VARIABLE, "")),
         work_pool=str(sync_api_environment.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "")),
         image=str((services.get(BUILD_SERVICE) or {}).get("image") or DEV_IMAGE),
         postgres=_optional_publication(services, "postgres", 5432),
@@ -576,27 +579,20 @@ def _attach_worker(context: Context, settings: DevSettings) -> None:
         )
 
 
-def bearer_label(bearer_tokens: str) -> str:
+def bearer_label(admin_token: str) -> str:
     """Return what the URLs print for the Sync API's bearer token.
 
-    The default principal's token is a public development value, so it is printed when a
-    principal's token equals it exactly. A token set through BEARER_TOKENS is the
-    developer's own, and so is anything that is not a JSON object of principals: they are
-    named by the variable, never printed.
+    The default token of `admin` is a public development value, so it is printed when the
+    token equals it exactly. A token set through ADMIN_ACCOUNT_TOKEN is the developer's own:
+    it is named by the variable, never printed.
     """
-    try:
-        principals = json.loads(bearer_tokens)
-    except ValueError:
-        principals = None
-    if isinstance(principals, dict) and any(
-        isinstance(principal, dict) and principal.get("token") == API_TOKEN for principal in principals.values()
-    ):
+    if admin_token == API_TOKEN:
         return API_TOKEN
-    return "from BEARER_TOKENS"
+    return "from ADMIN_ACCOUNT_TOKEN"
 
 
 def _print_urls(settings: DevSettings, *, host_worker: bool = False) -> None:
-    bearer = bearer_label(settings.bearer_tokens)
+    bearer = bearer_label(settings.admin_token)
     print(f" - [{NAMESPACE}] Project     {settings.project}")
     print(f" - [{NAMESPACE}] Sync API    {settings.sync_api_url}  (bearer {bearer})")
     print(f" - [{NAMESPACE}] Prefect UI  {settings.prefect_url}")
@@ -961,7 +957,7 @@ def dev_frontend(context: Context) -> None:
     already holds is left as it is), installs the locked dependencies, then runs `pnpm dev`
     in the foreground. The server forwards `/api` to the Sync API unchanged and adds no
     token: the person enters a token in the page. The task prints which token to enter,
-    with the label `dev.start` prints for the Sync API, never a token from BEARER_TOKENS.
+    with the label `dev.start` prints for the Sync API, never a token from ADMIN_ACCOUNT_TOKEN.
     """
     settings = dev_settings(context)
     environment = {FRONTEND_URL_VARIABLE: settings.sync_api_url}
@@ -971,7 +967,7 @@ def dev_frontend(context: Context) -> None:
     with context.cd(escape_path(REPO_BASE / FRONTEND_DIRECTORY)):
         context.run("pnpm install --frozen-lockfile", pty=True)
         print(f" - [{NAMESPACE}] Web interface on {FRONTEND_URL}, Sync API {settings.sync_api_url}; Ctrl-C stops it")
-        print(f" - [{NAMESPACE}] Token to enter in the page: {bearer_label(settings.bearer_tokens)}")
+        print(f" - [{NAMESPACE}] Token to enter in the page: {bearer_label(settings.admin_token)}")
         context.run("pnpm dev", env=environment, pty=True)
 
 

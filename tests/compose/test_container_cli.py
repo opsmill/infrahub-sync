@@ -181,8 +181,8 @@ def _deployment_cli(deployment: Deployment, *arguments: str) -> Captured:
 def test_the_cli_service_reaches_the_deployment_with_the_token_its_env_file_carries(deployment: Deployment) -> None:
     """The replacement for `./infrahub-sync-compose cli configs list`.
 
-    The `.env` carries the principal's token twice: once in the API's
-    `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`, once as the `INFRAHUB_SYNC_API_TOKEN`
+    The `.env` carries the API token of the `admin` account twice: once as the API's
+    `INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN`, once as the `INFRAHUB_SYNC_API_TOKEN`
     the `cli` service presents. A call that authenticated proves both reached
     the right container.
     """

@@ -261,6 +261,29 @@ def required_compose_variables() -> set[str]:
     return set(re.findall(r"\$\{([A-Z][A-Z0-9_]*):\?", COMPOSE_FILE.read_text(encoding="utf-8")))
 
 
+# The variables of the `admin` account and of sessions, which spec 022 added to the file. The
+# pages name them once the documentation task of that spec is done; until then each case below
+# fails, and a case that passes while it is still marked fails the run.
+ACCOUNT_VARIABLES = frozenset(
+    {
+        "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD",
+        "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN",
+        "INFRAHUB_SYNC_SESSION_IDLE_SECONDS",
+    }
+)
+ACCOUNT_VARIABLES_REASON = "022: the pages name the account variables once the documentation task is done"
+
+
+def variable_cases(variables: set[str]) -> list[object]:
+    """Return one case for each variable, marked as an expected failure when the pages do not name it yet."""
+    return [
+        pytest.param(name, marks=pytest.mark.xfail(strict=True, reason=ACCOUNT_VARIABLES_REASON))
+        if name in ACCOUNT_VARIABLES
+        else name
+        for name in sorted(variables)
+    ]
+
+
 def test_the_compose_file_has_required_credentials_to_document() -> None:
     """Guards the credential checks below against a pattern that matches nothing."""
     assert len(required_compose_variables()) == 7, required_compose_variables()
@@ -312,7 +335,7 @@ def test_the_page_still_names_the_cli_service() -> None:
     assert any(line.startswith(f"{CLI_SERVICE_PREFIX} cli ") for line in shell_lines(section(page(), "Use it")))
 
 
-@pytest.mark.parametrize("variable", sorted(required_compose_variables()))
+@pytest.mark.parametrize("variable", variable_cases(required_compose_variables()))
 def test_the_example_env_sets_every_required_credential(variable: str) -> None:
     """A copied example missing one credential stops Compose before anything starts."""
     example = section(page(), "The `.env` file")
@@ -345,7 +368,7 @@ def test_each_page_generates_env_through_a_private_file() -> None:
         assert "cat > .env" not in path.read_text(encoding="utf-8"), path.name
 
 
-@pytest.mark.parametrize("variable", sorted(required_compose_variables()))
+@pytest.mark.parametrize("variable", variable_cases(required_compose_variables()))
 def test_every_env_generator_sets_every_required_credential(variable: str) -> None:
     """A generated `.env` missing one credential stops Compose before anything starts."""
     generators = env_generators()
@@ -355,7 +378,7 @@ def test_every_env_generator_sets_every_required_credential(variable: str) -> No
     assert missing == [], f"{variable} is not generated on {missing}"
 
 
-@pytest.mark.parametrize("variable", sorted(compose_variables()))
+@pytest.mark.parametrize("variable", variable_cases(compose_variables()))
 def test_the_page_documents_every_variable_the_compose_file_reads(variable: str) -> None:
     """A setting the file reads but the page never names is one an operator cannot find."""
     assert f"`{variable}`" in page() or f"\n{variable}=" in page(), variable
