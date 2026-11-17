@@ -1,0 +1,19 @@
+dev/adr/0029-the-development-stack-is-one-compose-file-with-profiles.md
+  s_2d3d101935fd75::t_e59f4864f3694e 84-93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7baa803b9344439f4827e38828808dff4755836f",
+  "prompts": {},
+  "sessions": {
+    "s_2d3d101935fd75": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e718161f-01ea-4015-976a-63ce56c6c4bf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
