@@ -48,6 +48,20 @@ class ProtocolError(SyncClientError):
         super().__init__("the Sync API response violated the protocol")
 
 
+class NotSyncAPIError(SyncClientError):
+    """Report an answer that does not come from a Sync API, for example a web page or a proxy page.
+
+    The response body is never kept: only the operation, the address called without its query
+    string, and the HTTP status.
+    """
+
+    def __init__(self, operation: str, url: str, status: int) -> None:
+        self.operation = operation
+        self.url = url
+        self.status = status
+        super().__init__("the address did not answer as a Sync API")
+
+
 class APIError(SyncClientError):
     """Expose safe machine fields from a general API refusal."""
 

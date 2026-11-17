@@ -15,5 +15,5 @@
 # adds it.
 #
 # The list is empty: a plan leaves out the delete of a node that Infrahub creates itself, such
-# as the default IpamNamespace (dev/adr/0043).
+# as the default IpamNamespace (dev/adr/0047).
 []

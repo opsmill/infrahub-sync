@@ -14,6 +14,7 @@ import { type ComponentPropsWithRef, type ReactNode, useEffect, useRef, useState
 import { cn } from "tailwind-variants";
 
 import { describeError, meQuery, statusQuery, versionQuery } from "#/api/queries";
+import { clearToken } from "#/api/token";
 import { announce, LiveRegion } from "#/components/announcer";
 import { FOCUS, FOCUS_RAC } from "#/components/classes";
 import { StateIcon } from "#/components/icons";
@@ -196,13 +197,12 @@ function Row({
 
 const DL = "col-span-2 grid grid-cols-subgrid gap-y-1.5";
 
-/** The Sync service's state in the header; opens the details and the actor of the API token. */
+/** The Sync service's state in the header; opens the details and removes the token. */
 function StatusMenu() {
   const s = useServiceState();
   const status = useQuery(statusQuery());
   const version = useQuery(versionQuery());
   const me = useQuery(meQuery());
-  const actor = me.data?.actor;
   const w = status.data?.worker;
   const workerRows = s.showDetail && w;
 
@@ -215,23 +215,12 @@ function StatusMenu() {
           "min-w-0 max-w-full shrink gap-2 px-2 max-sm:size-8 max-sm:px-0 max-sm:before:absolute max-sm:before:-inset-2",
           FOCUS_RAC
         )}
-        aria-label={`${s.label}${actor ? `, ${actor}` : ""}. Open Sync service details`}
+        aria-label={`${s.label}. Open Sync service details`}
       >
         <StateIcon state={s.icon} className={cn("size-3.5 shrink-0", s.color)} />
         <span className="min-w-0 truncate font-normal text-foreground-muted text-xs max-sm:sr-only">
           {s.label}
         </span>
-        {actor && (
-          <>
-            <span
-              aria-hidden="true"
-              className="hidden h-4 w-px shrink-0 bg-border-strong lg:block"
-            />
-            <span className="hidden max-w-40 truncate font-normal text-foreground-muted text-xs lg:block">
-              {actor}
-            </span>
-          </>
-        )}
       </Button>
       <Popover placement="bottom end" className="bg-content">
         <PopoverDialog
@@ -279,18 +268,22 @@ function StatusMenu() {
                     <hr className="col-span-2 my-3 border-0 border-border border-t" />
                   )}
                   <dl className={DL}>
-                    <Row term="Requests sent as">
-                      <span className="font-medium [overflow-wrap:anywhere]">{me.data.actor}</span>
-                    </Row>
                     <Row term="Administrator rights">{me.data.administrator ? "Yes" : "No"}</Row>
                   </dl>
-                  <p className="col-span-2 mt-2 text-pretty text-subtle text-xs">
-                    The Sync service records this actor on the runs you start from this page.
-                  </p>
                 </>
               )}
             </div>
           )}
+          <hr className="my-3 border-0 border-border border-t" />
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn("-ml-2", FOCUS_RAC)}
+            // Removing the token also empties the query cache and the downloaded plans.
+            onPress={clearToken}
+          >
+            Remove token
+          </Button>
         </PopoverDialog>
       </Popover>
     </PopoverTrigger>

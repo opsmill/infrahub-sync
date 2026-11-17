@@ -22,7 +22,7 @@ REPORTS = ROOT / ".dev" / "nightly-e2e"
 SUITES = ("integration", "smoke", "saved-plan", "from-netbox", "v2-gate")
 EXPECTED_DEMO_OPERATIONS = 1687
 # The nodes that Infrahub creates itself on a new branch, by kind. The plan holds no delete
-# for them (ADR 0043), but the import branch still holds them, so the branch count of the
+# for them (ADR 0047), but the import branch still holds them, so the branch count of the
 # kind is the planned count plus this number. Nothing is left out of the plan by name.
 INFRAHUB_CREATED_NODES = {"IpamNamespace": 1}
 SCHEMA_SHA256 = "b74a0ff09cde3aafb1275293be7523f1b377d64073c43aca3ccc14cbe4c5a025"
@@ -209,7 +209,7 @@ def check_import_counts(run_id: str, env: dict[str, str]) -> None:
     """Compare the branch's node count per kind with the plan's operation count per kind.
 
     The branch also holds the nodes that Infrahub creates itself, which the plan holds no
-    operation for (ADR 0043), so `INFRAHUB_CREATED_NODES` is added to the planned count of
+    operation for (ADR 0047), so `INFRAHUB_CREATED_NODES` is added to the planned count of
     their kind before the comparison. A kind it lists is compared even when the plan holds no
     operation of that kind.
     """

@@ -145,7 +145,7 @@ def test_from_netbox_accepts_cli_terminal_outcomes(runner: ModuleType, monkeypat
 
 
 def test_import_counts_match_planned_operations(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The branch's 7 IpamNamespace match 6 planned creates plus the default namespace (ADR 0043)."""
+    """The branch's 7 IpamNamespace match 6 planned creates plus the default namespace (ADR 0047)."""
     plan = (
         "operations: 1687\nby_action: create=1687\nby_kind: DcimDevice=1681, IpamNamespace=6\n"
         "0 delete operations are recorded.\n"

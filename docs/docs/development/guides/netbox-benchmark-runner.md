@@ -177,7 +177,7 @@ prefix VRF moves into deletes and creates. v2 must execute the expected deletes.
 v3 checks its saved plan against the apply summary. Every recorded delete must match the
 expected change file exactly and is recorded as not executed in `skipped_deletes`, following [ADR 0004](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0004-deletes-are-recorded-but-never-executed.md).
 A plan leaves out the deletes of nodes that Infrahub creates itself, such as the default
-`IpamNamespace`, so the runner excludes no delete by name ([ADR 0043](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0043-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md)).
+`IpamNamespace`, so the runner excludes no delete by name ([ADR 0047](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0047-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md)).
 It must apply the expected creates and updates, with zero executed deletes. Missing or
 extra recorded deletes fail validation. Destination counts include the retained objects
 for v3; v2 counts subtract executed deletes. A valid v3 changed cell keeps its time and

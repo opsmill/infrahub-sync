@@ -239,7 +239,7 @@ Recreate services whose environment changed, then check readiness:
 
 ```sh
 docker compose up -d --wait
-curl -s http://127.0.0.1:8001/status
+curl -s http://127.0.0.1:8001/api/status
 ```
 
 Continue only when the `/status` response shows `worker.state` as `ready`.
@@ -384,7 +384,7 @@ creates and one delete of `default`. Apply created the intended objects and left
 the built-in namespace unchanged in identifier, name, and description. The second plan contained
 zero creates, zero updates, and the same single recorded delete. A plan now leaves out
 the deletes of nodes that Infrahub creates itself, such as `default`, as
-[ADR 0043](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0043-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md)
+[ADR 0047](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0047-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md)
 describes, so a plan of this configuration no longer records that delete.
 
 Under the saved-plan contract, other destination-only objects are still recorded

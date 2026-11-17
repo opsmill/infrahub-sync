@@ -49,6 +49,7 @@ READ_ONLY_ROOTS = (
     "/opt/infrahub-sync",
     "/opt/infrahub-sync/venv",
     "/opt/infrahub-sync/venv/bin",
+    "/opt/infrahub-sync/web",
     "/usr/local/lib",
 )
 
@@ -276,8 +277,8 @@ def started_container(image_ref: str, storage_network: str, storage: str) -> Ite
 
 
 def wait_for_api(container: str, *, timeout: int = API_READY_SECONDS) -> dict[str, object]:
-    """Return the served `GET /version` document once the container's API answers it."""
-    probe = "import json,httpx;print(json.dumps(httpx.get('http://127.0.0.1:8000/version', timeout=5).raise_for_status().json()))"
+    """Return the served `GET /api/version` document once the container's API answers it."""
+    probe = "import json,httpx;print(json.dumps(httpx.get('http://127.0.0.1:8000/api/version', timeout=5).raise_for_status().json()))"
     deadline = time.monotonic() + timeout
     last = "no attempt made"
     while time.monotonic() < deadline:
@@ -287,4 +288,4 @@ def wait_for_api(container: str, *, timeout: int = API_READY_SECONDS) -> dict[st
         last = result.stderr.strip()[-400:]
         time.sleep(2)
     logs = docker(["logs", "--tail", "40", container]).stdout
-    pytest.fail(f"the image's default command did not answer GET /version within {timeout}s: {last}\n{logs}")
+    pytest.fail(f"the image's default command did not answer GET /api/version within {timeout}s: {last}\n{logs}")

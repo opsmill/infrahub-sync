@@ -70,7 +70,7 @@ The reviewed lists are maintained as follows:
 - The lists were written from the first complete gate run of 2026-11-13: 50 entries for the 39
   records left out because of a problem and the 11 problems, and one delete, of
   `IpamNamespace name=default`. Since
-  [ADR 0043](0043-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md), a plan
+  [ADR 0047](0047-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md), a plan
   leaves out that delete, and the list of deletes is empty.
 - The lists must be reviewed when the pinned `demo` dataset, the NetBox example, or the way a
   plan reports records left out and problems changes.

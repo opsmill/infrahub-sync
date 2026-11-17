@@ -1,0 +1,1 @@
+The web interface no longer shows the actor that started a run: the configuration list dropped "Started by" and "by", and the run page says that only the token that started the run or an administrator token can act on it.

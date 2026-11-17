@@ -15,7 +15,7 @@ import {
   runsQuery,
 } from "#/api/queries";
 import type { Run, RunResource } from "#/api/types";
-import { ArrowRightIcon, PlusIcon } from "#/components/icons";
+import { ArrowRightIcon, PlusIcon, StateIcon } from "#/components/icons";
 import {
   Bar,
   CODE_CHIP,
@@ -45,7 +45,15 @@ import { useDocumentTitle } from "#/lib/title";
 import { ChangeCount, ChangesDock, type ChangesState, useChangesShortcut } from "./ChangesDock";
 import { ChangesSheet, useChangesSheet } from "./ChangesSheet";
 import { usePlanDownload } from "./plan-download";
-import { ApplyButton, ApplyWithPlan, CancelDialog, VerifyDialog } from "./RunActions";
+import {
+  ApplyButton,
+  ApplyWithPlan,
+  ApproveWithPlan,
+  CancelDialog,
+  ResumeWithPlan,
+  resumeLabel,
+  VerifyDialog,
+} from "./RunActions";
 import { RunTimeline, useStepFocus } from "./RunTimeline";
 import { RunTimeStrip } from "./RunTimeStrip";
 import {
@@ -262,7 +270,7 @@ function MetaLine({
   );
 }
 
-type Dialog = "verify" | "apply" | "cancel" | "plan" | null;
+type Dialog = "verify" | "approve" | "apply" | "resume" | "cancel" | "plan" | null;
 
 const STOPPED = new Set(["failed", "cancelled", "abandoned", "ambiguous"]);
 
@@ -445,9 +453,22 @@ export function RunPage({ runId }: { runId: string }) {
     latestVersion !== undefined && registryVersion !== undefined && latestVersion > registryVersion;
   const canAct = !me.data || me.data.administrator || me.data.actor === run.actor;
   const wouldCancel = Boolean(open) && !refreshError && !open?.cancellation_requested_at;
-  const wouldVerify = reviewable && !newer && !isVerified(run) && !planExpired;
-  const wouldApply =
+  // An interrupted write can be resumed from its saved position once a check passed after the
+  // interruption, and, when the Sync service requires approval, once its plan is approved.
+  const progress = resource.apply_progress;
+  const resumable =
+    Boolean(progress?.resumable) && !refreshError && !planExpired && run.phase !== "cancelled";
+  const resumeNeedsCheck = resumable && Boolean(progress?.verify_required);
+  const wouldVerify =
+    (reviewable && !newer && !isVerified(run) && !planExpired) || resumeNeedsCheck;
+  const applicable =
     reviewable && executable > 0 && hasPlan && !planExpired && download.plan?.checksum_ok !== false;
+  // A Sync service that requires approval refuses an apply of an unapproved plan, so Approve
+  // replaces Apply until the plan is approved.
+  const needsApproval = me.data?.approval_required === true && !run.approval;
+  const wouldApprove = (applicable || resumable) && !run.approval;
+  const wouldApply = applicable && !needsApproval;
+  const wouldResume = resumable && !resumeNeedsCheck && !needsApproval;
   const planVariant: "primary" | "outline" | undefined =
     !configId || running || latestVersion === undefined
       ? undefined
@@ -460,7 +481,9 @@ export function RunPage({ runId }: { runId: string }) {
         : headerState === "insync" || laterRun
           ? "outline"
           : headerState === "failed" || headerState === "idle"
-            ? "primary"
+            ? resumable
+              ? "outline"
+              : "primary"
             : undefined;
 
   const counts = runCounts(run);
@@ -496,6 +519,7 @@ export function RunPage({ runId }: { runId: string }) {
       plan={download.plan}
       source={source}
       destination={destination}
+      resumable={resumable}
     />
   ) : run.phase === "abandoned" ? (
     <AbandonedNotice run={run} orchestration={orchestration} newerRun={Boolean(laterRun)} />
@@ -553,19 +577,50 @@ export function RunPage({ runId }: { runId: string }) {
                 <When iso={open.cancellation_requested_at} />
               </p>
             )}
-            {me.data && !canAct && (wouldCancel || wouldVerify || wouldApply) && (
-              <p className="max-w-[40ch] text-foreground-muted text-xs">
-                Only {run.actor} or an administrator can verify, apply or cancel this run.
-              </p>
-            )}
+            {me.data &&
+              !canAct &&
+              (wouldCancel || wouldVerify || wouldApprove || wouldApply || wouldResume) && (
+                <p className="max-w-[40ch] text-foreground-muted text-xs">
+                  Only the token that started this run or an administrator token can act on this
+                  run.
+                </p>
+              )}
             {canAct && wouldCancel && (
               <Button variant="danger-outline" size="sm" onPress={() => setDialog("cancel")}>
                 Cancel run
               </Button>
             )}
+            {canAct && resumeNeedsCheck && (
+              <p className="max-w-[40ch] text-foreground-muted text-xs">
+                Check the plan before you resume. The check must pass after the interruption.
+              </p>
+            )}
             {canAct && wouldVerify && (
-              <Button variant="outline" size="sm" onPress={() => setDialog("verify")}>
+              <Button
+                variant={resumeNeedsCheck ? "primary" : "outline"}
+                size="sm"
+                onPress={() => setDialog("verify")}
+              >
                 Check the plan
+              </Button>
+            )}
+            {(applicable || resumable) && run.approval && (
+              <p className="flex items-center gap-1.5 text-foreground-muted text-sm">
+                <StateIcon state="insync" className="size-3.5 shrink-0 text-success" />
+                <span>
+                  Plan approved <When iso={run.approval.approved_at} />
+                </span>
+              </p>
+            )}
+            {canAct && wouldApprove && (
+              <Button
+                variant={
+                  needsApproval && !(wrote || newer) && !resumeNeedsCheck ? "primary" : "outline"
+                }
+                size="sm"
+                onPress={() => setDialog("approve")}
+              >
+                Approve the plan
               </Button>
             )}
             {canAct && wouldApply && (
@@ -574,6 +629,9 @@ export function RunPage({ runId }: { runId: string }) {
                 variant={wrote || newer ? "outline" : "primary"}
                 onPress={() => setDialog("apply")}
               />
+            )}
+            {canAct && wouldResume && (
+              <ApplyButton label={resumeLabel(run)} onPress={() => setDialog("resume")} />
             )}
             {planVariant && (
               <Button variant={planVariant} size="sm" onPress={() => setDialog("plan")}>
@@ -616,6 +674,15 @@ export function RunPage({ runId }: { runId: string }) {
         <Details run={run} name={name} source={source} destination={destination} />
       </div>
       {dialog === "verify" && <VerifyDialog run={run} onClose={close} onDone={focusHeading} />}
+      {dialog === "approve" && <ApproveWithPlan run={run} onClose={close} onDone={focusHeading} />}
+      {dialog === "resume" && (
+        <ResumeWithPlan
+          run={run}
+          writesTo={writesTo ?? undefined}
+          onClose={close}
+          onDone={focusHeading}
+        />
+      )}
       {dialog === "apply" && <ApplyWithPlan run={run} onClose={close} onDone={focusHeading} />}
       {changes && !sheet.isOpen && (
         <ChangesDock

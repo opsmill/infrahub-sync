@@ -1,7 +1,7 @@
 """The Infrahub destination keeps the ids of the nodes Infrahub created itself (spec 019 T009).
 
 The mark is the one research R2 chose from the probe of T001: the creator `__system__` in the
-node metadata, on a node whose kind is in `INFRAHUB_BUILTIN_NODE_KINDS` (ADR 0043). The nodes
+node metadata, on a node whose kind is in `INFRAHUB_BUILTIN_NODE_KINDS` (ADR 0047). The nodes
 are built from the probe output of a new Infrahub 1.11.9 branch,
 `tests/data/infrahub_builtin_nodes/infrahub-1.11.9.json`: the `IpamNamespace` named `default`
 that Infrahub created, and a control `BuiltinTag` that the API token created.
@@ -194,7 +194,7 @@ def test_the_node_the_api_token_created_is_not_built_in() -> None:
 
 
 def test_a_node_created_by_system_of_an_unlisted_kind_is_not_built_in() -> None:
-    """Infrahub also records `__system__` as the creator of imported IPAM nodes (ADR 0043).
+    """Infrahub also records `__system__` as the creator of imported IPAM nodes (ADR 0047).
 
     Only a node whose kind is in `INFRAHUB_BUILTIN_NODE_KINDS` counts, so the control tag stays
     out of the set even with the creator `__system__`.

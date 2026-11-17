@@ -100,8 +100,8 @@ read NetBox. [Run a first sync](#run-a-first-sync) uses this connection.
 Check the service:
 
 ```bash
-curl -sf http://127.0.0.1:8001/version
-curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8001/status
+curl -sf http://127.0.0.1:8001/api/version
+curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8001/api/status
 ```
 
 The `status` response reports `"service": "ready"` when the worker is running. The service
@@ -188,7 +188,7 @@ In the first terminal, run the smoke suite:
 uv run invoke dev.smoke
 ```
 
-When no `sync-api` container runs, `dev.smoke` first reads the `GET /status` route of the Sync API.
+When no `sync-api` container runs, `dev.smoke` first reads the `GET /api/status` route of the Sync API.
 If the Sync API does not answer, it fails and tells you to start `dev.api`. If the Sync API
 reports no available worker, it fails and tells you to start `dev.worker`. In this mode the
 worker runs on the host, so the smoke package names Infrahub by its host address,
@@ -207,13 +207,19 @@ uv run invoke dev.frontend
 The task fetches the `frontend/vendor/infrahub` submodule when it is missing, installs the locked
 dependencies and serves the interface on `http://localhost:3000` until you stop it with Ctrl-C.
 
-The server forwards `/api` to the Sync API of the stack with a bearer token, chosen in this order:
+The server forwards every request under `/api` to the Sync API of the stack, at the same path, and
+adds no token. Open the page and enter a Sync API token, as in a deployment. The task prints which
+token to enter: `infrahub-sync-dev-token` when a principal in `BEARER_TOKENS` has the development
+token, otherwise `from BEARER_TOKENS`, which means a token you set there. The task never prints a
+token you set yourself.
 
-- `INFRAHUB_SYNC_API_TOKEN`, when your shell exports it.
-- The development token, when a principal in `BEARER_TOKENS` has it.
-- The token of the only principal in `BEARER_TOKENS`.
+The page keeps the token for the browser tab only. To remove it, select the Sync service status
+at the top of the page, then select **Remove token**.
 
-The token stays in the server process and is not included in the browser bundle.
+To view the built web interface from `dev.api` instead, build it with `pnpm build` in `frontend/`
+and start `dev.api` with `INFRAHUB_SYNC_WEB_DIRECTORY` set to the absolute path of
+`frontend/dist`. The Sync API then serves the web interface at the root of its address, as the
+image does.
 
 ## Use an Infrahub that already runs
 
@@ -488,7 +494,7 @@ Use the addresses the worker container can reach, as in step 6.
 | `dev.api` | Runs the Sync API on the host, in the foreground. |
 | `dev.worker` | Runs the Sync worker on the host, in the foreground. |
 | `dev.seed` | Loads the smoke dataset into the stack's Infrahub. |
-| `dev.smoke` | Loads the smoke dataset, then runs the smoke suite. In host mode, it first checks `dev.api` and `dev.worker` through the `GET /status` route of the Sync API. |
+| `dev.smoke` | Loads the smoke dataset, then runs the smoke suite. In host mode, it first checks `dev.api` and `dev.worker` through the `GET /api/status` route of the Sync API. |
 | `dev.status` | Shows the containers, their health and the addresses. |
 | `dev.logs [-n SERVICE] [-l LINES]` | Shows the last lines of one service's logs, `sync-api` and 50 lines by default. |
 | `dev.stop` | Stops the containers and keeps the data volumes. |

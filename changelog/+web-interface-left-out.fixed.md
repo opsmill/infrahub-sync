@@ -1,0 +1,1 @@
+The Apply and Resume dialogs of the web interface list the records the plan leaves out and ask the person to confirm that they reviewed them. Before this change, the web interface could not apply a plan that leaves out records, because the Sync API refuses such an apply without that confirmation.

@@ -59,7 +59,7 @@ unchanged data holds zero operations.
 - [X] T017 [US1] Remove the `builtin_deletes` field and its name-based exclusion from `tasks/bench.py:480-494` and `development/bench/records.py:245`, and update `tests/test_benchmark_runner.py:173, 418, 483, 614` (FR-004)
 - [X] T018 [US1] Remove the `IpamNamespace name=default` entry from `tests/data/v2_gate/expected_deletes.yml`, keep the file and its loader in `.github/scripts/nightly_e2e.py`, and update `tests/test_nightly_v2_gate.py` so the gate fails on that delete (FR-024)
 - [X] T019 [P] [US1] Remove the `default` namespace delete from "Current limitations" in `examples/netbox_to_infrahub/README.md` and from `docs/docs/development/guides/netbox-benchmark-runner.md:153-170`
-- [X] T020 [P] [US1] Write ADR 0043 "A plan leaves out the deletes of nodes that Infrahub creates itself" in `dev/adr/0043-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md` with the probe result of T002, add a one-line note pointing to it in `dev/adr/0041-an-unmapped-ip-namespace-converts-to-the-default-namespace.md` and `dev/adr/0042-the-v2-gate-passes-on-no-creates-and-reviewed-lists.md`, and list it in `dev/adr/README.md`
+- [X] T020 [P] [US1] Write ADR 0047 "A plan leaves out the deletes of nodes that Infrahub creates itself" in `dev/adr/0047-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md` with the probe result of T002, add a one-line note pointing to it in `dev/adr/0041-an-unmapped-ip-namespace-converts-to-the-default-namespace.md` and `dev/adr/0042-the-v2-gate-passes-on-no-creates-and-reviewed-lists.md`, and list it in `dev/adr/README.md`
 
 **Checkpoint**: A second plan on unchanged data is empty.
 

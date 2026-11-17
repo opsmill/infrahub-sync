@@ -1,4 +1,4 @@
-# 43. A plan leaves out the deletes of nodes that Infrahub creates itself
+# 47. A plan leaves out the deletes of nodes that Infrahub creates itself
 
 **Status**: Accepted
 **Date**: 2026-11-16, amended 2026-11-17 (see [Amendment, 2026-11-17](#amendment-2026-11-17-the-mark-also-needs-a-listed-kind))

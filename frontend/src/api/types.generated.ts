@@ -53,7 +53,7 @@ export interface paths {
         };
         /**
          * Get Me
-         * @description Return the caller's actor name and administrator flag; performs no other action.
+         * @description Return the caller's actor name, administrator flag and the approval setting; performs no other action.
          */
         get: operations["get_me_me_get"];
         put?: never;
@@ -94,23 +94,6 @@ export interface paths {
         };
         /** Get Run */
         get: operations["get_run_runs__run_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/runs/{run_id}/plan": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Plan */
-        get: operations["get_plan_runs__run_id__plan_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -198,6 +181,26 @@ export interface paths {
         put?: never;
         /** Apply Run */
         post: operations["apply_run_runs__run_id__apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Run
+         * @description Resume an interrupted write from the run's saved position, after a `verify` passed (spec 016).
+         */
+        post: operations["resume_run_runs__run_id__resume_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -314,6 +317,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{run_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Run
+         * @description Record approval of the run's saved plan without applying it; submits no execution.
+         */
+        post: operations["approve_run_runs__run_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/events": {
         parameters: {
             query?: never;
@@ -354,13 +377,141 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{run_id}/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Plan */
+        get: operations["get_plan_runs__run_id__plan_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/plan/problems": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Plan Problems
+         * @description Return one page of the saved plan's problems (spec 007, contracts/sync-api.md).
+         */
+        get: operations["get_plan_problems_runs__run_id__plan_problems_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/plan/left-out": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Plan Left Out
+         * @description Return one page of the records the saved plan leaves out (spec 007).
+         */
+        get: operations["get_plan_left_out_runs__run_id__plan_left_out_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/runs/{run_id}/plan/kept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Plan Kept
+         * @description Return one page of the records the saved plan keeps without one optional relationship (spec 007).
+         */
+        get: operations["get_plan_kept_runs__run_id__plan_kept_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * ApplyProgressKindResource
+         * @description How many of one kind's operations were committed, are uncertain, and were not reached.
+         */
+        ApplyProgressKindResource: {
+            /** Kind */
+            kind: string;
+            /** Committed */
+            committed: number;
+            /** Uncertain */
+            uncertain: number;
+            /** Not Reached */
+            not_reached: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ApplyProgressResource
+         * @description How far a run's write got through its saved plan (spec 016 data-model.md "Run progress view").
+         *
+         *     `position` is the highest saved position over all the run's write executions, or `None` when
+         *     none was saved. `resumable` is true when the run's write was interrupted and no execution is
+         *     unfinished; `verify_required` is true when no `verify` passed after the latest interruption.
+         */
+        ApplyProgressResource: {
+            /** Position */
+            position?: number | null;
+            /** Saved At */
+            saved_at?: string | null;
+            /**
+             * Resumable
+             * @default false
+             */
+            resumable: boolean;
+            /**
+             * Verify Required
+             * @default false
+             */
+            verify_required: boolean;
+            /**
+             * By Kind
+             * @default []
+             */
+            by_kind: components["schemas"]["ApplyProgressKindResource"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * ApplyRunRequest
          * @description Request application of a reviewed plan checksum.
+         *
+         *     `confirm_left_out` confirms that the person reviewed the records the plan leaves out
+         *     (spec 007 FR-010). It is a strict JSON boolean, and it is serialized only when true, so a
+         *     request that does not confirm keeps today's body and today's idempotency fingerprint.
          */
         ApplyRunRequest: {
             /** Expected Checksum */
@@ -370,10 +521,57 @@ export interface components {
              * @default false
              */
             confirm_writes: boolean;
+            /**
+             * Confirm Left Out
+             * @default false
+             */
+            confirm_left_out: boolean;
             /** Branch */
             branch?: string | null;
             /** Reason */
             reason?: string | null;
+        };
+        /**
+         * ApproveRunRequest
+         * @description Request approval of a run's saved plan, bound to the reviewed checksum, without applying it.
+         */
+        ApproveRunRequest: {
+            /** Expected Checksum */
+            expected_checksum: string;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * ApprovedPlanSummaryResource
+         * @description The counts of the plan an approval covers: creates, updates and recorded deletes.
+         */
+        ApprovedPlanSummaryResource: {
+            /** Creates */
+            creates: number;
+            /** Updates */
+            updates: number;
+            /** Deletes Recorded */
+            deletes_recorded: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ApprovedRunResource
+         * @description The approve response: the run with its approval, and the counts of the plan approved.
+         */
+        ApprovedRunResource: {
+            run: components["schemas"]["PublicRunResource"];
+            /** Orchestration */
+            orchestration: components["schemas"]["OrchestrationSummary"][];
+            apply_progress?: components["schemas"]["ApplyProgressResource"] | null;
+            /**
+             * Resumes
+             * @default []
+             */
+            resumes: components["schemas"]["ResumeResource"][];
+            plan_summary: components["schemas"]["ApprovedPlanSummaryResource"];
+        } & {
+            [key: string]: unknown;
         };
         /**
          * ArtifactListResource
@@ -548,6 +746,12 @@ export interface components {
             run_id?: string | null;
             /** Mutation Id */
             mutation_id?: string | null;
+            /** Details */
+            details?: {
+                [key: string]: unknown;
+            } | null;
+            /** Left Out */
+            left_out?: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -787,6 +991,33 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * PlanReportPageResource
+         * @description One page of the problems, left-out records or kept records of a saved plan (spec 007).
+         *
+         *     `entries` are the lines of the plan's `report.jsonl` without their `entry` key, in the
+         *     report's stable order. `next_offset` is `None` on the last page.
+         */
+        PlanReportPageResource: {
+            /** Run Id */
+            run_id: string;
+            /** Plan Checksum */
+            plan_checksum: string;
+            /** Entries */
+            entries: {
+                [key: string]: unknown;
+            }[];
+            /** Offset */
+            offset: number;
+            /** Limit */
+            limit: number;
+            /** Total */
+            total: number;
+            /** Next Offset */
+            next_offset?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * PlanResource
          * @description Return a saved plan, checksum, summary, and operations.
          */
@@ -831,18 +1062,68 @@ export interface components {
             delete_operations_computed: boolean;
             /** Deletes Not Executed */
             deletes_not_executed: number;
+            /**
+             * Left Out
+             * @default 0
+             */
+            left_out: number;
+            /**
+             * Left Out With Problem
+             * @default 0
+             */
+            left_out_with_problem: number;
+            /**
+             * Left Out Dependent
+             * @default 0
+             */
+            left_out_dependent: number;
+            /** Left Out By Kind */
+            left_out_by_kind?: {
+                [key: string]: number;
+            };
+            /**
+             * Problems
+             * @default 0
+             */
+            problems: number;
+            /** Problems By Type */
+            problems_by_type?: {
+                [key: string]: number;
+            };
+            /**
+             * Kept
+             * @default 0
+             */
+            kept: number;
+            /** Deletes Withheld By Kind */
+            deletes_withheld_by_kind?: {
+                [key: string]: number;
+            };
+            /**
+             * Dropdown Values Checked
+             * @default false
+             */
+            dropdown_values_checked: boolean;
         } & {
             [key: string]: unknown;
         };
         /**
          * PrincipalResource
-         * @description Name the authenticated caller and whether it is an administrator.
+         * @description Name the authenticated caller, whether it is an administrator, and whether the site requires approval.
+         *
+         *     ``approval_required`` defaults to ``False`` for a Sync API that predates the setting, since such a
+         *     service never requires approval.
          */
         PrincipalResource: {
             /** Actor */
             actor: string;
             /** Administrator */
             administrator: boolean;
+            /**
+             * Approval Required
+             * @default false
+             */
+            approval_required: boolean;
         } & {
             [key: string]: unknown;
         };
@@ -919,6 +1200,7 @@ export interface components {
             reconciliation_required: boolean;
             /** Destination Branch */
             destination_branch?: string | null;
+            approval?: components["schemas"]["RunApprovalResource"] | null;
             /**
              * Artifact Refs
              * @default []
@@ -943,6 +1225,77 @@ export interface components {
             results: {
                 [key: string]: unknown;
             };
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ResumeResource
+         * @description One resume request of a run: who asked, when, why, where it started, and how it ended.
+         *
+         *     `outcome` is the resume execution's terminal outcome, or `None` while it has not ended.
+         *     `operations_written` is the number of creates and updates this resume committed: every one after
+         *     `start_after` for a resume that succeeded, otherwise those through its own last saved position,
+         *     a lower bound for a resume that was stopped after writing past it. `None` when the saved plan
+         *     cannot be read.
+         */
+        ResumeResource: {
+            /** Actor */
+            actor: string;
+            /**
+             * Requested At
+             * Format: date-time
+             */
+            requested_at: string;
+            /** Reason */
+            reason?: string | null;
+            /** Start After */
+            start_after?: number | null;
+            /** Outcome */
+            outcome?: string | null;
+            /** Operations Written */
+            operations_written?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ResumeRunRequest
+         * @description Request a resume of an interrupted apply from the run's saved position (spec 016 data-model.md).
+         *
+         *     The checks match `ApplyRunRequest`: `expected_checksum` must equal the saved plan's checksum,
+         *     `confirm_writes` must be true, and `confirm_left_out` is required when the plan left out records.
+         */
+        ResumeRunRequest: {
+            /** Expected Checksum */
+            expected_checksum: string;
+            /**
+             * Confirm Writes
+             * @default false
+             */
+            confirm_writes: boolean;
+            /**
+             * Confirm Left Out
+             * @default false
+             */
+            confirm_left_out: boolean;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * RunApprovalResource
+         * @description The one recorded approval of a run's saved plan: who approved which checksum, and when.
+         */
+        RunApprovalResource: {
+            /** Approved By */
+            approved_by: string;
+            /**
+             * Approved At
+             * Format: date-time
+             */
+            approved_at: string;
+            /** Plan Checksum */
+            plan_checksum: string;
+            /** Reason */
+            reason?: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -1032,11 +1385,20 @@ export interface components {
         /**
          * RunResource
          * @description Combine a public run record with its orchestration history.
+         *
+         *     `apply_progress` is `None` for a run that never started a write, and for a Sync API that
+         *     predates spec 016; `resumes` is then empty.
          */
         RunResource: {
             run: components["schemas"]["PublicRunResource"];
             /** Orchestration */
             orchestration: components["schemas"]["OrchestrationSummary"][];
+            apply_progress?: components["schemas"]["ApplyProgressResource"] | null;
+            /**
+             * Resumes
+             * @default []
+             */
+            resumes: components["schemas"]["ResumeResource"][];
         } & {
             [key: string]: unknown;
         };
@@ -1543,91 +1905,6 @@ export interface operations {
             };
         };
     };
-    get_plan_runs__run_id__plan_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                run_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PlanResource"];
-                };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Gone */
-            410: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Unprocessable Content */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
-        };
-    };
     get_results_runs__run_id__results_get: {
         parameters: {
             query?: never;
@@ -2066,6 +2343,97 @@ export interface operations {
             };
         };
     };
+    resume_run_runs__run_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResumeRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     cancel_run_runs__run_id__cancel_post: {
         parameters: {
             query?: never;
@@ -2083,6 +2451,15 @@ export interface operations {
             };
         };
         responses: {
+            /** @description The finished plan was withdrawn; the run is cancelled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunResource"];
+                };
+            };
             /** @description Successful Response */
             202: {
                 headers: {
@@ -2364,6 +2741,7 @@ export interface operations {
             query?: {
                 offset?: string;
                 limit?: string;
+                branch?: string | null;
             };
             header?: never;
             path: {
@@ -2390,6 +2768,97 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_run_runs__run_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovedRunResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };
@@ -2508,6 +2977,362 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunLogPage"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_plan_runs__run_id__plan_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_plan_problems_runs__run_id__plan_problems_get: {
+        parameters: {
+            query?: {
+                offset?: string | null;
+                limit?: string | null;
+                problem_type?: string | null;
+                kind?: string | null;
+                expected_checksum?: string | null;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanReportPageResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_plan_left_out_runs__run_id__plan_left_out_get: {
+        parameters: {
+            query?: {
+                offset?: string | null;
+                limit?: string | null;
+                kind?: string | null;
+                expected_checksum?: string | null;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanReportPageResource"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_plan_kept_runs__run_id__plan_kept_get: {
+        parameters: {
+            query?: {
+                offset?: string | null;
+                limit?: string | null;
+                kind?: string | null;
+                expected_checksum?: string | null;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanReportPageResource"];
                 };
             };
             /** @description Unauthorized */

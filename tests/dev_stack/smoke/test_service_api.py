@@ -146,7 +146,7 @@ def _client(smoke_env: dict[str, Any], token: str | None) -> httpx.Client:
     headers = {}
     if token is not None:
         headers["Authorization"] = f"Bearer {token}"
-    return httpx.Client(base_url=smoke_env["urls"]["sync_api"], headers=headers, timeout=30)
+    return httpx.Client(base_url=f"{smoke_env['urls']['sync_api']}/api", headers=headers, timeout=30)
 
 
 def authenticated_client(smoke_env: dict[str, Any], *, transcript: Path) -> httpx.Client:
@@ -333,12 +333,12 @@ def test_service_plan_and_apply_lifecycle(smoke_env: dict[str, Any], evidence_di
     captured = transcript.read_text(encoding="utf-8")
     exchanges = {(entry["method"], entry["path"], entry["status"]) for entry in map(json.loads, captured.splitlines())}
     assert exchanges >= {
-        ("POST", "/configs", 201),
-        ("POST", f"/configs/{config_id}/versions/{registry_version}/validate", 200),
-        ("POST", "/runs", 202),
-        ("GET", f"/runs/{run_id}/plan", 200),
-        ("POST", f"/runs/{run_id}/apply", 202),
-        ("GET", f"/runs/{run_id}/results", 200),
+        ("POST", "/api/configs", 201),
+        ("POST", f"/api/configs/{config_id}/versions/{registry_version}/validate", 200),
+        ("POST", "/api/runs", 202),
+        ("GET", f"/api/runs/{run_id}/plan", 200),
+        ("POST", f"/api/runs/{run_id}/apply", 202),
+        ("GET", f"/api/runs/{run_id}/results", 200),
     }
     assert (
         canary_leaks(

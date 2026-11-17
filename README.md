@@ -93,8 +93,8 @@ its containers, so after a code change run `uv run invoke dev.restart`.
 | **PostgreSQL** | `127.0.0.1:5440` |
 
 ```bash
-curl -sf http://127.0.0.1:8001/version
-curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8001/status
+curl -sf http://127.0.0.1:8001/api/version
+curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8001/api/status
 ```
 
 The stack starts with no source and no destination. To continue to a first sync from a

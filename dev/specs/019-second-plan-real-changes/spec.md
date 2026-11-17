@@ -301,7 +301,7 @@ tier M.
 
   The creator alone is not enough, because Infrahub 1.11.9 also records `__system__` as the
   creator of `IpamPrefix`, `IpamIPAddress` and `IpamAggregate` nodes that a sync imported
-  (ADR 0043, amendment of 2026-11-17).
+  (ADR 0047, amendment of 2026-11-17).
 - **FR-003**: When a source record matches a node that Infrahub creates itself, the plan MUST
   treat that node like any other node of its kind.
 - **FR-004**: The three places that accept the delete of the `default` IP namespace by name MUST

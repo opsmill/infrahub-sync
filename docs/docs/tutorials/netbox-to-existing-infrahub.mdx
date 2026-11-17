@@ -240,10 +240,10 @@ Recreate services whose environment changed, then check readiness:
 
 ```sh
 docker compose up -d --wait
-curl -s http://127.0.0.1:8001/status
+curl -s http://127.0.0.1:8001/api/status
 ```
 
-Continue only when the `/status` response shows `worker.state` as `ready`.
+Continue only when the `/api/status` response shows `worker.state` as `ready`.
 `up -d --wait` recreates the services whose environment changed;
 `docker compose restart` keeps the environment from when the containers were created.
 

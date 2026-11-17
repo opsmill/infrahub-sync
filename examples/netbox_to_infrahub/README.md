@@ -127,7 +127,7 @@ On 2026-09-29, against a local NetBox with the official v4.7 demo data, a plan h
 Infrahub creates itself. After apply, every kind's node count on the branch matched the
 plan, and a second plan held only that delete. A plan now leaves out the deletes of nodes
 that Infrahub creates itself, as
-[ADR 0043](../../dev/adr/0043-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md)
+[ADR 0047](../../dev/adr/0047-a-plan-leaves-out-the-deletes-of-nodes-that-infrahub-creates-itself.md)
 describes.
 
 The bounded live acceptance test in

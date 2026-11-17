@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite dev --port 3000",
     "generate-routes": "tsr generate",
-    "codegen:openapi": "openapi-typescript ${INFRAHUB_SYNC_API_URL:-http://127.0.0.1:8001}/openapi.json --output src/api/types.generated.ts",
+    "codegen:openapi": "openapi-typescript ${INFRAHUB_SYNC_API_URL:-http://127.0.0.1:8001}/api/openapi.json --output src/api/types.generated.ts",
     "build": "vite build",
     "preview": "vite preview",
     "format": "biome format",

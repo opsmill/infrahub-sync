@@ -6,7 +6,7 @@ leaves a built-in node that a source record matches to the comparison, like any 
 
 The plans run the real `Potenda` plan path over the fixture of `tests/data/second_plan/`. A
 destination row marks a node as built-in with the node metadata Infrahub returns for it (creator
-`__system__`, research R2) when its kind is in `INFRAHUB_BUILTIN_NODE_KINDS` (ADR 0043); the
+`__system__`, research R2) when its kind is in `INFRAHUB_BUILTIN_NODE_KINDS` (ADR 0047); the
 stand-in client of `tests/plan/problem_plan.py` reads that key
 as node metadata, not as model data.
 """
@@ -105,7 +105,7 @@ def test_a_node_without_node_metadata_keeps_its_delete(second_plan: PlanProblemF
 def test_an_imported_ipam_node_created_by_system_keeps_its_delete(
     second_plan: PlanProblemFixture, kind: str, row: dict[str, Any]
 ) -> None:
-    """ADR 0043 amendment: Infrahub 1.11.9 records `__system__` as the creator of imported IPAM nodes.
+    """ADR 0047 amendment: Infrahub 1.11.9 records `__system__` as the creator of imported IPAM nodes.
 
     The archived import run of `dev/specs/archive/009-import-lineage/opsmill-implement-report.md`
     found 274 NetBox-sourced `IpamPrefix`, `IpamIPAddress` and `IpamAggregate` nodes with that

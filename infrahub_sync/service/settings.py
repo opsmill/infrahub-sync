@@ -4,13 +4,23 @@
 makes ``sync`` refuse to start. It is read again for every request, so a restart with a new value
 takes effect without touching stored runs, and it is validated once when the application is created,
 so a malformed value stops the service instead of silently meaning "off".
+
+``INFRAHUB_SYNC_WEB_DIRECTORY`` names the directory of the built web interface. It is read once,
+when the service application is built, and never stops the service: a value that names no usable
+directory is logged and treated as unset.
 """
 
 from __future__ import annotations
 
 import os
+from pathlib import Path
+
+import structlog
 
 REQUIRE_APPROVAL_ENV = "INFRAHUB_SYNC_REQUIRE_APPROVAL"
+WEB_DIRECTORY_ENV = "INFRAHUB_SYNC_WEB_DIRECTORY"
+
+logger = structlog.get_logger(__name__)
 
 _TRUE_VALUES = frozenset({"true", "1", "yes", "on"})
 _FALSE_VALUES = frozenset({"false", "0", "no", "off"})
@@ -41,6 +51,38 @@ def approval_required() -> bool:
         ValueError: ``INFRAHUB_SYNC_REQUIRE_APPROVAL`` holds a value that is not accepted.
     """
     return _parse_flag(REQUIRE_APPROVAL_ENV, os.environ.get(REQUIRE_APPROVAL_ENV))
+
+
+def web_directory() -> Path | None:
+    """Return the resolved directory of the built web interface, or ``None`` when there is none.
+
+    Unset or empty means no web interface. A value whose resolved directory holds no regular file
+    ``index.html``, or that cannot be checked, is logged as a warning and treated as unset, so it
+    never stops the service.
+    """
+    value = os.environ.get(WEB_DIRECTORY_ENV, "").strip()
+    if not value:
+        return None
+    try:
+        directory = Path(value).resolve()
+        found = (directory / "index.html").is_file()
+    except (OSError, RuntimeError) as error:
+        # `is_file` raises PermissionError for a directory the service cannot enter, and `resolve`
+        # raises RuntimeError for a symbolic link loop before Python 3.13. Never the error text.
+        logger.warning(
+            "web interface directory cannot be checked; the web interface is not served",
+            variable=WEB_DIRECTORY_ENV,
+            error_type=type(error).__name__,
+        )
+        return None
+    if not found:
+        logger.warning(
+            "web interface directory holds no index.html; the web interface is not served",
+            variable=WEB_DIRECTORY_ENV,
+            path=str(directory),
+        )
+        return None
+    return directory
 
 
 def validate_settings() -> None:

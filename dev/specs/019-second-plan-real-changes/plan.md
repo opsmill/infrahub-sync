@@ -156,7 +156,7 @@ docs/docs/
 ├── reference/cli.mdx           # generated
 ├── development/knowledge/plan-artifact.md
 └── development/guides/netbox-benchmark-{runner,tiers,results}.md
-dev/adr/0043-*.md, dev/adr/0046-*.md
+dev/adr/0047-*.md, dev/adr/0046-*.md
 examples/netbox_to_infrahub/README.md
 changelog/387.fixed.md, changelog/+plan-step-timings.added.md
 ```
@@ -173,9 +173,9 @@ owns the behavior today; three new modules (`plan/digest.py`, `potenda/plan_step
   amended.
 - **User Story 1 needs the work of User Story 2.** The second-plan tests of User Story 1 include
   a LAG case that the emptied relationship affects. The tasks put the shared test helper first.
-- **Two decision records.** ADR 0043, "A plan leaves out the deletes of nodes that Infrahub
+- **Two decision records.** ADR 0047, "A plan leaves out the deletes of nodes that Infrahub
   creates itself"; ADR 0046, "Saved plan format 5 records an emptied one-peer relationship".
-  ADR 0041 and ADR 0042 get a one-line note that points to ADR 0043. The timings follow ADR 0035
+  ADR 0041 and ADR 0042 get a one-line note that points to ADR 0047. The timings follow ADR 0035
   and need no new record.
 - **Tests that assert format 4** are updated: `tests/plan/test_models.py:100`,
   `test_lineage_manifest.py:106`, `test_plan_format_3.py:94`, `test_problem_pass.py:331`,

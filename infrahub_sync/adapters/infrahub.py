@@ -97,7 +97,7 @@ _TIMESTAMP_FILTER_KW = "node_metadata__updated_at__after"
 INFRAHUB_SYSTEM_ACCOUNT_ID = "__system__"
 
 INFRAHUB_BUILTIN_NODE_KINDS: frozenset[str] = frozenset({"IpamNamespace"})
-"""The kinds of the nodes that Infrahub creates itself in a branch (ADR 0043, research R2).
+"""The kinds of the nodes that Infrahub creates itself in a branch (ADR 0047, research R2).
 
 The creator `__system__` alone does not mark a node as built in. Infrahub 1.11.9 also records
 `__system__` as the creator of IPAM nodes that a sync imported, such as the `IpamPrefix`,
@@ -1048,7 +1048,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         The member of `BuiltinNodeReadingDestination`. A node is in the set when its node
         metadata names the creator `__system__` and its kind is in `INFRAHUB_BUILTIN_NODE_KINDS`
-        (research R2, ADR 0043). Empty when the plan read no
+        (research R2, ADR 0047). Empty when the plan read no
         metadata (`metadata_read` is false), so every unmatched node then becomes a delete.
         """
         return frozenset(self._builtin_node_ids or ())
