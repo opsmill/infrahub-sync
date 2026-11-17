@@ -1,0 +1,71 @@
+tests/service/test_credentials.py
+  s_cf9ada8f865389::t_1b79b129b20076 25,161
+  s_cf9ada8f865389::t_7abe75cdfbb0c8 1-24,26-160,162-233
+tests/service/test_account_resolver.py
+  s_cf9ada8f865389::t_4c38497c25d82b 1-31,33-212,214-215,217-252,254-326
+  s_cf9ada8f865389::t_3caa98b8e832af 32,213,216
+  s_cf9ada8f865389::t_7e6d472016139e 253
+tests/service/test_status_observation_budget.py
+  s_cf9ada8f865389::t_1167a3540cd923 35
+  s_cf9ada8f865389::t_ea1fbbcf1a3bb2 119,122
+tests/service/test_liveness_policy.py
+  s_cf9ada8f865389::t_ea1fbbcf1a3bb2 554,556,984,986
+  s_cf9ada8f865389::t_1167a3540cd923 527,961
+infrahub_sync/service/app.py
+  s_cf9ada8f865389::t_452ab338d04ca3 466-468
+  s_cf9ada8f865389::t_45f51494576e1a 320-347,387
+tests/service/test_http_api.py
+  s_cf9ada8f865389::t_6079ffa93a10f6 252
+tests/service/test_admin_account.py
+  s_cf9ada8f865389::t_5ee6c69e53f1e0 361
+  s_cf9ada8f865389::t_3caa98b8e832af 45-46,223,249-268,278-280
+  s_cf9ada8f865389::t_1b79b129b20076 41-44,449
+  s_cf9ada8f865389::t_7e6d472016139e 1-40,47-222,224-248,269-277,281-360,362-448,450-470
+tests/service/test_config_routes.py
+  s_cf9ada8f865389::t_1167a3540cd923 36,1057
+infrahub_sync/service/settings.py
+  s_cf9ada8f865389::t_c928bf1a47f6e4 42,165-169
+  s_cf9ada8f865389::t_93ba8a7072cf4c 11-15,21,23,27-31,36-41,109-164,170-174,178-180,185
+  s_cf9ada8f865389::t_bf9fa22b501185 34-35
+infrahub_sync/product_store/accounts.py
+  s_cf9ada8f865389::t_bf9fa22b501185 105,434-436
+  s_cf9ada8f865389::t_ebdcacc543d4f0 389-394,444,448
+  s_cf9ada8f865389::t_c928bf1a47f6e4 102-104,106-114,395-433,437-443,445-447,449-462
+  s_cf9ada8f865389::t_56772b0ef6a2be 463-464
+tests/service/test_validation_secret_containment.py
+  s_cf9ada8f865389::t_1167a3540cd923 284-285
+  s_cf9ada8f865389::t_fbda72d4353419 41
+tests/service/test_serve_site.py
+  s_cf9ada8f865389::t_1167a3540cd923 17,38-39,68-69
+dev/specs/022-local-accounts/tasks.md
+  s_cf9ada8f865389::t_b039a75731e642 72,78,83,88,91,99,102,106
+tests/service/test_environment_names.py
+  s_cf9ada8f865389::t_1167a3540cd923 6,13,16-18,56,58-60,69
+infrahub_sync/service/auth.py
+  s_cf9ada8f865389::t_bf9fa22b501185 36
+  s_cf9ada8f865389::t_452ab338d04ca3 1-9,16-18,22-31,34-35,37-40,43-47,53-79,88-182,192,235,241
+infrahub_sync/service/credentials.py
+  s_cf9ada8f865389::t_bf9fa22b501185 32-33,97
+  s_cf9ada8f865389::t_16572c6c2e89ed 1-31,34-96,98-191
+infrahub_sync/product_store/store.py
+  s_cf9ada8f865389::t_c928bf1a47f6e4 422-424,893-902,3351-3392,4319-4346
+  s_cf9ada8f865389::t_550456e4e27662 4347
+infrahub_sync/service/serve.py
+  s_cf9ada8f865389::t_452ab338d04ca3 14,27-33,72,82-86,89-90,96-97,99-106,131,158
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8922f44967bd89814301bacf3a8d18380cf6f2b2",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
