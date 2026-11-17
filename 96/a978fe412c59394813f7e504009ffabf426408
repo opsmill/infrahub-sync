@@ -1,0 +1,19 @@
+docs/docs/development-stack.mdx
+  s_2d3d101935fd75::t_8886d02dd23384 87,215,564
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "96a978fe412c59394813f7e504009ffabf426408",
+  "prompts": {},
+  "sessions": {
+    "s_2d3d101935fd75": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e718161f-01ea-4015-976a-63ce56c6c4bf",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
