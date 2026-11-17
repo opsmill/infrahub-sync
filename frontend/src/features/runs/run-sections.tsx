@@ -107,7 +107,11 @@ function ArtifactDownload({
         size="sm"
         onPress={download}
         isDisabled={pending}
-        aria-label={`Download ${title}`}
+        aria-label={
+          pending
+            ? `Downloading ${title}${percent !== undefined ? `, ${percent}%` : ""}`
+            : `Download ${title}`
+        }
         className="text-foreground-muted pointer-coarse:h-11"
       >
         <DownloadIcon />
