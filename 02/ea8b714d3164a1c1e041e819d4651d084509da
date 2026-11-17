@@ -1,0 +1,28 @@
+docs/docs/development/knowledge/configuration-foundation.md
+  s_313229fc4d1c44::t_603a811d122e54 115-118
+docs/docs/reference/durable-product-records.mdx
+  s_313229fc4d1c44::t_b4d43c60572064 178-189
+docs/docs/development/guidelines/secret-redaction.md
+  s_313229fc4d1c44::t_bbb3f756a4ec1b 61-62
+docs/docs/operations/day-2-operations.mdx
+  s_313229fc4d1c44::t_0503884f3d27cf 173-193
+  s_313229fc4d1c44::t_e540c00b789643 111-120
+dev/adr/0048-a-product-store-failure-shows-its-sqlstate-and-sync-refuses-another-layout.md
+  s_313229fc4d1c44::t_2076287e4b7bf1 50-53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "02ea8b714d3164a1c1e041e819d4651d084509da",
+  "prompts": {},
+  "sessions": {
+    "s_313229fc4d1c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c6738f-876b-4301-a742-80e31346a4cc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
