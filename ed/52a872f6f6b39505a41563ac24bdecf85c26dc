@@ -1,0 +1,227 @@
+docs/docs/development/knowledge/orchestration-prefect.md
+  s_4c94b159df7a98::t_e77878a8f1d217 104-107,348-353
+docs/docs/operations/day-2-operations.mdx
+  s_4c94b159df7a98::t_e77878a8f1d217 64-65
+docs/docs/adapters/infrahub.mdx
+  s_4c94b159df7a98::t_e77878a8f1d217 131
+tests/service/test_apply_checkpoint_order.py
+  s_4c94b159df7a98::t_e77878a8f1d217 226
+docs/docs/reference/prefect-remote-run.mdx
+  s_4c94b159df7a98::t_e77878a8f1d217 55-63
+infrahub_sync/service/orchestration.py
+  s_4c94b159df7a98::t_e77878a8f1d217 209-210
+tests/service/test_managed_write_guard.py
+  s_4c94b159df7a98::t_e77878a8f1d217 259,272
+tests/test_get_potenda_top_level.py
+  s_4c94b159df7a98::t_e77878a8f1d217 14-15,29,38
+docs/docs/reference/config.mdx
+  s_4c94b159df7a98::t_e77878a8f1d217 119-120
+tests/test_sync_config_order.py
+  s_4c94b159df7a98::t_e77878a8f1d217 1,39,52
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_4c94b159df7a98::t_e77878a8f1d217 206,215-216
+dev/adr/0046-saved-plan-format-5-records-an-emptied-one-peer-relationship.md
+  s_4c94b159df7a98::t_6e17483ce1fd3a 1-83
+dev/adr/0044-the-base-install-declares-no-redis-client.md
+  s_4c94b159df7a98::t_e77878a8f1d217 1-54
+tests/plan/test_destination_binding.py
+  s_4c94b159df7a98::t_e77878a8f1d217 10-12
+tests/test_generated_examples.py
+  s_4c94b159df7a98::t_e77878a8f1d217 26-27
+changelog/+remove-unsupported-paths.removed.md
+  s_4c94b159df7a98::t_e77878a8f1d217 1
+docs/docs/development/knowledge/configuration-foundation.md
+  s_4c94b159df7a98::t_e77878a8f1d217 81,83-87,89
+infrahub_sync/service/service.py
+  s_4c94b159df7a98::t_e77878a8f1d217 377-380,390-394,552,559,567,569-571,620,627-631,653,662,664-666,687-749,903,908-911,919,927,929-930,936-939,982-986,1016-1024,1197-1206,1640-1641,1651,1653,1660-1662,1666-1667,1672-1685,1761,1767-1770,1776-1780,2094,2099-2102,2105-2132
+  s_4c94b159df7a98::t_1ab3eb75b6d20d 2133
+tests/product_store/test_plan_step_column.py
+  s_4c94b159df7a98::t_e564cec210c6cc 84,86
+docs/docs/development/guidelines/secret-redaction.md
+  s_4c94b159df7a98::t_e77878a8f1d217 28
+tests/service/test_verify_destination.py
+  s_4c94b159df7a98::t_e77878a8f1d217 223
+infrahub_sync/service/flow.py
+  s_4c94b159df7a98::t_e77878a8f1d217 48,128-132,259-268,270,351,432-440,538,546-549,551,557,563-564,768-770,832-841,850,873,930,1441
+infrahub_sync/product_store/store.py
+  s_4c94b159df7a98::t_e77878a8f1d217 11-12,77-79,141,146,191-192,237,243,365-368,817-850,869,871,884,905-910,927,935-937,976,978-984,986-991,1025-1044,1049-1051,1075-1089,1095-1103,1109-1114,1282-1287,1292-1300,1316-1317,1322,1376-1385,1387-1388,1390-1391,1597-1605,1609-1611,1625-1627,1657-1687,1931-1933,1942-1945,2333-2335,2343-2345,2383-2394,2396-2407,2435-2450,2452-2459,2558-2568,2611-2619,2624-2631,2634-2643,2687-2688,2691-2697,2746-2748,2888-2890,2894-2896,2902-2904,2911-2913,2917-2919,2923-2925,2971-2976,3047-3052,3083-3091,4346
+infrahub_sync/load_report.py
+  s_4c94b159df7a98::t_e77878a8f1d217 12
+docs/docs/development/adr-index.mdx
+  s_4c94b159df7a98::t_e77878a8f1d217 49
+tests/plan/test_keyed_create_refusal.py
+  s_4c94b159df7a98::t_e77878a8f1d217 32,80-86,250,276,297-299,321,360
+tests/service/test_worker_claim.py
+  s_4c94b159df7a98::t_e77878a8f1d217 83,177,182,212,292
+dev/specs/019-second-plan-real-changes/research.md
+  s_4c94b159df7a98::t_c66c408f363e5c 317-320
+tests/service/test_plan_step.py
+  s_4c94b159df7a98::t_797fa55eb15eea 553
+  s_4c94b159df7a98::t_9809de70d7113a 560-570,662,727
+  s_4c94b159df7a98::t_807e0d5f387d66 655,720
+  s_4c94b159df7a98::t_00ec3fd0ba642c 607,609
+  s_4c94b159df7a98::t_b4193ed63764d2 618
+tests/product_store/test_configs_service.py
+  s_4c94b159df7a98::t_e77878a8f1d217 509-510,601,604
+tests/sync_instances.py
+  s_4c94b159df7a98::t_e77878a8f1d217 1-78
+docs/docs/reference/incremental-extraction.mdx
+  s_4c94b159df7a98::t_e77878a8f1d217 36-37
+tests/test_credential_canary.py
+  s_4c94b159df7a98::t_e77878a8f1d217 15
+infrahub_sync/__init__.py
+  s_4c94b159df7a98::t_e77878a8f1d217 214
+tests/product_store/test_contract.py
+  s_4c94b159df7a98::t_e77878a8f1d217 58,157-158,779,782,786-788,791-793,796,798-799,824,831,1261,4043,4070,4137-4138,4151,4182-4186,4189,4248,4343,4357-4359,4430-4432,4465-4466,4468-4470,4500,4728-4747
+  s_4c94b159df7a98::t_c7dd304f70042f 4748-4749
+infrahub_sync/adapters/endpoint_records.py
+  s_4c94b159df7a98::t_e77878a8f1d217 1-81
+infrahub_sync/client/client.py
+  s_4c94b159df7a98::t_e77878a8f1d217 320,423,503,602,1029-1033
+  s_4c94b159df7a98::t_e5f647f370347a 1034
+infrahub_sync/orchestration/flow.py
+  s_4c94b159df7a98::t_e77878a8f1d217 31,152-180,205-241
+tests/test_sync_store_policy.py
+  s_4c94b159df7a98::t_e77878a8f1d217 10-11,113-148
+  s_4c94b159df7a98::t_ec0e134eca7bb6 149-150
+tests/service/test_failure_without_traceback.py
+  s_4c94b159df7a98::t_e77878a8f1d217 105
+tests/product_store/test_postgresql_isolation.py
+  s_4c94b159df7a98::t_e77878a8f1d217 190-191,193,223-224,227,232
+docs/docs/development/knowledge/incremental-and-cache.md
+  s_4c94b159df7a98::t_e77878a8f1d217 120-123,143,152
+tests/service/test_sync_store_policy.py
+  s_4c94b159df7a98::t_e77878a8f1d217 66
+tests/service/test_flow_and_prefect.py
+  s_4c94b159df7a98::t_e77878a8f1d217 248,290,311-313,316,332,367-368,408,495,570,636,667,705,740,786,824,870,1211,1258,1311,1485,1522
+tests/product_store/test_resume_admissions.py
+  s_4c94b159df7a98::t_e77878a8f1d217 170-184,194,222,289,388,500,511,525,565,652,679
+docs/docs/configuration-package.mdx
+  s_4c94b159df7a98::t_e77878a8f1d217 183
+tests/service/test_resume_run.py
+  s_4c94b159df7a98::t_e77878a8f1d217 1364
+AGENTS.md
+  s_4c94b159df7a98::t_e77878a8f1d217 215,271
+infrahub_sync/execution.py
+  s_4c94b159df7a98::t_e77878a8f1d217 86-88,98,101,633-634,913,1248,1253,1258
+dev/specs/019-second-plan-real-changes/plan.md
+  s_4c94b159df7a98::t_1aca243d504240 41-43
+  s_7c181637278aef::t_9aee73bb683c18 159,177
+changelog/+remove-unused-code-and-duplication.housekeeping.md
+  s_4c94b159df7a98::t_e77878a8f1d217 1
+.github/workflows/workflow-linter.yml
+  s_4c94b159df7a98::t_e77878a8f1d217 103
+tests/service/test_read_progress.py
+  s_4c94b159df7a98::t_e77878a8f1d217 390-393,398,479,523,525,533,560,603,627
+tests/test_potenda_plan_artifact.py
+  s_4c94b159df7a98::t_e77878a8f1d217 1376
+infrahub_sync/plugin_loader.py
+  s_4c94b159df7a98::t_e77878a8f1d217 226,318,338,347,354,361
+tests/service/test_worker_configuration_directory.py
+  s_4c94b159df7a98::t_e77878a8f1d217 1,3-6,54-55,60,63
+tasks/tests.py
+  s_4c94b159df7a98::t_e77878a8f1d217 10,89,121
+infrahub_sync/adapters/netbox.py
+  s_4c94b159df7a98::t_e77878a8f1d217 21,72,81,85,88,100,103,105-106
+tests/runtime_schema/test_worker_path.py
+  s_4c94b159df7a98::t_e77878a8f1d217 184,204,307,325,661,671-674
+tests/service/test_sync_left_out_stop.py
+  s_4c94b159df7a98::t_e77878a8f1d217 226
+tests/runtime_schema/test_model_builder.py
+  s_4c94b159df7a98::t_e77878a8f1d217 41-42
+docs/docs/development/knowledge/repository-tour.md
+  s_4c94b159df7a98::t_e77878a8f1d217 182,228,230-231,246-248
+tests/product_store/test_audit_event_migration.py
+  s_4c94b159df7a98::t_e77878a8f1d217 1,3-4,28
+docs/docs/development/knowledge/sync-architecture.md
+  s_4c94b159df7a98::t_e77878a8f1d217 100
+dev/adr/README.md
+  s_4c94b159df7a98::t_e77878a8f1d217 28-29,134-136
+  s_4c94b159df7a98::t_bc459207c38bd3 137
+tests/plan/test_source_identity_collision.py
+  s_4c94b159df7a98::t_e77878a8f1d217 158
+tests/service/test_prefect_wording.py
+  s_4c94b159df7a98::t_e77878a8f1d217 142
+docs/docs/development/knowledge/execution-surface.md
+  s_4c94b159df7a98::t_e77878a8f1d217 8,12-13,58,73,78,161-163
+infrahub_sync/utils.py
+  s_4c94b159df7a98::t_e77878a8f1d217 14,33,162-163,259-267,329,382-383,393-394,397,408,424,430,434,438
+infrahub_sync/adapters/nautobot.py
+  s_4c94b159df7a98::t_e77878a8f1d217 21,127,136,140,143,166,169,171-172
+docs/docs/development/knowledge/index.md
+  s_4c94b159df7a98::t_e77878a8f1d217 9-11,59
+tests/service/test_plan_checkpoint.py
+  s_4c94b159df7a98::t_e77878a8f1d217 174,192,215,446,479,516
+tests/service/test_registered_plan_apply.py
+  s_4c94b159df7a98::t_e77878a8f1d217 96,201,231,342
+tests/plan/test_destination_only_peer.py
+  s_4c94b159df7a98::t_e77878a8f1d217 44
+tests/service/test_registered_schema_guard.py
+  s_4c94b159df7a98::t_e77878a8f1d217 223
+docs/docs/development/guidelines/testing-tiers.md
+  s_4c94b159df7a98::t_e77878a8f1d217 159,211-212,215,726-727
+tests/service/test_service_worker.py
+  s_4c94b159df7a98::t_e77878a8f1d217 446
+infrahub_sync/potenda/__init__.py
+  s_4c94b159df7a98::t_e77878a8f1d217 470-471
+pyproject.toml
+  s_4c94b159df7a98::t_e77878a8f1d217 26-28
+tests/service/test_stage_scratch.py
+  s_4c94b159df7a98::t_e77878a8f1d217 139,143,267,292,340,372,395
+tests/product_store/test_run_approval.py
+  s_4c94b159df7a98::t_e77878a8f1d217 1,43,52,74
+tests/service/test_run_log_next_step.py
+  s_4c94b159df7a98::t_e77878a8f1d217 308,519,585,721
+tests/service/test_sync_checkpoint_order.py
+  s_4c94b159df7a98::t_e77878a8f1d217 204
+tests/service/test_worker_run_binding.py
+  s_4c94b159df7a98::t_e77878a8f1d217 1-138
+docs/docs/reference/sync-http-api.mdx
+  s_4c94b159df7a98::t_e77878a8f1d217 50,175-177,196,198-200,202-207,720,878
+tests/test_execution_surface.py
+  s_4c94b159df7a98::t_e77878a8f1d217 44-45,1522
+tasks/linter.py
+  s_4c94b159df7a98::t_e77878a8f1d217 18,22-23,27,30
+infrahub_sync/plan/verify.py
+  s_4c94b159df7a98::t_e77878a8f1d217 463-464
+dev/adr/0008-declare-redis-directly-instead-of-the-diffsync-extra.md
+  s_4c94b159df7a98::t_e77878a8f1d217 3-4
+tests/compose/test_documentation.py
+  s_4c94b159df7a98::t_e77878a8f1d217 113-114,116,120,124,126
+docs/docs/running-a-sync.mdx
+  s_4c94b159df7a98::t_e77878a8f1d217 358
+tests/plan/test_config_version.py
+  s_4c94b159df7a98::t_e77878a8f1d217 44
+tests/integration/test_saved_plan_apply_integration.py
+  s_4c94b159df7a98::t_e77878a8f1d217 126,128,729,741,758
+dev/specs/019-second-plan-real-changes/opsmill-implement-report.md
+  s_4c94b159df7a98::t_5d374f2feab074 25,93
+dev/specs/019-second-plan-real-changes/tasks.md
+  s_4c94b159df7a98::t_d43b50abbf0eb8 94
+docs/docs/development/knowledge/plan-artifact.md
+  s_4c94b159df7a98::t_78d29c9420266f 17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ed52a872f6f6b39505a41563ac24bdecf85c26dc",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_7c181637278aef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a43925806267cb910",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
