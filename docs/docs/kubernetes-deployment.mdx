@@ -48,7 +48,8 @@ containers, which fail after `waitTimeoutSeconds` (600 seconds by default):
    exists.
 3. The bootstrap Job waits until PostgreSQL accepts connections and runs the database script
    again, which creates any role or database that is missing, as the Compose `db-bootstrap`
-   service does. It then waits until the object store and the Prefect server answer, and runs.
+   service does. A renamed role or database is created new and empty: the script moves no data
+   and changes no ownership. It then waits until the object store and the Prefect server answer, and runs.
    It retries on failure, up to `bootstrap.backoffLimit` times (6 by default). Its last step
    writes the bootstrap record to the product database: the Sync version and the work pool name
    it set up.
@@ -293,7 +294,8 @@ Secret also holds it, because the credentials Secret's value wins.
 
 The init containers of the Prefect server and the bootstrap Job set the resource requests and
 limits of `initContainers.resources`: 10m CPU and 64Mi memory requested, and a 128Mi memory limit,
-by default. A namespace with a ResourceQuota refuses a pod whose containers set none.
+by default. A namespace with a ResourceQuota on CPU or memory, such as `requests.cpu` or
+`limits.memory`, refuses a pod whose containers do not set the values that the quota tracks.
 
 :::warning
 The chart restarts the pods that read a Secret or ConfigMap only when the chart creates that

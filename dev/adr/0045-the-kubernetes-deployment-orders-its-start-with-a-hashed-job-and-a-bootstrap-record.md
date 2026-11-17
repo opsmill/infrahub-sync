@@ -40,11 +40,14 @@ bootstrap's object store check correct. None of them needs access to the Kuberne
 - **Database bootstrap.** The bundled PostgreSQL runs the role and database script of the Compose
   file from `/docker-entrypoint-initdb.d`, mounted from a ConfigMap with mode `0555`, when it
   first initializes its volume. The bootstrap Job runs the same script again over TCP as the
-  administrator, in an `ensure-databases` init container, as the Compose `db-bootstrap` service
-  does on every start. The script creates a role or a database only when it is missing, so a
-  renamed role or database, or a first start that was interrupted after the volume was
-  initialized, is repaired by the next Job. The Prefect server waits for PostgreSQL with
-  `pg_isready` in an init container, and restarts until its role exists.
+  administrator, in an `ensure-databases` init container. In Compose, the short-lived
+  `db-bootstrap` service runs this script on every start because the script is safe to repeat;
+  `sync-bootstrap` is the step that must not run at every start. The script creates a role or a
+  database only when it is missing. After a first start that was interrupted once the volume was
+  initialized, the next Job creates what is missing. After a rename of a role or a database, the
+  next Job creates the new one, empty: the script moves no data and changes no ownership, and the
+  old role and database stay. The Prefect server waits for PostgreSQL with `pg_isready` in an
+  init container, and restarts until its role exists.
 - **Service bootstrap.** A plain Kubernetes Job, not a Helm hook, named
   `<fullname>-bootstrap-<hash>`. The hash is the first 8 characters of a SHA-256 over every input
   of the Job's pod:
@@ -82,7 +85,9 @@ Job runs again, but the start check already passes.
 ## Consequences
 
 - **Restarts are expected.** On a first install the Sync API and the worker exit and restart until
-  the Job has written the record. Nothing makes them wait for PostgreSQL, so their restarts also
+  the Job has written the record. The Prefect server restarts until its role exists, when the
+  role is created by the Job's `ensure-databases` step rather than by the PostgreSQL entrypoint,
+  as after a rename. Nothing makes them wait for PostgreSQL, so their restarts also
   include failures to reach the product database while PostgreSQL starts. Measured once on
   minikube: the Sync API restarted 3 times and was ready 23 seconds after the Job completed; the
   worker restarted 2 times. With Helm 4.2.4, `helm install --wait` alone does not wait for a Job;
@@ -124,7 +129,7 @@ Job runs again, but the start check already passes.
   need a second gate. The bootstrap Job's `ensure-databases` init container runs the script
   instead, and the Prefect server restarts until its role exists. The PostgreSQL entrypoint alone
   was the first choice; it runs the script only on an empty volume, so a renamed role or an
-  interrupted first start left the roles missing.
+  interrupted first start left a role or a database missing.
 - **An init container on the Sync API and the worker that waits for the Prefect deployment**
   `infrahub-sync-service/run` in the configured work pool. Rejected after it was first built: on
   an upgrade the deployment of the previous release already exists, so the wait ends at once and
