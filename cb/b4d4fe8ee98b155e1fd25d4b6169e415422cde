@@ -1,0 +1,23 @@
+tests/product_store/test_contract.py
+  s_e27e0562681035::t_ca420cf5b1803f 116-128,143-144,154,158,4302,4304
+tests/product_store/test_layout_check.py
+  s_e27e0562681035::t_69c04c3317e0f1 88-98
+tests/product_store/test_postgresql_isolation.py
+  s_e27e0562681035::t_a242c6e0372191 478-483,527-573
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cbb4d4fe8ee98b155e1fd25d4b6169e415422cde",
+  "prompts": {},
+  "sessions": {
+    "s_e27e0562681035": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a174389c08e291358",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
