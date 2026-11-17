@@ -162,6 +162,13 @@ def test_constructor_closes_connection_inputs(url: str, token: str, timeout: obj
         # Only a whole trailing `api` path segment is removed: not a host named `api`, not `myapi`.
         ("http://api", "http://api", "http://api/api/version"),
         ("http://host/myapi", "http://host/myapi", "http://host/myapi/api/version"),
+        # A percent-encoded path keeps its encoding: `%2F` is not a separator, `%3F` not a query.
+        ("https://proxy/a%2Fb/api", "https://proxy/a%2Fb", "https://proxy/a%2Fb/api/version"),
+        ("https://proxy/a%3Fb", "https://proxy/a%3Fb", "https://proxy/a%3Fb/api/version"),
+        # An empty query or fragment is dropped, so the route never lands after `?` or `#`.
+        ("http://sync-api:8000/sync?", "http://sync-api:8000/sync", "http://sync-api:8000/sync/api/version"),
+        ("http://sync-api:8000/api#", "http://sync-api:8000", "http://sync-api:8000/api/version"),
+        ("http://sync-api:8000/?#", "http://sync-api:8000", "http://sync-api:8000/api/version"),
     ],
 )
 def test_the_client_adds_api_to_the_service_address(configured: str, service_url: str, requested: str) -> None:

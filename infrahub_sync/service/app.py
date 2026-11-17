@@ -410,6 +410,7 @@ def create_app(
         )
         return JSONResponse(status_code=422, content=_error_content(envelope))
 
+    # TODO: Starlette types a handler's exception as `Exception`; drop the ignore once ty accepts a narrower one.
     application.add_exception_handler(StarletteHTTPException, _http_error)  # ty: ignore[invalid-argument-type]
 
     @application.get("/version")

@@ -104,7 +104,11 @@ BUILD_INPUT_FRONTEND_PATHS = (
     "frontend/vendor/infrahub/frontend/packages/ui",
 )
 # Directories that a local install or build creates and the image build never copies.
-BUILD_INPUT_SKIPPED_DIRECTORIES = frozenset({"node_modules", "dist"})
+BUILD_INPUT_SKIPPED_DIRECTORIES = frozenset({"node_modules", "dist", "__pycache__"})
+# Files `.dockerignore` keeps out of the build context: hashing them would ask for a rebuild
+# that changes nothing in the image, for example after Finder writes a `.DS_Store`.
+BUILD_INPUT_SKIPPED_FILES = frozenset({".DS_Store"})
+BUILD_INPUT_SKIPPED_SUFFIXES = (".pyc",)
 # The service whose build produces `infrahub-sync:dev`; every Sync-image service uses it.
 BUILD_SERVICE = "prefect-server"
 # What `docker image inspect` prints for a label the image does not carry.
@@ -407,7 +411,8 @@ def resolved_compose(context: Context | None = None, target: ComposeTarget | Non
 def _frontend_build_inputs(root: Path) -> list[Path]:
     """Return the files of `BUILD_INPUT_FRONTEND_PATHS` that exist, in hashing order.
 
-    A directory's files are sorted by relative path, without `node_modules` and `dist`.
+    A directory's files are sorted by relative path, without what `.dockerignore` excludes:
+    `node_modules`, `dist` and `__pycache__` directories, `.DS_Store` and `*.pyc` files.
     """
     files: list[Path] = []
     for name in BUILD_INPUT_FRONTEND_PATHS:
@@ -419,6 +424,8 @@ def _frontend_build_inputs(root: Path) -> list[Path]:
                 candidate
                 for candidate in path.rglob("*")
                 if candidate.is_file()
+                and candidate.name not in BUILD_INPUT_SKIPPED_FILES
+                and not candidate.name.endswith(BUILD_INPUT_SKIPPED_SUFFIXES)
                 and not BUILD_INPUT_SKIPPED_DIRECTORIES.intersection(candidate.relative_to(path).parts)
             )
             files.extend(sorted(found, key=lambda candidate: candidate.relative_to(root).as_posix()))

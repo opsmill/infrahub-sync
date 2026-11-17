@@ -162,11 +162,14 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         if authority_invalid or carries_credentials:
             raise ClientInputError(_SERVICE_URL_ARG)
         # The value is the Sync service's address; one trailing `api` path segment is the Sync
-        # API's own prefix, which the client adds itself (ADR 0043, decision 4).
-        path = url.path.rstrip("/")
+        # API's own prefix, which the client adds itself (ADR 0043, decision 4). The path stays
+        # percent-encoded: decoding it would turn `%2F` into `/` and make `%3F` or `%23` invalid.
+        # An empty `?` or `#` passes the check above and is dropped here, so the routes the client
+        # adds never land in a query string or a fragment.
+        path = url.raw_path.partition(b"?")[0].decode("ascii").rstrip("/")
         if path.endswith("/api"):
             path = path.removesuffix("/api").rstrip("/")
-        return str(url.copy_with(path=path or "/")).rstrip("/")
+        return str(url.copy_with(raw_path=(path or "/").encode("ascii"), fragment=None)).rstrip("/")
 
     @property
     def service_url(self) -> str:

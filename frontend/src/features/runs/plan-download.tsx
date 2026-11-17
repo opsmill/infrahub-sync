@@ -2,10 +2,9 @@ import { Button } from "@infrahub/ui";
 import { useEffect, useSyncExternalStore } from "react";
 import { cn } from "tailwind-variants";
 
-import { handleUnauthorized } from "#/api/client";
-import { isEnvelope, SyncApiUnavailable } from "#/api/errors";
+import { fetchWithToken } from "#/api/client";
 import { describeError } from "#/api/queries";
-import { bearer, getToken, onTokenCleared } from "#/api/token";
+import { onTokenCleared } from "#/api/token";
 import type { Plan, Run } from "#/api/types";
 import { PLAN_ARTIFACT_ID } from "#/domain/run-steps";
 
@@ -61,23 +60,17 @@ class PlanDownload {
     void this.run(this.abort.signal);
   };
 
+  /** Stops a download in progress; its state stays as it is. */
+  cancel = () => {
+    this.abort?.abort();
+  };
+
   private async run(signal: AbortSignal) {
     try {
-      const token = getToken();
-      const request = new Request(`/api/runs/${encodeURIComponent(this.runId)}/plan`, {
-        headers: token ? { Authorization: bearer(token) } : undefined,
-      });
-      const response = await fetch(request, { signal });
-      if (!response.ok) {
-        handleUnauthorized(request, response);
-        let body: unknown;
-        try {
-          body = await response.json();
-        } catch {
-          body = undefined;
-        }
-        throw isEnvelope(body) ? body : new SyncApiUnavailable(response.status);
-      }
+      const response = await fetchWithToken(
+        `/api/runs/${encodeURIComponent(this.runId)}/plan`,
+        signal
+      );
       // A compressed response states its compressed size, so the plan file's size is used then.
       const length = Number(response.headers.get("Content-Length"));
       const total =
@@ -120,8 +113,12 @@ class PlanDownload {
 
 const downloads = new Map<string, PlanDownload>();
 
-// A plan downloaded with a removed token is not shown to the person who enters the next one.
-onTokenCleared(() => downloads.clear());
+// A plan downloaded with a removed token is not shown to the person who enters the next one, and
+// a download still in progress stops instead of reading the rest of the plan for nobody.
+onTokenCleared(() => {
+  for (const download of downloads.values()) download.cancel();
+  downloads.clear();
+});
 
 const NONE = new PlanDownload("", 0);
 

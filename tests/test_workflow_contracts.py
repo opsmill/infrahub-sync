@@ -118,6 +118,9 @@ CHECKOUT_ACTION = "actions/checkout"
 SHA_INPUT = "sha"
 HEAD_READBACK = "git rev-parse HEAD"
 ANCESTRY_CHECK = "git merge-base --is-ancestor"
+# The nightly jobs check out with `fetch-depth: 0`, so `submodules: true` would clone the
+# submodule's whole history; they fetch it at depth 1 instead.
+NIGHTLY_SUBMODULE_FETCH = "git submodule update --init --depth 1 frontend/vendor/infrahub"
 # What `actions/checkout` does with the run's token unless told otherwise. Left
 # on, it writes the token into `.git/config` of the tree every later step runs
 # third-party code against.
@@ -668,8 +671,8 @@ def test_nightly_route_is_dispatch_only_and_requires_an_exact_merged_commit() ->
         "ref": f"${{{{ inputs.{SHA_INPUT} }}}}",
         "fetch-depth": 0,
         "persist-credentials": False,
-        "submodules": True,
     }
+    assert any(step.get("run") == NIGHTLY_SUBMODULE_FETCH for step in steps)
     guard_step = next(step for step in steps if step.get("id") == "sha_guard")
     guard = guard_step["run"]
     assert "${#expected} -ne 40" in guard
@@ -749,12 +752,13 @@ def test_nightly_runs_the_compose_suite_against_an_image_it_builds() -> None:
         "ref": f"${{{{ inputs.{SHA_INPUT} }}}}",
         "fetch-depth": 0,
         "persist-credentials": False,
-        "submodules": True,
     }
     guard = next(step for step in steps if step.get("id") == "sha_guard")["run"]
     assert ANCESTRY_CHECK in guard
     assert HEAD_READBACK in guard
     runs = [str(step.get("run", "")) for step in steps]
+    # The image's web stage needs the submodule; fetched before the image is built.
+    submodule = runs.index(NIGHTLY_SUBMODULE_FETCH)
     # The `testcontainers` extra, so `TestInfrahubSyncDocker` runs with the rest of the suite.
     install = next(
         index
@@ -768,6 +772,7 @@ def test_nightly_runs_the_compose_suite_against_an_image_it_builds() -> None:
         if run == "uv run --no-sync pytest -m compose tests/compose --compose-zero-skip"
     )
     assert install < build < suite
+    assert submodule < build
     assert steps[suite]["env"] == {"INFRAHUB_SYNC_DOCKER_IMAGE": "infrahub-sync", "VERSION": "compose-test"}
 
 

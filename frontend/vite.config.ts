@@ -6,6 +6,22 @@ import { defineConfig } from "vite";
 
 const { INFRAHUB_SYNC_API_URL } = process.env;
 
+/**
+ * The Sync service's address, as the CLI reads it: one trailing `api` path segment is the Sync
+ * API's prefix, which the forwarded path already carries. A value that is not a URL is kept as it
+ * is, so `vite build`, which never forwards, does not fail on it.
+ */
+function serviceAddress(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return value;
+  }
+  url.pathname = url.pathname.replace(/\/+$/, "").replace(/\/api$/, "");
+  return url.toString().replace(/\/+$/, "");
+}
+
 const config = defineConfig({
   resolve: { tsconfigPaths: true },
   plugins: [
@@ -17,7 +33,7 @@ const config = defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: INFRAHUB_SYNC_API_URL || "http://127.0.0.1:8001",
+        target: serviceAddress(INFRAHUB_SYNC_API_URL || "http://127.0.0.1:8001"),
         changeOrigin: true,
       },
     },

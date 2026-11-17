@@ -50,8 +50,6 @@ jobs:
           ref: ${{ inputs.sha }}
           fetch-depth: 0
           persist-credentials: false
-          # The image's web stage builds from the frontend/vendor/infrahub submodule.
-          submodules: true
 
       # Test exactly the requested commit, and only one already merged into feature/v3-develop.
       - name: "Refuse an abbreviated, different, or unmerged commit"
@@ -81,6 +79,11 @@ jobs:
             echo "$expected is not merged into feature/v3-develop" >&2
             exit 1
           fi
+
+      # The image's web stage builds from the frontend/vendor/infrahub submodule. Fetched here at
+      # depth 1: `submodules: true` with `fetch-depth: 0` would clone the submodule's whole history.
+      - name: "Fetch the design system submodule"
+        run: git submodule update --init --depth 1 frontend/vendor/infrahub
 
       - name: "Install uv"
         uses: astral-sh/setup-uv@v7
@@ -276,8 +279,6 @@ jobs:
           ref: ${{ inputs.sha }}
           fetch-depth: 0
           persist-credentials: false
-          # The image's web stage builds from the frontend/vendor/infrahub submodule.
-          submodules: true
 
       # The same exact-checkout and merged-ancestor guard as the job above.
       - name: "Refuse an abbreviated, different, or unmerged commit"
@@ -307,6 +308,10 @@ jobs:
             echo "$expected is not merged into feature/v3-develop" >&2
             exit 1
           fi
+
+      # The same depth-1 submodule fetch as the job above.
+      - name: "Fetch the design system submodule"
+        run: git submodule update --init --depth 1 frontend/vendor/infrahub
 
       - name: "Install uv"
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0

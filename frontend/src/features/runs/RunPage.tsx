@@ -675,7 +675,14 @@ export function RunPage({ runId }: { runId: string }) {
       </div>
       {dialog === "verify" && <VerifyDialog run={run} onClose={close} onDone={focusHeading} />}
       {dialog === "approve" && <ApproveWithPlan run={run} onClose={close} onDone={focusHeading} />}
-      {dialog === "resume" && <ResumeWithPlan run={run} onClose={close} onDone={focusHeading} />}
+      {dialog === "resume" && (
+        <ResumeWithPlan
+          run={run}
+          writesTo={writesTo ?? undefined}
+          onClose={close}
+          onDone={focusHeading}
+        />
+      )}
       {dialog === "apply" && <ApplyWithPlan run={run} onClose={close} onDone={focusHeading} />}
       {changes && !sheet.isOpen && (
         <ChangesDock

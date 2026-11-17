@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pathlib
 from typing import TYPE_CHECKING
 
 import pytest
@@ -59,6 +60,31 @@ def test_a_directory_without_index_html_is_logged_and_treated_as_unset(
     assert len(logs) == 1
     assert logs[0]["log_level"] == "warning"
     assert logs[0]["path"] == str(tmp_path.resolve())
+
+
+@pytest.mark.parametrize(
+    ("method", "error"),
+    [
+        pytest.param("is_file", PermissionError(13, "Permission denied"), id="directory-not-enterable"),
+        pytest.param("resolve", RuntimeError("Symlink loop"), id="symbolic-link-loop"),
+    ],
+)
+def test_a_directory_that_cannot_be_checked_is_logged_and_treated_as_unset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, method: str, error: Exception
+) -> None:
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setenv(WEB_DIRECTORY_ENV, str(tmp_path))
+    monkeypatch.setattr(pathlib.Path, method, refuse)
+
+    with capture_logs() as logs:
+        assert web_directory() is None
+
+    assert len(logs) == 1
+    assert logs[0]["log_level"] == "warning"
+    assert logs[0]["error_type"] == type(error).__name__
+    assert logs[0]["variable"] == WEB_DIRECTORY_ENV
 
 
 def test_a_directory_with_index_html_is_returned_resolved(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

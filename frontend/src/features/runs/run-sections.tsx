@@ -3,10 +3,8 @@ import { Link } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { cn } from "tailwind-variants";
 
-import { handleUnauthorized } from "#/api/client";
-import { isEnvelope, SyncApiUnavailable } from "#/api/errors";
+import { fetchWithToken } from "#/api/client";
 import { describeError } from "#/api/queries";
-import { bearer, getToken } from "#/api/token";
 import type { Plan, Run } from "#/api/types";
 import { DownloadIcon } from "#/components/icons";
 import { CopyButton, FOCUS, Notice, SectionHeading } from "#/components/page";
@@ -70,21 +68,7 @@ function ArtifactDownload({
     setPending(true);
     setError(undefined);
     try {
-      const token = getToken();
-      const request = new Request(url, {
-        headers: token ? { Authorization: bearer(token) } : undefined,
-      });
-      const response = await fetch(request);
-      if (!response.ok) {
-        handleUnauthorized(request, response);
-        let body: unknown;
-        try {
-          body = await response.json();
-        } catch {
-          body = undefined;
-        }
-        throw isEnvelope(body) ? body : new SyncApiUnavailable(response.status);
-      }
+      const response = await fetchWithToken(url);
       saveBlob(await response.blob(), filename);
     } catch (caught) {
       setError(caught);

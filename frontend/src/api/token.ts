@@ -67,7 +67,7 @@ export function setToken(value: string) {
   update(next);
 }
 
-/** Removes the token from this tab and tells the caches outside React Query to empty. */
+/** Removes the token from this tab and tells the caches that subscribed with `onTokenCleared` to empty. */
 export function clearToken() {
   try {
     sessionStorage.removeItem(STORAGE_KEY);

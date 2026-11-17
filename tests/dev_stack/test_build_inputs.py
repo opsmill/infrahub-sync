@@ -118,6 +118,9 @@ def test_the_hash_changes_when_a_frontend_file_is_added(frontend: Path, added: s
         pytest.param("frontend/vendor/infrahub/frontend/packages/ui/dist/index.js", id="dist-in-ui"),
         pytest.param("frontend/dist/index.html", id="build-output"),
         pytest.param("frontend/README.md", id="file-not-copied"),
+        # `.dockerignore` keeps these out of the build context.
+        pytest.param("frontend/src/.DS_Store", id="finder-metadata"),
+        pytest.param("frontend/vendor/infrahub/frontend/packages/ui/scripts/__pycache__/x.pyc", id="python-cache"),
     ],
 )
 def test_the_hash_ignores_files_the_image_build_does_not_copy(frontend: Path, ignored: str) -> None:

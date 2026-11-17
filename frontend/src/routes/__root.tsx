@@ -13,7 +13,6 @@ import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { type ComponentPropsWithRef, type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "tailwind-variants";
 
-import { queryClient } from "#/api/client";
 import { describeError, meQuery, statusQuery, versionQuery } from "#/api/queries";
 import { clearToken } from "#/api/token";
 import { announce, LiveRegion } from "#/components/announcer";
@@ -280,10 +279,8 @@ function StatusMenu() {
             variant="ghost"
             size="sm"
             className={cn("-ml-2", FOCUS_RAC)}
-            onPress={() => {
-              clearToken();
-              queryClient.clear();
-            }}
+            // Removing the token also empties the query cache and the downloaded plans.
+            onPress={clearToken}
           >
             Remove token
           </Button>

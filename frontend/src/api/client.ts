@@ -3,7 +3,7 @@ import createFetchClient from "openapi-fetch";
 import createQueryHooks from "openapi-react-query";
 
 import { isEnvelope, isTimeout, REQUEST_TIMEOUT_MS, SyncApiUnavailable } from "./errors";
-import { bearer, clearToken, getToken, refusesHeldToken } from "./token";
+import { bearer, clearToken, getToken, onTokenCleared, refusesHeldToken } from "./token";
 import type { paths } from "./types.generated";
 
 export const queryClient = new QueryClient({
@@ -33,15 +33,38 @@ export const fetchClient = createFetchClient<paths>({
     ),
 });
 
+// Answers read with a removed token are not shown to the person who enters the next one,
+// whichever way the token was removed.
+onTokenCleared(() => queryClient.clear());
+
 /**
- * Removes the held token and empties the query cache when the Sync API refuses the token the
- * request carried. A 401 for an earlier token and a 403 change nothing. Requests sent with a raw
- * `fetch` pass their request and answer here too.
+ * Removes the held token when the Sync API refuses the token the request carried. A 401 for an
+ * earlier token and a 403 change nothing.
  */
-export function handleUnauthorized(request: Request, response: Response) {
+function handleUnauthorized(request: Request, response: Response) {
   if (!refusesHeldToken(response.status, request.headers.get("Authorization"), getToken())) return;
   clearToken();
-  queryClient.clear();
+}
+
+/**
+ * Sends a GET outside the typed client, such as a file download, with the held token. An error
+ * answer removes a refused token, then throws its envelope, or `SyncApiUnavailable` without one.
+ */
+export async function fetchWithToken(url: string, signal?: AbortSignal): Promise<Response> {
+  const token = getToken();
+  const request = new Request(url, {
+    headers: token ? { Authorization: bearer(token) } : undefined,
+  });
+  const response = await fetch(request, { signal });
+  if (response.ok) return response;
+  handleUnauthorized(request, response);
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    body = undefined;
+  }
+  throw isEnvelope(body) ? body : new SyncApiUnavailable(response.status);
 }
 
 fetchClient.use({

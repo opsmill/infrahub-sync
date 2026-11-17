@@ -80,14 +80,13 @@ WORKDIR /src/frontend
 # Corepack installs the pnpm release that `packageManager` in package.json names.
 RUN corepack enable
 
+# The install reads only the manifests, so it is copied first: a change to the
+# sources then reuses the installed dependencies instead of installing them again.
 COPY frontend/.npmrc frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
-COPY frontend/index.html frontend/vite.config.ts frontend/tsconfig.json frontend/tsr.config.json ./
-COPY frontend/src ./src
-# Only the design system package of the opsmill/infrahub submodule; the rest of
-# the submodule is not part of the build. The `[d]` wildcard lets the copy match
-# nothing when the submodule was not fetched, so the guard below can name the
-# cause instead of the COPY failing with a bare "not found".
-COPY fronten[d]/vendor/infrahub/frontend/packages/ui ./vendor/infrahub/frontend/packages/ui
+# The `[d]` wildcard lets the copy match nothing when the submodule was not
+# fetched, so the guard below can name the cause instead of the COPY failing
+# with a bare "not found".
+COPY fronten[d]/vendor/infrahub/frontend/packages/ui/package.json ./vendor/infrahub/frontend/packages/ui/
 
 # Without the submodule, `pnpm install --frozen-lockfile` still succeeds and the
 # build fails later in `vite build` with an error that does not name the cause.
@@ -95,6 +94,12 @@ RUN test -f vendor/infrahub/frontend/packages/ui/package.json || { echo "fronten
 
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
+
+COPY frontend/index.html frontend/vite.config.ts frontend/tsconfig.json frontend/tsr.config.json ./
+COPY frontend/src ./src
+# Only the design system package of the opsmill/infrahub submodule; the rest of
+# the submodule is not part of the build.
+COPY fronten[d]/vendor/infrahub/frontend/packages/ui ./vendor/infrahub/frontend/packages/ui
 
 RUN pnpm build
 

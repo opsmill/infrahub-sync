@@ -825,11 +825,27 @@ export function ApproveWithPlan({ run, onClose, onDone }: DialogProps) {
 export const resumeLabel = (run: Run) =>
   run.operation === "sync" ? "Resume the sync" : "Resume the apply";
 
-/** The Resume dialog, once the saved plan has downloaded. */
-export function ResumeWithPlan({ run, onClose, onDone }: DialogProps) {
+/**
+ * The Resume dialog, once the saved plan has downloaded. `writesTo` is the branch the run page
+ * resolves from the configuration when neither the run nor the plan records one.
+ */
+export function ResumeWithPlan({
+  run,
+  writesTo,
+  onClose,
+  onDone,
+}: DialogProps & { writesTo?: string }) {
   const download = usePlanDownload(run, { start: true });
   if (download.plan)
-    return <ResumeDialog run={run} plan={download.plan} onClose={onClose} onDone={onDone} />;
+    return (
+      <ResumeDialog
+        run={run}
+        plan={download.plan}
+        writesTo={writesTo}
+        onClose={onClose}
+        onDone={onDone}
+      />
+    );
   return (
     <PlanDownloadDialog
       download={download}
@@ -846,11 +862,14 @@ export function ResumeWithPlan({ run, onClose, onDone }: DialogProps) {
 export function ResumeDialog({
   run,
   plan,
+  writesTo,
   onClose,
   onDone,
 }: {
   run: Run;
   plan: Plan;
+  /** The branch the configuration sets, for a run and a plan that record none. */
+  writesTo?: string;
   onClose: () => void;
   onDone?: () => void;
 }) {
@@ -864,7 +883,9 @@ export function ResumeDialog({
   const by = plan.summary.by_action;
   const written = (by.create ?? 0) + (by.update ?? 0);
   const checksumRefused = plan.checksum_ok === false;
-  const branch = run.destination_branch ?? plan.destination_branch ?? undefined;
+  // As in the Apply dialog, the person types the branch the write goes to, even when the run
+  // and the plan record none.
+  const branch = run.destination_branch ?? plan.destination_branch ?? writesTo;
   const matches = branch === undefined || typed.trim() === branch;
   const label = resumeLabel(run);
   const position = progress?.position;

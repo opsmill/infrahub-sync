@@ -150,7 +150,6 @@ def create_site(api: FastAPI, directory: Path | None) -> Starlette:
             The caller checked that it holds a regular file ``index.html``.
     """
     files: StaticFiles | None = None
-    index_file = ""
     script_hashes: tuple[str, ...] = ()
     if directory is not None:
         resolved = directory.resolve()
@@ -165,7 +164,6 @@ def create_site(api: FastAPI, directory: Path | None) -> Starlette:
             )
         else:
             files = StaticFiles(directory=resolved, check_dir=False)
-            index_file = str(resolved / "index.html")
             script_hashes = _inline_script_hashes(index_html)
     security_headers = {
         "Content-Security-Policy": content_security_policy(script_hashes),
@@ -184,7 +182,9 @@ def create_site(api: FastAPI, directory: Path | None) -> Starlette:
     def file_answer(built: StaticFiles, request: Request, found: tuple[str, os.stat_result], relative: str) -> Response:
         full_path, stat_result = found
         response = built.file_response(full_path, stat_result, request.scope)
-        if full_path == index_file:
+        # By the requested name: `lookup_path` returns the resolved path, which differs from the
+        # entry page's name when `index.html` is a symbolic link.
+        if relative == "index.html":
             response.headers["Cache-Control"] = INDEX_CACHE_CONTROL
         elif relative.startswith("assets/"):
             response.headers["Cache-Control"] = ASSET_CACHE_CONTROL

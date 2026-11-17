@@ -176,6 +176,17 @@ def test_index_html_is_sent_with_no_cache(site: TestClient) -> None:
     _assert_security_headers(response)
 
 
+@pytest.mark.parametrize("path", ["/index.html", "/runs/abc"])
+def test_an_entry_page_that_is_a_symbolic_link_inside_the_directory_is_sent_with_no_cache(
+    web_directory: Path, path: str
+) -> None:
+    (web_directory / "index.html").rename(web_directory / "index-release.html")
+    (web_directory / "index.html").symlink_to(web_directory / "index-release.html")
+    site = TestClient(create_site(_small_api(), web_directory))
+
+    _assert_index(site.get(path, headers=HTML))
+
+
 def test_an_asset_is_sent_with_an_immutable_cache(site: TestClient) -> None:
     response = site.get("/assets/app-abc.js", headers=JSON)
 
