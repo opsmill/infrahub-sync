@@ -81,8 +81,13 @@ with the Sync API and worker on the host, for a debugger.
 - `preview`: adds the `infrahub` profile, starts the local NetBox and loads the smoke dataset
   into the local Infrahub.
 
-`--preset` or `INFRAHUB_SYNC_DEV_PRESET` selects a preset, and `dev.infrahub` and
-`dev.preview` start one directly. Without either, a task follows the stack's containers:
-`infrahub` when an `infrahub-server` container exists, otherwise `sync`. With
-`--infrahub-network`, the preset is `sync`. `tasks/dev.py` and the development stack
-documentation describe the rules in full.
+`dev.infrahub` and `dev.preview` start their preset directly. Otherwise a task takes the first
+of these that applies:
+
+1. `--preset`, else `INFRAHUB_SYNC_DEV_PRESET`. Either one combined with an Infrahub network
+   and the `infrahub` or `preview` preset is refused.
+2. `--infrahub-network`, else `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK`: the preset is `sync`.
+3. The stack's containers: `infrahub` when an `infrahub-server` container exists, running or
+   stopped, otherwise `sync`. The containers never select `preview`.
+
+`tasks/dev.py` and the development stack documentation describe the rules in full.
