@@ -1,0 +1,38 @@
+dev/specs/020-product-store-failure-cause/alignment-check.md
+  s_313229fc4d1c44::t_ad2200c90e9b98 36-37
+dev/specs/020-product-store-failure-cause/research.md
+  s_313229fc4d1c44::t_ad2200c90e9b98 144-148
+dev/specs/020-product-store-failure-cause/spec.md
+  s_313229fc4d1c44::t_7e1745d0028a40 319-320
+  s_313229fc4d1c44::t_2041787f451488 219-221
+  s_313229fc4d1c44::t_2f9b1da453be99 96-100,110
+  s_313229fc4d1c44::t_2108d721d2e6f8 274-277
+  s_313229fc4d1c44::t_a3561beea47872 243-244
+  s_313229fc4d1c44::t_a98372101aa1e6 105-107
+  s_313229fc4d1c44::t_0f66eec3ca962f 101-104
+  s_313229fc4d1c44::t_c17a952b9443fb 208-211
+  s_313229fc4d1c44::t_b76731cc8fb023 299-301
+  s_313229fc4d1c44::t_ad2200c90e9b98 108-109,330-331
+dev/specs/020-product-store-failure-cause/contracts/start-up.md
+  s_313229fc4d1c44::t_ad2200c90e9b98 10
+dev/specs/020-product-store-failure-cause/plan.md
+  s_313229fc4d1c44::t_ad2200c90e9b98 184-189
+dev/specs/020-product-store-failure-cause/tasks.md
+  s_313229fc4d1c44::t_ad2200c90e9b98 173-178,209-215,262-264
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f13f6869275f023576bc26fd9a5f708e65f9b629",
+  "prompts": {},
+  "sessions": {
+    "s_313229fc4d1c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c6738f-876b-4301-a742-80e31346a4cc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
