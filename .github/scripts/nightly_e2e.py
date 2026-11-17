@@ -83,7 +83,6 @@ def environment() -> dict[str, str]:
 
     settings = dev.dev_settings()
     netbox = load_netbox_env()
-    principals = json.loads(settings.bearer_tokens)
     env = dict(os.environ)
     env.update(dev.host_environment(settings, "sync-worker"))
     store_url = env[dev.DATABASE_URL_VARIABLE]
@@ -95,7 +94,7 @@ def environment() -> dict[str, str]:
             dev.INFRAHUB_CREDENTIAL_VARIABLE: settings.infrahub_admin_token,
             "INFRAHUB_SYNC_CONFIG_DIRECTORY": str(ROOT / "examples"),
             "INFRAHUB_SYNC_API_URL": settings.sync_api_url,
-            "INFRAHUB_SYNC_API_TOKEN": principals[min(principals)]["token"],
+            "INFRAHUB_SYNC_API_TOKEN": settings.admin_token,
             "NETBOX_URL": netbox_url(netbox),
             "NETBOX_TOKEN": netbox_token(netbox),
             # What the worker resolves for a registered package's `netbox-token`.
