@@ -38,12 +38,19 @@ from infrahub_sync.product_store import (
     DuplicateConfigurationError,
     DuplicatePrefectExecutionError,
     DuplicateRunError,
+    EarlierProductDatabaseError,
+    EventDetails,
+    EventFilters,
     MutationReceipt,
     PrefectExecutionLink,
     ProductProjection,
     ProductRun,
+    RelatedResource,
     RunFilters,
     RunNotFoundError,
+    ScheduleBranch,
+    ScheduleFilters,
+    ScheduleRecord,
     WriteAdmissionConflictError,
     local_product_projection,
 )
@@ -91,6 +98,8 @@ EXPECTED_PUBLIC_NAMES = {
     "DuplicateCredentialError",
     "DuplicatePrefectExecutionError",
     "DuplicateRunError",
+    "EarlierProductDatabaseError",
+    "EventDetails",
     "EventFilters",
     "EventPage",
     "ExecutionFinishWriteback",
@@ -110,8 +119,9 @@ EXPECTED_PUBLIC_NAMES = {
     "RunPage",
     "RunReference",
     "S3Client",
-    "SignInAttempt",
-    "SignInAttemptsFullError",
+    "ScheduleBranch",
+    "ScheduleFilters",
+    "ScheduleRecord",
     "WorkerEnvironment",
     "WriteAdmissionConflictError",
     "local_product_projection",
@@ -133,8 +143,9 @@ class _CursorAdapter:
     Genuine CRUD statements pass straight through with ``%s`` translated to ``?``, so every
     contract test below still exercises a real database engine. SQLite has neither
     ``information_schema`` nor ``ALTER TABLE ... ADD CONSTRAINT``, so this adapter emulates
-    only those two PostgreSQL-only statements the store's dialect-specific schema bootstrap
-    issues; it does not model transactional DDL or abort-on-error (see
+    only the PostgreSQL-only statements the store's dialect-specific schema bootstrap issues:
+    the two catalog reads (constraints, and a table's columns) and ``ADD CONSTRAINT``. It does
+    not model transactional DDL or abort-on-error (see
     ``_FakePostgreSQLDatabase`` for the fake that does, used to prove the bootstrap fix itself).
     """
 
@@ -145,6 +156,11 @@ class _CursorAdapter:
     def execute(self, operation: str, parameters: Sequence[Any] = ()):
         self._fake_rows = None
         stripped = operation.strip()
+        if "information_schema.columns" in stripped:
+            # The column names of one table, as the start-up check of an earlier database reads them.
+            self._cursor.execute("SELECT name FROM pragma_table_info(?)", (parameters[0],))
+            self._fake_rows = tuple(self._cursor.fetchall())
+            return self
         if "information_schema.table_constraints" in stripped:
             self._cursor.execute(
                 f"SELECT 1 FROM {_POSTGRESQL_EMULATION_CONSTRAINTS_TABLE} WHERE constraint_name = ?",  # noqa: S608
@@ -4198,8 +4214,13 @@ class _FakePostgreSQLDatabase:
     ``_ConnectionAdapter`` instead, which does not model those three semantics.
     """
 
-    def __init__(self, *, tables: frozenset[str] = frozenset()) -> None:
+    def __init__(
+        self, *, tables: frozenset[str] = frozenset(), columns: Mapping[str, frozenset[str]] | None = None
+    ) -> None:
         self.tables: set[str] = set(tables)
+        # The columns of each existing table, for the start-up check of an earlier database.
+        # A table that is not listed holds every column the check looks for.
+        self.columns: dict[str, frozenset[str]] = dict(columns or {})
         self.constraints: set[str] = set()
         self.statements: list[str] = []
 
@@ -4270,10 +4291,8 @@ class _FakePostgreSQLCursor:
             return ()
         if operation.startswith(("CREATE UNIQUE INDEX IF NOT EXISTS", "CREATE INDEX IF NOT EXISTS")):
             return ()
-        if "information_schema.table_constraints" in operation:
-            name = parameters[-1]
-            visible = database.constraints | connection.pending_constraints
-            return ((1,),) if name in visible else ()
+        if "information_schema." in operation:
+            return self._catalog_rows(operation, parameters)
         if match := _FAKE_ALTER_ADD_CONSTRAINT.match(operation):
             name = match.group(1)
             visible = database.constraints | connection.pending_constraints
@@ -4284,6 +4303,22 @@ class _FakePostgreSQLCursor:
             return ()
         msg = f"the fake PostgreSQL database does not model this statement: {operation!r}"
         raise AssertionError(msg)
+
+    def _catalog_rows(self, operation: str, parameters: Sequence[Any]) -> tuple[tuple[Any, ...], ...]:
+        """Answer the two catalog reads of start-up: a table's columns, and a constraint by name."""
+        connection = self._connection
+        database = connection.database
+        if "information_schema.columns" in operation:
+            table = parameters[0]
+            if table not in database.tables:
+                return ()
+            current = frozenset(product_store_store._COLUMNS_ADDED_SINCE_AN_EARLIER_BUILD.get(table, ()))
+            return tuple((column,) for column in sorted(database.columns.get(table, current | {"created_at"})))
+        if "information_schema.table_constraints" not in operation:
+            msg = f"the fake PostgreSQL database does not model this catalog read: {operation!r}"
+            raise AssertionError(msg)
+        visible = database.constraints | connection.pending_constraints
+        return ((1,),) if parameters[-1] in visible else ()
 
     @property
     def rowcount(self) -> int:
@@ -5129,3 +5164,518 @@ def test_configuration_page_is_newest_first_filters_by_name_and_continues_after_
     assert {(item.name, item.latest_version) for item in first.items} == {("from-netbox", 1)}
     assert len(listing_provider.list_configuration_page(name="from-netbox").items) == 3
     assert listing_provider.list_configuration_page(name="another-name").items == ()
+
+
+# --- Scheduled runs (spec 021): the new columns, the receipt kind and the earlier database ------
+
+_SCHEDULE_ID = "s-" + "0" * 31 + "1"
+_OTHER_SCHEDULE_ID = "s-" + "0" * 31 + "2"
+_SCHEDULED_START = datetime(2026, 11, 18, 2, tzinfo=timezone.utc)
+_TRIGGER_COLUMN_NAMES = ("trigger_type", "schedule_id", "scheduled_start_at")
+_SCHEDULE_TABLE_COLUMNS = {
+    "schedules": frozenset(
+        {
+            "schedule_id",
+            "name",
+            "config_id",
+            "registry_version",
+            "cron",
+            "timezone",
+            "write_target",
+            "write_when_left_out",
+            "left_out_set_by",
+            "left_out_set_at",
+            "overlap_policy",
+            "start_late_by_at_most_seconds",
+            "state",
+            "state_reason",
+            "owner",
+            "consecutive_failures",
+            "last_start_at",
+            "prefect_schedule_id",
+            "prefect_synced",
+            "waiting_start_at",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "schedule_branches": frozenset(
+        {"schedule_id", "run_id", "branch", "proposed_change_id", "state", "replaced_by_run_id", "created_at"}
+    ),
+}
+_SCHEDULE_INDEXES = {
+    "product_runs_schedule_started": (["schedule_id", "started_at", "run_id"], False),
+    "product_runs_schedule_start": (["schedule_id", "scheduled_start_at"], True),
+    "schedules_name_not_deleted": (["name"], True),
+    "schedules_config_not_deleted": (["config_id"], True),
+}
+
+
+def _scheduled_run(run_id: str = "run-scheduled", **overrides: object) -> ProductRun:
+    values: dict[str, object] = {
+        "trigger_type": "scheduled",
+        "schedule_id": _SCHEDULE_ID,
+        "scheduled_start_at": _SCHEDULED_START,
+        **overrides,
+    }
+    return ProductRun.model_validate({**_run(run_id).model_dump(), **values})
+
+
+def _schedule(**overrides: object) -> ScheduleRecord:
+    values: dict[str, object] = {
+        "schedule_id": _SCHEDULE_ID,
+        "name": "nightly",
+        "config_id": "20260101T0000-aaaaaaaa",
+        "registry_version": 1,
+        "cron": "0 2 * * *",
+        "state": "active",
+        "owner": "operator@example.com",
+        "created_at": _SCHEDULED_START,
+        "updated_at": _SCHEDULED_START,
+    }
+    values.update(overrides)
+    return ScheduleRecord.model_validate(values)
+
+
+def test_fresh_sqlite_database_has_the_schedule_tables_columns_and_indexes(tmp_path: Path) -> None:
+    database = tmp_path / "records.sqlite3"
+    SQLiteRunStore(database)
+
+    assert set(_TRIGGER_COLUMN_NAMES) <= set(_sqlite_columns(database, "product_runs"))
+    assert "details" in _sqlite_columns(database, "audit_events")
+    for table, columns in _SCHEDULE_TABLE_COLUMNS.items():
+        assert set(_sqlite_columns(database, table)) == columns, table
+    with sqlite3.connect(database) as connection:
+        unique = {
+            str(row[1]): bool(row[2])
+            for table in ("product_runs", "schedules")
+            for row in connection.execute(f"PRAGMA index_list({table})")
+        }
+    for index, (columns, is_unique) in _SCHEDULE_INDEXES.items():
+        assert _sqlite_index_columns(database, index) == columns, index
+        assert unique[index] is is_unique, index
+    definitions = {name: str(sql) for kind, name, sql in _sqlite_schema(database) if kind == "index"}
+    for index in ("schedules_name_not_deleted", "schedules_config_not_deleted"):
+        assert definitions[index].endswith("WHERE state <> 'deleted'"), index
+
+
+def test_the_schedule_table_columns_are_the_stored_fields_of_their_models() -> None:
+    """The next start time is computed, so the record and the table hold the same fields."""
+    assert set(ScheduleRecord.model_fields) == _SCHEDULE_TABLE_COLUMNS["schedules"]
+    assert "next_start_at" not in ScheduleRecord.model_fields
+    assert set(ScheduleBranch.model_fields) == _SCHEDULE_TABLE_COLUMNS["schedule_branches"]
+    assert set(ScheduleFilters.model_fields) == {"config_id", "state"}
+
+
+def test_second_start_up_leaves_the_schedule_schema_unchanged(tmp_path: Path) -> None:
+    database = tmp_path / "records.sqlite3"
+    SQLiteRunStore(database)
+    first = _sqlite_schema(database)
+
+    SQLiteRunStore(database)
+
+    assert _sqlite_schema(database) == first
+
+
+def test_a_manual_run_round_trips_without_a_schedule(listing_provider: ProductProjection) -> None:
+    listing_provider.create_run(_run())
+
+    loaded = listing_provider.lookup_run("run-001").value
+
+    assert loaded is not None
+    assert (loaded.trigger_type, loaded.schedule_id, loaded.scheduled_start_at) == ("manual", None, None)
+
+
+def test_two_manual_runs_do_not_conflict_on_the_start_index(listing_provider: ProductProjection) -> None:
+    """Both runs hold no schedule and no start time; the unique index does not constrain them."""
+    listing_provider.create_run(_run("run-001"))
+    listing_provider.create_run(_run("run-002"))
+
+    page = listing_provider.list_runs(RunFilters())
+
+    assert {run.run_id for run in page.items} == {"run-001", "run-002"}
+
+
+def test_a_scheduled_run_round_trips_with_its_schedule_and_start_time_in_utc(
+    listing_provider: ProductProjection,
+) -> None:
+    plus_two = timezone(timedelta(hours=2))
+    expected = _scheduled_run(scheduled_start_at=datetime(2026, 11, 18, 4, tzinfo=plus_two))
+    listing_provider.create_run(expected)
+
+    loaded = listing_provider.lookup_run(expected.run_id).value
+
+    assert loaded is not None
+    assert (loaded.trigger_type, loaded.schedule_id) == ("scheduled", _SCHEDULE_ID)
+    assert loaded.scheduled_start_at == _SCHEDULED_START
+    assert loaded.scheduled_start_at is not None
+    assert loaded.scheduled_start_at.utcoffset() == timedelta(0)
+
+
+def test_one_start_of_a_schedule_holds_one_run_whatever_offset_writes_it(listing_provider: ProductProjection) -> None:
+    plus_two = timezone(timedelta(hours=2))
+    listing_provider.create_run(_scheduled_run("run-first"))
+
+    with pytest.raises(DuplicateRunError):
+        listing_provider.create_run(
+            _scheduled_run("run-second", scheduled_start_at=datetime(2026, 11, 18, 4, tzinfo=plus_two))
+        )
+
+    assert not listing_provider.lookup_run("run-second").available
+    listing_provider.create_run(_scheduled_run("run-next", scheduled_start_at=_SCHEDULED_START + timedelta(days=1)))
+    listing_provider.create_run(_scheduled_run("run-other", schedule_id=_OTHER_SCHEDULE_ID))
+
+
+def test_run_list_filters_on_the_trigger_the_schedule_and_the_start_time(listing_provider: ProductProjection) -> None:
+    listing_provider.create_run(_run("run-manual"))
+    listing_provider.create_run(_scheduled_run("run-a1"))
+    listing_provider.create_run(_scheduled_run("run-a2", scheduled_start_at=_SCHEDULED_START + timedelta(days=1)))
+    listing_provider.create_run(_scheduled_run("run-b1", schedule_id=_OTHER_SCHEDULE_ID))
+
+    def listed(**filters: object) -> set[str]:
+        return {run.run_id for run in listing_provider.list_runs(RunFilters.model_validate(filters)).items}
+
+    assert listed(trigger_type="manual") == {"run-manual"}
+    assert listed(trigger_type="scheduled") == {"run-a1", "run-a2", "run-b1"}
+    assert listed(schedule_id=_SCHEDULE_ID) == {"run-a1", "run-a2"}
+    assert listed(schedule_id=_SCHEDULE_ID, trigger_type="manual") == set()
+    assert listed(schedule_id=_SCHEDULE_ID, scheduled_start_at=_SCHEDULED_START) == {"run-a1"}
+    assert listed() == {"run-manual", "run-a1", "run-a2", "run-b1"}
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        pytest.param({"schedule_id": None}, "a scheduled run requires", id="scheduled-without-schedule"),
+        pytest.param({"scheduled_start_at": None}, "a scheduled run requires", id="scheduled-without-start"),
+        pytest.param({"trigger_type": "manual"}, "a manual run cannot name", id="manual-with-schedule"),
+        pytest.param({"trigger_type": "webhook"}, "trigger_type", id="unknown-trigger"),
+        pytest.param({"schedule_id": "nightly"}, "schedule_id", id="not-a-schedule-id"),
+        pytest.param(
+            {"scheduled_start_at": datetime(2026, 11, 18, 2)},  # noqa: DTZ001 - the naive value under test.
+            "must include a timezone",
+            id="naive-start",
+        ),
+    ],
+)
+def test_product_run_refuses_an_inconsistent_trigger(overrides: dict[str, Any], message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        _scheduled_run(**overrides)
+
+
+@pytest.mark.parametrize(
+    ("filters", "message"),
+    [
+        ({"scheduled_start_at": _SCHEDULED_START}, "scheduled_start_at requires schedule_id"),
+        ({"schedule_id": _SCHEDULE_ID, "scheduled_start_at": datetime(2026, 11, 18, 2)}, "must include a timezone"),  # noqa: DTZ001
+        ({"trigger_type": "webhook"}, "trigger_type"),
+    ],
+)
+def test_run_filters_refuse_an_incomplete_or_unknown_filter(filters: dict[str, object], message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        RunFilters.model_validate(filters)
+
+
+def _schedule_receipt(**overrides: object) -> MutationReceipt:
+    values: dict[str, object] = {
+        **_receipt(operation="schedule-create").model_dump(),
+        "resource_kind": "schedule",
+        "resource_id": _SCHEDULE_ID,
+        "run_id": None,
+        "prefect_key": None,
+    }
+    values.update(overrides)
+    return MutationReceipt.model_validate(values)
+
+
+def test_a_schedule_receipt_is_reserved_and_replayed(listing_provider: ProductProjection) -> None:
+    """The receipt constraint of both databases accepts the resource kind ``schedule``."""
+    receipt = _schedule_receipt()
+
+    reserved, created = listing_provider.reserve_mutation(receipt, run=None)
+    replayed, created_again = listing_provider.reserve_mutation(receipt, run=None)
+
+    assert created is True
+    assert created_again is False
+    assert reserved.resource_kind == replayed.resource_kind == "schedule"
+    assert reserved.resource_id == _SCHEDULE_ID
+    assert (reserved.run_id, reserved.prefect_key, reserved.flow_run_id) == (None, None, None)
+
+
+@pytest.mark.parametrize(
+    "identifiers",
+    [
+        {"run_id": "run-001"},
+        {"prefect_key": "a" * 64},
+        {"target_run_id": "run-001"},
+        {"state": "accepted", "response_status": 201, "response_body": {}, "flow_run_id": "flow-001"},
+    ],
+)
+def test_a_schedule_receipt_cannot_carry_run_or_prefect_identifiers(identifiers: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="a schedule mutation receipt cannot carry run or Prefect identifiers"):
+        _schedule_receipt(**identifiers)
+
+
+def test_a_receipt_refuses_an_unknown_resource_kind() -> None:
+    with pytest.raises(ValidationError, match="resource_kind"):
+        _schedule_receipt(resource_kind="deployment")
+
+
+@pytest.mark.parametrize(
+    ("resource_kind", "run_id", "accepted"),
+    [
+        pytest.param("schedule", None, True, id="schedule"),
+        pytest.param("schedule", "run-001", False, id="schedule-with-a-run"),
+        pytest.param("deployment", None, False, id="unknown-kind"),
+    ],
+)
+def test_sqlite_receipt_triggers_accept_only_a_schedule_receipt_without_a_run(
+    tmp_path: Path, resource_kind: str, run_id: str | None, *, accepted: bool
+) -> None:
+    database = tmp_path / "records.sqlite3"
+    SQLiteRunStore(database)
+    statement = (
+        "INSERT INTO mutation_receipts (receipt_id, actor, key_digest, operation, request_fingerprint, "
+        "resource_kind, resource_id, run_id, state, created_at, updated_at) "
+        "VALUES ('m-1', 'operator', 'digest', 'schedule-create', 'fingerprint', ?, ?, ?, 'reserved', 'now', 'now')"
+    )
+
+    with sqlite3.connect(database) as connection:
+        if accepted:
+            connection.execute(statement, (resource_kind, _SCHEDULE_ID, run_id))
+        else:
+            with pytest.raises(sqlite3.IntegrityError, match="mutation receipt resource identity is inconsistent"):
+                connection.execute(statement, (resource_kind, _SCHEDULE_ID, run_id))
+
+
+def test_the_postgresql_receipt_check_names_the_schedule_kind() -> None:
+    assert "'schedule'" in product_store_store._MUTATION_RECEIPT_RESOURCE_CHECK
+    assert "'schedule'" in product_store_store._SQLITE_MUTATION_RECEIPT_RESOURCE_CHECK
+
+
+def _schedule_event(**overrides: object) -> AuditEvent:
+    values: dict[str, object] = {
+        "event_id": "event-schedule",
+        "actor": "operator@example.com",
+        "operation": "schedule-start",
+        "reason": None,
+        "outcome": "skipped-run-in-progress",
+        "created_at": datetime(2026, 11, 18, 2, 0, 5, tzinfo=timezone.utc),
+        "event_type": "infrahub_sync.schedule.start_skipped",
+        "config_id": "20260101T0000-aaaaaaaa",
+        "registry_version": 1,
+        "related": (
+            {"kind": "branch", "id": "main"},
+            {"kind": "schedule", "id": _SCHEDULE_ID},
+            {"kind": "config", "id": "20260101T0000-aaaaaaaa"},
+        ),
+        "details": {"start_at": _SCHEDULED_START, "cause": "run-in-progress"},
+    }
+    values.update(overrides)
+    return AuditEvent.model_validate(values)
+
+
+def test_an_event_with_details_round_trips_and_is_listed_by_its_schedule(listing_provider: ProductProjection) -> None:
+    expected = _schedule_event()
+    listing_provider.record_audit(expected)
+    listing_provider.record_audit(_schedule_event(event_id="event-plain", related=(), details=None))
+
+    page = listing_provider.list_events(EventFilters(related=(RelatedResource(kind="schedule", id=_SCHEDULE_ID),)))
+    plain = listing_provider.list_events(EventFilters(event_types=("infrahub_sync.schedule.start_skipped",)))
+
+    assert page.items == (expected,)
+    assert page.items[0].details == EventDetails(start_at=_SCHEDULED_START, cause="run-in-progress")
+    assert {event.event_id: event.details for event in plain.items}["event-plain"] is None
+
+
+def test_an_event_lists_its_schedule_between_the_version_and_the_branch() -> None:
+    assert [resource.kind for resource in _schedule_event().related] == ["config", "schedule", "branch"]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "primary"),
+    [
+        pytest.param({"run_id": "run-001"}, ("run", "run-001"), id="run-first"),
+        pytest.param({}, ("schedule", _SCHEDULE_ID), id="then-schedule"),
+        pytest.param({"related": ()}, ("config", "20260101T0000-aaaaaaaa"), id="then-configuration"),
+    ],
+)
+def test_the_primary_resource_is_the_run_then_the_schedule_then_the_configuration(
+    overrides: dict[str, object], primary: tuple[str, str]
+) -> None:
+    resource = _schedule_event(**overrides).primary_resource
+
+    assert resource is not None
+    assert (resource.kind, resource.id) == primary
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        pytest.param({"note": "free text"}, id="unknown-key"),
+        pytest.param({"start_at": datetime(2026, 11, 18, 2)}, id="naive-start"),  # noqa: DTZ001
+        pytest.param({"starts": -1}, id="negative-count"),
+        pytest.param({"cause": ""}, id="empty-cause"),
+    ],
+)
+def test_event_details_accept_only_their_closed_keys(details: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        _schedule_event(details=details)
+
+
+def test_event_type_accepts_the_schedule_segment_and_no_other_new_segment() -> None:
+    assert _schedule_event(event_type="infrahub_sync.schedule.created").event_type == "infrahub_sync.schedule.created"
+    with pytest.raises(ValidationError):
+        _schedule_event(event_type="infrahub_sync.deployment.created")
+
+
+def test_redaction_removes_a_secret_from_the_text_of_details_and_keeps_its_times() -> None:
+    event = _schedule_event(
+        details={"start_at": _SCHEDULED_START, "branch": "sync/hunter2/20261118", "cause": "hunter2", "left_out": 7}
+    )
+
+    redacted = product_store_store._redact_event(event, ("hunter2", "11-18"))
+
+    assert redacted.details is not None
+    assert "hunter2" not in redacted.details.model_dump_json()
+    assert redacted.details.start_at == _SCHEDULED_START
+    assert redacted.details.left_out == 7
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        pytest.param({"state": "stopped"}, "state reason", id="stopped-without-reason"),
+        pytest.param({"state_reason": "repeated-failures"}, "state reason", id="reason-outside-stopped"),
+        pytest.param(
+            {"write_when_left_out": True, "left_out_set_by": "alice", "left_out_set_at": _SCHEDULED_START},
+            "always writes the remaining records",
+            id="left-out-with-branch-review",
+        ),
+        pytest.param(
+            {"write_target": "default-branch", "write_when_left_out": True},
+            "requires the actor",
+            id="left-out-without-actor",
+        ),
+        pytest.param({"left_out_set_by": "alice"}, "only while write_when_left_out is on", id="actor-while-off"),
+        pytest.param({"start_late_by_at_most_seconds": 59}, "start_late_by_at_most_seconds", id="too-short"),
+        pytest.param({"start_late_by_at_most_seconds": 604801}, "start_late_by_at_most_seconds", id="too-long"),
+        pytest.param({"schedule_id": "nightly"}, "schedule_id", id="not-a-schedule-id"),
+        pytest.param({"state": "running"}, "state", id="unknown-state"),
+        pytest.param({"state": "stopped", "state_reason": "holiday"}, "state_reason", id="unknown-reason"),
+        pytest.param({"overlap_policy": "replace"}, "overlap_policy", id="unknown-overlap-policy"),
+        pytest.param({"consecutive_failures": -1}, "consecutive_failures", id="negative-failures"),
+        pytest.param({"next_start_at": _SCHEDULED_START}, "next_start_at", id="next-start-is-not-stored"),
+        pytest.param({"created_at": datetime(2026, 11, 18, 2)}, "must include a timezone", id="naive-time"),  # noqa: DTZ001
+    ],
+)
+def test_schedule_record_refuses_an_inconsistent_schedule(overrides: dict[str, object], message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        _schedule(**overrides)
+
+
+def test_schedule_record_defaults_follow_the_data_model() -> None:
+    schedule = _schedule()
+
+    assert (schedule.timezone, schedule.write_target, schedule.overlap_policy) == ("UTC", "branch-review", "reject")
+    assert (schedule.write_when_left_out, schedule.start_late_by_at_most_seconds) == (False, 3600)
+    assert (schedule.consecutive_failures, schedule.prefect_synced, schedule.prefect_schedule_id) == (0, False, None)
+    stopped = _schedule(state="stopped", state_reason="repeated-failures", consecutive_failures=5)
+    assert stopped.state_reason == "repeated-failures"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "valid"),
+    [
+        pytest.param({"state": "pending"}, True, id="pending"),
+        pytest.param({"state": "open", "proposed_change_id": "pc-1"}, True, id="open"),
+        pytest.param({"state": "replaced", "replaced_by_run_id": "run-002"}, True, id="replaced"),
+        pytest.param({"state": "replaced"}, False, id="replaced-without-its-run"),
+        pytest.param({"state": "kept", "replaced_by_run_id": "run-002"}, False, id="kept-with-a-replacing-run"),
+        pytest.param({"state": "merged"}, False, id="unknown-state"),
+    ],
+)
+def test_schedule_branch_states(overrides: dict[str, object], *, valid: bool) -> None:
+    values: dict[str, object] = {
+        "schedule_id": _SCHEDULE_ID,
+        "run_id": "run-001",
+        "branch": "sync/nightly/20261118T0200",
+        "created_at": _SCHEDULED_START,
+        **overrides,
+    }
+
+    if valid:
+        assert ScheduleBranch.model_validate(values).state == overrides["state"]
+    else:
+        with pytest.raises(ValidationError):
+            ScheduleBranch.model_validate(values)
+
+
+_EARLIER_TABLES = {
+    "product_runs": "CREATE TABLE product_runs (run_id TEXT PRIMARY KEY, started_at TEXT NOT NULL)",
+    "audit_events": "CREATE TABLE audit_events (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)",
+}
+_EARLIER_MISSING = {
+    "product_runs": ("trigger_type", "schedule_id", "scheduled_start_at"),
+    "audit_events": ("details",),
+}
+
+
+@pytest.mark.parametrize("table", sorted(_EARLIER_TABLES))
+@pytest.mark.parametrize("dialect", ["sqlite", "postgresql-emulated"])
+def test_start_up_refuses_a_database_of_an_earlier_build_and_creates_nothing(
+    tmp_path: Path, dialect: str, table: str
+) -> None:
+    database = tmp_path / "records.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(_EARLIER_TABLES[table])
+        connection.commit()
+    before = [entry for entry in _sqlite_schema(database) if "_fake_" not in entry[1]]
+
+    with pytest.raises(EarlierProductDatabaseError) as refusal:
+        _ = SQLiteRunStore(database) if dialect == "sqlite" else PostgreSQLRunStore(_connect(database))
+
+    message = str(refusal.value)
+    assert refusal.value.missing == {table: _EARLIER_MISSING[table]}
+    assert f"table {table!r} lacks {', '.join(_EARLIER_MISSING[table])}" in message
+    assert "created by an earlier build" in message
+    assert "Replace it with a new, empty database" in message
+    assert [entry for entry in _sqlite_schema(database) if "_fake_" not in entry[1]] == before
+
+
+def test_start_up_names_every_table_of_an_earlier_database(tmp_path: Path) -> None:
+    database = tmp_path / "records.sqlite3"
+    with sqlite3.connect(database) as connection:
+        for statement in _EARLIER_TABLES.values():
+            connection.execute(statement)
+        connection.commit()
+
+    with pytest.raises(EarlierProductDatabaseError) as refusal:
+        SQLiteRunStore(database)
+
+    assert refusal.value.missing == _EARLIER_MISSING
+
+
+def test_postgresql_start_up_refuses_an_earlier_database_before_any_statement_changes_it() -> None:
+    database = _FakePostgreSQLDatabase(
+        tables=frozenset({"product_runs", "audit_events"}),
+        columns={"product_runs": frozenset({"run_id", "started_at"}), "audit_events": frozenset({"event_id"})},
+    )
+
+    with pytest.raises(EarlierProductDatabaseError) as refusal:
+        PostgreSQLRunStore(database.connect)
+
+    assert refusal.value.missing == _EARLIER_MISSING
+    assert database.tables == {"product_runs", "audit_events"}
+    assert not database.constraints
+    assert not [statement for statement in database.statements if statement.startswith(("CREATE", "ALTER"))]
+    # The refusal has no SQLSTATE, so start-up does not try again.
+    assert len([statement for statement in database.statements if "pg_advisory_xact_lock" in statement]) == 1
+
+
+def test_the_refusal_of_an_earlier_database_is_not_a_provider_failure() -> None:
+    """The service turns a provider failure into a message without a cause; this one keeps its text."""
+    error = EarlierProductDatabaseError({"product_runs": ("trigger_type",)})
+
+    assert isinstance(error, RuntimeError)
+    assert not isinstance(error, product_store.ProductStoreProviderError)

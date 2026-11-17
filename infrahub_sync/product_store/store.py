@@ -90,7 +90,8 @@ CREATE TABLE IF NOT EXISTS product_runs (
     phase TEXT NOT NULL, outcome TEXT, summary TEXT NOT NULL, results TEXT NOT NULL,
     reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE,
     config_id TEXT, registry_version INTEGER, package_checksum TEXT, destination_branch TEXT,
-    approved_by TEXT, approved_at TEXT, approved_checksum TEXT, approval_reason TEXT
+    approved_by TEXT, approved_at TEXT, approved_checksum TEXT, approval_reason TEXT,
+    trigger_type TEXT NOT NULL DEFAULT 'manual', schedule_id TEXT, scheduled_start_at TEXT
 );
 CREATE TABLE IF NOT EXISTS artifact_refs (
     run_id TEXT NOT NULL, artifact_id TEXT NOT NULL, kind TEXT NOT NULL, media_type TEXT NOT NULL,
@@ -139,7 +140,7 @@ CREATE TABLE IF NOT EXISTS resume_admissions (
 CREATE TABLE IF NOT EXISTS audit_events (
     event_id TEXT PRIMARY KEY, run_id TEXT, actor TEXT NOT NULL, operation TEXT NOT NULL,
     reason TEXT, outcome TEXT NOT NULL, created_at TEXT NOT NULL,
-    event_type TEXT, config_id TEXT, registry_version INTEGER, branch TEXT
+    event_type TEXT, config_id TEXT, registry_version INTEGER, branch TEXT, details TEXT
 );
 CREATE INDEX IF NOT EXISTS audit_events_run_created
     ON audit_events (run_id, created_at);
@@ -201,10 +202,37 @@ CREATE TABLE IF NOT EXISTS bootstrap_record (
     record_id INTEGER PRIMARY KEY CHECK (record_id = 1), sync_version TEXT NOT NULL,
     work_pool TEXT NOT NULL, completed_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS schedules (
+    schedule_id TEXT PRIMARY KEY, name TEXT NOT NULL, config_id TEXT NOT NULL,
+    registry_version INTEGER NOT NULL, cron TEXT NOT NULL, timezone TEXT NOT NULL DEFAULT 'UTC',
+    write_target TEXT NOT NULL DEFAULT 'branch-review', write_when_left_out BOOLEAN NOT NULL DEFAULT FALSE,
+    left_out_set_by TEXT, left_out_set_at TEXT, overlap_policy TEXT NOT NULL DEFAULT 'reject',
+    start_late_by_at_most_seconds INTEGER NOT NULL DEFAULT 3600, state TEXT NOT NULL, state_reason TEXT,
+    owner TEXT NOT NULL, consecutive_failures INTEGER NOT NULL DEFAULT 0, last_start_at TEXT,
+    prefect_schedule_id TEXT, prefect_synced BOOLEAN NOT NULL DEFAULT FALSE, waiting_start_at TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS schedule_branches (
+    run_id TEXT PRIMARY KEY, schedule_id TEXT NOT NULL, branch TEXT NOT NULL, proposed_change_id TEXT,
+    state TEXT NOT NULL, replaced_by_run_id TEXT, created_at TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES product_runs(run_id),
+    FOREIGN KEY (schedule_id) REFERENCES schedules(schedule_id)
+);
 """
-# ``accounts_name_key`` is a plain unique index. SQLite and PostgreSQL both treat two empty
-# (NULL) values as different, so every deleted account can have an empty key while two accounts
-# cannot share a name.
+# The columns that a build with schedules added to tables that already existed. The store
+# has no migration: a new column is part of its ``CREATE TABLE`` statement and reaches only a
+# new database. A database whose table lacks one of them was created by an earlier build, and
+# start-up refuses it before it creates anything (spec 021, research R12). The same refusal
+# covers the receipt ``CHECK`` constraint and triggers of an earlier build, which do not accept
+# the resource kind ``schedule`` and are never replaced.
+_COLUMNS_ADDED_SINCE_AN_EARLIER_BUILD: dict[str, tuple[str, ...]] = {
+    "product_runs": ("trigger_type", "schedule_id", "scheduled_start_at"),
+    "audit_events": ("details",),
+}
+_SELECT_SQLITE_TABLE_COLUMNS = "SELECT name FROM pragma_table_info(?)"
+_SELECT_POSTGRESQL_TABLE_COLUMNS = (
+    "SELECT column_name FROM information_schema.columns WHERE table_name = ? AND table_schema = current_schema()"
+)
 _SQLITE_EXECUTION_TIMESTAMP_FUNCTION = "infrahub_sync_execution_timestamp_microseconds"
 _UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 _CANCELLATION_DEADLINE_ERROR = "execution cancellation recovery deadline is invalid"
@@ -252,6 +280,18 @@ _RUN_LISTING_INDEXES: tuple[str, ...] = (
     "ON product_runs (config_id, registry_version, finished_at, run_id) WHERE phase = 'applied'",
     "CREATE INDEX IF NOT EXISTS configurations_name ON configurations (name)",
     "CREATE INDEX IF NOT EXISTS configurations_created ON configurations (created_at, config_id)",
+    # The runs of one schedule, newest first (the ``schedule_id`` filter of the run list).
+    "CREATE INDEX IF NOT EXISTS product_runs_schedule_started ON product_runs (schedule_id, started_at, run_id)",
+)
+# One run for each start of a schedule: two flow runs of the same start cannot both create a
+# run (spec 021, research R2). A manual run holds NULL in both columns, and SQLite and
+# PostgreSQL both treat NULLs as distinct, so the index does not constrain manual runs. The two
+# partial indexes hold the rules of the schedule itself: a name is unique among schedules that
+# are not deleted, and a configuration has at most one schedule that is not deleted.
+_SCHEDULE_UNIQUE_INDEXES: tuple[str, ...] = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS product_runs_schedule_start ON product_runs (schedule_id, scheduled_start_at)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS schedules_name_not_deleted ON schedules (name) WHERE state <> 'deleted'",
+    "CREATE UNIQUE INDEX IF NOT EXISTS schedules_config_not_deleted ON schedules (config_id) WHERE state <> 'deleted'",
 )
 # The read state of each side of a plan or sync execution: one JSON document per side, so the
 # two read threads never write the same column (spec 013, research R3).
@@ -282,7 +322,7 @@ _SQLITE_MUTATION_RECEIPT_RESOURCE_TRIGGER_NAMES = (
 )
 _SQLITE_MUTATION_RECEIPT_RESOURCE_CHECK = """NOT (
     (NEW.resource_kind = 'run' AND NEW.run_id IS NOT NULL AND NEW.prefect_key IS NOT NULL)
-    OR (NEW.resource_kind IN ('configuration', 'configuration-registry') AND NEW.run_id IS NULL
+    OR (NEW.resource_kind IN ('configuration', 'configuration-registry', 'schedule') AND NEW.run_id IS NULL
         AND NEW.prefect_key IS NULL AND NEW.target_run_id IS NULL AND NEW.flow_run_id IS NULL)
 )"""
 _SQLITE_MUTATION_RECEIPT_RESOURCE_INSERT_TRIGGER = f"""
@@ -300,7 +340,7 @@ BEGIN SELECT RAISE(ABORT, 'mutation receipt resource identity is inconsistent');
 _MUTATION_RECEIPT_RESOURCE_CONSTRAINT = "mutation_receipts_resource_consistent"
 _MUTATION_RECEIPT_RESOURCE_CHECK = (
     "(resource_kind = 'run' AND run_id IS NOT NULL AND prefect_key IS NOT NULL) OR "
-    "(resource_kind IN ('configuration', 'configuration-registry') AND run_id IS NULL "
+    "(resource_kind IN ('configuration', 'configuration-registry', 'schedule') AND run_id IS NULL "
     "AND prefect_key IS NULL AND target_run_id IS NULL AND flow_run_id IS NULL)"
 )
 _SQLITE_CONFIGURATION_BINDING_INSERT_TRIGGER_NAME = "product_runs_configuration_binding_insert"
@@ -497,11 +537,13 @@ _SELECT_NEXT_CONFIGURATION_VERSION = (
 
 _INSERT_PRODUCT_RUN = """INSERT INTO product_runs (run_id, operation, configuration_reference, config_id,
 registry_version, package_checksum, actor, audit_links, started_at, finished_at, phase, outcome, summary, results,
-reconciliation_required, destination_branch, approved_by, approved_at, approved_checksum, approval_reason)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+reconciliation_required, destination_branch, approved_by, approved_at, approved_checksum, approval_reason,
+trigger_type, schedule_id, scheduled_start_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _PRODUCT_RUN_COLUMNS = """run_id, operation, configuration_reference, actor, audit_links, started_at,
 finished_at, phase, outcome, summary, results, config_id, registry_version, package_checksum, reconciliation_required,
-destination_branch, approved_by, approved_at, approved_checksum, approval_reason"""
+destination_branch, approved_by, approved_at, approved_checksum, approval_reason, trigger_type, schedule_id,
+scheduled_start_at"""
 _SELECT_PRODUCT_RUN = "SELECT " + _PRODUCT_RUN_COLUMNS + " FROM product_runs WHERE run_id = ?"  # noqa: S608 - module constants only.
 # The run list is assembled from these fixed fragments only; every value is a bound parameter.
 # The keyset predicate is the row comparison ``(started_at, run_id) < (?, ?)`` written out as an
@@ -509,6 +551,9 @@ _SELECT_PRODUCT_RUN = "SELECT " + _PRODUCT_RUN_COLUMNS + " FROM product_runs WHE
 _SELECT_PRODUCT_RUN_LIST = "SELECT " + _PRODUCT_RUN_COLUMNS + " FROM product_runs"  # noqa: S608 - module constants only.
 _RUN_LIST_CONFIGURATION = "config_id = ?"
 _RUN_LIST_VERSION = "registry_version = ?"
+_RUN_LIST_TRIGGER_TYPE = "trigger_type = ?"
+_RUN_LIST_SCHEDULE = "schedule_id = ?"
+_RUN_LIST_SCHEDULED_START = "scheduled_start_at = ?"
 _RUN_LIST_AFTER = "(started_at < ? OR (started_at = ? AND run_id < ?))"
 _RUN_LIST_ORDER = " ORDER BY started_at DESC, run_id DESC LIMIT ?"
 _SELECT_AUDIT_LINKS_FOR_RUNS = (
@@ -570,10 +615,11 @@ request_fingerprint, reason, resource_kind, resource_id, run_id, prefect_key, st
 created_at, updated_at FROM mutation_receipts WHERE run_id = ? AND flow_run_id = ? AND operation = ?
 ORDER BY created_at, receipt_id"""
 _INSERT_AUDIT_EVENT = """INSERT INTO audit_events (event_id, run_id, actor, operation, reason, outcome, created_at,
-event_type, config_id, registry_version, branch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+event_type, config_id, registry_version, branch, details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 _INSERT_AUDIT_EVENT_RESOURCE = "INSERT INTO audit_event_resources (event_id, kind, resource_id) VALUES (?, ?, ?)"
 _AUDIT_EVENT_COLUMNS = (
-    "event_id, run_id, actor, operation, reason, outcome, created_at, event_type, config_id, registry_version, branch"
+    "event_id, run_id, actor, operation, reason, outcome, created_at, event_type, config_id, registry_version, "
+    "branch, details"
 )
 _SELECT_AUDIT_EVENTS = f"SELECT {_AUDIT_EVENT_COLUMNS} FROM audit_events WHERE run_id = ? ORDER BY created_at, event_id"  # noqa: S608
 _SELECT_ALL_AUDIT_EVENTS = f"SELECT {_AUDIT_EVENT_COLUMNS} FROM audit_events ORDER BY created_at, event_id"  # noqa: S608
@@ -590,6 +636,22 @@ _SELECT_AUDIT_LINKS = "SELECT event_id FROM audit_events WHERE run_id = ? ORDER 
 
 class DuplicateRunError(ValueError):
     """The requested stable Sync run ID already exists."""
+
+
+class EarlierProductDatabaseError(RuntimeError):
+    """The product database was created by an earlier build and lacks a column this build stores.
+
+    The message names the tables and their missing columns, and no value of the database.
+    """
+
+    def __init__(self, missing: Mapping[str, Sequence[str]]) -> None:
+        columns = "; ".join(f"table {table!r} lacks {', '.join(names)}" for table, names in missing.items())
+        super().__init__(
+            "The product database was created by an earlier build of Infrahub Sync and cannot be used: "
+            f"{columns}. Infrahub Sync does not upgrade a product database in place. Replace it with a new, "
+            "empty database, then start Infrahub Sync again."
+        )
+        self.missing = {table: tuple(names) for table, names in missing.items()}
 
 
 class ProductStoreProviderError(RuntimeError):
@@ -1038,6 +1100,9 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 try:
                     if self._dialect == "postgresql":
                         cursor.execute(_POSTGRESQL_SCHEMA_INITIALIZATION_LOCK)
+                    # Before any statement: SQLite commits each DDL statement on its own, so
+                    # a later refusal would leave the new tables on the earlier database.
+                    self._refuse_earlier_database(cursor)
                     for statement in _SCHEMA.split(";"):
                         if statement.strip():
                             cursor.execute(statement)
@@ -1061,10 +1126,28 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             finally:
                 connection.close()
 
+    def _refuse_earlier_database(self, cursor: _Cursor) -> None:
+        """Raise when a table of an earlier build lacks a column this build stores.
+
+        A table that does not exist yet has no column, and is created whole afterwards. The
+        column names are read from the catalog, so the check changes nothing and aborts no
+        transaction.
+        """
+        statement = _SELECT_SQLITE_TABLE_COLUMNS if self._dialect == "sqlite" else _SELECT_POSTGRESQL_TABLE_COLUMNS
+        missing: dict[str, tuple[str, ...]] = {}
+        for table, required in _COLUMNS_ADDED_SINCE_AN_EARLIER_BUILD.items():
+            cursor.execute(self._sql(statement), (table,))
+            present = {str(row[0]) for row in cursor.fetchall()}
+            absent = tuple(column for column in required if column not in present)
+            if present and absent:
+                missing[table] = absent
+        if missing:
+            raise EarlierProductDatabaseError(missing)
+
     @staticmethod
     def _ensure_run_listing_indexes(cursor: _Cursor) -> None:
-        """Create the indexes for listing runs and configurations."""
-        for statement in _RUN_LISTING_INDEXES:
+        """Create the indexes for listing runs and configurations, and the unique indexes of schedules."""
+        for statement in (*_RUN_LISTING_INDEXES, *_SCHEDULE_UNIQUE_INDEXES):
             cursor.execute(statement)
 
     def _mutation_receipt_resource_constraint_exists(self, cursor: _Cursor) -> bool:
@@ -1200,6 +1283,11 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 run.reconciliation_required,
                 run.destination_branch,
                 *_approval_columns(run.approval),
+                run.trigger_type,
+                run.schedule_id,
+                # Stored as UTC: the unique index compares text, so one instant written
+                # with two offsets must be one value.
+                None if run.scheduled_start_at is None else _utc_iso(run.scheduled_start_at),
             ),
         )
 
@@ -2867,6 +2955,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                 event.config_id,
                 event.registry_version,
                 event.branch,
+                None if event.details is None else _json(event.details.model_dump(mode="json", exclude_none=True)),
             ),
         )
         for resource in event.related:
@@ -3228,6 +3317,15 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         if filters.registry_version is not None:
             conditions.append(_RUN_LIST_VERSION)
             parameters.append(filters.registry_version)
+        if filters.trigger_type is not None:
+            conditions.append(_RUN_LIST_TRIGGER_TYPE)
+            parameters.append(filters.trigger_type)
+        if filters.schedule_id is not None:
+            conditions.append(_RUN_LIST_SCHEDULE)
+            parameters.append(filters.schedule_id)
+        if filters.scheduled_start_at is not None:
+            conditions.append(_RUN_LIST_SCHEDULED_START)
+            parameters.append(_utc_iso(filters.scheduled_start_at))
         if after is not None:
             conditions.append(_RUN_LIST_AFTER)
             parameters.extend(_keyset_parameters(after))
@@ -5254,6 +5352,9 @@ def _run_from_rows(
             "reconciliation_required": bool(row[14]),
             "destination_branch": row[15],
             "approval": RunApproval.from_columns(row[16], row[17], row[18], row[19]),
+            "trigger_type": row[20],
+            "schedule_id": row[21],
+            "scheduled_start_at": row[22],
             "artifact_refs": [_reference_from_row(item).model_dump() for item in references],
             "prefect_executions": [
                 {
@@ -5435,17 +5536,26 @@ def _cancellation_unconfirmed_response(run_id: str, receipt_id: str) -> dict[str
 # Redacting them could only break their validation: a secret such as `infrahub` would turn the
 # event type into text the type pattern refuses, and fail the decision the event is saved with.
 _EVENT_FIXED_FIELDS = frozenset({"event_id", "event_type", "created_at", "registry_version"})
+# The text keys of an event's ``details`` that are redacted. Its start times, its counts and
+# the run it names are computed by Sync, and redacting one could only break its validation.
+_EVENT_DETAILS_TEXT_KEYS = frozenset({"branch", "proposed_change_id", "cause"})
 
 
 def _redact_event(event: AuditEvent, secrets: Sequence[str]) -> AuditEvent:
     """Return ``event`` with every configured secret removed from its caller-supplied values."""
     ordered = redaction_order(secrets)
-    return AuditEvent.model_validate(
-        {
-            name: value if name in _EVENT_FIXED_FIELDS else _redact_ordered_value(value, ordered, numbers=False)
-            for name, value in event.model_dump(mode="json").items()
+    values = event.model_dump(mode="json")
+    details = values.pop("details")
+    redacted = {
+        name: value if name in _EVENT_FIXED_FIELDS else _redact_ordered_value(value, ordered, numbers=False)
+        for name, value in values.items()
+    }
+    if details is not None:
+        redacted["details"] = {
+            key: _redact_ordered_value(value, ordered, numbers=False) if key in _EVENT_DETAILS_TEXT_KEYS else value
+            for key, value in details.items()
         }
-    )
+    return AuditEvent.model_validate(redacted)
 
 
 def _redacted_event(event: AuditEvent | None, secrets: Sequence[str]) -> AuditEvent | None:
@@ -5467,6 +5577,7 @@ def _audit_from_row(row: Sequence[Any], related: Sequence[tuple[str, str]] = ())
             "registry_version": row[9],
             "branch": row[10],
             "related": tuple({"kind": kind, "id": resource_id} for kind, resource_id in related),
+            "details": None if row[11] is None else json.loads(row[11]),
         }
     )
 

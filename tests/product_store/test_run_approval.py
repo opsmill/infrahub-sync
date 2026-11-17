@@ -24,6 +24,8 @@ from infrahub_sync.product_store.store import PostgreSQLRunStore, SQLiteRunStore
 from tests.product_store.postgresql_isolation import dsn_or_skip, isolated_schema
 
 _APPROVAL_COLUMN_NAMES = ("approved_by", "approved_at", "approved_checksum", "approval_reason")
+_TRIGGER_COLUMN_NAMES = ("trigger_type", "schedule_id", "scheduled_start_at")
+_SCHEDULE_ID = "s-" + "0" * 31 + "1"
 _CHECKSUM = "a" * 64
 
 
@@ -105,6 +107,43 @@ def test_fresh_database_has_the_approval_columns(backend: _Backend) -> None:
     backend.make_store()
 
     assert set(_APPROVAL_COLUMN_NAMES) <= set(backend.product_run_columns())
+
+
+def test_fresh_database_has_the_trigger_columns(backend: _Backend) -> None:
+    backend.make_store()
+
+    assert set(_TRIGGER_COLUMN_NAMES) <= set(backend.product_run_columns())
+
+
+def test_an_approved_scheduled_run_keeps_its_approval_and_its_trigger(backend: _Backend) -> None:
+    """The trigger columns follow the approval columns in the row; neither is read as the other."""
+    store = backend.make_store()
+    expected = _run(approval=_approval()).model_copy(
+        update={
+            "trigger_type": "scheduled",
+            "schedule_id": _SCHEDULE_ID,
+            "scheduled_start_at": datetime(2026, 8, 8, 11, tzinfo=timezone.utc),
+        }
+    )
+    store.create(expected)
+
+    loaded = store.lookup(expected.run_id).value
+
+    assert loaded is not None
+    assert loaded.approval == expected.approval
+    assert (loaded.trigger_type, loaded.schedule_id) == ("scheduled", _SCHEDULE_ID)
+    assert loaded.scheduled_start_at == expected.scheduled_start_at
+
+
+def test_an_approved_manual_run_reads_back_as_manual(backend: _Backend) -> None:
+    store = backend.make_store()
+    store.create(_run(approval=_approval()))
+
+    loaded = store.lookup("run-001").value
+
+    assert loaded is not None
+    assert loaded.approval is not None
+    assert (loaded.trigger_type, loaded.schedule_id, loaded.scheduled_start_at) == ("manual", None, None)
 
 
 @pytest.mark.parametrize("reason", ["CHG-42 reviewed", None])

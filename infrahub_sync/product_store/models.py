@@ -1,5 +1,7 @@
 """Typed records for Sync's durable product projection."""
 
+# pylint: disable=too-many-lines  # one module owns every record of the product store, the schedule records included
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,6 +16,10 @@ from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves
 from infrahub_sync.plan.identity import OPERATION_ID_PATTERN
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+# A schedule's generated identifier: ``s-`` and 32 hexadecimal characters.
+SCHEDULE_ID_PATTERN = r"^s-[0-9a-f]{32}$"
+# What started a run: a request to ``POST /runs``, or a schedule.
+TriggerType: TypeAlias = Literal["manual", "scheduled"]
 # The largest registry version the store can allocate: the signed 64-bit integer limit.
 MAX_REGISTRY_VERSION = 2**63 - 1
 # Page size of the store's configuration, version and run lists when a caller gives none.
@@ -372,10 +378,16 @@ class ProductRun(BaseModel):
     # Approval is not a phase: an approved run keeps its phase, ``planned`` or the phase of a
     # run whose write stopped part-way and that is approved before its resume (spec 016).
     approval: RunApproval | None = None
+    # What started the run. A run of ``POST /runs`` holds ``manual``.
+    trigger_type: TriggerType = "manual"
+    # The schedule that started the run, and the start time of its cadence. Both are set for
+    # a scheduled run and ``None`` for a manual run. One schedule holds one run for each start.
+    schedule_id: str | None = Field(default=None, pattern=SCHEDULE_ID_PATTERN)
+    scheduled_start_at: datetime | None = None
     artifact_refs: tuple[ArtifactReference, ...] = ()
     prefect_executions: tuple[PrefectExecutionLink, ...] = ()
 
-    @field_validator("started_at", "finished_at")
+    @field_validator("started_at", "finished_at", "scheduled_start_at")
     @classmethod
     def _require_timezone(cls, value: datetime | None) -> datetime | None:
         if value is not None and value.utcoffset() is None:
@@ -388,6 +400,13 @@ class ProductRun(BaseModel):
         binding = (self.config_id, self.registry_version, self.package_checksum)
         if any(value is None for value in binding) and any(value is not None for value in binding):
             msg = "configuration binding must be all absent or all present"
+            raise ValueError(msg)
+        start = (self.schedule_id, self.scheduled_start_at)
+        if self.trigger_type == "scheduled" and any(value is None for value in start):
+            msg = "a scheduled run requires its schedule and its scheduled start time"
+            raise ValueError(msg)
+        if self.trigger_type == "manual" and any(value is not None for value in start):
+            msg = "a manual run cannot name a schedule or a scheduled start time"
             raise ValueError(msg)
         if self.finished_at is not None and self.outcome is None:
             msg = "a finished product record requires an outcome"
@@ -543,7 +562,7 @@ class MutationReceipt(BaseModel):
     target_run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
     request_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     reason: str | None = Field(min_length=1)
-    resource_kind: Literal["run", "configuration", "configuration-registry"] = "run"
+    resource_kind: Literal["run", "configuration", "configuration-registry", "schedule"] = "run"
     resource_id: str = Field(min_length=1)
     run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
     prefect_key: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
@@ -568,10 +587,13 @@ class MutationReceipt(BaseModel):
         if self.resource_kind == "run" and (self.run_id is None or self.prefect_key is None):
             msg = "a run mutation receipt requires its run and Prefect identifiers"
             raise ValueError(msg)
-        if self.resource_kind in {"configuration", "configuration-registry"} and any(
+        # A receipt of a configuration route or of a schedule route names no run: a schedule
+        # request creates none, and a scheduled run's own receipt has the resource kind ``run``.
+        if self.resource_kind != "run" and any(
             value is not None for value in (self.run_id, self.prefect_key, self.flow_run_id, self.target_run_id)
         ):
-            msg = "a configuration mutation receipt cannot carry run or Prefect identifiers"
+            resource = "schedule" if self.resource_kind == "schedule" else "configuration"
+            msg = f"a {resource} mutation receipt cannot carry run or Prefect identifiers"
             raise ValueError(msg)
         if self.state == "accepted" and (self.response_status is None or self.response_body is None):
             msg = "an accepted mutation receipt requires its stored status and response"
@@ -711,17 +733,35 @@ class ConfigurationVersion(BaseModel):
 
 
 class RunFilters(BaseModel):
-    """The configuration binding a run list is restricted to; no filter lists every run."""
+    """What a run list is restricted to; every given filter must match, and none lists every run.
+
+    The filters are the configuration binding, what started the run, the schedule that
+    started it, and one start time of that schedule.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     config_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
     registry_version: int | None = Field(default=None, ge=1, le=MAX_REGISTRY_VERSION)
+    trigger_type: TriggerType | None = None
+    schedule_id: str | None = Field(default=None, pattern=SCHEDULE_ID_PATTERN)
+    scheduled_start_at: datetime | None = None
+
+    @field_validator("scheduled_start_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
+            msg = "run-list start times must include a timezone"
+            raise ValueError(msg)
+        return value
 
     @model_validator(mode="after")
     def _require_configuration_for_version(self) -> RunFilters:
         if self.registry_version is not None and self.config_id is None:
             msg = "registry_version requires config_id"
+            raise ValueError(msg)
+        if self.scheduled_start_at is not None and self.schedule_id is None:
+            msg = "scheduled_start_at requires schedule_id"
             raise ValueError(msg)
         return self
 
@@ -731,14 +771,17 @@ RunPage: TypeAlias = StorePage[ProductRun]
 
 
 # An event's dotted type, ``infrahub_sync.<resource>.<action>`` (spec 012, FR-012).
-EVENT_TYPE_PATTERN = r"^infrahub_sync\.(run|config|account)\.[a-z_]+$"
+EVENT_TYPE_PATTERN = r"^infrahub_sync\.(run|config|schedule)\.[a-z_]+$"
 # The kinds of resource an event names besides its primary resource, in the order an event lists them.
-RelatedResourceKind: TypeAlias = Literal["account", "config", "config_version", "branch"]
-_RELATED_KIND_ORDER: dict[str, int] = {"account": 0, "config": 1, "config_version": 2, "branch": 3}
+RelatedResourceKind: TypeAlias = Literal["account", "config", "config_version", "schedule", "branch"]
+_RELATED_KIND_ORDER: dict[str, int] = {"account": 0, "config": 1, "config_version": 2, "schedule": 3, "branch": 4}
 
 
 class RelatedResource(BaseModel):
-    """One resource an event names besides its primary resource: the actor's account, a configuration, a version or a branch."""
+    """One resource an event names besides its primary resource.
+
+    The resource is the actor's account, a configuration, a version, a schedule or a branch.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -747,12 +790,46 @@ class RelatedResource(BaseModel):
 
 
 class PrimaryResource(BaseModel):
-    """The resource an event is about: its run, or else its configuration."""
+    """The resource an event is about: its run, or else its schedule, or else its configuration."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    kind: Literal["run", "config"]
+    kind: Literal["run", "schedule", "config"]
     id: str = Field(min_length=1)
+
+
+class EventDetails(BaseModel):
+    """The facts of one event, under a closed set of keys. A key the event does not use is ``None``.
+
+    ``reason`` of the event keeps the text of the person who made the request; the start
+    time, the counts and the cause of an event are stored here. ``cause`` is a refusal code or
+    a failure class, never free text from Infrahub.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # The start time of the cadence, on every event of a scheduled start.
+    start_at: datetime | None = None
+    # The count, the first and the last of the missed starts that one event records together.
+    starts: int | None = Field(default=None, ge=0)
+    first_start_at: datetime | None = None
+    last_start_at: datetime | None = None
+    # The plan's count of records left out, on the result event of a scheduled run.
+    left_out: int | None = Field(default=None, ge=0)
+    # The branch and the proposed change of a run with branch review.
+    branch: str | None = Field(default=None, min_length=1)
+    proposed_change_id: str | None = Field(default=None, min_length=1)
+    # The earlier run whose branch or proposed change was replaced.
+    replaced_run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
+    cause: str | None = Field(default=None, min_length=1)
+
+    @field_validator("start_at", "first_start_at", "last_start_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
+            msg = "event-detail timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
 
 
 class AuditEvent(BaseModel):
@@ -760,7 +837,8 @@ class AuditEvent(BaseModel):
 
     ``event_type`` is NULL only for a request refused for a missing or invalid token, which
     the event list never returns. ``related`` is kept in one order (account, configuration,
-    version, branch, then ID), so an event reads back equal to the event that was recorded.
+    version, schedule, branch, then ID), so an event reads back equal to the event that was
+    recorded. ``details`` is ``None`` for an event that records no fact of its own.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -777,6 +855,7 @@ class AuditEvent(BaseModel):
     registry_version: int | None = Field(default=None, ge=1, le=MAX_REGISTRY_VERSION)
     branch: str | None = Field(default=None, min_length=1)
     related: tuple[RelatedResource, ...] = ()
+    details: EventDetails | None = None
 
     @field_validator("created_at")
     @classmethod
@@ -796,9 +875,12 @@ class AuditEvent(BaseModel):
 
     @property
     def primary_resource(self) -> PrimaryResource | None:
-        """Return the run the event is about, else its configuration, else nothing."""
+        """Return the run the event is about, else the schedule it names, else its configuration, else nothing."""
         if self.run_id is not None:
             return PrimaryResource(kind="run", id=self.run_id)
+        schedule = next((resource for resource in self.related if resource.kind == "schedule"), None)
+        if schedule is not None:
+            return PrimaryResource(kind="schedule", id=schedule.id)
         if self.config_id is not None:
             return PrimaryResource(kind="config", id=self.config_id)
         return None
@@ -934,6 +1016,139 @@ class ResolvedCredential(BaseModel):
     last_used_at: datetime | None = None
 
     _aware = field_validator("expires_at", "last_used_at")(_require_aware)
+
+
+ScheduleWriteTarget: TypeAlias = Literal["branch-review", "default-branch"]
+ScheduleOverlapPolicy: TypeAlias = Literal["reject", "queue"]
+ScheduleState: TypeAlias = Literal["active", "paused", "stopped", "deleted"]
+# Why a schedule is in the state ``stopped``.
+ScheduleStateReason: TypeAlias = Literal["owner-not-found", "approval-required", "repeated-failures"]
+ScheduleBranchState: TypeAlias = Literal["pending", "open", "removed", "replaced", "kept"]
+# The fewest and the most seconds a scheduled run may start after its start time.
+MIN_START_LATE_SECONDS = 60
+MAX_START_LATE_SECONDS = 604800
+DEFAULT_START_LATE_SECONDS = 3600
+_SCHEDULE_TIME_MESSAGE = "schedule timestamps must include a timezone"
+
+
+class ScheduleRecord(BaseModel):
+    """One stored schedule: the cadence that starts a ``sync`` of one configuration version.
+
+    The record is kept after deletion, in the state ``deleted``. The next start time is
+    computed from ``cron`` and ``timezone`` each time the schedule is returned, so the record
+    does not hold it. ``owner`` is an actor name; the record holds no token.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schedule_id: str = Field(pattern=SCHEDULE_ID_PATTERN)
+    # Unique among schedules that are not deleted.
+    name: str = Field(pattern=_IDENTIFIER_PATTERN)
+    # A configuration has at most one schedule that is not deleted.
+    config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    registry_version: int = Field(ge=1, le=MAX_REGISTRY_VERSION)
+    # A five-field cron expression and a time zone name. The store keeps them as text; the
+    # Sync API checks them before it saves the schedule.
+    cron: str = Field(min_length=1)
+    timezone: str = Field(default="UTC", min_length=1)
+    write_target: ScheduleWriteTarget = "branch-review"
+    write_when_left_out: bool = False
+    # The actor who last turned ``write_when_left_out`` on, and when. Both are ``None`` while
+    # it is off.
+    left_out_set_by: str | None = Field(default=None, min_length=1)
+    left_out_set_at: datetime | None = None
+    overlap_policy: ScheduleOverlapPolicy = "reject"
+    start_late_by_at_most_seconds: int = Field(
+        default=DEFAULT_START_LATE_SECONDS, ge=MIN_START_LATE_SECONDS, le=MAX_START_LATE_SECONDS
+    )
+    state: ScheduleState
+    # Set only in the state ``stopped``.
+    state_reason: ScheduleStateReason | None = None
+    owner: str = Field(min_length=1)
+    # The count of failed runs in a row.
+    consecutive_failures: int = Field(default=0, ge=0)
+    # The most recent start that was admitted or recorded.
+    last_start_at: datetime | None = None
+    # The Prefect schedule of this schedule, and whether it matches this record.
+    prefect_schedule_id: str | None = Field(default=None, min_length=1)
+    prefect_synced: bool = False
+    # The start that waits under the ``queue`` policy.
+    waiting_start_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    @field_validator("left_out_set_at", "last_start_at", "waiting_start_at", "created_at", "updated_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
+            raise ValueError(_SCHEDULE_TIME_MESSAGE)
+        return value
+
+    @model_validator(mode="after")
+    def _require_consistent_settings(self) -> ScheduleRecord:
+        if (self.state == "stopped") is (self.state_reason is None):
+            msg = "a schedule holds a state reason only in the state stopped, and always there"
+            raise ValueError(msg)
+        if self.write_when_left_out and self.write_target == "branch-review":
+            msg = "a schedule with branch review always writes the remaining records"
+            raise ValueError(msg)
+        set_by = (self.left_out_set_by, self.left_out_set_at)
+        if self.write_when_left_out and any(value is None for value in set_by):
+            msg = "write_when_left_out requires the actor who turned it on and the time"
+            raise ValueError(msg)
+        if not self.write_when_left_out and any(value is not None for value in set_by):
+            msg = "left_out_set_by and left_out_set_at are set only while write_when_left_out is on"
+            raise ValueError(msg)
+        return self
+
+
+class ScheduleBranch(BaseModel):
+    """The branch of one run with branch review, and what became of it.
+
+    ``pending``: the run was created and its branch may or may not exist in Infrahub.
+    ``open``: the run finished its write and opened its proposed change. ``removed``: the
+    run deleted its own branch because the plan held no operation. ``replaced``: a later run
+    of the schedule closed the proposed change, if any, and deleted the branch. ``kept``: a
+    person merged or closed the proposed change, and the schedule leaves both alone.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schedule_id: str = Field(pattern=SCHEDULE_ID_PATTERN)
+    run_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    branch: str = Field(min_length=1)
+    # Set when the run opened a proposed change.
+    proposed_change_id: str | None = Field(default=None, min_length=1)
+    state: ScheduleBranchState
+    # The run that replaced this one; set only in the state ``replaced``.
+    replaced_by_run_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
+    created_at: datetime
+
+    @field_validator("created_at")
+    @classmethod
+    def _require_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            raise ValueError(_SCHEDULE_TIME_MESSAGE)
+        return value
+
+    @model_validator(mode="after")
+    def _require_replacing_run(self) -> ScheduleBranch:
+        if (self.state == "replaced") is (self.replaced_by_run_id is None):
+            msg = "a schedule branch names the run that replaced it only in the state replaced, and always there"
+            raise ValueError(msg)
+        return self
+
+
+class ScheduleFilters(BaseModel):
+    """What a schedule list is restricted to.
+
+    Without ``state``, the list leaves out deleted schedules.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    config_id: str | None = Field(default=None, pattern=_IDENTIFIER_PATTERN)
+    state: ScheduleState | None = None
 
 
 T = TypeVar("T")
