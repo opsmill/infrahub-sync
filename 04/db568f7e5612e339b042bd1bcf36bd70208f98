@@ -1,0 +1,57 @@
+infrahub_sync/service/service.py
+  s_313229fc4d1c44::t_8a8b4af7140a65 42,1912
+infrahub_sync/service/plan_step.py
+  s_313229fc4d1c44::t_8a8b4af7140a65 26,142
+infrahub_sync/service/storage.py
+  s_313229fc4d1c44::t_8a8b4af7140a65 47,49-54,282-284
+  s_313229fc4d1c44::t_4082e2044b3086 22
+infrahub_sync/service/app.py
+  s_313229fc4d1c44::t_8a8b4af7140a65 27,347,438
+infrahub_sync/service/apply_progress.py
+  s_313229fc4d1c44::t_8a8b4af7140a65 32,153
+infrahub_sync/service/run_artifact.py
+  s_313229fc4d1c44::t_8a8b4af7140a65 25,160
+infrahub_sync/service/flow.py
+  s_313229fc4d1c44::t_8a8b4af7140a65 82-83,1298,1360-1371,1387-1388,1403,1581
+infrahub_sync/service/read_progress.py
+  s_313229fc4d1c44::t_8a8b4af7140a65 22,63
+infrahub_sync/product_store/store.py
+  s_313229fc4d1c44::t_8a8b4af7140a65 10,521-540,542-546,549-561
+dev/specs/020-product-store-failure-cause/tasks.md
+  s_313229fc4d1c44::t_2d6afa74637a11 34,39,42,48,56,61,64,71,74
+infrahub_sync/service/bootstrap.py
+  s_313229fc4d1c44::t_0805b2a7285ba3 37-38,103-104,107,110,350-352,388-389
+  s_313229fc4d1c44::t_11654f378933d0 48,375-378
+tests/product_store/test_contract.py
+  s_313229fc4d1c44::t_b4a911e745bce2 105
+tests/product_store/test_error_label.py
+  s_313229fc4d1c44::t_ed3ef5540792f1 1-18
+infrahub_sync/product_store/__init__.py
+  s_313229fc4d1c44::t_8a8b4af7140a65 48,97
+tests/service/test_storage.py
+  s_313229fc4d1c44::t_8ba2add5edeef9 740
+  s_313229fc4d1c44::t_ed3ef5540792f1 717-739,741-796
+  s_313229fc4d1c44::t_02cd5f6a5080d1 358
+tests/service/test_compose_bootstrap.py
+  s_313229fc4d1c44::t_626d908a4172c8 41
+  s_313229fc4d1c44::t_ea9dde60abdf78 26-31,501-528
+  s_313229fc4d1c44::t_3032cd2ecdb7cb 529-531
+tests/service/test_failure_without_traceback.py
+  s_313229fc4d1c44::t_77893bb6a03891 13,18,25-30,34,169-220
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "04db568f7e5612e339b042bd1bcf36bd70208f98",
+  "prompts": {},
+  "sessions": {
+    "s_313229fc4d1c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c6738f-876b-4301-a742-80e31346a4cc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
