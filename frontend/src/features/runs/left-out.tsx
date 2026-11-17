@@ -80,7 +80,8 @@ export function LeftOutReview({
         <p className="text-subtle text-xs">Loading the records that are left out.</p>
       ) : page.isError ? (
         <p className="text-subtle text-xs">
-          The list of records could not be read. The count above comes from the saved plan.
+          The list of records could not be read, so the write cannot be confirmed. Close this dialog
+          and open it again to read the list again.
         </p>
       ) : (
         <ul className="mt-1 flex max-h-40 list-disc flex-col gap-0.5 overflow-y-auto pl-4 text-xs">
@@ -98,7 +99,9 @@ export function LeftOutReview({
           id={id}
           type="checkbox"
           className="mt-0.5 size-4 shrink-0"
-          checked={confirmed}
+          // The records are confirmed only once their list is on screen.
+          disabled={!page.isSuccess}
+          checked={confirmed && page.isSuccess}
           onChange={(e) => onConfirmedChange(e.target.checked)}
         />
         <span>
