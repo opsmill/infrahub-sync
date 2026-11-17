@@ -1,0 +1,41 @@
+infrahub_sync/service/start_check.py
+  s_d989f93fc3b8fb::t_a1249e304c5a48 35-38
+  s_4c94b159df7a98::t_496cc196b6ab63 39-40
+docs/docs/kubernetes-deployment.mdx
+  s_d989f93fc3b8fb::t_f657f61bbee754 84
+docs/docs/reference/sync-http-api.mdx
+  s_d989f93fc3b8fb::t_7a9d385b56d070 105-112
+  s_d989f93fc3b8fb::t_6782c9b0667111 203
+  s_d989f93fc3b8fb::t_a6f6bd72a5a531 123-124
+docs/docs/container-image.mdx
+  s_d989f93fc3b8fb::t_ccef839131d490 74
+infrahub_sync/service/worker.py
+  s_d989f93fc3b8fb::t_bbf0167383b565 559-565,572,575-576,583,585-589
+tests/service/test_worker_termination.py
+  s_d989f93fc3b8fb::t_20d4cf5c6e25d8 49-59,62-65
+  s_d989f93fc3b8fb::t_866bed9c4062e4 60-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "100002c7d668992f415c819cd6c0e6ed37657195",
+  "prompts": {},
+  "sessions": {
+    "s_4c94b159df7a98": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "15b6b549-a860-48df-8029-e041d634d876",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_d989f93fc3b8fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b53e9e82-fcbd-48f8-ae99-61f94c0060c7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
