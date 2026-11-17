@@ -1,0 +1,19 @@
+tests/service/test_service_worker.py
+  s_c1ec525e6edd78::t_f0921740a628f5 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ad349b8cd5d0165f6150556b640b15eedd53c560",
+  "prompts": {},
+  "sessions": {
+    "s_c1ec525e6edd78": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-af3c6957cbe4ae91d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
