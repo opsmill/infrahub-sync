@@ -1,0 +1,21 @@
+docs/docs/kubernetes-deployment.mdx
+  s_d989f93fc3b8fb::t_5038e56facd735 51-52,297-298
+dev/adr/0045-the-kubernetes-deployment-orders-its-start-with-a-hashed-job-and-a-bootstrap-record.md
+  s_d989f93fc3b8fb::t_5038e56facd735 43-50,88-90,132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b4b1b38048761dcc1c21472258c26f85ca807db4",
+  "prompts": {},
+  "sessions": {
+    "s_d989f93fc3b8fb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b53e9e82-fcbd-48f8-ae99-61f94c0060c7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
