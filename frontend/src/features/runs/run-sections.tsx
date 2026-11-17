@@ -56,26 +56,48 @@ function ArtifactDownload({
   url,
   filename,
   title,
+  size,
 }: {
   url: string;
   filename: string;
   title: string;
+  /** The size the Sync service recorded, in bytes, to show the progress. */
+  size: number;
 }) {
   const [pending, setPending] = useState(false);
+  const [received, setReceived] = useState(0);
   const [error, setError] = useState<unknown>();
 
   async function download() {
     setPending(true);
+    setReceived(0);
     setError(undefined);
     try {
       const response = await fetchWithToken(url);
-      saveBlob(await response.blob(), filename);
+      // The file is read in parts so the button shows how much has arrived.
+      const chunks: BlobPart[] = [];
+      const reader = response.body?.getReader();
+      if (reader) {
+        let total = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          total += value.byteLength;
+          setReceived(total);
+        }
+      } else {
+        chunks.push(await response.blob());
+      }
+      saveBlob(new Blob(chunks, { type: response.headers.get("Content-Type") ?? "" }), filename);
     } catch (caught) {
       setError(caught);
     } finally {
       setPending(false);
     }
   }
+
+  const percent = size > 0 ? Math.min(100, Math.floor((received / size) * 100)) : undefined;
 
   const d = error === undefined ? undefined : describeError(error);
   return (
@@ -89,7 +111,11 @@ function ArtifactDownload({
         className="text-foreground-muted pointer-coarse:h-11"
       >
         <DownloadIcon />
-        Download
+        {pending ? (
+          <span className="tabular-nums">Downloading{percent !== undefined && ` ${percent}%`}</span>
+        ) : (
+          "Download"
+        )}
       </Button>
       {d && (
         <Notice tone="danger" role="alert" title={d.title} className="basis-full">
@@ -143,6 +169,7 @@ export function RunFiles({ run }: { run: Run }) {
                   url={`/api/runs/${encodeURIComponent(run.run_id)}/artifacts/${encodeURIComponent(a.artifact_id)}`}
                   filename={`${run.run_id}-${a.artifact_id}${json ? ".json" : ""}`}
                   title={title}
+                  size={a.size}
                 />
               </li>
             );
