@@ -93,7 +93,7 @@ sign in is the `admin` token from the environment.
   token, delete its sessions when the password changed, delete its `sign_in_attempts` row),
   under the schema initialization lock on PostgreSQL. After it returns, remove the password
   variable from `os.environ`.
-- [ ] T015 In `infrahub_sync/service/serve.py`, call `apply_admin_account` in `build_app` before
+- [X] T015 In `infrahub_sync/service/serve.py`, call `apply_admin_account` in `build_app` before
   the resolver is built, build `StoreAccountResolver`, and delete
   `EnvironmentPrincipalResolver` and `PRINCIPALS_ENV` from `infrahub_sync/service/auth.py`.
 - [X] T016 In `infrahub_sync/service/app.py`, make `authenticate` use the result of `resolve`:
@@ -144,7 +144,7 @@ sign in is the `admin` token from the environment.
   `${NAME:?message}` form, optional token, optional idle period), in
   `development/docker-compose.yml` (fixed development password, token
   `infrahub-sync-dev-token`) and in the `tasks/` modules that read `BEARER_TOKENS`.
-- [ ] T026 Run `uv run invoke tests.tests-unit`; compare with the count of T001; fix every
+- [X] T026 Run `uv run invoke tests.tests-unit`; compare with the count of T001; fix every
   failure that the change of resolver caused.
 
 ## Phase 3: User Story 1 - Sign in with a local account through the CLI and the API (P1)
