@@ -1,0 +1,21 @@
+dev/specs/022-local-accounts/spec.md
+  s_cf9ada8f865389::t_20ac72ddb8ce43 1-430
+dev/specs/022-local-accounts/checklists/requirements.md
+  s_cf9ada8f865389::t_7b00452d40f5cd 1-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ea5e289692feedd4943179fd21b036ddc3fe3cdc",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
