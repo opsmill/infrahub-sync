@@ -1,0 +1,53 @@
+docs/docs/operations/day-2-operations.mdx
+  s_313229fc4d1c44::t_4a9ea3971f39e6 115
+  s_313229fc4d1c44::t_a3a1facf6612d9 201-202
+  s_313229fc4d1c44::t_1ba57e00ae8584 171
+  s_313229fc4d1c44::t_5dd53720f769dc 64-67
+  s_313229fc4d1c44::t_82534b3ce4d3e2 104-114,116-170,172-200,203
+docs/docs/development/guidelines/secret-redaction.md
+  s_313229fc4d1c44::t_e40c1c9d92936c 29
+  s_313229fc4d1c44::t_ffe5611ef2ce5c 27
+  s_313229fc4d1c44::t_e71de37ae64dd1 105
+  s_313229fc4d1c44::t_f2419c9728061c 61-66
+  s_313229fc4d1c44::t_ad69296e6e84d2 91,97-104,106-114
+dev/specs/020-product-store-failure-cause/tasks.md
+  s_313229fc4d1c44::t_44dee893f9879e 226,231,234,237,241,243
+docs/docs/development/adr-index.mdx
+  s_313229fc4d1c44::t_d0789728923538 50
+dev/adr/README.md
+  s_313229fc4d1c44::t_d5c6d74021991b 143-146
+docs/docs/development/knowledge/configuration-foundation.md
+  s_313229fc4d1c44::t_689391992c9666 83-86,89-135
+  s_313229fc4d1c44::t_20e5c35c02406e 136
+dev/adr/0048-a-product-store-failure-shows-its-sqlstate-and-sync-refuses-another-layout.md
+  s_313229fc4d1c44::t_bbba2e3dd694ea 50
+  s_313229fc4d1c44::t_82e5d71247ff79 129-130
+  s_313229fc4d1c44::t_712a4930305de7 1-49,51-128,131-147,150-164
+  s_313229fc4d1c44::t_c3ca5dee664624 148-149
+dev/specs/020-product-store-failure-cause/contracts/failure-text.md
+  s_313229fc4d1c44::t_392eee7758c602 20
+docs/docs/development-stack.mdx
+  s_313229fc4d1c44::t_b4b05f058de59a 142-171
+changelog/+product-store-failure-cause.changed.md
+  s_313229fc4d1c44::t_aff980a3926019 1
+docs/docs/reference/durable-product-records.mdx
+  s_313229fc4d1c44::t_b6bb9ffe314c2b 160-195
+docs/docs/compose-deployment.mdx
+  s_313229fc4d1c44::t_5792d0e2785c83 1147-1240
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0de90d7da6086b2de2237f8b7dd4dd1c8caa56eb",
+  "prompts": {},
+  "sessions": {
+    "s_313229fc4d1c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c6738f-876b-4301-a742-80e31346a4cc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
