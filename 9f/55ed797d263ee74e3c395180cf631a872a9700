@@ -1,0 +1,21 @@
+dev/specs/020-product-store-failure-cause/checklists/requirements.md
+  s_313229fc4d1c44::t_0cc65306f76460 1-40
+dev/specs/020-product-store-failure-cause/spec.md
+  s_313229fc4d1c44::t_51e51731e90e97 1-315
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9f55ed797d263ee74e3c395180cf631a872a9700",
+  "prompts": {},
+  "sessions": {
+    "s_313229fc4d1c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c6738f-876b-4301-a742-80e31346a4cc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
