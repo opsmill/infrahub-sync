@@ -1,0 +1,23 @@
+.github/scripts/nightly_e2e.py
+  s_564c364058ca9c::t_6293f17159299e 97
+tests/dev_stack/smoke/conftest.py
+  s_564c364058ca9c::t_c76b71e1294a50 92-94
+tests/integration/test_managed_write_guard_live.py
+  s_564c364058ca9c::t_5dfa4d22e5197e 144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fa87bcfab3061d9c8b65d17f6125050f5fc9ec4f",
+  "prompts": {},
+  "sessions": {
+    "s_564c364058ca9c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-abf5fe180b33ba309",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
