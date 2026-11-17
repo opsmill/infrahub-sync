@@ -1,0 +1,27 @@
+tests/service/test_sign_in.py
+  s_cf9ada8f865389::t_c733453b725848 410-411,413
+tests/product_store/test_sign_in_attempts.py
+  s_cf9ada8f865389::t_c733453b725848 167-170
+infrahub_sync/product_store/store.py
+  s_cf9ada8f865389::t_c733453b725848 4410-4411
+infrahub_sync/service/account_routes.py
+  s_cf9ada8f865389::t_c733453b725848 106,108-113
+infrahub_sync/product_store/accounts.py
+  s_cf9ada8f865389::t_c733453b725848 562-563,566,568-569
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4e0b75f067d3a91995cb90986f96cc5f4ffc0d4e",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
