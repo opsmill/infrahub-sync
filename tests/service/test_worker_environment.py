@@ -46,12 +46,12 @@ from infrahub_sync.product_store import ProductStoreProviderError, local_product
 from infrahub_sync.service import storage as service_storage
 from infrahub_sync.service import worker as service_worker
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.config_routes import ConfigurationRoutes
 from infrahub_sync.service.service import RunService
 from infrahub_sync.service.worker import ServiceProcessWorker
 from tests.configuration.test_validate_permissions import _StandInClient
 from tests.configuration.validation_packages import package_data
+from tests.service.accounts import seed_accounts
 from tests.service.failure_cases import (
     SHORT_CREDENTIAL,
     SHORT_CREDENTIAL_NAME,
@@ -154,8 +154,7 @@ def _validation_client(
             destination_access_accessor=None,
         )
         monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": _ADMIN_TOKEN, "administrator": True}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
+    resolver = seed_accounts(projection, {"admin": {"token": _ADMIN_TOKEN, "administrator": True}}).resolver
     del tmp_path
     client = TestClient(
         create_app(

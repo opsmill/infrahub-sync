@@ -40,7 +40,6 @@ from infrahub_sync.client import ResultsResource, RunResource
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.run_artifact import run_markdown
 from infrahub_sync.service.service import RunService
 from tests.cli.test_client_commands import (
@@ -50,6 +49,7 @@ from tests.cli.test_client_commands import (
     _terminal,
     client,  # noqa: F401 - the fixture is used by name.
 )
+from tests.service.accounts import account_identifier, seed_accounts
 from tests.service.execution_fixtures import append_execution
 from tests.service.failure_cases import CASES, CREDENTIALS, ERROR_TEXT, FailureCase, forbidden_values
 from tests.service.test_http_api import _FakeOrchestration, _registered_package
@@ -102,11 +102,10 @@ def test_no_credential_reaches_the_failure_record(case: FailureCase) -> None:
         _assert_absent(rendered, f"the {case.case_id} failure record")
 
 
-def _service(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[ProductProjection, TestClient, str]:
+def _service(tmp_path: Path) -> tuple[ProductProjection, TestClient, str]:
     """A product store with one claimed run, and a client of the Sync API over it."""
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": OWNER_TOKEN}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection((tmp_path / "store").resolve())
+    resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
     version = projection.create_configuration(_registered_package())
     projection.create_run(
         ProductRun(
@@ -116,7 +115,7 @@ def _service(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[ProductPr
             config_id=version.config_id,
             registry_version=version.registry_version,
             package_checksum=version.package_checksum,
-            actor="owner",
+            actor=account_identifier(projection, "owner"),
             started_at=datetime(2026, 11, 11, 12, tzinfo=timezone.utc),
             phase="accepted",
             summary={"sync_name": "inventory"},
@@ -150,11 +149,10 @@ def _record(projection: ProductProjection, flow_run_id: str, case: FailureCase) 
 @pytest.mark.parametrize("case", ALL_CASES)
 def test_no_credential_reaches_the_api_the_cli_or_the_run_artifact(
     case: FailureCase,
-    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     client: MagicMock,  # noqa: F811 - the imported fixture.
 ) -> None:
-    projection, api, flow_run_id = _service(monkeypatch, tmp_path)
+    projection, api, flow_run_id = _service(tmp_path)
     recorded = _record(projection, flow_run_id, case)
 
     run_response = api.get(f"/runs/{RUN_ID}", headers=HEADERS)

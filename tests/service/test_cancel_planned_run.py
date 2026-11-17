@@ -6,7 +6,6 @@ contract (``dev/specs/archive/014-plan-approval/contracts/http-api.md``).
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from hashlib import sha256
 from itertools import count
@@ -31,12 +30,12 @@ from infrahub_sync.product_store import (
     local_product_projection,
 )
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.events import RUN_CANCELLED
 from infrahub_sync.service.models import PlanOperationResource, PlanResource, PlanSummaryResource
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
 from infrahub_sync.service.settings import REQUIRE_APPROVAL_ENV
+from tests.service.accounts import account_identifier, seed_accounts
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -114,19 +113,16 @@ _Api = tuple[TestClient, ProductProjection, _RecordingOrchestration, "Configurat
 
 @pytest.fixture(name="api")
 def _api_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Api:
-    monkeypatch.setenv(
-        PRINCIPALS_ENV,
-        json.dumps(
-            {
-                "owner": {"token": OWNER_TOKEN},
-                "other": {"token": OTHER_TOKEN},
-                "admin": {"token": ADMIN_TOKEN, "administrator": True},
-            }
-        ),
-    )
     monkeypatch.delenv(REQUIRE_APPROVAL_ENV, raising=False)
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(
+        projection,
+        {
+            "owner": {"token": OWNER_TOKEN},
+            "other": {"token": OTHER_TOKEN},
+            "admin": {"token": ADMIN_TOKEN, "administrator": True},
+        },
+    ).resolver
     orchestration = _RecordingOrchestration()
     version = projection.create_configuration(_registered_package())
     service = RunService(projection, orchestration, secrets=resolver.secret_values)
@@ -140,7 +136,7 @@ def _reserve_receipt(projection: ProductProjection, purpose: str) -> MutationRec
     reserved, _created = projection.reserve_mutation(
         MutationReceipt(
             receipt_id=f"m-fixture-{ordinal}",
-            actor="owner",
+            actor=account_identifier(projection, "owner"),
             key_digest=sha256(f"fixture-key-{ordinal}".encode()).hexdigest(),
             operation=purpose,
             target_run_id=RUN_ID,
@@ -200,7 +196,7 @@ def _stored_run(
             config_id=version.config_id,
             registry_version=version.registry_version,
             package_checksum=version.package_checksum,
-            actor="owner",
+            actor=account_identifier(projection, "owner"),
             started_at=datetime(2026, 11, 10, 12, tzinfo=timezone.utc),
             phase=phase,
         )
@@ -270,7 +266,7 @@ def _cancelled_events(projection: ProductProjection) -> list[AuditEvent]:
 
 
 def _receipt_for(projection: ProductProjection, key: str) -> MutationReceipt | None:
-    return projection.lookup_mutation("owner", sha256(key.encode()).hexdigest()).value
+    return projection.lookup_mutation(account_identifier(projection, "owner"), sha256(key.encode()).hexdigest()).value
 
 
 # T035: the cancel endpoint.
@@ -299,7 +295,11 @@ def test_cancelling_a_planned_run_withdraws_it_without_calling_prefect(api: _Api
     assert decision.event_type == "infrahub_sync.run.accepted"
     # No Prefect acknowledgement follows a withdrawal, so the Sync API records the run's end event.
     [ended] = _cancelled_events(projection)
-    assert (ended.operation, ended.outcome, ended.actor) == ("cancel", "cancelled", "owner")
+    assert (ended.operation, ended.outcome, ended.actor) == (
+        "cancel",
+        "cancelled",
+        account_identifier(projection, "owner"),
+    )
     assert ended.created_at == stored.finished_at
     assert decision.created_at <= ended.created_at, "the request is listed before the run's end"
 

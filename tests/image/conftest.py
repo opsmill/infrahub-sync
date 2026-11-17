@@ -166,8 +166,9 @@ STORAGE_READY_SECONDS = 120
 # Distinct, greppable throwaway values, so a test can prove none of them reaches
 # the container's logs (constitution Principle VI).
 BEARER_TOKEN = "smoke-token-0123456789"  # noqa: S105 -- throwaway credential for the smoke container
+ADMIN_PASSWORD = "smoke-admin-password-7c3e1a"  # noqa: S105 -- throwaway credential for the smoke container
 S3_SECRET_KEY = "smoke-secret-key-8a4f2b"  # noqa: S105 -- throwaway credential for the smoke container
-INJECTED_SECRETS = (BEARER_TOKEN, STORAGE_PASSWORD, S3_SECRET_KEY)
+INJECTED_SECRETS = (BEARER_TOKEN, ADMIN_PASSWORD, STORAGE_PASSWORD, S3_SECRET_KEY)
 API_READY_SECONDS = 60
 
 
@@ -249,7 +250,9 @@ def api_environment(storage_host: str) -> dict[str, str]:
         "AWS_ACCESS_KEY_ID": "smoke-access-key",
         "AWS_SECRET_ACCESS_KEY": S3_SECRET_KEY,
         "PREFECT_API_URL": "http://127.0.0.1:4200/api",
-        "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": json.dumps({"smoke": {"token": BEARER_TOKEN, "administrator": False}}),
+        # The `admin` account: the API does not start without its password.
+        "INFRAHUB_SYNC_ADMIN_ACCOUNT_PASSWORD": ADMIN_PASSWORD,
+        "INFRAHUB_SYNC_ADMIN_ACCOUNT_TOKEN": BEARER_TOKEN,
     }
 
 

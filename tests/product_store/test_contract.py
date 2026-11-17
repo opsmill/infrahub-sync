@@ -3167,7 +3167,7 @@ def test_a_public_json_artifact_preserves_nonmatching_numbers_and_boolean_values
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="The Sync service requires Python 3.11 or later.")
 def test_a_public_json_artifact_plan_with_a_matching_number_is_retrievable_through_authenticated_http(
-    monkeypatch: pytest.MonkeyPatch, redaction_provider: ProductProjection
+    redaction_provider: ProductProjection,
 ) -> None:
     """Use the worker's review serializer and publication method, then the real plan route."""
     pytest.importorskip("prefect")
@@ -3180,13 +3180,12 @@ def test_a_public_json_artifact_plan_with_a_matching_number_is_retrievable_throu
     from infrahub_sync.plan.review import SavedPlan
     from infrahub_sync.service import flow as service_flow
     from infrahub_sync.service.app import create_app
-    from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
     from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
+    from tests.service.accounts import seed_accounts
 
     token = "plan-review-auth-canary"  # noqa: S105 - synthetic authentication credential.
     secret = "-1e100"  # noqa: S105 - synthetic numeric credential.
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"reviewer": {"token": token}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
+    resolver = seed_accounts(redaction_provider, {"reviewer": {"token": token}}).resolver
     redaction_provider.create_run(_run())
     saved = SavedPlan(
         manifest=PlanManifest(

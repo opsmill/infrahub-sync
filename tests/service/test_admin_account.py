@@ -19,7 +19,7 @@ pytest.importorskip("prefect")
 from fastapi.testclient import TestClient
 
 from infrahub_sync.product_store import DuplicateCredentialError, ProductProjection, local_product_projection
-from infrahub_sync.service import auth, serve
+from infrahub_sync.service import serve
 from infrahub_sync.service.auth import apply_admin_account
 from infrahub_sync.service.credentials import digest, new_session_token, verify_password
 from infrahub_sync.service.settings import (
@@ -447,7 +447,9 @@ def test_the_served_application_resolves_the_token_of_the_environment_to_admin(
 
 def test_the_removed_variable_is_no_longer_read(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     old_token = "old-principal-token-0001"  # noqa: S105 - a test value, not a secret.
-    monkeypatch.setenv(auth.PRINCIPALS_ENV, f'{{"alice": {{"token": "{old_token}", "administrator": true}}}}')
+    monkeypatch.setenv(
+        "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS", f'{{"alice": {{"token": "{old_token}", "administrator": true}}}}'
+    )
 
     app, _captured = _build(monkeypatch, tmp_path, **{ADMIN_ACCOUNT_PASSWORD_ENV: _PASSWORD})
 

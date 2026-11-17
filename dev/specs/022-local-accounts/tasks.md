@@ -130,10 +130,10 @@ sign in is the `admin` token from the environment.
 - [X] T021 Create the shared fixture in `tests/service/accounts.py` (and register it in
   `tests/conftest.py` if other test packages need it): a store with seeded accounts (one
   administrator, one non-administrator), their API tokens, and a `StoreAccountResolver`.
-- [ ] T022 Move the 18 files of `tests/service/` that build `EnvironmentPrincipalResolver` or
+- [X] T022 Move the 18 files of `tests/service/` that build `EnvironmentPrincipalResolver` or
   set the removed variable to the fixture of T021. Change set-up only; an assertion on `actor`
   keeps expecting the account name.
-- [ ] T023 [P] Do the same for `tests/plan/test_format_5.py`,
+- [X] T023 [P] Do the same for `tests/plan/test_format_5.py`,
   `tests/product_store/test_contract.py`, `tests/image/conftest.py` and
   `tests/service/test_environment_names.py`.
 - [ ] T024 [P] Replace the removed variable with the `admin` variables in

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -33,12 +32,13 @@ from infrahub_sync.product_store import configs as configs_service
 from infrahub_sync.product_store.configs import ValidationReport
 from infrahub_sync.service import serve
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver, Principal, Resolution
+from infrahub_sync.service.auth import Principal, Resolution
 from infrahub_sync.service.config_routes import ConfigurationAPIError, ConfigurationRoutes
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, RunLogRead, Submission
 from infrahub_sync.service.serve import build_app
 from infrahub_sync.service.service import RunService, ServiceAPIError
 from tests.configuration.validation_packages import package, package_data
+from tests.service.accounts import account_identifier, seed_accounts
 
 ADMIN_TOKEN = "admin-token-canary-0003"  # noqa: S105 - deliberate non-secret boundary canary.
 OTHER_TOKEN = "reader-token-canary-0004"  # noqa: S105 - deliberate non-secret boundary canary.
@@ -76,13 +76,12 @@ class _UnknownConfigsError(configs_service.ConfigsError):
     """An unrecognized service error remains conservatively non-retryable."""
 
 
-def test_configuration_routes_register_then_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_configuration_routes_register_then_read(tmp_path: Path) -> None:
     """A configuration resource delegates registration and its scoped reads."""
-    monkeypatch.setenv(
-        PRINCIPALS_ENV, json.dumps({"admin": {"token": "admin-token-canary-0003", "administrator": True}})
-    )
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path)
+    resolver = seed_accounts(
+        projection, {"admin": {"token": "admin-token-canary-0003", "administrator": True}}
+    ).resolver
     runs = RunService(projection, _Orchestration(), secrets=resolver.secret_values)
     routes = ConfigurationRoutes(product_projection=local_product_projection(tmp_path), secrets=resolver.secret_values)
     client = TestClient(create_app(runs, resolver, routes))
@@ -100,15 +99,12 @@ def test_configuration_routes_register_then_read(tmp_path: Path, monkeypatch: py
     )
 
 
-def test_configuration_routes_use_the_injected_projection_for_services_receipts_and_audit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_configuration_routes_use_the_injected_projection_for_services_receipts_and_audit(tmp_path: Path) -> None:
     """Every configuration path uses the one projection supplied at composition."""
 
     bearer = "admin-token-canary-0003"
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
     delegate = local_product_projection(tmp_path)
+    resolver = seed_accounts(delegate, {"admin": {"token": bearer, "administrator": True}}).resolver
 
     class ProjectionSentinel:
         def __init__(self) -> None:
@@ -197,25 +193,20 @@ def test_configuration_receipt_and_audit_provider_errors_are_storage_failures() 
     assert receipt_error.value.family == audit_error.value.family == "storage"
 
 
-def test_configuration_http_provider_errors_preserve_storage_and_internal_families(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_configuration_http_provider_errors_preserve_storage_and_internal_families(tmp_path: Path) -> None:
     """Marked projection failures are storage responses at every configuration HTTP boundary."""
     from infrahub_sync.product_store import ProductStoreProviderError
 
     admin_token = ADMIN_TOKEN
     reader_token = OTHER_TOKEN
-    monkeypatch.setenv(
-        PRINCIPALS_ENV,
-        json.dumps(
-            {
-                "admin": {"token": admin_token, "administrator": True},
-                "reader": {"token": reader_token},
-            }
-        ),
-    )
-    resolver = EnvironmentPrincipalResolver.from_environment()
     run_projection = local_product_projection(tmp_path)
+    resolver = seed_accounts(
+        run_projection,
+        {
+            "admin": {"token": admin_token, "administrator": True},
+            "reader": {"token": reader_token},
+        },
+    ).resolver
 
     class StorageProjection:
         @staticmethod
@@ -295,7 +286,6 @@ def test_every_configuration_storage_boundary_has_a_value_free_http_family(
     boundary: str,
     failure_kind: str,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Each projection call contains provider details and classifies unmarked defects."""
@@ -303,17 +293,14 @@ def test_every_configuration_storage_boundary_has_a_value_free_http_family(
 
     admin_token = ADMIN_TOKEN
     reader_token = OTHER_TOKEN
-    monkeypatch.setenv(
-        PRINCIPALS_ENV,
-        json.dumps(
-            {
-                "admin": {"token": admin_token, "administrator": True},
-                "reader": {"token": reader_token, "administrator": False},
-            }
-        ),
-    )
-    resolver = EnvironmentPrincipalResolver.from_environment()
     delegate = local_product_projection(tmp_path)
+    resolver = seed_accounts(
+        delegate,
+        {
+            "admin": {"token": admin_token, "administrator": True},
+            "reader": {"token": reader_token, "administrator": False},
+        },
+    ).resolver
     version = delegate.create_configuration(package())
     dsn_canary = "postgresql://dsn-secret-canary@db/sync"
     driver_canary = "driver-secret-canary"
@@ -380,15 +367,12 @@ def test_every_configuration_storage_boundary_has_a_value_free_http_family(
         assert forbidden not in rendered
 
 
-def test_configuration_mutation_replays_exact_response_and_rejects_changed_content(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_configuration_mutation_replays_exact_response_and_rejects_changed_content(tmp_path: Path) -> None:
     """A configuration mutation uses the one durable receipt rather than a second write."""
-    monkeypatch.setenv(
-        PRINCIPALS_ENV, json.dumps({"admin": {"token": "admin-token-canary-0003", "administrator": True}})
-    )
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path)
+    resolver = seed_accounts(
+        projection, {"admin": {"token": "admin-token-canary-0003", "administrator": True}}
+    ).resolver
     client = TestClient(
         create_app(
             RunService(projection, _Orchestration(), secrets=resolver.secret_values),
@@ -407,19 +391,18 @@ def test_configuration_mutation_replays_exact_response_and_rejects_changed_conte
     assert replay.json() == first.json()
     assert changed.status_code == 409
     assert len(projection.list_configurations()) == 1
-    receipt = projection.lookup_mutation("admin", sha256(b"register-once").hexdigest())
+    receipt = projection.lookup_mutation(account_identifier(projection, "admin"), sha256(b"register-once").hexdigest())
     assert receipt.value is not None
     assert receipt.value.state == "accepted"
 
 
 def test_duplicate_configuration_version_checksum_returns_existing_version_without_a_second_write(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     """A checksum already stored for a configuration is a 200 replay, not a new version."""
     bearer = "admin-token-canary-0003"
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path)
+    resolver = seed_accounts(projection, {"admin": {"token": bearer, "administrator": True}}).resolver
     client = TestClient(
         create_app(
             RunService(projection, _Orchestration(), secrets=resolver.secret_values),
@@ -449,13 +432,12 @@ def test_duplicate_configuration_version_checksum_returns_existing_version_witho
 
 
 def test_configuration_mutation_audits_accepted_replayed_and_refused_idempotency_without_secrets(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     """Every mutation decision is durable evidence and contains no bearer secret."""
     bearer = "admin-token-canary-0003"
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path)
+    resolver = seed_accounts(projection, {"admin": {"token": bearer, "administrator": True}}).resolver
     client = TestClient(
         create_app(
             RunService(projection, _Orchestration(), secrets=resolver.secret_values),
@@ -489,7 +471,6 @@ def test_configuration_mutation_audits_accepted_replayed_and_refused_idempotency
 )
 def test_configuration_mutation_releases_only_proven_pre_effect_error_families(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     error_type: type[configs_service.ConfigsError],
     *,
     status: int,
@@ -497,8 +478,9 @@ def test_configuration_mutation_releases_only_proven_pre_effect_error_families(
 ) -> None:
     """Only declared pre-effect families make a configuration receipt retryable."""
     bearer = "admin-token-canary-0003"
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
+    resolver = seed_accounts(
+        local_product_projection(tmp_path), {"admin": {"token": bearer, "administrator": True}}
+    ).resolver
 
     class Service:
         ConfigsRequestError = configs_service.ConfigsRequestError
@@ -530,7 +512,9 @@ def test_configuration_mutation_releases_only_proven_pre_effect_error_families(
     body = {"package": package_data(), "reason": "retry after outage"}
 
     refused = client.post("/configs", headers=headers, json=body)
-    reserved = projection.lookup_mutation("admin", sha256(headers["Idempotency-Key"].encode()).hexdigest()).value
+    reserved = projection.lookup_mutation(
+        account_identifier(projection, "admin"), sha256(headers["Idempotency-Key"].encode()).hexdigest()
+    ).value
     retry = client.post("/configs", headers=headers, json=body)
 
     assert refused.status_code == status
@@ -701,21 +685,16 @@ def test_unrelated_service_assertion_is_not_reclassified_as_configuration_refusa
         ConfigurationRoutes(product_projection=local_product_projection(tmp_path), service=Service()).list_configs()
 
 
-def test_configuration_mutation_refuses_unauthenticated_and_non_admin_calls(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_configuration_mutation_refuses_unauthenticated_and_non_admin_calls(tmp_path: Path) -> None:
     """Authorization refusal occurs before configuration reservation or service invocation."""
-    monkeypatch.setenv(
-        PRINCIPALS_ENV,
-        json.dumps(
-            {
-                "admin": {"token": "admin-token-canary-0003", "administrator": True},
-                "reader": {"token": "reader-token-canary-0002", "administrator": False},
-            }
-        ),
-    )
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path)
+    resolver = seed_accounts(
+        projection,
+        {
+            "admin": {"token": "admin-token-canary-0003", "administrator": True},
+            "reader": {"token": "reader-token-canary-0002", "administrator": False},
+        },
+    ).resolver
     client = TestClient(
         create_app(
             RunService(projection, _Orchestration(), secrets=resolver.secret_values),
@@ -737,13 +716,12 @@ def test_configuration_mutation_refuses_unauthenticated_and_non_admin_calls(
     assert [event.outcome for event in projection.audit_events()] == ["refused-authentication", "refused-authorization"]
 
 
-def test_configuration_route_grammar_refuses_hostile_values_before_service_classification(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_configuration_route_grammar_refuses_hostile_values_before_service_classification(tmp_path: Path) -> None:
     """Path, page, and body grammar failures use the fixed request envelope without a service call."""
     bearer = "admin-token-canary-0003"
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
+    resolver = seed_accounts(
+        local_product_projection(tmp_path), {"admin": {"token": bearer, "administrator": True}}
+    ).resolver
 
     class Service:
         ConfigsRequestError = configs_service.ConfigsRequestError
@@ -827,13 +805,12 @@ def test_configuration_route_grammar_refuses_hostile_values_before_service_class
     assert service.calls == []
 
 
-def test_validation_pages_are_bounded_and_concatenate_to_the_single_snapshot(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_validation_pages_are_bounded_and_concatenate_to_the_single_snapshot(tmp_path: Path) -> None:
     """Pages slice one ordered validation report without changing its snapshot fields."""
     bearer = "admin-token-canary-0003"
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": bearer, "administrator": True}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
+    resolver = seed_accounts(
+        local_product_projection(tmp_path), {"admin": {"token": bearer, "administrator": True}}
+    ).resolver
     findings = tuple(
         ValidationFinding(code="synthetic", severity="error", location=f"/item{i}", message=f"finding {i}")
         for i in range(600)
@@ -918,10 +895,9 @@ def test_configuration_error_matrix_preserves_only_declared_fields(  # noqa: PLR
     reason: str | None,
 ) -> None:
     """Each shared-service failure maps to the fixed configuration envelope."""
-    monkeypatch.setenv(
-        PRINCIPALS_ENV, json.dumps({"admin": {"token": "admin-token-canary-0003", "administrator": True}})
-    )
-    resolver = EnvironmentPrincipalResolver.from_environment()
+    resolver = seed_accounts(
+        local_product_projection(tmp_path), {"admin": {"token": "admin-token-canary-0003", "administrator": True}}
+    ).resolver
     runs = RunService(local_product_projection(tmp_path), _Orchestration(), secrets=resolver.secret_values)
     routes = ConfigurationRoutes(product_projection=local_product_projection(tmp_path))
 
@@ -1274,14 +1250,13 @@ def test_build_app_validates_complete_liveness_policy_before_constructing_depend
     ],
 )
 def test_configuration_mutation_without_a_reason_replays_by_reason(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retry_reason: dict[str, object], *, replayed: bool
+    tmp_path: Path, retry_reason: dict[str, object], *, replayed: bool
 ) -> None:
     """A registration may omit its reason; an omitted reason is one value for idempotency."""
-    monkeypatch.setenv(
-        PRINCIPALS_ENV, json.dumps({"admin": {"token": "admin-token-canary-0003", "administrator": True}})
-    )
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path)
+    resolver = seed_accounts(
+        projection, {"admin": {"token": "admin-token-canary-0003", "administrator": True}}
+    ).resolver
     client = TestClient(
         create_app(
             RunService(projection, _Orchestration(), secrets=resolver.secret_values),
@@ -1299,7 +1274,9 @@ def test_configuration_mutation_without_a_reason_replays_by_reason(
     if replayed:
         assert retry.json() == first.json()
     assert len(projection.list_configurations()) == 1
-    receipt = projection.lookup_mutation("admin", sha256(b"register-without-reason").hexdigest()).value
+    receipt = projection.lookup_mutation(
+        account_identifier(projection, "admin"), sha256(b"register-without-reason").hexdigest()
+    ).value
     assert receipt is not None
     assert receipt.reason is None
     accepted = [event for event in projection.audit_events() if event.outcome == "accepted"]
@@ -1311,11 +1288,10 @@ def test_configuration_mutation_without_a_reason_replays_by_reason(
 _DISCOVERY_T0 = datetime(2026, 11, 4, 9, tzinfo=timezone.utc)
 
 
-def _discovery_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, ProductProjection]:
+def _discovery_client(tmp_path: Path) -> tuple[TestClient, ProductProjection]:
     """Return an administrator client and the one projection both route families use."""
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": ADMIN_TOKEN, "administrator": True}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path)
+    resolver = seed_accounts(projection, {"admin": {"token": ADMIN_TOKEN, "administrator": True}}).resolver
     client = TestClient(
         create_app(
             RunService(projection, _Orchestration(), secrets=resolver.secret_values),
@@ -1360,10 +1336,8 @@ def _bound_run(run_id: str, minutes: int, config_id: str, registry_version: int,
     )
 
 
-def test_configuration_list_is_a_page_newest_first_with_name_and_latest_version(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    client, _projection = _discovery_client(tmp_path, monkeypatch)
+def test_configuration_list_is_a_page_newest_first_with_name_and_latest_version(tmp_path: Path) -> None:
+    client, _projection = _discovery_client(tmp_path)
     netbox = _register(client, _named_package("netbox-inventory"), "register-netbox")
     _add_version(client, netbox, _named_package("netbox-inventory", "https://second.netbox.test"), "version-2")
     other = _register(client, _named_package("other-inventory"), "register-other")
@@ -1382,10 +1356,8 @@ def test_configuration_list_is_a_page_newest_first_with_name_and_latest_version(
     }
 
 
-def test_name_filter_returns_every_configuration_that_shares_the_name(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    client, _projection = _discovery_client(tmp_path, monkeypatch)
+def test_name_filter_returns_every_configuration_that_shares_the_name(tmp_path: Path) -> None:
+    client, _projection = _discovery_client(tmp_path)
     first = _register(client, _named_package("shared-name"), "register-first")
     second = _register(client, _named_package("shared-name"), "register-second")
     _register(client, _named_package("other-name"), "register-other")
@@ -1396,10 +1368,8 @@ def test_name_filter_returns_every_configuration_that_shares_the_name(
     assert {item["config_id"] for item in response.json()["items"]} == {first, second}
 
 
-def test_configuration_summary_includes_name_and_latest_version(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    client, _projection = _discovery_client(tmp_path, monkeypatch)
+def test_configuration_summary_includes_name_and_latest_version(tmp_path: Path) -> None:
+    client, _projection = _discovery_client(tmp_path)
     config_id = _register(client, _named_package("netbox-inventory"), "register")
     _add_version(client, config_id, _named_package("renamed-inventory", "https://second.netbox.test"), "version-2")
 
@@ -1409,10 +1379,8 @@ def test_configuration_summary_includes_name_and_latest_version(
     assert (response.json()["name"], response.json()["latest_version"]) == ("renamed-inventory", 2)
 
 
-def test_version_list_returns_summaries_with_each_versions_latest_run_and_latest_applied_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    client, projection = _discovery_client(tmp_path, monkeypatch)
+def test_version_list_returns_summaries_with_each_versions_latest_run_and_latest_applied_run(tmp_path: Path) -> None:
+    client, projection = _discovery_client(tmp_path)
     config_id = _register(client, _named_package("netbox-inventory"), "register")
     _add_version(client, config_id, _named_package("netbox-inventory", "https://second.netbox.test"), "version-2")
     _add_version(client, config_id, _named_package("netbox-inventory", "https://third.netbox.test"), "version-3")
@@ -1448,11 +1416,9 @@ def test_version_list_returns_summaries_with_each_versions_latest_run_and_latest
     assert items[2]["latest_applied_run"]["phase"] == "applied"
 
 
-def test_limit_limits_each_page_and_cursor_returns_the_next_page(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_limit_limits_each_page_and_cursor_returns_the_next_page(tmp_path: Path) -> None:
     """The paging parameters take effect on both lists; they were once accepted and ignored."""
-    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    client, _projection = _discovery_client(tmp_path)
     config_ids = {_register(client, _named_package(f"config-{index}"), f"register-{index}") for index in range(3)}
     config_id = next(iter(config_ids))
     for index in (2, 3):
@@ -1475,8 +1441,8 @@ def test_limit_limits_each_page_and_cursor_returns_the_next_page(
     assert rest_versions["next_cursor"] is None
 
 
-def test_list_routes_declare_cursor_paging_and_no_offset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    client, _projection = _discovery_client(tmp_path, monkeypatch)
+def test_list_routes_declare_cursor_paging_and_no_offset(tmp_path: Path) -> None:
+    client, _projection = _discovery_client(tmp_path)
     paths = client.get("/openapi.json").json()["paths"]
 
     def parameters(path: str) -> set[str]:
@@ -1486,8 +1452,8 @@ def test_list_routes_declare_cursor_paging_and_no_offset(tmp_path: Path, monkeyp
     assert parameters("/configs/{config_id}/versions") == {"limit", "cursor"}
 
 
-def test_version_list_of_an_unknown_configuration_is_404(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    client, _projection = _discovery_client(tmp_path, monkeypatch)
+def test_version_list_of_an_unknown_configuration_is_404(tmp_path: Path) -> None:
+    client, _projection = _discovery_client(tmp_path)
 
     response = client.get("/configs/config-unknown/versions")
 
@@ -1496,11 +1462,9 @@ def test_version_list_of_an_unknown_configuration_is_404(tmp_path: Path, monkeyp
     assert response.json()["error"]["reason"] == "configuration-not-found"
 
 
-def test_invalid_cursor_is_answered_with_422_in_the_error_envelope(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_invalid_cursor_is_answered_with_422_in_the_error_envelope(tmp_path: Path) -> None:
     """A cursor that does not decode, or was issued for another list, is refused with 422."""
-    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    client, _projection = _discovery_client(tmp_path)
     config_id = _register(client, _named_package("netbox-inventory"), "register")
     _add_version(client, config_id, _named_package("netbox-inventory", "https://second.netbox.test"), "version-2")
     version_cursor = client.get(f"/configs/{config_id}/versions", params={"limit": 1}).json()["next_cursor"]
@@ -1523,11 +1487,9 @@ def test_invalid_cursor_is_answered_with_422_in_the_error_envelope(
         assert response.json() == expected
 
 
-def test_a_cursor_is_refused_by_another_filter_configuration_or_list(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_cursor_is_refused_by_another_filter_configuration_or_list(tmp_path: Path) -> None:
     """A cursor is bound to its list and its filters, even when both lists are unfiltered."""
-    client, projection = _discovery_client(tmp_path, monkeypatch)
+    client, projection = _discovery_client(tmp_path)
     alpha = _register(client, _named_package("alpha"), "register-alpha-1")
     _register(client, _named_package("alpha", "https://alpha-2.netbox.test"), "register-alpha-2")
     beta = _register(client, _named_package("beta"), "register-beta-1")
@@ -1555,14 +1517,12 @@ def test_a_cursor_is_refused_by_another_filter_configuration_or_list(
         assert response.json()["error"]["code"] == "invalid-cursor"
 
 
-def _event_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, ProductProjection]:
+def _event_client(tmp_path: Path) -> tuple[TestClient, ProductProjection]:
     """Return a client that holds no token, and the projection both route families use."""
-    monkeypatch.setenv(
-        PRINCIPALS_ENV,
-        json.dumps({"admin": {"token": ADMIN_TOKEN, "administrator": True}, "viewer": {"token": OTHER_TOKEN}}),
-    )
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path)
+    resolver = seed_accounts(
+        projection, {"admin": {"token": ADMIN_TOKEN, "administrator": True}, "viewer": {"token": OTHER_TOKEN}}
+    ).resolver
     client = TestClient(
         create_app(
             RunService(projection, _Orchestration(), secrets=resolver.secret_values),
@@ -1584,7 +1544,7 @@ def test_configuration_decisions_record_typed_configuration_events(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """FR-012: registration, a new version, a retrieved version and a replay each name the configuration and version."""
-    client, projection = _event_client(tmp_path, monkeypatch)
+    client, projection = _event_client(tmp_path)
     admin = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
     record_audit = projection.record_audit
 
@@ -1630,17 +1590,15 @@ def test_configuration_decisions_record_typed_configuration_events(
         assert event.run_id is None
         assert event.primary_resource == PrimaryResource(kind="config", id=config_id)
         assert event.related == (
-            RelatedResource(kind="account", id="admin"),
+            RelatedResource(kind="account", id=account_identifier(projection, "admin")),
             RelatedResource(kind="config", id=config_id),
             RelatedResource(kind="config_version", id=f"{config_id}@{event.registry_version}"),
         )
 
 
-def test_configuration_refusals_record_configuration_refused_events(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_configuration_refusals_record_configuration_refused_events(tmp_path: Path) -> None:
     """FR-012: an authorization or idempotency refusal is typed `config.refused`; a bad token gets no type."""
-    client, projection = _event_client(tmp_path, monkeypatch)
+    client, projection = _event_client(tmp_path)
     admin = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
     viewer = {"Authorization": f"Bearer {OTHER_TOKEN}"}
     body = {"package": package_data(), "reason": "new"}
@@ -1670,7 +1628,7 @@ def test_configuration_refusals_record_configuration_refused_events(
     version_refusal = refusals[1]
     assert version_refusal.primary_resource == PrimaryResource(kind="config", id=config_id)
     assert version_refusal.related == (
-        RelatedResource(kind="account", id="viewer"),
+        RelatedResource(kind="account", id=account_identifier(projection, "viewer")),
         RelatedResource(kind="config", id=config_id),
     )
 
@@ -1743,7 +1701,7 @@ def test_validate_with_a_branch_checks_the_mapping_against_that_branch(
 ) -> None:
     """FR-034: the named branch, not the declared one, is read; each missing kind and field is named."""
     branches = _spied_schema_reads(monkeypatch)
-    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    client, _projection = _discovery_client(tmp_path)
     config_id = _register(client, _package_with_missing_kind_attribute_and_relationship(), "branch-validate")
 
     response = client.post(f"/configs/{config_id}/versions/1/validate", params={"branch": "review"})
@@ -1774,7 +1732,7 @@ def test_validate_with_a_branch_refuses_a_caller_without_a_valid_token_before_an
 ) -> None:
     """FR-034: a branch validation reads Infrahub with the registered credential, so it needs a valid token."""
     branches = _spied_schema_reads(monkeypatch)
-    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    client, _projection = _discovery_client(tmp_path)
     config_id = _register(client, _package_with_missing_kind_attribute_and_relationship(), "branch-validate-auth")
     del client.headers["Authorization"]
     headers = {} if authorization is None else {"Authorization": authorization}
@@ -1790,7 +1748,7 @@ def test_validate_without_a_branch_reads_no_schema_and_is_unchanged(
 ) -> None:
     """FR-034: without a branch, validation judges declared content only, as before."""
     branches = _spied_schema_reads(monkeypatch)
-    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    client, _projection = _discovery_client(tmp_path)
     data = _package_with_missing_kind_attribute_and_relationship()
     config_id = _register(client, data, "plain-validate")
 
@@ -1812,11 +1770,9 @@ def _without_content(body: object) -> bool:
     return True
 
 
-def test_the_register_response_shows_the_checksum_and_no_declared_content(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_register_response_shows_the_checksum_and_no_declared_content(tmp_path: Path) -> None:
     """FR-038 (SYNC-107): the response holds `package_checksum` and no redacted content beside it."""
-    client, projection = _discovery_client(tmp_path, monkeypatch)
+    client, projection = _discovery_client(tmp_path)
     body = {"package": package_data(), "reason": "register"}
     headers = {"Idempotency-Key": "register-reference"}
 
@@ -1833,11 +1789,9 @@ def test_the_register_response_shows_the_checksum_and_no_declared_content(
     RegisteredConfigurationResource.model_validate(first.json())
 
 
-def test_the_new_version_response_shows_the_checksum_and_no_declared_content(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_new_version_response_shows_the_checksum_and_no_declared_content(tmp_path: Path) -> None:
     """FR-038: a created version (201), an identical version (200) and a replay hold no content."""
-    client, projection = _discovery_client(tmp_path, monkeypatch)
+    client, projection = _discovery_client(tmp_path)
     config_id = _register(client, package_data(), "register-first")
     changed = _named_package("from-netbox", url="https://netbox.example.test")
     body = {"package": changed, "reason": "second version"}
@@ -1856,9 +1810,9 @@ def test_the_new_version_response_shows_the_checksum_and_no_declared_content(
     assert replay.json() == created.json()
 
 
-def test_reading_a_version_still_returns_its_declared_content(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reading_a_version_still_returns_its_declared_content(tmp_path: Path) -> None:
     """FR-038 changes the registration responses only; `GET` of a version keeps the content."""
-    client, _projection = _discovery_client(tmp_path, monkeypatch)
+    client, _projection = _discovery_client(tmp_path)
     config_id = _register(client, package_data(), "register-read")
 
     response = client.get(f"/configs/{config_id}/versions/1")

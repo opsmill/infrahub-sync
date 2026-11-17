@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
@@ -16,7 +15,6 @@ from fastapi.testclient import TestClient
 
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.orchestration import (
     CancellationResult,
     FlowRunLog,
@@ -27,6 +25,7 @@ from infrahub_sync.service.orchestration import (
     Submission,
 )
 from infrahub_sync.service.service import RunService
+from tests.service.accounts import seed_accounts
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -102,10 +101,9 @@ def _run(run_id: str, *links: PrefectExecutionLink) -> ProductRun:
 
 
 @pytest.fixture
-def logs_api(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestClient, _FakeOrchestration]:
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": OWNER_TOKEN}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
+def logs_api(tmp_path: Path) -> tuple[TestClient, _FakeOrchestration]:
     projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
     projection.create_run(
         _run(
             RUN_ID,

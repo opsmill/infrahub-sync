@@ -12,7 +12,6 @@ FR-011: no module under `infrahub_sync/` calls a Prefect flow run delete.
 from __future__ import annotations
 
 import ast
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,11 +38,11 @@ from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_
 from infrahub_sync.runtime_schema.errors import DestinationBranchNotFoundError
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.flow import service_sync_run
 from infrahub_sync.service.orchestration import PrefectOrchestration
 from infrahub_sync.service.service import RunService
 from infrahub_sync.service.web import create_site
+from tests.service.accounts import seed_accounts
 from tests.service.execution_fixtures import append_execution
 
 if TYPE_CHECKING:
@@ -199,8 +198,7 @@ def test_no_message_line_or_output_points_at_prefect(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, prefect_api_address: str, mode: str
 ) -> None:
     projection, flow_run_id, records = _failed_run(monkeypatch, tmp_path)
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": OWNER_TOKEN}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
+    resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
     log_client = _PrefectLogClient(flow_run_id, records)
     log_client.mode = mode
     orchestration = PrefectOrchestration(log_client)  # ty: ignore[invalid-argument-type] - the log reader's two calls only.

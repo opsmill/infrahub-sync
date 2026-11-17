@@ -17,9 +17,9 @@ from infrahub_sync.product_store.bundle import (
     write_bundle,
 )
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.models import EMITTED_RESOURCES, EmittedArtifactListResource
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
+from tests.service.accounts import account_identifier, seed_accounts
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -90,11 +90,10 @@ def _package() -> ConfigurationPackage:
 
 
 @pytest.fixture
-def published(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestClient, ProductProjection, RunService]:
+def published(tmp_path: Path) -> tuple[TestClient, ProductProjection, RunService]:
     """One run carrying both a public review artifact and both internal checkpoints."""
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": OWNER_TOKEN}}))
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(projection, {"owner": {"token": OWNER_TOKEN}}).resolver
     version = projection.create_configuration(_package())
     projection.create_run(
         ProductRun(
@@ -104,7 +103,7 @@ def published(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestClie
             config_id=version.config_id,
             registry_version=version.registry_version,
             package_checksum=version.package_checksum,
-            actor="owner",
+            actor=account_identifier(projection, "owner"),
             started_at=datetime(2026, 9, 3, 12, tzinfo=timezone.utc),
             phase="accepted",
         )

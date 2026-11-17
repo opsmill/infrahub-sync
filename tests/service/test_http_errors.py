@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -15,8 +14,8 @@ from fastapi.testclient import TestClient
 
 from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
 from infrahub_sync.service.service import RunService
+from tests.service.accounts import seed_accounts
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -24,10 +23,9 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
-    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"owner": {"token": "http-errors-owner-token"}}))
     monkeypatch.delenv("INFRAHUB_SYNC_REQUIRE_APPROVAL", raising=False)
-    resolver = EnvironmentPrincipalResolver.from_environment()
     projection = local_product_projection(tmp_path.resolve())
+    resolver = seed_accounts(projection, {"owner": {"token": "http-errors-owner-token"}}).resolver
     # No route these tests call reaches the orchestration.
     service = RunService(projection, object(), secrets=resolver.secret_values)  # ty: ignore[invalid-argument-type]
     return TestClient(create_app(service, resolver))
