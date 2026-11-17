@@ -31,7 +31,8 @@ variable that changes the stack changes the tasks too.
 matches the checkout: the image carries the hash of the files that shape it as a label,
 and a change to the Python source alone never changes that hash, because the stack mounts
 the source over the installed copy. A change to the web interface's build inputs under
-`frontend/` changes it, because the image carries the built web interface.
+`frontend/` changes it, because the image carries the built web interface. After a change
+there, `dev.start` or `dev.build` rebuilds the image; `dev.restart` does not.
 
 To use an Infrahub started from Infrahub's own Compose file (`docker compose -p infrahub`),
 run `dev.start --infrahub-network infrahub_default`: the stack runs the Sync services only and
@@ -806,7 +807,8 @@ def dev_start(context: Context, infrahub_network: str = "") -> None:
     )
     _attach_worker(context, settings)
     _print_urls(settings)
-    print(f" - [{NAMESPACE}] After a code change: `uv run invoke dev.restart`")
+    print(f" - [{NAMESPACE}] After a Python change: `uv run invoke dev.restart`")
+    print(f" - [{NAMESPACE}] After a web interface change: `uv run invoke dev.start`")
 
 
 @task(name="restart")

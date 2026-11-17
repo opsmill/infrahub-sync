@@ -14,7 +14,7 @@ Psycopg, and Boto3 remain optional service dependencies.
 
 Construct a client with the address of the Sync service, a bearer token, and a positive request
 timeout. The address is an HTTP or HTTPS URL, for example `http://127.0.0.1:8001`. The client adds
-`/api` to every request; an address that already ends in `/api` is used as it is.
+`/api` to every request; an address that already ends in `/api` is accepted and not given a second `/api`.
 `SyncClient.service_url` returns the address without `/api`. TLS verification is enabled and
 redirects are refused.
 

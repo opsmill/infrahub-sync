@@ -1048,7 +1048,7 @@ curl -s http://127.0.0.1:8001/api/status
 ```
 
 `docker compose ps` shows each container and the health of `postgres`,
-`object-store`, and `prefect-server`. The `/status` response needs no
+`object-store`, and `prefect-server`. The `/api/status` response needs no
 authentication; its `worker.state` says whether a worker is live:
 
 | `worker.state` | What it means |
