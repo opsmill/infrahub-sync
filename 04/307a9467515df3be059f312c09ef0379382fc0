@@ -1,0 +1,37 @@
+dev/specs/020-product-store-failure-cause/tasks.md
+  s_a6e67454191553::t_91631f203a900a 90,94,99,106,111,113,116
+infrahub_sync/product_store/__init__.py
+  s_a6e67454191553::t_eb38b551dfcf72 34-35,45,60-61,91
+infrahub_sync/product_store/store.py
+  s_a6e67454191553::t_5d6ef3e85ce503 553-577
+infrahub_sync/service/failure_cause.py
+  s_a6e67454191553::t_c75c93c16fd630 54-55,110-113,138-144
+infrahub_sync/service/storage.py
+  s_a6e67454191553::t_f7b5e9d89049f3 18,78-82,84-91
+tests/cli/test_client_commands.py
+  s_a6e67454191553::t_317457947d30c6 1104-1134
+tests/product_store/test_contract.py
+  s_a6e67454191553::t_f82eb6f1e45648 65-66,96
+tests/service/test_failure_cause.py
+  s_a6e67454191553::t_48dea83d066547 29-34,442-495
+tests/service/test_failure_without_traceback.py
+  s_a6e67454191553::t_0e6043bf114892 25-26,28,223-302
+tests/service/test_storage.py
+  s_a6e67454191553::t_8be21d98947f50 719-812
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "04307a9467515df3be059f312c09ef0379382fc0",
+  "prompts": {},
+  "sessions": {
+    "s_a6e67454191553": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ab1fe64d171c2d2f0",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
