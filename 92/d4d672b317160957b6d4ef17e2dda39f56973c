@@ -1,0 +1,19 @@
+tests/service/test_account_presentation.py
+  s_53b50d9d96dc6f::t_638f6585c81ec6 179-181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "92d4d672b317160957b6d4ef17e2dda39f56973c",
+  "prompts": {},
+  "sessions": {
+    "s_53b50d9d96dc6f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a2a12db07477f87c5",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
