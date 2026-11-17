@@ -384,6 +384,65 @@ A run can hold `plan`, `verify` and `apply` entries in order. To show one read s
 run, use the latest entry whose `purpose` is `plan` or `sync`. The change is additive:
 existing fields keep their meaning and order.
 
+### Timings of the plan step
+
+Each orchestration entry also carries `plan_step`: the start and the end of each part of the
+plan step of a `plan` or `sync` execution. Read it to find which part of a plan takes the
+time, or which part was running when a plan stopped. The routes that return `reads` return
+`plan_step` too; `GET /runs` does not.
+
+`plan_step` and each of its parts are subject to change in a later release.
+
+```json
+"plan_step": {
+  "running": null,
+  "parts": {
+    "waiting":   {"started_at": "2026-11-16T10:00:00Z", "ended_at": "2026-11-16T10:00:04Z", "stopped_at": null},
+    "preparing": {"started_at": "2026-11-16T10:00:04Z", "ended_at": "2026-11-16T10:00:09Z", "stopped_at": null},
+    "comparing": {"started_at": "2026-11-16T10:00:41Z", "ended_at": "2026-11-16T10:01:13Z", "stopped_at": null},
+    "checking":  {"started_at": "2026-11-16T10:01:13Z", "ended_at": "2026-11-16T10:01:15Z", "stopped_at": null},
+    "saving":    {"started_at": "2026-11-16T10:01:15Z", "ended_at": "2026-11-16T10:01:16Z", "stopped_at": null}
+  }
+}
+```
+
+`parts` holds one entry per part that started, in the order the plan step runs them:
+
+| Part | Period |
+| --- | --- |
+| `waiting` | From the submission of the execution (`submitted_at`) to the moment a worker takes it (`claimed_at`). Subject to change. |
+| `preparing` | From `claimed_at` to the start of the earlier of the two reads. Subject to change. |
+| `comparing` | Deriving the operations from the two reads. Subject to change. |
+| `checking` | The checks that run on the derived plan before it is saved, which build the plan report. Subject to change. |
+| `saving` | Writing the plan and publishing it, up to the moment the run returns its plan. Subject to change. |
+
+The two reads run between `preparing` and `comparing`. Their times stay in `reads` and are not
+repeated in `plan_step`.
+
+Each entry holds three times:
+
+- `started_at` is the start of the part.
+- `ended_at` is the end of the part, and is `null` while the part runs.
+- `stopped_at` is set only for the part that was running when the execution failed, was
+  cancelled or was interrupted. It is the execution's `terminal_at`. When Prefect reports the
+  flow run as `failed`, `crashed` or `cancelled` and the execution has no `terminal_state`
+  yet, that part is returned with `started_at` only.
+
+`running` names the part that runs, and is `null` once the execution has a verdict. A part
+that did not start has no entry, so no part holds a duration that was not measured. A
+`waiting` entry is returned only when `claimed_at` is not before `submitted_at`. When an
+execution completed and the stored timings still name a running part, that part has no entry,
+because its end was not recorded; the Sync API logs a warning.
+
+`plan_step` is `null` for a `verify` or `apply` execution, for an execution recorded before the
+Sync API stored these timings, and for a `plan` or `sync` execution that the worker has not
+started yet. When the worker cannot store a timing, it logs a warning with the error class and
+continues the plan. No field holds an error message or a value from the source or destination
+data.
+
+`running` and the part names are strings in the client model, so a client from this release
+reads a run response that holds a part added by a later release.
+
 ## Routes
 
 Every route below requires `Authorization: Bearer <token>`. Every `POST` route that writes or

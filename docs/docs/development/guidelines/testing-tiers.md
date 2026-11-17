@@ -385,11 +385,14 @@ Run these commands from the repository root:
    uv run infrahub-sync sync --config-id <config-id> --version <version> --branch netbox-import --reason "import the local NetBox demo data"
    ```
 
-On the pinned dataset and the current example mapping, the plan has 1,688 operations: 1,687
-creates and one delete, which apply does not execute. After the sync, the object count of
-each kind on the `netbox-import` branch equals that kind's planned operations. A different
-count means that the mapping, the adapter, or the pinned data changed. Explain that change
-in the pull request.
+On the pinned dataset and the current example mapping, the plan has 1,687 operations, all
+creates. It holds no delete for the nodes that Infrahub creates itself, such as the built-in
+`default` IP namespace. A second plan on the same data holds 0 operations. After the sync,
+the object count of each kind on the `netbox-import` branch equals that kind's planned
+operations, except `IpamNamespace`: the branch also holds the `default` namespace, so its count
+is one more than the planned creates. `INFRAHUB_CREATED_NODES` in
+`.github/scripts/nightly_e2e.py` records that difference. A different count means that the mapping, the adapter, or the pinned data
+changed. Explain that change in the pull request.
 
 When you finish, remove both stacks and their data volumes:
 

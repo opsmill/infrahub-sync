@@ -19,7 +19,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
-from infrahub_sync.client.models import DEFAULT_LOG_LIMIT, PlanReportPageResource
+from infrahub_sync.client.models import DEFAULT_LOG_LIMIT, PlanReportPageResource, PlanStepPart, PlanStepTimings
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
@@ -86,6 +86,7 @@ from .orchestration import (
     normalized_pool_status,
 )
 from .paging import FilterValue, decode_cursor, timestamp_cursor, timestamp_key, validate_limit
+from .plan_step import stage_plan_step
 from .prefect_ui import flow_run_url
 from .read_progress import stage_reads
 from .resume_view import (
@@ -106,6 +107,26 @@ if TYPE_CHECKING:
     from .auth import Principal
 
 logger = logging.getLogger(__name__)
+
+
+def _plan_step_timings(link: PrefectExecutionLink, *, run_id: str, prefect_state: str | None) -> PlanStepTimings | None:
+    """The plan step timings of one execution as the run response returns them (spec 019, FR-014).
+
+    `None` for an execution that stored no plan step document, including every execution
+    recorded before the timings (FR-019).
+    """
+    state = stage_plan_step(link, run_id=run_id, prefect_state=prefect_state)
+    if state is None:
+        return None
+    return PlanStepTimings(
+        running=state.running,
+        parts={
+            name: PlanStepPart(started_at=times.started_at, ended_at=times.ended_at, stopped_at=times.stopped_at)
+            for name, times in state.parts.items()
+        },
+    )
+
+
 # How many plan operations the in-process cache of plan layouts holds, over all its runs
 # (research R14). A tier L plan has about 88,000 operations, and one cached operation takes
 # about 200 bytes, so the bound keeps the cache under about 40 MB in every API process.
@@ -1948,9 +1969,11 @@ class RunService:
                         terminal_outcome=link.terminal_outcome,
                         prefect_flow_run_url=link_url,
                         reads=stage_reads(link, run_id=run.run_id, prefect_state=link.last_observed_state),
+                        plan_step=_plan_step_timings(link, run_id=run.run_id, prefect_state=link.last_observed_state),
                     )
                 )
                 continue
+            prefect_state = observed.state if observed.available else link.last_observed_state
             live = None if observed.state is None else redact(observed.state, self._secrets)
             reason = None if observed.reason is None else redact(observed.reason, self._secrets)
             orchestration.append(
@@ -1971,11 +1994,8 @@ class RunService:
                     terminal_state=link.terminal_state,
                     terminal_outcome=link.terminal_outcome,
                     prefect_flow_run_url=link_url,
-                    reads=stage_reads(
-                        link,
-                        run_id=run.run_id,
-                        prefect_state=observed.state if observed.available else link.last_observed_state,
-                    ),
+                    reads=stage_reads(link, run_id=run.run_id, prefect_state=prefect_state),
+                    plan_step=_plan_step_timings(link, run_id=run.run_id, prefect_state=prefect_state),
                 )
             )
         operations = self._plan_operations(run)

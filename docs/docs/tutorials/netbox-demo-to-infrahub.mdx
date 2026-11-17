@@ -318,8 +318,8 @@ to review each plan before it writes.
 
 Run the same `plan` again to confirm the branch matches NetBox. After a successful import,
 the plan lists no creates, apart from records that other users added to the demo in the
-meantime. It records one delete of the built-in `default` IP namespace, and `apply` never
-runs deletes.
+meantime. It holds no delete for the nodes that Infrahub creates itself, such as the
+built-in `default` IP namespace, and `apply` never runs deletes.
 
 ## When a run fails
 

@@ -524,6 +524,11 @@ in that stage&#x27;s latest execution: `state`, `mode`, `started_at`, `ended_at`
 keys that have no value. A side with no read state to return reads &lt;none&gt;. Neither line is printed when that
 execution has no read state: a run recorded before the read state, a stage the worker has not started, or a
 stage whose read state the worker could not store.
+After them, one `plan_&lt;part&gt;` line per part of that execution&#x27;s plan step that started: `plan_waiting`,
+`plan_preparing`, `plan_comparing`, `plan_checking` and `plan_saving`. A part that ended shows its duration in
+seconds, the part that runs shows `running`, and a part that was running when the stage failed, was cancelled or
+was interrupted shows `stopped after &lt;seconds&gt;s`, or `stopped` when no stop time exists. No plan line is printed
+for a run recorded before these timings. The plan step lines are subject to change in a later release.
 A failed stage adds its error type and, when the run recorded them, a `cause:` and a `hint:` line.
 A `sync` that stopped after a plan that leaves out records adds a `sync stopped:` and a `hint:` line.
 A run with a write adds a `progress:` line, a `resumable:` line, one `kind` line per kind with its committed,
@@ -570,6 +575,9 @@ $ infrahub-sync runs results [OPTIONS] {run_id}
 ### `infrahub-sync runs plan`
 
 Review a saved plan summary, checksum, and operations, or list its problems, left-out or kept records.
+
+The operations count holds only creates, updates and deletes.
+A plan with 0 operations can still leave out records: problems, left-out and kept records are not operations.
 
 **Usage**:
 

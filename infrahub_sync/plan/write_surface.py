@@ -100,6 +100,22 @@ class MetadataReadingDestination(Protocol):
         """Decide, before either side of a plan is loaded, whether the destination's reads ask for metadata."""
 
 
+@runtime_checkable
+class BuiltinNodeReadingDestination(Protocol):
+    """A destination that knows which of the nodes it read Infrahub created itself (spec 019 FR-001).
+
+    Only the Infrahub destination is one. The set comes from a mark Infrahub sets on the node
+    (research R2), never from a name or a list, and holds only nodes the destination read for
+    this plan. A destination without the protocol has no such set, and every unmatched node
+    becomes a delete, as before. The `isinstance` check is presence-only, like
+    `MetadataReadingDestination`'s, so the value is checked before use.
+    """
+
+    @property
+    def builtin_node_ids(self) -> frozenset[str]:
+        """The destination node ids, among the nodes this plan read, that Infrahub created itself."""
+
+
 def resolve_destination_lineage(destination: object, *, saved_plan: PlanManifest | None = None) -> None:
     """Resolve the destination's lineage when the destination writes lineage; otherwise do nothing.
 
@@ -145,3 +161,18 @@ def destination_last_changes(destination: object) -> LastChangeCollector | None:
     if not isinstance(changes, Mapping):
         return None
     return LastChangeCollector(changes, metadata_read=destination.metadata_read is True)
+
+
+def destination_builtin_node_ids(destination: object) -> frozenset[str]:
+    """The ids of the destination nodes that Infrahub created itself, or an empty set (spec 019 FR-001).
+
+    Empty when the destination does not implement `BuiltinNodeReadingDestination`, or when the
+    value it returns is not a `set` or `frozenset`, so `derive_deletes` keeps every delete.
+    From a set, only the string members are kept; any other member is dropped.
+    """
+    if not isinstance(destination, BuiltinNodeReadingDestination):
+        return frozenset()
+    ids = destination.builtin_node_ids
+    if not isinstance(ids, (set, frozenset)):
+        return frozenset()
+    return frozenset(node_id for node_id in ids if isinstance(node_id, str))

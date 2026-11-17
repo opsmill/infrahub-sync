@@ -446,9 +446,9 @@ apply.
     ```
 
    The plan takes about two minutes. The CLI prints the `run_id`, the `plan_checksum`,
-   and the operation counts by kind. On 2026-09-29 the plan held 1,688 operations:
-   1,687 creates across 20 kinds, and one recorded delete of Infrahub's built-in
-   `default` IP namespace. Apply never executes a delete.
+   and the operation counts by kind. On 2026-09-29 the plan held 1,687 creates across
+   20 kinds. The plan holds no delete for the nodes that Infrahub creates itself, such as
+   the built-in `default` IP namespace. Apply never executes a delete.
 
 8. Review the plan, then apply it by its checksum:
 
@@ -462,8 +462,8 @@ apply.
    it takes depends on the destination: against Infrahub's own Compose file on 2026-10-05,
    an apply of 1,609 operations took 46 seconds. The CLI waits up to 30 minutes by default.
 
-9. Run the same `plan` again. After a successful apply, the new plan holds only the
-   recorded delete of the `default` namespace. Open `http://localhost:8000`, log in
+9. Run the same `plan` again. After a successful apply, the new plan holds no
+   delete of the `default` namespace. Open `http://localhost:8000`, log in
    with `admin` and `infrahub`, and select the `netbox-import` branch to browse the
    imported objects.
 

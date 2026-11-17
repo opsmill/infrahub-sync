@@ -20,7 +20,11 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 REPORTS = ROOT / ".dev" / "nightly-e2e"
 SUITES = ("integration", "smoke", "saved-plan", "from-netbox", "v2-gate")
-EXPECTED_DEMO_OPERATIONS = 1688
+EXPECTED_DEMO_OPERATIONS = 1687
+# The nodes that Infrahub creates itself on a new branch, by kind. The plan holds no delete
+# for them (ADR 0047), but the import branch still holds them, so the branch count of the
+# kind is the planned count plus this number. Nothing is left out of the plan by name.
+INFRAHUB_CREATED_NODES = {"IpamNamespace": 1}
 SCHEMA_SHA256 = "b74a0ff09cde3aafb1275293be7523f1b377d64073c43aca3ccc14cbe4c5a025"
 # The v2 release whose writes the first V3 plan is compared with. v1 and v2 shipped only as
 # the `infrahub-sync` package on PyPI, so the gate installs it from there, as a customer did.
@@ -202,14 +206,24 @@ def planned_counts(output: str) -> dict[str, int]:
 
 
 def check_import_counts(run_id: str, env: dict[str, str]) -> None:
-    """Compare branch counts with planned operations, including unexecuted deletes."""
+    """Compare the branch's node count per kind with the plan's operation count per kind.
+
+    The branch also holds the nodes that Infrahub creates itself, which the plan holds no
+    operation for (ADR 0047), so `INFRAHUB_CREATED_NODES` is added to the planned count of
+    their kind before the comparison. A kind it lists is compared even when the plan holds no
+    operation of that kind.
+    """
     from infrahub_sdk import Config, InfrahubClientSync  # noqa: PLC0415 -- live-suite dependency
 
     plan = run("uv", "run", "--no-sync", "infrahub-sync", "runs", "plan", run_id, env=env, capture=True)
-    expected = planned_counts(plan)
-    if not expected or sum(expected.values()) != EXPECTED_DEMO_OPERATIONS:
-        msg = f"the local demo plan has {sum(expected.values())} operations, expected 1688"
+    planned = planned_counts(plan)
+    if not planned or sum(planned.values()) != EXPECTED_DEMO_OPERATIONS:
+        msg = f"the local demo plan has {sum(planned.values())} operations, expected {EXPECTED_DEMO_OPERATIONS}"
         raise RuntimeError(msg)
+    expected = {
+        kind: planned.get(kind, 0) + INFRAHUB_CREATED_NODES.get(kind, 0)
+        for kind in planned.keys() | INFRAHUB_CREATED_NODES.keys()
+    }
     client = InfrahubClientSync(config=Config(address=env["INFRAHUB_ADDRESS"], api_token=env["INFRAHUB_API_TOKEN"]))
     actual = {kind: client.count(kind=kind, branch="netbox-import") for kind in expected}
     if actual != expected:
@@ -258,8 +272,11 @@ def from_netbox(env: dict[str, str]) -> None:
             capture=True,
         )
         fields = parsed_fields(result)
-        if operation == "plan" and fields.get("operations") != "1688":
-            msg = f"the local demo plan has {fields.get('operations', 'no')} operations, expected 1688"
+        if operation == "plan" and fields.get("operations") != str(EXPECTED_DEMO_OPERATIONS):
+            msg = (
+                f"the local demo plan has {fields.get('operations', 'no')} operations, "
+                f"expected {EXPECTED_DEMO_OPERATIONS}"
+            )
             raise RuntimeError(msg)
         if operation == "plan":
             plan_run_id = fields["run_id"]

@@ -2438,9 +2438,11 @@ def test_a_none_valued_cardinality_one_reference_is_absent_from_the_plan() -> No
     rack = operation_for(operations, "LocationRack")
     assert "site" not in {reference.field for reference in rack.relationships or ()}
     assert "site" not in (rack.payload or {})
-    # And there is no shape it could have taken: a `one` reference must name a peer.
+    # Plan format 5 has a shape for an emptied one-peer reference (spec 019 R4); format 4 has none.
+    emptied = {"field": "site", "peer_kind": "LocationSite", "cardinality": "one", "peers": []}
+    assert RelationshipReference.model_validate(emptied).peers == []
     with pytest.raises(ValidationError):
-        RelationshipReference(field="site", peer_kind="LocationSite", cardinality="one", peers=[])
+        RelationshipReference.model_validate(emptied, context={"format_version": 4})
 
 
 # =======================================================================================

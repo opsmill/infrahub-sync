@@ -78,6 +78,7 @@ if TYPE_CHECKING:
     from infrahub_sync.plan.review import SavedPlan
     from infrahub_sync.potenda import Potenda
     from infrahub_sync.potenda.apply_progress import ApplyProgressObserver
+    from infrahub_sync.potenda.plan_step import PlanStepObserver
     from infrahub_sync.potenda.read_progress import SideReadObserver
 
 logger = logging.getLogger(__name__)
@@ -1153,6 +1154,7 @@ def execute_run(
     _read_observer: SideReadObserver | None = None,
     _apply_progress: ApplyProgressObserver | None = None,
     _start_after: int | None = None,
+    _plan_step_observer: PlanStepObserver | None = None,
 ) -> RunResult | SavedPlan:
     """Run one product operation against a resolved instance.
 
@@ -1173,6 +1175,10 @@ def execute_run(
     progress marker and for a resume (spec 016): the observer that saves the marker, and the
     position of the last operation an earlier execution committed. Both default to `None`, so
     the CLI-local and direct Prefect paths apply the whole plan and report nothing.
+
+    `_read_observer` and `_plan_step_observer` are the worker's seams for the timings of a
+    plan: each side's read (spec 013) and the parts of the plan step after the reads (spec 019,
+    research R12). Both are set on the built engine, after the factory call.
 
     `base_directory` names the cache root this run works in. A caller that owns a
     private directory for the run — the Sync service, whose stages share no filesystem
@@ -1251,6 +1257,7 @@ def execute_run(
         ptd.force_full_extract = full_extract
         # Set after the factory call so its pinned five-keyword shape does not change.
         ptd.read_observer = _read_observer
+        ptd.plan_step_observer = _plan_step_observer
         if ptd.run_dir is None:  # get_potenda_from_instance always allocates one
             msg = "get_potenda_from_instance did not allocate a run_dir"
             raise RuntimeError(msg)

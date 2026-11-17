@@ -44,6 +44,8 @@ from infrahub_sync.client import (
     PlanLastChangeResource,
     PlanOperationResource,
     PlanResource,
+    PlanStepPart,
+    PlanStepTimings,
     PlanSummaryResource,
     PrincipalResource,
     ProtocolError,
@@ -929,6 +931,84 @@ def test_runs_show_prints_no_read_fields_for_a_run_without_read_state(client: Ma
         "flow_run_id: flow-service-1",
         "prefect_flow_run_url: <none>",
     ]
+
+
+def _with_plan_step(resource: RunResource, plan_step: PlanStepTimings | None) -> RunResource:
+    execution = resource.orchestration[0].model_copy(update={"plan_step": plan_step})
+    return resource.model_copy(update={"orchestration": (execution,)})
+
+
+def _plan_part(start: float, end: float | None = None, *, stopped: float | None = None) -> PlanStepPart:
+    return PlanStepPart(
+        started_at=READ_STARTED + timedelta(seconds=start),
+        ended_at=None if end is None else READ_STARTED + timedelta(seconds=end),
+        stopped_at=None if stopped is None else READ_STARTED + timedelta(seconds=stopped),
+    )
+
+
+def test_runs_show_prints_one_plan_step_line_per_part_after_the_read_lines(client: MagicMock) -> None:
+    """FR-018, contracts/cli.md: a part that ended prints its duration, the part that runs prints `running`."""
+    reads = StageReads(source=SideRead(state="succeeded"), destination=SideRead(state="succeeded"))
+    plan_step = PlanStepTimings(
+        running="saving",
+        parts={
+            "waiting": _plan_part(-9, -5),
+            "preparing": _plan_part(-5, 0.1),
+            "comparing": _plan_part(20, 51.7),
+            "checking": _plan_part(51.7, 54),
+            "saving": _plan_part(54),
+        },
+    )
+    client.get_run.return_value = _with_plan_step(_with_reads(_run(), reads), plan_step)
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    read_line = lines.index("destination_read: state=succeeded")
+    assert lines[read_line + 1 : read_line + 6] == [
+        "plan_waiting: 4.0s",
+        "plan_preparing: 5.1s",
+        "plan_comparing: 31.7s",
+        "plan_checking: 2.3s",
+        "plan_saving: running",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("part", "expected"),
+    [
+        pytest.param(_plan_part(20, stopped=33.3), "plan_comparing: stopped after 13.3s", id="stopped-at-verdict"),
+        pytest.param(_plan_part(20), "plan_comparing: stopped", id="stopped-without-verdict"),
+    ],
+)
+def test_runs_show_prints_how_a_part_that_did_not_end_stopped(
+    client: MagicMock, part: PlanStepPart, expected: str
+) -> None:
+    """FR-016: a part that was running when the step failed shows its time up to the verdict, if any."""
+    client.get_run.return_value = _with_plan_step(_run(), PlanStepTimings(parts={"comparing": part}))
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    plan_lines = [line for line in result.output.splitlines() if line.startswith("plan_")]
+    assert plan_lines == [expected]
+
+
+@pytest.mark.parametrize(
+    "plan_step",
+    [pytest.param(None, id="old-run"), pytest.param(PlanStepTimings(), id="no-part-started")],
+)
+def test_runs_show_prints_no_plan_step_line_for_a_run_without_plan_step_timings(
+    client: MagicMock, plan_step: PlanStepTimings | None
+) -> None:
+    """FR-019: a run recorded before the timings, or with no part started, prints no plan line and succeeds."""
+    client.get_run.return_value = _with_plan_step(_run(), plan_step)
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert not [line for line in result.output.splitlines() if line.startswith("plan_")]
 
 
 @pytest.mark.parametrize(
@@ -2674,3 +2754,75 @@ def test_events_follow_prints_each_new_event_once(client: MagicMock, monkeypatch
     ]
     assert polls == [2.0, 2.0]
     client.iter_events.assert_not_called()
+
+
+def _lag_update(peers: list[dict[str, Any]], *, cardinality: str = "one") -> PlanOperationResource:
+    """An interface update whose `lag` reference holds `peers`."""
+    return PlanOperationResource(
+        operation_id="op-update",
+        action="update",
+        kind="InterfacePhysical",
+        identity={"device": "edge-01", "name": "et-0/0/1"},
+        tier=0,
+        payload={},
+        relationships=({"field": "lag", "peer_kind": "InterfaceLag", "cardinality": cardinality, "peers": peers},),
+        destination_id="dest-1",
+    )
+
+
+def _plan_of(operation: PlanOperationResource) -> PlanResource:
+    plan = _plan()
+    summary = plan.summary.model_copy(
+        update={
+            "by_action": {"update": 1},
+            "by_kind": {"InterfacePhysical": 1},
+            "total": 1,
+            "deletes_not_executed": 0,
+        }
+    )
+    return plan.model_copy(update={"operations": (operation,), "summary": summary})
+
+
+def test_runs_plan_detail_states_that_an_emptied_one_peer_relationship_becomes_empty(client: MagicMock) -> None:
+    """FR-009: the detail names the relationship and states that it becomes empty."""
+    client.get_plan.return_value = _plan_of(_lag_update([]))
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.split("\n")
+    assert "op-update update InterfacePhysical device=edge-01 name=et-0/0/1" in lines
+    assert "  lag: becomes empty" in lines
+    assert "by_action: update=1" in lines
+    assert "operations: 1" in lines
+
+
+@pytest.mark.parametrize(
+    ("peers", "cardinality"),
+    [([{"name": "ae0"}], "one"), ([], "many")],
+    ids=["a one-peer relationship that holds a peer", "an emptied many relationship"],
+)
+def test_runs_plan_detail_states_becomes_empty_only_for_an_emptied_one_peer_relationship(
+    client: MagicMock, peers: list[dict[str, Any]], cardinality: str
+) -> None:
+    client.get_plan.return_value = _plan_of(_lag_update(peers, cardinality=cardinality))
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert "becomes empty" not in result.output
+
+
+def test_runs_plan_detail_escapes_the_name_of_an_emptied_relationship(client: MagicMock) -> None:
+    operation = _lag_update([])
+    forged = operation.model_copy(
+        update={
+            "relationships": ({"field": "lag\x1b[2K", "peer_kind": "InterfaceLag", "cardinality": "one", "peers": []},)
+        }
+    )
+    client.get_plan.return_value = _plan_of(forged)
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert "  lag\\x1b[2K: becomes empty" in result.output.split("\n")

@@ -33,11 +33,17 @@ from infrahub_sync.plan.identity import OPERATION_ID_PATTERN, canonical_identity
 
 # `1` is reserved for the pre-existing row format the reader refuses (FR-019); no manifest
 # ever carries it.
-PLAN_FORMAT_VERSION = 4
-# Read and review accept all three. A format-2 plan's updates carry no recorded destination
+PLAN_FORMAT_VERSION = 5
+# Read and review accept all four. A format-2 plan's updates carry no recorded destination
 # id, so they cannot be keyed — reviewing such a plan is still useful, applying it is not safe
 # (see `PlanFormatApplyUnsupportedError`). Format 3 has no plan report (spec 007 research R9).
-SUPPORTED_FORMAT_VERSIONS = frozenset({2, 3, 4})
+# Format 5 differs from format 4 only in that an update can empty a one-peer relationship
+# (spec 019 research R4, R5), so apply accepts both.
+SUPPORTED_FORMAT_VERSIONS = frozenset({2, 3, 4, 5})
+
+# The format that lets a one-peer reference of an update hold no peer, meaning "the relationship
+# becomes empty" (spec 019 FR-005 to FR-010, contracts/plan-format-5.md).
+EMPTIED_ONE_PEER_FORMAT_VERSION = 5
 
 # The format that introduced `plan/report.jsonl` and the manifest's `report` record (spec 007,
 # contracts/plan-artifact-format-4.md). A manifest of this format or later must carry it.
@@ -71,18 +77,13 @@ DestinationIdentity = dict[str, Any]
 class RelationshipReference(BaseModel):
     """A peer named by kind and identity, never by a destination-assigned id.
 
-    **A plan cannot clear a cardinality-one peer, by design in v1.**
-    There is no encoding for an emptied cardinality-one relationship: `cardinality: "one"`
-    requires exactly one peer, and the reference being *absent* from the operation means the
-    field carries no value of that kind at all rather than that it should be emptied — the
-    same asymmetry `_validate_cardinality` records for the many case. Derivation cannot
-    produce one either, because `derive._resolve_references` treats a `None`-valued reference
-    field as absent and skips it.
+    From plan format 5 on, a `cardinality: "one"` reference with an **empty** `peers` list
+    means "this relationship becomes empty" (spec 019 research R4). `PlannedOperation` allows
+    it on an update only, and never on a field that is part of the operation identity. In a
+    plan of an earlier format a one-peer reference names exactly one peer.
 
-    A relationship a plan does not mention is a
-    relationship the apply leaves alone. So an operator who needs a cardinality-one peer
-    cleared clears it at the destination. Extending the format to encode it is a follow-up
-    issue; `format_version` is the mechanism that would carry the extension.
+    A relationship a plan does not mention is a relationship the apply leaves alone: the
+    reference being *absent* from the operation is not the same as an empty reference.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -93,21 +94,45 @@ class RelationshipReference(BaseModel):
     peers: list[DestinationIdentity]
 
     @model_validator(mode="after")
-    def _validate_cardinality(self) -> RelationshipReference:
-        """A `one` reference names exactly one peer; a `many` reference may name none.
+    def _validate_cardinality(self, info: ValidationInfo) -> RelationshipReference:
+        """A `one` reference names at most one peer; a `many` reference may name none.
 
         An **empty** `peers` under `cardinality == "many"` means the peer set is
         deliberately empty and the replace-set write acts on it; the reference being
         **absent** from the operation means it carries no value of that kind at all. The
         two are never interchangeable (FR-028.2).
+
+        Under `cardinality == "one"`, an empty `peers` means the relationship becomes empty,
+        from plan format 5 on. The format comes from the reader's validation context; with no
+        context the reference is built in process, so the current format applies, as for
+        `PlannedOperation.destination_id`.
         """
-        if self.cardinality == "one" and len(self.peers) != 1:
+        if self.cardinality != "one":
+            return self
+        format_version = _context_format_version(info)
+        allowed = (0, 1) if format_version >= EMPTIED_ONE_PEER_FORMAT_VERSION else (1,)
+        if len(self.peers) not in allowed:
+            expected = "at most one peer" if len(allowed) > 1 else "exactly one peer"
             msg = (
                 f"Relationship reference {self.field!r} declares cardinality 'one' and must name "
-                f"exactly one peer, got {len(self.peers)}."
+                f"{expected}, got {len(self.peers)}."
             )
             raise ValueError(msg)
         return self
+
+    @property
+    def empties_one_peer(self) -> bool:
+        """Whether this reference empties a one-peer relationship (plan format 5)."""
+        return self.cardinality == "one" and not self.peers
+
+
+def _context_format_version(info: ValidationInfo) -> int:
+    """The plan format the reader validates against, or the current format with no reader context."""
+    context = info.context
+    format_version = context.get("format_version") if isinstance(context, Mapping) else None
+    if not isinstance(format_version, int) or isinstance(format_version, bool):
+        return PLAN_FORMAT_VERSION
+    return format_version
 
 
 class PlannedOperation(BaseModel):
@@ -236,6 +261,7 @@ class PlannedOperation(BaseModel):
                 "writes would depend on reference order, so the record is ambiguous."
             )
             raise ValueError(msg)
+        self._refuse_misplaced_emptied_references()
         if self.action == "delete":
             if self.payload is not None:
                 msg = f"Operation {self.operation_id!r} is a delete and must carry no payload."
@@ -293,6 +319,31 @@ class PlannedOperation(BaseModel):
                 )
                 raise ValueError(msg)
         return self
+
+    def _refuse_misplaced_emptied_references(self) -> None:
+        """Allow an emptied one-peer reference on an update only, and never on an identity field.
+
+        A create holds no entry for a relationship it creates without a peer, and a delete
+        writes no relationship, so for both an emptied reference has no meaning (spec 019
+        FR-007). An identity field keys the convergent write, so it cannot become empty. The
+        identity check runs before the identity comparison below, which reads the one peer.
+        """
+        for reference in self.relationships or ():
+            if not reference.empties_one_peer:
+                continue
+            if self.action != "update":
+                msg = (
+                    f"Operation {self.operation_id!r} on kind {self.kind!r}: a {self.action} cannot empty "
+                    f"relationship `{reference.field}`. Only an update records that a one-peer "
+                    "relationship becomes empty."
+                )
+                raise ValueError(msg)
+            if reference.field in self.identity:
+                msg = (
+                    f"Operation {self.operation_id!r} on kind {self.kind!r} cannot empty identity field "
+                    f"`{reference.field}`: the identity keys the write, so it cannot become empty."
+                )
+                raise ValueError(msg)
 
 
 def require_run_relative_path(value: str) -> str:
@@ -810,6 +861,7 @@ ProblemType: TypeAlias = Literal[
     "peer_not_found_in_source",
     "destination_identity_ambiguous",
     "transform_failed",
+    "required_relationship_empty_in_source",
 ]
 """The stable problem type names (FR-002, FR-025). A later release may add a name; an
 existing name is never renamed or removed."""
