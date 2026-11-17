@@ -46,7 +46,8 @@ name, configuration and version, state, cron, time zone, next start time.
 
 ## `infrahub-sync schedules show <schedule>`
 
-Prints every field of the schedule.
+Prints every field of the schedule, with its state, the reason of a stopped schedule, its last
+run and the count of consecutive failed runs (FR-033).
 
 ## `infrahub-sync schedules change <schedule>`
 

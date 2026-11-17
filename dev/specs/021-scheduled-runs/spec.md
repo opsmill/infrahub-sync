@@ -70,6 +70,25 @@ Sources:
 - **Missed start**: a start whose time passed while the worker or the task manager of the Sync
   service was not running.
 
+## Clarifications
+
+### Session 2026-11-17
+
+- Q: Can one configuration have several schedules? → A: No. At most one schedule that is not
+  deleted for each configuration; a request for a second one is refused with the name of the
+  first.
+- Q: What does a schedule do when its runs keep failing? → A: After 5 consecutive failed runs it
+  stops with the reason `repeated-failures` and records an event. Its owner resumes it. The
+  number is fixed.
+- Q: Is scheduling delivered before the event system exists? → A: Yes. Scheduling is delivered
+  without it, the guide states how a team checks a schedule, and the event system follows as its
+  own specification.
+- Q: What happens to the open proposed change of a schedule that is deleted, or changed to write
+  to the default branch? → A: It stays in Infrahub with its branch. The answer to the request
+  names them, so the operator knows what is left to merge or close.
+- Q: How soon after its start time must a scheduled run start? → A: Within 1 minute, while the
+  worker and the task manager are running.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Scheduled sync with review in Infrahub (Priority: P1)
@@ -128,9 +147,9 @@ branches and the proposed changes.
     and events.
 12. **Given** a schedule owned by one actor, **When** another actor who is not an administrator
     asks to pause, change or delete it, **Then** the request is refused.
-13. **Given** a cron expression or a time zone that is not valid, or a name that another
-    schedule holds, **When** an operator asks for a schedule, **Then** the request is refused
-    with the reason and no schedule is created.
+13. **Given** a cron expression or a time zone that is not valid, a name that another schedule
+    holds, or a configuration that already has a schedule, **When** an operator asks for a
+    schedule, **Then** the request is refused with the reason and no schedule is created.
 14. **Given** a schedule whose owner's actor no longer exists on the Sync API, **When** a start
     passes, **Then** no run starts and the schedule reports that it stopped for that reason.
 15. **Given** that stopped schedule and an owner's actor that exists again, **When** the owner
@@ -149,6 +168,9 @@ branches and the proposed changes.
 20. **Given** a schedule with branch review, **When** a plan leaves out 13 records of 4,013,
     **Then** the run writes the 4,000 remaining records to its branch, whatever the left-out
     setting is, and the proposed change states that 13 records were left out.
+21. **Given** a schedule whose last 4 runs failed, **When** a fifth run fails, **Then** the
+    schedule stops with the reason `repeated-failures`, an event records it, and no further run
+    starts until its owner resumes it.
 
 ---
 
@@ -237,8 +259,10 @@ and take over a stopped schedule. Check the runs and the events each time.
   skipped and recorded, and neither is recorded as a failure.
 - A run that a person started is in progress at a start time. The overlap policy applies, because
   it covers every run of the same configuration.
-- A scheduled run fails. The schedule starts a run at the next start, and keeps doing so. It does
-  not pause itself. The earlier proposed change stays as it was.
+- A scheduled run fails. The schedule starts a run at the next start. The earlier proposed change
+  stays as it was. After 5 failed runs in a row, the schedule stops and reports that reason.
+- A source is out of reach for three hours and an hourly schedule fails three times. The fourth
+  run succeeds, and the count of failed runs starts again from zero.
 - A scheduled run fails, is interrupted or is cancelled after it created its branch. The earlier
   proposed change is not closed. The schedule holds a record of the new branch, and its next
   successful run deletes it. A person cannot resume such a run.
@@ -258,15 +282,19 @@ and take over a stopped schedule. Check the runs and the events each time.
 - A start falls in the hour that a daylight-saving change removes or repeats in the schedule's
   time zone. The schedule starts at most one run for that start.
 - An operator deletes a schedule while one of its runs is in progress. The run ends normally and
-  no further run starts. The open proposed change of the schedule stays in Infrahub.
+  no further run starts.
+- An operator deletes a schedule, or changes it to write to the default branch, while it has an
+  open proposed change. The proposed change and its branch stay in Infrahub, and the answer to
+  the request names them. A person merges or closes the proposed change in Infrahub.
 - The configuration version that a schedule names can no longer be run. No run is created, and
   the start is recorded as failed with the reason.
 - The Sync API cannot reach its task manager when an operator creates or changes a schedule. The
   request reports it, the schedule is stored, and it starts no run until it is handed over.
 - The Sync API is not running at a start time. The run still starts, because the Sync API takes
   no part in a start.
-- Two schedules name the same configuration. Each start follows the overlap policy of its own
-  schedule, and two runs of that configuration never write at the same time.
+- An operator asks for a second schedule for a configuration, for example to add a start at
+  14:00 to a nightly schedule. The request is refused. The operator changes the cron expression
+  of the existing schedule, for example to `0 2,14 * * *`.
 - The Sync API is restarted with required approval turned on, while a schedule writes to the
   default branch. At its next start the schedule starts no run, stops, and reports that reason.
   It becomes active again when its owner changes its write target to branch review.
@@ -306,7 +334,9 @@ and take over a stopped schedule. Check the runs and the events each time.
 - **FR-006**: A schedule MUST be a record separate from the configuration, and MUST name one
   configuration and one version of it. Registering a newer version MUST NOT change what the
   schedule runs. A schedule MUST have a name that the operator chooses, unique among the
-  schedules that are not deleted.
+  schedules that are not deleted. A configuration MUST have at most one schedule that is not
+  deleted, whatever its version: a request for a second one MUST be refused with the name of the
+  existing schedule.
 - **FR-007**: When a newer version of the configuration exists than the one a schedule names, the
   Sync API MUST report it on the schedule, and the CLI MUST show a warning wherever it lists or
   shows the schedule.
@@ -320,6 +350,10 @@ and take over a stopped schedule. Check the runs and the events each time.
 - **FR-024**: Users MUST be able to list schedules, view one schedule, and pause, resume, change
   and delete a schedule, from the CLI and the Sync API. A paused schedule MUST start no run and
   MUST keep its cadence, settings and events.
+- **FR-034**: Deleting a schedule, or changing its write target to the default branch, MUST leave
+  its open proposed change and that branch in Infrahub. The answer to the request MUST name the
+  proposed change and the branch that are left. Infrahub Sync MUST NOT close or delete them
+  afterwards.
 
 #### Owner
 
@@ -331,6 +365,12 @@ and take over a stopped schedule. Check the runs and the events each time.
 - **FR-013**: When the owner's actor no longer exists on the Sync API, the schedule MUST stop
   starting runs and MUST report that state and its reason. A resume of a stopped schedule MUST
   succeed when the reason no longer holds, and MUST be refused when it still holds.
+- **FR-032**: After 5 consecutive failed runs of a schedule, the schedule MUST stop with the
+  reason `repeated-failures`, and MUST record an event. A run counts as failed when it ends as
+  failed, interrupted or ambiguous. A run that succeeds, or that ends with no change, MUST set
+  the count to zero. A skipped, missed or failed start, a run that a person cancelled, and a run
+  that stopped for a review of records left out MUST NOT change the count. A resume of a schedule
+  stopped for this reason MUST always succeed and MUST set the count to zero.
 - **FR-026**: An administrator MUST be able to take over a schedule, and then becomes its owner.
   A schedule that stopped because its owner's actor no longer exists MUST become active.
 
@@ -398,12 +438,16 @@ and take over a stopped schedule. Check the runs and the events each time.
   Every event of a scheduled run MUST also name its schedule.
 - **FR-025**: No event, schedule record, message or log line of scheduling MUST hold a credential
   or source data.
+- **FR-033**: The user guide MUST state that Infrahub Sync sends no notification for a scheduled
+  run, and MUST give the commands with which a team checks the last runs, the skipped and missed
+  starts and the state of a schedule. Viewing one schedule MUST show its state, the reason of a
+  stopped schedule, its last run and the count of consecutive failed runs.
 
 #### Requirements for each user story
 
 | User story | Requirements |
 | --- | --- |
-| 1 (P1) | FR-001, FR-002, FR-006, FR-008 to FR-015, FR-020 to FR-025, FR-027 to FR-031 |
+| 1 (P1) | FR-001, FR-002, FR-006, FR-008 to FR-015, FR-020 to FR-025, FR-027 to FR-034 |
 | 2 (P2) | FR-003, FR-004, FR-005 |
 | 3 (P3) | FR-007, FR-016 to FR-019, FR-026 |
 
@@ -418,7 +462,7 @@ schedule does not show a "start late by at most" duration.
   Holds the cadence, the time zone, the write target, the left-out setting with who turned it on
   and when, the overlap policy, the "start late by at most" duration, and its state: active,
   paused, stopped or deleted. A stopped schedule holds the reason: the owner's actor no longer
-  exists, or the Sync API now requires approval for its write target.
+  exists, the Sync API now requires approval for its write target, or 5 runs failed in a row.
 - **Run**: existing. Gains a trigger type and, for a scheduled run, the schedule's identifier
   and the start time of the cadence that it serves.
 - **Event**: existing. Gains the event types of FR-023. Together they are the history of a
@@ -444,6 +488,8 @@ schedule does not show a "start late by at most" duration.
   schedule, which configuration version and who owns the schedule.
 - **SC-006**: Two runs of the same configuration never write at the same time, whoever or whatever
   started them.
+- **SC-007**: While the worker and the task manager of the Sync service are running, a scheduled
+  run starts within 1 minute of its start time.
 
 ## Branch and proposed change capabilities
 
@@ -467,11 +513,12 @@ proposed changes in Infrahub. The deployment guide states this.
 
 ## Assumptions
 
-- **Delivery of events to the outside is a separate specification.** An event system will deliver
-  the events of Infrahub Sync, by webhook or another channel, for successful and failed runs,
-  whoever started them. Until it exists, a team reads a schedule's events with `GET /events` or
-  `infrahub-sync events`. Whether that event system is delivered before user story 1 is not
-  decided.
+- **Delivery of events to the outside is a separate specification, and scheduling does not wait
+  for it.** An event system will deliver the events of Infrahub Sync, by webhook or another
+  channel, for successful and failed runs, whoever started them. Until it exists, nothing tells a
+  team that a scheduled run failed, that a start was skipped or that a schedule stopped. A team
+  checks `infrahub-sync events`, the schedule, or the proposed changes in Infrahub: a morning
+  with no new proposed change after a night with changes in the source is a sign to look.
 - **Telemetry is a separate specification.** Scheduling adds nothing to it.
 - **Constitution principle I is amended with this work.** The product owner decided on
   2026-11-17 to amend it for both write targets, and the amendment is in version 1.1.0 of the
@@ -488,8 +535,9 @@ proposed changes in Infrahub. The deployment guide states this.
 - **Branch name pattern.** The pattern is fixed and follows the one Infrahub MCP uses for its
   session branches: a fixed prefix, the schedule's name, the date and a short suffix. A schedule
   cannot set its own pattern.
-- **A failing schedule keeps starting.** A source outage ends without anyone acting, and the next
-  run then succeeds.
+- **A failing schedule stops after 5 failed runs in a row.** A short outage of the source ends
+  without anyone acting, and the next run then succeeds. A schedule that fails for a lasting
+  cause stops and says so.
 - **Shared review duty.** A team in which several people manage one schedule makes them
   administrators, or creates the schedule with a shared team token.
 - **The web interface** shows schedules from the same Sync API. It is built separately and is not

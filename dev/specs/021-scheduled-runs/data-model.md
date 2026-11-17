@@ -10,7 +10,8 @@ Table `schedules` of the product store. One row for each schedule, kept after de
 | --- | --- | --- |
 | `schedule_id` | text, primary key | Generated: `s-` and 32 hexadecimal characters. |
 | `name` | text | Identifier pattern of the API. Unique among schedules that are not deleted. |
-| `config_id` | text | A registered configuration. |
+| `consecutive_failures` | integer | The count of failed runs in a row (FR-032). Default 0. |
+| `config_id` | text | A registered configuration. At most one schedule that is not deleted for each configuration. |
 | `registry_version` | integer | A registered version of that configuration. |
 | `cron` | text | A five-field cron expression that Prefect's `CronSchedule` accepts (R3). |
 | `timezone` | text | A time zone name that Prefect's `CronSchedule` accepts. Default `UTC`. |
@@ -21,7 +22,7 @@ Table `schedules` of the product store. One row for each schedule, kept after de
 | `overlap_policy` | text | `reject` (default) or `queue`. `queue` is accepted from user story 3. |
 | `start_late_by_at_most_seconds` | integer | Default 3600, from 60 to 604800. Used, and shown by the API, from user story 3. |
 | `state` | text | `active`, `paused`, `stopped` or `deleted`. |
-| `state_reason` | text or null | For `stopped`: `owner-not-found` or `approval-required`. |
+| `state_reason` | text or null | For `stopped`: `owner-not-found`, `approval-required` or `repeated-failures`. |
 | `owner` | text | The actor name of the owner (R8). No token is stored. |
 | `next_start_at` | timestamp or null | In UTC. Null when the state is not `active`. Computed, not stored (R3). |
 | `last_start_at` | timestamp or null | The most recent start that was admitted or recorded (R10). |
@@ -43,6 +44,12 @@ Rules:
 - `next_start_at` is computed from `cron` and `timezone` each time the schedule is returned. It
   is always later than the time of the computation.
 - The Prefect schedule is active only when the state is `active`.
+- `consecutive_failures` is updated in the transaction that saves the end of a scheduled run: plus
+  one for a run that ends as failed, interrupted or ambiguous; zero for a run that succeeds or ends
+  with no change; unchanged for a run that a person cancelled or that stopped for a review of
+  records left out. At 5, the same transaction stops the schedule and saves the event. The worker
+  cannot reach Prefect's schedule from there: until the next match of Prefect to the store, the
+  admission of a start answers `schedule-not-active` and creates no run.
 - A change may set `registry_version`, `cron`, `timezone`, `write_target`, `write_when_left_out`,
   `overlap_policy` and `start_late_by_at_most_seconds`. It may not set `name`, `config_id` or
   `owner`.
@@ -56,7 +63,9 @@ State transitions:
 | `paused` | resume | `active` |
 | `active` | the owner's actor does not exist on the Sync API, when the API process starts | `stopped`, reason `owner-not-found` |
 | `active` | the Sync API requires approval and the write target is the default branch, when the API process starts | `stopped`, reason `approval-required` |
+| `active` | the fifth consecutive failed run ends | `stopped`, reason `repeated-failures` |
 | `stopped` | resume, when the reason no longer holds | `active` |
+| `stopped` (`repeated-failures`) | resume, always | `active`, with `consecutive_failures` at 0 |
 | `stopped` (`owner-not-found`) | take over by an administrator (user story 3) | `active`, with the administrator as owner |
 | `stopped` (`approval-required`) | change of the write target to `branch-review` | `active` |
 | `active`, `paused`, `stopped` | delete | `deleted` |

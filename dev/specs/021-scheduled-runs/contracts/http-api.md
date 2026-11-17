@@ -28,6 +28,7 @@ existing rules for a repeated key. Errors use the existing error body.
   "waiting_start_at": null,
   "last_run_id": "…",
   "prefect_synced": true,
+  "consecutive_failures": 0,
   "open_branch": {"run_id": "…", "branch": "sync/from-netbox-nightly-20261117-a1b2c3", "proposed_change_id": "…"},
   "created_at": "2026-11-17T09:12:00Z",
   "updated_at": "2026-11-17T09:12:00Z"
@@ -38,7 +39,8 @@ existing rules for a repeated key. Errors use the existing error body.
   `registry_version`, else null (user story 3).
 - `newer_version`, `start_late_by_at_most_seconds` and `waiting_start_at` are absent before user
   story 3 is delivered.
-- `state_reason` is `owner-not-found` or `approval-required` for a stopped schedule, else null.
+- `state_reason` is `owner-not-found`, `approval-required` or `repeated-failures` for a stopped
+  schedule, else null.
 - `last_run_id` is the schedule's most recent run, else null. `GET /runs/{run_id}` holds its
   outcome.
 - `open_branch` is the schedule's most recent branch in the state `open`, else null.
@@ -67,6 +69,7 @@ Refusals:
 | --- | --- | --- |
 | 404 | `configuration-version-not-found` | The configuration or the version is not registered. |
 | 409 | `schedule-name-in-use` | A schedule that is not deleted has that name. |
+| 409 | `schedule-exists-for-configuration` | The configuration already has a schedule that is not deleted. The message names it. |
 | 409 | `approval-required-for-schedule` | `write_target` is `default-branch` and the Sync API requires approval. The message names `INFRAHUB_SYNC_REQUIRE_APPROVAL`. |
 | 409 | `schedule-branch-declared` | `write_target` is `branch-review` and the configuration version declares its own destination branch. |
 | 422 | `schedule-left-out-not-applicable` | `write_when_left_out` is true and `write_target` is `branch-review`. A run with branch review always writes the remaining records. |
@@ -125,7 +128,9 @@ active.
 ## `POST /schedules/{schedule_id}/delete`
 
 Body: an optional `reason`. Answer `200` with the schedule resource in the state `deleted`. A
-run in progress is not cancelled. The open proposed change stays in Infrahub. Refusals: `403
+run in progress is not cancelled. The open proposed change and its branch stay in Infrahub, and
+`open_branch` in the answer names them (FR-034). The same holds for a change of the write target
+to `default-branch`. Refusals: `403
 forbidden`, `404 schedule-not-found`. A second deletion answers `200`.
 
 ## `POST /schedules/{schedule_id}/take-over` (user story 3)

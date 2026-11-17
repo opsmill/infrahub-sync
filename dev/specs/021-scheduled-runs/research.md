@@ -178,6 +178,10 @@ write to the default branch is never chosen for the operator (FR-003).
 **Decision record**: the rule amends ADR 0037 and needs its own ADR, written when the
 specification is extracted.
 
+**A third stop reason**, `repeated-failures`, is set by the worker with the end of the fifth
+failed run in a row (FR-032). The count is a column of the schedule, updated in the transaction
+that saves the end of the run.
+
 ## R7. Overlap: one store question, asked when a start is admitted
 
 **Decision**: A new store method answers "which run of configuration X is in progress". A run is

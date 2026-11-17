@@ -57,14 +57,14 @@ the development stack, which is the only tier that runs Prefect's scheduler.
 
 **Project Type**: a web service with a worker, a CLI and an HTTP client, in one Python package.
 
-**Performance Goals**: a run starts within 30 seconds of its start time while the worker and the
-Prefect server are running. Prefect marks a run late after 15 seconds, and the worker asks for
+**Performance Goals**: a run starts within 1 minute of its start time while the worker and the
+Prefect server are running (SC-007). Prefect marks a run late after 15 seconds, and the worker asks for
 work every 10 seconds.
 
 **Constraints**: no credential in a schedule record or an event. No new container and no
 periodic task in the API process. `POST /runs` is not changed. A product database of an earlier build must be replaced (R12).
 
-**Scale/Scope**: tens of schedules for each deployment, with cadences from one minute to one
+**Scale/Scope**: at most one schedule for each configuration, so tens of schedules for each deployment, with cadences from one minute to one
 week. About 8 routes, 8 CLI commands, 2 tables.
 
 ## Constitution Check
