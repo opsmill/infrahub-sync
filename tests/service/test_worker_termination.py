@@ -46,6 +46,23 @@ def test_the_sigterm_handler_is_removed_afterwards() -> None:
     assert asyncio.run(scenario()) is False
 
 
+def test_a_handled_sigterm_leaves_no_cancellation_pending() -> None:
+    """A later `TaskGroup` or `timeout` in the same task must not count the handled SIGTERM."""
+
+    async def start() -> None:
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.sleep(30)
+
+    async def scenario() -> int:
+        await worker.run_until_terminated(start)
+        task = asyncio.current_task()
+        assert task is not None
+        # `Task.cancelling` is Python 3.11+, as the service itself is.
+        return task.cancelling() if sys.version_info >= (3, 11) else 0
+
+    assert asyncio.run(scenario()) == 0
+
+
 def test_a_cancel_without_sigterm_still_propagates() -> None:
     async def start() -> None:
         await asyncio.sleep(30)

@@ -556,30 +556,37 @@ def neutral_working_directory() -> Iterator[Path]:
 async def run_until_terminated(start: Callable[[], Awaitable[object]]) -> None:
     """Run `start()` and stop it when the process receives SIGTERM.
 
-    Kubernetes and Docker stop a container with SIGTERM. The worker is the container's
-    first process (PID 1), and the kernel delivers no signal to PID 1 that the process
-    has no handler for. Python installs no SIGTERM handler, and neither does Prefect's
-    worker, so without this handler the worker ran until the grace period ended and was
-    killed. The handler cancels the worker task, so the worker's own exit steps run, and
-    the process exits 0.
+    Kubernetes and Docker stop a container with SIGTERM, and tini, the image's entrypoint,
+    passes it on to the worker. Python installs no SIGTERM handler, and neither does
+    Prefect's worker, so without this handler the signal ends the worker at once, before
+    its exit steps run; a worker started as the container's first process (PID 1), without
+    tini, does not receive the signal at all and is killed when the grace period ends. The
+    handler cancels the worker task, so the worker's own exit steps run, and the process
+    exits 0.
     """
     loop = asyncio.get_running_loop()
     task = asyncio.current_task()
     if task is None:  # pragma: no cover -- a coroutine run by asyncio always has a task
         msg = "run_until_terminated must run inside an asyncio task"
         raise RuntimeError(msg)
-    terminated = asyncio.Event()
+    terminated = False
 
     def terminate() -> None:
-        terminated.set()
+        nonlocal terminated
+        terminated = True
         task.cancel()
 
     loop.add_signal_handler(signal.SIGTERM, terminate)
     try:
         await start()
     except asyncio.CancelledError:
-        if not terminated.is_set():
+        if not terminated:
             raise
+        # The cancellation this handler requested ends here. asyncio asks a task that
+        # suppresses one to withdraw it, so a later `TaskGroup` or `timeout` in this task
+        # does not count it as a cancellation still pending.
+        if sys.version_info >= (3, 11):
+            task.uncancel()
     finally:
         loop.remove_signal_handler(signal.SIGTERM)
 

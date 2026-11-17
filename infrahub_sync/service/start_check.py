@@ -32,7 +32,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-START_REFUSED_MESSAGE = "the service bootstrap for this Sync version and work pool has not completed"
+# Every refusal ends with this line, whatever its cause: a missing or different record, a
+# database that cannot be reached or read, or an unknown installed version. The line logged
+# before it names the cause.
+START_REFUSED_MESSAGE = (
+    "refusing to start: the bootstrap record for this Sync version and work pool could not be confirmed"
+)
 
 
 class StartRefusedError(RuntimeError):
