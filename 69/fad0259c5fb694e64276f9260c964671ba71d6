@@ -1,0 +1,48 @@
+tests/product_store/test_contract.py
+  s_313229fc4d1c44::t_0b414549c5ae2a 137-138,148-151
+  s_313229fc4d1c44::t_d1e2379ba1fa90 4293,4295-4296
+  s_313229fc4d1c44::t_50608578b8ff0f 4204-4207,4212,4224,4233,4242,4246-4254
+  s_313229fc4d1c44::t_2fb63669e81ef4 116-122
+  s_313229fc4d1c44::t_9a0acf26b3f159 4255
+tests/product_store/test_layout_check.py
+  s_313229fc4d1c44::t_4498d3d470e892 1-92,94-149,151,153-178
+  s_313229fc4d1c44::t_7c68f2de1d917a 93
+  s_313229fc4d1c44::t_8066b602281628 150
+  s_313229fc4d1c44::t_69ac65f7cde27b 152
+dev/specs/020-product-store-failure-cause/research.md
+  s_a1768729d8c435::t_a9690edc9a8622 213-238
+dev/specs/020-product-store-failure-cause/tasks.md
+  s_a1768729d8c435::t_56787c443e8347 133,141,149,157,183,189,195,197
+infrahub_sync/product_store/store.py
+  s_a1768729d8c435::t_a1ed2420c987fe 15,20,375-383,589-609,952,963-964,977-1002
+infrahub_sync/service/storage.py
+  s_a1768729d8c435::t_da54f8098c255e 294-297
+tests/product_store/test_postgresql_isolation.py
+  s_a1768729d8c435::t_9ddd4c0a792b01 473-522
+tests/service/test_storage.py
+  s_a1768729d8c435::t_46832b96be2019 891-934
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "69fad0259c5fb694e64276f9260c964671ba71d6",
+  "prompts": {},
+  "sessions": {
+    "s_313229fc4d1c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c6738f-876b-4301-a742-80e31346a4cc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a1768729d8c435": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a461f5188c4a837ba",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
