@@ -48,7 +48,7 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why the artifact handoff became a Harbor build-and-push workflow, how a tag waits for every
   platform's smoke test, and when `latest` moves.
 - [0016 — The Compose deployment is one tag-pinned file](0016-the-compose-deployment-is-one-tag-pinned-file.md)
-  — why the wrapper and digest binding became a root `docker-compose.yml` pinned by the
+  — **partly superseded by 0045** — why the wrapper and digest binding became a root `docker-compose.yml` pinned by the
   release commit, and what was given up.
 - [0019 — Prefect is an internal component of Sync](0019-prefect-is-an-internal-component-of-sync.md)
   — why Sync runs its own Prefect server and PostgreSQL server instead of Infrahub's task
@@ -130,6 +130,9 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0044 — The base install declares no Redis client, and no code imports the Redis store](0044-the-base-install-declares-no-redis-client.md)
   — why the `redis` dependency and the `RedisStore` import were removed, and the refusal a
   configured store gets. Supersedes 0008.
+- [0045 — The Compose file defaults its internal credentials](0045-the-compose-file-defaults-its-internal-credentials.md)
+  — why the six credentials used only between the Compose services have fixed defaults, and why
+  the API bearer tokens stay required. Partly supersedes 0016.
 
 ## Related
 

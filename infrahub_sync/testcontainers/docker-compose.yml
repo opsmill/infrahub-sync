@@ -6,8 +6,9 @@
 #
 #   1. Fetch this file for the release you want:
 #        curl -fsSLO https://raw.githubusercontent.com/opsmill/infrahub-sync/<version>/docker-compose.yml
-#   2. Write a `.env` beside it that sets every required credential below. Compose
-#      stops before any container starts, naming the first one that is missing.
+#   2. Write a `.env` beside it that sets INFRAHUB_SYNC_SERVICE_BEARER_TOKENS, the
+#      one required credential. Compose stops before any container starts when it
+#      is missing.
 #   3. docker compose up -d
 #
 # Every Sync service runs `${INFRAHUB_SYNC_DOCKER_IMAGE}:${VERSION}`. `VERSION`
@@ -24,9 +25,17 @@
 #   * only PostgreSQL and the object store keep data across a restart. Every
 #     other writable path is tmpfs and disappears with its container.
 #
-# Nothing here defaults a credential. The connection strings are built from the
-# role, database and password settings, and stay overridable as a whole; a
-# password used in them must be URL-safe, or the matching URL must be set instead.
+# The credentials that only the services of this file use between themselves
+# have fixed defaults, so a test deployment needs only an API token: the
+# PostgreSQL passwords, the object store keys and the Prefect API credential.
+# None of these services publishes a port. The defaults are public, because they
+# are written in this file, so set your own values in `.env` for any deployment
+# that holds real data. The API bearer tokens guard the published port and have
+# no default.
+#
+# The connection strings are built from the role, database and password
+# settings, and stay overridable as a whole; a password used in them must be
+# URL-safe, or the matching URL must be set instead.
 
 # The image's three declared writable roots. A tmpfs mount takes its own
 # ownership, so a bare mount would arrive root-owned and the runtime user could
@@ -42,7 +51,7 @@ x-sync-scratch: &sync-scratch
 x-sync-storage: &sync-storage
   INFRAHUB_SYNC_DATABASE_URL: "${INFRAHUB_SYNC_DATABASE_URL:-postgresql://\
     ${INFRAHUB_SYNC_PRODUCT_ROLE:-infrahub_sync}:\
-    ${INFRAHUB_SYNC_PRODUCT_PASSWORD:?INFRAHUB_SYNC_PRODUCT_PASSWORD is required}\
+    ${INFRAHUB_SYNC_PRODUCT_PASSWORD:-infrahub-sync-product}\
     @postgres:5432/${INFRAHUB_SYNC_PRODUCT_DATABASE:-infrahub_sync}}"
   INFRAHUB_SYNC_S3_BUCKET: "${INFRAHUB_SYNC_S3_BUCKET:-infrahub-sync}"
   INFRAHUB_SYNC_S3_PREFIX: "${INFRAHUB_SYNC_S3_PREFIX:-infrahub-sync}"
@@ -56,14 +65,14 @@ x-sync-storage: &sync-storage
   # public roots (infrahub_sync/service/trust_store.py).
   INFRAHUB_SYNC_CA_DIRECTORY: "/etc/infrahub-sync/ca"
   INFRAHUB_SYNC_S3_REGION: "${INFRAHUB_SYNC_S3_REGION:-us-east-1}"
-  AWS_ACCESS_KEY_ID: "${INFRAHUB_SYNC_S3_ACCESS_KEY:?INFRAHUB_SYNC_S3_ACCESS_KEY is required}"
-  AWS_SECRET_ACCESS_KEY: "${INFRAHUB_SYNC_S3_SECRET_KEY:?INFRAHUB_SYNC_S3_SECRET_KEY is required}"
+  AWS_ACCESS_KEY_ID: "${INFRAHUB_SYNC_S3_ACCESS_KEY:-infrahub-sync}"
+  AWS_SECRET_ACCESS_KEY: "${INFRAHUB_SYNC_S3_SECRET_KEY:-infrahub-sync-object-store}"
   INFRAHUB_SYNC_SERVICE_WORK_POOL: "${INFRAHUB_SYNC_WORK_POOL:-infrahub-sync}"
   PREFECT_API_URL: "http://prefect-server:4200/api"
   # The Prefect server refuses every API call without this value, because a
   # caller that can create a deployment in the work pool decides what the worker
   # runs. Each Sync process presents it; the CLI service is not given it.
-  PREFECT_API_AUTH_STRING: "${INFRAHUB_SYNC_PREFECT_AUTH_STRING:?the Prefect API credential is required}"
+  PREFECT_API_AUTH_STRING: "${INFRAHUB_SYNC_PREFECT_AUTH_STRING:-infrahub-sync-prefect-api}"
 
 # The operator's CA certificates, read-only. INFRAHUB_SYNC_CA_CERTIFICATES names a host
 # directory of *.pem and *.crt files; unset, the mount is an empty named volume and the
@@ -77,7 +86,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: "${INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE:-postgres}"
-      POSTGRES_PASSWORD: "${INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD:?INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD is required}"
+      POSTGRES_PASSWORD: "${INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD:-infrahub-sync-postgres-admin}"
       POSTGRES_DB: "${INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE:-postgres}"
     volumes:
       - "postgres-data:/var/lib/postgresql/data"
@@ -99,13 +108,13 @@ services:
       PGHOST: "postgres"
       PGUSER: "${INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE:-postgres}"
       PGDATABASE: "${INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE:-postgres}"
-      PGPASSWORD: "${INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD:?INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD is required}"
+      PGPASSWORD: "${INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD:-infrahub-sync-postgres-admin}"
       INFRAHUB_SYNC_PRODUCT_DATABASE: "${INFRAHUB_SYNC_PRODUCT_DATABASE:-infrahub_sync}"
       INFRAHUB_SYNC_PRODUCT_ROLE: "${INFRAHUB_SYNC_PRODUCT_ROLE:-infrahub_sync}"
-      INFRAHUB_SYNC_PRODUCT_PASSWORD: "${INFRAHUB_SYNC_PRODUCT_PASSWORD:?INFRAHUB_SYNC_PRODUCT_PASSWORD is required}"
+      INFRAHUB_SYNC_PRODUCT_PASSWORD: "${INFRAHUB_SYNC_PRODUCT_PASSWORD:-infrahub-sync-product}"
       INFRAHUB_SYNC_PREFECT_DATABASE: "${INFRAHUB_SYNC_PREFECT_DATABASE:-prefect}"
       INFRAHUB_SYNC_PREFECT_ROLE: "${INFRAHUB_SYNC_PREFECT_ROLE:-prefect}"
-      INFRAHUB_SYNC_PREFECT_PASSWORD: "${INFRAHUB_SYNC_PREFECT_PASSWORD:?INFRAHUB_SYNC_PREFECT_PASSWORD is required}"
+      INFRAHUB_SYNC_PREFECT_PASSWORD: "${INFRAHUB_SYNC_PREFECT_PASSWORD:-infrahub-sync-prefect}"
     configs:
       - source: db-bootstrap-script
         target: /usr/local/bin/databases.sh
@@ -149,8 +158,8 @@ services:
       object-store-init:
         condition: service_completed_successfully
     environment:
-      MINIO_ROOT_USER: "${INFRAHUB_SYNC_S3_ACCESS_KEY:?INFRAHUB_SYNC_S3_ACCESS_KEY is required}"
-      MINIO_ROOT_PASSWORD: "${INFRAHUB_SYNC_S3_SECRET_KEY:?INFRAHUB_SYNC_S3_SECRET_KEY is required}"
+      MINIO_ROOT_USER: "${INFRAHUB_SYNC_S3_ACCESS_KEY:-infrahub-sync}"
+      MINIO_ROOT_PASSWORD: "${INFRAHUB_SYNC_S3_SECRET_KEY:-infrahub-sync-object-store}"
       # The browser console is a second published surface this topology does not
       # offer, so it is not started rather than merely left unpublished.
       MINIO_BROWSER: "off"
@@ -187,7 +196,7 @@ services:
       # and why a replacement container resumes from the same records.
       PREFECT_SERVER_DATABASE_CONNECTION_URL: "${INFRAHUB_SYNC_PREFECT_DATABASE_URL:-postgresql+asyncpg://\
         ${INFRAHUB_SYNC_PREFECT_ROLE:-prefect}:\
-        ${INFRAHUB_SYNC_PREFECT_PASSWORD:?INFRAHUB_SYNC_PREFECT_PASSWORD is required}\
+        ${INFRAHUB_SYNC_PREFECT_PASSWORD:-infrahub-sync-prefect}\
         @postgres:5432/${INFRAHUB_SYNC_PREFECT_DATABASE:-prefect}}"
       PREFECT_SERVER_API_HOST: "0.0.0.0"
       PREFECT_SERVER_API_PORT: "4200"
@@ -201,7 +210,7 @@ services:
       # Basic authentication on the whole API, the UI's calls included: the UI
       # asks for this value once and sends it with each request. Prefect leaves
       # only the health and readiness probes open, which the check below uses.
-      PREFECT_SERVER_API_AUTH_STRING: "${INFRAHUB_SYNC_PREFECT_AUTH_STRING:?the Prefect API credential is required}"
+      PREFECT_SERVER_API_AUTH_STRING: "${INFRAHUB_SYNC_PREFECT_AUTH_STRING:-infrahub-sync-prefect-api}"
     read_only: true
     tmpfs: *sync-scratch
     healthcheck:
