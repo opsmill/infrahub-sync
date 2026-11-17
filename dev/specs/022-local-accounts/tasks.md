@@ -111,7 +111,7 @@ sign in is the `admin` token from the environment.
 
 ### Names in answers
 
-- [ ] T019 Create `infrahub_sync/service/presentation.py`: one function that, given an outgoing
+- [X] T019 Create `infrahub_sync/service/presentation.py`: one function that, given an outgoing
   body and a way to read accounts by identifier, replaces account identifiers in the fields
   `actor`, `approved_by` and `registered_by` and in related resources of kind `account` with
   the name, or `Deleted account <short_id>`, and leaves any other value as it is. Apply it in
@@ -119,7 +119,7 @@ sign in is the `admin` token from the environment.
   (`infrahub_sync/service/service.py`, `infrahub_sync/service/config_routes.py`). Change
   `already_approved_body` in `infrahub_sync/product_store/models.py` so its message names no
   account.
-- [ ] T020 [P] Write `tests/service/test_account_presentation.py`: for every response model in
+- [X] T020 [P] Write `tests/service/test_account_presentation.py`: for every response model in
   `infrahub_sync/client/models.py` that has `actor`, `approved_by`, `registered_by` or a related
   account resource, the answer shows a name and never a value that starts with `acct_`; a
   replayed answer shows a name; a value that is not an identifier is unchanged; a deleted

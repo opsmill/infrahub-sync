@@ -3,7 +3,7 @@
 import logging
 import os
 from asyncio import CancelledError, create_task, sleep
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from typing import Annotated, Any
@@ -24,6 +24,7 @@ from infrahub_sync.client.models import (
 )
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.plan.models import PROBLEM_TYPES
+from infrahub_sync.product_store import Account
 
 from .auth import Principal, PrincipalResolver
 from .compatibility import API_STABILITY, API_VERSIONS, installed_server_version
@@ -61,6 +62,7 @@ from .models import (
     VersionResource,
 )
 from .paging import InvalidCursorError
+from .presentation import AccountNameMiddleware, AccountReader
 from .service import MAX_EVENT_OFFSET, RunService, ServiceAPIError, parse_event_time
 from .settings import approval_required, validate_settings
 
@@ -345,6 +347,15 @@ def _authenticator(service: RunService, resolver: PrincipalResolver) -> Callable
     return authenticate
 
 
+def _account_reader(service: RunService) -> AccountReader:
+    """Return the account read of the presentation; the service is asked only when an answer names an account."""
+
+    def read_accounts(account_ids: Sequence[str]) -> Mapping[str, Account]:
+        return service.read_accounts(account_ids)
+
+    return read_accounts
+
+
 def create_app(
     service: RunService,
     resolver: PrincipalResolver,
@@ -438,6 +449,10 @@ def create_app(
     async def get_status() -> ServiceStatusResource:
         """Return unauthenticated lifecycle state without provider identifiers."""
         return await service.status(os.environ.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "default"))
+
+    # Added before `contain_unhandled_error`, so it runs inside it: every JSON answer of a route or
+    # of an exception handler passes through it, and a failed account read answers that 503.
+    application.add_middleware(AccountNameMiddleware, read_accounts=_account_reader(service))
 
     @application.middleware("http")
     async def contain_unhandled_error(

@@ -100,9 +100,10 @@ from .run_log import sync_lines
 from .settings import approval_required
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from infrahub_sync.configuration import ConfigurationPackage
+    from infrahub_sync.product_store import Account
 
     from .auth import Principal
 
@@ -339,6 +340,10 @@ class RunService:
         self._cancellation_recovery_seconds = cancellation_recovery_seconds
         self._clock = clock
         self._plan_layouts = _PlanLayoutCache(PLAN_LAYOUT_CACHE_OPERATIONS)
+
+    def read_accounts(self, account_ids: Sequence[str]) -> dict[str, Account]:
+        """Return the accounts among these identifiers, deleted or not, in one store call."""
+        return self._projection.lookup_accounts(account_ids)
 
     async def create_run(
         self, request: CreateRunRequest, principal: Principal, idempotency_key: str

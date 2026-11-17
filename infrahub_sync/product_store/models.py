@@ -323,11 +323,15 @@ def approval_error_body(
 
 
 def already_approved_body(approval: RunApproval, *, run_id: str, mutation_id: str | None) -> dict[str, Any]:
-    """Return the ``already-approved`` refusal, carrying the approval the run already has."""
+    """Return the ``already-approved`` refusal, carrying the approval the run already has.
+
+    The message names no account: ``approved_by`` holds an account identifier, which the API
+    shows as a name only in the approval of the details.
+    """
     return approval_error_body(
         409,
         "already-approved",
-        f"the run's plan was already approved by {approval.approved_by!r}",
+        "the run's plan was already approved",
         run_id=run_id,
         mutation_id=mutation_id,
         details={"approval": approval.model_dump(mode="json")},
