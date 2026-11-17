@@ -1,0 +1,48 @@
+tests/service/test_principal_resolver.py
+  s_29b17f91da9f30::t_f8e5b339a3e3ec 1-37,39-80
+  s_29b17f91da9f30::t_c6fe77554d6aa6 38
+infrahub_sync/client/__init__.py
+  s_dc9cc07e6b9d52::t_9aca405c94ebfd 28,37-38,69-72,95,108-109,144-147
+infrahub_sync/client/models.py
+  s_dc9cc07e6b9d52::t_872a48edb4b499 37-49,112-114,243-314,400-406,410,721-747,760-762,767,779-843
+infrahub_sync/service/auth.py
+  s_dc9cc07e6b9d52::t_52ecc5a8fa6221 32-33,91-97
+infrahub_sync/service/models.py
+  s_dc9cc07e6b9d52::t_8f6128a9e737b3 26,31,34,53-56,75,80,83,102-105,179-180,191-192
+tests/client/test_models.py
+  s_dc9cc07e6b9d52::t_dc80d588c098db 17,20-21,30-33,165-167,336-773
+tests/client/test_public_surface.py
+  s_dc9cc07e6b9d52::t_216a27dc687754 7-8,69-96
+dev/specs/021-scheduled-runs/tasks.md
+  s_dc9cc07e6b9d52::t_8cf1de143d99ce 47,56-57
+tests/service/test_events_route.py
+  s_dc9cc07e6b9d52::t_a034ae9efd11e7 180
+tests/service/test_liveness_policy.py
+  s_dc9cc07e6b9d52::t_2abae2beb4e209 558-561,992-995
+tests/service/test_status_observation_budget.py
+  s_dc9cc07e6b9d52::t_d4d9512163f285 124-128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7f2c719eb21e9ee567f782430a5ceada5c0191f3",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_dc9cc07e6b9d52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ad3f8a8792345b4d7",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
