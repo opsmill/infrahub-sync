@@ -206,25 +206,12 @@ class SyncConfig(pydantic.BaseModel):
                 new_flags.append(item)
         return new_flags
 
-    def compute_order(self) -> list[str]:
-        """Return the operator-provided `order` if set, else flattened tiers
-        auto-computed from `schema_mapping`.
-
-        Logs the tier layout at INFO and any dropped optional edges at WARNING,
-        as `compute_order_and_tiers` does by default.
-        """
-        order, _tiers = self.compute_order_and_tiers()
-        return order
-
     def compute_order_and_tiers(
         self, generic_peers: Mapping[str, tuple[str, ...]] | None = None, *, announce: bool = True
     ) -> tuple[list[str], list[set[str]] | None]:
         """Return `(flat_order, tiers)` from a single topological pass.
 
-        `tiers` is `None` when an explicit `order` is configured. Callers that
-        need both the flat order and the tier layout should use this rather
-        than calling `compute_order()` and `compute_tiers()` separately, which
-        would sort the graph twice.
+        `tiers` is `None` when an explicit `order` is configured.
 
         Logs the tier layout at INFO and any dropped optional edges at WARNING.
         `announce=False` logs both at DEBUG, for a caller that recomputes a

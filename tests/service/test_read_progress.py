@@ -387,17 +387,19 @@ def _bind_stage_context(monkeypatch: pytest.MonkeyPatch, projection: ProductProj
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda *_args, **_kwargs: [])
 
 
-def _execute(projection: ProductProjection, stage: str, *, binding: tuple[Any, Any, Any] = (None, None, None)) -> None:
+_BINDING = ("cfg-read-progress", 1, "b" * 64)
+
+
+def _execute(projection: ProductProjection, stage: str) -> None:
     with stage_scratch(stage) as scratch:
         service_flow._execute_stage(
             _RUN_ID,
             cast("Any", stage),
-            *binding,
+            *_BINDING,
             None,
             "a" * 64 if stage == "apply" else None,
             confirm_writes=stage in {"apply", "sync"},
             secrets=[],
-            config_directory=None,
             projection=projection,
             tracker=WriteDispatchTracker(),
             scratch=scratch,
@@ -474,7 +476,7 @@ def test_an_apply_stage_records_no_read_and_passes_only_the_apply_progress_obser
     monkeypatch.setattr(service_flow, "execute_run", _execute_run)
 
     with pytest.raises(_StopStageError):
-        _execute(projection, "apply", binding=("cfg-read-progress", 1, "b" * 64))
+        _execute(projection, "apply")
 
     assert seen["operation"] == "apply"
     assert "_read_observer" not in seen
@@ -518,13 +520,9 @@ def _fail_schema_read(*_args: object, **_kwargs: object) -> None:
     raise _SchemaReadError
 
 
-@pytest.mark.parametrize(
-    ("stage", "binding"),
-    [("plan", (None, None, None)), ("sync", ("cfg-read-progress", 1, "b" * 64))],
-    ids=["plan", "sync"],
-)
+@pytest.mark.parametrize("stage", ["plan", "sync"])
 def test_a_stage_that_fails_in_its_schema_read_returns_both_sides_not_started(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str, binding: tuple[Any, Any, Any]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
     """Both sides are `waiting` from the start of the stage, before the live schema read."""
     projection = _store(tmp_path, stage)
@@ -532,7 +530,7 @@ def test_a_stage_that_fails_in_its_schema_read_returns_both_sides_not_started(
     monkeypatch.setattr(service_flow, "_worker_execution_context", _fail_schema_read)
 
     with pytest.raises(_SchemaReadError):
-        _execute(projection, stage, binding=binding)
+        _execute(projection, stage)
 
     link = _stored_link(projection)
     assert (link.source_read, link.destination_read) == ({"state": "waiting"}, {"state": "waiting"})
@@ -559,7 +557,7 @@ def test_a_sync_stage_records_waiting_before_it_waits_for_the_write_guard(
     monkeypatch.setattr(service_flow, "_configuration_write_guard", _guard)
 
     with pytest.raises(_StopStageError):
-        _execute(projection, "sync", binding=_SYNC_BINDING)
+        _execute(projection, "sync")
 
     assert seen["reads"] == ({"state": "waiting"}, {"state": "waiting"})
 
@@ -569,7 +567,6 @@ def test_a_sync_stage_records_waiting_before_it_waits_for_the_write_guard(
 _FAKE_SOURCE_REPORT = SideReadReport(succeeded=True, read_mode="full", nodes_by_kind={"DcimDevice": 3})
 _FAKE_DESTINATION_REPORT = SideReadReport(succeeded=False, error_class="ConnectionError")
 _FIXED_NOW = "2026-11-09T10:00:05+00:00"
-_SYNC_BINDING = ("cfg-read-progress", 1, "b" * 64)
 
 
 def _bind_sync_stage(monkeypatch: pytest.MonkeyPatch, projection: ProductProjection) -> None:
@@ -603,7 +600,7 @@ def test_a_sync_stage_records_both_sides_waiting_then_passes_the_observer_to_its
     monkeypatch.setattr(service_flow, "_plan", _plan)
 
     with pytest.raises(_StopStageError):
-        _execute(projection, "sync", binding=_SYNC_BINDING)
+        _execute(projection, "sync")
 
     assert seen["composed_sync"] is True
     assert seen["source"] == {"state": "waiting"}
@@ -627,7 +624,7 @@ def test_a_sync_stage_returns_the_same_reads_as_a_plan_stage_for_the_same_reads(
         projection = _store(directory, stage)
         _bind_sync_stage(monkeypatch, projection)
         with pytest.raises(_StopStageError):
-            _execute(projection, stage, binding=_SYNC_BINDING if stage == "sync" else (None, None, None))
+            _execute(projection, stage)
         reads[stage] = stage_reads(_stored_link(projection), run_id=_RUN_ID)
 
     fixed = _utc(_FIXED_NOW)

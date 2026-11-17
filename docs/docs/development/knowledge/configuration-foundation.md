@@ -78,13 +78,15 @@ Credential validation happens at the `ProductProjection` boundary, not in the st
 matching where redaction already lives. A caller reaching for `SQLiteRunStore` or
 `PostgreSQLRunStore` directly bypasses it; neither is part of the package's public surface.
 
-#### Schema migration and dialect
+#### Schema creation and dialect
 
-Migration is additive: the store introspects the existing column set and emits
-`ALTER TABLE ADD COLUMN` only for what is missing. There is no schema version table, no rebuild,
-and no backfill. Construction is idempotent, so a process restart re-runs it safely.
+Construction does not migrate columns or data. It creates each table, index, trigger and
+constraint that is missing, also on a table that already exists, and does not add a column to a
+table that already exists. There is no schema version table. A
+database that an earlier version created is not upgraded: start with an empty database.
+Construction is idempotent, so a process restart re-runs it safely.
 
-The store selects its introspection and constraint statements from an explicit `dialect` argument
+The store selects its constraint statements from an explicit `dialect` argument
 that each provider passes. Never infer the dialect from the placeholder string or by running a
 statement to see whether it fails: the test suite's PostgreSQL profile is a SQLite file behind a
 `%s`-to-`?` adapter, so a placeholder check misidentifies it, and provoking an error on a

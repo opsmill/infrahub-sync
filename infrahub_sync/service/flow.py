@@ -43,16 +43,9 @@ from infrahub_sync.execution import (
     collect_secret_values,
     execute_run,
     redact,
-    resolve_sync_instance,
     sanitize_exception_chain,
 )
-from infrahub_sync.orchestration.flow import (
-    _REMOTE_LOGGER_OWNERSHIP_LOCK,
-    BRIDGED_LEVEL,
-    SOURCE_LOGGER_NAME,
-    RunLogger,
-    RunLoggerBridge,
-)
+from infrahub_sync.orchestration.flow import RunLogger, remote_log_bridge
 from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.destination_check import (
     DestinationNodeReader,
@@ -123,7 +116,6 @@ from .scratch import StageScratch, stage_scratch
 from .service import PLAN_ARTIFACT_ID, PLAN_REPORT_KEY
 from .storage import service_guard_secrets, service_guard_session, service_product_projection
 
-CONFIG_DIR_ENV = "INFRAHUB_SYNC_CONFIG_DIRECTORY"
 logger = logging.getLogger(__name__)
 _REGISTERED_VERSION_UNAVAILABLE = "registered configuration version is unavailable"
 _REGISTERED_VERSION_INVALID = "registered configuration version is invalid"
@@ -133,12 +125,12 @@ _REGISTERED_PLAN_VERIFICATION_FAILED = "registered saved plan verification faile
 # The outcome of a `sync` that stopped after a plan that leaves out records (spec 007 FR-012).
 LEFT_OUT_STOP_OUTCOME = "left-out-review-required"
 _REGISTERED_PLAN_CHECKSUM_MISMATCH = "registered saved plan checksum does not match the approved expected_checksum"
-_WORKER_BINDING_PARAMETERS_INVALID = "service worker configuration binding parameters must be all absent or all present"
-_LEGACY_RUN_IDENTITY_UNAVAILABLE = "legacy service run identity is unavailable"
-_LEGACY_CONFIGURATION_DIRECTORY_UNAVAILABLE = (
-    f"{CONFIG_DIR_ENV} must name the directory an unregistered service run resolves its configuration from"
+_WORKER_BINDING_PARAMETERS_INVALID = "service worker configuration binding parameters must all be present"
+# The one refusal of a run that names no registered configuration, whichever stage it asks for
+# and whether the worker parameters or the stored run lack the binding.
+_RUN_BINDING_REQUIRED = (
+    "the Sync service worker runs only a run with a complete registered configuration binding, and this run has none"
 )
-_LEGACY_RUN_CONFIGURATION_MISMATCH = "legacy service run configuration version does not match durable run"
 _WORKER_EXECUTION_REFUSED = "service worker execution claim was refused"
 # Fixed text with the run ID as its only value, so the refusal echoes nothing else.
 _WORKER_EXECUTION_REFUSED_GUIDANCE = (
@@ -156,10 +148,6 @@ _UNNAMED_RUN_ID = "<run-id>"
 _WORKER_EXECUTION_ID_INVALID = "service worker execution identity is invalid"
 _WORKER_EXECUTION_IDENTITY_UNAVAILABLE = "service worker execution identity is unavailable"
 _WORKER_EXECUTION_WRITEBACK_REFUSED = "service worker execution writeback was refused"
-_UNREGISTERED_WRITE_REFUSED = (
-    "a managed write requires a complete registered configuration binding, because the write "
-    "guard serializes writers per registered configuration"
-)
 _WORKER_PAGE_SIZE = 200
 # A registered run resolves both adapters from installed code and reads nothing from a
 # filesystem, so its runtime instance names no generated-code root. Empty is the value
@@ -268,33 +256,18 @@ def _remote_log_bridge(
     if not prefect_context:
         yield
         return
-    with _REMOTE_LOGGER_OWNERSHIP_LOCK:
-        source_logger = logging.getLogger(SOURCE_LOGGER_NAME)
-        bridge = RunLoggerBridge(run_logger, secrets=secrets)
-        previous_level = source_logger.level
-        previous_propagate = source_logger.propagate
-        source_logger.addHandler(bridge)
-        source_logger.setLevel(BRIDGED_LEVEL)
-        source_logger.propagate = False
-        try:
-            yield
-        finally:
-            source_logger.removeHandler(bridge)
-            source_logger.setLevel(previous_level)
-            source_logger.propagate = previous_propagate
+    with remote_log_bridge(run_logger, secrets=secrets):
+        yield
 
 
-def _runtime(*, projection_factory: Any = service_product_projection) -> tuple[str | None, ProductProjection]:
-    """Resolve the worker's product store, and a configuration directory if it has one.
+def _runtime(*, projection_factory: Any = service_product_projection) -> ProductProjection:
+    """Resolve the worker's product store.
 
-    A registered run reads its declared configuration out of the registry and resolves
-    both adapter classes out of installed code, so it opens no directory at all. Only an
-    unregistered run resolves a `SyncConfig` file, and that path is where the setting is
-    required -- checked here instead, every registered deployment would have to satisfy
-    it with a directory nothing ever reads. No cache location is read either: every stage
-    creates its own private scratch.
+    A run reads its declared configuration out of the registry and resolves both adapter
+    classes out of installed code, so the worker reads no configuration directory. No cache
+    location is read either: every stage creates its own private scratch.
     """
-    return os.environ.get(CONFIG_DIR_ENV) or None, projection_factory()
+    return projection_factory()
 
 
 def _review_document(run_id: str, saved: SavedPlan) -> PlanResource:
@@ -360,7 +333,6 @@ def _plan(
         operation="plan",
         branch=branch,
         run_id=run_id,
-        show_progress=False,
         print_diff=False,
         base_directory=base_directory,
         _run_file_mode="sync" if composed_sync else None,
@@ -376,7 +348,7 @@ def _verify_registered_apply(
     *,
     instance: Any,
     run_id: str,
-    binding: tuple[str, int, str] | None,
+    binding: tuple[str, int, str],
     expected_checksum: str | None,
     base_directory: Path | None = None,
 ) -> PlanManifest:
@@ -457,16 +429,16 @@ def _baseline_writeback(manifest: PlanManifest) -> BaselineWriteback:
 
 def _worker_binding(
     config_id: str | None, registry_version: int | None, package_checksum: str | None
-) -> tuple[str, int, str] | None:
-    """Return the closed Prefect tuple carrier or refuse a partial carrier."""
-    values = (config_id, registry_version, package_checksum)
-    if all(value is None for value in values):
-        return None
-    if any(value is None for value in values):
+) -> tuple[str, int, str]:
+    """Return the registered configuration binding the Prefect parameters carry, or refuse.
+
+    Parameters that carry no binding get the fixed refusal of a run without a registered
+    configuration. Parameters that carry only part of one are refused as invalid.
+    """
+    if config_id is None and registry_version is None and package_checksum is None:
+        raise ValueError(_RUN_BINDING_REQUIRED)
+    if config_id is None or registry_version is None or package_checksum is None:
         raise ValueError(_WORKER_BINDING_PARAMETERS_INVALID)
-    assert config_id is not None
-    assert registry_version is not None
-    assert package_checksum is not None
     return config_id, registry_version, package_checksum
 
 
@@ -563,43 +535,36 @@ def _claim_current_execution(projection: ProductProjection, run_id: str) -> tupl
 
 def _worker_execution_context(
     run_id: str,
-    binding: tuple[str, int, str] | None,
+    binding: tuple[str, int, str],
     *,
-    config_directory: str | None,
     projection: ProductProjection,
     run_branch: str | None,
     stage: str,
     build_models: bool = True,
     model_scope: RuntimeModelScope | None = None,
 ) -> tuple[ProductProjection, Any, str]:
-    """Load the durable run and resolve its registered or legacy runtime.
+    """Load the durable run and resolve the runtime of its registered configuration.
 
-    A registered run builds its runtime model plan here, from one destination schema read,
+    A stored run that names no registered configuration is refused with the same fixed text
+    as worker parameters that carry no binding, before the two are compared.
+
+    The runtime model plan is built here, from one destination schema read,
     before any adapter is constructed or any source is extracted. A saved-plan apply defers
     that build until its artifact binding is verified. What the plan covers follows the stage:
     both sides for plan and sync, the destination only for a saved-plan apply, and nothing at
     all for verify's file checks. `model_scope` asks for a scope the stage does not build by
     itself: verify's destination checks request the destination scope once its file checks
-    have passed. The legacy path keeps its generated-code resolution and builds no plan.
+    have passed.
     """
     stored = projection.lookup_run(run_id)
     if stored.value is None:
         msg = f"API-created Sync run {run_id!r} is unavailable"
         raise RuntimeError(msg)
+    if stored.value.configuration_binding is None:
+        raise ValueError(_RUN_BINDING_REQUIRED)
     if stored.value.configuration_binding != binding:
         msg = "service run binding does not match worker parameters"
         raise ValueError(msg)
-    if binding is None:
-        sync_name = stored.value.summary.get("sync_name")
-        if not isinstance(sync_name, str) or not sync_name:
-            raise ValueError(_LEGACY_RUN_IDENTITY_UNAVAILABLE)
-        if config_directory is None or not Path(config_directory).is_dir():
-            raise ValueError(_LEGACY_CONFIGURATION_DIRECTORY_UNAVAILABLE)
-        instance = resolve_sync_instance(sync_name, directory=config_directory)
-        if resolve_config_version(instance) != stored.value.configuration_reference:
-            raise ValueError(_LEGACY_RUN_CONFIGURATION_MISMATCH)
-        return projection, instance, sync_name
-
     config_id, registry_version, package_checksum = binding
     registered = projection.lookup_configuration_version(config_id, registry_version).value
     if registered is None:
@@ -644,7 +609,6 @@ def _check_destination(  # pylint: disable=too-many-arguments
     binding: tuple[str, int, str],
     manifest_checksum: str,
     branch: str | None,
-    config_directory: str | None,
     projection: ProductProjection,
     scratch: StageScratch,
     report: dict[str, Any] | None = None,
@@ -671,7 +635,6 @@ def _check_destination(  # pylint: disable=too-many-arguments
     _, destination_instance, _ = _worker_execution_context(
         run_id,
         binding,
-        config_directory=config_directory,
         projection=projection,
         run_branch=branch,
         stage="verify",
@@ -744,13 +707,6 @@ def _configuration_write_guard(configuration_id: str) -> AbstractContextManager[
     return hold_apply_guard(configuration_id, connect=service_guard_session, secrets=service_guard_secrets())
 
 
-def _require_registered_write(binding: tuple[str, int, str] | None) -> str:
-    """Return the configuration ID a managed write is guarded by, or refuse the write."""
-    if binding is None:
-        raise ValueError(_UNREGISTERED_WRITE_REFUSED)
-    return binding[0]
-
-
 def resume_start_after(projection: ProductProjection, run_id: str) -> int | None:
     """The position a resume starts after: the run's highest saved progress marker.
 
@@ -782,7 +738,6 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     *,
     confirm_writes: bool,
     secrets: list[str],
-    config_directory: str | None,
     projection: ProductProjection,
     tracker: WriteDispatchTracker,
     scratch: StageScratch,
@@ -810,13 +765,9 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         plan_step = plan_step or StorePlanStepObserver(projection, run_id, flow_run_id)
         plan_step.begin()
     parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
-    if stage in _WRITE_STAGES:
-        if not confirm_writes:
-            msg = f"confirm_writes=true is required for service stage={stage}"
-            raise ValueError(msg)
-        # Before anything is resolved: the guard serializes writers per registered
-        # configuration, so a run that names none cannot be serialized against them.
-        _require_registered_write(parameter_binding)
+    if stage in _WRITE_STAGES and not confirm_writes:
+        msg = f"confirm_writes=true is required for service stage={stage}"
+        raise ValueError(msg)
     if stage in _SAVED_PLAN_WRITE_STAGES and expected_checksum is None:
         msg = f"expected_checksum is required for service stage={stage}"
         raise ValueError(msg)
@@ -825,7 +776,6 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     projection, instance, sync_name = _worker_execution_context(
         run_id,
         parameter_binding,
-        config_directory=config_directory,
         projection=projection,
         run_branch=branch,
         stage=stage,
@@ -879,23 +829,16 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         assert isinstance(saved, SavedPlan)
         # The per-operation report of an interrupted run, filled only after every check passed.
         destination_report: dict[str, Any] = {}
-        if parameter_binding is None:
-            # A legacy run cannot be applied by the service, so it has no destination checks
-            # to run: it reports its file checks and says the destination was not checked.
-            checks, destination_checked = _FILE_CHECKS, False
-        else:
-            checks = _check_destination(
-                instance,
-                run_id=run_id,
-                binding=parameter_binding,
-                manifest_checksum=saved.manifest.plan_checksum,
-                branch=branch,
-                config_directory=config_directory,
-                projection=projection,
-                scratch=scratch,
-                report=destination_report,
-            )
-            destination_checked = True
+        checks = _check_destination(
+            instance,
+            run_id=run_id,
+            binding=parameter_binding,
+            manifest_checksum=saved.manifest.plan_checksum,
+            branch=branch,
+            projection=projection,
+            scratch=scratch,
+            report=destination_report,
+        )
         result = {
             "run_id": run_id,
             "stage": stage,
@@ -904,7 +847,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             "checksum_ok": saved.checksum_ok,
             "verification_notes": list(saved.verification_notes),
             "checks": list(checks),
-            "destination_checked": destination_checked,
+            "destination_checked": True,
             **destination_report,
         }
         writeback = ExecutionMergeWriteback(results={"verification": result})
@@ -927,14 +870,13 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             expected_checksum=expected_checksum,
             base_directory=scratch.root,
         )
-        with _configuration_write_guard(_require_registered_write(parameter_binding)) as guard:
+        with _configuration_write_guard(parameter_binding[0]) as guard:
             ownership = ProvenWriteOwnership(prove=guard.require_ownership, tracker=tracker)
             # The live schema read, and the comparison it exists for, both under the guard
             # and both before any adapter is constructed: the registered pre-write gate.
             _, instance, sync_name = _worker_execution_context(
                 run_id,
                 parameter_binding,
-                config_directory=config_directory,
                 projection=projection,
                 run_branch=branch,
                 stage=stage,
@@ -985,12 +927,11 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     else:
         # One guard across planning, verification, and the write it approves: a plan
         # generated outside it could go stale behind another writer before being applied.
-        with _configuration_write_guard(_require_registered_write(parameter_binding)) as guard:
+        with _configuration_write_guard(parameter_binding[0]) as guard:
             ownership = ProvenWriteOwnership(prove=guard.require_ownership, tracker=tracker)
             _, instance, sync_name = _worker_execution_context(
                 run_id,
                 parameter_binding,
-                config_directory=config_directory,
                 projection=projection,
                 run_branch=branch,
                 stage=stage,
@@ -1497,7 +1438,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     # the `infrahub_sync` logger tree with the same prefix.
     lines = SyncFlowLines(run_logger, secrets)
     failure: Exception | None = None
-    config_directory, projection = _runtime()
+    projection = _runtime()
     try:
         flow_run_id, worker_id = _claim_current_execution(projection, run_id)
     except ExecutionClaimRefusedError as refused:
@@ -1531,7 +1472,6 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 expected_checksum,
                 confirm_writes=confirm_writes,
                 secrets=secrets,
-                config_directory=config_directory,
                 projection=projection,
                 tracker=tracker,
                 scratch=scratch,

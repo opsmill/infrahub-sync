@@ -102,7 +102,7 @@ def _stage_raises(
 ) -> tuple[ProductProjection, list[dict[str, Any]]]:
     """Run the flow on a claimed run whose stage raises `error`; record each published artifact."""
     projection, flow_run_id = _claimed_run(tmp_path, run_id)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (None, projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     monkeypatch.setattr(
         service_flow, "_claim_current_execution", lambda _projection, _run_id: (flow_run_id, _WORKER_ID)
     )

@@ -23,18 +23,10 @@ dependencies = [
     # lowest-direct resolution falls back to 6.0's source build, which no longer
     # builds against a current Cython.
     "pyyaml>=6.0.2,<7",
-    # The `[redis]` extra is deliberately dropped: it caps `redis<5.0`, which is
-    # unsatisfiable next to the optional `prefect` extra below
-    # (prefect>=3.6 -> pydocket -> redis>=5). diffsync's cap is stale rather than
-    # real — its redis store was verified functionally intact on redis-py 4.6.0,
-    # 5.0, 6.4, 7.0 and 8.1.0 — and diffsync has no 3.x release raising it.
+    # Without the `[redis]` extra: V3 refuses a configured sync store and imports no
+    # Redis store (ADR 0044). The extra also caps `redis<5.0`, which cannot be installed
+    # next to the optional `prefect` extra below (prefect>=3.6 -> pydocket -> redis>=5).
     "diffsync>=2.1,<3.0",
-    # Declared DIRECTLY rather than through `diffsync[redis]`, because
-    # `infrahub_sync/utils.py` imports `diffsync.store.redis.RedisStore`
-    # unconditionally: without this entry `import infrahub_sync.utils` breaks for
-    # every user. The floor is permissive on purpose (NOT `>=5`) so a downstream
-    # consumer that still requires `diffsync[redis]` keeps resolving, at redis 4.6.0.
-    "redis>=4.3,<9",
     "netutils>=1.12,<2.0",
     # Runtime (not only dev) dependency: `generate` formats its rendered Python with
     # `ruff format` so regeneration is byte-stable. A range, not an exact pin: an
@@ -43,7 +35,6 @@ dependencies = [
     # boundary (style changes ship in minors, not patches), and the byte-identity
     # test enforces the contract against the locked version.
     "ruff>=0.15.5,<0.16",
-    "tqdm>=4.67",
     # The first release carrying the fix; 23.0.0 is inside the series but predates
     # the patch. `tests/image/test_version_policy.py` enforces the refused releases.
     "pyarrow>=23.0.1,<24",
@@ -152,8 +143,6 @@ dev = [
     "ipython>=8.18",
     "pytest-asyncio>=0.24",
     "prek>=0.5.0",
-    "types-toml>=0.10",
-    "types-ujson>=5.10",
     "typer-cli>=0.23",
     "invoke>=2.2.1,<4",
     "types-PyYAML>=6.0.12",
@@ -163,7 +152,6 @@ dev = [
     "pytest-xdist>=3.8",
     "pytest-timeout>=2.3",
     "ty==0.0.32",
-    "types-python-slugify>=8.0.2.20240310",
     "towncrier>=24.8,<27",
     "rumdl>=0.1.68",
     "infrahub-testcontainers>=1.11.9,<2; python_version >= '3.11'",

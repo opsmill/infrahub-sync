@@ -6,14 +6,12 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Union, cast
 
-import yaml
 from diffsync.store.local import LocalStore
-from diffsync.store.redis import RedisStore
 
-from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.cache.paths import run_dir as stored_run_dir
 from infrahub_sync.configuration.runtime import effective_destination_branch
+from infrahub_sync.configuration.storage import UnsupportedSyncStoreError
 from infrahub_sync.generator import render_template
 from infrahub_sync.generic_peers import generic_peers_for_destination as _generic_peers_for_order
 from infrahub_sync.plan.errors import PlanVerificationError
@@ -32,25 +30,12 @@ if TYPE_CHECKING:
     from diffsync import Adapter
     from infrahub_sdk.schema import GenericSchema, NodeSchema
 
+    from infrahub_sync import SyncAdapter, SyncInstance
     from infrahub_sync.plan.models import ApplyRecord
     from infrahub_sync.plan.ownership import WriteOwnership
     from infrahub_sync.plan.reader import RawPlanArtifact
     from infrahub_sync.potenda.apply_progress import ApplyProgressObserver
     from infrahub_sync.runtime_schema import RuntimeModelPlan
-
-
-def find_missing_schema_model(
-    sync_instance: SyncInstance,
-    schema: MutableMapping[str, Union[NodeSchema, GenericSchema]],
-) -> list[str]:
-    missing_schema_models = []
-    for item in sync_instance.schema_mapping:
-        match_found = any(item.name == node.kind for node in schema.values())
-
-        if not match_found:
-            missing_schema_models.append(item.name)
-
-    return missing_schema_models
 
 
 def render_adapter(
@@ -125,52 +110,6 @@ def import_adapter(sync_instance: SyncInstance, adapter: SyncAdapter):
         return None
 
 
-def get_all_sync(directory: str | None = None) -> list[SyncInstance]:
-    results = []
-    search_directory = Path(directory) if directory else Path(__file__).parent
-    config_files = search_directory.glob("**/config.yml")
-
-    for config_file in config_files:
-        with config_file.open("r") as file:
-            directory_name = str(config_file.parent)
-            config_data = yaml.safe_load(file)
-            SyncConfig(**config_data)
-            results.append(SyncInstance(**config_data, directory=directory_name))
-
-    return results
-
-
-def get_instance(
-    name: str | None = None,
-    config_file: str | None = "config.yml",
-    directory: str | None = None,
-) -> SyncInstance | None:
-    if name:
-        all_sync_instances = get_all_sync(directory=directory)
-        for item in all_sync_instances:
-            if item.name == name:
-                return item
-        return None
-
-    if config_file is None:
-        # TODO: Log or raise an Error/Warning
-        return None
-
-    # Check `directory is None` (not truthiness) so an empty string still collapses to Path(config_file).
-    config_file_path: Path = (
-        Path(config_file) if Path(config_file).is_absolute() or directory is None else Path(directory, config_file)
-    )
-
-    if config_file_path:
-        directory_path = config_file_path.parent
-        if config_file_path.is_file():
-            with config_file_path.open("r", encoding="UTF-8") as file:
-                config_data = yaml.safe_load(file)
-                return SyncInstance(**config_data, directory=str(directory_path))
-
-    return None
-
-
 def _adapter_classes(
     sync_instance: SyncInstance, runtime_models: RuntimeModelPlan | None
 ) -> tuple[type[Any], type[Any]]:
@@ -204,10 +143,8 @@ def _adapter_classes(
 def get_potenda_from_instance(  # pylint: disable=too-many-positional-arguments  # public API; callers may pass positionally
     sync_instance: SyncInstance,
     branch: str | None = None,
-    show_progress: bool | None = None,
     verbosity: int | None = None,
     run_id: str | None = None,
-    concurrent_load: bool = True,
     base_directory: Path | None = None,
 ) -> Potenda:
     """Create and return a Potenda instance based on the provided SyncInstance.
@@ -222,17 +159,8 @@ def get_potenda_from_instance(  # pylint: disable=too-many-positional-arguments 
     runtime_models = sync_instance._runtime_models
     source, destination = _adapter_classes(sync_instance, runtime_models)
 
-    source_store = LocalStore()
-    destination_store = LocalStore()
-
-    if sync_instance.store and sync_instance.store.type == "redis":
-        if sync_instance.store.settings and isinstance(sync_instance.store.settings, dict):
-            redis_settings = sync_instance.store.settings
-            source_store = RedisStore(**redis_settings, name=sync_instance.source.name)
-            destination_store = RedisStore(**redis_settings, name=sync_instance.destination.name)
-        else:
-            source_store = RedisStore(name=sync_instance.source.name)
-            destination_store = RedisStore(name=sync_instance.destination.name)
+    source_store = _in_memory_store(sync_instance)
+    destination_store = _in_memory_store(sync_instance)
 
     source_kwargs = {
         "config": sync_instance,
@@ -305,13 +233,11 @@ def get_potenda_from_instance(  # pylint: disable=too-many-positional-arguments 
         config=sync_instance,
         top_level=top_level,
         tiers=tiers,
-        show_progress=show_progress,
         verbosity=verbosity,
         run_dir=rdir,
         run_id=rid,
         cache_root=rdir.parent,  # .infrahub-sync-cache/<sync_name>/
         schema_subhash=subhash,
-        concurrent_load=concurrent_load,
     )
 
 
@@ -330,12 +256,15 @@ class _PlanApplySource:
         raise AttributeError(msg)
 
 
-def _destination_store(sync_instance: SyncInstance) -> LocalStore | RedisStore:
-    """The diffsync store the destination adapter uses, per the configuration's `store` block."""
-    if sync_instance.store and sync_instance.store.type == "redis":
-        if sync_instance.store.settings and isinstance(sync_instance.store.settings, dict):
-            return RedisStore(**sync_instance.store.settings, name=sync_instance.destination.name)
-        return RedisStore(name=sync_instance.destination.name)
+def _in_memory_store(sync_instance: SyncInstance) -> LocalStore:
+    """Return the in-memory diffsync store one adapter uses.
+
+    Raises:
+        UnsupportedSyncStoreError: the configuration has a `store` block. V3 keeps sync data
+            in memory only, so a configured store is refused and never replaced without notice.
+    """
+    if sync_instance.store is not None:
+        raise UnsupportedSyncStoreError
     return LocalStore()
 
 
@@ -397,7 +326,7 @@ class PlanApplier:
             "config": sync_instance,
             "target": "destination",
             "adapter": sync_instance.destination,
-            "internal_storage_engine": _destination_store(sync_instance),
+            "internal_storage_engine": _in_memory_store(sync_instance),
         }
         if "infrahub" in sync_instance.destination.name.lower():
             dest_kwargs["branch"] = effective_destination_branch(sync_instance.destination.settings, branch)
@@ -436,7 +365,6 @@ class PlanApplier:
         *,
         ownership: WriteOwnership,
         config_version: str | None = None,
-        allow_destination_change: bool = False,
         expected_checksum: str | None = None,
         confirm_left_out: bool = False,
         progress: ApplyProgressObserver | None = None,
@@ -451,11 +379,8 @@ class PlanApplier:
         copy (DBR-006).
 
         The binding precheck compares the manifest's recorded destination against the live
-        adapter's and refuses on a mismatch; `allow_destination_change` turns that refusal into
-        a logged warning, for an apply to the same Infrahub instance through another URL or on
-        another branch. It cannot carry a plan to another instance: the engine still refuses on
-        the import account (FR-012). Plans without the recorded
-        field, and destinations that expose no binding, skip the check.
+        adapter's and refuses on a mismatch. Plans without the recorded field, and destinations
+        that expose no binding, skip the check.
 
         `expected_checksum` travels to the engine rather than being answered here, so the
         operator's approval is decided against the artifact the apply loop consumes.
@@ -465,11 +390,11 @@ class PlanApplier:
         (spec 016); `None` for both applies the whole plan and reports nothing.
 
         Raises:
-            PlanVerificationError: the plan was computed against a different destination
-                and `allow_destination_change` is false; nothing was written.
+            PlanVerificationError: the plan was computed against a different destination;
+                nothing was written.
         """
         artifact = read_plan_artifact_bytes(self.run_dir)
-        self._require_recorded_destination(artifact=artifact, allow_destination_change=allow_destination_change)
+        self._require_recorded_destination(artifact=artifact)
         return self.engine.apply_plan(
             ownership=ownership,
             config_version=config_version,
@@ -480,7 +405,7 @@ class PlanApplier:
             start_after=start_after,
         )
 
-    def check_plan(self, *, config_version: str | None = None, allow_destination_change: bool = False) -> PlanCheck:
+    def check_plan(self, *, config_version: str | None = None) -> PlanCheck:
         """Run every pre-write check `apply_plan` runs, on one read of the artifact, and write nothing.
 
         The same two steps `apply_plan` takes before its loop — the destination-binding
@@ -496,39 +421,27 @@ class PlanApplier:
             Any error `Potenda.check_plan` raises.
         """
         artifact = read_plan_artifact_bytes(self.run_dir)
-        compared = self._require_recorded_destination(
-            artifact=artifact, allow_destination_change=allow_destination_change
-        )
+        compared = self._require_recorded_destination(artifact=artifact)
         result = self.engine.check_plan(run_id=self.run_id, config_version=config_version, artifact=artifact)
         if not compared:
             return result
         return PlanCheck(loaded=result.loaded, checks=ordered_checks((*result.checks, "destination_binding")))
 
-    def _require_recorded_destination(self, *, artifact: RawPlanArtifact, allow_destination_change: bool) -> bool:
+    def _require_recorded_destination(self, *, artifact: RawPlanArtifact) -> bool:
         """The apply-time destination-binding guard, on the seam that owns apply-specific assembly.
 
         Here rather than inside `Potenda.apply_plan` because the check's subject is the
-        destination this seam constructed, and its refusal is the one pre-apply verdict an
-        operator may deliberately override. It answers about `artifact` — the same object the
+        destination this seam constructed. It answers about `artifact` — the same object the
         engine verifies and applies — rather than a read of its own.
 
         Returns whether the comparison ran and passed: `False` when it was skipped (a plan
-        without the recorded field, a destination that exposes no binding) or overridden.
+        without the recorded field, a destination that exposes no binding).
         """
         live = getattr(self.engine.destination, "destination_binding", None)
         failure = destination_binding_failure(run_id=self.run_id, artifact=artifact, live=live)
         if failure is None:
             mapping = manifest_mapping_or_none(artifact.manifest_bytes)
             return live is not None and mapping is not None and mapping.get("destination_binding") is not None
-        if allow_destination_change:
-            logger.warning(
-                "Applying run %s to a different destination than it was planned against: "
-                "recorded %s; live %s (allow_destination_change).",
-                self.run_id,
-                failure.expected,
-                failure.found,
-            )
-            return False
         msg = (
             f"The plan of run {self.run_id!r} is bound to a different destination than this "
             f"apply would write to: expected {failure.expected}; found {failure.found}. "

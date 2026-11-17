@@ -9,7 +9,7 @@ the left-out records (data-model.md).
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Literal, TypeAlias, get_args
+from typing import Any, Literal, TypeAlias
 
 import pydantic
 
@@ -31,8 +31,6 @@ records it as a dependent left-out record, not as a problem. `required_relations
 names a record that holds no peer for a one-peer relationship the model requires (spec 019
 FR-013a); the record is not loaded.
 """
-
-LOAD_REPORT_REASONS: tuple[LoadReportReason, ...] = get_args(LoadReportReason)
 
 
 _NO_SOURCE_ID_VALUES = frozenset({"", "None"})

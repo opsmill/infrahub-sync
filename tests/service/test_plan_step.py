@@ -550,14 +550,24 @@ class _FakeSaved:
         raise _StopStageError
 
 
-_SYNC_BINDING = ("cfg-plan-step", 1, "b" * 64)
+_BINDING = ("cfg-plan-step", 1, "b" * 64)
 
 
 def _store(tmp_path: Path, purpose: str) -> ProductProjection:
     projection = ProductProjection(
         SQLiteRunStore(tmp_path / "records.sqlite3"), FileArtifactStore(tmp_path / "objects")
     )
-    projection.create_run(_run(_RUN_ID))
+    config_id, registry_version, package_checksum = _BINDING
+    projection.create_run(
+        _run(_RUN_ID).model_copy(
+            update={
+                "configuration_reference": f"{config_id}@{registry_version}",
+                "config_id": config_id,
+                "registry_version": registry_version,
+                "package_checksum": package_checksum,
+            }
+        )
+    )
     append_execution(projection, _RUN_ID, PrefectExecutionLink(flow_run_id=_FLOW_RUN_ID, purpose=purpose, attempt=1))
     return projection
 
@@ -594,13 +604,9 @@ def _bind_stage(monkeypatch: pytest.MonkeyPatch, projection: ProductProjection) 
     return seen
 
 
-@pytest.mark.parametrize(
-    ("stage", "binding"),
-    [("plan", (None, None, None)), ("sync", _SYNC_BINDING)],
-    ids=["plan", "sync"],
-)
+@pytest.mark.parametrize("stage", ["plan", "sync"])
 def test_the_stage_closes_saving_only_after_the_plan_is_published(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str, binding: tuple[Any, Any, Any]
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
     projection = _store(tmp_path, stage)
     seen = _bind_stage(monkeypatch, projection)
@@ -609,12 +615,11 @@ def test_the_stage_closes_saving_only_after_the_plan_is_published(
         service_flow._execute_stage(
             _RUN_ID,
             cast("Any", stage),
-            *binding,
+            *_BINDING,
             None,
             None,
             confirm_writes=stage == "sync",
             secrets=[],
-            config_directory=None,
             projection=projection,
             tracker=WriteDispatchTracker(),
             scratch=scratch,
@@ -647,14 +652,14 @@ def _run_failing_stage(
         msg = f"the comparison failed: {_CANARY}"
         raise RuntimeError(msg)
 
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (None, projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-plan-step"), False))
     monkeypatch.setattr(service_flow, "_claim_current_execution", lambda *_args: (_FLOW_RUN_ID, _WORKER_ID))
     monkeypatch.setattr(service_flow, "_execute_stage", _execute_stage)
 
     # The flow either returns a `Failed` state or raises a sanitized copy of the failure.
     with contextlib.suppress(RuntimeError):
-        service_flow.service_sync_run.fn(_RUN_ID, cast("Any", stage))
+        service_flow.service_sync_run.fn(_RUN_ID, cast("Any", stage), *_BINDING)
     return projection
 
 
@@ -712,14 +717,14 @@ def test_a_stage_with_no_plan_step_gets_no_observer(
         seen.update(kwargs)
         raise _StopStageError
 
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (None, projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-plan-step"), False))
     monkeypatch.setattr(service_flow, "_claim_current_execution", lambda *_args: (_FLOW_RUN_ID, _WORKER_ID))
     monkeypatch.setattr(service_flow, "_execute_stage", _execute_stage)
     monkeypatch.setattr(service_flow, "_record_failure", lambda *_args, **_kwargs: None)
 
     with contextlib.suppress(RuntimeError):
-        service_flow.service_sync_run.fn(_RUN_ID, cast("Any", stage))
+        service_flow.service_sync_run.fn(_RUN_ID, cast("Any", stage), *_BINDING)
 
     assert seen["plan_step"] is None
     assert _stored_link(projection).plan_step is None

@@ -203,24 +203,17 @@ of that kind. This includes unchanged records restored from the previous run's c
 records represented by updates. When a distinct source identity projects onto the same
 destination match key as a create, including paths through nested peer identities, the plan
 records an `identities_merge_in_destination` problem and leaves those records out.
-`refuse_identity_groups` in `plan/keying.py`, which the plan no longer calls, still renders
-the earlier refusal text: it names the kind, source identity fields, destination match key, and fields the
-destination cannot distinguish. Alternative uniqueness constraints do not replace the
+Alternative uniqueness constraints do not replace the
 human-friendly ID used to match a create. An update-only plan continues to use recorded
 destination ids.
-
-The refusal identifies the other record by its source-store identifier when its identity
-contains only names. For identities with other fields it reports an opaque source identity
-fingerprint instead, withholding their values. These are source record identifiers,
-not create operation ids for unchanged records or updates.
 
 A source record with no value for a match component cannot prove a collision; planning
 warns and skips that record in the population comparison. An unchanged record whose
 identity peer cannot be resolved in the source store also warns and is skipped.
 Planned operations still require resolved peers. The separate checks for an
 under-keyed create still apply. Infrahub creates require the cached destination schema,
-and identity checks run even when no plan artifact directory was supplied. Direct Python
-callers planning for Infrahub must supply the parsed configuration; otherwise planning
+and identity checks run even when no plan artifact directory was supplied. A call
+that plans for Infrahub must supply the parsed configuration; otherwise planning
 raises `PlanVerificationError`. Other destinations skip artifact derivation when no
 artifact directory or run id is supplied. The product run factory supplies all three.
 

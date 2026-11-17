@@ -11,7 +11,8 @@ import pytest
 if TYPE_CHECKING:
     from infrahub_sync import SyncInstance
 
-from infrahub_sync.utils import get_instance, get_potenda_from_instance
+from infrahub_sync.utils import get_potenda_from_instance
+from tests.sync_instances import get_instance
 
 EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
 
@@ -25,7 +26,7 @@ def netbox_instance(tmp_path: Path) -> SyncInstance:
     dst.write_text(src.read_text())
     inst = get_instance(config_file=str(dst))
     assert inst is not None
-    inst.order = []  # force fallback to compute_order()
+    inst.order = []  # force fallback to the computed order
     return inst
 
 
@@ -34,7 +35,7 @@ def test_potenda_top_level_comes_from_compute_order(netbox_instance: SyncInstanc
     with patch("infrahub_sync.utils.import_adapter") as fake_import:
         fake_import.return_value = MagicMock()
         ptd = get_potenda_from_instance(sync_instance=netbox_instance)
-    expected = netbox_instance.compute_order()
+    expected = netbox_instance.compute_order_and_tiers()[0]
     assert ptd.top_level == expected
     assert "BuiltinTag" in ptd.top_level
 

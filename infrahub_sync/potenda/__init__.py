@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import re
-import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from operator import methodcaller
@@ -12,7 +11,6 @@ from typing import TYPE_CHECKING, Any, cast
 # The one costly module-level import: apply's exception boundary must name the SDK's errors.
 from infrahub_sdk.exceptions import Error as InfrahubSDKError
 from infrahub_sdk.exceptions import GraphQLError, ServerNotResponsiveError
-from tqdm import tqdm
 
 from infrahub_sync import DiffSyncMixin, resolve_effective_diffsync_flags
 from infrahub_sync.infrahub_errors import classify_infrahub_error
@@ -389,7 +387,6 @@ class Potenda:
         config: SyncInstance,
         top_level: list[str],
         partition=None,
-        show_progress: bool | None = None,
         verbosity: int | None = None,
         tiers: list[set[str]] | None = None,
         run_dir: Path | None = None,
@@ -451,8 +448,6 @@ class Potenda:
         self.destination.top_level = top_level  # ty: ignore[invalid-attribute-access]
 
         self.partition = partition
-        self.progress_bar = None
-        self.show_progress = show_progress if show_progress is not None else sys.stderr.isatty()
 
         if verbosity is not None:
             logging.getLogger("diffsync").setLevel(verbosity)
@@ -472,18 +467,8 @@ class Potenda:
         return dict(self._last_applied_plan_action_counts)
 
     def _print_callback(self, stage: str, elements_processed: int, total_models: int):
-        """Callback for DiffSync progress tracking."""
-        if self.show_progress:
-            if self.progress_bar is None:
-                self.progress_bar = tqdm(total=total_models, desc=stage, unit="models")
-
-            self.progress_bar.n = elements_processed
-            self.progress_bar.refresh()
-
-            if elements_processed == total_models:
-                self.progress_bar.close()
-                self.progress_bar = None
-        elif elements_processed == total_models:
+        """Log one line when DiffSync has processed every model of a stage."""
+        if elements_processed == total_models:
             logger.info("%s: %d/%d models processed", stage, elements_processed, total_models)
 
     def _previous_run(self) -> Path | None:
@@ -865,7 +850,6 @@ class Potenda:
         """Compare both loaded sides; this starts the `comparing` part of the plan step."""
         self._notify_plan_step("comparing", ended=False)
         logger.info("Diff: Comparing data from %s to %s", self.source, self.destination)
-        self.progress_bar = None
         return self.destination.diff_from(self.source, flags=self.flags, callback=self._print_callback)
 
     def _diff_to_rows(self, diff: Any) -> list[dict[str, str]]:

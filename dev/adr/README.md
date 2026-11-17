@@ -25,8 +25,8 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0007 — A canonical plan fingerprint is the equivalence oracle between run paths](0007-canonical-plan-fingerprint-as-equivalence-oracle.md)
   — how "the remote path produced the same plan" becomes a testable claim.
 - [0008 — Declare Redis directly instead of using the diffsync extra](0008-declare-redis-directly-instead-of-the-diffsync-extra.md)
-  — the dependency conflict that forced a base declaration change, and why the floor is
-  permissive.
+  — **superseded by 0044** — the dependency conflict that forced a base declaration change, and
+  why the floor is permissive.
 - [0009 — Optional integrations live in their own package and are proven absent in CI](0009-optional-integrations-live-in-their-own-package.md)
   — the import boundary for an optional integration and the three mechanisms that enforce it.
 - [0010 — A managed write holds one configuration guard and ends in a verdict, not a retry](0010-a-managed-write-ends-in-a-verdict-not-a-retry.md)
@@ -131,7 +131,10 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why a plan reads the creator `__system__` from node metadata, for the kinds listed in
   `INFRAHUB_BUILTIN_NODE_KINDS`, to leave out these deletes, and why no file accepts the delete of
   the `default` namespace by name.
-- [0044 — Saved plan format 5 records an emptied one-peer relationship](0044-saved-plan-format-5-records-an-emptied-one-peer-relationship.md)
+- [0044 — The base install declares no Redis client, and no code imports the Redis store](0044-the-base-install-declares-no-redis-client.md)
+  — why the `redis` dependency and the `RedisStore` import were removed, and the refusal a
+  configured store gets. Supersedes 0008.
+- [0046 — Saved plan format 5 records an emptied one-peer relationship](0046-saved-plan-format-5-records-an-emptied-one-peer-relationship.md)
   — why an update records an emptied one-peer relationship as a reference with no peer, why every
   plan is saved in format 5, and why apply writes it as `null` in the one Upsert.
 

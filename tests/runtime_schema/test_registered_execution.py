@@ -249,7 +249,6 @@ def test_a_registered_run_plans_creates_and_updates_through_engine_assembly(tmp_
         instance,
         operation="plan",
         run_id="registered-execution",
-        show_progress=False,
         print_diff=False,
         _return_saved_plan=True,
     )
@@ -385,7 +384,6 @@ def test_no_generated_python_is_written_or_read_by_a_registered_run(tmp_path: Pa
         instance,
         operation="plan",
         run_id="registered-no-generated-files",
-        show_progress=False,
         print_diff=False,
     )
 

@@ -165,7 +165,6 @@ def main(
     _setup_logging(level=level)
     ctx.ensure_object(dict)
     ctx.obj["api_url"] = api_url or ""
-    ctx.obj["verbosity"] = level
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
 

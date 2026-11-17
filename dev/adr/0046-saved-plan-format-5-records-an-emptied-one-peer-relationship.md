@@ -1,4 +1,4 @@
-# 44. Saved plan format 5 records an emptied one-peer relationship
+# 46. Saved plan format 5 records an emptied one-peer relationship
 
 **Status**: Accepted
 **Date**: 2026-11-16

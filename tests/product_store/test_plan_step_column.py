@@ -80,28 +80,10 @@ def _columns(database: Path) -> set[str]:
         connection.close()
 
 
-def test_a_store_created_before_the_feature_gains_the_column_and_reads_old_rows_as_none(
-    tmp_path: Path, profile: str
-) -> None:
-    _original, database = _projection_with_execution(tmp_path, profile)
-    # Return the store to its shape before this feature.
-    connection = sqlite3.connect(database)
-    try:
-        connection.execute("ALTER TABLE prefect_executions DROP COLUMN plan_step")
-        connection.commit()
-    finally:
-        connection.close()
-    assert "plan_step" not in _columns(database)
-
-    restarted = _projection(tmp_path, profile)
+def test_a_new_execution_has_no_document(tmp_path: Path, profile: str) -> None:
+    projection, database = _projection_with_execution(tmp_path, profile)
 
     assert "plan_step" in _columns(database)
-    assert _link(restarted).plan_step is None
-
-
-def test_a_new_execution_has_no_document(tmp_path: Path, profile: str) -> None:
-    projection, _database = _projection_with_execution(tmp_path, profile)
-
     assert _link(projection).plan_step is None
 
 

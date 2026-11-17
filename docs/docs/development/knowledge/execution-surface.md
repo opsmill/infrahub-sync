@@ -5,12 +5,12 @@ title: "The shared execution surface"
 ## The shared execution surface
 
 `infrahub_sync/execution.py` runs individual plan, verification and apply operations for
-the Sync service and direct Python callers. The CLI submits registered runs through the
+the Sync service and the direct Prefect flow. The CLI submits registered runs through the
 Sync HTTP API; the worker calls this module to execute them.
 
 For tracing a registered write, start with the service stages and their
-[configuration write guard](apply-guard.md). For a direct Python or Prefect plan, start
-with `execute_run` or `run_remote_request`. The direct Prefect integration resolves a local
+[configuration write guard](apply-guard.md). For a direct Prefect plan, start
+with `run_remote_request`. The direct Prefect integration resolves a local
 configuration and only plans; it does not perform the registered service workflow.
 
 The module imports no Prefect symbols or orchestration modules and remains importable
@@ -23,7 +23,6 @@ The behavior below follows the [released execution source][execution-source].
 | --- | --- |
 | CLI `plan`, `sync`, `apply` | Call `SyncClient` methods over HTTP; inspect API run and plan resources. They do not call `execute_run`. |
 | Sync service worker | Call `execute_run` for each stage, passing `base_directory` for that stage's private scratch directory. A service `sync` composes plan, verify and apply. |
-| Direct Python caller | Pass a resolved `SyncInstance` to `execute_run`; the operation selects the lifecycle and return type. |
 | Direct Prefect flow | Call `run_remote_request`, which resolves a configuration name and calls `execute_run` in-process for a plan. |
 
 The [CLI][cli-source] constructs requests through `SyncClient`.
@@ -56,7 +55,7 @@ raise `PlanVerificationError` if checks fail. A returned `SavedPlan` from an ord
 review call is therefore not proof that the artifact passed every apply check.
 
 `execute_run(operation="verify")` checks the plan files only. The service's `verify` stage calls
-it first and, for a run of a registered configuration, then runs `_check_destination` in
+it first and then runs `_check_destination` in
 `infrahub_sync/service/flow.py`: the configuration binding, one read of the live destination
 schema, the destination adapter, and `PlanApplier.check_plan`. The stage result lists the checks
 that passed by name. See [The pre-write gate](planned-write-and-apply.md#the-pre-write-gate).
@@ -71,13 +70,12 @@ fails.
 
 `run_remote_request(sync_name, operation, confirm_writes, branch, config_directory=…)`
 resolves an exact logical name from `config.yml` files beneath `config_directory`.
-The Python caller supplies that directory; the packaged Prefect flow reads it from
+The packaged Prefect flow reads that directory from
 `INFRAHUB_SYNC_CONFIG_DIRECTORY`. The four flow parameters contain no configuration path,
 credentials, CLI fragments or environment overrides.
 
 Only `operation="plan"` executes through this direct integration. `"sync"` is refused
-before configuration resolution, even with `confirm_writes=True`. Other engine options
-use `execute_run` defaults, except `show_progress=False`.
+before configuration resolution, even with `confirm_writes=True`.
 See [Prefect orchestration](orchestration-prefect.md#the-flow) for the flow parameters,
 logging and serve entrypoint.
 
@@ -160,9 +158,9 @@ so registered writes acquire the [PostgreSQL configuration guard](apply-guard.md
 The service sets `_lock_already_held=True` on its apply calls while holding that guard.
 The direct remote wrapper never sets it. Verification takes no pipeline lock.
 
-Planning calls `PotendaFactory` with seven explicit keyword arguments: `sync_instance`,
-`branch`, `show_progress`, `verbosity`, `run_id`, `concurrent_load` and `base_directory`. The protocol preserves those parameter names for type checking of
-injected factories. Apply uses `PlanApplier.open_existing` to construct only the
+Planning calls `PotendaFactory` with five explicit keyword arguments: `sync_instance`,
+`branch`, `verbosity`, `run_id` and `base_directory`. The protocol preserves those parameter
+names for type checking of injected factories. Apply uses `PlanApplier.open_existing` to construct only the
 destination adapter; it does not call the planning factory or reload the source.
 
 ### Plan fingerprint

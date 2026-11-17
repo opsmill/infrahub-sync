@@ -97,7 +97,6 @@ def make_potenda(tmp_path: Path) -> tuple[Potenda, _StubAdapter, _StubAdapter]:
         destination=destination,
         config=config,  # ty: ignore[invalid-argument-type]
         top_level=["InfraDevice"],
-        show_progress=False,
         concurrent_load=False,
     )
     potenda.run_dir = tmp_path / "run-current"

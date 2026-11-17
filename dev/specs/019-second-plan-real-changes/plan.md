@@ -38,8 +38,9 @@ package also run on Python 3.10.
 FastAPI, Typer, Prefect client. No new dependency.
 
 **Storage**: the product store on SQLite (tests, local) and PostgreSQL (service). One nullable
-TEXT column `plan_step` on `prefect_executions`, added by the existing start-up column migration
-(`infrahub_sync/product_store/store.py:1007-1016`). No backfill. Saved plans gain format 5;
+TEXT column `plan_step` on `prefect_executions`, declared in `CREATE TABLE`. Since PR #425, start-up
+no longer upgrades a product database that an earlier build created, so the column is not added to
+an existing database. No backfill. Saved plans gain format 5;
 format 4 plans stay readable and applicable.
 
 **Testing**: pytest offline unit tier (`uv run invoke tests.tests-unit`): `tests/plan/`,
@@ -155,7 +156,7 @@ docs/docs/
 ├── reference/cli.mdx           # generated
 ├── development/knowledge/plan-artifact.md
 └── development/guides/netbox-benchmark-{runner,tiers,results}.md
-dev/adr/0043-*.md, dev/adr/0044-*.md
+dev/adr/0043-*.md, dev/adr/0046-*.md
 examples/netbox_to_infrahub/README.md
 changelog/387.fixed.md, changelog/+plan-step-timings.added.md
 ```
@@ -173,7 +174,7 @@ owns the behavior today; three new modules (`plan/digest.py`, `potenda/plan_step
 - **User Story 1 needs the work of User Story 2.** The second-plan tests of User Story 1 include
   a LAG case that the emptied relationship affects. The tasks put the shared test helper first.
 - **Two decision records.** ADR 0043, "A plan leaves out the deletes of nodes that Infrahub
-  creates itself"; ADR 0044, "Saved plan format 5 records an emptied one-peer relationship".
+  creates itself"; ADR 0046, "Saved plan format 5 records an emptied one-peer relationship".
   ADR 0041 and ADR 0042 get a one-line note that points to ADR 0043. The timings follow ADR 0035
   and need no new record.
 - **Tests that assert format 4** are updated: `tests/plan/test_models.py:100`,

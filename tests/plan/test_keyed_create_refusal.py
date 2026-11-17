@@ -29,7 +29,7 @@ from infrahub_sdk.schema.main import NodeSchemaAPI
 from infrahub_sync.plan.derive import warn_missing_convergence_key
 from infrahub_sync.plan.errors import DestinationIdentityCollisionError
 from infrahub_sync.plan.identity import canonical_identity, operation_id
-from infrahub_sync.plan.keying import IdentityGroup, destination_identity_collision_groups, refuse_identity_groups
+from infrahub_sync.plan.keying import IdentityGroup, destination_identity_collision_groups, raise_identity_group
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 from tests.adapters.test_infrahub_keyed_write import ALL_SCHEMAS, CONSTRAINED_KIND
 from tests.adapters.test_infrahub_planned_write import DEVICE_KIND, DEVICE_SCHEMA, KEYLESS_KIND, SITE_KIND, _text
@@ -75,6 +75,13 @@ def planned(
 def check(*operations: PlannedOperation) -> list[IdentityGroup]:
     """Run FR-024 over `operations` against the fixture destination; return the identity groups."""
     return warn_missing_convergence_key(destination=destination(), operations=list(operations))
+
+
+def refuse_first_destination_collision(groups: list[IdentityGroup]) -> None:
+    """Raise the write surface's refusal for the first destination collision group in `groups`."""
+    for group in groups:
+        if group.problem_type == "destination_identity_collision":
+            raise_identity_group(group)
 
 
 def rack_schema(*, inherited: bool = False, constraint: bool = False) -> dict[str, NodeSchemaAPI]:
@@ -240,7 +247,7 @@ def test_two_creates_projecting_onto_one_destination_hfid_are_refused() -> None:
     from infrahub_sync.plan.errors import DestinationIdentityCollisionError
 
     with pytest.raises(DestinationIdentityCollisionError) as excinfo:
-        refuse_identity_groups(check(site_create("site-a", "first"), site_create("site-a", "second")))
+        refuse_first_destination_collision(check(site_create("site-a", "first"), site_create("site-a", "second")))
 
     assert SITE_KIND in str(excinfo.value)
 
@@ -266,7 +273,7 @@ def test_distinct_hfids_colliding_on_another_rule_are_refused(variant: str, rule
     schemas = rack_schema(inherited=variant == "inherited", constraint=variant == "constraint")
 
     with pytest.raises(DestinationIdentityCollisionError, match=rule) as excinfo:
-        refuse_identity_groups(
+        refuse_first_destination_collision(
             warn_missing_convergence_key(
                 destination=SimpleNamespace(schema=schemas), operations=[rack_create("site-a"), rack_create("site-b")]
             )
@@ -287,7 +294,9 @@ def test_collision_message_withholds_non_name_unique_values() -> None:
 
     # The collision groups directly: these creates are also unkeyed, which the full check refuses first.
     with pytest.raises(DestinationIdentityCollisionError) as excinfo:
-        refuse_identity_groups(destination_identity_collision_groups(schema=schemas, operations=[first, second]))
+        refuse_first_destination_collision(
+            destination_identity_collision_groups(schema=schemas, operations=[first, second])
+        )
 
     assert "values withheld" in str(excinfo.value)
     assert "sensitive-value" not in str(excinfo.value)
@@ -309,7 +318,7 @@ def test_shared_generic_unique_name_refuses_creates_of_different_kinds() -> None
     )
 
     with pytest.raises(DestinationIdentityCollisionError, match="inherited unique attribute") as excinfo:
-        refuse_identity_groups(
+        refuse_first_destination_collision(
             warn_missing_convergence_key(destination=SimpleNamespace(schema=schemas), operations=[first, second])
         )
 
@@ -348,22 +357,9 @@ def test_relationship_uniqueness_constraint_uses_the_peer_identity() -> None:
     )
 
     with pytest.raises(DestinationIdentityCollisionError, match=r"uniqueness constraint \(site\)"):
-        refuse_identity_groups(
+        refuse_first_destination_collision(
             warn_missing_convergence_key(destination=SimpleNamespace(schema=schemas), operations=[first, second])
         )
-
-
-def test_a_create_sharing_an_updates_projection_is_refused() -> None:
-    """The update is safe by id, but the create could replace its source record's data."""
-    update = planned(
-        kind=SITE_KIND,
-        identity={"name": "site-a", "description": "second"},
-        payload={"name": "site-a", "description": "second"},
-        action="update",
-    )
-
-    with pytest.raises(DestinationIdentityCollisionError, match="distinct loaded source record"):
-        refuse_identity_groups(check(site_create("site-a", "first"), update))
 
 
 def test_two_updates_sharing_a_projection_are_not_a_collision() -> None:

@@ -1,4 +1,4 @@
-"""The stored approval of a run's plan: the ``product_runs`` columns and their migration.
+"""The stored approval of a run's plan: the ``product_runs`` approval columns.
 
 The ``postgresql`` parameter needs ``PRODUCT_STORE_TEST_POSTGRESQL_DSN`` and runs each case in
 its own generated schema, dropped afterwards.
@@ -16,7 +16,6 @@ from typing import Any
 
 import pytest
 from pydantic import ValidationError
-from typing_extensions import LiteralString
 
 from infrahub_sync.execution import REDACTED
 from infrahub_sync.product_store import MutationReceipt, PrefectExecutionLink, ProductRun, local_product_projection
@@ -26,22 +25,6 @@ from tests.product_store.postgresql_isolation import dsn_or_skip, isolated_schem
 
 _APPROVAL_COLUMN_NAMES = ("approved_by", "approved_at", "approved_checksum", "approval_reason")
 _CHECKSUM = "a" * 64
-# ``product_runs`` as it was before approval existed: the clean V3 table plus the columns
-# earlier migrations added, and none of the four approval columns.
-_PRE_APPROVAL_PRODUCT_RUNS_TABLE = """
-CREATE TABLE product_runs (
-    run_id TEXT PRIMARY KEY, operation TEXT NOT NULL, configuration_reference TEXT NOT NULL,
-    actor TEXT, audit_links TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
-    phase TEXT NOT NULL, outcome TEXT, summary TEXT NOT NULL, results TEXT NOT NULL,
-    reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE,
-    config_id TEXT, registry_version INTEGER, package_checksum TEXT, destination_branch TEXT
-)
-"""
-_INSERT_PRE_APPROVAL_RUN = (
-    "INSERT INTO product_runs (run_id, operation, configuration_reference, actor, audit_links, started_at, "
-    "phase, summary, results) VALUES ('legacy-run-001', 'plan', 'sha256:legacy', NULL, '[]', "
-    "'2026-01-01T00:00:00+00:00', 'planned', '{}', '{}')"
-)
 
 
 @dataclass(frozen=True)
@@ -49,20 +32,15 @@ class _Backend:
     """One storage backend: how to build its run store and read its ``product_runs`` columns."""
 
     make_store: Callable[[], SQLiteRunStore | PostgreSQLRunStore]
-    execute: Callable[[LiteralString], None]
     product_run_columns: Callable[[], list[str]]
 
 
 def _sqlite_backend(database: Path) -> _Backend:
-    def execute(statement: LiteralString) -> None:
-        with sqlite3.connect(database) as connection:
-            connection.execute(statement)
-
     def product_run_columns() -> list[str]:
         with sqlite3.connect(database) as connection:
             return [str(row[1]) for row in connection.execute("PRAGMA table_info(product_runs)")]
 
-    return _Backend(lambda: SQLiteRunStore(database), execute, product_run_columns)
+    return _Backend(lambda: SQLiteRunStore(database), product_run_columns)
 
 
 @pytest.fixture(name="backend", params=("sqlite", pytest.param("postgresql", marks=pytest.mark.integration)))
@@ -71,7 +49,7 @@ def _backend_fixture(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator
     if request.param == "sqlite":
         yield _sqlite_backend(tmp_path / "records.sqlite3")
         return
-    schema = isolated_schema(dsn_or_skip("the run-approval migration's PostgreSQL case"))
+    schema = isolated_schema(dsn_or_skip("the run-approval PostgreSQL case"))
     # pylint: disable-next=import-outside-toplevel,import-error
     import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
 
@@ -80,11 +58,6 @@ def _backend_fixture(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator
 
     def connect() -> Any:  # noqa: ANN401 - the provider's own connection wrapper.
         return PsycopgConnectionFactory(psycopg.connect)(schema.dsn)
-
-    def execute(statement: LiteralString) -> None:
-        with psycopg.connect(schema.dsn) as connection:
-            connection.execute(statement)
-            connection.commit()
 
     def product_run_columns() -> list[str]:
         with psycopg.connect(schema.dsn) as connection:
@@ -98,7 +71,7 @@ def _backend_fixture(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator
 
     schema.create()
     try:
-        yield _Backend(lambda: PostgreSQLRunStore(connect), execute, product_run_columns)
+        yield _Backend(lambda: PostgreSQLRunStore(connect), product_run_columns)
     finally:
         schema.drop()
 
@@ -126,23 +99,6 @@ def _run(*, approval: RunApproval | None = None) -> ProductRun:
         outcome="succeeded",
         approval=approval,
     )
-
-
-def test_pre_approval_table_gains_the_approval_columns_once_and_its_rows_read_unapproved(backend: _Backend) -> None:
-    backend.execute(_PRE_APPROVAL_PRODUCT_RUNS_TABLE)
-    backend.execute(_INSERT_PRE_APPROVAL_RUN)
-
-    store = backend.make_store()
-    migrated = backend.product_run_columns()
-    backend.make_store()
-    restarted = backend.product_run_columns()
-
-    for name in _APPROVAL_COLUMN_NAMES:
-        assert migrated.count(name) == 1, name
-    assert sorted(restarted) == sorted(migrated)
-    loaded = store.lookup("legacy-run-001")
-    assert loaded.value is not None
-    assert loaded.value.approval is None
 
 
 def test_fresh_database_has_the_approval_columns(backend: _Backend) -> None:

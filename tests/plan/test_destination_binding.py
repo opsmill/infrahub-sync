@@ -7,16 +7,14 @@ records the *effective* destination identity (normalized URL and branch, never t
 as an additive `destination_binding` field, and `PlanApplier` compares it against the live
 adapter before delegating to the engine.
 
-Four behaviors from the spec's own test list: a mismatch refuses; `allow_destination_change`
-applies anyway; a plan without the field skips the check; normalization keeps equivalent
-addresses from false-refusing. Plus one more: the typed `destination_binding` check
-serializes to its plain string form.
+Three behaviors from the spec's own test list: a mismatch refuses; a plan without the field
+skips the check; normalization keeps equivalent addresses from false-refusing. Plus one more:
+the typed `destination_binding` check serializes to its plain string form.
 """
 
 from __future__ import annotations
 
 import json
-import logging
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -300,19 +298,6 @@ def test_a_destination_mismatch_refuses_before_the_engine_is_reached(tmp_path: P
     assert "--allow-destination-change" not in message
     assert "Create a new plan against the current destination" in message
     assert engine.apply_calls == 0
-
-
-def test_the_override_applies_and_discloses_the_change(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    _artifact(tmp_path, destination_binding=BINDING_OVERRIDE)
-    applier, engine = _applier(tmp_path, _BoundDestination(LIVE_URL))
-
-    with caplog.at_level(logging.WARNING, logger="infrahub_sync.utils"):
-        applier.apply_plan(ownership=granted_ownership(), allow_destination_change=True)
-
-    assert engine.apply_calls == 1
-    warnings = " ".join(record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING)
-    assert RECORDED_URL in warnings
-    assert LIVE_URL in warnings
 
 
 def test_a_matching_destination_applies_without_ceremony(tmp_path: Path) -> None:

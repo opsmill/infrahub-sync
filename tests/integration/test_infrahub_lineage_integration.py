@@ -1285,7 +1285,6 @@ def _run_plan(
         top_level=[TAG_KIND, DEVICE_KIND],
         run_dir=run_dir,
         run_id=run_id,
-        show_progress=False,
         concurrent_load=False,
     )
     engine.load_both_sides()

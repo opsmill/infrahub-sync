@@ -93,7 +93,7 @@ def _registered_apply(
     )
     publish_authored_plan(projection, run_id, run_directory=authored, manifest=manifest)
     calls: list[str] = []
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
@@ -198,7 +198,7 @@ def test_registered_apply_reports_verifier_recovery_before_destination(
         service_flow._verify_registered_apply(
             instance=SimpleNamespace(name="managed-plan"),
             run_id=run_id,
-            binding=None,
+            binding=("config-001", 1, "a" * 64),
             expected_checksum=None,
             base_directory=tmp_path,
         )
@@ -228,7 +228,7 @@ def test_registered_apply_stores_only_the_fixed_recovery_signal(
 ) -> None:
     """A refused managed apply preserves a safe CLI hint without storing manifest text."""
     run_id, binding, checksum, calls = _registered_apply(tmp_path, monkeypatch, manifest_binding="exact")
-    projection = service_flow._runtime()[1]
+    projection = service_flow._runtime()
     rehydrate = service_flow.rehydrate_plan_checkpoint
 
     def damaged_checkpoint(product: ProductProjection, selected_run_id: str, *, destination: Path) -> Path:
@@ -339,7 +339,7 @@ def test_a_registered_saved_apply_runs_without_the_source_credential(
         raise AssertionError(msg)
 
     monkeypatch.setattr("infrahub_sync.utils.import_adapter", _refuse_adapter_import)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))
     monkeypatch.setattr(service_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)

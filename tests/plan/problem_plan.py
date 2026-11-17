@@ -355,7 +355,6 @@ def build_potenda(  # noqa: PLR0913 - one keyword per part of the fixture a test
         top_level=fixture.order,
         run_dir=run_dir,
         run_id=run_id,
-        show_progress=False,
         concurrent_load=False,
     )
 

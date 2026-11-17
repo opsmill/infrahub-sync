@@ -15,12 +15,10 @@ from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.cache.parquet_io import write_resource_side
 from infrahub_sync.plan.derive import operations_from_diff, warn_missing_convergence_key
 from infrahub_sync.plan.errors import (
-    DestinationIdentityCollisionError,
     PlanVerificationError,
     SourcePeerUnresolvedError,
     UnkeyedCreateRefusedError,
 )
-from infrahub_sync.plan.keying import refuse_source_identity_collisions
 from infrahub_sync.potenda import Potenda
 
 if TYPE_CHECKING:
@@ -157,9 +155,7 @@ def populations(*, nested: bool, existing: str, distinct: bool = False) -> tuple
 
 def engine(source: Population, destination: Population) -> Potenda:
     """A real engine with no artifact storage identity."""
-    return Potenda(
-        source=source, destination=destination, config=config(), top_level=list(source.top_level), show_progress=False
-    )
+    return Potenda(source=source, destination=destination, config=config(), top_level=list(source.top_level))
 
 
 def report_lines(run_dir: Path) -> list[dict[str, Any]]:
@@ -346,30 +342,6 @@ def test_non_infrahub_without_storage_skips_derivation() -> None:
     source.add(Interface(name="eth0", device="missing-device"))
     potenda = engine(source, destination)
     assert potenda.write_plan(potenda.diff()) is None
-
-
-def test_collision_identifiers_with_non_name_values_are_withheld() -> None:
-    """Counterpart diagnostics must not expose non-name values through the store id."""
-    source, destination, kind = populations(nested=False, existing="unchanged")
-    operations = operations_from_diff(
-        engine(source, destination).diff(),
-        config=config(),
-        tier_of=lambda _: 0,
-        source_adapter=source,
-        destination_adapter=destination,
-    )
-    operation = operations[0].model_copy(update={"identity": {"name": "same", "credential": "ours"}})
-    sensitive = "synthetic-credential-marker"
-    with pytest.raises(DestinationIdentityCollisionError) as error:
-        refuse_source_identity_collisions(
-            kind=kind,
-            node=destination.schema[kind],  # ty: ignore[unresolved-attribute]
-            creates=[operation],
-            identities=[(f"same__{sensitive}", {"name": "same", "credential": sensitive})],
-            declared_identity={"name", "credential"},
-        )
-    assert sensitive not in str(error.value)
-    assert "source identity fingerprint" in str(error.value)
 
 
 def test_alternative_uniqueness_constraint_does_not_mask_actual_match_key(tmp_path: Path) -> None:

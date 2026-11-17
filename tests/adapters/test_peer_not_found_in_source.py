@@ -228,7 +228,6 @@ def _potenda(name: str, recorded: RecordedSource) -> Potenda:
         top_level=list(ORDER),
         run_dir=run_dir,
         run_id=RUN_ID,
-        show_progress=False,
         concurrent_load=False,
     )
 

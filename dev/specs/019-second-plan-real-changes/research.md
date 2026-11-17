@@ -314,8 +314,10 @@ above. Ending saving at the terminal commit, rejected because a `sync` commits a
 **Decision**: One nullable TEXT column `plan_step` on `prefect_executions`, holding one JSON
 document with the parts `preparing`, `comparing`, `checking` and `saving`, each with
 `started_at` and `ended_at`, and a `running` key that names the part that runs. The column is
-added at start-up by `_migrate_prefect_execution_columns` (`infrahub_sync/product_store/store.py:1007-1016`),
-the mechanism that added `source_read` and `destination_read`. Old rows read `NULL`.
+declared in `CREATE TABLE`, beside `source_read` and `destination_read`. A new execution reads
+`NULL` until the worker writes the document. Amended 2026-11-17: PR #425 removed the start-up
+migration that this decision first used, so a product database that an earlier build created
+does not gain the column.
 
 - The document is checked against a fixed list of keys and part names before the write, as
   `_check_side_read_document` does (`infrahub_sync/product_store/store.py:4663-4709`). It

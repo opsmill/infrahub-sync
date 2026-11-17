@@ -91,7 +91,7 @@ unchanged data holds zero operations.
 - [X] T032 [US2] Write an emptied one-peer relationship in `apply_planned_operation`: no entry in the create data for it, the destination id in the create data for that operation only, the field set to `None`, and the rendered-input guard extended, in `infrahub_sync/adapters/infrahub.py:1852-1937`
 - [X] T033 [US2] Print `<field>: becomes empty` in `_operation_detail`, in `infrahub_sync/cli.py:1075-1094`
 - [X] T034 [P] [US2] Describe format 5 and the emptied one-peer reference in `docs/docs/development/knowledge/plan-artifact.md`
-- [X] T035 [P] [US2] Write ADR 0044 "Saved plan format 5 records an emptied one-peer relationship" in `dev/adr/0044-saved-plan-format-5-records-an-emptied-one-peer-relationship.md` and list it in `dev/adr/README.md`
+- [X] T035 [P] [US2] Write ADR 0046 "Saved plan format 5 records an emptied one-peer relationship" in `dev/adr/0046-saved-plan-format-5-records-an-emptied-one-peer-relationship.md` and list it in `dev/adr/README.md`
 - [X] T036 [P] [US2] Add the news fragment `changelog/387.fixed.md`: a plan now records and apply now writes an emptied one-peer relationship; plans are saved in format 5; upgrade the API and the worker together
 
 **Checkpoint**: A second plan holds every real change.

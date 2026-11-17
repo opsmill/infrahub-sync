@@ -41,7 +41,8 @@ from infrahub_sync.execution import (
 )
 from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.potenda.apply_progress import ApplyProgressLostError
-from infrahub_sync.utils import get_all_sync, get_potenda_from_instance
+from infrahub_sync.utils import get_potenda_from_instance
+from tests.sync_instances import get_all_sync
 
 SYNC_NAME = "canary-example"
 RUN_ID = "20260731T1200-abcdef12"
@@ -1475,9 +1476,6 @@ def test_branch_reaches_the_factory_from_run_remote_request(
     run_remote_request(SYNC_NAME, "plan", False, branch, config_directory=config_dir, _potenda_factory=factory)  # noqa: FBT003
     call = factory.calls[0]
     assert call["branch"] == branch
-    # Remote runs pin the CLI engine defaults, with progress display disabled.
-    assert call["show_progress"] is False
-    assert call["concurrent_load"] is True
     assert "continue_on_error" not in call
     assert call["run_id"] is None
     assert call["verbosity"] == logging.INFO
@@ -1521,7 +1519,7 @@ def test_the_read_observer_seam_reaches_the_engine_without_changing_the_factory_
     assert getattr(factory.engine, "read_observer", None) is observer
     recorded = factory.calls[0]
     assert set(recorded) == set(inspect.signature(get_potenda_from_instance).parameters)
-    assert len(recorded) == 7  # spec 007 removed `continue_on_error`
+    assert len(recorded) == 5
 
 
 def test_the_plan_step_observer_seam_reaches_the_engine_without_changing_the_factory_call(

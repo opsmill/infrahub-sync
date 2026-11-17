@@ -115,7 +115,6 @@ def _potenda(
         run_id=run_id,
         cache_root=cache_root,
         schema_subhash=SCHEMA_SUBHASH,
-        show_progress=False,
         concurrent_load=False,
     )
 

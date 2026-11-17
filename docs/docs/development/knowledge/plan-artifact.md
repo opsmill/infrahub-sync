@@ -14,7 +14,7 @@ exists so that the set of changes an operator reads is the set that gets written
 by `infrahub_sync/plan/` and is versioned: `format_version` is `5` for every plan written now.
 Format `5` is format `4` with one change: a one-peer reference of an update can hold no peer, which
 records that the relationship becomes empty
-([ADR 0044](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0044-saved-plan-format-5-records-an-emptied-one-peer-relationship.md)).
+([ADR 0046](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0046-saved-plan-format-5-records-an-emptied-one-peer-relationship.md)).
 Plans of format `4` are still read, verified, approved, applied and resumed. Plans of format `2`
 and `3` can still be read and reviewed, but `apply` refuses them: a format `2` plan's updates
 record no destination id, and neither format was checked for problems or records a count of

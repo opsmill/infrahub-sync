@@ -167,6 +167,21 @@ def _interrupted_run(projection: ProductProjection, name: str) -> str:
     return run_id
 
 
+def _run_is_resumable(projection: ProductProjection, run_id: str) -> bool:
+    """Evaluate the store's resumable-run rule, the one its admissions read, on a cursor of its own."""
+    records = projection._records
+    assert isinstance(records, (SQLiteRunStore, PostgreSQLRunStore))
+    connection = records._connect()
+    try:
+        cursor = connection.cursor()
+        try:
+            return records._run_is_resumable(cursor, run_id)
+        finally:
+            cursor.close()
+    finally:
+        connection.close()
+
+
 def _assert_refused(receipt: MutationReceipt) -> None:
     assert receipt.state == "accepted"
     assert receipt.response_status == 409
@@ -176,7 +191,7 @@ def _assert_refused(receipt: MutationReceipt) -> None:
 def test_an_interrupted_run_with_no_unfinished_execution_is_resumable(projection: ProductProjection) -> None:
     run_id = _interrupted_run(projection, "resumable")
 
-    assert projection.run_is_resumable(run_id) is True
+    assert _run_is_resumable(projection, run_id) is True
 
 
 def test_verify_is_admitted_on_a_resumable_run_and_can_submit_its_execution(projection: ProductProjection) -> None:
@@ -204,7 +219,7 @@ def test_a_second_verify_is_refused_while_the_first_execution_is_unfinished(proj
     run_id = _interrupted_run(projection, "verify-running")
     _submit(projection, run_id, _reserve(projection, run_id, "m-verify-1", operation="verify"), purpose="verify")
 
-    assert projection.run_is_resumable(run_id) is False
+    assert _run_is_resumable(projection, run_id) is False
     _assert_refused(_reserve(projection, run_id, "m-verify-2", operation="verify"))
 
 
@@ -271,7 +286,7 @@ def test_verify_is_still_refused_on_an_applied_run(projection: ProductProjection
         ),
     )
 
-    assert projection.run_is_resumable(run_id) is False
+    assert _run_is_resumable(projection, run_id) is False
     _assert_refused(_reserve(projection, run_id, "m-verify", operation="verify"))
 
 
@@ -370,7 +385,7 @@ def test_a_resume_after_a_failed_verify_is_refused_with_verify_required(projecti
     run_id = _interrupted_run(projection, "resume-failed-verify")
     _verify(projection, run_id, "m-verify", passed=False)
 
-    assert projection.run_is_resumable(run_id) is True
+    assert _run_is_resumable(projection, run_id) is True
     assert _run(projection, run_id).reconciliation_required is True
     _assert_resume_refused(_reserve_resume(projection, run_id, "m-resume"), _VERIFY_REQUIRED_CODE)
 
@@ -482,7 +497,7 @@ def test_a_resume_that_succeeds_clears_reconciliation_and_sets_the_run_applied(p
     stored = _run(projection, run_id)
     assert stored.reconciliation_required is False
     assert stored.phase == "applied"
-    assert projection.run_is_resumable(run_id) is False
+    assert _run_is_resumable(projection, run_id) is False
     _assert_resume_refused(_reserve_resume(projection, run_id, "m-resume-again"), _NOT_RESUMABLE_CODE)
 
 
@@ -493,7 +508,7 @@ def test_a_resume_that_fails_keeps_the_run_requiring_reconciliation(projection: 
     _finish_claimed(projection, run_id, flow_run_id, verdict=("failed", "failed"))
 
     assert _run(projection, run_id).reconciliation_required is True
-    assert projection.run_is_resumable(run_id) is True
+    assert _run_is_resumable(projection, run_id) is True
 
 
 def test_an_interrupted_resume_keeps_the_run_resumable_and_requires_a_new_verify(
@@ -507,7 +522,7 @@ def test_an_interrupted_resume_keeps_the_run_resumable_and_requires_a_new_verify
     stored = _run(projection, run_id)
     assert stored.reconciliation_required is True
     assert stored.phase == "interrupted"
-    assert projection.run_is_resumable(run_id) is True
+    assert _run_is_resumable(projection, run_id) is True
     _assert_resume_refused(_reserve_resume(projection, run_id, "m-resume-2"), _VERIFY_REQUIRED_CODE)
     _verify(projection, run_id, "m-verify-2")
     assert _reserve_resume(projection, run_id, "m-resume-3").state == "reserved"
@@ -547,7 +562,7 @@ def test_a_cancelled_verify_keeps_the_run_resumable_and_requires_a_new_verify(pr
     assert stored.prefect_executions[-1].terminal_state == "cancelled"
     assert stored.phase == "interrupted"
     assert stored.reconciliation_required is True
-    assert projection.run_is_resumable(run_id) is True
+    assert _run_is_resumable(projection, run_id) is True
     _assert_resume_refused(_reserve_resume(projection, run_id, "m-resume"), _VERIFY_REQUIRED_CODE)
 
 
@@ -634,7 +649,7 @@ def _sync_killed_while_planning(projection: ProductProjection, name: str) -> str
 def test_a_sync_killed_before_it_saved_a_plan_is_not_resumable(projection: ProductProjection) -> None:
     run_id = _sync_killed_while_planning(projection, "sync-no-plan")
 
-    assert projection.run_is_resumable(run_id) is False
+    assert _run_is_resumable(projection, run_id) is False
 
 
 def test_a_resume_of_a_sync_killed_before_it_saved_a_plan_is_refused_and_says_why(
@@ -661,4 +676,4 @@ def test_a_sync_becomes_resumable_once_its_plan_is_saved(projection: ProductProj
 
     _publish_plan(projection, run_id)
 
-    assert projection.run_is_resumable(run_id) is True
+    assert _run_is_resumable(projection, run_id) is True

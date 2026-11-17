@@ -22,7 +22,7 @@ task is done, and every test added or changed has local-pass evidence.
 | 5. Format 5 and readers | T021, T022, T028, T029 (4) | 4 done | `2c51a9a6` | Earlier releases already refuse an unknown plan format; the readers did not change. |
 | 6. Deriving an emptied relationship | T023, T030, T031, T031a (4) | 4 done | `c1cb0c0f`, `580a2990` | Before this feature, a required one-peer field missing from NetBox data failed the whole plan; a field set to `None` was left out as `wrong_value_type`. Both now give `required_relationship_empty_in_source`. |
 | 7. Apply, verify, CLI detail | T024, T025, T027, T032, T033 (5) | 5 done | `a817392e` | Verify needed no change. The pre-write checks now render an emptied relationship. The task named `tests/plan/test_destination_check.py`; the file is `tests/test_destination_check.py`. |
-| 8. Change tests and docs | T026, T034-T036 (4) | 4 done | `4e80a8b7`, `617452d7` | ADR 0044 written. `compose-deployment.mdx` and `planned-write-and-apply.md` described the old behavior and were updated. |
+| 8. Change tests and docs | T026, T034-T036 (4) | 4 done | `4e80a8b7`, `617452d7` | ADR 0046 written. `compose-deployment.mdx` and `planned-write-and-apply.md` described the old behavior and were updated. |
 | 9. Timings: store and observer | T037-T039, T042-T044 (6) | 6 done | `fd52064f` | A plan step makes five store writes, not four as `plan.md` states: the first is an empty document at stage start. Comparing starts when `Potenda.diff()` is called. A failed part keeps no end; the response gives it `stopped_at` equal to the verdict time. |
 | 10. Timings: API, CLI, docs | T040, T041, T045-T048 (6) | 6 done | `ee46e604` | `runs show` prints `plan_<part>: <s>s`, `running`, `stopped after <s>s` or `stopped`. The web interface types were not changed (out of scope). |
 | 11. Benchmark fields | T049-T053 (5) | 5 done | `293742a3`, `c797d998` | Only a `warm` cell can pass after a stop for records left out; `cold` and `changed` cells fail because nothing was written. |
@@ -90,7 +90,7 @@ with comments. The simplification pass was not run, because it only gives advice
 | Medium | `docs/docs/reference/sync-http-api.mdx`, `docs/docs/running-a-sync.mdx` | Placed the plan report in `comparing`; it is built in `checking`. | Fixed. |
 | Low | `infrahub_sync/plan/derive.py` | A missing owner record emptied a relationship without a log line. | Fixed: the relationship is left alone and one warning names the kind and the field. |
 | Low | `tasks/bench.py` | A failed or cancelled run after a published plan could be recorded as `ok`. | Fixed: checks phase `planned` and outcome `left-out-review-required`. |
-| Low | `plan-artifact.md`, ADR 0044 | The refusal list left out deletes. | Fixed. |
+| Low | `plan-artifact.md`, ADR 0046 | The refusal list left out deletes. | Fixed. |
 | Low | `infrahub_sync/__init__.py` | A misspelled `mapping` on a required relationship now leaves every record of the kind out as `required_relationship_empty_in_source` instead of failing the read. | Deferred. |
 | Low | `tests/plan/problem_plan.py` | The stand-in destination records the built-in mark without the `metadata_read` condition. The real path is covered by `tests/adapters/test_infrahub_builtin_nodes.py`. | Deferred. |
 | Low | `infrahub_sync/adapters/infrahub.py` | When the server version query is refused on Infrahub 1.11.9, metadata is not read and the `default` delete comes back. No test covers this. | Deferred. |

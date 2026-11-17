@@ -171,20 +171,6 @@ def test_each_generated_schema_name_is_namespaced_and_unique() -> None:
     assert all(re.fullmatch(r"[a-z0-9_]+", name) for name in names)
 
 
-# The pre-run-discovery shape of the three tables the start-up migration extends.
-_LEGACY_RUN_DISCOVERY_TABLES = (
-    "CREATE TABLE product_runs (run_id TEXT PRIMARY KEY, operation TEXT NOT NULL, "
-    "configuration_reference TEXT NOT NULL, actor TEXT, audit_links TEXT NOT NULL, started_at TEXT NOT NULL, "
-    "finished_at TEXT, phase TEXT NOT NULL, outcome TEXT, summary TEXT NOT NULL, results TEXT NOT NULL, "
-    "reconciliation_required BOOLEAN NOT NULL DEFAULT FALSE)",
-    "CREATE TABLE configurations (config_id TEXT PRIMARY KEY, created_at TEXT NOT NULL)",
-    "CREATE TABLE configuration_versions (config_id TEXT NOT NULL, registry_version INTEGER NOT NULL, "
-    "package_checksum TEXT NOT NULL, declared_content TEXT NOT NULL, created_at TEXT NOT NULL, "
-    "PRIMARY KEY (config_id, registry_version), FOREIGN KEY (config_id) REFERENCES configurations(config_id))",
-    "INSERT INTO product_runs (run_id, operation, configuration_reference, audit_links, started_at, phase, "
-    "summary, results) VALUES ('legacy-run-001', 'plan', 'sha256:legacy', '[]', "
-    "'2026-01-01T00:00:00+00:00', 'planning', '{}', '{}')",
-)
 _RUN_DISCOVERY_COLUMNS = {
     "product_runs": {"config_id", "registry_version", "package_checksum", "destination_branch"},
     "configuration_versions": {"registered_by", "registration_reason"},
@@ -201,10 +187,10 @@ _RUN_DISCOVERY_INDEXES = {
 
 
 @pytest.mark.integration
-def test_postgresql_start_up_upgrades_a_database_without_the_run_discovery_schema_once() -> None:
-    """A real server: legacy tables gain the columns and indexes, and a second start-up is a no-op."""
+def test_postgresql_start_up_creates_the_run_discovery_schema_once() -> None:
+    """A real server: a new database has the columns and indexes, and a second start-up changes nothing."""
     schema = postgresql_isolation.isolated_schema(
-        postgresql_isolation.dsn_or_skip("the run-discovery migration's PostgreSQL case")
+        postgresql_isolation.dsn_or_skip("the run-discovery schema's PostgreSQL case")
     )
     # pylint: disable-next=import-outside-toplevel,import-error
     import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
@@ -234,24 +220,16 @@ def test_postgresql_start_up_upgrades_a_database_without_the_run_discovery_schem
 
     schema.create()
     try:
-        with psycopg.connect(schema.dsn) as connection:
-            for statement in _LEGACY_RUN_DISCOVERY_TABLES:
-                connection.execute(statement)
-            connection.commit()
-
-        store = PostgreSQLRunStore(connect)
-        upgraded = catalog()
+        PostgreSQLRunStore(connect)
+        created = catalog()
         PostgreSQLRunStore(connect)
 
-        columns, indexes = upgraded
+        columns, indexes = created
         for table, expected in _RUN_DISCOVERY_COLUMNS.items():
             assert expected <= columns[table], table
         for index, definition in _RUN_DISCOVERY_INDEXES.items():
             assert indexes[index].endswith(definition), indexes[index]
-        assert catalog() == upgraded
-        loaded = store.lookup("legacy-run-001").value
-        assert loaded is not None
-        assert loaded.destination_branch is None
+        assert catalog() == created
     finally:
         schema.drop()
 

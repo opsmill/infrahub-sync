@@ -256,7 +256,7 @@ def _prepare(  # noqa: PLR0913, PLR0915 - one harness knob per collaborator a ca
         )
         return saved_plan(base)
 
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
     monkeypatch.setattr(service_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)
@@ -269,7 +269,7 @@ def _prepare(  # noqa: PLR0913, PLR0915 - one harness knob per collaborator a ca
     monkeypatch.setattr(service_flow, "service_guard_secrets", lambda: ())
     if commit_failure is not None:
         prepared.projection = _FailingSuccessCommit(projection, commit_failure)
-        monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), prepared.projection))
+        monkeypatch.setattr(service_flow, "_runtime", lambda: prepared.projection)
     return prepared
 
 
@@ -426,48 +426,6 @@ def test_a_managed_sync_holds_one_guard_across_planning_and_applying(
     assert acquired < prepared.events.index("live-schema-read")
     assert acquired < prepared.events.index("execute-run:apply")
     assert prepared.events[-1] == "guard-released"
-
-
-def test_a_managed_write_without_a_registered_binding_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A guard keyed on a configuration cannot serialize a run that names none."""
-    monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
-    monkeypatch.setattr(service_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)
-    monkeypatch.setattr(service_flow, "_require_current_worker_identity", lambda *_args: None)
-    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
-    projection = local_product_projection(tmp_path / "product")
-    run_id = "legacy-apply"
-    projection.create_run(
-        ProductRun(
-            run_id=run_id,
-            operation="apply",
-            configuration_reference="legacy-config-version",
-            actor="owner",
-            started_at=datetime.now(timezone.utc),
-            phase="planned",
-            summary={"sync_name": "legacy-inventory"},
-        )
-    )
-    reserved, _created = projection.reserve_mutation(
-        _receipt("m-legacy", run_id=run_id, operation="apply"), admit_write=True
-    )
-    projection.add_prefect_execution(
-        run_id,
-        PrefectExecutionLink(
-            flow_run_id=FLOW_RUN_ID, purpose="apply", attempt=1, submitted_at=datetime.now(timezone.utc)
-        ),
-        receipt_id=reserved.receipt_id,
-    )
-    guard_sessions: list[object] = []
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
-    monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))
-    monkeypatch.setattr(service_flow, "service_guard_session", lambda: guard_sessions.append(object()))
-
-    with pytest.raises(RuntimeError, match="registered configuration binding"):
-        service_sync_run.fn(run_id, "apply", expected_checksum="a" * 64, confirm_writes=True)
-
-    assert guard_sessions == []
 
 
 def test_the_managed_write_path_takes_no_local_pipeline_lock() -> None:
