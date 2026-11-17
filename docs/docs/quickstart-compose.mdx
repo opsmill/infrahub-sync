@@ -54,9 +54,12 @@ directory.
 
 ## Write the credentials
 
-The file needs seven credentials, and defaults none of them. This generates random
-values for each, and gives the bundled CLI the same token as the one principal
-the API accepts:
+The file requires one credential, the token that the Sync API accepts. The
+credentials that its services use between themselves have defaults, which suit a
+test deployment. For a deployment that holds real data, replace them as
+[The `.env` file](./compose-deployment.mdx#configuration-prerequisites)
+describes. This generates random values for each credential anyway, and gives
+the bundled CLI the same token as the one principal the API accepts:
 
 ```sh
 rand() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }
@@ -77,8 +80,8 @@ mv -f "$env_file" .env
 docker compose config --quiet
 ```
 
-`config --quiet` prints nothing when every credential is set. Otherwise it names
-the missing one, for example `INFRAHUB_SYNC_PRODUCT_PASSWORD is required`. Keep
+`config --quiet` prints nothing when the token is set. Otherwise it prints
+`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS is required`. Keep
 `.env` out of version control and never `source` it. Every variable it can set,
 including the image version, is listed in
 [The `.env` file](./compose-deployment.mdx#configuration-prerequisites).

@@ -49,15 +49,20 @@ SYNC_IMAGE_FORM = re.compile(
     r'^\s*image:\s*"\$\{INFRAHUB_SYNC_DOCKER_IMAGE:-registry\.opsmill\.io/opsmill/infrahub-sync\}'
     r':\$\{VERSION:-(?P<version>[0-9][0-9A-Za-z.+-]*)\}"\s*$'
 )
-# The operator credentials: never defaulted, so each is guarded with `:?`.
-CREDENTIALS = (
-    "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD",
-    "INFRAHUB_SYNC_PRODUCT_PASSWORD",
-    "INFRAHUB_SYNC_PREFECT_PASSWORD",
-    "INFRAHUB_SYNC_S3_ACCESS_KEY",
-    "INFRAHUB_SYNC_S3_SECRET_KEY",
-    "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS",
-)
+# The credential that guards the published API port: never defaulted, so it is
+# guarded with `:?`.
+REQUIRED_CREDENTIALS = ("INFRAHUB_SYNC_SERVICE_BEARER_TOKENS",)
+# The credentials only the file's own services use between themselves, none of
+# which publishes a port. Each has one fixed, non-empty default, so a test
+# deployment starts with an API token alone.
+DEFAULTED_CREDENTIALS = {
+    "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD": "infrahub-sync-postgres-admin",
+    "INFRAHUB_SYNC_PRODUCT_PASSWORD": "infrahub-sync-product",
+    "INFRAHUB_SYNC_PREFECT_PASSWORD": "infrahub-sync-prefect",
+    "INFRAHUB_SYNC_S3_ACCESS_KEY": "infrahub-sync",
+    "INFRAHUB_SYNC_S3_SECRET_KEY": "infrahub-sync-object-store",
+    "INFRAHUB_SYNC_PREFECT_AUTH_STRING": "infrahub-sync-prefect-api",
+}
 # The database bootstrap script: a top-level `configs` entry, mounted where the
 # job's entrypoint runs it.
 BOOTSTRAP_CONFIG = "db-bootstrap-script"
@@ -379,28 +384,48 @@ def test_the_file_declares_no_secret_file(cli_model: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Required credentials
+# Required and defaulted credentials
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", CREDENTIALS)
+def credential_references(name: str) -> list[str]:
+    """Return the modifier of every `${NAME...}` interpolation of one variable in the file.
+
+    `$${NAME}` is an escaped, literal `$` for the shell inside the bootstrap
+    script, read at run time from the container: not an interpolation.
+    """
+    pattern = r"(?<!\$)\$\{" + name + r"(?![A-Z0-9_])([^}]*)\}"
+    return re.findall(pattern, COMPOSE_FILE.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("name", REQUIRED_CREDENTIALS)
 def test_every_reference_to_a_credential_is_guarded_with_a_required_marker(name: str) -> None:
     """Read from the text: each `${NAME...}` is `${NAME:?...}`, so no default can creep in.
 
     A model cannot answer this, because interpolation has already replaced every
     reference with its value by the time one exists.
     """
-    # `$${NAME}` is an escaped, literal `$` for the shell inside the bootstrap
-    # script, read at run time from the container: not an interpolation.
-    pattern = r"(?<!\$)\$\{" + name + r"(?![A-Z0-9_])([^}]*)\}"
-    references = re.findall(pattern, COMPOSE_FILE.read_text(encoding="utf-8"))
+    references = credential_references(name)
     unguarded = [reference for reference in references if not reference.startswith(":?")]
 
     assert references, f"the file never references {name}"
     assert unguarded == [], f"{name} is referenced without a :? guard: {unguarded}"
 
 
-@pytest.mark.parametrize("name", CREDENTIALS)
+@pytest.mark.parametrize(("name", "default"), sorted(DEFAULTED_CREDENTIALS.items()))
+def test_every_reference_to_an_internal_credential_carries_the_same_default(name: str, default: str) -> None:
+    """Read from the text: one default per credential, so both ends of a connection agree.
+
+    A server and its client given different defaults would start and then fail to
+    authenticate, so every reference to one credential carries the same value.
+    """
+    references = credential_references(name)
+
+    assert references, f"the file never references {name}"
+    assert set(references) == {f":-{default}"}, f"{name} is referenced with {sorted(set(references))}"
+
+
+@pytest.mark.parametrize("name", REQUIRED_CREDENTIALS)
 def test_a_missing_credential_stops_compose_naming_it(compose_version: str, name: str) -> None:
     """Compose refuses before any container exists, and the refusal says which one."""
     del compose_version
@@ -504,16 +529,28 @@ def test_the_cli_service_is_not_given_the_prefect_credential(cli_model: dict[str
     assert PREFECT_CLIENT_CREDENTIAL not in environment
 
 
-def test_the_bundle_refuses_to_resolve_without_the_prefect_credential(
-    compose_version: str, contract_environment: dict[str, str]
+@pytest.mark.parametrize("value", [None, ""], ids=["unset", "empty"])
+def test_an_unset_or_empty_prefect_credential_resolves_to_its_default(
+    compose_version: str, contract_environment: dict[str, str], value: str | None
 ) -> None:
-    """An empty credential would start an unauthenticated server, so it is not a default."""
-    del compose_version
-    without = {key: value for key, value in contract_environment.items() if key != PREFECT_CREDENTIAL_SETTING}
-    result = compose(["config"], environment={**without, PREFECT_CREDENTIAL_SETTING: ""})
+    """An empty credential would start an unauthenticated server, so `:-` replaces it too.
 
-    assert result.returncode != 0
-    assert "Prefect API credential" in result.stderr
+    The server and every client then hold the same non-empty default. Read from raw
+    output and compared privately, because the credential is redacted by name.
+    """
+    del compose_version
+    environment = {key: item for key, item in contract_environment.items() if key != PREFECT_CREDENTIAL_SETTING}
+    if value is not None:
+        environment[PREFECT_CREDENTIAL_SETTING] = value
+    resolved = resolve_privately(environment)
+    default = DEFAULTED_CREDENTIALS[PREFECT_CREDENTIAL_SETTING]
+
+    assert default, f"{PREFECT_CREDENTIAL_SETTING} has an empty default"
+    server_has_it = service(resolved, PREFECT_SERVER)["environment"][PREFECT_SERVER_CREDENTIAL] == default
+    assert server_has_it, f"prefect-server does not fall back to the default {PREFECT_CREDENTIAL_SETTING}"
+    for name in sorted(PREFECT_CREDENTIAL_RECEIVERS):
+        same = service(resolved, name)["environment"][PREFECT_CLIENT_CREDENTIAL] == default
+        assert same, f"{name} does not present the default {PREFECT_CREDENTIAL_SETTING}"
 
 
 # ---------------------------------------------------------------------------

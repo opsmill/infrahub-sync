@@ -97,6 +97,12 @@ Security is enforced at the boundary, and secrets never leak.
 
 - Credentials MUST come from environment variables or a secret manager — never committed,
   printed, or logged.
+    - **Exception:** the root `docker-compose.yml` MAY give a fixed default to a credential that
+      only its own services use between themselves, on the deployment's own network, when none
+      of those services publishes a port. The file and the operator documentation MUST state each
+      default and say to replace it for a deployment that holds real data. A credential that
+      guards a published port MUST stay required, and a credential of a source or destination
+      system MUST NOT have a default value. See [ADR 0045](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0045-the-compose-file-defaults-its-internal-credentials.md).
 - Never print or guess secrets; tracebacks and structured logs MUST NOT contain credentials.
 - Example configurations MUST be authentic but sanitized. They MUST NOT contain real tokens or
   internal hostnames; use placeholder values instead.
@@ -128,7 +134,8 @@ reversible.
 #### Security requirements
 
 - Credentials only via environment variables or a secret manager; no secrets in code, logs,
-  tracebacks, or example configurations.
+  tracebacks, or example configurations. The one exception is the internal-credential defaults
+  of the root `docker-compose.yml` that Principle VI allows.
 - Default to read-only; the mutating `sync` and `apply` commands require explicit approval and
   confirmed targets.
 - Handle authentication failures (401/403) and authorization boundaries explicitly.
@@ -202,4 +209,4 @@ This constitution is the authoritative reference for development standards in th
   sets the principles those documents
   implement. Where they appear to conflict, the constitution governs.
 
-**Version**: 1.0.4 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-11-05
+**Version**: 1.1.0 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-11-16
