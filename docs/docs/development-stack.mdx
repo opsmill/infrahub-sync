@@ -84,7 +84,7 @@ shell already exports that variable.
 ### Choose a mode
 
 The stack runs in one of two modes. Both start the same PostgreSQL, object store, Prefect
-server containers, and the preset's Infrahub and NetBox, and both end with the same check,
+server containers, and the Infrahub and NetBox of the preset, and both end with the same check,
 `dev.smoke`. With
 `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0`, neither mode starts the object store containers: the
 Sync processes use the store that `INFRAHUB_SYNC_S3_ENDPOINT_URL` names instead (see
@@ -212,7 +212,7 @@ uv run invoke dev.deps --preset infrahub
 ```
 
 `dev.deps` rebuilds the image when its inputs changed, starts PostgreSQL, the object store, the
-Prefect server and the preset's Infrahub and NetBox, and runs `sync-bootstrap` once to create the database, the bucket,
+Prefect server and the Infrahub and NetBox of the preset, and runs `sync-bootstrap` once to create the database, the bucket,
 the Prefect work pool and the deployment. It prints the addresses, including PostgreSQL on
 `127.0.0.1:5440` (`STORAGE_POSTGRES_PORT`) and the object store on `http://127.0.0.1:9010`
 (`MINIO_PORT`), and then returns.
@@ -561,7 +561,7 @@ Use the addresses the worker container can reach, as in step 6.
 | Task | What it does |
 | --- | --- |
 | `dev.build [--no-cache]` | Builds the image from your checkout and labels it with the hash of its build inputs. |
-| `dev.start [--preset NAME] [--infrahub-network NAME]` | Rebuilds the image when its inputs changed, then starts the preset's containers and waits until they are healthy. The preset is `sync`, `infrahub` or `preview`. |
+| `dev.start [--preset NAME] [--infrahub-network NAME]` | Rebuilds the image when its inputs changed, then starts the containers of the preset and waits until they are healthy. The preset is `sync`, `infrahub` or `preview`. |
 | `dev.infrahub` | `dev.start --preset infrahub`: the Sync services and a local Infrahub. |
 | `dev.preview` | `dev.start --preset preview`: a local Infrahub, the local NetBox and the smoke dataset in Infrahub. |
 | `dev.restart` | Recreates the Sync containers so they run the mounted code. No rebuild. |
