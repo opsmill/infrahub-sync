@@ -1,0 +1,37 @@
+dev/specs/021-scheduled-runs/spec.md
+  s_29b17f91da9f30::t_dd9b0cf4f9aa20 73-79,91,150-152,295-297,337-339
+  s_29b17f91da9f30::t_f0343e08bac411 80-82,262-265,368-373,465,538-540
+  s_29b17f91da9f30::t_4da70dfc7692aa 83-85,441-444,516-521
+  s_29b17f91da9f30::t_56cabc5ee535a9 86-88,285-288,353-356,450
+  s_29b17f91da9f30::t_618b01e306ff10 89-90,171-173,491-492
+dev/specs/021-scheduled-runs/contracts/cli.md
+  s_29b17f91da9f30::t_618b01e306ff10 49-50
+dev/specs/021-scheduled-runs/contracts/events.md
+  s_29b17f91da9f30::t_618b01e306ff10 37
+dev/specs/021-scheduled-runs/research.md
+  s_29b17f91da9f30::t_618b01e306ff10 181-184
+dev/specs/021-scheduled-runs/plan.md
+  s_29b17f91da9f30::t_618b01e306ff10 60-61,67
+dev/specs/021-scheduled-runs/contracts/http-api.md
+  s_29b17f91da9f30::t_618b01e306ff10 31,42-43,72,131-133
+dev/specs/021-scheduled-runs/tasks.md
+  s_29b17f91da9f30::t_618b01e306ff10 54,73-74,83,181,187
+dev/specs/021-scheduled-runs/data-model.md
+  s_29b17f91da9f30::t_618b01e306ff10 13-14,25,47-52,66,68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "56223bf752b8f9f4552a8719bd76506a8813f047",
+  "prompts": {},
+  "sessions": {
+    "s_29b17f91da9f30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dfcfd39d-8f7f-4fef-a767-b859c4b1a3fc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
