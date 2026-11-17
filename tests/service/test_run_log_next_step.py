@@ -305,7 +305,7 @@ def flow_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, ...]]:
     calls: list[tuple[Any, ...]] = []
     logger = _RecordingLogger(calls)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logger, False))
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (None, object()))
+    monkeypatch.setattr(service_flow, "_runtime", object)
     monkeypatch.setattr(service_flow, "_claim_current_execution", lambda _projection, _run_id: ("flow", _WORKER_ID))
 
     def commit(*_args: object, **_kwargs: object) -> None:
@@ -516,7 +516,7 @@ def published(
     created: list[dict[str, Any]] = []
     logger = _RecordingLogger(flow_calls)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logger, True))
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (None, _StoredRun()))
+    monkeypatch.setattr(service_flow, "_runtime", _StoredRun)
     monkeypatch.setattr(service_flow, "collect_secret_values", lambda: [_REDACTION_PROBE])
 
     def create(**kwargs: object) -> None:
@@ -582,7 +582,7 @@ def test_outside_a_prefect_run_nothing_is_published(
     monkeypatch: pytest.MonkeyPatch, flow_calls: list[tuple[Any, ...]]
 ) -> None:
     _stage_returns(monkeypatch, {"outcome": "planned"})
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (None, _StoredRun()))
+    monkeypatch.setattr(service_flow, "_runtime", _StoredRun)
 
     created: list[dict[str, Any]] = []
     monkeypatch.setattr(service_flow, "create_markdown_artifact", lambda **kwargs: created.append(kwargs))
@@ -718,7 +718,7 @@ def test_the_unpersisted_evidence_warning_carries_the_sync_prefix(
             msg = "store unavailable"
             raise OSError(msg)
 
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (None, _FailingCommit()))
+    monkeypatch.setattr(service_flow, "_runtime", _FailingCommit)
     monkeypatch.setattr(
         service_flow, "_claim_current_execution", lambda _projection, _run_id: (flow_run_id, _WORKER_ID)
     )

@@ -223,7 +223,7 @@ def _harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, report: PlanRep
             artifact_path=str(tmp_path / "runs" / runtime.name / _RUN_ID),
         )
 
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
     monkeypatch.setattr(service_flow, "_prefect_flow_run_id", lambda: harness.flow_run_id)

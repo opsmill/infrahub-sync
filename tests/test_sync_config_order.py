@@ -1,4 +1,4 @@
-"""SyncConfig.compute_order() returns the operator override if present,
+"""SyncConfig.compute_order_and_tiers() returns the operator override if present,
 otherwise falls back to the auto-tiered, flattened topological order.
 """
 
@@ -36,7 +36,7 @@ def test_compute_order_uses_explicit_order_when_set() -> None:
             ),
         ],
     )
-    assert cfg.compute_order() == ["Device", "Tag"]
+    assert cfg.compute_order_and_tiers()[0] == ["Device", "Tag"]
 
 
 def test_compute_order_falls_back_to_tiers_when_empty() -> None:
@@ -49,7 +49,7 @@ def test_compute_order_falls_back_to_tiers_when_empty() -> None:
             ),
         ],
     )
-    assert cfg.compute_order() == ["Tag", "Device"]
+    assert cfg.compute_order_and_tiers()[0] == ["Tag", "Device"]
 
 
 @pytest.mark.parametrize(

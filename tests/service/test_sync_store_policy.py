@@ -63,7 +63,7 @@ def test_worker_refuses_a_previously_registered_store_before_external_reads(
         projection, "legacy-store-run", PrefectExecutionLink(flow_run_id=flow_run_id, purpose=stage, attempt=1)
     )
     assert projection.claim_execution("legacy-store-run", flow_run_id, worker_id=worker_id)
-    monkeypatch.setattr(flow, "_runtime", lambda: (None, projection))
+    monkeypatch.setattr(flow, "_runtime", lambda: projection)
     monkeypatch.setattr(flow, "_run_logger", lambda: (logging.getLogger("store-policy"), False))
     monkeypatch.setattr(flow, "_claim_current_execution", lambda *_args: (flow_run_id, worker_id))
 

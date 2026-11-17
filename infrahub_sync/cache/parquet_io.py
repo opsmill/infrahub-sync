@@ -39,21 +39,6 @@ PLAN_SCHEMA = pa.schema(
 )
 
 
-ERRORS_SCHEMA = pa.schema(
-    [
-        pa.field("error_class", pa.string(), nullable=False),
-        pa.field("resource", pa.string(), nullable=False),
-        pa.field("source_id", pa.string()),
-        pa.field("dest_id", pa.string()),
-        pa.field("attribute", pa.string()),
-        pa.field("message", pa.string(), nullable=False),
-        pa.field("hint", pa.string()),
-        pa.field("retry_count", pa.int64(), nullable=False),
-        pa.field("terminal", pa.bool_(), nullable=False),
-    ]
-)
-
-
 def write_table(uri: str, table: pa.Table) -> None:
     """Write a Parquet table to `uri` atomically.
 

@@ -18,9 +18,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
-from hashlib import sha256
-from itertools import starmap
-from operator import itemgetter
 from typing import TYPE_CHECKING, Any, Literal
 
 from infrahub_sync.plan.canonical import canonical_json_bytes
@@ -51,18 +48,6 @@ def require_infrahub_create_schema(*, destination: Any, operations: Sequence[Pla
         "is unavailable. The whole plan was refused before any destination write."
     )
     raise UnkeyedCreateRefusedError(msg, next_action="Load the destination schema, then re-run `plan`.")
-
-
-def _identity_paths(identity: Mapping[str, Any], prefix: str = "") -> set[str]:
-    """Name identity leaves, including fields inside nested peer identities."""
-    paths: set[str] = set()
-    for field, value in identity.items():
-        path = f"{prefix}{field}"
-        if isinstance(value, Mapping) and isinstance(value.get("identity"), Mapping):
-            paths.update(_identity_paths(value["identity"], f"{path}__"))
-        else:
-            paths.add(f"{path}__value")
-    return paths
 
 
 IdentityProblemType = Literal["destination_identity_collision", "identities_merge_in_destination"]
@@ -161,55 +146,6 @@ def source_identity_collision_groups(
         )
         for projection, operations in found.items()
     ]
-
-
-def refuse_source_identity_collisions(
-    *,
-    kind: str,
-    node: Any,
-    creates: Sequence[PlannedOperation],
-    identities: Sequence[tuple[str, Mapping[str, Any]]],
-    declared_identity: Collection[str],
-) -> None:
-    """Refuse a create matching a distinct loaded source identity, even without a diff.
-
-    Raises `DestinationIdentityCollisionError` for the first group of
-    `source_identity_collision_groups`, naming its first create.
-    """
-    groups = source_identity_collision_groups(kind=kind, node=node, creates=creates, identities=identities)
-    if groups:
-        raise_source_identity_group(groups[0], declared_identity=declared_identity)
-
-
-def raise_source_identity_group(group: IdentityGroup, *, declared_identity: Collection[str]) -> None:
-    """Raise `DestinationIdentityCollisionError` for one group of `source_identity_collision_groups`."""
-    kind = group.kind
-    operation = group.operations[0]
-    components = group.components
-    own = canonical_json_bytes(operation.identity, kind=kind)
-    others = [record for record in group.source_records if canonical_json_bytes(record[1], kind=kind) != own]
-    paths = _identity_paths(operation.identity)
-    for _, identity in others:
-        paths.update(_identity_paths(identity))
-    indistinguishable = ", ".join(sorted(paths - set(components))) or "distinct source identities"
-    ids = ", ".join(starmap(_source_record_identifier, sorted(others, key=itemgetter(0))[:2]))
-    msg = (
-        f"Create {operation.operation_id!r} of destination kind {kind!r} shares its actual destination "
-        f"match key (human-friendly ID: {', '.join(components)}) with a distinct loaded source record. "
-        f"Declared source identity (mapping identifiers): {', '.join(sorted(declared_identity))}. "
-        f"The destination cannot distinguish: {indistinguishable}. Other loaded source record identifiers: {ids}. "
-        f"{_collision_values(components, operation)}. Applying the create could replace that record's data. "
-        "The whole plan was refused before any destination write."
-    )
-    raise DestinationIdentityCollisionError(msg)
-
-
-def _source_record_identifier(identifier: str, identity: Mapping[str, Any]) -> str:
-    """Show store ids containing only names; otherwise show an opaque identity fingerprint."""
-    if all(path.split(COMPONENT_PATH_SEPARATOR)[-2] == "name" for path in _identity_paths(identity)):
-        return repr(identifier)
-    fingerprint = sha256(canonical_json_bytes(identity)).hexdigest()[:16]
-    return f"source identity fingerprint {fingerprint} (non-name values withheld)"
 
 
 def _component_field(component: str) -> str:
@@ -719,22 +655,3 @@ def merged_identity_groups(
         for group in by_projection.values()
         if len(group) > 1
     ]
-
-
-def refuse_identity_groups(groups: Sequence[IdentityGroup], *, config: Any = None) -> None:
-    """Raise `DestinationIdentityCollisionError` for the first group a plan refused before spec 007.
-
-    A destination collision and a create that shares its human-friendly ID with a distinct
-    loaded source record are refused; a merge on the closest destination key only warns.
-    """
-    for group in groups:
-        if group.problem_type == "destination_identity_collision":
-            raise_identity_group(group)
-        if group.rule == "human-friendly ID":
-            declared = {
-                field
-                for entry in getattr(config, "schema_mapping", None) or ()
-                if entry.name == group.kind
-                for field in (entry.identifiers or [])
-            }
-            raise_source_identity_group(group, declared_identity=declared or set(group.operations[0].identity))

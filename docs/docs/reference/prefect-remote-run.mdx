@@ -52,20 +52,15 @@ those — so ordinary CLI use is unchanged whether the extra is installed or not
 
 ### Base dependency change this required
 
-Making the extra installable changed two base dependency declarations:
+Making the extra installable changed one base dependency declaration:
+`diffsync[redis]>=2.1,<3.0` became `diffsync>=2.1,<3.0`. The `[redis]` extra caps
+`redis<5.0`, which cannot be satisfied next to Prefect's own dependency chain, where
+`pydocket` requires `redis>=5`.
 
-- `diffsync[redis]>=2.1,<3.0` became `diffsync>=2.1,<3.0` — the `[redis]` extra caps
-  `redis<5.0`, which cannot be satisfied next to Prefect's own dependency chain, where
-  `pydocket` requires `redis>=5`.
-- `redis>=4.3,<9` is now declared directly, because `infrahub_sync/utils.py` imports
-  `RedisStore` from DiffSync unconditionally and therefore needs a Redis client in every
-  installation; the floor stays permissive on purpose so anything else requiring
-  `diffsync[redis]` still resolves.
-
-If you are upgrading an existing installation: the Redis client is now a **direct**
-dependency of `infrahub-sync` with a wider allowed range than before. V3 keeps sync
-data in memory and refuses configured sync stores, including Redis. The Redis client
-remains installed for the existing DiffSync import; it does not enable Redis sync storage.
+If you are upgrading an existing installation: `infrahub-sync` no longer declares a Redis
+client. V3 keeps sync data in memory and refuses configured sync stores, including Redis.
+An installation with the `prefect` extra still installs a Redis client, because Prefect
+requires one; it does not enable Redis sync storage.
 
 ## Serving the deployment
 

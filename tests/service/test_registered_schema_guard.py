@@ -220,7 +220,7 @@ def _harness(
     )
     spy = _SnapshotSpy()
     monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", spy)
-    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    monkeypatch.setattr(service_flow, "_runtime", lambda: projection)
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (service_flow.logger, False))
     monkeypatch.setattr(service_flow, "_prefect_flow_run_id", lambda: FLOW_RUN_ID)
@@ -295,7 +295,6 @@ def _execute_apply_stage(harness: _Harness) -> tuple[dict[str, Any], Any]:
             harness.checksum,
             confirm_writes=True,
             secrets=[],
-            config_directory=str(harness.run_dir.parents[2]),
             projection=harness.projection,
             tracker=WriteDispatchTracker(),
             scratch=scratch,

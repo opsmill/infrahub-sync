@@ -54,8 +54,7 @@ any of these modules. Ordinary CLI and Python API imports remain Prefect-free.
 You also need:
 
 - a Prefect API and an existing process work pool;
-- a worker with access to the allowed Sync configuration directory, needed only for
-  legacy unregistered runs;
+- a Sync worker that takes runs from that work pool;
 - PostgreSQL for product records; and
 - an S3-compatible bucket for immutable artifacts.
 
@@ -155,7 +154,6 @@ Configure the worker environment before it starts:
 | Variable | Requirement |
 | --- | --- |
 | `PREFECT_API_URL` | Prefect API used by the deployment and worker. |
-| `INFRAHUB_SYNC_CONFIG_DIRECTORY` | Legacy runs only. A registered run reads its declared configuration from PostgreSQL and resolves both adapters from installed code, so a worker serving registered runs needs no directory and no configuration mount. Set it only where unregistered runs — which resolve a `SyncConfig` file by name — still have to be served; those runs refuse when it is unset or names no directory. |
 | `INFRAHUB_SYNC_DATABASE_URL` | Non-empty PostgreSQL connection string accepted by Psycopg for product records. |
 | `INFRAHUB_SYNC_S3_BUCKET` | Non-empty bucket for immutable product artifacts. |
 | `INFRAHUB_SYNC_S3_PREFIX` | Optional object-key prefix; defaults to `infrahub-sync`. |
@@ -181,8 +179,9 @@ The service flow accepts exactly eight bounded parameters:
 | `expected_checksum` | SHA-256 string or `null` | Reviewed checksum required by `apply`. |
 | `confirm_writes` | `bool` | Required for `apply` and composed `sync`. |
 
-`config_id`, `registry_version`, and `package_checksum` must be all present for a
-registered execution or all `null` for a legacy execution.
+`config_id`, `registry_version`, and `package_checksum` must all be present. The worker
+refuses an execution when any of them is `null`, and it refuses a run that has no registered
+configuration, before it reads the source or the destination.
 
 The API rejects configured secret values in flow-bound request fields. Credentials,
 endpoints, adapter instances, and filesystem paths are never flow parameters.
@@ -201,17 +200,18 @@ export INFRAHUB_SYNC_SERVICE_HOST="127.0.0.1"
 python -m infrahub_sync.service.serve
 ```
 
-:::warning First startup after upgrading a legacy product store
+:::warning A product database created by an earlier version is not upgraded
 
-A validated single legacy startup migrates `mutation_receipts.run_id` and
-`mutation_receipts.prefect_key` from `is_nullable=NO/NO` to nullable. Two simultaneous
-first startups while the PostgreSQL catalog is still legacy can deadlock one startup.
-The failed startup fails closed before worker claim or admission, writes no Sync data,
-and the catalog converges through the successful startup.
+Startup creates the tables, indexes and constraints of the product database when they are
+missing. It does not add a column to a table that already exists, so a table that an earlier
+version created keeps the columns of that version.
 
-Restart the failed process after the first migration converges. Repeated or concurrent
-startups against an already-migrated nullable catalog are supported. The failed startup
-does not retry automatically.
+Start this version on an empty database. On a database that an earlier version created,
+startup fails, or a later request fails, when it reaches a missing column. The runs,
+configurations and audit events in the earlier database are not copied to the new one.
+
+Several processes can start at the same time on the same database, whether it is empty or
+already has the tables.
 
 :::
 
@@ -665,11 +665,7 @@ destination branch. The event types are:
 | `infrahub_sync.config.refused`, `.replayed`, `.unavailable` | The same decisions as for a run, on a configuration request. |
 
 A request refused for a missing or invalid token is not an event, and `GET /events` never
-returns it. Events recorded before this release get a type when the Sync API first starts on
-this release, from their operation and outcome. They name the account of their actor, but no
-configuration, version or branch, because the earlier record did not hold them. A request
-refused for a missing or invalid token that an earlier release recorded gets no type and is
-not listed.
+returns it.
 
 ### Read why a stage failed
 
@@ -827,10 +823,7 @@ The checks, in the order they run and are reported:
 | `lineage` | The plan records an import account, the apply would run with that same import account, and the `source` and `owner` nodes the package names exist in the destination. Reported only for a destination that records lineage, such as Infrahub. |
 
 On success, `GET /runs/{run_id}/results` holds the result under `verification`, with `checks`
-listing every check that passed, in order, and `destination_checked: true`. A run with no
-registered configuration binding cannot be applied by the service: its verification runs the
-file checks only, from `checkpoint` to `format_version`, and reports
-`destination_checked: false`.
+listing every check that passed, in order, and `destination_checked: true`.
 
 When a check fails, the verification stage fails, and `GET /runs/{run_id}` reports the failure
 with the name of the check, what was expected and what was found, as for a refused `apply`.

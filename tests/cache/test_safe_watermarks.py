@@ -99,7 +99,6 @@ def _engine(root: Path, run: str, source: _TimestampSource, side: str) -> Potend
         destination=source if side == "B" else other,
         config=SimpleNamespace(diffsync_flags=[]),  # ty: ignore[invalid-argument-type]
         top_level=["Device", "Empty"] if "Empty" in source.rows else ["Device"],
-        show_progress=False,
         concurrent_load=False,
         run_dir=root / run,
         cache_root=root,
@@ -406,7 +405,6 @@ def _plan_engine(root: Path, run: str, source: _TimestampSource, destination: _T
         destination=destination,
         config=config,
         top_level=list(source.rows),
-        show_progress=False,
         concurrent_load=False,
         run_dir=root / run,
         run_id=run,

@@ -443,7 +443,7 @@ async def test_child_refuses_stale_identity_after_start_before_claim(
             child.setenv("PREFECT__WORKER_ID", starter._env["PREFECT__WORKER_ID"])
             child.setenv("PREFECT__WORKER_NAME", starter._env["PREFECT__WORKER_NAME"])
             child.setattr(service_flow, "get_client", lambda **_kwargs: registry, raising=False)
-            child.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+            child.setattr(service_flow, "_runtime", lambda: projection)
             child.setattr(service_flow, "_prefect_flow_run_id", lambda: str(FLOW_ID))
             child.setattr(service_flow, "_execute_stage", lambda *_args, **_kwargs: post_claim_work.append(True))
             try:

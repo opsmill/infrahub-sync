@@ -123,8 +123,9 @@ from infrahub_sync import DiffSyncMixin
 from infrahub_sync.adapters.infrahub import InfrahubAdapter
 from infrahub_sync.plan import read_saved_plan
 from infrahub_sync.plan.errors import OperationApplyFailedError, PeerAmbiguousError
-from infrahub_sync.utils import find_missing_schema_model, get_instance, get_potenda_from_instance, render_adapter
+from infrahub_sync.utils import get_potenda_from_instance, render_adapter
 from tests.plan.ownership_fixtures import granted_ownership
+from tests.sync_instances import find_missing_schema_model, get_instance
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
@@ -725,7 +726,7 @@ def _plan_run(config_path: Path) -> tuple[str, Path]:
     forced full destination extract, because FR-015 derives deletes only from a full one and
     SC-007's live half needs the plan to carry one.
     """
-    potenda = get_potenda_from_instance(sync_instance=_sync_instance(config_path), show_progress=False)
+    potenda = get_potenda_from_instance(sync_instance=_sync_instance(config_path))
     potenda.force_full_extract = True
     if potenda.run_dir is None or potenda.run_id is None:
         msg = "get_potenda_from_instance allocated no run directory for the plan run."
@@ -737,9 +738,7 @@ def _plan_run(config_path: Path) -> tuple[str, Path]:
 
 def _potenda_for_apply(live: LivePlan) -> Any:  # noqa: ANN401 — Potenda is imported lazily by the CLI too
     """A `Potenda` bound to the stored run, constructed exactly as `apply_cmd` constructs it."""
-    return get_potenda_from_instance(
-        sync_instance=_sync_instance(live.config_path), run_id=live.run_id, show_progress=False
-    )
+    return get_potenda_from_instance(sync_instance=_sync_instance(live.config_path), run_id=live.run_id)
 
 
 def _seed_the_peer_kinds(workspace: Path, environment: Mapping[str, str], suffix: str) -> None:
@@ -756,7 +755,7 @@ def _seed_the_peer_kinds(workspace: Path, environment: Mapping[str, str], suffix
         environment=environment,
     )
     run_id, _ = _plan_run(seed_config)
-    get_potenda_from_instance(sync_instance=_sync_instance(seed_config), run_id=run_id, show_progress=False).apply_plan(
+    get_potenda_from_instance(sync_instance=_sync_instance(seed_config), run_id=run_id).apply_plan(
         ownership=granted_ownership()
     )
 

@@ -64,35 +64,6 @@ def _link(projection: ProductProjection) -> PrefectExecutionLink:
     return run.prefect_executions[0]
 
 
-def _columns(database: Path) -> set[str]:
-    connection = sqlite3.connect(database)
-    try:
-        return {row[1] for row in connection.execute("PRAGMA table_info(prefect_executions)")}
-    finally:
-        connection.close()
-
-
-def test_a_store_created_before_the_feature_gains_the_column_once_and_reads_old_rows_as_none(
-    tmp_path: Path, profile: str
-) -> None:
-    _projection_with_execution(tmp_path, profile)
-    database = _database(tmp_path, profile)
-    # Return the store to its shape before this feature.
-    connection = sqlite3.connect(database)
-    try:
-        connection.execute("ALTER TABLE prefect_executions DROP COLUMN apply_progress")
-        connection.commit()
-    finally:
-        connection.close()
-    assert "apply_progress" not in _columns(database)
-
-    _projection(tmp_path, profile)
-    restarted = _projection(tmp_path, profile)
-
-    assert "apply_progress" in _columns(database)
-    assert _link(restarted).apply_progress is None
-
-
 def test_a_marker_round_trips(tmp_path: Path, profile: str) -> None:
     projection = _projection_with_execution(tmp_path, profile)
 

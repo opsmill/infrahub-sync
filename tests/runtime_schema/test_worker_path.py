@@ -16,7 +16,6 @@ import pytest
 from infrahub_sync.configuration import ConfigurationPackage, parse_configuration_package
 from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
 from infrahub_sync.execution import RunResult
-from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.models import PlanManifest
 from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.product_store.models import ConfigurationVersion, LookupResult, ProductRun
@@ -182,7 +181,7 @@ def test_registered_plan_refuses_a_server_allocated_only_identity(
         _plan(_package(), tmp_path)
 
 
-def test_registered_composition_attaches_the_plan_to_the_runtime_instance(spy: _SnapshotSpy, tmp_path: Path) -> None:
+def test_registered_composition_attaches_the_plan_to_the_runtime_instance(spy: _SnapshotSpy) -> None:
     package = _package()
     binding = ("cfg-runtime-models", 1, package.checksum())
     projection = _StubProjection(package, binding)
@@ -190,7 +189,6 @@ def test_registered_composition_attaches_the_plan_to_the_runtime_instance(spy: _
     _, instance, name = service_flow._worker_execution_context(
         "run-runtime-models",
         binding,
-        config_directory=str(tmp_path),
         projection=cast("ProductProjection", projection),
         run_branch=None,
         stage="plan",
@@ -203,7 +201,7 @@ def test_registered_composition_attaches_the_plan_to_the_runtime_instance(spy: _
 
 
 def test_registered_composition_carries_generic_peers_into_ordering(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     snapshot = copy.deepcopy(_SNAPSHOT)
     snapshot["BuiltinLabel"] = {
@@ -224,7 +222,6 @@ def test_registered_composition_carries_generic_peers_into_ordering(
     _, instance, _ = service_flow._worker_execution_context(
         "run-generic-order",
         binding,
-        config_directory=str(tmp_path),
         projection=cast("ProductProjection", _StubProjection(package, binding)),
         run_branch=None,
         stage="plan",
@@ -234,30 +231,6 @@ def test_registered_composition_carries_generic_peers_into_ordering(
     assert instance._runtime_models.generic_peers == {"BuiltinLabel": ("BuiltinTag", "UnmappedKind")}
     assert instance.compute_order_and_tiers(instance._runtime_models.generic_peers)[0] == ["BuiltinTag", "LocationSite"]
     assert spy.branches == ["main"]
-
-
-def test_a_legacy_unregistered_run_builds_no_runtime_models(spy: _SnapshotSpy, tmp_path: Path) -> None:
-    package = _package()
-    (tmp_path / "from-netbox").mkdir()
-    (tmp_path / "from-netbox" / "config.yml").write_text(
-        "name: from-netbox\nsource:\n  name: netbox\ndestination:\n  name: infrahub\n", encoding="utf-8"
-    )
-    from infrahub_sync.execution import resolve_sync_instance
-
-    reference = resolve_config_version(resolve_sync_instance("from-netbox", directory=str(tmp_path)))
-    projection = _StubProjection(package, None, sync_name="from-netbox", configuration_reference=reference)
-
-    _, instance, _ = service_flow._worker_execution_context(
-        "legacy-run",
-        None,
-        config_directory=str(tmp_path),
-        projection=cast("ProductProjection", projection),
-        run_branch=None,
-        stage="plan",
-    )
-
-    assert instance._runtime_models is None
-    assert spy.branches == []
 
 
 def test_a_registered_stage_reaches_execution_with_its_models_bound(
@@ -308,7 +281,6 @@ def test_a_registered_stage_reaches_execution_with_its_models_bound(
             None,
             confirm_writes=True,
             secrets=[],
-            config_directory=str(tmp_path),
             projection=cast("ProductProjection", projection),
             tracker=WriteDispatchTracker(),
             scratch=scratch,
@@ -332,7 +304,7 @@ def test_a_registered_stage_reaches_execution_with_its_models_bound(
     [("plan", 1), ("sync", 1), ("apply", 1), ("verify", 0)],
 )
 def test_only_stages_that_construct_adapters_read_the_schema(
-    spy: _SnapshotSpy, tmp_path: Path, stage: str, expected_reads: int
+    spy: _SnapshotSpy, stage: str, expected_reads: int
 ) -> None:
     package = _package()
     binding = ("cfg-runtime-models", 1, package.checksum())
@@ -341,7 +313,6 @@ def test_only_stages_that_construct_adapters_read_the_schema(
     _, instance, _ = service_flow._worker_execution_context(
         f"run-{stage}",
         binding,
-        config_directory=str(tmp_path),
         projection=cast("ProductProjection", projection),
         run_branch=None,
         stage=stage,
@@ -351,7 +322,7 @@ def test_only_stages_that_construct_adapters_read_the_schema(
     assert (instance._runtime_models is None) == (expected_reads == 0)
 
 
-def test_a_saved_plan_apply_builds_no_source_requirements(spy: _SnapshotSpy, tmp_path: Path) -> None:
+def test_a_saved_plan_apply_builds_no_source_requirements(spy: _SnapshotSpy) -> None:
     # Apply constructs the destination only, so requiring the source plugin would
     # reintroduce the source dependency a no-source apply exists to avoid.
     package = _package()
@@ -361,7 +332,6 @@ def test_a_saved_plan_apply_builds_no_source_requirements(spy: _SnapshotSpy, tmp
     _, instance, _ = service_flow._worker_execution_context(
         "run-apply",
         binding,
-        config_directory=str(tmp_path),
         projection=cast("ProductProjection", projection),
         run_branch=None,
         stage="apply",
@@ -688,32 +658,23 @@ class _StubProjection:
     def __init__(
         self,
         package: ConfigurationPackage,
-        binding: tuple[str, int, str] | None,
-        *,
-        sync_name: str | None = None,
-        configuration_reference: str = "legacy@1",
+        binding: tuple[str, int, str],
     ) -> None:
         self._package = package
         self._binding = binding
-        self._sync_name = sync_name
-        self._configuration_reference = configuration_reference
 
     def lookup_run(self, run_id: str) -> LookupResult[ProductRun]:
-        summary = {"sync_name": self._sync_name} if self._sync_name else {}
         return LookupResult(
             value=ProductRun(
                 run_id=run_id,
                 operation="plan",
-                configuration_reference=(
-                    self._configuration_reference if self._binding is None else f"{self._binding[0]}@{self._binding[1]}"
-                ),
-                config_id=None if self._binding is None else self._binding[0],
-                registry_version=None if self._binding is None else self._binding[1],
-                package_checksum=None if self._binding is None else self._binding[2],
+                configuration_reference=f"{self._binding[0]}@{self._binding[1]}",
+                config_id=self._binding[0],
+                registry_version=self._binding[1],
+                package_checksum=self._binding[2],
                 actor="owner",
                 started_at=datetime.now(timezone.utc),
                 phase="reserved",
-                summary=summary,
             )
         )
 
