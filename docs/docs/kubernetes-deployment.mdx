@@ -26,7 +26,7 @@ this page use that release name, in the namespace `infrahub-sync`.
 | `infrahub-sync-prefect-server` | Deployment, Service | The Prefect API, from the Sync image. It hands runs to the worker and serves no UI. |
 | `infrahub-sync-bootstrap-<hash>` | Job | Creates the bucket, the Prefect work pool, the Prefect deployment and the product schema, then writes the bootstrap record: the Sync version and the work pool name it set up. |
 | `infrahub-sync-postgresql` | StatefulSet, Service | PostgreSQL, with the product database and the Prefect database. |
-| `infrahub-sync-postgresql-init` | ConfigMap | The script that creates both PostgreSQL databases and their roles. |
+| `infrahub-sync-postgresql-init` | ConfigMap | The script that creates both PostgreSQL databases and their roles when they are missing. PostgreSQL runs it on an empty volume, and the bootstrap Job runs it each time. |
 | `infrahub-sync-object-store` | StatefulSet, Service | The object store for plans and run files, on the Silo image. |
 | `infrahub-sync` | Secret | The credentials, when you set them as values instead of naming your own Secret. |
 | `infrahub-sync-worker-credentials` | Secret | Source credentials set in `worker.credentials`. Only the worker reads it. |
@@ -44,10 +44,14 @@ The services start in this order. The waits of the Prefect server and the bootst
 containers, which fail after `waitTimeoutSeconds` (600 seconds by default):
 
 1. PostgreSQL runs its database script when it creates its data directory on an empty volume.
-2. The Prefect server waits until PostgreSQL accepts connections.
-3. The bootstrap Job waits until the Prefect server answers, then runs. It retries on failure, up
-   to `bootstrap.backoffLimit` times (6 by default). Its last step writes the bootstrap record to
-   the product database: the Sync version and the work pool name it set up.
+2. The Prefect server waits until PostgreSQL accepts connections. It restarts until its role
+   exists.
+3. The bootstrap Job waits until PostgreSQL accepts connections and runs the database script
+   again, which creates any role or database that is missing, as the Compose `db-bootstrap`
+   service does. It then waits until the object store and the Prefect server answer, and runs.
+   It retries on failure, up to `bootstrap.backoffLimit` times (6 by default). Its last step
+   writes the bootstrap record to the product database: the Sync version and the work pool name
+   it set up.
 4. The Sync API and the worker read the bootstrap record when they start. When the record is
    missing, or names another Sync version or work pool, they log what they found and what they
    expected, and exit. Kubernetes restarts them, with a longer delay after each failure, until the
@@ -282,7 +286,14 @@ Source credentials go to the worker only:
 A package references these variables by name, as
 [Credentials in a package](./compose-deployment.mdx#credentials-in-a-package) describes. The destination
 token `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` is a key of the credentials Secret, and the
-Sync API and the worker both read it.
+Sync API and the worker both read it. To give the worker another token, set that key in
+`worker.credentials`: the worker then reads it from there and not from the credentials Secret.
+Do not put that key in a Secret of `worker.credentialsExistingSecrets` while the credentials
+Secret also holds it, because the credentials Secret's value wins.
+
+The init containers of the Prefect server and the bootstrap Job set the resource requests and
+limits of `initContainers.resources`: 10m CPU and 64Mi memory requested, and a 128Mi memory limit,
+by default. A namespace with a ResourceQuota refuses a pod whose containers set none.
 
 :::warning
 The chart restarts the pods that read a Secret or ConfigMap only when the chart creates that

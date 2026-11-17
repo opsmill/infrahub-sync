@@ -39,8 +39,12 @@ bootstrap's object store check correct. None of them needs access to the Kuberne
 
 - **Database bootstrap.** The bundled PostgreSQL runs the role and database script of the Compose
   file from `/docker-entrypoint-initdb.d`, mounted from a ConfigMap with mode `0555`, when it
-  first initializes its volume. The PostgreSQL pod is not ready until the script has run. The
-  Prefect server waits for PostgreSQL with `pg_isready` in an init container.
+  first initializes its volume. The bootstrap Job runs the same script again over TCP as the
+  administrator, in an `ensure-databases` init container, as the Compose `db-bootstrap` service
+  does on every start. The script creates a role or a database only when it is missing, so a
+  renamed role or database, or a first start that was interrupted after the volume was
+  initialized, is repaired by the next Job. The Prefect server waits for PostgreSQL with
+  `pg_isready` in an init container, and restarts until its role exists.
 - **Service bootstrap.** A plain Kubernetes Job, not a Helm hook, named
   `<fullname>-bootstrap-<hash>`. The hash is the first 8 characters of a SHA-256 over every input
   of the Job's pod:
@@ -48,12 +52,16 @@ bootstrap's object store check correct. None of them needs access to the Kuberne
     - the checksums of the Secret and the CA ConfigMap that the chart creates
     - the `bootstrap` values, the pull policy and pull secrets, the security contexts, the service
       account, the CA ConfigMap name and the wait timeout
+    - the init container resources, whether the bundled object store runs, and the PostgreSQL
+      image, roles and databases
     - the chart version
 
   A change to any input gives a new name, so the upgrade creates a new Job and Helm deletes the
   Job of the previous name. No Job is ever patched. An upgrade that changes no input keeps the
-  completed Job; on a converged deployment the bootstrap would change nothing. The Job waits for
-  the Prefect server's `/api/health` in an init container and retries on failure.
+  completed Job; on a converged deployment the bootstrap would change nothing. Its init
+  containers wait for PostgreSQL, create the missing roles and databases, wait for the bundled
+  object store's `/minio/health/ready`, and wait for the Prefect server's `/api/health`, in that
+  order. The Job retries on failure.
 - **Bootstrap record and start check.** As its last step, the bootstrap writes a one-row table
   `bootstrap_record` in the product database with the Sync version and the work pool name it set
   up. A repeat for the same version and pool writes nothing. The Sync API and the worker read the
@@ -95,8 +103,9 @@ Job runs again, but the start check already passes.
 - **Existing Secrets.** The chart cannot read a Secret it did not create, so a change to the
   content of `credentials.existingSecret` creates no Job and restarts no pod. The operator
   restarts the pods.
-- **Passwords.** The database script runs only on an empty volume. A role password changed in
-  the values later must be changed in the database too, as with Compose.
+- **Passwords.** The database script creates a missing role with its password and leaves an
+  existing role unchanged. A role password changed in the values later must be changed in the
+  database too, as with Compose.
 - **No Role.** No pod mounts a service account token, and the chart creates no Role or
   RoleBinding.
 
@@ -111,9 +120,11 @@ Job runs again, but the start check already passes.
   every restart, which the Compose file rules out.
 - **An init container that waits for the Job through the Kubernetes API.** Rejected: it needs a
   Role, a RoleBinding, a service account token in the pod and a `kubectl` image.
-- **The database bootstrap as a Job, as in Compose.** Rejected: the Prefect server would need a
-  second gate. The cost of the init script is that it runs only on an empty volume, which the
-  documentation states.
+- **The database bootstrap as a separate Job, as in Compose.** Rejected: the Prefect server would
+  need a second gate. The bootstrap Job's `ensure-databases` init container runs the script
+  instead, and the Prefect server restarts until its role exists. The PostgreSQL entrypoint alone
+  was the first choice; it runs the script only on an empty volume, so a renamed role or an
+  interrupted first start left the roles missing.
 - **An init container on the Sync API and the worker that waits for the Prefect deployment**
   `infrahub-sync-service/run` in the configured work pool. Rejected after it was first built: on
   an upgrade the deployment of the previous release already exists, so the wait ends at once and
