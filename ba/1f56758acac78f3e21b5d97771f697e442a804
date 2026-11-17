@@ -1,0 +1,23 @@
+tests/service/accounts.py
+  s_cf9ada8f865389::t_1d7e02d07513f6 1-133
+tests/service/test_events_route.py
+  s_cf9ada8f865389::t_903f4c111d071b 32,99,101
+dev/specs/022-local-accounts/tasks.md
+  s_cf9ada8f865389::t_44c445a0a1d680 130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ba1f56758acac78f3e21b5d97771f697e442a804",
+  "prompts": {},
+  "sessions": {
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
