@@ -1,0 +1,49 @@
+dev/specs/022-local-accounts/tasks.md
+  s_cf9ada8f865389::t_ed04acc62430a6 45,49,52,57,61,64
+infrahub_sync/product_store/models.py
+  s_cf9ada8f865389::t_b17f1e4b85f16a 812-913
+tests/product_store/test_accounts.py
+  s_cf9ada8f865389::t_4eaf48881ee89b 1-13,15-51,53-58,60-139,141-162,168-471,473-518,521-542
+  s_cf9ada8f865389::t_37c5cac00cc496 14
+  s_cf9ada8f865389::t_555a27f806073a 52
+  s_cf9ada8f865389::t_99755d54e0767f 59
+  s_cf9ada8f865389::t_d0bea608925c2d 140
+  s_cf9ada8f865389::t_72614a53e19d7d 163-167
+  s_cf9ada8f865389::t_cc3f3913b32828 472
+  s_cf9ada8f865389::t_fbfe686b1c6841 519-520
+infrahub_sync/product_store/accounts.py
+  s_cf9ada8f865389::t_fab482322829c7 1-21,23-83,85-383,385-400
+  s_cf9ada8f865389::t_02c2d8ca77bb42 22
+  s_cf9ada8f865389::t_f689fabeb0408b 84
+  s_cf9ada8f865389::t_833e9068e7eab5 384
+infrahub_sync/product_store/__init__.py
+  s_07114a26dcda0c::t_9b5ee755e4fc7d 3-8,10-12,35,39,68-73,91,107,113
+infrahub_sync/product_store/store.py
+  s_07114a26dcda0c::t_1089543b8bc724 27-33,43-45,66,166-196,198-200,422-424,608-610,833-889,3154-3337,4144-4263,4624-4628
+tests/product_store/test_contract.py
+  s_07114a26dcda0c::t_e7a773e934cbdc 66-71,89,105,111
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c44450f668ab5227c61c22bb8dad8fbedad02296",
+  "prompts": {},
+  "sessions": {
+    "s_07114a26dcda0c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ae1717869d5680d00",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_cf9ada8f865389": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9780ee3-7e3e-45ca-950a-97499e57bc75",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
