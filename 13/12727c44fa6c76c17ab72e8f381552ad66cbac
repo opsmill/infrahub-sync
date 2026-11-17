@@ -1,0 +1,26 @@
+infrahub_sync/service/bootstrap.py
+  s_313229fc4d1c44::t_62f8892cbb3c46 109-110,116-121
+infrahub_sync/product_store/store.py
+  s_313229fc4d1c44::t_05c9241c87b33d 562,566-572
+tests/service/test_sqlstate_read_only.py
+  s_313229fc4d1c44::t_ebf0757d93d65d 29
+  s_313229fc4d1c44::t_b1a19c448418b9 1-28,30-33
+infrahub_sync/service/storage.py
+  s_313229fc4d1c44::t_83da93d9a14b95 51,55-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1312727c44fa6c76c17ab72e8f381552ad66cbac",
+  "prompts": {},
+  "sessions": {
+    "s_313229fc4d1c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66c6738f-876b-4301-a742-80e31346a4cc",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
