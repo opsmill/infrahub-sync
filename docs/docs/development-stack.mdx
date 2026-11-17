@@ -6,7 +6,9 @@ The local development stack builds the Sync service image from your checkout and
 with Docker Compose: PostgreSQL, an object store, the Prefect server, the Sync API and the Sync
 worker. A preset adds a local Infrahub, and a local NetBox, when you want them. Use the stack
 to work on Infrahub Sync, test a fix, run the smoke suite, run a first sync, or run V3 on a
-Mac. Every credential it uses is a published local default.
+Mac. Every credential the stack defines is a published local default. With the default `sync`
+preset, the worker also needs the token of the Infrahub it connects to: export it as
+`INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` before you start the stack.
 Never point any value on this page at a shared or internet-facing instance.
 
 The `dev` Invoke tasks drive the stack. They run

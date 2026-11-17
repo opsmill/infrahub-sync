@@ -11,7 +11,7 @@ Sync API and the worker on the host with `dev.deps`), and how to run the tests.
 
 ```bash
 uv sync --extra dev --extra prefect --extra service
-uv run invoke dev.start      # preset `sync`: the Sync service only
+uv run invoke dev.start      # preset `sync`, or `infrahub` when a local Infrahub container exists
 uv run invoke dev.infrahub   # preset `infrahub`: plus a local Infrahub
 uv run invoke dev.preview    # preset `preview`: plus the local NetBox and the smoke dataset
 ```

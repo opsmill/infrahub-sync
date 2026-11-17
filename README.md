@@ -79,7 +79,7 @@ Infrahub, or a local Infrahub and NetBox:
 
 ```bash
 uv sync --extra dev --extra prefect --extra service   # once
-uv run invoke dev.start      # the `sync` preset: syncs into an Infrahub you already run
+uv run invoke dev.start      # `sync` preset, or `infrahub` when a local Infrahub container exists
 uv run invoke dev.infrahub   # the `infrahub` preset: adds a local Infrahub
 uv run invoke dev.preview    # the `preview` preset: adds a local Infrahub, NetBox and sample data
 ```
@@ -100,8 +100,9 @@ curl -sf http://127.0.0.1:8001/api/version
 curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8001/api/status
 ```
 
-The `sync` and `infrahub` presets start with no source and no destination; `preview` starts the
-local NetBox as a source and loads the smoke dataset into the local Infrahub. To continue to a first sync from a
+The `sync` preset starts with no source and no destination, and `infrahub` adds an empty local
+Infrahub as a destination. `preview` starts the local NetBox as a source and loads the smoke
+dataset into the local Infrahub. To continue to a first sync from a
 local NetBox into the stack's Infrahub, follow
 [Run from source](https://feature-v3-develop.infrahub-sync.pages.dev/development-stack#run-from-source)
 in the documentation. In short:

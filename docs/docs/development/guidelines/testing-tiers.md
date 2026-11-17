@@ -327,7 +327,7 @@ Run these commands from the repository root:
 
 2. Start a fresh development stack. The worker resolves the package's `netbox-token` credential
    from its own environment, so set `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` to the token that step 1
-   printed before `dev.start` creates the worker container. `dev.start` sets
+   printed before `dev.infrahub` creates the worker container. `dev.infrahub` sets
    `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` to the stack's Infrahub admin token, and connects
    the worker to NetBox's network.
 

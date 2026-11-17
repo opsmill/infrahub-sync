@@ -1,7 +1,7 @@
 # 29. The development stack is one Compose file with profiles, run by one `dev` namespace
 
 **Status**: Accepted
-**Date**: 2026-10-22
+**Date**: 2026-10-22, amended 2026-11-17 (see [Amendment, 2026-11-17](#amendment-2026-11-17-presets-decide-the-profiles))
 **Source**: `dev/specs/archive/008-prefect-from-sync-image/research.md` (R5, R6, R7),
 `dev/specs/archive/008-prefect-from-sync-image/spec.md` (D-6, D-8, D-9, D-10, D-12)
 
@@ -24,9 +24,7 @@ with the Sync API and worker on the host, for a debugger.
   file includes `development/docker-compose.infrahub.yml` with Compose `include:`, and every
   Infrahub service has the `infrahub` profile.
 - **One task namespace with two modes.** `dev.start` starts the core services and both
-  profiles. (Since amended: a preset decides the profiles. The default `sync` preset starts the
-  `sync` profile only, and `dev.deps` no profile; the `infrahub` and `preview` presets add the
-  `infrahub` profile. See `tasks/dev.py` and the development stack documentation.)
+  profiles (amended 2026-11-17: a preset decides the profiles; see the amendment below).
   `dev.deps` starts the core services and the `infrahub` profile, prints the
   addresses and returns; `dev.api` and `dev.worker` then run the host processes in the
   foreground. No task writes a PID file or starts a background process.
@@ -72,3 +70,19 @@ with the Sync API and worker on the host, for a debugger.
   copied project layer, so every start would rebuild.
 - **Compare file modification times with the image creation time.** Rejected: a `git checkout`
   changes modification times without changing content.
+
+### Amendment, 2026-11-17: presets decide the profiles
+
+`dev.start`, `dev.restart` and `dev.deps` start one preset, and the preset decides the profiles:
+
+- `sync`, the default: `dev.start` starts the core services and the `sync` profile, and
+  `dev.deps` starts the core services only. The worker reaches an Infrahub outside the stack.
+- `infrahub`: adds the `infrahub` profile, which is the behavior the decision above describes.
+- `preview`: adds the `infrahub` profile, starts the local NetBox and loads the smoke dataset
+  into the local Infrahub.
+
+`--preset` or `INFRAHUB_SYNC_DEV_PRESET` selects a preset, and `dev.infrahub` and
+`dev.preview` start one directly. Without either, a task follows the stack's containers:
+`infrahub` when an `infrahub-server` container exists, otherwise `sync`. With
+`--infrahub-network`, the preset is `sync`. `tasks/dev.py` and the development stack
+documentation describe the rules in full.

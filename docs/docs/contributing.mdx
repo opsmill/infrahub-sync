@@ -156,7 +156,8 @@ it writes, and why a skipped test does not count as a pass. See
 ### Run the Sync service locally
 
 The development stack runs the Sync API, the worker, PostgreSQL, object storage and Prefect in
-containers. A preset adds a disposable Infrahub, and a local NetBox. The Sync API, the worker and
+containers. The `infrahub` preset adds a disposable Infrahub, and the `preview` preset adds a
+disposable Infrahub and a local NetBox. The Sync API, the worker and
 Prefect run an image built from your working tree; PostgreSQL, object storage, Infrahub and
 NetBox run published images. It uses
 development credentials.
